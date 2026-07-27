@@ -23,6 +23,26 @@
       "type": "string",
       "format": "uuid"
     },
+    "transaction_kind": {
+      "enum": [
+        "installation",
+        "rollback"
+      ]
+    },
+    "parent_transaction_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "rollback_transaction_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
     "project_id": {
       "type": "string"
     },
@@ -231,6 +251,12 @@
               "reverse_merge",
               "none",
               null
+            ]
+          },
+          "rollback_source_path": {
+            "type": [
+              "string",
+              "null"
             ]
           },
           "backup_sha256": {

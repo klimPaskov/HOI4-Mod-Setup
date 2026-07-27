@@ -259,6 +259,9 @@ pub fn new_journal(
     TransactionJournal {
         schema_version: "1.0.0".into(),
         transaction_id: plan.plan_id,
+        transaction_kind: "installation".into(),
+        parent_transaction_id: None,
+        rollback_transaction_id: None,
         project_id: project_id.into(),
         project_root: project_root.display().to_string(),
         state: "preflight".into(),
@@ -299,6 +302,7 @@ pub fn new_journal(
                 source_sha256: operation.source_sha256.clone(),
                 result_sha256: operation.result_sha256.clone(),
                 rollback: Some(operation.rollback),
+                rollback_source_path: None,
                 backup_sha256: None,
                 after_sha256: None,
                 after_exists: None,
@@ -2125,6 +2129,242 @@ fn rollback_destination_is_restored(
     }
 }
 
+fn rollback_operation_is_actionable(operation: &JournalOperation) -> bool {
+    matches!(
+        operation.status.as_str(),
+        "rollback_applying" | "applying" | "applied" | "verified"
+    ) && !matches!(
+        operation.action,
+        Some(OperationAction::Skip | OperationAction::External) | None
+    ) && !matches!(operation.rollback, Some(RollbackAction::None) | None)
+}
+
+fn new_rollback_journal(
+    parent: &TransactionJournal,
+    transaction_id: Uuid,
+    project_root: &Path,
+) -> TransactionJournal {
+    let now = Utc::now().to_rfc3339();
+    TransactionJournal {
+        schema_version: "1.0.0".into(),
+        transaction_id,
+        transaction_kind: "rollback".into(),
+        parent_transaction_id: Some(parent.transaction_id),
+        rollback_transaction_id: None,
+        project_id: parent.project_id.clone(),
+        project_root: project_root.display().to_string(),
+        state: "preflight".into(),
+        created_at: now.clone(),
+        updated_at: now,
+        last_checkpoint: "rollback-preflight".into(),
+        plan_sha256: parent.plan_sha256.clone(),
+        stages: TRANSACTION_STAGES
+            .iter()
+            .map(|id| StageCheckpoint {
+                id: (*id).into(),
+                status: "pending".into(),
+                started_at: None,
+                completed_at: None,
+                evidence: vec![],
+            })
+            .collect(),
+        operations: parent
+            .operations
+            .iter()
+            .rev()
+            .map(|operation| {
+                let actionable = rollback_operation_is_actionable(operation);
+                let desired_sha256 = if actionable
+                    && !matches!(operation.rollback, Some(RollbackAction::RemoveCreated))
+                {
+                    operation.before_sha256.clone()
+                } else {
+                    None
+                };
+                JournalOperation {
+                    id: format!("rollback-{}", operation.id),
+                    status: if actionable {
+                        "pending".into()
+                    } else {
+                        "rolled_back".into()
+                    },
+                    destination: operation.destination.clone(),
+                    ownership: operation.ownership,
+                    component_id: operation.component_id.clone(),
+                    action: if actionable {
+                        Some(if desired_sha256.is_some() {
+                            OperationAction::Replace
+                        } else {
+                            OperationAction::DeleteManaged
+                        })
+                    } else {
+                        Some(OperationAction::Skip)
+                    },
+                    location_scope: operation.location_scope.clone(),
+                    external: operation.external,
+                    backup_path: None,
+                    before_sha256: None,
+                    expected_sha256: desired_sha256.clone(),
+                    source_sha256: desired_sha256.clone(),
+                    result_sha256: desired_sha256,
+                    rollback: if actionable {
+                        Some(RollbackAction::RestoreBackup)
+                    } else {
+                        Some(RollbackAction::None)
+                    },
+                    rollback_source_path: operation.backup_path.clone(),
+                    backup_sha256: None,
+                    after_sha256: None,
+                    after_exists: None,
+                }
+            })
+            .collect(),
+        recovery: RecoveryState {
+            resume_allowed: false,
+            rollback_allowed: false,
+            discard_staging_allowed: false,
+            project_apply_started: true,
+            recommended_action: "inspect".into(),
+        },
+        git_initialized: false,
+        git_remote_added_name: None,
+        git_remote_added_url: None,
+        previous_lock_backup_path: None,
+        previous_lock_sha256: None,
+        error: None,
+    }
+}
+
+fn rollback_operation_destination(
+    project_root: &Path,
+    operation: &JournalOperation,
+) -> Result<PathBuf, AppError> {
+    if operation.external {
+        validate_external_destination(&operation.destination)
+    } else {
+        safe_join(project_root, &operation.destination)
+    }
+}
+
+fn prepare_rollback_transaction(
+    project_root: &Path,
+    parent: &TransactionJournal,
+    parent_journal_path: &Path,
+) -> Result<(TransactionJournal, PathBuf), AppError> {
+    let app_root = journal_app_root(parent_journal_path)?;
+    if path_has_link_component(&app_root) {
+        return Err(AppError::PathSecurity(
+            "application data root contains a symlink or junction".into(),
+        ));
+    }
+    let transaction_id = parent.rollback_transaction_id.unwrap_or_else(Uuid::new_v4);
+    let roots = transaction_root(&app_root, transaction_id);
+    if path_has_link_component(&roots.transaction) || path_has_link_component(&roots.backup) {
+        return Err(AppError::PathSecurity(
+            "rollback transaction storage contains a symlink or junction".into(),
+        ));
+    }
+    fs::create_dir_all(&roots.transaction)?;
+    fs::create_dir_all(&roots.backup)?;
+    let journal_path = roots.transaction.join("journal.json");
+    let mut rollback = if journal_path.is_file() {
+        let journal = read_journal(&journal_path)?;
+        if journal.transaction_id != transaction_id
+            || journal.transaction_kind != "rollback"
+            || journal.parent_transaction_id != Some(parent.transaction_id)
+        {
+            return Err(AppError::Transaction(
+                "rollback transaction identity does not match its parent journal".into(),
+            ));
+        }
+        journal
+    } else {
+        let journal = new_rollback_journal(parent, transaction_id, project_root);
+        atomic_write_json(&journal_path, &journal)?;
+        journal
+    };
+
+    for index in 0..rollback.operations.len() {
+        let operation = rollback.operations[index].clone();
+        if operation.status == "rolled_back" || operation.action == Some(OperationAction::Skip) {
+            continue;
+        }
+        let destination = rollback_operation_destination(project_root, &operation)?;
+        let backup = roots.backup.join(format!("{}.bak", operation.id));
+        if path_has_link_component(&backup) {
+            return Err(AppError::PathSecurity(
+                "rollback backup path contains a symlink or junction".into(),
+            ));
+        }
+        match fs::symlink_metadata(&destination) {
+            Ok(metadata) if is_link_metadata(&metadata) => {
+                return Err(AppError::PathSecurity(format!(
+                    "refusing to back up rollback destination link: {}",
+                    operation.destination
+                )));
+            }
+            Ok(metadata) if metadata.is_file() => {
+                let current_hash = sha256_file(&destination)?;
+                if backup.is_file() {
+                    if sha256_file(&backup)? != current_hash {
+                        return Err(AppError::Transaction(format!(
+                            "rollback backup changed before apply: {}",
+                            operation.destination
+                        )));
+                    }
+                } else {
+                    copy_atomic(&destination, &backup)?;
+                }
+                rollback.operations[index].before_sha256 = Some(current_hash.clone());
+                rollback.operations[index].after_exists = Some(true);
+                rollback.operations[index].backup_path = Some(backup.display().to_string());
+                rollback.operations[index].backup_sha256 = Some(sha256_file(&backup)?);
+            }
+            Ok(_) => {
+                return Err(AppError::Transaction(format!(
+                    "rollback destination is not a regular file: {}",
+                    operation.destination
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                rollback.operations[index].before_sha256 = None;
+                rollback.operations[index].after_exists = Some(false);
+                rollback.operations[index].backup_path = None;
+                rollback.operations[index].backup_sha256 = None;
+            }
+            Err(error) => return Err(error.into()),
+        }
+        rollback.last_checkpoint = format!("rollback-backup-{}", operation.id);
+        persist_journal(&journal_path, &mut rollback)?;
+    }
+    rollback.state = "applying".into();
+    rollback.last_checkpoint = "rollback-backup-complete".into();
+    if let Some(stage) = rollback.stages.get_mut(5) {
+        stage.status = "complete".into();
+        stage.completed_at = Some(Utc::now().to_rfc3339());
+    }
+    persist_journal(&journal_path, &mut rollback)?;
+    Ok((rollback, journal_path))
+}
+
+fn persist_rollback_checkpoint(
+    rollback: &mut TransactionJournal,
+    rollback_path: &Path,
+    parent_operation_id: &str,
+    status: &str,
+    checkpoint: &str,
+) -> Result<(), AppError> {
+    if let Some(operation) = rollback
+        .operations
+        .iter_mut()
+        .find(|operation| operation.id == format!("rollback-{parent_operation_id}"))
+    {
+        operation.status = status.into();
+    }
+    rollback.last_checkpoint = checkpoint.into();
+    persist_journal(rollback_path, rollback)
+}
+
 pub fn rollback_transaction(
     project_root: &Path,
     journal: &mut TransactionJournal,
@@ -2136,7 +2376,9 @@ pub fn rollback_transaction(
             "rollback is not allowed by the journal".into(),
         ));
     }
+    let rollback_transaction_id = journal.rollback_transaction_id.unwrap_or_else(Uuid::new_v4);
     let project_apply_started = journal.recovery.project_apply_started;
+    journal.rollback_transaction_id = Some(rollback_transaction_id);
     journal.state = "rolling_back".into();
     journal.recovery = RecoveryState {
         resume_allowed: false,
@@ -2146,154 +2388,229 @@ pub fn rollback_transaction(
         recommended_action: "rollback".into(),
     };
     persist_journal(journal_path, journal)?;
-    // Remove transaction-created Git metadata before restoring files. The
-    // newly initialized index would otherwise record the transaction's
-    // applied files as user changes and make safe Git cleanup impossible.
-    if journal.git_initialized {
-        crate::git::rollback_initialized_git(&project_root)?;
-        journal.git_initialized = false;
-        persist_journal(journal_path, journal)?;
-    } else if let (Some(name), Some(url)) = (
-        journal.git_remote_added_name.as_deref(),
-        journal.git_remote_added_url.as_deref(),
-    ) {
-        crate::git::rollback_added_remote(&project_root, name, url)?;
-        journal.git_remote_added_name = None;
-        journal.git_remote_added_url = None;
-        persist_journal(journal_path, journal)?;
-    }
-    for index in (0..journal.operations.len()).rev() {
-        let operation = journal.operations[index].clone();
-        if !matches!(
-            operation.status.as_str(),
-            "rollback_applying" | "applying" | "applied" | "verified"
+    let (mut rollback_journal, rollback_path) =
+        prepare_rollback_transaction(&project_root, journal, journal_path)?;
+    let result = (|| -> Result<(), AppError> {
+        // Remove transaction-created Git metadata before restoring files. The
+        // newly initialized index would otherwise record the transaction's
+        // applied files as user changes and make safe Git cleanup impossible.
+        if journal.git_initialized {
+            crate::git::rollback_initialized_git(&project_root)?;
+            journal.git_initialized = false;
+            persist_journal(journal_path, journal)?;
+            rollback_journal.last_checkpoint = "rollback-git-cleanup".into();
+            persist_journal(&rollback_path, &mut rollback_journal)?;
+        } else if let (Some(name), Some(url)) = (
+            journal.git_remote_added_name.as_deref(),
+            journal.git_remote_added_url.as_deref(),
         ) {
-            continue;
-        }
-        // A skip is a durable no-op. In particular, it may represent a
-        // locally modified file or an external launcher descriptor that the
-        // user explicitly kept. Never remove such a destination merely
-        // because the operation has a verified journal status. Legacy
-        // journals without action/rollback metadata are also treated as
-        // non-destructive until they are re-planned with ownership evidence.
-        if matches!(
-            operation.action,
-            Some(OperationAction::Skip | OperationAction::External) | None
-        ) || matches!(operation.rollback, Some(RollbackAction::None) | None)
-        {
-            journal.operations[index].status = "rolled_back".into();
-            journal.last_checkpoint = format!("rollback-noop-{}", operation.id);
+            crate::git::rollback_added_remote(&project_root, name, url)?;
+            journal.git_remote_added_name = None;
+            journal.git_remote_added_url = None;
             persist_journal(journal_path, journal)?;
-            continue;
+            rollback_journal.last_checkpoint = "rollback-git-cleanup".into();
+            persist_journal(&rollback_path, &mut rollback_journal)?;
         }
-        let destination = if operation.external {
-            validate_external_destination(&operation.destination)?
-        } else {
-            safe_join(&project_root, &operation.destination)?
-        };
-        if operation.status == "rollback_applying"
-            && rollback_destination_is_restored(&operation, &destination, journal, journal_path)?
-        {
-            journal.operations[index].status = "rolled_back".into();
-            journal.last_checkpoint = format!("rollback-{}", operation.id);
-            persist_journal(journal_path, journal)?;
-            continue;
-        }
-        journal.operations[index].status = "rollback_applying".into();
-        journal.last_checkpoint = format!("rollback-intent-{}", operation.id);
-        persist_journal(journal_path, journal)?;
-        let _ = regular_file_hash(&destination)?;
-        if let Some(after) = &operation.after_sha256 {
-            if destination.is_file() && sha256_file(&destination)? != *after {
-                return Err(AppError::Transaction(format!(
-                    "user changes detected after apply; refusing rollback of {}",
-                    operation.destination
-                )));
+        for index in (0..journal.operations.len()).rev() {
+            let operation = journal.operations[index].clone();
+            if !matches!(
+                operation.status.as_str(),
+                "rollback_applying" | "applying" | "applied" | "verified"
+            ) {
+                continue;
             }
-        } else if operation.after_exists == Some(false) && destination.is_file() {
-            return Err(AppError::Transaction(format!(
-                "user created a file after managed deletion; refusing rollback of {}",
-                operation.destination
-            )));
-        } else if operation.status == "applying" && destination.is_file() {
-            let current = sha256_file(&destination)?;
-            if operation.before_sha256.as_deref() != Some(current.as_str())
-                && operation.expected_sha256.as_deref() != Some(current.as_str())
+            // A skip is a durable no-op. In particular, it may represent a
+            // locally modified file or an external launcher descriptor that the
+            // user explicitly kept. Never remove such a destination merely
+            // because the operation has a verified journal status. Legacy
+            // journals without action/rollback metadata are also treated as
+            // non-destructive until they are re-planned with ownership evidence.
+            if matches!(
+                operation.action,
+                Some(OperationAction::Skip | OperationAction::External) | None
+            ) || matches!(operation.rollback, Some(RollbackAction::None) | None)
             {
-                return Err(AppError::Transaction(format!(
-                    "uncertain live state after interruption; refusing rollback of {}",
-                    operation.destination
-                )));
+                journal.operations[index].status = "rolled_back".into();
+                journal.last_checkpoint = format!("rollback-noop-{}", operation.id);
+                persist_journal(journal_path, journal)?;
+                persist_rollback_checkpoint(
+                    &mut rollback_journal,
+                    &rollback_path,
+                    &operation.id,
+                    "rolled_back",
+                    &format!("rollback-noop-{}", operation.id),
+                )?;
+                continue;
             }
-        }
-        if let Some(backup) = &operation.backup_path {
-            let expected_backup = expected_operation_backup(journal, journal_path, &operation.id)?;
-            let supplied_backup = PathBuf::from(backup);
-            let matches = if cfg!(target_os = "windows") {
-                supplied_backup
-                    .to_string_lossy()
-                    .eq_ignore_ascii_case(&expected_backup.to_string_lossy())
+            let destination = if operation.external {
+                validate_external_destination(&operation.destination)?
             } else {
-                supplied_backup == expected_backup
+                safe_join(&project_root, &operation.destination)?
             };
-            if !matches {
-                return Err(AppError::PathSecurity(
-                    "journal backup path is outside the transaction backup root".into(),
-                ));
+            if operation.status == "rollback_applying"
+                && rollback_destination_is_restored(
+                    &operation,
+                    &destination,
+                    journal,
+                    journal_path,
+                )?
+            {
+                journal.operations[index].status = "rolled_back".into();
+                journal.last_checkpoint = format!("rollback-{}", operation.id);
+                persist_journal(journal_path, journal)?;
+                persist_rollback_checkpoint(
+                    &mut rollback_journal,
+                    &rollback_path,
+                    &operation.id,
+                    "rolled_back",
+                    &format!("rollback-{}", operation.id),
+                )?;
+                continue;
             }
-            let backup_metadata = fs::symlink_metadata(&expected_backup).ok();
-            if backup_metadata.as_ref().is_some_and(is_link_metadata) {
-                return Err(AppError::PathSecurity(
-                    "refusing to restore a backup symlink".into(),
-                ));
-            }
-            if expected_backup.is_file() {
-                let actual_backup = sha256_file(&expected_backup)?;
-                if operation
-                    .backup_sha256
-                    .as_deref()
-                    .is_some_and(|expected| expected != actual_backup)
-                    || operation
-                        .before_sha256
-                        .as_deref()
-                        .is_some_and(|expected| expected != actual_backup)
-                {
+            journal.operations[index].status = "rollback_applying".into();
+            journal.last_checkpoint = format!("rollback-intent-{}", operation.id);
+            persist_journal(journal_path, journal)?;
+            persist_rollback_checkpoint(
+                &mut rollback_journal,
+                &rollback_path,
+                &operation.id,
+                "rollback_applying",
+                &format!("rollback-intent-{}", operation.id),
+            )?;
+            let _ = regular_file_hash(&destination)?;
+            if let Some(after) = &operation.after_sha256 {
+                if destination.is_file() && sha256_file(&destination)? != *after {
                     return Err(AppError::Transaction(format!(
-                        "backup checksum mismatch for {}",
+                        "user changes detected after apply; refusing rollback of {}",
                         operation.destination
                     )));
                 }
-                copy_atomic(&expected_backup, &destination)?;
-            } else {
+            } else if operation.after_exists == Some(false) && destination.is_file() {
                 return Err(AppError::Transaction(format!(
-                    "rollback backup is missing for {}",
+                    "user created a file after managed deletion; refusing rollback of {}",
                     operation.destination
                 )));
+            } else if operation.status == "applying" && destination.is_file() {
+                let current = sha256_file(&destination)?;
+                if operation.before_sha256.as_deref() != Some(current.as_str())
+                    && operation.expected_sha256.as_deref() != Some(current.as_str())
+                {
+                    return Err(AppError::Transaction(format!(
+                        "uncertain live state after interruption; refusing rollback of {}",
+                        operation.destination
+                    )));
+                }
             }
-        } else if destination.is_file() {
-            fs::remove_file(&destination)?;
+            if let Some(backup) = &operation.backup_path {
+                let expected_backup =
+                    expected_operation_backup(journal, journal_path, &operation.id)?;
+                let supplied_backup = PathBuf::from(backup);
+                let matches = if cfg!(target_os = "windows") {
+                    supplied_backup
+                        .to_string_lossy()
+                        .eq_ignore_ascii_case(&expected_backup.to_string_lossy())
+                } else {
+                    supplied_backup == expected_backup
+                };
+                if !matches {
+                    return Err(AppError::PathSecurity(
+                        "journal backup path is outside the transaction backup root".into(),
+                    ));
+                }
+                let backup_metadata = fs::symlink_metadata(&expected_backup).ok();
+                if backup_metadata.as_ref().is_some_and(is_link_metadata) {
+                    return Err(AppError::PathSecurity(
+                        "refusing to restore a backup symlink".into(),
+                    ));
+                }
+                if expected_backup.is_file() {
+                    let actual_backup = sha256_file(&expected_backup)?;
+                    if operation
+                        .backup_sha256
+                        .as_deref()
+                        .is_some_and(|expected| expected != actual_backup)
+                        || operation
+                            .before_sha256
+                            .as_deref()
+                            .is_some_and(|expected| expected != actual_backup)
+                    {
+                        return Err(AppError::Transaction(format!(
+                            "backup checksum mismatch for {}",
+                            operation.destination
+                        )));
+                    }
+                    copy_atomic(&expected_backup, &destination)?;
+                } else {
+                    return Err(AppError::Transaction(format!(
+                        "rollback backup is missing for {}",
+                        operation.destination
+                    )));
+                }
+            } else if destination.is_file() {
+                fs::remove_file(&destination)?;
+            }
+            journal.operations[index].status = "rolled_back".into();
+            journal.last_checkpoint = format!("rollback-{}", operation.id);
+            persist_journal(journal_path, journal)?;
+            persist_rollback_checkpoint(
+                &mut rollback_journal,
+                &rollback_path,
+                &operation.id,
+                "rolled_back",
+                &format!("rollback-{}", operation.id),
+            )?;
         }
-        journal.operations[index].status = "rolled_back".into();
-        journal.last_checkpoint = format!("rollback-{}", operation.id);
+        restore_previous_lock(&project_root, journal, journal_path)?;
+        rollback_journal.last_checkpoint = "rollback-lock-restored".into();
+        persist_journal(&rollback_path, &mut rollback_journal)?;
+        journal.state = "rolled_back".into();
+        journal.recovery = RecoveryState {
+            resume_allowed: false,
+            rollback_allowed: false,
+            discard_staging_allowed: true,
+            project_apply_started: false,
+            recommended_action: "none".into(),
+        };
         persist_journal(journal_path, journal)?;
+        atomic_write_json(
+            &journal_path
+                .parent()
+                .ok_or_else(|| {
+                    AppError::Transaction("journal has no transaction directory".into())
+                })?
+                .join("rollback-record.json"),
+            journal,
+        )?;
+        rollback_journal.state = "completed".into();
+        rollback_journal.recovery = RecoveryState {
+            resume_allowed: false,
+            rollback_allowed: false,
+            discard_staging_allowed: false,
+            project_apply_started: true,
+            recommended_action: "none".into(),
+        };
+        rollback_journal.last_checkpoint = "rollback-complete".into();
+        persist_journal(&rollback_path, &mut rollback_journal)?;
+        atomic_write_json(
+            &rollback_path
+                .parent()
+                .ok_or_else(|| AppError::Transaction("rollback journal has no directory".into()))?
+                .join("rollback-record.json"),
+            &rollback_journal,
+        )?;
+        Ok(())
+    })();
+    if let Err(error) = &result {
+        rollback_journal.state = "interrupted".into();
+        rollback_journal.error = Some(JournalError {
+            code: "ROLLBACK_TRANSACTION_FAILED".into(),
+            message: error.to_string(),
+            stage: rollback_journal.last_checkpoint.clone(),
+        });
+        rollback_journal.recovery.recommended_action = "inspect".into();
+        let _ = persist_journal(&rollback_path, &mut rollback_journal);
     }
-    restore_previous_lock(&project_root, journal, journal_path)?;
-    journal.state = "rolled_back".into();
-    journal.recovery = RecoveryState {
-        resume_allowed: false,
-        rollback_allowed: false,
-        discard_staging_allowed: true,
-        project_apply_started: false,
-        recommended_action: "none".into(),
-    };
-    persist_journal(journal_path, journal)?;
-    atomic_write_json(
-        &journal_path
-            .parent()
-            .ok_or_else(|| AppError::Transaction("journal has no transaction directory".into()))?
-            .join("rollback-record.json"),
-        journal,
-    )
+    result
 }
 
 fn restore_previous_lock(
@@ -3287,6 +3604,32 @@ mod tests {
             .path()
             .join(".hoi4-mod-setup/install.lock.json")
             .exists());
+        let rollback_id = journal
+            .rollback_transaction_id
+            .expect("rollback must have a child transaction");
+        let rollback_journal_path = app
+            .path()
+            .join("transactions")
+            .join(rollback_id.to_string())
+            .join("journal.json");
+        let rollback_journal = read_journal(&rollback_journal_path).unwrap();
+        assert_eq!(rollback_journal.transaction_kind, "rollback");
+        assert_eq!(
+            rollback_journal.parent_transaction_id,
+            Some(journal.transaction_id)
+        );
+        assert_eq!(rollback_journal.state, "completed");
+        let rollback_backup = rollback_journal.operations[0]
+            .backup_path
+            .as_ref()
+            .map(PathBuf::from)
+            .expect("rollback should retain an inverse backup");
+        assert_eq!(fs::read(rollback_backup).unwrap(), b"safe");
+        assert!(rollback_journal_path
+            .parent()
+            .unwrap()
+            .join("rollback-record.json")
+            .is_file());
     }
 
     #[test]

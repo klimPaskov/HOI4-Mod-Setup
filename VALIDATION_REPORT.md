@@ -48,7 +48,7 @@ explicitly bounded below.
 | JSON-schema examples (manifest, plan, lock, journal) | Pass |
 | Cargo formatting | Pass |
 | Rust toolchain | Pass, pinned to Rust 1.88.0 by `rust-toolchain.toml` |
-| Rust all-feature tests | Pass, 113 tests under pinned Rust 1.88.0 |
+| Rust all-feature tests | Pass, 114 tests under pinned Rust 1.88.0 |
 | Rust all-feature clippy | Pass with `-D warnings` under pinned Rust 1.88.0 |
 | Fuzz target compilation | Pass, manifest, relative-path, Codex-analysis, descriptor/thumbnail, and structured-TOML targets |
 | Committed-secret scan | Pass |
@@ -71,8 +71,7 @@ Runtime completion still requires:
 - native macOS compilation, packaging, and desktop E2E launch
 - native screen-reader, contrast, scaling, and clean-machine evidence on both supported platforms
 - a journaled rollback boundary for the high-impact 3D bootstrap's external environment changes; the source does not declare preflight-only behavior or rollback metadata
-- a separate rollback-as-new-transaction backup; the current reversal is root-bound, journaled, and per-operation checkpointed, but rollback-as-new-transaction preview/backup semantics remain release work
-- cross-process power-loss durability fixtures for the final journal/rollback-record/lock finalization window
+- cross-process power-loss fixtures for final journal/rollback-record/lock finalization and a user-facing inverse action for a completed rollback transaction; rollback now creates a separate child journal and inverse backup set before restoration
 
 ## Source verification limits
 

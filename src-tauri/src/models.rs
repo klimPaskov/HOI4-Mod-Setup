@@ -794,6 +794,12 @@ pub struct JournalOperation {
     pub result_sha256: Option<String>,
     #[serde(default)]
     pub rollback: Option<RollbackAction>,
+    /// For a rollback transaction, the verified backup from the parent
+    /// transaction that supplies the restored bytes. The rollback
+    /// transaction's own `backup_path` remains the bytes needed to undo the
+    /// rollback itself.
+    #[serde(default)]
+    pub rollback_source_path: Option<String>,
     #[serde(default)]
     pub backup_sha256: Option<String>,
     #[serde(default)]
@@ -822,6 +828,12 @@ pub struct JournalError {
 pub struct TransactionJournal {
     pub schema_version: String,
     pub transaction_id: Uuid,
+    #[serde(default = "default_transaction_kind")]
+    pub transaction_kind: String,
+    #[serde(default)]
+    pub parent_transaction_id: Option<Uuid>,
+    #[serde(default)]
+    pub rollback_transaction_id: Option<Uuid>,
     pub project_id: String,
     /// Canonical project root bound to this journal. Older journals may omit
     /// it, but recovery must refuse to resume them without a root binding.
@@ -851,6 +863,10 @@ pub struct TransactionJournal {
     pub previous_lock_sha256: Option<String>,
     #[serde(default)]
     pub error: Option<JournalError>,
+}
+
+fn default_transaction_kind() -> String {
+    "installation".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

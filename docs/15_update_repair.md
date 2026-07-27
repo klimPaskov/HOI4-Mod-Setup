@@ -24,7 +24,7 @@ Re-fetch selected components at the same or chosen revision. Preserve local modi
 
 ## Rollback
 
-Select a rollback record and preview source revision, restored or removed files, structured configuration, Git impact, optional states, and lock state. The current implementation performs a journaled, root-bound reversal using the transaction's verified backups and predecessor lock. It records the reversal and refuses to remove explicit skips, merged content, or later user edits. A separate rollback-as-new-transaction backup is not yet implemented and remains a release blocker for the broader rollback contract.
+Select a rollback record and preview source revision, restored or removed files, structured configuration, Git impact, optional states, and lock state. The current implementation performs a journaled, root-bound reversal using the transaction's verified backups and predecessor lock. Before restoration it creates a separate rollback transaction journal, links it from the parent journal, and backs up the live post-transaction bytes so the reversal has its own durable audit boundary. It records the reversal and refuses to remove explicit skips, merged content, or later user edits. Cross-process power-loss recovery and a user-facing inverse action for the rollback transaction remain release work.
 
 ## Removal
 

@@ -187,7 +187,12 @@ fn strip_legacy_core_only_codex_bindings(value: &mut Value) {
 }
 
 pub fn migrate_journal(value: Value) -> Result<TransactionJournal, AppError> {
-    let value = migrate_value(value, "transaction journal", CURRENT_JOURNAL_SCHEMA)?;
+    let mut value = migrate_value(value, "transaction journal", CURRENT_JOURNAL_SCHEMA)?;
+    if let Some(object) = value.as_object_mut() {
+        object
+            .entry("transaction_kind")
+            .or_insert_with(|| Value::String("installation".into()));
+    }
     serde_json::from_value(value).map_err(AppError::from)
 }
 
@@ -254,5 +259,18 @@ mod tests {
         let lock = migrate_lock(value).unwrap();
 
         assert!(lock.codex_analysis.unwrap().project_root.is_none());
+    }
+
+    #[test]
+    fn legacy_journal_defaults_to_an_installation_transaction() {
+        let value: Value = serde_json::from_str(include_str!(
+            "../../examples/transaction-journal.example.json"
+        ))
+        .unwrap();
+        let mut legacy = value;
+        legacy.as_object_mut().unwrap().remove("transaction_kind");
+        let journal = migrate_journal(legacy).unwrap();
+        assert_eq!(journal.transaction_kind, "installation");
+        assert!(journal.parent_transaction_id.is_none());
     }
 }

@@ -109,7 +109,10 @@ stops after the lock and rollback record are durable, resume verifies both
 artifacts and only completes the journal; it never replays file operations.
 Rollback uses `rolling_back` plus `rollback_applying` per-operation
 checkpoints, verifies an already-restored destination before retrying, and
-leaves rollback enabled when an error requires reinspection.
+leaves rollback enabled when an error requires reinspection. Before restoring
+the parent transaction, it creates or reopens a child journal with
+`transaction_kind: "rollback"`, `parent_transaction_id`, and a separate
+backup set of the live post-transaction bytes; retries reuse that child ID.
 
 Every new journal binds its canonical `project_root`; recovery discovery and commands reject a journal for any other root. Journals from before that binding existed are readable for audit but are not resumable.
 
@@ -138,7 +141,7 @@ Opaque OS-vault credential references are carried separately from secret values.
 
 ## Lock and rollback evidence
 
-Read journals through `migrations::migrate_journal`. The journal records action, component, location scope, source/result/backup hashes, expected and observed hashes, whether a destination existed after apply, and per-operation intent. Rollback must refuse ambiguous later user work, restore verified backups and lock state, and persist the rollback record after the state transition.
+Read journals through `migrations::migrate_journal`. The journal records action, component, location scope, source/result/backup hashes, expected and observed hashes, whether a destination existed after apply, and per-operation intent. Rollback must refuse ambiguous later user work, restore verified backups and lock state, and persist both the parent and child rollback records after the state transition. `rollback_source_path` identifies the parent backup that supplies restored bytes; the child `backup_path` identifies the inverse backup.
 
 ## Fault testing
 
