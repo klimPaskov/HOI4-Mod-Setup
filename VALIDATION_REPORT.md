@@ -66,7 +66,7 @@ Runtime completion still requires:
 - browser and device-code login completion with a developer-owned ChatGPT account
 - Windows and macOS launcher-path integration and live HOI4 launcher discovery tests
 - release signing and notarization evidence
-- a committed/tagged app revision for the required platform-package verification mode on this uncommitted workspace
+- a published/tagged app revision and CI-produced platform packages for public release; the local bootstrap commit is sufficient only for deterministic local verification
 - native macOS compilation, packaging, and desktop E2E launch
 - native screen-reader, contrast, scaling, and clean-machine evidence on both supported platforms
 - a journaled rollback boundary for the high-impact 3D bootstrap's external environment changes; the source does not declare preflight-only behavior or rollback metadata
