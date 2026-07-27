@@ -94,9 +94,9 @@ jobs:
         if: steps.detect.outputs.present == 'true'
         shell: bash
         run: |
-          rustup update stable
-          rustup default stable
-          rustup component add rustfmt clippy
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+          rustup component add rustfmt clippy --toolchain 1.88.0
       - name: Install Linux Tauri dependencies
         if: steps.detect.outputs.present == 'true' && matrix.os == 'ubuntu-latest'
         run: |

@@ -2418,7 +2418,7 @@ fn finish_finalization(
     })?;
     let lock_value: serde_json::Value = serde_json::from_slice(&lock_bytes)?;
     let lock = crate::migrations::migrate_lock(lock_value)?;
-    let record_suffix = format!("{}/rollback-record.json", transaction_id);
+    let record_suffix = format!("{transaction_id}/rollback-record.json");
     if !lock
         .rollback_records
         .iter()

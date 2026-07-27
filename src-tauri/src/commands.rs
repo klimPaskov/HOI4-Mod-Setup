@@ -1942,7 +1942,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                 action = OperationAction::Skip;
             }
             conflicts.push(PlanConflict {
-                id: format!("conflict-{}", index),
+                id: format!("conflict-{index}"),
                 path: selection.destination.clone(),
                 options,
                 selected: selected_choice.clone(),

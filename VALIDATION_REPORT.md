@@ -47,8 +47,9 @@ explicitly bounded below.
 | Frontend production build | Pass, Vite build completed on the elevated host run |
 | JSON-schema examples (manifest, plan, lock, journal) | Pass |
 | Cargo formatting | Pass |
-| Rust all-feature tests | Pass, 113 tests |
-| Rust all-feature clippy | Pass with `-D warnings` |
+| Rust toolchain | Pass, pinned to Rust 1.88.0 by `rust-toolchain.toml` |
+| Rust all-feature tests | Pass, 113 tests under pinned Rust 1.88.0 |
+| Rust all-feature clippy | Pass with `-D warnings` under pinned Rust 1.88.0 |
 | Fuzz target compilation | Pass, manifest, relative-path, Codex-analysis, descriptor/thumbnail, and structured-TOML targets |
 | Committed-secret scan | Pass |
 | Windows Tauri release build | Pass, x64 executable and MSI bundle |
