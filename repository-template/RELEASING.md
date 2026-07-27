@@ -58,7 +58,7 @@ Do not move or reuse a published tag. If an artifact is wrong, withdraw the rele
 
 Use protected GitHub environments for stable release credentials. The release workflow must receive only the minimum platform-specific secrets and permissions required for its job. Fork pull requests never receive these secrets.
 
-The repository-owned `pnpm release:build` and `pnpm release:verify` scripts are the stable automation surface. Implement and document them before enabling tag publication. When their behavior changes, update this file and `hoi4-mod-setup-open-source-release` in the same pull request.
+The repository-owned `pnpm release:build` and `pnpm release:verify` scripts are the stable automation surface. `release:build` clears generated `dist/release` output before copying the current frontend and native bundle, and `release:verify` checks the artifact manifest plus the package extension expected for the runner platform. Implement and document them before enabling tag publication. When their behavior changes, update this file and `hoi4-mod-setup-open-source-release` in the same pull request.
 
 ## Public source gate
 

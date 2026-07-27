@@ -1,5 +1,10 @@
 # Platform and release audit
 
+> Historical snapshot from 2026-07-26. The release scripts and workflow were
+> implemented after this audit; its negative findings describe the pre-build
+> state and are not current package evidence. See `VALIDATION_REPORT.md` and
+> the current release scripts for the latest verified boundary.
+
 Date: 2026-07-26
 Release type: public stable, semantic-version tag based
 Platforms in scope: Windows x64; macOS Apple Silicon and Intel while supported

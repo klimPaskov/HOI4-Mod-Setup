@@ -67,7 +67,7 @@ Stable release evidence includes:
 
 Never move a published tag. Withdraw a bad release and publish a new version.
 
-The current release workflow builds Tauri packages on explicit Windows x64, macOS arm64, and macOS x64 runners, verifies an `ARTIFACTS.sha256` manifest, and keeps publication behind the `release` environment plus repository variables for signing and publication. CI additionally runs the same package verification and `pnpm desktop:e2e` launch smoke on those runners. `.github/rulesets/main-protected.json` is the declarative protection baseline and still requires administrator activation. Unsigned package builds may be evidence artifacts; they must not be described or published as signed releases. Third-party Actions are pinned to reviewed full commit SHAs.
+The current release workflow builds Tauri packages on explicit Windows x64, macOS arm64, and macOS x64 runners, verifies a cleanly regenerated `ARTIFACTS.sha256` manifest and platform-appropriate package extension, and keeps publication behind the `release` environment plus repository variables for signing and publication. CI additionally runs the same package verification and `pnpm desktop:e2e` launch smoke on those runners. `.github/rulesets/main-protected.json` is the declarative protection baseline and still requires administrator activation. Unsigned package builds may be evidence artifacts; they must not be described or published as signed releases. Third-party Actions are pinned to reviewed full commit SHAs.
 
 The required platform-verification mode rejects local uncommitted builds whose
 source revision is `unresolved-local`; tagged CI builds must provide the exact

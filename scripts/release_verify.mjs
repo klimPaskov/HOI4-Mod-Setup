@@ -47,8 +47,14 @@ if (process.env.HOI4_MOD_SETUP_REQUIRE_TAURI === "1") {
   const packageRoot = resolve(root, "dist", "release", "packages");
   if (!existsSync(packageRoot)) throw new Error("Tauri package directory is missing");
   const packages = readdirSync(packageRoot, { recursive: true });
-  if (!packages.some((path) => /\.(msi|dmg|app|exe)$/i.test(path))) {
-    throw new Error("no platform package was found in the Tauri bundle output");
+  const platform = String(metadata.platform).toLowerCase();
+  const packagePattern = platform.includes("windows")
+    ? /\.(msi|exe)$/i
+    : platform.includes("mac") || platform.includes("darwin")
+      ? /\.(dmg|app)$/i
+      : /\.(msi|dmg|app|exe)$/i;
+  if (!packages.some((path) => packagePattern.test(path))) {
+    throw new Error(`no ${platform} package was found in the Tauri bundle output`);
   }
   if (process.env.HOI4_MOD_SETUP_REQUIRE_SIGNING === "1" && metadata.signing !== "configured") {
     throw new Error("platform package is unsigned; configure signing before publication");

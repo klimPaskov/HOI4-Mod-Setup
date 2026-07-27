@@ -1,4 +1,4 @@
-import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -36,7 +36,11 @@ const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });
 if (result.error) throw result.error;
 if (result.status !== 0) process.exit(result.status ?? 1);
 if (!existsSync(resolve(root, "dist", "index.html"))) throw new Error("frontend build did not produce dist/index.html");
-const releaseRoot = resolve(root, "dist", "release", "frontend");
+const releaseRootPath = resolve(root, "dist", "release");
+// Release output is generated state. Clear it before copying so a repeated
+// build cannot silently carry an artifact from a different platform or commit.
+await rm(releaseRootPath, { recursive: true, force: true });
+const releaseRoot = resolve(releaseRootPath, "frontend");
 await mkdir(releaseRoot, { recursive: true });
 await cp(resolve(root, "dist", "index.html"), resolve(releaseRoot, "index.html"), { force: true });
 if (existsSync(resolve(root, "dist", "assets"))) {
@@ -52,7 +56,6 @@ if (tauriBuild) {
   await mkdir(packageRoot, { recursive: true });
   await cp(bundleRoot, packageRoot, { recursive: true, force: true });
 }
-const releaseRootPath = resolve(root, "dist", "release");
 async function walk(directory, prefix = "") {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
