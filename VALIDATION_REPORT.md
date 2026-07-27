@@ -49,10 +49,10 @@ explicitly bounded below.
 | Cargo formatting | Pass |
 | Rust all-feature tests | Pass, 113 tests |
 | Rust all-feature clippy | Pass with `-D warnings` |
-| Fuzz target compilation | Pass, manifest, relative-path, and Codex-analysis targets |
+| Fuzz target compilation | Pass, manifest, relative-path, Codex-analysis, descriptor/thumbnail, and structured-TOML targets |
 | Committed-secret scan | Pass |
 | Windows Tauri release build | Pass, x64 executable and MSI bundle |
-| Release artifact hash verification | Pass, local `ARTIFACTS.sha256` verified; required exact-revision package mode is intentionally unavailable without a committed/tagged app revision |
+| Release artifact hash verification | Pass, local `ARTIFACTS.sha256` and strict exact-revision package mode verified against the committed bootstrap revision |
 | Windows native desktop launch smoke | Pass |
 
 ## Manual implementation gates retained
