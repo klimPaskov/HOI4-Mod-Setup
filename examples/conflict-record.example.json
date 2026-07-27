@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0.0",
+  "conflict_id": "conflict-001",
+  "path": "AGENTS.md",
+  "kind": "text",
+  "base": {
+    "exists": true,
+    "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "source": "previous installed revision",
+    "preview_path": "previews/base/AGENTS.md"
+  },
+  "local": {
+    "exists": true,
+    "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "source": "project working tree",
+    "preview_path": "previews/local/AGENTS.md"
+  },
+  "incoming": {
+    "exists": true,
+    "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "source": "remote revision 599497e",
+    "preview_path": "previews/incoming/AGENTS.md"
+  },
+  "allowed_choices": [
+    "keep",
+    "replace",
+    "merge",
+    "rename",
+    "skip"
+  ],
+  "selected_choice": "merge",
+  "merged_preview_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+}

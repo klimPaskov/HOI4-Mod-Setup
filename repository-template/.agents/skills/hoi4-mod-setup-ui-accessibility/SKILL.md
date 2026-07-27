@@ -1,0 +1,109 @@
+---
+name: hoi4-mod-setup-ui-accessibility
+description: Use for wizard screens, interaction design, visual density, progressive disclosure, file previews, conflict review, progress, readiness, keyboard behavior, accessibility, or visual regression changes.
+---
+
+# Minimal desktop UI and accessibility
+
+## Required sources
+
+Read:
+
+- `AGENTS.md`
+- `docs/02_user_flows.md`
+- `docs/17_ui_accessibility.md`
+- `ui-references/README.md`
+- the relevant full-resolution screen references
+- `docs/22_acceptance_criteria.md`
+
+## Design baseline
+
+Use a clean dark desktop interface with restrained blue and violet accents.
+
+Use seven grouped phases:
+
+- Project
+- Review
+- Components
+- Integrations
+- Git
+- Install
+- Ready
+
+ChatGPT sign-in is a compact blocking step for planning. It uses one primary action, one status line, a device-code fallback link, and a visible cancellation action while the App Server is waiting. Usage-limited state preserves the draft and offers retry or refresh without pretending planning succeeded. Do not show API-key inputs, raw protocol logs, or model billing details.
+
+Each screen normally has:
+
+- one title
+- zero or one short supporting sentence
+- one focal task
+- no more than two visible content regions
+- persistent navigation controls
+
+Do not add permanent evidence sidebars, repeated status summaries, help paragraphs that restate controls, or visible technical detail that is not needed for the current decision.
+
+## Progressive disclosure
+
+Hide these by default:
+
+- full evidence
+- hashes
+- source URLs
+- dependency graphs
+- complete file lists
+- raw logs
+- advanced settings
+- command environment detail
+
+Use `Details`, `Preview`, `Advanced`, or `Show log` controls. Preserve state when a section is opened and the user navigates back.
+
+Conflict review is the exception. It may show a three-way comparison and more controls because comparison is the primary task.
+
+## Interaction rules
+
+- One primary action per screen.
+- Back remains visible where navigation is reversible.
+- Destructive actions require clear scope and confirmation.
+- Disabled actions explain the blocking reason in a tooltip or adjacent concise status.
+- Progress shows current stage and durable checkpoint, not the full log.
+- Existing-project scans show the current stage, bounded relative path, file/directory/byte counters, and an accessible Cancel scan action. Use an indeterminate progress bar until a total is known; partial and cancelled results must remain visibly incomplete and announce that no Codex evidence was approved.
+- Readiness leads with core status and Open in Codex.
+- When no verified Codex opener is available, keep a passed readiness result visible and expose the validated project path as an announced manual-opening result.
+- Optional incomplete states remain secondary.
+- Keep a local recovery/removal entry reachable from Welcome when signed out; rollback, backup inspection, and managed removal do not depend on Codex.
+- Preserve account and analysis state when logout or usage-limit errors occur, and announce the actionable error without losing focus.
+
+## Accessibility
+
+Meet WCAG 2.2 AA.
+
+Require:
+
+- complete keyboard operation
+- logical focus order
+- visible focus
+- screen-reader names and descriptions
+- status not conveyed by color alone
+- reduced motion
+- 200 percent scaling
+- long path and translation resilience
+- error recovery without focus loss
+- accessible diff and code preview semantics
+
+Keyboard shortcuts should exist where useful, but do not display a permanent shortcut legend.
+
+## UI change evidence
+
+A visible change requires:
+
+- screenshots at the target desktop size
+- keyboard path
+- focus and screen-reader review
+- 200 percent scaling review
+- reduced motion review when animated
+- visual regression update with explanation
+- density review against the one-task rule
+
+## Update this skill when
+
+Update this skill when phase grouping, screen structure, disclosure rules, component conventions, accessibility target, interaction states, screenshot process, or visual regression workflow changes.

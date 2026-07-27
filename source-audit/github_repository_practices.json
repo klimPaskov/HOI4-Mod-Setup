@@ -1,0 +1,31 @@
+{
+  "reviewed_on": "2026-07-25",
+  "purpose": "Ground the open-source GitHub repository templates in current official GitHub documentation.",
+  "sources": [
+    {
+      "topic": "Repository customization, README, licensing, topics, and CODEOWNERS",
+      "url": "https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository"
+    },
+    {
+      "topic": "Issue and pull request templates",
+      "url": "https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/about-issue-and-pull-request-templates"
+    },
+    {
+      "topic": "CODEOWNERS",
+      "url": "https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners"
+    },
+    {
+      "topic": "Dependabot version updates",
+      "url": "https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/configure-version-updates"
+    },
+    {
+      "topic": "Repository security policy",
+      "url": "https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/add-security-policy"
+    }
+  ],
+  "limits": [
+    "Repository ruleset settings must still be configured in the final GitHub repository.",
+    "Workflow actions and release commands require review against the implemented source tree before becoming required checks.",
+    "The planning package does not select the final open-source license."
+  ]
+}

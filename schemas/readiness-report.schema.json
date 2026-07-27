@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://klimpaskov.github.io/hoi4-mod-setup/schemas/readiness-report.schema.json",
+  "title": "Readiness Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "report_id",
+    "project_id",
+    "generated_at",
+    "codex",
+    "checks",
+    "summary",
+    "open_in_codex"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "report_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/check"
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "pass",
+        "warn",
+        "block",
+        "not_selected",
+        "planned_unavailable"
+      ],
+      "properties": {
+        "pass": {
+          "type": "integer"
+        },
+        "warn": {
+          "type": "integer"
+        },
+        "block": {
+          "type": "integer"
+        },
+        "not_selected": {
+          "type": "integer"
+        },
+        "planned_unavailable": {
+          "type": "integer"
+        }
+      }
+    },
+    "open_in_codex": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "blocking_check_ids"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "blocking_check_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "command_preview": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "codex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "integration",
+        "auth_mode",
+        "authenticated_during_setup",
+        "analysis_status",
+        "confirmed_field_count",
+        "no_account_metadata_persisted",
+        "blocking_check_ids"
+      ],
+      "properties": {
+        "integration": {
+          "const": "codex_app_server"
+        },
+        "auth_mode": {
+          "const": "chatgpt"
+        },
+        "authenticated_during_setup": {
+          "type": "boolean"
+        },
+        "analysis_status": {
+          "enum": [
+            "confirmed",
+            "block"
+          ]
+        },
+        "confirmed_field_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "no_account_metadata_persisted": {
+          "const": true
+        },
+        "blocking_check_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "category",
+        "label",
+        "status",
+        "blocking",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "category": {
+          "enum": [
+            "descriptor",
+            "launcher",
+            "thumbnail",
+            "structure",
+            "codex",
+            "skill",
+            "subagent",
+            "mcp",
+            "wiki",
+            "git",
+            "environment",
+            "hash",
+            "conflict",
+            "dependency",
+            "workflow",
+            "analysis"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "warn",
+            "block",
+            "not_selected",
+            "planned_unavailable",
+            "unsupported_platform"
+          ]
+        },
+        "blocking": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "value"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "value": {},
+              "path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "schema_version": "1.0.0",
+  "analysis_id": "8da5758f-e9d8-4ad4-bba6-99c9bc6583ee",
+  "mode": "new_project_identity",
+  "input_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "project_summary": "A Cold War alternate-history mod centered on a divided Europe, diplomatic crises, proxy conflicts, and several playable political routes.",
+  "proposals": [
+    {
+      "key": "display_name",
+      "value": "Cold War Curtain",
+      "confidence": 0.94,
+      "reason": "The name is short, distinct, and matches the divided-Europe premise.",
+      "evidence_refs": ["brief:1"]
+    },
+    {
+      "key": "project_id",
+      "value": "cold_war_curtain",
+      "confidence": 0.99,
+      "reason": "The stable lowercase identifier follows the proposed display name.",
+      "evidence_refs": ["proposal:display_name"]
+    },
+    {
+      "key": "script_prefix",
+      "value": "cwc",
+      "confidence": 0.88,
+      "reason": "The three-letter prefix is concise and derived from the confirmed project identity.",
+      "evidence_refs": ["proposal:display_name"]
+    },
+    {
+      "key": "primary_namespace",
+      "value": "cwc",
+      "confidence": 0.88,
+      "reason": "Using the same validated prefix reduces unnecessary naming variation.",
+      "evidence_refs": ["proposal:script_prefix"]
+    },
+    {
+      "key": "descriptor_tags",
+      "value": ["Alternative History", "Events"],
+      "confidence": 0.82,
+      "reason": "The brief emphasizes alternate history and event-driven crises.",
+      "evidence_refs": ["brief:1"]
+    },
+    {
+      "key": "folder_profile",
+      "value": ["events", "common", "localisation/english", "docs"],
+      "confidence": 0.9,
+      "reason": "The project needs event, decision, focus, country, localisation, interface, and documentation surfaces without a total-conversion map scaffold.",
+      "evidence_refs": ["brief:1"]
+    },
+    {
+      "key": "project_description",
+      "value": "A Cold War alternate-history mod centered on a divided Europe.",
+      "confidence": 0.92,
+      "reason": "The concise description preserves the requested scope for the generated project README.",
+      "evidence_refs": ["brief:1"]
+    },
+    {
+      "key": "agents_profile",
+      "value": "default",
+      "confidence": 0.8,
+      "reason": "The default project instructions profile is appropriate until the user confirms adaptations.",
+      "evidence_refs": ["brief:1"]
+    },
+    {
+      "key": "localisation_convention",
+      "value": "english",
+      "confidence": 0.86,
+      "reason": "The project uses the standard English localisation directory as its initial convention.",
+      "evidence_refs": ["brief:1"]
+    },
+    {
+      "key": "documentation_convention",
+      "value": "markdown",
+      "confidence": 0.86,
+      "reason": "Markdown is the repository's documented convention for project guidance.",
+      "evidence_refs": ["brief:1"]
+    }
+  ],
+  "component_recommendations": [
+    {
+      "component_id": "core.skills",
+      "recommendation": "required",
+      "reason": "The project will repeatedly use event, focus, decision, localisation, and asset workflows."
+    },
+    {
+      "component_id": "workflow.3d",
+      "recommendation": "not_recommended",
+      "reason": "The supplied brief does not require custom unit or building models at project creation."
+    }
+  ],
+  "warnings": [
+    "The final project ID and namespace still require deterministic collision checks."
+  ]
+}

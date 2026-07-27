@@ -1,0 +1,49 @@
+name: Workflow source or manifest issue
+description: Report a problem with Agentic HOI4 Modding source resolution, components, wiki distribution, MCP, dependencies, or hashes
+title: "[Source] "
+labels:
+  - source-manifest
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste credentials or private repository URLs. Report security bypasses through SECURITY.md.
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Source mode
+      options:
+        - Latest
+        - Pinned commit
+        - Pinned release
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Resolved commit or release
+      description: Use the revision shown in the dry run, plan, lock, or readiness report.
+    validations:
+      required: true
+  - type: input
+    id: component
+    attributes:
+      label: Component ID
+      placeholder: core.skills, core.wiki, optional.3d
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the mismatch, missing file, unsupported route, hash failure, dependency issue, or health-check problem.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Include file paths relative to the source repository, component IDs, hashes, and status. Do not include secrets.
+    validations:
+      required: false

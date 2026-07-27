@@ -1,0 +1,30 @@
+{
+  "verified_on": "2026-07-26",
+  "sources": [
+    {
+      "title": "Codex App Server",
+      "url": "https://developers.openai.com/codex/app-server/",
+      "verified_facts": [
+        "App Server is the interface for deep product integration with Codex.",
+        "The default local transport is stdio with newline-delimited JSON.",
+        "ChatGPT-managed authentication supports browser and device-code flows.",
+        "Codex owns token persistence and refresh for managed ChatGPT authentication.",
+        "turn/start accepts a per-turn outputSchema."
+      ]
+    },
+    {
+      "title": "Using Codex with your ChatGPT plan",
+      "url": "https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan",
+      "verified_facts": [
+        "Users access Codex by signing in with their ChatGPT account.",
+        "Codex availability and usage limits depend on the ChatGPT plan and current product policy."
+      ]
+    }
+  ],
+  "product_decisions": [
+    "Core semantic setup uses ChatGPT-managed Codex authentication.",
+    "The product does not request an OpenAI API key.",
+    "The application does not own or persist ChatGPT tokens.",
+    "No model name is hardcoded for the normal path."
+  ]
+}

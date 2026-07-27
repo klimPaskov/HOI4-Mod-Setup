@@ -1,0 +1,40 @@
+{
+  "name": "hoi4-mod-setup",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows and macOS desktop wizard for preparing HOI4 mods for agentic development in Codex.",
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "lint": "node scripts/lint_frontend.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:a11y": "node scripts/check_accessibility.mjs",
+    "test:e2e": "node scripts/run_e2e_smoke.mjs",
+    "desktop:e2e": "node scripts/run_desktop_e2e.mjs",
+    "validate": "python scripts/validate_repository_templates.py",
+    "validate:secrets": "python scripts/check_committed_secrets.py",
+    "release:build": "node scripts/release_build.mjs",
+    "release:verify": "node scripts/release_verify.mjs",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.5.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@tauri-apps/cli": "^2.5.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4"
+  }
+}

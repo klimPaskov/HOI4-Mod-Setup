@@ -1,0 +1,709 @@
+{
+  "schema_version": "1.0.0",
+  "manifest_id": "agentic-hoi4-modding",
+  "generated_for_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+  "repository": {
+    "provider": "github",
+    "owner": "klimPaskov",
+    "name": "Agentic-HOI4-Modding",
+    "default_branch": "main",
+    "web_url": "https://github.com/klimPaskov/Agentic-HOI4-Modding",
+    "api_base": "https://api.github.com",
+    "license_evidence": "declared_unverified"
+  },
+  "components": [
+    {
+      "id": "core.agents",
+      "display_name": "Project instructions",
+      "description": "Adapt AGENTS_template.md into project-specific AGENTS.md",
+      "category": "core",
+      "optional": false,
+      "platforms": [
+        "all"
+      ],
+      "source": {
+        "kind": "file",
+        "path": "AGENTS_template.md",
+        "include": [],
+        "exclude": [],
+        "template_engine": "agents_adaptation_v1"
+      },
+      "destination": {
+        "path": "AGENTS.md",
+        "ownership": "merged",
+        "outside_project": false
+      },
+      "dependencies": [],
+      "required_tools": [],
+      "environment": [],
+      "expected_files": [
+        {
+          "path": "AGENTS_template.md",
+          "sha256": "420bea21df06f2cdf32f40b80859dc7a4db8568cea91c8a2070d5b035bd25afc",
+          "size": 36892
+        }
+      ],
+      "conflicts": [
+        "existing AGENTS.md"
+      ],
+      "conflict_policy": "three_way_merge",
+      "validation": [
+        {
+          "id": "agents.no_placeholders",
+          "severity": "block",
+          "kind": "custom",
+          "target": "AGENTS.md",
+          "parameters": {
+            "rule": "no_unresolved_template_tokens"
+          }
+        },
+        {
+          "id": "agents.project_paths",
+          "severity": "block",
+          "kind": "custom",
+          "target": "AGENTS.md",
+          "parameters": {
+            "rule": "paths_are_project_specific"
+          }
+        }
+      ],
+      "update": {
+        "strategy": "three_way_merge",
+        "remove_obsolete": false,
+        "preserve_local_additions": true
+      },
+      "capabilities": [
+        "repository instructions",
+        "workflow routing"
+      ],
+      "notes": [
+        "Existing project rules must be preserved through three-way merge."
+      ]
+    },
+    {
+      "id": "core.skills",
+      "display_name": "HOI4 workflow skills",
+      "description": "Install the current generic skills and their declared helper files",
+      "category": "skill",
+      "optional": false,
+      "platforms": [
+        "all"
+      ],
+      "source": {
+        "kind": "tree",
+        "path": ".agents/skills",
+        "include": [
+          "hoi4-*/**"
+        ],
+        "exclude": [
+          "**/.DS_Store"
+        ],
+        "template_engine": null
+      },
+      "destination": {
+        "path": ".agents/skills/",
+        "ownership": "managed",
+        "outside_project": false
+      },
+      "dependencies": [
+        "core.agents"
+      ],
+      "required_tools": [],
+      "environment": [],
+      "expected_files": [],
+      "conflicts": [
+        "existing skill with the same path"
+      ],
+      "conflict_policy": "replace_if_unmodified",
+      "validation": [
+        {
+          "id": "skills.frontmatter",
+          "severity": "block",
+          "kind": "custom",
+          "target": ".agents/skills",
+          "parameters": {
+            "required": [
+              "name",
+              "description"
+            ]
+          }
+        },
+        {
+          "id": "skills.no_absolute_example_paths",
+          "severity": "warn",
+          "kind": "custom",
+          "target": ".agents/skills",
+          "parameters": {
+            "rule": "surface_absolute_paths_for_review"
+          }
+        }
+      ],
+      "update": {
+        "strategy": "replace_if_unmodified",
+        "remove_obsolete": true,
+        "preserve_local_additions": true
+      },
+      "capabilities": [
+        "events",
+        "focus trees",
+        "decisions",
+        "assets",
+        "3D planning",
+        "subagent routing"
+      ],
+      "notes": [
+        "Only repository-declared generic hoi4 skill trees are selected."
+      ]
+    },
+    {
+      "id": "core.subagents",
+      "display_name": "Codex subagents",
+      "description": "Install bounded generic subagent TOML files",
+      "category": "subagent",
+      "optional": false,
+      "platforms": [
+        "all"
+      ],
+      "source": {
+        "kind": "tree",
+        "path": ".codex/agents",
+        "include": [
+          "hoi4_*.toml"
+        ],
+        "exclude": [
+          "chaosx_*.toml"
+        ],
+        "template_engine": null
+      },
+      "destination": {
+        "path": ".codex/agents/",
+        "ownership": "managed",
+        "outside_project": false
+      },
+      "dependencies": [
+        "core.skills"
+      ],
+      "required_tools": [],
+      "environment": [],
+      "expected_files": [],
+      "conflicts": [
+        "existing subagent with the same name"
+      ],
+      "conflict_policy": "replace_if_unmodified",
+      "validation": [
+        {
+          "id": "subagents.toml",
+          "severity": "block",
+          "kind": "toml_parse",
+          "target": ".codex/agents",
+          "parameters": {}
+        },
+        {
+          "id": "subagents.fork_context",
+          "severity": "block",
+          "kind": "custom",
+          "target": ".codex/agents",
+          "parameters": {
+            "rule": "prompts_require_fork_context_false"
+          }
+        }
+      ],
+      "update": {
+        "strategy": "replace_if_unmodified",
+        "remove_obsolete": true,
+        "preserve_local_additions": true
+      },
+      "capabilities": [
+        "bounded research",
+        "audits",
+        "asset production",
+        "planning"
+      ],
+      "notes": []
+    },
+    {
+      "id": "codex.config",
+      "display_name": "Codex project configuration",
+      "description": "Merge project Codex settings and registered MCP servers",
+      "category": "codex",
+      "optional": false,
+      "platforms": [
+        "all"
+      ],
+      "source": {
+        "kind": "file",
+        "path": ".codex/config.toml",
+        "include": [],
+        "exclude": [],
+        "template_engine": null
+      },
+      "destination": {
+        "path": ".codex/config.toml",
+        "ownership": "merged",
+        "outside_project": false
+      },
+      "dependencies": [
+        "core.agents"
+      ],
+      "required_tools": [
+        {
+          "id": "codex",
+          "required": true,
+          "version_policy": "user_managed",
+          "version": null,
+          "commands": [],
+          "health_checks": [
+            "codex executable resolves"
+          ]
+        }
+      ],
+      "environment": [],
+      "expected_files": [],
+      "conflicts": [
+        "existing .codex/config.toml"
+      ],
+      "conflict_policy": "toml_merge",
+      "validation": [
+        {
+          "id": "codex.toml",
+          "severity": "block",
+          "kind": "toml_parse",
+          "target": ".codex/config.toml",
+          "parameters": {}
+        },
+        {
+          "id": "codex.cwd",
+          "severity": "block",
+          "kind": "custom",
+          "target": ".codex/config.toml",
+          "parameters": {
+            "rule": "mcp_cwd_equals_project_root"
+          }
+        }
+      ],
+      "update": {
+        "strategy": "toml_merge",
+        "remove_obsolete": false,
+        "preserve_local_additions": true
+      },
+      "capabilities": [
+        "project sandbox",
+        "subagents",
+        "MCP registration"
+      ],
+      "notes": [
+        "Security-sensitive sandbox policy is reviewed rather than copied silently."
+      ]
+    },
+    {
+      "id": "mcp.hoi4_agent_tools",
+      "display_name": "HOI4 Agent Tools MCP",
+      "description": "Install or register the repository-declared HOI4 agent tools server",
+      "category": "mcp",
+      "optional": false,
+      "platforms": [
+        "windows"
+      ],
+      "source": {
+        "kind": "generated",
+        "path": ".codex/config.toml#mcp_servers.hoi4_agent_tools",
+        "include": [],
+        "exclude": [],
+        "template_engine": "mcp_config_v1"
+      },
+      "destination": {
+        "path": ".codex/config.toml",
+        "ownership": "merged",
+        "outside_project": false
+      },
+      "dependencies": [
+        "codex.config"
+      ],
+      "required_tools": [
+        {
+          "id": "node",
+          "required": true,
+          "version_policy": "user_managed",
+          "version": null,
+          "commands": [],
+          "health_checks": [
+            "node --version",
+            "npm --version"
+          ]
+        },
+        {
+          "id": "hoi4-agent-tools",
+          "required": true,
+          "version_policy": "repository_script",
+          "version": null,
+          "commands": [],
+          "health_checks": [
+            "hoi4-agent-tools.cmd resolves",
+            "MCP initialize succeeds"
+          ]
+        }
+      ],
+      "environment": [],
+      "expected_files": [],
+      "conflicts": [
+        "existing MCP server id"
+      ],
+      "conflict_policy": "prompt",
+      "validation": [
+        {
+          "id": "mcp.hoi4.health",
+          "severity": "block",
+          "kind": "command",
+          "target": "hoi4-agent-tools.cmd",
+          "parameters": {
+            "operation": "mcp_initialize"
+          }
+        }
+      ],
+      "update": {
+        "strategy": "repository_script",
+        "remove_obsolete": false,
+        "preserve_local_additions": true
+      },
+      "capabilities": [
+        "focus tree inspection",
+        "event chain inspection",
+        "GUI rendering",
+        "map tools",
+        "technology viewer",
+        "probability analysis"
+      ],
+      "notes": [
+        "The current repository command is Windows specific. A macOS route must be declared before this component can be marked supported on macOS."
+      ]
+    },
+    {
+      "id": "wiki.snapshot",
+      "display_name": "Offline Hearts of Iron IV Paradox wiki",
+      "description": "Install the repository snapshot under paradox_wiki/",
+      "category": "wiki",
+      "optional": false,
+      "platforms": [
+        "all"
+      ],
+      "source": {
+        "kind": "tree",
+        "path": "paradox_wiki",
+        "include": [
+          "**/*"
+        ],
+        "exclude": [],
+        "template_engine": null
+      },
+      "destination": {
+        "path": "paradox_wiki/",
+        "ownership": "managed",
+        "outside_project": false
+      },
+      "dependencies": [],
+      "required_tools": [],
+      "environment": [],
+      "expected_files": [],
+      "conflicts": [
+        "existing paradox_wiki files"
+      ],
+      "conflict_policy": "replace_if_unmodified",
+      "validation": [
+        {
+          "id": "wiki.required_pages",
+          "severity": "block",
+          "kind": "directory_coverage",
+          "target": "paradox_wiki",
+          "parameters": {
+            "required_pages": "manifest.wiki.required_pages"
+          }
+        },
+        {
+          "id": "wiki.no_path_escape",
+          "severity": "block",
+          "kind": "custom",
+          "target": "paradox_wiki",
+          "parameters": {
+            "rule": "all_entries_within_destination"
+          }
+        },
+        {
+          "id": "wiki.provenance_notice",
+          "severity": "warn",
+          "kind": "custom",
+          "target": "paradox_wiki",
+          "parameters": {
+            "rule": "source_and_license_metadata_unverified"
+          }
+        }
+      ],
+      "update": {
+        "strategy": "replace_if_unmodified",
+        "remove_obsolete": true,
+        "preserve_local_additions": true
+      },
+      "capabilities": [
+        "offline syntax reference",
+        "engine behavior reference"
+      ],
+      "notes": [
+        "No formal wiki source or license metadata was verified in the repository at the inspected revision."
+      ]
+    },
+    {
+      "id": "workflow.3d",
+      "display_name": "3D models workflow",
+      "description": "Install the current repository 3D skill, agent, bootstrap, wrappers, and declared dependency records",
+      "category": "workflow",
+      "optional": true,
+      "platforms": [
+        "windows"
+      ],
+      "source": {
+        "kind": "tree",
+        "path": ".tools/3d_pipeline",
+        "include": [
+          "**/*"
+        ],
+        "exclude": [
+          "vendor/**",
+          "runtime/**"
+        ],
+        "template_engine": null
+      },
+      "destination": {
+        "path": ".tools/3d_pipeline/",
+        "ownership": "managed",
+        "outside_project": false
+      },
+      "dependencies": [
+        "core.skills",
+        "core.subagents",
+        "codex.config"
+      ],
+      "required_tools": [
+        {
+          "id": "python",
+          "required": true,
+          "version_policy": "user_managed",
+          "version": null,
+          "commands": [],
+          "health_checks": [
+            "python --version"
+          ]
+        },
+        {
+          "id": "git",
+          "required": true,
+          "version_policy": "user_managed",
+          "version": null,
+          "commands": [],
+          "health_checks": [
+            "git --version"
+          ]
+        },
+        {
+          "id": "node-npx",
+          "required": true,
+          "version_policy": "repository_script",
+          "version": null,
+          "commands": [],
+          "health_checks": [
+            "node --version",
+            "npx --version"
+          ]
+        },
+        {
+          "id": "blender",
+          "required": true,
+          "version_policy": "repository_script",
+          "version": null,
+          "commands": [],
+          "health_checks": [
+            "Blender executable detected",
+            "bridge reachable"
+          ]
+        }
+      ],
+      "environment": [
+        {
+          "name": "MESHY_API_KEY",
+          "secret": true,
+          "required": true,
+          "storage": "os_credential_vault",
+          "non_empty": true
+        }
+      ],
+      "expected_files": [],
+      "conflicts": [
+        "existing 3D bootstrap or wrapper files"
+      ],
+      "conflict_policy": "replace_if_unmodified",
+      "validation": [
+        {
+          "id": "3d.key",
+          "severity": "warn",
+          "kind": "custom",
+          "target": null,
+          "parameters": {
+            "rule": "MESHY_API_KEY_non_empty_without_readback"
+          }
+        },
+        {
+          "id": "3d.bootstrap.dry_run",
+          "severity": "warn",
+          "kind": "command",
+          "target": ".tools/3d_pipeline/bootstrap_3d_workflow.py",
+          "parameters": {
+            "mode": "preflight_only"
+          }
+        },
+        {
+          "id": "3d.mcp.health",
+          "severity": "warn",
+          "kind": "custom",
+          "target": ".codex/config.toml",
+          "parameters": {
+            "rule": "all_selected_3d_servers_initialize"
+          }
+        }
+      ],
+      "update": {
+        "strategy": "repository_script",
+        "remove_obsolete": true,
+        "preserve_local_additions": true
+      },
+      "capabilities": [
+        "one-image Meshy generation",
+        "Blender normalization",
+        "PDX mesh and animation export"
+      ],
+      "notes": [
+        "Missing key leaves this optional workflow incomplete without blocking core readiness.",
+        "The current repository implementation is Windows oriented."
+      ]
+    },
+    {
+      "id": "workflow.lora_comfyui_interest",
+      "display_name": "LoRA and ComfyUI portrait workflow preference",
+      "description": "Record interest only. No installer exists in version 1.",
+      "category": "workflow",
+      "optional": true,
+      "platforms": [
+        "all"
+      ],
+      "source": {
+        "kind": "generated",
+        "path": "project-state.json#preferences.lora_comfyui_interest",
+        "include": [],
+        "exclude": [],
+        "template_engine": "preference_only"
+      },
+      "destination": {
+        "path": ".hoi4-mod-setup/state.json",
+        "ownership": "generated",
+        "outside_project": false
+      },
+      "dependencies": [],
+      "required_tools": [],
+      "environment": [],
+      "expected_files": [],
+      "conflicts": [],
+      "conflict_policy": "generated_review",
+      "validation": [
+        {
+          "id": "lora.no_actions",
+          "severity": "block",
+          "kind": "custom",
+          "target": null,
+          "parameters": {
+            "rule": "zero_download_install_or_environment_actions"
+          }
+        }
+      ],
+      "update": {
+        "strategy": "recreate",
+        "remove_obsolete": false,
+        "preserve_local_additions": true
+      },
+      "capabilities": [
+        "interest recording"
+      ],
+      "notes": [
+        "Readiness state is planned_unavailable."
+      ]
+    }
+  ],
+  "profiles": [
+    {
+      "id": "core",
+      "display_name": "Core Codex setup",
+      "components": [
+        "core.agents",
+        "core.skills",
+        "core.subagents",
+        "codex.config",
+        "mcp.hoi4_agent_tools",
+        "wiki.snapshot"
+      ],
+      "default": true
+    },
+    {
+      "id": "core_with_3d",
+      "display_name": "Core plus 3D workflow",
+      "components": [
+        "core.agents",
+        "core.skills",
+        "core.subagents",
+        "codex.config",
+        "mcp.hoi4_agent_tools",
+        "wiki.snapshot",
+        "workflow.3d"
+      ],
+      "default": false
+    }
+  ],
+  "wiki": {
+    "component_id": "wiki.snapshot",
+    "destination": "paradox_wiki/",
+    "snapshot_marker": "_last_updated_on_27_Nov_2025.txt",
+    "required_pages": [
+      "Data structures - Hearts of Iron 4 Wiki.md",
+      "Triggers - Hearts of Iron 4 Wiki.md",
+      "Effects - Hearts of Iron 4 Wiki.md",
+      "Modifiers - Hearts of Iron 4 Wiki.md",
+      "Localisation - Hearts of Iron 4 Wiki.md",
+      "Scopes - Hearts of Iron 4 Wiki.md",
+      "On actions - Hearts of Iron 4 Wiki.md",
+      "Event modding - Hearts of Iron 4 Wiki.md",
+      "Decision modding - Hearts of Iron 4 Wiki.md",
+      "Idea modding - Hearts of Iron 4 Wiki.md",
+      "AI modding - Hearts of Iron 4 Wiki.md"
+    ],
+    "required_media_policy": "all_declared",
+    "provenance": {
+      "source_status": "repository_only",
+      "license_status": "not_found",
+      "notes": [
+        "The repository contains the snapshot but no formal source or license file was verified at the inspected revision."
+      ]
+    }
+  },
+  "update_policy": {
+    "latest": {
+      "resolve_default_branch": true,
+      "record_commit": true
+    },
+    "pinned": {
+      "allow_commit": true,
+      "allow_release": true
+    },
+    "rollback_retention": 3,
+    "manifest_cache_ttl_seconds": 900
+  },
+  "signing": {
+    "required": false,
+    "algorithm": null,
+    "public_key_id": null
+  }
+}

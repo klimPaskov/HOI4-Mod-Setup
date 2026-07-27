@@ -1,0 +1,30 @@
+stateDiagram-v2
+  [*] --> Preflight
+  Preflight --> ResolveSource
+  ResolveSource --> Download
+  Download --> Verify
+  Verify --> DryRunReview
+  DryRunReview --> Backup: approved
+  DryRunReview --> [*]: cancelled
+  Backup --> Staging
+  Staging --> Validation
+  Validation --> Apply
+  Apply --> PostInstallChecks
+  PostInstallChecks --> ReadinessReport
+  ReadinessReport --> RollbackRecord
+  RollbackRecord --> Completed
+  Preflight --> Failed
+  ResolveSource --> Failed
+  Download --> Failed
+  Verify --> Failed
+  Backup --> Failed
+  Staging --> Interrupted
+  Validation --> Failed
+  Apply --> Interrupted
+  Apply --> Failed
+  Interrupted --> Staging: resume before apply
+  Interrupted --> Rollback
+  Failed --> Rollback
+  Rollback --> RolledBack
+  Completed --> [*]
+  RolledBack --> [*]

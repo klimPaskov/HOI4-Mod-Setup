@@ -1,0 +1,13 @@
+flowchart TD
+    Check[Readiness evaluation] --> Auth{ChatGPT auth verified?}
+    Auth -- no --> Block[Open in Codex disabled]
+    Auth -- yes --> Analysis{Confirmed Codex analysis?}
+    Analysis -- no --> Block
+    Analysis -- yes --> Launcher{Both descriptors valid?}
+    Launcher -- no --> Block
+    Launcher -- yes --> Thumb{Thumbnail valid?}
+    Thumb -- no --> Block
+    Thumb -- yes --> Core{Core components and hashes valid?}
+    Core -- no --> Block
+    Core -- yes --> Ready[Enable Open in Codex]
+    Optional[Optional workflow incomplete] -. does not block .-> Ready

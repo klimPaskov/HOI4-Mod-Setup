@@ -1,0 +1,124 @@
+{
+  "schema_version": "1.0.0",
+  "transaction_id": "960ccbb7-c36a-41b0-9d76-0105bcd83b05",
+  "project_id": "cold_war_curtain",
+  "project_root": "C:\\Users\\example\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain",
+  "state": "interrupted",
+  "created_at": "2026-07-25T17:40:00+03:00",
+  "updated_at": "2026-07-25T17:41:42+03:00",
+  "last_checkpoint": "stage-07-file-1498",
+  "plan_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+  "stages": [
+    {
+      "id": "preflight",
+      "status": "complete",
+      "started_at": "2026-07-25T17:40:00+03:00",
+      "completed_at": "2026-07-25T17:40:02+03:00",
+      "evidence": [
+        "preflight.json"
+      ]
+    },
+    {
+      "id": "repository source resolution",
+      "status": "complete",
+      "started_at": "2026-07-25T17:40:02+03:00",
+      "completed_at": "2026-07-25T17:40:04+03:00",
+      "evidence": [
+        "source-resolution.json"
+      ]
+    },
+    {
+      "id": "selective download",
+      "status": "complete",
+      "started_at": "2026-07-25T17:40:04+03:00",
+      "completed_at": "2026-07-25T17:40:40+03:00",
+      "evidence": [
+        "download-ledger.json"
+      ]
+    },
+    {
+      "id": "checksum verification",
+      "status": "complete",
+      "started_at": "2026-07-25T17:40:40+03:00",
+      "completed_at": "2026-07-25T17:40:55+03:00",
+      "evidence": [
+        "checksum-report.json"
+      ]
+    },
+    {
+      "id": "dry-run review",
+      "status": "complete",
+      "started_at": "2026-07-25T17:40:55+03:00",
+      "completed_at": "2026-07-25T17:41:10+03:00",
+      "evidence": [
+        "approved-plan.json"
+      ]
+    },
+    {
+      "id": "backup",
+      "status": "complete",
+      "started_at": "2026-07-25T17:41:10+03:00",
+      "completed_at": "2026-07-25T17:41:20+03:00",
+      "evidence": [
+        "backup-manifest.json"
+      ]
+    },
+    {
+      "id": "staging",
+      "status": "active",
+      "started_at": "2026-07-25T17:41:20+03:00",
+      "completed_at": null,
+      "evidence": [
+        "staging-ledger.json"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "id": "op-001",
+      "status": "staged",
+      "destination": "AGENTS.md",
+      "ownership": "merged",
+      "component_id": "core.agents",
+      "action": "replace",
+      "location_scope": "project",
+      "backup_path": "backup/AGENTS.md",
+      "source_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "result_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "rollback": "restore_backup",
+      "backup_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "before_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "after_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+    },
+    {
+      "id": "op-002",
+      "status": "staged",
+      "destination": ".agents/skills/hoi4-events/SKILL.md",
+      "ownership": "managed",
+      "component_id": "core.skills",
+      "action": "create",
+      "location_scope": "project",
+      "backup_path": null,
+      "source_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "result_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "rollback": "remove_created",
+      "backup_sha256": null,
+      "before_sha256": null,
+      "after_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+    }
+  ],
+  "recovery": {
+    "resume_allowed": true,
+    "rollback_allowed": true,
+    "discard_staging_allowed": true,
+    "project_apply_started": false,
+    "recommended_action": "resume"
+  },
+  "previous_lock_backup_path": "C:\\Users\\example\\AppData\\Local\\HOI4 Mod Setup\\backups\\960ccbb7-c36a-41b0-9d76-0105bcd83b05\\install.lock.json.bak",
+  "previous_lock_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+  "error": {
+    "code": "APP_TERMINATED",
+    "message": "The application closed during staging.",
+    "stage": "staging"
+  }
+}

@@ -1,0 +1,405 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://klimpaskov.github.io/hoi4-mod-setup/schemas/scan-result.schema.json",
+  "title": "Project Scan Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "scan_id",
+    "project_root",
+    "mode",
+    "started_at",
+    "completed_at",
+    "read_only",
+    "partial",
+    "cancelled",
+    "limits_hit",
+    "files_scanned",
+    "directories_scanned",
+    "bytes_read",
+    "findings",
+    "semantic_analysis",
+    "summary"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "scan_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "project_root": {
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "new",
+        "existing"
+      ]
+    },
+    "platform": {
+      "enum": [
+        "windows",
+        "macos"
+      ]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completed_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "read_only": {
+      "const": true
+    },
+    "scanner_version": {
+      "type": "string"
+    },
+    "partial": {
+      "type": "boolean"
+    },
+    "cancelled": {
+      "type": "boolean"
+    },
+    "limits_hit": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "files_scanned": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "directories_scanned": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "bytes_read": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/conflict"
+      }
+    },
+    "semantic_analysis": {
+      "$ref": "#/$defs/semantic_analysis"
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "accepted",
+        "needs_review",
+        "blocking",
+        "warnings"
+      ],
+      "properties": {
+        "accepted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "needs_review": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocking": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warnings": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "detector",
+        "path",
+        "confidence"
+      ],
+      "properties": {
+        "detector": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "line_start": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "line_end": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "excerpt_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "category",
+        "key",
+        "value",
+        "status",
+        "origin",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "category": {
+          "enum": [
+            "identity",
+            "descriptor",
+            "thumbnail",
+            "structure",
+            "git",
+            "namespace",
+            "naming",
+            "localisation",
+            "documentation",
+            "skill",
+            "subagent",
+            "codex",
+            "mcp",
+            "conflict",
+            "tool",
+            "wiki"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "value": {},
+        "status": {
+          "enum": [
+            "accepted",
+            "needs_review",
+            "edited",
+            "rejected",
+            "blocking"
+          ]
+        },
+        "user_value": {},
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "origin": {
+          "enum": [
+            "deterministic",
+            "codex_suggested",
+            "user_confirmed"
+          ]
+        },
+        "recommendation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "semantic_analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested",
+        "required",
+        "status",
+        "engine",
+        "auth_mode",
+        "transport",
+        "input_manifest",
+        "output_schema_id",
+        "analysis_id",
+        "response_sha256",
+        "suggestions"
+      ],
+      "properties": {
+        "requested": {
+          "const": true
+        },
+        "required": {
+          "const": true
+        },
+        "status": {
+          "enum": [
+            "authentication_required",
+            "usage_limited",
+            "cancelled",
+            "failed",
+            "complete"
+          ]
+        },
+        "engine": {
+          "const": "codex_app_server"
+        },
+        "auth_mode": {
+          "const": "chatgpt"
+        },
+        "transport": {
+          "const": "stdio_jsonl"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "input_manifest": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ref_id",
+              "kind",
+              "path",
+              "sha256",
+              "approved"
+            ],
+            "properties": {
+              "ref_id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "user_brief",
+                  "deterministic_finding",
+                  "text_excerpt",
+                  "wizard_constraint"
+                ]
+              },
+              "path": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "approved": {
+                "const": true
+              }
+            }
+          }
+        },
+        "output_schema_id": {
+          "const": "codex-analysis/1.0.0"
+        },
+        "analysis_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "response_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "suggestions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        }
+      }
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "path",
+        "kind",
+        "severity"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "managed_file_exists",
+            "naming_collision",
+            "namespace_collision",
+            "descriptor_mismatch",
+            "binary_mismatch",
+            "tool_missing",
+            "platform_unsupported",
+            "encoding_mixed",
+            "other"
+          ]
+        },
+        "severity": {
+          "enum": [
+            "block",
+            "warn",
+            "info"
+          ]
+        },
+        "details": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

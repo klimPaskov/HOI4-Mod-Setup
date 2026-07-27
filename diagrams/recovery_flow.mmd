@@ -1,0 +1,15 @@
+flowchart TD
+  A[App starts] --> B{Incomplete journal found?}
+  B -->|No| C[Normal project dashboard]
+  B -->|Yes| D[Verify journal, backup, and staging hashes]
+  D --> E{Project apply started?}
+  E -->|No| F[Offer resume, rollback, discard staging]
+  E -->|Yes| G[Offer resume from checkpoint or rollback only]
+  F --> H{User choice}
+  G --> H
+  H -->|Resume| I[Revalidate completed stages and continue]
+  H -->|Rollback| J[Restore backup and remove created files]
+  H -->|Discard staging| K[Delete staging only]
+  I --> L[Write new checkpoint]
+  J --> M[Write rollback record]
+  K --> M

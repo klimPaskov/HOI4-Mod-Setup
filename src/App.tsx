@@ -1,0 +1,1285 @@
+import { useEffect, useRef, useState } from "react";
+import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
+import { applyInstallation, approveInstallation, buildInstallationPlan, buildMaintenancePlan, cancelCodexLogin, cancelScan, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openInCodex, pickLauncherFolder, pickProjectFolder, previewDescriptors, previewInstallationConflict, previewSourceManifest, readCodexAccount, readTransactionJournal, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallation, run3DHealthCheck, runCodexAnalysis, runMcpHealthCheck, scanProject, startCodexLogin, storeMeshyCredential, waitForCodexLoginResult } from "./lib/tauri";
+import type { ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, InstallationPlan, ManifestComponentPreview, PhaseId, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, WizardState, WorkflowHealthResult } from "./types";
+
+const PHASES: Array<{ id: PhaseId; label: string }> = [
+  { id: "project", label: "Project" },
+  { id: "review", label: "Review" },
+  { id: "components", label: "Components" },
+  { id: "integrations", label: "Integrations" },
+  { id: "git", label: "Git" },
+  { id: "install", label: "Install" },
+  { id: "ready", label: "Ready" },
+];
+
+const MAINTENANCE_PHASES = [
+  { id: "overview", label: "Overview" },
+  { id: "update", label: "Update" },
+  { id: "conflict", label: "Conflicts" },
+  { id: "recovery", label: "Recovery" },
+] as const;
+
+const DEFAULT_IDENTITY: ProjectIdentity = {
+  displayName: "Cold War Curtain",
+  projectId: "cold_war_curtain",
+  author: "",
+  version: "0.1.0",
+  supportedGameVersion: "1.17.*",
+  projectRoot: "",
+  defaultBranch: "main",
+  scriptPrefix: "",
+  primaryNamespace: "",
+  descriptorTags: [],
+  launcherDescriptorPath: "",
+};
+
+const INITIAL_SCAN_PROGRESS: ScanProgress = {
+  stage: "discovering_files",
+  currentPath: ".",
+  filesScanned: 0,
+  directoriesScanned: 0,
+  bytesRead: 0,
+};
+
+const DEFAULT_COMPONENTS: ComponentRow[] = [
+  { id: "core.agents", title: "Project instructions", detail: "AGENTS.md and source record", size: "manifest", selected: true, required: true },
+  { id: "core.skills", title: "Skills", detail: "Current HOI4 workflow skills", size: "manifest", selected: true, required: true },
+  { id: "core.subagents", title: "Subagents", detail: "Bounded Codex agent profiles", size: "manifest", selected: true, required: true },
+  { id: "codex.config", title: "Codex and MCP", detail: "Project configuration and declared server entry", size: "manifest", selected: true, required: true },
+  { id: "mcp.hoi4_agent_tools", title: "HOI4 Agent Tools MCP", detail: "Windows-declared route; macOS remains unsupported", size: "manifest", selected: true, required: false, platform: "windows" },
+  { id: "wiki.snapshot", title: "Offline wiki", detail: "Installed under paradox_wiki/", size: "manifest", selected: true, required: true },
+];
+
+const initialState: WizardState = {
+  screen: "welcome",
+  mode: "new",
+  recoveryEntry: false,
+  identity: DEFAULT_IDENTITY,
+  description: "A Cold War total conversion focused on Southeast Asia, with new countries, political routes, decisions, events, custom doctrines, and long campaigns that can diverge from history.",
+  sourceMode: "latest",
+  pinnedRef: "",
+  selectedComponents: DEFAULT_COMPONENTS.filter((component) => component.selected).map((component) => component.id),
+  components: DEFAULT_COMPONENTS,
+  meshSelected: false,
+  meshKeyDraft: "",
+  meshKeyStatus: "missing",
+  meshCredentialReference: undefined,
+  loraInterest: false,
+  gitMode: "initialize",
+  gitBranch: "main",
+  initialCommit: true,
+  gitRemoteName: "",
+  gitRemoteUrl: "",
+  installProgress: 0,
+  installStage: "Preflight",
+  conflictChoice: undefined,
+  recoveryChoice: "resume",
+  readiness: null,
+  codexAccount: null,
+  codexLoginPending: false,
+  codexAnalysis: undefined,
+  codexAnalysisRecord: undefined,
+  sourceStatus: "Manifest configured; remote resolution required",
+  draftSaved: true,
+};
+
+const SCREEN_PHASE: Record<ScreenId, PhaseId> = {
+  welcome: "project",
+  description: "project",
+  identity: "project",
+  scan: "review",
+  findings: "review",
+  components: "components",
+  workflows: "integrations",
+  mesh: "integrations",
+  lora: "integrations",
+  mcp: "integrations",
+  git: "git",
+  "dry-run": "install",
+  install: "install",
+  ready: "ready",
+  update: "install",
+  conflict: "install",
+  recovery: "install",
+};
+
+const screenCopy: Record<ScreenId, { title: string; supporting?: string; status?: { label: string; tone: StatusTone } }> = {
+  welcome: { title: "Start a mod project", supporting: "Choose a starting point." },
+  description: { title: "Describe the mod", supporting: "A few sentences are enough." },
+  identity: { title: "Project identity", supporting: "Confirm the names and paths used by HOI4 and Codex.", status: { label: "Descriptors valid", tone: "pass" } },
+  scan: { title: "Scanning project", supporting: "Read-only scan in progress.", status: { label: "Read only", tone: "info" } },
+  findings: { title: "Confirm scan findings", supporting: "Edit only the values that are wrong." },
+  components: { title: "Choose what to install", supporting: "Recommended components are selected.", status: { label: "Recommended", tone: "info" } },
+  workflows: { title: "Optional workflows", supporting: "These choices never block the core setup." },
+  mesh: { title: "3D model workflow", supporting: "Connect Meshy.ai; provider charges may apply.", status: { label: "Key required", tone: "review" } },
+  lora: { title: "LoRA and ComfyUI portraits", supporting: "Automated setup is planned for a later release.", status: { label: "Unavailable", tone: "review" } },
+  mcp: { title: "MCP and credentials", supporting: "Review detected servers and required variables.", status: { label: "Review", tone: "info" } },
+  git: { title: "Choose Git setup", supporting: "Online actions stay off until explicitly enabled." },
+  "dry-run": { title: "Review changes", supporting: "Nothing has been applied yet.", status: { label: "Dry run", tone: "info" } },
+  install: { title: "Installing components", supporting: "Staging managed files." },
+  ready: { title: "Project ready", supporting: "Core requirements passed.", status: { label: "Ready for Codex", tone: "pass" } },
+  update: { title: "Update and repair", supporting: "Manage the installed workflow." },
+  conflict: { title: "Resolve AGENTS.md", supporting: "Choose the result before continuing." },
+  recovery: { title: "Installation was interrupted", supporting: "Resume from the last safe checkpoint." },
+};
+
+function phaseIndex(screen: ScreenId): number {
+  return PHASES.findIndex((phase) => phase.id === SCREEN_PHASE[screen]);
+}
+
+async function sha256Text(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function nextScreen(state: WizardState): ScreenId {
+  switch (state.screen) {
+    case "welcome": return state.recoveryEntry ? "identity" : state.mode === "new" ? "description" : "identity";
+    case "description": return "identity";
+    case "identity": return state.recoveryEntry ? "recovery" : state.mode === "existing" ? "scan" : "components";
+    case "scan": return "findings";
+    case "findings": return "components";
+    case "components": return "workflows";
+    case "workflows": return state.meshSelected ? "mesh" : state.loraInterest ? "lora" : "mcp";
+    case "mesh": return state.loraInterest ? "lora" : "mcp";
+    case "lora": return "mcp";
+    case "mcp": return "git";
+    case "git": return "dry-run";
+    case "dry-run": return "install";
+    case "install": return "ready";
+    case "ready": return "ready";
+    case "conflict": return "dry-run";
+    case "recovery": return "install";
+    default: return "ready";
+  }
+}
+
+function previousScreen(state: WizardState): ScreenId {
+  switch (state.screen) {
+    case "description": return "welcome";
+    case "identity": return state.recoveryEntry ? "welcome" : state.mode === "existing" ? "welcome" : "description";
+    case "scan": return "identity";
+    case "findings": return "scan";
+    case "components": return state.mode === "existing" ? "findings" : "identity";
+    case "workflows": return "components";
+    case "mesh": return "workflows";
+    case "lora": return state.meshSelected ? "mesh" : "workflows";
+    case "mcp": return state.loraInterest ? "lora" : state.meshSelected ? "mesh" : "workflows";
+    case "git": return "mcp";
+    case "dry-run": return "git";
+    case "install": return "dry-run";
+    case "ready": return "install";
+    case "update": return "ready";
+    default: return "welcome";
+  }
+}
+
+export default function App() {
+  const [state, setState] = useState<WizardState>(initialState);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const [scanComplete, setScanComplete] = useState(false);
+  const [scanError, setScanError] = useState<string>();
+  const [scanProgress, setScanProgress] = useState<ScanProgress>(INITIAL_SCAN_PROGRESS);
+  const [scanRequestId, setScanRequestId] = useState<string>();
+  const [scanCancellationRequested, setScanCancellationRequested] = useState(false);
+  const [scanPartial, setScanPartial] = useState(false);
+  const [scanLimitsHit, setScanLimitsHit] = useState<string[]>([]);
+  const [selectedFinding, setSelectedFinding] = useState("localisation");
+  const [findings, setFindings] = useState<ScanFinding[]>([]);
+
+  useEffect(() => {
+    if (state.screen !== "welcome" && state.screen !== "description" && state.screen !== "identity" && state.screen !== "findings") return;
+    if (state.codexAccount !== null) return;
+    void readCodexAccount().then((account) => {
+      if (account) {
+        setState((current) => ({ ...current, codexAccount: account }));
+      } else if (isTauriRuntime()) {
+        setState((current) => ({ ...current, codexAccount: { available: false, authenticated: false, auth_mode: "", usage_limited: false, error: "The official Codex App Server could not be reached." } }));
+      }
+    });
+  }, [state.screen, state.codexAccount]);
+
+  useEffect(() => {
+    if (state.screen === "scan" && state.mode === "existing") {
+      setScanComplete(false);
+      setScanError(undefined);
+      setScanProgress(INITIAL_SCAN_PROGRESS);
+      setScanCancellationRequested(false);
+      setScanRequestId(undefined);
+      setScanPartial(false);
+      setScanLimitsHit([]);
+      setFindings([]);
+      setState((current) => ({ ...current, scanContext: undefined, codexAnalysis: undefined, codexAnalysisRecord: undefined }));
+      if (!state.identity.projectRoot.trim()) {
+        setScanError("Choose an accessible project folder before scanning.");
+        return;
+      }
+      let active = true;
+      let requestId: string | undefined;
+      let finished = false;
+      void scanProject(
+        state.identity.projectRoot,
+        setScanProgress,
+        (id) => {
+          requestId = id;
+          setScanRequestId(id);
+        },
+      ).then((result) => {
+        if (!active) return;
+        if (!result) {
+          setScanError("The selected folder could not be scanned. Choose an accessible project folder.");
+          return;
+        }
+        setScanProgress((current) => ({
+          ...current,
+          stage: result.cancelled ? "cancelled" : "complete",
+          filesScanned: result.filesScanned,
+          directoriesScanned: result.directoriesScanned,
+          bytesRead: result.bytesRead,
+        }));
+        setScanPartial(result.partial);
+        setScanLimitsHit(result.limitsHit);
+        if (result.cancelled) {
+          setScanError("The read-only scan was cancelled. No scan evidence was approved.");
+          setScanComplete(false);
+          return;
+        }
+        setFindings(result.findings);
+        setState((current) => ({
+          ...current,
+          scanContext: {
+            scanId: result.scanId,
+            projectRoot: result.projectRoot,
+            completedAt: result.completedAt,
+            partial: result.partial,
+            limitsHit: result.limitsHit,
+          },
+        }));
+        setScanComplete(true);
+      }).finally(() => {
+        finished = true;
+        setScanRequestId(undefined);
+      });
+      return () => {
+        active = false;
+        if (requestId && !finished) void cancelScan(requestId);
+      };
+    }
+    setScanComplete(false);
+    setScanError(undefined);
+    setScanProgress(INITIAL_SCAN_PROGRESS);
+    setScanRequestId(undefined);
+    setScanPartial(false);
+    setScanLimitsHit([]);
+  }, [state.screen, state.mode, state.identity.projectRoot]);
+
+  useEffect(() => {
+    if (!state.identity.projectRoot || state.transaction) return;
+    void findInterruptedTransaction(state.identity.projectRoot).then((journal) => {
+      if (journal) setState((current) => current.transaction ? current : ({ ...current, transaction: journal, screen: "recovery", transactionError: "An interrupted transaction needs a recovery decision." }));
+    });
+  }, [state.identity.projectRoot, state.screen, state.transaction]);
+
+  useEffect(() => {
+    if (state.screen === "ready" && !state.readiness) {
+      void evaluateReadiness(state.identity.projectRoot || "<selected project>", state.identity.projectId, state.meshSelected ? state.meshKeyStatus === "verified" ? "ready" : "incomplete" : "not_selected", state.loraInterest).then((result) => {
+        if (result) setState((current) => ({ ...current, readiness: result }));
+      });
+    }
+  }, [state.screen, state.readiness, state.identity.projectId, state.identity.projectRoot, state.meshSelected, state.meshKeyStatus, state.loraInterest]);
+
+  useEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
+  }, [state.screen]);
+
+  const update = (patch: Partial<WizardState>) => setState((current) => ({ ...current, ...patch, draftSaved: true }));
+  const updateIdentity = (patch: Partial<ProjectIdentity>) => setState((current) => {
+    const identity = { ...current.identity, ...patch };
+    if (patch.projectId && current.identity.launcherDescriptorPath) {
+      const oldFile = current.identity.launcherDescriptorPath.split(/[\\/]/).pop()?.toLowerCase();
+      const oldProjectFile = `${current.identity.projectId}.mod`.toLowerCase();
+      if (oldFile === oldProjectFile || oldFile === "project.mod") {
+        identity.launcherDescriptorPath = current.identity.launcherDescriptorPath.replace(/[^\\/]+$/, `${patch.projectId}.mod`);
+      }
+    }
+    return { ...current, identity, transactionError: undefined, draftSaved: true };
+  });
+  const chooseProjectFolder = () => pickProjectFolder();
+  const chooseLauncherFolder = () => pickLauncherFolder();
+  const buildCodexEvidence = async (sourceFindings: ScanFinding[]) => Promise.all(sourceFindings.filter((finding) => finding.status !== "rejected").map(async (finding) => ({
+    reference: finding.id,
+    path: finding.evidencePath ?? "",
+    excerpt: finding.evidenceExcerpt ?? finding.value,
+    excerpt_sha256: await sha256Text(finding.evidenceExcerpt ?? finding.value),
+    confidence: finding.confidence,
+  })));
+  const runSemanticAnalysis = async (mode: "new_project_identity" | "existing_project_semantics"): Promise<boolean> => {
+    if (state.codexAnalysisRecord) return true;
+    if (!state.codexAccount?.available) {
+      if (isTauriRuntime()) update({ transactionError: "The official Codex App Server is required for semantic analysis." });
+      return isTauriRuntime();
+    }
+    if (state.codexAccount.error) {
+      update({ transactionError: state.codexAccount.error });
+      return false;
+    }
+    if (state.codexAccount.usage_limited) {
+      update({ transactionError: "Codex usage is currently limited. Planning is paused; recovery remains available." });
+      return false;
+    }
+    if (!state.codexAccount.authenticated || state.codexAccount.auth_mode !== "chatgpt") {
+      update({ transactionError: "Sign in with ChatGPT through Codex before semantic setup analysis." });
+      return false;
+    }
+    const evidence = await buildCodexEvidence(findings);
+    if (mode === "existing_project_semantics" && !state.scanContext) {
+      update({ transactionError: "The completed scan is no longer available. Rerun the read-only scan." });
+      return false;
+    }
+    if (mode === "existing_project_semantics" && state.scanContext?.partial) {
+      update({ transactionError: "The read-only scan reached a safety limit. Complete an untruncated scan before semantic analysis." });
+      return false;
+    }
+    if (mode === "existing_project_semantics" && evidence.some((item) => !item.path || !item.excerpt)) {
+      update({ transactionError: "The completed scan did not provide complete evidence for semantic analysis. Rerun the read-only scan." });
+      return false;
+    }
+    const result = await runCodexAnalysis({
+      mode,
+      brief: state.description,
+      evidence: mode === "existing_project_semantics" ? evidence : [],
+      constraints: { platform: "windows_or_macos", project_id_pattern: "^[a-z][a-z0-9_]{1,63}$", no_workshop_id: true },
+      analysis_purpose: mode === "existing_project_semantics" ? "existing_project_import" : undefined,
+      project_root: mode === "existing_project_semantics" ? state.scanContext?.projectRoot : undefined,
+      scan_id: mode === "existing_project_semantics" ? state.scanContext?.scanId : undefined,
+    });
+    if (!result) {
+      update({ transactionError: "Codex analysis could not be completed. Your draft and scan remain unchanged." });
+      return false;
+    }
+    const proposal = (key: string) => result.analysis.proposals.find((item) => item.key === key)?.value;
+    const displayName = proposal("display_name");
+    const projectId = proposal("project_id");
+    const description = proposal("project_description");
+    const folderProfile = proposal("folder_profile");
+    const scriptPrefix = proposal("script_prefix");
+    const primaryNamespace = proposal("primary_namespace");
+    const descriptorTags = proposal("descriptor_tags");
+    setState((current) => ({
+      ...current,
+      codexAnalysis: result.analysis,
+      codexAnalysisRecord: result.record,
+      identity: {
+        ...current.identity,
+        displayName: typeof displayName === "string" ? displayName : current.identity.displayName,
+        projectId: typeof projectId === "string" ? projectId : current.identity.projectId,
+        scriptPrefix: typeof scriptPrefix === "string" ? scriptPrefix : current.identity.scriptPrefix,
+        primaryNamespace: typeof primaryNamespace === "string" ? primaryNamespace : current.identity.primaryNamespace,
+        descriptorTags: Array.isArray(descriptorTags) && descriptorTags.every((item) => typeof item === "string") ? descriptorTags as string[] : current.identity.descriptorTags,
+      },
+      description: typeof description === "string" ? description : current.description,
+      folderProfile: Array.isArray(folderProfile) && folderProfile.every((item) => typeof item === "string") ? folderProfile as string[] : current.folderProfile,
+      transactionError: undefined,
+      draftSaved: true,
+    }));
+    return true;
+  };
+  const prepareMaintenanceReanalysis = async (): Promise<boolean> => {
+    if (!isTauriRuntime()) {
+      update({ transactionError: "Codex reanalysis is available in the packaged desktop app." });
+      return false;
+    }
+    if (!state.identity.projectRoot.trim()) {
+      update({ transactionError: "Choose the installed project folder before reanalysis." });
+      return false;
+    }
+    const scanned = await scanProject(state.identity.projectRoot);
+    if (!scanned) {
+      update({ transactionError: "The installed project could not be scanned. Nothing was changed." });
+      return false;
+    }
+    setFindings(scanned.findings);
+    const scanWasPartial = scanned.partial || scanned.cancelled;
+    update({
+      scanContext: {
+        scanId: scanned.scanId,
+        projectRoot: scanned.projectRoot,
+        completedAt: scanned.completedAt,
+        partial: scanned.partial,
+        limitsHit: scanned.limitsHit,
+      },
+      maintenanceEvidenceReady: !scanWasPartial,
+      maintenanceCodexAnalysisRecord: undefined,
+      codexAnalysis: undefined,
+      codexAnalysisRecord: undefined,
+      screen: "update",
+      transactionError: scanWasPartial
+        ? scanned.cancelled
+          ? "The read-only scan was cancelled. No evidence is available for reanalysis."
+          : "The read-only scan reached a safety limit. Complete an untruncated scan before reanalysis."
+        : "Read-only evidence is ready. Review the input below, then run Codex reanalysis.",
+    });
+    return !scanWasPartial;
+  };
+  const runMaintenanceReanalysis = async (): Promise<boolean> => {
+    if (!state.maintenanceEvidenceReady) return prepareMaintenanceReanalysis();
+    if (!state.scanContext) {
+      update({ transactionError: "Prepare the latest read-only evidence before reanalysis." });
+      return false;
+    }
+    const account = state.codexAccount ?? await readCodexAccount();
+    if (!account || !account.available) {
+      update({ transactionError: "The official Codex App Server is required for reanalysis." });
+      return false;
+    }
+    if (account.error) {
+      update({ codexAccount: account, transactionError: account.error });
+      return false;
+    }
+    if (account.usage_limited) {
+      update({ codexAccount: account, transactionError: "Codex usage is currently limited. Reanalysis is paused; recovery remains available." });
+      return false;
+    }
+    if (!account.authenticated || account.auth_mode !== "chatgpt") {
+      update({ codexAccount: account, transactionError: "Sign in with ChatGPT through Codex before reanalysis." });
+      return false;
+    }
+    const evidence = await buildCodexEvidence(findings);
+    if (!evidence.length || evidence.some((item) => !item.path || !item.excerpt)) {
+      update({ transactionError: "The approved scan did not provide complete evidence for reanalysis. Prepare the read-only evidence again." });
+      return false;
+    }
+    const result = await runCodexAnalysis({
+      mode: "existing_project_semantics",
+      brief: "Review the installed HOI4 project for semantic changes before a workflow update. Preserve deterministic facts, identify convention or instruction changes, and propose only reviewable values. Do not write files or approve operations.",
+      evidence,
+      constraints: {
+        platform: "windows_or_macos",
+        analysis_purpose: "maintenance_reanalysis",
+        project_id_pattern: "^[a-z][a-z0-9_]{1,63}$",
+        no_workshop_id: true,
+      },
+      analysis_purpose: "maintenance_reanalysis",
+      project_root: state.scanContext.projectRoot,
+      scan_id: state.scanContext.scanId,
+    });
+    if (!result) {
+      update({ transactionError: "Codex reanalysis could not be completed. The installed project and evidence remain unchanged." });
+      return false;
+    }
+    update({
+      codexAccount: account,
+      codexAnalysis: result.analysis,
+      codexAnalysisRecord: result.record,
+      maintenanceCodexAnalysisRecord: result.record,
+      transactionError: "Review and confirm the Codex reanalysis before creating the update plan.",
+      screen: "update",
+    });
+    return true;
+  };
+  const confirmAnalysis = async () => {
+    if (!state.codexAnalysis || !state.codexAnalysisRecord) return;
+    const confirmedFields = state.codexAnalysis.proposals.map((proposal) => proposal.key);
+    const record = await confirmCodexAnalysis(state.codexAnalysisRecord, confirmedFields);
+    if (!record) {
+      update({ transactionError: "Codex proposals could not be confirmed by the core." });
+      return;
+    }
+    update({
+      codexAnalysisRecord: record,
+      maintenanceCodexAnalysisRecord: state.maintenanceCodexAnalysisRecord ? record : state.maintenanceCodexAnalysisRecord,
+      transactionError: undefined,
+    });
+  };
+  const applyReviewedPlan = async (plan: InstallationPlan) => {
+    if (plan.conflicts.some((conflict) => !conflict.selected)) {
+      update({ plan, screen: "conflict", transactionError: undefined });
+      return;
+    }
+    if (!(await approveInstallation(plan.plan_id))) {
+      update({ transactionError: "The reviewed installation plan could not be approved. Nothing was changed." });
+      return;
+    }
+    const journal = await applyInstallation(plan, state.identity.projectRoot);
+    if (!journal) {
+      const interrupted = await readTransactionJournal(state.identity.projectRoot, plan.plan_id);
+      if (interrupted?.state === "interrupted") {
+        update({ transaction: interrupted, transactionError: "Installation was interrupted. Choose a recovery action before continuing.", screen: "recovery" });
+      } else {
+        update({ transactionError: "Installation could not start. Nothing was changed." });
+      }
+      return;
+    }
+    const maintenance = state.maintenanceMode !== undefined;
+    update({
+      plan: maintenance ? undefined : plan,
+      maintenanceMode: maintenance ? undefined : state.maintenanceMode,
+      maintenanceCodexAnalysisRecord: maintenance ? undefined : state.maintenanceCodexAnalysisRecord,
+      maintenanceEvidenceReady: maintenance ? undefined : state.maintenanceEvidenceReady,
+      codexAnalysis: maintenance ? undefined : state.codexAnalysis,
+      codexAnalysisRecord: maintenance ? undefined : state.codexAnalysisRecord,
+      transaction: journal,
+      transactionError: undefined,
+      readiness: maintenance ? null : state.readiness,
+      installProgress: 100,
+      installStage: journal.last_checkpoint,
+      screen: maintenance ? "ready" : "install",
+    });
+  };
+  const prepareSetupPlan = async () => {
+    const plan = await buildInstallationPlan({ ...state, conflictChoice: undefined });
+    if (!plan) {
+      update({ transactionError: "The typed installation plan is unavailable. Nothing was changed." });
+      return;
+    }
+    update({ plan, sourceStatus: `Exact source ${plan.source.resolved_revision.slice(0, 12)} selected`, conflictChoice: undefined, transactionError: undefined, screen: plan.conflicts.some((conflict) => !conflict.selected) ? "conflict" : "dry-run" });
+  };
+  const startMaintenance = async (mode: "update" | "repair" | "reinstall" | "remove") => {
+    if (mode === "update" && !state.maintenanceCodexAnalysisRecord?.confirmed_fields.length) {
+      if (!state.maintenanceEvidenceReady) {
+        await prepareMaintenanceReanalysis();
+      } else if (!state.maintenanceCodexAnalysisRecord) {
+        update({ transactionError: "Run Codex reanalysis and confirm its proposals before checking for updates." });
+      } else {
+        update({ transactionError: "Confirm the Codex reanalysis before checking for updates." });
+      }
+      return;
+    }
+    const plan = await buildMaintenancePlan(mode, state.identity.projectRoot, state.maintenanceCodexAnalysisRecord);
+    if (!plan) {
+      update({ transactionError: "The maintenance plan is unavailable. Nothing was changed." });
+      return;
+    }
+    update({ plan, sourceStatus: `Exact source ${plan.source.resolved_revision.slice(0, 12)} selected`, maintenanceMode: mode, transactionError: undefined, screen: plan.conflicts.some((conflict) => !conflict.selected) ? "conflict" : "update" });
+  };
+  const chooseConflict = async (choice: ConflictChoice) => {
+    const plan = state.plan;
+    const conflict = plan?.conflicts.find((candidate) => !candidate.selected);
+    if (!plan || !conflict) {
+      update({ conflictChoice: choice });
+      return;
+    }
+    const updatedPlan = await resolveInstallationConflict(plan.plan_id, conflict.path, choice);
+    if (!updatedPlan) {
+      update({ transactionError: "The conflict decision was rejected by the core plan. No files were changed." });
+      return;
+    }
+    update({ plan: updatedPlan, conflictChoice: choice, transactionError: undefined });
+  };
+  const handleRecovery = async () => {
+    const transaction = state.transaction;
+    if (!transaction) {
+      update({ transactionError: "No interrupted transaction is available for this project." });
+      return;
+    }
+    const transactionId = transaction.transaction_id;
+    if (state.recoveryChoice === "resume") {
+      if (!transaction.recovery.resume_allowed) {
+        update({ transactionError: "This transaction cannot resume safely; rollback or inspection is required." });
+        return;
+      }
+      const resumed = await resumeInstallation(state.identity.projectRoot, transactionId);
+      if (!resumed) {
+        update({ transactionError: "Resume was refused after revalidation. Review the transaction journal or roll back." });
+        return;
+      }
+      update({ transaction: resumed, transactionError: undefined, installProgress: 100, installStage: resumed.last_checkpoint, screen: "install" });
+      return;
+    }
+    if (state.recoveryChoice === "rollback") {
+      if (!transaction.recovery.rollback_allowed) {
+        update({ transactionError: "Rollback is not allowed by the recorded transaction state." });
+        return;
+      }
+      const rolledBack = await rollbackInstallation(state.identity.projectRoot, transactionId);
+      if (!rolledBack) {
+        update({ transactionError: "Rollback was refused because the live project state needs review." });
+        return;
+      }
+      update({ transaction: rolledBack, transactionError: undefined, readiness: null, screen: "ready" });
+      return;
+    }
+    if (!transaction.recovery.discard_staging_allowed) {
+      update({ transactionError: "Staging cannot be discarded after project apply has started." });
+      return;
+    }
+    const discarded = await discardInstallationStaging(state.identity.projectRoot, transactionId);
+    if (!discarded) {
+      update({ transactionError: "The staging directory could not be discarded safely." });
+      return;
+    }
+    update({ transaction: discarded, transactionError: undefined, screen: state.maintenanceMode ? "update" : "dry-run" });
+  };
+  const goNext = async () => {
+    if (state.screen === "recovery") {
+      await handleRecovery();
+      return;
+    }
+    if (state.screen === "welcome" && !state.recoveryEntry && ((isTauriRuntime() && !state.codexAccount) || (state.codexAccount && (!state.codexAccount.available || !state.codexAccount.authenticated || state.codexAccount.auth_mode !== "chatgpt" || Boolean(state.codexAccount.error))))) {
+      update({ transactionError: "Sign in with ChatGPT through Codex before starting setup. Recovery remains available." });
+      return;
+    }
+    if (state.screen === "description" && state.mode === "new" && !state.codexAnalysisRecord) {
+      if (!isTauriRuntime()) {
+        update({ screen: nextScreen(state) });
+        return;
+      }
+      const handled = await runSemanticAnalysis("new_project_identity");
+      if (handled && state.codexAccount?.available) {
+        update({ screen: "identity" });
+        return;
+      }
+      if (isTauriRuntime()) return;
+    }
+    if (state.screen === "identity" && state.mode === "existing" && !state.identity.projectRoot.trim()) {
+      update({ transactionError: "Choose an accessible project folder before scanning." });
+      return;
+    }
+    if (state.screen === "scan" && !scanComplete) {
+      update({ transactionError: scanError ?? "The read-only scan is still pending. Nothing has been changed." });
+      return;
+    }
+    if (state.screen === "findings" && state.mode === "existing" && !state.codexAnalysisRecord) {
+      if (!isTauriRuntime()) {
+        update({ screen: nextScreen(state) });
+        return;
+      }
+      const handled = await runSemanticAnalysis("existing_project_semantics");
+      if (handled && state.codexAccount?.available) return;
+      if (isTauriRuntime()) return;
+    }
+    if ((state.screen === "identity" && state.mode === "new")
+      || (state.screen === "findings" && state.mode === "existing")) {
+      if (isTauriRuntime() && !state.codexAnalysisRecord?.confirmed_fields.length) {
+        update({ transactionError: "Review and confirm the Codex proposals before continuing." });
+        return;
+      }
+    }
+    if (state.screen === "findings" && isTauriRuntime() && !state.codexAnalysisRecord) {
+      update({ transactionError: "Review and confirm the Codex proposals before continuing." });
+      return;
+    }
+    if (state.screen === "dry-run") {
+      const plan = state.plan ?? (state.conflictChoice ? await buildInstallationPlan(state) : null);
+      if (!plan) {
+        update({ transactionError: "Review the plan or resolve conflicts before installation." });
+        return;
+      }
+      await applyReviewedPlan(plan);
+      return;
+    }
+    if (state.screen === "update" && state.plan) {
+      await applyReviewedPlan(state.plan);
+      return;
+    }
+    if (state.screen === "conflict") {
+      if (!state.plan || state.plan.conflicts.some((conflict) => !conflict.selected)) return;
+      if (state.maintenanceMode) {
+        await applyReviewedPlan(state.plan);
+      } else {
+        update({ screen: "dry-run" });
+      }
+      return;
+    }
+    if (state.screen === "install" && state.installProgress >= 100) {
+      update({ screen: "ready" });
+      return;
+    }
+    update({ screen: nextScreen(state), installProgress: state.installProgress });
+  };
+  const goBack = () => update({ screen: previousScreen(state) });
+  const cancelActiveScan = async () => {
+    if (!scanRequestId || scanComplete || scanCancellationRequested) return;
+    setScanCancellationRequested(true);
+    const result = await cancelScan(scanRequestId);
+    if (result.value === null && result.error && !/no longer running/i.test(result.error)) {
+      setScanCancellationRequested(false);
+      setScanError(`The scan could not be cancelled: ${result.error}`);
+    }
+  };
+  const openMaintenance = (screen: "update" | "conflict" | "recovery") => update({ screen, plan: undefined, maintenanceMode: undefined, maintenanceCodexAnalysisRecord: undefined, maintenanceEvidenceReady: undefined, transactionError: undefined });
+
+  const copy = state.screen === "ready"
+    ? {
+      title: "Project ready",
+      supporting: state.readiness ? state.readiness.openInCodex ? "Core requirements passed." : "Resolve blocking checks before opening in Codex." : "Checking core requirements.",
+      status: state.readiness ? state.readiness.openInCodex ? { label: "Ready for Codex", tone: "pass" as const } : { label: "Needs review", tone: "block" as const } : { label: "Checking readiness", tone: "info" as const },
+    }
+    : screenCopy[state.screen];
+  return (
+    <div className="app-shell">
+      <header className="titlebar">
+        <div className="brand-mark" aria-hidden="true">H</div>
+        <span className="brand-name">HOI4 Mod Setup</span>
+        <div className="source-state"><span className="status-dot info" />{state.sourceStatus}</div>
+        <div className="window-controls" aria-hidden="true"><span /><span /><span className="close" /></div>
+      </header>
+      <div className="workspace">
+        <PhaseRail screen={state.screen} />
+        <main className="main-viewport" aria-labelledby="screen-title" aria-describedby="screen-supporting" onKeyDown={closeDisclosureOnEscape}>
+          <div className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{copy.title}</div>
+          <ScreenFrame screen={state.screen} copy={copy} state={state} headingRef={headingRef} onBack={goBack} onNext={goNext} onMaintenance={openMaintenance} onPrepareConflicts={prepareSetupPlan}>
+            {renderScreen(state, update, updateIdentity, findings, selectedFinding, setSelectedFinding, setFindings, scanComplete, scanError, scanProgress, scanPartial, scanLimitsHit, scanRequestId, scanCancellationRequested, cancelActiveScan, openMaintenance, startMaintenance, runMaintenanceReanalysis, chooseConflict, chooseProjectFolder, chooseLauncherFolder, confirmAnalysis)}
+          </ScreenFrame>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function PhaseRail({ screen }: { screen: ScreenId }) {
+  const maintenance = screen === "update" || screen === "conflict" || screen === "recovery";
+  const currentMaintenance = maintenance ? screen === "update" ? 1 : screen === "conflict" ? 2 : 3 : -1;
+  const current = phaseIndex(screen);
+  const phases = maintenance ? MAINTENANCE_PHASES : PHASES;
+  return <nav className="phase-rail" aria-label={maintenance ? "Maintenance phases" : "Setup phases"}>
+    <div className="rail-label">{maintenance ? "MANAGE" : "SETUP"}</div>
+    {phases.map((phase, index) => {
+      const active = maintenance ? index === currentMaintenance : phase.id === SCREEN_PHASE[screen];
+      const completed = maintenance ? index < currentMaintenance : index < current;
+      return <div key={phase.id} className={`phase-item ${active ? "active" : ""} ${completed ? "completed" : ""}`} aria-current={active ? "step" : undefined}>
+        <span className="phase-number">{completed ? "✓" : index + 1}</span><span>{phase.label}</span>
+      </div>;
+    })}
+    <div className="rail-source"><strong>Agentic-HOI4-Modding</strong><span>main · exact revision after resolve</span></div>
+  </nav>;
+}
+
+function ScreenFrame({ screen, copy, state, headingRef, onBack, onNext, onMaintenance, onPrepareConflicts, children }: { screen: ScreenId; copy: { title: string; supporting?: string; status?: { label: string; tone: StatusTone } }; state: WizardState; headingRef: { current: HTMLHeadingElement | null }; onBack: () => void; onNext: () => void; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onPrepareConflicts: () => void; children: ReactNode }) {
+  const installDone = screen === "install" && state.installProgress >= 100;
+  const primaryLabel = screen === "welcome" ? "Continue" : screen === "dry-run" ? "Start installation" : screen === "install" ? (installDone ? "Continue" : "") : screen === "ready" ? "Finish" : screen === "recovery" ? "Continue" : screen === "conflict" ? "Apply" : screen === "update" ? (state.plan ? "Apply reviewed plan" : "") : "Next";
+  const showBack = !["welcome", "install"].includes(screen);
+  return <>
+    <div className="content-scroll">
+      <div className="screen-heading">
+        <div><div className="eyebrow">{(screen === "update" ? "Update" : screen === "conflict" ? "Conflicts" : screen === "recovery" ? "Recovery" : SCREEN_PHASE[screen]).toUpperCase()}</div><h1 id="screen-title" ref={headingRef} tabIndex={-1}>{copy.title}</h1>{copy.supporting && <p id="screen-supporting">{copy.supporting}</p>}</div>
+        {copy.status && <Status label={copy.status.label} tone={copy.status.tone} />}
+      </div>
+      {children}
+    </div>
+    <footer className="footer-bar">
+      <span className="footer-note" role={state.transactionError ? "alert" : undefined}>{footerNote(screen, state)}</span>
+      <div className="footer-actions">
+        {screen === "ready" && <button className="button secondary" onClick={() => onMaintenance("update")}>Update and repair</button>}
+        {screen === "dry-run" && <button className="button secondary" onClick={onPrepareConflicts}>Resolve conflicts</button>}
+        {showBack && <button className="button secondary" onClick={onBack}>Back</button>}
+        {primaryLabel && <button className="button primary" onClick={onNext} disabled={(screen === "dry-run" && (!state.plan || state.plan.conflicts.some((conflict) => !conflict.selected))) || (screen === "recovery" && !recoveryChoiceAllowed(state))}>{primaryLabel}</button>}
+      </div>
+    </footer>
+  </>;
+}
+
+function footerNote(screen: ScreenId, state: WizardState): string {
+  if (screen === "welcome") return "Nothing is changed until the dry run.";
+  if (screen === "scan") return state.transactionError ?? "No project files are being modified.";
+  if (screen === "workflows") return "Optional workflows can be changed from Update and Repair.";
+  if (screen === "mesh") return "The key is never written into the project or lock file.";
+  if (screen === "lora") return "This preference is non-blocking.";
+  if (screen === "mcp") return "Only variable names appear in configuration.";
+  if (screen === "git") return "No remote will be created and nothing will be pushed.";
+  if (screen === "dry-run") return state.transactionError ?? (state.conflictChoice ? "Review the exact file, command, conflict, and rollback actions." : "Resolve blocking conflicts before installation.");
+  if (screen === "install") return state.installProgress >= 100 ? `Last checkpoint saved · ${state.transaction?.last_checkpoint ?? state.installStage}. Readiness is next.` : `Checkpoint saved · ${state.installStage}`;
+  if (screen === "ready") return state.transactionError ?? "Rollback record saved.";
+  if (screen === "update") return state.transactionError ?? "User-modified files are never overwritten silently.";
+  if (screen === "conflict") return "A preview and validation run follow the selected resolution.";
+  if (screen === "recovery") return "Recovery actions are reversible until apply begins.";
+  return state.draftSaved ? "Draft saved locally." : "";
+}
+
+function closeDisclosureOnEscape(event: ReactKeyboardEvent<HTMLElement>) {
+  if (event.key !== "Escape") return;
+  const details = (event.target as HTMLElement).closest("details[open]") as HTMLDetailsElement | null;
+  if (!details) return;
+  details.open = false;
+  details.querySelector<HTMLElement>("summary")?.focus();
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function recoveryChoiceAllowed(state: WizardState): boolean {
+  if (state.screen !== "recovery" || !state.transaction) return false;
+  if (state.recoveryChoice === "resume") return state.transaction.recovery.resume_allowed;
+  if (state.recoveryChoice === "rollback") return state.transaction.recovery.rollback_allowed;
+  return state.transaction.recovery.discard_staging_allowed;
+}
+
+function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) => void, updateIdentity: (patch: Partial<ProjectIdentity>) => void, findings: ScanFinding[], selectedFinding: string, setSelectedFinding: (id: string) => void, setFindings: Dispatch<SetStateAction<ScanFinding[]>>, scanComplete: boolean, scanError: string | undefined, scanProgress: ScanProgress, scanPartial: boolean, scanLimitsHit: string[], scanRequestId: string | undefined, scanCancellationRequested: boolean, onCancelScan: () => Promise<void>, onMaintenance: (screen: "update" | "conflict" | "recovery") => void, startMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void, onReanalyze: () => Promise<boolean>, chooseConflict: (choice: ConflictChoice) => void, onPickProjectFolder: () => Promise<FolderSelection | null>, onPickLauncherFolder: () => Promise<FolderSelection | null>, onConfirmAnalysis: () => Promise<void>) {
+  switch (state.screen) {
+    case "welcome": return <Welcome state={state} update={update} />;
+    case "description": return <Description state={state} update={update} />;
+    case "identity": return <Identity state={state} update={update} updateIdentity={updateIdentity} onPickProjectFolder={onPickProjectFolder} onPickLauncherFolder={onPickLauncherFolder} onConfirmAnalysis={onConfirmAnalysis} />;
+    case "scan": return <Scan state={state} complete={scanComplete} error={scanError} progress={scanProgress} partial={scanPartial} limitsHit={scanLimitsHit} canCancel={Boolean(scanRequestId)} cancellationRequested={scanCancellationRequested} onCancel={onCancelScan} />;
+    case "findings": return <Findings state={state} findings={findings} selected={selectedFinding} setSelected={setSelectedFinding} setFindings={setFindings} onConfirmAnalysis={onConfirmAnalysis} />;
+    case "components": return <Components state={state} update={update} />;
+    case "workflows": return <Workflows state={state} update={update} />;
+    case "mesh": return <Mesh state={state} update={update} />;
+    case "lora": return <Lora state={state} update={update} />;
+    case "mcp": return <Mcp state={state} />;
+    case "git": return <Git state={state} update={update} />;
+    case "dry-run": return <DryRun state={state} />;
+    case "install": return <Install state={state} />;
+    case "ready": return <Ready state={state} update={update} onMaintenance={onMaintenance} />;
+    case "update": return <Update state={state} findings={findings} setFindings={setFindings} onMaintenance={onMaintenance} onStartMaintenance={startMaintenance} onReanalyze={onReanalyze} />;
+    case "conflict": return <Conflict state={state} update={update} onChoice={chooseConflict} />;
+    case "recovery": return <Recovery state={state} update={update} onPickProjectFolder={onPickProjectFolder} onStartMaintenance={startMaintenance} />;
+  }
+}
+
+export function Welcome({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
+  const account = state.codexAccount;
+  const signIn = async (mode: "browser" | "device") => {
+    if (state.codexLoginPending) await cancelCodexLogin();
+    const login = await startCodexLogin(mode);
+    if (login) {
+      update({ codexLogin: login, codexLoginPending: Boolean(login.login_id), transactionError: login.error ?? undefined });
+      if (login.login_id) {
+        void waitForCodexLoginResult(login.login_id).then(({ value: accountStatus, error }) => {
+          update({ codexLoginPending: false, codexAccount: accountStatus ?? state.codexAccount ?? null, transactionError: error ?? accountStatus?.error ?? undefined });
+        });
+      }
+    }
+    else if (isTauriRuntime()) update({ transactionError: "The Codex login flow could not be started." });
+  };
+  const refresh = async () => {
+    const next = await readCodexAccount();
+    if (next) update({ codexAccount: next, transactionError: next.error ?? undefined });
+    else if (isTauriRuntime()) update({ codexAccount: { available: false, authenticated: false, auth_mode: "", usage_limited: false, error: "The official Codex App Server could not be reached." } });
+  };
+  const cancel = async () => {
+    if (await cancelCodexLogin()) update({ codexLoginPending: false, transactionError: "Codex login cancelled. You can retry or use the device-code flow." });
+  };
+  const openLoginUrl = async (url: string) => {
+    const result = await openCodexLoginUrlResult(url);
+    update({ transactionError: result.error });
+  };
+  const signOut = async () => {
+    const result = await logoutCodexResult();
+    const next = await readCodexAccount();
+    update({
+      codexLoginPending: false,
+      codexAccount: next,
+      codexAnalysis: undefined,
+      codexAnalysisRecord: undefined,
+      maintenanceCodexAnalysisRecord: undefined,
+      transactionError: result.error ?? undefined,
+    });
+  };
+  return <div className="stack wide"><div className="choice-grid">
+    <button type="button" className={`choice-card ${state.mode === "new" ? "selected" : ""}`} aria-pressed={state.mode === "new"} onClick={() => update({ mode: "new" })}>
+      <span className="choice-icon">＋</span><span className="choice-radio" aria-hidden="true" /><h2>Create new mod</h2><p>Start from a short description.</p>
+    </button>
+    <button type="button" className={`choice-card ${state.mode === "existing" ? "selected" : ""}`} aria-pressed={state.mode === "existing"} onClick={() => update({ mode: "existing" })}>
+      <span className="choice-icon">⌕</span><span className="choice-radio" aria-hidden="true" /><h2>Import existing mod</h2><p>Scan the project without changing it.</p>
+    </button>
+  </div><section><div className="section-label">Codex access</div><div className="panel recent-list">
+    {!account && <p className="muted" role="status">Checking the official Codex App Server…</p>}
+    {account && account.available && account.authenticated && account.auth_mode === "chatgpt" && <><p><strong>Signed in with ChatGPT</strong>{account.email ? ` · ${account.email}` : ""}</p>{account.usage_limited && <p className="callout review" role="status">Codex usage is currently limited. Planning is paused until usage is available again; recovery remains available.</p>}<button type="button" className="text-button" onClick={() => void refresh()}>Refresh account status</button><button type="button" className="text-button" onClick={() => void signOut()}>Sign out</button></>}
+    {account && (!account.available || !account.authenticated || account.auth_mode !== "chatgpt") && <><p className="muted">Create, Import, Update, and Repair use your ChatGPT Codex access. No API key is requested.</p><div className="button-row"><button type="button" className="button secondary" onClick={() => void signIn("browser")} disabled={state.codexLoginPending}>Sign in with ChatGPT</button><button type="button" className="text-button" onClick={() => void signIn("device")}>Use device code</button>{state.codexLoginPending && <button type="button" className="text-button" onClick={() => void cancel()}>Cancel sign-in</button>}</div>{state.codexLogin?.auth_url && <p><button type="button" className="text-button" onClick={() => void openLoginUrl(state.codexLogin?.auth_url ?? "")}>Open the ChatGPT sign-in page</button></p>}{state.codexLogin?.verification_url && <p className="muted"><button type="button" className="text-button" onClick={() => void openLoginUrl(state.codexLogin?.verification_url ?? "")}>Open the device-code page</button> and enter <strong>{state.codexLogin.user_code}</strong>.</p>}<button type="button" className="text-button" onClick={() => void refresh()}>Check again</button></>}
+    {!account && <p className="muted">The browser preview does not start a local process. The packaged desktop app checks Codex before planning.</p>}
+  </div></section><section><div className="section-label">Recovery</div><div className="panel recent-list"><p className="muted">Rollback, interrupted-transaction recovery, and managed removal stay local and do not require Codex sign-in.</p><button type="button" className="text-button" onClick={() => update({ mode: "existing", recoveryEntry: true, identity: { ...DEFAULT_IDENTITY }, transaction: undefined, transactionError: undefined })}>Recover or remove an installed project</button></div></section></div>;
+}
+
+function Description({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
+  return <div className="stack narrow"><textarea className="brief-input" aria-label="Mod description" value={state.description} onChange={(event) => update({ description: event.target.value, codexAnalysis: undefined, codexAnalysisRecord: undefined })} /><details><summary>Codex input preview</summary><p className="muted">The brief above and these constraints are sent to the signed-in local Codex App Server: Windows or macOS, lowercase project ID, no Workshop identity, no file writes.</p></details><div className="chips"><span>Natural-language brief</span><span>Reviewable suggestions</span><span>Editable structure</span></div></div>;
+}
+
+function CodexReview({ state, onConfirmAnalysis }: { state: WizardState; onConfirmAnalysis: () => Promise<void> }) {
+  const analysis = state.codexAnalysis;
+  if (!analysis) return null;
+  const confirmed = (state.codexAnalysisRecord?.confirmed_fields.length ?? 0) > 0;
+  return <section className="panel" aria-label="Codex proposal review"><div className="list-row"><div><strong>{confirmed ? "Codex proposals confirmed" : "Suggested by Codex"}</strong><span>{analysis.project_summary}</span></div><Status label={confirmed ? "Confirmed" : "Review required"} tone={confirmed ? "pass" : "review"} /></div><details open={!confirmed}><summary>{analysis.proposals.length} semantic proposals · schema {analysis.schema_version}</summary><div className="manifest-details">{analysis.proposals.map((proposal) => <div key={proposal.key}><strong>{proposal.key}</strong><span>{typeof proposal.value === "string" ? proposal.value : JSON.stringify(proposal.value)} · {Math.round(proposal.confidence * 100)}% confidence</span><small>{proposal.reason}</small></div>)}</div></details>{analysis.warnings.length > 0 && <p className="callout review">{analysis.warnings.join(" ")}</p>}{!confirmed && <button type="button" className="button primary" onClick={() => void onConfirmAnalysis()}>Confirm Codex proposals</button>}</section>;
+}
+
+function RecoveryProjectPicker({ state, updateIdentity, onPickProjectFolder }: { state: WizardState; updateIdentity: (patch: Partial<ProjectIdentity>) => void; onPickProjectFolder: () => Promise<FolderSelection | null> }) {
+  const [message, setMessage] = useState<string>();
+  const choose = async () => {
+    setMessage(undefined);
+    const selected = await onPickProjectFolder();
+    if (selected?.path) updateIdentity({ projectRoot: selected.path });
+    else if (selected?.error) setMessage(`The selected folder could not be used: ${selected.error}`);
+    else setMessage("No folder selected.");
+  };
+  return <div className="stack narrow"><section className="panel form-panel"><PanelTitle title="Choose an installed project" /><p className="muted">This local route can inspect interrupted transactions, restore backups, discard staging, or remove managed files without Codex sign-in.</p><Field label="Project folder" value={state.identity.projectRoot} placeholder="Choose an installed project folder" onChange={(value) => updateIdentity({ projectRoot: value })} action="Browse" onAction={() => void choose()} />{message && <p className="muted" role="status">{message}</p>}</section></div>;
+}
+
+function Identity({ state, update, updateIdentity, onPickProjectFolder, onPickLauncherFolder, onConfirmAnalysis }: { state: WizardState; update: (patch: Partial<WizardState>) => void; updateIdentity: (patch: Partial<ProjectIdentity>) => void; onPickProjectFolder: () => Promise<FolderSelection | null>; onPickLauncherFolder: () => Promise<FolderSelection | null>; onConfirmAnalysis: () => Promise<void> }) {
+  const [previews, setPreviews] = useState<GeneratedArtifactPreview[]>([]);
+  const [previewMessage, setPreviewMessage] = useState<string>();
+  const [folderMessage, setFolderMessage] = useState<string>();
+  const showPreviews = async () => {
+    setPreviewMessage("Rendering and validating with the Rust core…");
+    const result = await previewDescriptors(state);
+    setPreviews(result);
+    setPreviewMessage(result.length ? undefined : "Descriptor preview is available in the desktop core after a project path is selected.");
+  };
+  const chooseFolder = async () => {
+    setFolderMessage(undefined);
+    const selected = await onPickProjectFolder();
+    if (selected?.path) {
+      updateIdentity({ projectRoot: selected.path });
+    } else if (selected?.error) {
+      setFolderMessage(`The selected folder could not be used: ${selected.error}`);
+    } else {
+      setFolderMessage("No folder selected. You can enter a path manually.");
+    }
+  };
+  const chooseLauncherFolder = async () => {
+    const selected = await onPickLauncherFolder();
+    if (!selected?.path) return;
+    const separator = selected.path.includes("\\") ? "\\" : "/";
+    updateIdentity({ launcherDescriptorPath: `${selected.path.replace(/[\\/]+$/, "")}${separator}${state.identity.projectId || "project"}.mod` });
+  };
+  if (state.recoveryEntry) {
+    return <RecoveryProjectPicker state={state} updateIdentity={updateIdentity} onPickProjectFolder={onPickProjectFolder} />;
+  }
+  return <div className="stack">{state.codexAnalysis && <CodexReview state={state} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel form-panel"><div className="form-grid">
+    <Field label="Mod name" value={state.identity.displayName} onChange={(value) => updateIdentity({ displayName: value })} />
+    <Field label="Project ID" value={state.identity.projectId} onChange={(value) => updateIdentity({ projectId: value })} mono />
+    <Field label="Author" value={state.identity.author} onChange={(value) => updateIdentity({ author: value })} />
+    <Field label="Version" value={state.identity.version} onChange={(value) => updateIdentity({ version: value })} />
+    <Field label="Supported game version" value={state.identity.supportedGameVersion} onChange={(value) => updateIdentity({ supportedGameVersion: value })} />
+    <Field label="Default branch" value={state.identity.defaultBranch} onChange={(value) => updateIdentity({ defaultBranch: value })} />
+    <Field label="Script prefix" value={state.identity.scriptPrefix ?? ""} onChange={(value) => updateIdentity({ scriptPrefix: value })} mono />
+    <Field label="Primary namespace" value={state.identity.primaryNamespace ?? ""} onChange={(value) => updateIdentity({ primaryNamespace: value })} mono />
+    <Field label="Descriptor tags" value={(state.identity.descriptorTags ?? []).join(", ")} onChange={(value) => updateIdentity({ descriptorTags: value.split(",").map((tag) => tag.trim()).filter(Boolean) })} />
+    <Field label="Initial folders" value={(state.folderProfile ?? []).join(", ")} placeholder="common, events, gfx, localisation/english, docs" onChange={(value) => update({ folderProfile: value.split(",").map((folder) => folder.trim()).filter(Boolean) })} />
+  </div><Field label="Project folder" value={state.identity.projectRoot} placeholder="Choose a project folder" onChange={(value) => updateIdentity({ projectRoot: value })} action="Browse" onAction={() => void chooseFolder()} />{folderMessage && <p className="muted" role="status">{folderMessage}</p>}<Field label="Launcher descriptor path" value={state.identity.launcherDescriptorPath ?? ""} placeholder="Choose <HOI4 user mod directory>/<project_id>.mod" onChange={(value) => updateIdentity({ launcherDescriptorPath: value })} action="Browse" onAction={() => void chooseLauncherFolder()} mono /></section><section className="panel"><PanelTitle title="Generated files" /><div className="list-row"><div><strong>descriptor.mod</strong><span>Inside the project</span></div><button type="button" className="text-button" onClick={() => void showPreviews()}>Preview</button></div><div className="list-row"><div><strong>{state.identity.projectId || "project"}.mod</strong><span>Confirmed external launcher destination</span></div><button type="button" className="text-button" onClick={() => void showPreviews()}>Preview</button></div><div className="list-row"><div><strong>thumbnail.png</strong><span>Replaceable 1x1 placeholder</span></div><button type="button" className="text-button" onClick={() => void showPreviews()}>Preview</button></div>{previewMessage && <p className="muted" role="status">{previewMessage}</p>}{previews.map((artifact) => <details key={artifact.destination} open><summary>{artifact.destination} · SHA-256 verified by core</summary><pre className="report-preview">{artifact.content}</pre></details>)}<details><summary>Advanced fields</summary><p className="muted">The launcher destination must be confirmed. A modified thumbnail is a visible conflict and is never silently replaced.</p></details></section></div></div>;
+}
+
+const SCAN_STAGE_LABELS: Record<string, string> = {
+  discovering_files: "Reading selected project metadata",
+  detecting_descriptors: "Checking descriptors",
+  detecting_thumbnail: "Checking thumbnail",
+  detecting_structure: "Checking project structure",
+  detecting_git: "Checking Git state",
+  detecting_identifiers: "Checking identifiers and namespaces",
+  detecting_localisation: "Checking localisation",
+  detecting_documentation: "Checking documentation",
+  detecting_agentic_files: "Checking Codex files and skills",
+  detecting_paths: "Checking project paths",
+  detecting_components: "Checking managed components",
+  complete: "Read-only scan complete",
+  cancelled: "Read-only scan cancelled",
+};
+
+function formatScanBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function Scan({ state, complete, error, progress, partial, limitsHit, canCancel, cancellationRequested, onCancel }: { state: WizardState; complete: boolean; error?: string; progress: ScanProgress; partial: boolean; limitsHit: string[]; canCancel: boolean; cancellationRequested: boolean; onCancel: () => Promise<void> }) {
+  const currentCheck = cancellationRequested ? "Cancellation requested" : error ? "Scan needs attention" : complete && partial ? "Read-only scan reached a safety limit" : SCAN_STAGE_LABELS[progress.stage] ?? "Reading selected project metadata";
+  const statusText = complete ? partial ? "Partial scan complete" : "100% complete" : cancellationRequested ? "Stopping scan" : "Scan in progress";
+  return (
+    <div className="scan-wrap"><section className="panel scan-panel">
+      <div className="scan-top"><div aria-live="polite"><span className="muted">Current check</span><strong>{currentCheck}</strong></div><strong className="scan-percent">{complete ? "100%" : "..."}</strong></div>
+      <Progress value={complete ? 100 : undefined} valueText={statusText} label="Project scan progress" />
+      {error && <p className="callout block" role="alert">{error}</p>}
+      {partial && !error && <p className="callout review" role="status">Some files were not inspected because the scanner reached a safety limit. Review the partial result before continuing.</p>}
+      {partial && limitsHit.length > 0 && <details><summary>Show scan limits</summary><p className="muted">{limitsHit.join(", ")}</p></details>}
+      <div className="scan-dots" aria-hidden="true"><span className={complete ? "done" : "active"} /><span className={complete ? "done" : "active"} /><span className={complete ? "done" : "active"} /><span className={complete ? "done" : "active"} /><span className={complete ? "done" : "active"} /><span className={complete ? "done" : "active"} /></div>
+      <div className="list-row no-border"><div><strong>{complete ? partial ? "Partial scan evidence saved for review" : "Scan evidence saved for review" : "Detected so far"}</strong><span>Current path: <code className="scan-path">{progress.currentPath || "."}</code></span><span>{progress.filesScanned.toLocaleString()} files, {progress.directoriesScanned.toLocaleString()} directories, {formatScanBytes(progress.bytesRead)} read</span></div><span className="muted">{state.mode === "existing" ? "bounded scan" : "new project"}</span></div>
+      {canCancel && !complete && <button type="button" className="text-button scan-cancel" onClick={() => void onCancel()} disabled={cancellationRequested}>{cancellationRequested ? "Cancelling scan..." : "Cancel scan"}</button>}
+    </section></div>
+  );
+  /*
+  return <div className="scan-wrap"><section className="panel scan-panel"><div className="scan-top"><div><span className="muted">Current check</span><strong>{currentCheck}</strong></div><strong className="scan-percent">{complete ? "100%" : "…"}</strong></div><Progress value={complete ? 100 : undefined} valueText={statusText} label="Project scan progress" />{error && <p className="callout block" role="alert">{error}</p>}<div className="scan-dots" aria-hidden="true"><span className={complete ? "done" : "active"} /><span className={complete ? "done" : "active"} /><span className={complete ? "done" : "active"} /><span className={complete ? "done" : "active"} /><span className={complete ? "done" : "active"} /><span className={complete ? "done" : "active"} /></div><div className="list-row no-border"><div><strong>{complete ? "Scan evidence saved for review" : "Detected so far"}</strong><span>Current path: <code className="scan-path">{progress.currentPath || "."}</code></span><span>{progress.filesScanned.toLocaleString()} files · {progress.directoriesScanned.toLocaleString()} directories · {formatScanBytes(progress.bytesRead)} read</span></div><span className="muted">{state.mode === "existing" ? "bounded scan" : "new project"}</span></div>{canCancel && !complete && <button type="button" className="text-button scan-cancel" onClick={() => void onCancel()} disabled={cancellationRequested}>{cancellationRequested ? "Cancelling scan…" : "Cancel scan"}</button>}</section></div>;
+*/
+}
+
+/*
+function ScanLegacy({ state, complete, error }: { state: WizardState; complete: boolean; error?: string }) {
+  const progress = complete ? 100 : 0;
+  const currentCheck = error ? "Scan needs a valid project folder" : complete ? "Read-only scan complete" : "Reading selected project metadata";
+  return <div className="scan-wrap"><section className="panel scan-panel"><div className="scan-top"><div><span className="muted">Current check</span><strong>{currentCheck}</strong></div><strong className="scan-percent">{complete ? "100%" : "…"}</strong></div><Progress value={progress} label="Project scan progress" />{error && <p className="callout block" role="alert">{error}</p>}<div className="scan-dots" aria-hidden="true"><span className={complete ? "done" : "active"} /><span className={complete ? "done" : "active"} /><span className={complete ? "done" : "active"} /><span className={complete ? "done" : "active"} /><span className={complete ? "done" : "active"} /><span className={complete ? "done" : "active"} /></div><div className="list-row no-border"><div><strong>{complete ? "Scan evidence saved for review" : "Detected so far"}</strong><span>Descriptors, Git, namespaces, skills, Codex configuration</span></div><span className="muted">{state.mode === "existing" ? "bounded scan" : "new project"}</span></div></section></div>;
+}
+*/
+
+function Findings({ state, findings, selected, setSelected, setFindings, onConfirmAnalysis }: { state: WizardState; findings: ScanFinding[]; selected: string; setSelected: (id: string) => void; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onConfirmAnalysis: () => Promise<void> }) {
+  const active = findings.find((finding) => finding.id === selected) ?? findings[0];
+  return <div className="stack"><details><summary>Codex input preview</summary><div className="manifest-details">{findings.map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.value}</small></div>)}</div></details>{state.codexAnalysis && <CodexReview state={state} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel"><PanelTitle title="Project facts" />{findings.length ? <div>{findings.map((finding) => <button type="button" key={finding.id} className={`finding-row ${finding.status === "needs_review" ? "review" : ""}`} aria-pressed={finding.id === active?.id} onClick={() => setSelected(finding.id)}><span className={`state-icon ${finding.status === "needs_review" ? "review" : "pass"}`}>{finding.status === "needs_review" ? "!" : "✓"}</span><span><strong>{finding.label}</strong><small>{finding.value}</small></span><span className="text-button">{finding.status === "needs_review" ? "Review" : "Edit"}</span></button>)}</div> : <p className="muted">No scan findings are available in this runtime. The desktop scanner must return evidence before values can be accepted.</p>}</section><section className="panel selected-finding"><PanelTitle title="Selected finding" />{active ? <div className="selected-body"><label className="field-label" htmlFor="finding-value">{active.label}</label><input id="finding-value" className="text-input focused" value={active.value} onChange={(event) => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, value: event.target.value, status: "edited" } : finding))} /><span className="confidence">{Math.round(active.confidence * 100)}% confidence</span><div className="evidence-block"><span>Evidence</span><p>{active.evidence}</p></div><details><summary>Show matching files</summary><p className="muted">Full evidence and hashes stay behind progressive disclosure.</p></details></div> : <p className="muted">Select a finding after the bounded scan returns.</p>}</section></div></div>;
+}
+
+function formatManifestSize(component: ManifestComponentPreview): string {
+  const bytes = component.expected_files.reduce((total, file) => total + (file.size ?? 0), 0);
+  const size = bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : "manifest";
+  return `${component.expected_files.length} files · ${size}`;
+}
+
+function manifestRow(component: ManifestComponentPreview, selected: boolean): ComponentRow {
+  const platform = component.platforms.length === 1 && (component.platforms[0] === "windows" || component.platforms[0] === "macos") ? component.platforms[0] : "all";
+  return {
+    id: component.id,
+    title: component.display_name,
+    detail: component.description ?? `${component.category} component from the resolved manifest`,
+    size: formatManifestSize(component),
+    selected,
+    required: !component.optional,
+    platform,
+  };
+}
+
+function Components({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
+  const [manifest, setManifest] = useState<SourceManifestPreview | null>(state.manifestPreview ?? null);
+  const [manifestMessage, setManifestMessage] = useState(state.manifestPreview ? "Manifest loaded; source revision is recorded below." : "Resolving the exact source manifest…");
+
+  useEffect(() => {
+    let active = true;
+    setManifest(null);
+    setManifestMessage("Resolving the exact source manifest…");
+    void previewSourceManifest(state.sourceMode, state.pinnedRef).then((result) => {
+      if (!active) return;
+      if (!result) {
+        setManifest(null);
+        setManifestMessage("The desktop core could not resolve the manifest. No component claims are shown.");
+        return;
+      }
+      const requiredIds = result.components.filter((component) => !component.optional).map((component) => component.id);
+      const availableIds = new Set(result.components.map((component) => component.id));
+      const selectedComponents = Array.from(new Set([
+        ...state.selectedComponents.filter((id) => availableIds.has(id)),
+        ...requiredIds,
+      ]));
+      const rows = result.components.map((component) => manifestRow(component, selectedComponents.includes(component.id)));
+      setManifest(result);
+      setManifestMessage(`Exact source ${result.source.resolved_revision.slice(0, 12)} · ${result.components.length} manifest components`);
+      update({ manifestPreview: result, components: rows, selectedComponents, sourceStatus: `Exact source ${result.source.resolved_revision.slice(0, 12)} selected` });
+    });
+    return () => { active = false; };
+  }, [state.sourceMode, state.pinnedRef]);
+
+  const rows = manifest?.components.map((component) => manifestRow(component, state.selectedComponents.includes(component.id))) ?? [];
+  const toggle = (id: string) => {
+    const component = rows.find((row) => row.id === id);
+    if (!component || component.required) return;
+    const selected = component.selected ? state.selectedComponents.filter((value) => value !== id) : [...state.selectedComponents, id];
+    update({ selectedComponents: selected, components: rows.map((row) => row.id === id ? { ...row, selected: !row.selected } : row) });
+  };
+  return <div className="stack narrow"><section className="panel">{manifest ? rows.map((component) => <button type="button" key={component.id} className="component-row" onClick={() => toggle(component.id)} aria-pressed={component.selected} aria-disabled={component.required || undefined}><span className={`checkbox ${component.selected ? "checked" : ""}`}>{component.selected ? "✓" : ""}</span><span><strong>{component.title}</strong><small>{component.detail}</small></span><span className="size">{component.size}</span></button>) : null}<p className="muted" role="status">{manifestMessage}</p><details><summary>Dependencies and file list</summary><p className="muted">Dependencies, platform support, destinations, and declared files come from the exact manifest revision. Full verified file hashes appear in the dry run.</p></details><details><summary>Source revision</summary><label className="field"><span className="field-label">Install source</span><select className="text-input" value={state.sourceMode} onChange={(event) => update({ sourceMode: event.target.value as WizardState["sourceMode"], manifestPreview: undefined, components: [] })}><option value="latest">Latest default branch (resolved to an exact commit)</option><option value="pinned_commit">Pinned commit</option><option value="pinned_release">Pinned release</option></select></label>{state.sourceMode !== "latest" && <Field label={state.sourceMode === "pinned_commit" ? "Commit SHA" : "Release tag"} value={state.pinnedRef} onChange={(value) => update({ pinnedRef: value, manifestPreview: undefined })} mono placeholder={state.sourceMode === "pinned_commit" ? "40-character commit SHA" : "v1.0.0"} />}<p className="muted">The manifest and every selected file use one immutable resolved revision.</p></details></section><div className="disclosure-note">Download size is calculated from the verified manifest during dry run.</div></div>;
+}
+
+function Workflows({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
+  return <div className="stack narrow"><section className="panel"><ToggleRow label="Do you want to set up the 3D models workflow?" detail="Manifest-declared workflow files and checks" checked={state.meshSelected} onChange={(checked) => update({ meshSelected: checked })} /><ToggleRow label="Do you want to set up LoRAs and ComfyUI for portrait generation?" detail="Interest only in this version" checked={state.loraInterest} onChange={(checked) => update({ loraInterest: checked })} /></section></div>;
+}
+
+function WorkflowDeclaration({ state }: { state: WizardState }) {
+  const component = state.manifestPreview?.components.find((candidate) => candidate.id === "workflow.3d" && state.selectedComponents.includes(candidate.id));
+  if (!component) {
+    return <details><summary>Verified workflow declarations</summary><p className="muted">Tool names, commands, dependencies, and health checks appear only after the exact manifest revision is resolved. No macOS substitute is invented.</p></details>;
+  }
+  const tools = component.required_tools.map((tool) => tool.id).join(", ") || "None declared";
+  const health = component.required_tools.flatMap((tool) => tool.health_checks).join(", ") || "None declared";
+  const validation = component.validation.map((rule) => `${rule.id} · ${rule.severity}`).join(", ") || "None declared";
+  return <details><summary>Verified workflow declarations</summary><div className="manifest-details"><div><strong>Source</strong><span>{component.source.path}</span></div><div><strong>Destination</strong><span>{component.destination.path}</span></div><div><strong>Tools</strong><span>{tools}</span></div><div><strong>Health checks</strong><span>{health}</span></div><div><strong>Validation</strong><span>{validation}</span></div></div></details>;
+}
+
+function Mesh({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
+  const save = async () => {
+    const value = state.meshKeyDraft;
+    const result = await storeMeshyCredential(value);
+    update({ meshKeyDraft: "", meshKeyStatus: result ? "present" : "missing", meshCredentialReference: result ?? undefined });
+  };
+  const credentialLabel = state.meshKeyStatus === "present" ? "Stored; health check pending" : state.meshKeyStatus === "verified" ? "Verified" : "Not stored";
+  const remove = async () => {
+    if (!state.meshCredentialReference) return;
+    if (await removeMeshyCredential(state.meshCredentialReference)) {
+      update({ meshKeyStatus: "missing", meshCredentialReference: undefined, transactionError: undefined });
+    } else {
+      update({ transactionError: "The operating-system credential was not removed; no project files were changed." });
+    }
+  };
+  return <div className="stack narrow"><section className="panel form-panel"><label className="field-label" htmlFor="meshy-key">Meshy API key</label><p className="muted">Meshy.ai may charge for provider usage. Review the provider’s current pricing and account limits before running the source-declared workflow.</p><input id="meshy-key" className="text-input focused" type="password" value={state.meshKeyDraft} onChange={(event) => update({ meshKeyDraft: event.target.value })} autoComplete="off" /><div className="vault-line"><span>Store in the operating-system credential vault</span><span className="toggle on" aria-hidden="true" /></div><div className="button-row"><button type="button" className="button primary" onClick={save}>Store in vault</button><button type="button" className="button secondary" onClick={() => update({ meshKeyDraft: "", meshKeyStatus: "missing" })}>Configure later</button>{state.meshCredentialReference && <button type="button" className="text-button" onClick={() => void remove()}>Delete stored key</button>}</div></section><section className="panel"><div className="list-row"><div><strong>MESHY_API_KEY</strong><span>Process-only environment variable</span></div><Status label={credentialLabel} tone={state.meshKeyStatus === "verified" ? "pass" : "review"} /></div><WorkflowDeclaration state={state} /></section></div>;
+}
+
+function Lora({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
+  return <div className="center-column"><section className="panel lora-panel"><span className="choice-icon">◉</span><h2>Record interest</h2><p>No ComfyUI, model, LoRA, Python, or GPU changes will be made.</p><label className="check-row"><input type="checkbox" checked={state.loraInterest} onChange={(event) => update({ loraInterest: event.target.checked })} /><span>Notify this project when setup becomes available</span><Status label="Planned" tone="info" /></label></section></div>;
+}
+
+function Mcp({ state }: { state: WizardState }) {
+  const component = state.manifestPreview?.components.find((candidate) => candidate.category === "mcp" && state.selectedComponents.includes(candidate.id));
+  const toolText = component?.required_tools.map((tool) => `${tool.id}${tool.version ? ` ${tool.version}` : ""}`).join(", ") || "None declared";
+  const environmentText = component?.environment.map((environment) => `${environment.name}${environment.secret ? " · secret" : ""}`).join(", ") || "None declared";
+  const capabilityText = component?.capabilities.join(", ") || "None declared";
+  const healthText = component?.required_tools.flatMap((tool) => tool.health_checks).join(", ") || "No health checks declared";
+  return <div className="two-column"><section className="panel"><PanelTitle title="Servers" />{component ? <div className="server-row"><span className="server-icon">{component.display_name.slice(0, 1).toUpperCase()}</span><span><strong>{component.display_name}</strong><small>{component.description ?? "Manifest-declared MCP component"}</small></span><Status label={`Declared for ${component.platforms.join(" / ")}`} tone="info" /></div> : <p className="muted">MCP details remain unavailable until the verified manifest is resolved, or no manifest-declared MCP server is selected.</p>}{component && <details><summary>Requirements and health</summary><div className="manifest-details"><div><strong>Tools</strong><span>{toolText}</span></div><div><strong>Environment names</strong><span>{environmentText}</span></div><div><strong>Capabilities</strong><span>{capabilityText}</span></div><div><strong>Health checks</strong><span>{healthText}</span></div><div><strong>Validation</strong><span>{component.validation.map((rule) => `${rule.id} · ${rule.severity}`).join(", ") || "None declared"}</span></div></div></details>}</section><section className="panel"><PanelTitle title="Credentials" /><div className="list-row"><div><strong>MESHY_API_KEY</strong><span>Operating-system credential vault; injected only for approved processes</span></div><Status label={state.meshSelected && state.meshKeyStatus === "present" ? "Stored" : state.meshSelected ? "Not stored" : "Not selected"} tone={state.meshSelected && state.meshKeyStatus === "present" ? "review" : "muted"} /></div><div className="list-row"><div><strong>Project secrets</strong><span>Values are never displayed or written by the UI.</span></div><Status label="Core controlled" tone="info" /></div><details><summary>Manage credentials</summary><p className="muted">Only opaque references enter project state and locks.</p></details></section></div>;
+}
+
+function Git({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
+  return <div className="stack narrow"><section className="panel">{(["initialize", "preserve", "skip"] as const).map((mode) => <label key={mode} className="radio-row"><input type="radio" name="git-mode" checked={state.gitMode === mode} onChange={() => update({ gitMode: mode })} /><span><strong>{mode === "initialize" ? "Initialize a Git repository" : mode === "preserve" ? "Preserve the existing repository" : "Skip Git setup"}</strong><small>{mode === "initialize" ? "Create .git, merge .gitignore, and prepare an initial commit" : mode === "preserve" ? "Keep remotes, history, and branch state" : "Continue without repository changes"}</small></span>{mode === "initialize" && <Status label="Recommended" tone="info" />}</label>)}</section><section className="panel form-panel"><div className="form-grid"><Field label="Default branch" value={state.gitBranch} onChange={(value) => update({ gitBranch: value })} /><label className="field"><span className="field-label">Initial commit</span><select className="text-input" value={state.initialCommit ? "after-validation" : "none"} onChange={(event) => update({ initialCommit: event.target.value === "after-validation" })}><option value="after-validation">Create after validation</option><option value="none">Do not create</option></select></label></div><details><summary>Remote and advanced options</summary><div className="form-grid"><Field label="Remote name" value={state.gitRemoteName} onChange={(value) => update({ gitRemoteName: value })} placeholder="origin" /><Field label="Remote URL" value={state.gitRemoteUrl} onChange={(value) => update({ gitRemoteUrl: value })} placeholder="https://github.com/owner/repo.git" mono /></div><p className="muted">A remote is configured locally only. Online repository creation and push are separate actions and remain off.</p></details></section></div>;
+}
+
+function DryRun({ state }: { state: WizardState }) {
+  const plan = state.plan;
+  const counts = plan?.operations.reduce((summary, operation) => {
+    if (operation.action === "create" || operation.action === "generate") summary.create += 1;
+    else if (operation.action === "replace" || operation.action === "merge" || operation.action === "rename") summary.update += 1;
+    else if (operation.action === "skip") summary.skip += 1;
+    return summary;
+  }, { create: 0, update: 0, skip: 0 }) ?? { create: 0, update: 0, skip: 0 };
+  const unresolved = plan?.conflicts.filter((conflict) => !conflict.selected).length;
+  const planStatus = plan ? `${plan.operations.length} operations` : "Plan unavailable";
+  return <div className="stack"><div className="metric-grid"><Metric label="Create" value={plan ? String(counts.create) : "—"} tone={plan ? "pass" : "info"} /><Metric label="Update" value={plan ? String(counts.update) : "—"} tone={plan ? "info" : "muted"} /><Metric label="Skip" value={plan ? String(counts.skip) : "—"} tone={plan ? "review" : "muted"} /><Metric label="Conflicts" value={plan ? String(unresolved) : "—"} tone={plan ? unresolved ? "block" : "pass" : "info"} /></div><div className="two-column"><section className="panel"><PanelTitle title="Plan summary" /><ChangeRow title="Install workflow files" detail=".agents/ · .codex/ · paradox_wiki/" value={planStatus} /><ChangeRow title="Merge project instructions" detail="AGENTS.md" status={plan ? "Review if modified" : "Pending"} /><ChangeRow title="Configure MCP" detail=".codex/config.toml" value={plan ? "manifest-declared" : "Pending"} /><ChangeRow title="Initialize Git" detail={`${state.gitBranch} · local only`} value={plan ? "No push" : "Pending"} />{plan && <details><summary>Open full file plan</summary><p className="muted">Every operation includes source revision, SHA-256, local precondition, ownership, conflict choice, and rollback instruction.</p></details>}{plan?.external_actions?.length ? <details><summary>External actions requiring review</summary><div className="manifest-details">{plan.external_actions.map((action) => <div key={action.id}><strong>{action.component_id}</strong><span>{action.display_command ?? action.command_source} · {action.risk} risk · approval required</span><small>Executable: {action.executable ?? "Not declared"}; args: {action.arguments?.join(" ") || "None declared"}; cwd: {action.working_directory ?? "Not declared"}</small><small>Environment names: {action.environment_names?.join(", ") || "None declared"}; network: {action.network_access ?? "Not declared"}; expected writes: {action.expected_writes?.join(", ") || "Not declared"}</small><small>Privilege: {action.privilege ?? "Not declared"}; rollback boundary: {action.rollback_boundary ?? "Not declared"}</small></div>)}</div></details> : null}{!plan && <p className="muted">The desktop core must resolve the source and return a typed plan before installation can be approved.</p>}</section><section className="panel"><PanelTitle title="Preflight" /><CheckRow label="Disk space" status={plan ? "Checked by core" : "Pending"} tone={plan ? "pass" : "info"} /><CheckRow label="Backup location" status={plan ? "Ready" : "Pending"} tone={plan ? "pass" : "info"} /><CheckRow label="External tools" status={plan ? "Review declared actions" : "Pending"} tone="review" /><CheckRow label="Unresolved conflicts" status={plan ? String(unresolved) : "Pending"} tone={plan ? unresolved ? "block" : "pass" : "info"} /></section></div></div>;
+}
+
+function Install({ state }: { state: WizardState }) {
+  const stages = state.transaction?.stages ?? ["preflight", "repository source resolution", "selective download", "checksum verification", "dry-run review", "backup", "staging", "validation", "apply", "post-install checks", "readiness report", "rollback record"].map((id) => ({ id, status: "pending" }));
+  const completed = state.transaction?.stages.filter((stage) => stage.status === "completed").length ?? 0;
+  const progress = state.transaction ? Math.round((completed / stages.length) * 100) : state.installProgress;
+  return <div className="center-column"><section className="panel install-panel"><div className="install-progress"><Progress value={progress} label="Installation progress" /><Status label={state.transaction ? `${progress}%` : "Awaiting transaction"} tone={state.transaction ? "info" : "muted"} /></div>{stages.map((stage) => { const done = stage.status === "completed"; const active = !done && state.transaction?.last_checkpoint === stage.id; return <div key={stage.id} className={`timeline-row ${done ? "done" : active ? "active" : ""}`}><span className="timeline-icon">{done ? "✓" : active ? "●" : ""}</span><strong>{stage.id}</strong><span>{done ? "Done" : active ? "Checkpoint" : "Pending"}</span></div>; })}<details><summary>Show transaction log</summary><p className="muted">The durable journal is kept collapsed during normal progress. Last checkpoint: {state.transaction?.last_checkpoint ?? "not started"}.</p></details></section></div>;
+}
+
+export function Ready({ state, update, onMaintenance }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onMaintenance: (screen: "update" | "conflict" | "recovery") => void }) {
+  const [mcpCheck, setMcpCheck] = useState<WorkflowHealthResult>();
+  const [openMessage, setOpenMessage] = useState<string>();
+  const report = state.readiness;
+  const open = report?.openInCodex === true;
+  const readinessPending = report === null;
+  const project = readinessRow(report, ["descriptor.project", "structure.core"]);
+  const codex = readinessRow(report, ["codex.agents", "skills.core", "subagents.core", "codex.config"]);
+  const mcpWiki = readinessRow(report, ["mcp.hoi4", "wiki.coverage"]);
+  const gitHashes = readinessRow(report, ["git.project", "hashes.managed", "conflicts.resolved", "dependencies.core"]);
+  const mesh = readinessRow(report, ["workflow.3d"]);
+  const lora = readinessRow(report, ["workflow.lora_comfyui_interest"]);
+  const run3dCheck = async () => {
+    const result = await run3DHealthCheck(state.identity.projectRoot);
+    if (!result) {
+      update({ transactionError: "The verified 3D bootstrap could not be started. The workflow remains incomplete." });
+      return;
+    }
+    if (result.status === "ready") {
+      update({ meshKeyStatus: "verified", readiness: null, transactionError: undefined });
+    } else {
+      update({ readiness: null, transactionError: `The source-declared 3D check did not pass (exit ${result.exit_code ?? "unknown"}). The workflow remains incomplete.` });
+    }
+  };
+  const runMcpCheck = async () => {
+    const result = await runMcpHealthCheck(state.identity.projectRoot);
+    if (!result) {
+      update({ transactionError: "The source-declared MCP health check could not be started." });
+      return;
+    }
+    setMcpCheck(result);
+    update({ readiness: null, transactionError: result.status === "ready" ? undefined : "The source-declared MCP initialize check did not pass." });
+  };
+  const handleOpen = async () => {
+    setOpenMessage(undefined);
+    const result = await openInCodex(state.identity.projectRoot);
+    if (!result) {
+      update({ transactionError: "Codex could not be opened. Check the Codex installation or open the project folder manually." });
+      return;
+    }
+    update({ transactionError: undefined });
+    setOpenMessage(result.message);
+  };
+  return <div className="stack"><section className={`ready-banner ${open ? "pass" : "block"}`} aria-live="polite"><span className="ready-icon">{readinessPending ? "…" : open ? "✓" : "!"}</span><div><h2>{readinessPending ? "Checking readiness" : `${state.identity.displayName || "Project"} ${open ? "is ready" : "needs review"}`}</h2><p>{readinessPending ? "Core checks are still being evaluated." : open ? "Optional workflow status does not block Codex." : "Resolve blocking checks before opening in Codex."}</p></div><div className="ready-action"><button type="button" className="button primary" disabled={!open} aria-describedby="open-in-codex-help" onClick={() => void handleOpen()}>Open in Codex ↗</button>{openMessage && <p className="ready-action-message" role="status">{openMessage}</p>}</div><span id="open-in-codex-help" className="visually-hidden">{readinessPending ? "Readiness checks are still running." : open ? "Opens the verified project in Codex, or shows a manual folder-opening instruction if no verified opener is installed." : "Resolve blocking checks before opening in Codex."}</span></section><div className="two-column"><section className="panel"><CheckRow label="Project and descriptors" status={project.status} tone={project.tone} /><CheckRow label="Codex instructions and skills" status={codex.status} tone={codex.tone} /> <CheckRow label="MCP and offline wiki" status={mcpWiki.status} tone={mcpWiki.tone} />{state.selectedComponents.includes("mcp.hoi4_agent_tools") && <><button type="button" className="button secondary" onClick={() => void runMcpCheck()}>Run source-declared MCP check</button>{mcpCheck && <p className="muted" role="status">{mcpCheck.status === "ready" ? `MCP initialize passed${mcpCheck.stdout ? ` · ${mcpCheck.stdout}` : ""}` : `MCP check: ${mcpCheck.status}`}</p>}</>}<CheckRow label="Git and managed hashes" status={gitHashes.status} tone={gitHashes.tone} /></section><section className="panel"><CheckRow label="3D model workflow" status={mesh.status} tone={mesh.tone} /><CheckRow label="LoRA and ComfyUI" status={lora.status} tone={lora.tone} />{state.meshSelected && <button type="button" className="button secondary" onClick={() => void run3dCheck()}>Run source-declared 3D check</button>}<details><summary>Open readiness report</summary><pre className="report-preview">{report ? JSON.stringify(report.checks, null, 2) : "Report will be stored after post-install verification."}</pre></details></section></div><div className="button-row end"><button type="button" className="text-button" onClick={() => onMaintenance("update")}>Manage installation</button><button type="button" className="text-button" onClick={() => update({ readiness: null })}>Refresh checks</button></div></div>;
+}
+
+function readinessRow(report: ReadinessReport | null, ids: string[]): { status: string; tone: StatusTone } {
+  if (!report) return { status: "Checking", tone: "info" };
+  const checks = report.checks.filter((check) => ids.includes(check.id));
+  if (!checks.length) return { status: "Not reported", tone: "review" };
+  if (checks.some((check) => check.status === "block" && check.blocking)) return { status: "Blocked", tone: "block" };
+  if (checks.some((check) => ["block", "warn", "unsupported_platform"].includes(check.status))) return { status: "Review", tone: "review" };
+  if (checks.some((check) => check.status === "planned_unavailable")) return { status: "Planned", tone: "review" };
+  if (checks.every((check) => check.status === "not_selected")) return { status: "Not selected", tone: "muted" };
+  return { status: "Pass", tone: "pass" };
+}
+
+function Update({ state, findings, setFindings, onMaintenance, onStartMaintenance, onReanalyze }: { state: WizardState; findings: ScanFinding[]; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void; onReanalyze: () => Promise<boolean> }) {
+  const plan = state.plan;
+  const optional3d = state.meshSelected ? state.meshKeyStatus === "present" ? "Stored; health check pending" : "Selected; key not stored" : "Not selected";
+  const reanalysisLabel = state.maintenanceEvidenceReady ? state.maintenanceCodexAnalysisRecord ? "Run again" : "Run Codex reanalysis" : "Prepare read-only evidence";
+  return <div className="stack"><div className="action-grid"><ActionTile title="Check for updates" detail="Compare with the latest or a pinned revision." onClick={() => onStartMaintenance("update")} /><ActionTile title="Repair installation" detail="Restore missing or corrupted managed files." onClick={() => onStartMaintenance("repair")} /><ActionTile title="Roll back" detail="Return to a recorded installation state." onClick={() => onMaintenance("recovery")} /><ActionTile title="Remove components" detail="Review managed files before removal." onClick={() => onStartMaintenance("remove")} /></div><section className="panel"><PanelTitle title="Codex reanalysis" /><p className="muted">Updates use a fresh semantic review when project instructions, component choices, or conventions may have changed. The scan is read-only and must be reviewed before transmission.</p><button type="button" className="button secondary" onClick={() => void onReanalyze()}>{reanalysisLabel}</button>{state.maintenanceEvidenceReady && <details open><summary>{findings.filter((finding) => finding.status !== "rejected").length} approved scan findings</summary><div className="manifest-details">{findings.map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small><button type="button" className="text-button" aria-pressed={finding.status !== "rejected"} onClick={() => setFindings((current) => current.map((candidate) => candidate.id === finding.id ? { ...candidate, status: candidate.status === "rejected" ? "accepted" : "rejected" } : candidate))}>{finding.status === "rejected" ? "Include" : "Exclude"}</button></div>)}</div></details>}{state.maintenanceCodexAnalysisRecord && <p className="muted" role="status">Reanalysis returned. Confirm the Codex proposals above before checking for updates.</p>}</section><section className="panel"><PanelTitle title="Installed state" /><CheckRow label="Core workflow" status={plan ? `${plan.operations.length} planned operations` : "No plan loaded"} tone={plan ? "info" : "muted"} /><CheckRow label="Optional 3D workflow" status={optional3d} tone={state.meshSelected ? "review" : "muted"} /><CheckRow label="Modified managed files" status={plan ? String(plan.conflicts.length) : "Not evaluated"} tone={plan?.conflicts.length ? "review" : "muted"} />{plan && <details open><summary>Reviewed maintenance plan</summary><p className="muted">Source {plan.source.resolved_revision}; modified files remain explicit conflicts until resolved.</p></details>}</section></div>;
+}
+
+function Conflict({ state, update, onChoice }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onChoice: (choice: ConflictChoice) => void }) {
+  const conflict = state.plan?.conflicts.find((candidate) => !candidate.selected) ?? state.plan?.conflicts[0];
+  const choices = (conflict?.options ?? ["keep", "replace", "merge", "rename", "skip"]).filter((choice): choice is ConflictChoice => ["keep", "replace", "merge", "rename", "skip"].includes(choice));
+  const operation = conflict && state.plan?.operations.find((candidate) => candidate.destination === conflict.path);
+  const [preview, setPreview] = useState<ConflictPreview>();
+  const [previewMessage, setPreviewMessage] = useState<string>();
+  const planId = state.plan?.plan_id;
+  const conflictPath = conflict?.path;
+  useEffect(() => {
+    let active = true;
+    setPreview(undefined);
+    if (!planId || !conflictPath) {
+      setPreviewMessage(undefined);
+      return () => { active = false; };
+    }
+    setPreviewMessage("Loading the core-owned base, local, and incoming preview…");
+    void previewInstallationConflict(planId, conflictPath).then((result) => {
+      if (!active) return;
+      if (!result) {
+        setPreviewMessage("The core preview is unavailable; verified hashes remain visible.");
+        return;
+      }
+      setPreview(result);
+      setPreviewMessage(result.truncated && result.redacted
+        ? "Preview truncated for display and secret-shaped values redacted; hashes cover each complete file."
+        : result.truncated
+          ? "Preview truncated for display; hashes cover each complete file."
+          : result.redacted
+            ? "Secret-shaped values are redacted; hashes cover each complete file."
+            : undefined);
+    });
+    return () => { active = false; };
+  }, [planId, conflictPath]);
+  const content = (value: string | null | undefined, fallback: string) => value ?? fallback;
+  const hashText = (label: string, value?: string | null) => `${label}: ${value ?? "not recorded"}`;
+  const baseText = content(preview?.base, preview ? "No verified base content is available for this operation." : "Loading core preview…");
+  const localText = content(preview?.local, preview ? "No local content is present." : "Loading core preview…");
+  const incomingText = content(preview?.incoming, preview ? "No incoming text preview is available for this operation." : "Loading core preview…");
+  const baseHash = preview?.base_sha256 ?? operation?.base_sha256;
+  const localHash = preview?.local_sha256 ?? operation?.local_sha256;
+  const incomingHash = preview?.incoming_sha256 ?? operation?.result_sha256 ?? operation?.source_sha256;
+  return <div className="stack"><div className="diff-grid"><DiffPane title="Base" badge={preview?.base ? "Recorded base" : "Reference"} text={`${conflict?.path ?? "No conflict selected"}\n\n${baseText}\n${hashText("Base SHA-256", baseHash)}`} tone="neutral" /><DiffPane title="Local" badge={operation?.local_state === "modified" ? "Modified" : "Absent"} text={`${conflict?.path ?? "No conflict selected"}\n\n${localText}\n${hashText("Local SHA-256", localHash)}`} tone="minus" /><DiffPane title="Incoming" badge={preview?.kind ? `Core ${preview.kind}` : "Exact source revision"} text={`${conflict?.path ?? "No conflict selected"}\n\n${incomingText}\n${hashText("Incoming SHA-256", incomingHash)}`} tone="plus" /></div>{previewMessage && <p className="muted" role="status">{previewMessage}</p>}<section className="panel conflict-actions"><p className="muted">{conflict ? `Choose a bounded action for ${conflict.path}. The core validates any merge before apply.` : "All conflicts are resolved."}</p><div className="button-row">{choices.map((choice) => <button type="button" key={choice} className={`button ${state.conflictChoice === choice ? "primary" : "secondary"}`} aria-pressed={state.conflictChoice === choice} onClick={() => { update({ conflictChoice: choice }); void onChoice(choice); }}>{choice === "keep" ? "Keep local" : choice === "replace" ? "Use incoming" : choice === "merge" ? "Merge" : choice === "rename" ? "Rename incoming" : "Skip"}</button>)}</div></section></div>;
+}
+
+function Recovery({ state, update, onPickProjectFolder, onStartMaintenance }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onPickProjectFolder: () => Promise<FolderSelection | null>; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => Promise<void> | void }) {
+  const transaction = state.transaction;
+  if (!transaction) {
+    const choose = async () => {
+      const selected = await onPickProjectFolder();
+      if (selected?.path) update({ identity: { ...state.identity, projectRoot: selected.path }, transactionError: undefined });
+      else if (selected?.error) update({ transactionError: `The selected folder could not be used: ${selected.error}` });
+    };
+    return <div className="stack narrow"><section className="panel"><PanelTitle title="Local recovery" /><p className="muted">No interrupted transaction is loaded yet. Choose an installed project to inspect its journal, or remove its managed components without signing in to Codex.</p><div className="button-row"><button type="button" className="button secondary" onClick={() => void choose()}>Choose another project</button><button type="button" className="button secondary" disabled={!state.identity.projectRoot.trim()} onClick={() => void onStartMaintenance("remove")}>Remove managed components</button></div></section></div>;
+  }
+  const options: Array<{ id: RecoveryChoice; title: string; detail: string; allowed: boolean }> = [
+    { id: "resume", title: "Resume", detail: "Revalidate staging and replay the pre-apply transaction.", allowed: transaction.recovery.resume_allowed },
+    { id: "rollback", title: "Roll back", detail: "Restore the recorded project state when apply has begun.", allowed: transaction.recovery.rollback_allowed },
+    { id: "discard", title: "Discard staging", detail: "Remove temporary files and preserve the journal and backups.", allowed: transaction.recovery.discard_staging_allowed },
+  ];
+  const checkpoint = transaction.state === "finalizing"
+    ? "The success lock is present; resume only finalizes the durable journal."
+    : transaction.state === "rolling_back"
+      ? "Rollback is checkpointed per operation; choose Roll back to continue the reversal or inspect the live state."
+      : transaction.recovery.project_apply_started
+        ? "Project apply started; resume is disabled."
+    : `Pre-apply checkpoint: ${transaction.last_checkpoint}`;
+  return <div className="stack"><div className="callout review">{checkpoint}</div><div className="recovery-grid">{options.map((item) => <button type="button" key={item.id} className={`recovery-card ${state.recoveryChoice === item.id ? "selected" : ""}`} aria-pressed={state.recoveryChoice === item.id} disabled={!item.allowed} onClick={() => update({ recoveryChoice: item.id })}><span className="choice-radio" aria-hidden="true" /><strong>{item.title}</strong><p>{item.detail}</p></button>)}</div><section className="panel"><div className="list-row"><div><strong>Transaction</strong><span className="mono">{transaction.transaction_id}</span></div><span className="muted">{transaction.state}</span></div><button type="button" className="text-button" onClick={() => void onStartMaintenance("remove")}>Manage installed components locally</button></section></div>;
+}
+
+function Field({ label, value, onChange, placeholder, action, onAction, mono }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; action?: string; onAction?: () => void; mono?: boolean }) {
+  const id = `field-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  return <div className="field"><label className="field-label" htmlFor={id}>{label}</label><span className="input-with-action"><input id={id} className={`text-input ${mono ? "mono" : ""}`} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />{action && onAction && <button type="button" className="input-action" aria-label={`${action} ${label.toLowerCase()}`} onClick={onAction}>{action}</button>}</span></div>;
+}
+function PanelTitle({ title }: { title: string }) { return <h2 className="panel-title">{title}</h2>; }
+function Status({ label, tone }: { label: string; tone: StatusTone }) { return <span className={`status status-${tone}`}><span className="status-symbol" aria-hidden="true">{tone === "pass" ? "✓" : tone === "block" ? "!" : tone === "review" ? "!" : "·"}</span>{label}</span>; }
+function Progress({ value, label, valueText }: { value?: number; label: string; valueText?: string }) {
+  const bounded = value === undefined ? undefined : Math.min(100, Math.max(0, value));
+  return <div className={`progress ${bounded === undefined ? "indeterminate" : ""}`} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuetext={valueText ?? (bounded === undefined ? "In progress" : `${bounded}% complete`)} {...(bounded === undefined ? {} : { "aria-valuenow": bounded })}><span style={bounded === undefined ? undefined : { width: `${bounded}%` }} /></div>;
+}
+function ToggleRow({ label, detail, checked, onChange }: { label: string; detail: string; checked: boolean; onChange: (checked: boolean) => void }) { return <button type="button" className="toggle-row" role="switch" aria-checked={checked} onClick={() => onChange(!checked)}><span className="server-icon">{checked ? "◈" : "○"}</span><span><strong>{label}</strong><small>{detail}</small></span><span className={`toggle ${checked ? "on" : ""}`} aria-hidden="true"><i /></span></button>; }
+function Metric({ label, value, tone }: { label: string; value: string; tone: StatusTone }) { return <div className={`metric metric-${tone}`}><span>{label}</span><strong>{value}</strong></div>; }
+function ChangeRow({ title, detail, value, status }: { title: string; detail: string; value?: string; status?: string }) { return <div className="change-row"><span className="change-icon">◆</span><span><strong>{title}</strong><small className="mono">{detail}</small></span>{value && <span className="size">{value}</span>}{status && <Status label={status} tone="review" />}</div>; }
+function CheckRow({ label, status, tone }: { label: string; status: string; tone: StatusTone }) { return <div className="check-row"><strong>{label}</strong><Status label={status} tone={tone} /></div>; }
+function ActionTile({ title, detail, onClick }: { title: string; detail: string; onClick: () => void }) { return <button className="action-tile" onClick={onClick}><span className="choice-icon">✦</span><strong>{title}</strong><p>{detail}</p></button>; }
+function DiffPane({ title, badge, text, tone }: { title: string; badge: string; text: string; tone: "plus" | "minus" | "neutral" }) {
+  const titleId = `diff-${tone}-${title.toLowerCase()}`;
+  return <section className="diff-pane" aria-labelledby={titleId}><h2 className="diff-title"><strong id={titleId}>{title}</strong><span>{badge}</span></h2><pre className={`diff-code ${tone}`} aria-label={`${title} code preview, ${badge}`}>{text}</pre></section>;
+}

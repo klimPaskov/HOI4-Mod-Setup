@@ -1,0 +1,13 @@
+flowchart TD
+  A[Load installation lock] --> B[Resolve target revision]
+  B --> C[Fetch target manifest and hashes]
+  C --> D[Compare base, local, incoming]
+  D --> E{Local file modified?}
+  E -->|No| F[Replace or remove by manifest]
+  E -->|Yes text| G[Three-way merge preview]
+  E -->|Yes binary| H[Keep, replace, rename, or skip]
+  G --> I{User choice}
+  H --> I
+  I --> J[Update dry-run plan]
+  J --> K[Transactional apply]
+  K --> L[Refresh lock and rollback record]

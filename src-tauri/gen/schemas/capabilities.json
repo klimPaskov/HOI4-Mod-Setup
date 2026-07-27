@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Minimal desktop permissions for the HOI4 Mod Setup wizard.","local":true,"windows":["main"],"permissions":["core:default","dialog:allow-open"]}}

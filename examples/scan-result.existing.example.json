@@ -1,0 +1,155 @@
+{
+  "schema_version": "1.0.0",
+  "scan_id": "5b0399d9-3377-4acd-9ef0-c18835ddba69",
+  "project_root": "D:\\HOI4 Mods\\cold_war_curtain",
+  "mode": "existing",
+  "platform": "windows",
+  "started_at": "2026-07-25T17:31:00+03:00",
+  "completed_at": "2026-07-25T17:31:12+03:00",
+  "read_only": true,
+  "scanner_version": "0.1.0",
+  "partial": false,
+  "cancelled": false,
+  "limits_hit": [],
+  "files_scanned": 42,
+  "directories_scanned": 18,
+  "bytes_read": 18432,
+  "findings": [
+    {
+      "id": "descriptor.name",
+      "category": "descriptor",
+      "key": "mod_name",
+      "value": "Cold War Curtain",
+      "status": "accepted",
+      "user_value": null,
+      "origin": "deterministic",
+      "evidence": [
+        {
+          "detector": "descriptor_parser",
+          "path": "descriptor.mod",
+          "line_start": 1,
+          "line_end": 1,
+          "excerpt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "confidence": 1.0,
+          "note": "Matched launcher descriptor"
+        }
+      ],
+      "recommendation": null
+    },
+    {
+      "id": "namespace.primary",
+      "category": "namespace",
+      "key": "primary_namespace",
+      "value": "cwc",
+      "status": "accepted",
+      "user_value": null,
+      "origin": "deterministic",
+      "evidence": [
+        {
+          "detector": "identifier_frequency",
+          "path": "events/",
+          "line_start": null,
+          "line_end": null,
+          "excerpt_sha256": null,
+          "confidence": 0.91,
+          "note": "91 percent of custom identifiers use cwc"
+        }
+      ],
+      "recommendation": "Keep cwc as the project namespace."
+    },
+    {
+      "id": "localisation.encoding",
+      "category": "localisation",
+      "key": "encoding_policy",
+      "value": "mixed_utf8_bom",
+      "status": "needs_review",
+      "user_value": null,
+      "origin": "deterministic",
+      "evidence": [
+        {
+          "detector": "bom_scanner",
+          "path": "localisation/english/",
+          "line_start": null,
+          "line_end": null,
+          "excerpt_sha256": null,
+          "confidence": 1.0,
+          "note": "3 files lack BOM"
+        }
+      ],
+      "recommendation": "Preserve files during setup and report them for later repair."
+    }
+  ],
+  "conflicts": [
+    {
+      "id": "conflict.agents",
+      "path": "AGENTS.md",
+      "kind": "managed_file_exists",
+      "severity": "warn",
+      "details": "Existing project instructions require a three-way merge."
+    },
+    {
+      "id": "conflict.mcp.platform",
+      "path": ".codex/config.toml",
+      "kind": "platform_unsupported",
+      "severity": "warn",
+      "details": "The current repository MCP command is Windows specific."
+    }
+  ],
+  "semantic_analysis": {
+    "requested": true,
+    "required": true,
+    "status": "complete",
+    "engine": "codex_app_server",
+    "auth_mode": "chatgpt",
+    "transport": "stdio_jsonl",
+    "model": null,
+    "input_manifest": [
+      {
+        "ref_id": "finding:descriptor.name",
+        "kind": "deterministic_finding",
+        "path": "scan://findings/descriptor.name",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "approved": true
+      },
+      {
+        "ref_id": "excerpt:agents",
+        "kind": "text_excerpt",
+        "path": "AGENTS.md",
+        "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "approved": true
+      }
+    ],
+    "output_schema_id": "codex-analysis/1.0.0",
+    "analysis_id": "66d37b62-a792-41f8-b4a3-a828fb1b2594",
+    "response_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "suggestions": [
+      {
+        "id": "codex.project_summary",
+        "category": "codex",
+        "key": "project_summary",
+        "value": "An event-driven Cold War alternate-history project with country routes and diplomatic crises.",
+        "status": "accepted",
+        "user_value": null,
+        "origin": "codex_suggested",
+        "evidence": [
+          {
+            "detector": "codex_app_server",
+            "path": "codex://analysis/66d37b62/project_summary",
+            "line_start": null,
+            "line_end": null,
+            "excerpt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "confidence": 0.9,
+            "note": "Schema-constrained summary based on approved deterministic findings and excerpts"
+          }
+        ],
+        "recommendation": "Use this summary when adapting AGENTS.md and selecting workflow components."
+      }
+    ]
+  },
+  "summary": {
+    "accepted": 2,
+    "needs_review": 1,
+    "blocking": 0,
+    "warnings": 2
+  }
+}

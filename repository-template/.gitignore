@@ -1,0 +1,60 @@
+# Node and frontend
+node_modules/
+.pnpm-store/
+coverage/
+playwright-report/
+test-results/
+.vite/
+dist/
+
+# Rust and Tauri
+target/
+src-tauri/target/
+*.pdb
+
+# Release outputs
+artifacts/
+release-artifacts/
+*.app.zip
+*.dmg
+*.msi
+*.msix
+*.exe.sig
+
+# Local application state
+.hoi4-mod-setup/
+*.journal.tmp
+*.lock.tmp
+*.backup.tmp
+
+# Credentials and local environment
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
+*.cer
+*.key
+*.mobileprovision
+
+# Logs and crash data
+*.log
+crash-reports/
+support-bundles/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Python validation helpers
+__pycache__/
+*.pyc
+.venv/
+
+# Temporary files
+*.tmp
+*.swp
+*~

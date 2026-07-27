@@ -1,0 +1,12 @@
+flowchart TD
+    Start[Create new mod] --> Auth{Signed in to ChatGPT?}
+    Auth -- no --> Login[Browser login or device code]
+    Login --> Brief[Plain-language mod brief]
+    Auth -- yes --> Brief
+    Brief --> Codex[Codex proposes identity and profile]
+    Codex --> Validate[Deterministic validation]
+    Validate --> Review[User edits and confirms]
+    Review --> Preview[Preview descriptors, thumbnail, and folders]
+    Preview --> DryRun[Dry-run review]
+    DryRun --> Apply[Reversible transaction]
+    Apply --> Ready[Launcher-ready and Open in Codex]

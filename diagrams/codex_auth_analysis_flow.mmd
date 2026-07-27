@@ -1,0 +1,22 @@
+sequenceDiagram
+    participant U as User
+    participant A as HOI4 Mod Setup
+    participant C as Codex App Server
+    participant R as Deterministic Rust core
+    U->>A: Start Create or Import
+    A->>C: initialize
+    A->>C: account/read
+    alt Signed out
+        A->>C: account/login/start, ChatGPT browser
+        C-->>U: Official sign-in
+        C-->>A: Account updated
+    end
+    R-->>A: Scan facts or wizard constraints
+    A-->>U: Preview analysis input manifest
+    U->>A: Approve selected inputs
+    A->>C: turn/start with read-only policy and outputSchema
+    C-->>A: Schema-constrained proposals
+    A->>R: Validate identifiers, paths, and collisions
+    A-->>U: Show proposals
+    U->>A: Edit and confirm
+    A->>R: Render descriptors, thumbnail, folders, and plan

@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://klimpaskov.github.io/hoi4-mod-setup/schemas/conflict-record.schema.json",
+  "title": "Conflict Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "conflict_id",
+    "path",
+    "base",
+    "local",
+    "incoming",
+    "allowed_choices",
+    "selected_choice"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "conflict_id": {
+      "type": "string"
+    },
+    "path": {
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "text",
+        "toml",
+        "json",
+        "binary",
+        "symlink",
+        "directory"
+      ]
+    },
+    "base": {
+      "$ref": "#/$defs/version"
+    },
+    "local": {
+      "$ref": "#/$defs/version"
+    },
+    "incoming": {
+      "$ref": "#/$defs/version"
+    },
+    "allowed_choices": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "keep",
+          "replace",
+          "merge",
+          "rename",
+          "skip"
+        ]
+      }
+    },
+    "selected_choice": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "keep",
+        "replace",
+        "merge",
+        "rename",
+        "skip",
+        null
+      ]
+    },
+    "merged_preview_sha256": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "$defs": {
+    "version": {
+      "type": "object",
+      "required": [
+        "exists",
+        "sha256"
+      ],
+      "properties": {
+        "exists": {
+          "type": "boolean"
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source": {
+          "type": "string"
+        },
+        "preview_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}
