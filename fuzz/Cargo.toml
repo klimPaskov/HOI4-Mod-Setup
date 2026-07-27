@@ -32,4 +32,18 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "descriptor"
+path = "fuzz_targets/descriptor.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "toml_merge"
+path = "fuzz_targets/toml_merge.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]

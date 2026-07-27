@@ -21,7 +21,9 @@ Use the smallest useful layer and keep high-risk behavior covered at more than o
 
 - unit tests for deterministic domain functions
 - property tests for invariants
-- fuzzing for parsers and hostile input
+- fuzzing for parsers and hostile input; the checked-in cargo-fuzz targets cover
+  manifests, relative paths, Codex analysis payloads, descriptors/thumbnail
+  PNGs, and structured TOML merges
 - integration tests for adapters and cross-module behavior
 - transaction fault injection
 - security tests
@@ -107,7 +109,8 @@ A release is blocked by:
 
 On Windows, activate the MSVC environment with `vcvars64.bat` before
 all-feature Rust gates when using PowerShell. Compile fuzz targets with
-`cargo check --manifest-path fuzz/Cargo.toml --bins`; package and smoke-test
+`cargo check --manifest-path fuzz/Cargo.toml --bins`; run the bounded targets
+from `fuzz/README.md` when parser behavior changes; package and smoke-test
 through `pnpm release:build`, `pnpm release:verify`, and `pnpm desktop:e2e`.
 The native smoke harness uses `taskkill.exe` with an argument array on Windows
 so the Tauri process tree cannot survive the test timeout; keep cleanup bounded

@@ -31,7 +31,11 @@ Run a controlled manual release test against a real ChatGPT account. Never place
 
 ## Fuzzing
 
-Descriptor syntax, TOML, JSON, Markdown link extraction, localisation keys, encodings, huge files, and deep trees.
+Descriptor syntax, thumbnail PNG decoding, TOML parsing and structured merge,
+manifest JSON, Codex analysis JSON, relative paths, Markdown link extraction,
+localisation keys, encodings, huge files, and deep trees. The checked-in
+`fuzz/` package provides bounded `descriptor` and `toml_merge` targets in
+addition to the manifest, path, and Codex targets.
 
 ## Integration tests
 
