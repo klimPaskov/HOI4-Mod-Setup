@@ -721,6 +721,7 @@ pub fn run_transaction(
         };
         persist_journal(&journal_path, &mut journal)?;
         atomic_write_json(&roots.transaction.join("rollback-record.json"), &journal)?;
+        maybe_abort_for_test("after_rollback_record");
         stage_complete(
             &mut journal,
             11,
@@ -734,6 +735,7 @@ pub fn run_transaction(
         // this point is best-effort: a stale `finalizing` journal is safely
         // reconciled by resume only after the lock and rollback record verify.
         atomic_write_json(&metadata_root.join("install.lock.json"), &lock)?;
+        maybe_abort_for_test("after_lock_write");
         journal.state = "completed".into();
         journal.recovery = RecoveryState {
             resume_allowed: false,
@@ -2365,6 +2367,20 @@ fn persist_rollback_checkpoint(
     persist_journal(rollback_path, rollback)
 }
 
+#[cfg(test)]
+fn maybe_abort_for_test(checkpoint: &str) {
+    if std::env::var("HOI4_MOD_SETUP_TEST_ABORT_AT")
+        .ok()
+        .as_deref()
+        == Some(checkpoint)
+    {
+        std::process::abort();
+    }
+}
+
+#[cfg(not(test))]
+fn maybe_abort_for_test(_checkpoint: &str) {}
+
 pub fn rollback_transaction(
     project_root: &Path,
     journal: &mut TransactionJournal,
@@ -2390,6 +2406,7 @@ pub fn rollback_transaction(
     persist_journal(journal_path, journal)?;
     let (mut rollback_journal, rollback_path) =
         prepare_rollback_transaction(&project_root, journal, journal_path)?;
+    maybe_abort_for_test("rollback_after_backup");
     let result = (|| -> Result<(), AppError> {
         // Remove transaction-created Git metadata before restoring files. The
         // newly initialized index would otherwise record the transaction's
@@ -3365,6 +3382,7 @@ pub fn update_operations(
 mod tests {
     use super::*;
     use crate::readiness::manifest_wiki_pages;
+    use std::process::Command;
     use tempfile::tempdir;
 
     fn test_codex_analysis() -> CodexAnalysisRecord {
@@ -3468,6 +3486,141 @@ mod tests {
             fs::write(path, "# Test wiki page\n").unwrap();
         }
         plan
+    }
+
+    fn existing_file_fixture(project_root: &Path) -> (InstallationPlan, Vec<PreparedFile>) {
+        let mut plan = ready_plan(project_root);
+        fs::write(project_root.join("AGENTS.md"), "old").unwrap();
+        plan.operations[0].action = OperationAction::Replace;
+        plan.operations[0].rollback = RollbackAction::RestoreBackup;
+        plan.operations[0].local_state = LocalState::Unmodified;
+        plan.operations[0].local_sha256 = Some(sha256_bytes(b"old"));
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        (plan, prepared)
+    }
+
+    #[test]
+    fn transaction_process_fault_worker() {
+        let mode = match std::env::var("HOI4_MOD_SETUP_TEST_WORKER") {
+            Ok(mode) => mode,
+            Err(_) => return,
+        };
+        let project_root = PathBuf::from(std::env::var_os("HOI4_MOD_SETUP_TEST_PROJECT").unwrap());
+        let app_root = PathBuf::from(std::env::var_os("HOI4_MOD_SETUP_TEST_APP").unwrap());
+        fs::create_dir_all(&project_root).unwrap();
+        fs::create_dir_all(&app_root).unwrap();
+        let (plan, prepared) = existing_file_fixture(&project_root);
+        let (mut journal, _) = run_transaction(
+            &project_root,
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app_root.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        if mode == "rollback_after_backup" {
+            let journal_path = app_root
+                .join("transactions")
+                .join(plan.plan_id.to_string())
+                .join("journal.json");
+            rollback_transaction(&project_root, &mut journal, &journal_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn cross_process_finalization_and_rollback_boundaries_are_recoverable() {
+        for mode in [
+            "after_rollback_record",
+            "after_lock_write",
+            "rollback_after_backup",
+        ] {
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "transaction::tests::transaction_process_fault_worker",
+                    "--nocapture",
+                ])
+                .env("HOI4_MOD_SETUP_TEST_WORKER", mode)
+                .env("HOI4_MOD_SETUP_TEST_ABORT_AT", mode)
+                .env("HOI4_MOD_SETUP_TEST_PROJECT", project.path())
+                .env("HOI4_MOD_SETUP_TEST_APP", app.path())
+                .output()
+                .unwrap();
+            assert!(
+                !output.status.success(),
+                "fault worker unexpectedly succeeded for {mode}: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            let transaction_entries = fs::read_dir(app.path().join("transactions"))
+                .unwrap()
+                .filter_map(Result::ok)
+                .collect::<Vec<_>>();
+            assert!(!transaction_entries.is_empty(), "no journal for {mode}");
+            let mut installation = None;
+            let mut rollback = None;
+            for entry in transaction_entries {
+                let journal_path = entry.path().join("journal.json");
+                let journal = read_journal(&journal_path).unwrap();
+                if journal.transaction_kind == "rollback" {
+                    rollback = Some((journal, journal_path));
+                } else {
+                    installation = Some((journal, journal_path));
+                }
+            }
+            let (mut installation, installation_path) = installation.expect("installation journal");
+            if mode != "rollback_after_backup" {
+                assert_eq!(installation.state, "finalizing");
+            }
+            match mode {
+                "after_rollback_record" => {
+                    assert!(!project
+                        .path()
+                        .join(".hoi4-mod-setup/install.lock.json")
+                        .exists());
+                    assert!(resume_transaction(
+                        project.path(),
+                        app.path(),
+                        installation.transaction_id
+                    )
+                    .is_err());
+                }
+                "after_lock_write" => {
+                    assert!(project
+                        .path()
+                        .join(".hoi4-mod-setup/install.lock.json")
+                        .is_file());
+                    let (reconciled, _) =
+                        resume_transaction(project.path(), app.path(), installation.transaction_id)
+                            .unwrap();
+                    assert_eq!(reconciled.state, "completed");
+                }
+                "rollback_after_backup" => {
+                    let (rollback_journal, rollback_path) = rollback.expect("rollback journal");
+                    assert_eq!(installation.state, "rolling_back");
+                    assert_eq!(rollback_journal.state, "applying");
+                    assert_eq!(
+                        rollback_journal.parent_transaction_id,
+                        Some(installation.transaction_id)
+                    );
+                    assert!(rollback_journal.operations[0].backup_path.is_some());
+                    rollback_transaction(project.path(), &mut installation, &installation_path)
+                        .unwrap();
+                    let resumed_rollback = read_journal(&rollback_path).unwrap();
+                    assert_eq!(resumed_rollback.state, "completed");
+                    assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"old");
+                }
+                _ => unreachable!(),
+            }
+        }
     }
 
     #[test]
