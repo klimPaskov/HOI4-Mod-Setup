@@ -13,9 +13,9 @@ without silently replacing user work.
 
 The public source repository is [klimPaskov/HOI4-Mod-Setup](https://github.com/klimPaskov/HOI4-Mod-Setup).
 
-[Download Windows .exe](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/preview-d29955cb26832dfd7d43a837f783efd25086b00d/HOI4-Mod-Setup-windows-x64-setup.exe) ·
-[Download macOS Apple silicon .dmg](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/preview-d29955cb26832dfd7d43a837f783efd25086b00d/HOI4-Mod-Setup-macos-arm64.dmg) ·
-[Download macOS Intel .dmg](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/preview-d29955cb26832dfd7d43a837f783efd25086b00d/HOI4-Mod-Setup-macos-x64.dmg) ·
+[Download Windows .exe](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/preview-313588f1efc4910b889f7a8c8174ddf54d06d423/HOI4-Mod-Setup-windows-x64-setup.exe) ·
+[Download macOS Apple silicon .dmg](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/preview-313588f1efc4910b889f7a8c8174ddf54d06d423/HOI4-Mod-Setup-macos-arm64.dmg) ·
+[Download macOS Intel .dmg](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/preview-313588f1efc4910b889f7a8c8174ddf54d06d423/HOI4-Mod-Setup-macos-x64.dmg) ·
 [All releases](https://github.com/klimPaskov/HOI4-Mod-Setup/releases)
 
 Development previews are source-built test packages. Windows or macOS may
