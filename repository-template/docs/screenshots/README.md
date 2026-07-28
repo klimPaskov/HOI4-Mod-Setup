@@ -3,7 +3,9 @@
 These screenshots are the current implementation gallery linked from the
 user-facing [README](../../README.md). They were captured from the local React
 browser preview at the target desktop layout while exercising the wizard's
-Project, Components, Integrations, Git, Install, and provider-selection views.
+  Project, Components, Integrations, Git, Install, and provider-selection views.
+  The description and identity captures also show generated, editable project
+  fields based on a mod name and brief.
 
 The preview does not have a live source manifest, native process adapter, or
 credentials. The unavailable states shown in the gallery are therefore honest

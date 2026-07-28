@@ -83,9 +83,11 @@ user can approve a plan.
 
 ## Create or import a mod
 
-For a new project, describe the mod in plain language. The selected provider
-proposes an editable identity, project ID, namespaces, tags, folder profile,
-instructions, skills, subagents, and components. For an existing project, a
+For a new project, enter a mod name and describe it in plain language. The app
+immediately fills an editable project ID, script prefix, namespace, descriptor
+tags, and starter folders; the selected provider can refine those suggestions
+before review. You do not need to invent naming conventions from scratch. For
+an existing project, a
 bounded read-only scan records evidence for descriptors, launcher state,
 structure, Git, identifiers, naming, localisation, docs, skills, subagents,
 Codex/MCP files, paths, and conflicts before semantic review.

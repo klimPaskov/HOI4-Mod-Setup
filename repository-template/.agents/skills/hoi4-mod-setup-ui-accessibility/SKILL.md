@@ -80,6 +80,7 @@ Conflict review is the exception. It may show a three-way comparison and more co
 - Keep a local recovery/removal entry reachable from Welcome when signed out; rollback, backup inspection, and managed removal do not depend on Codex.
 - Preserve account and analysis state when logout or usage-limit errors occur, and announce the actionable error without losing focus.
 - The final Git-phase option `Prepare a flattened ChatGPT project-sources folder` is a native keyboard-accessible checkbox shown only when Codex is selected. Its optional extras control is progressive, its mapping and no-upload Chat recommendation are stated concisely, and it never appears for another provider.
+- The new-project description screen asks for the mod name and brief. The identity screen opens with generated project ID, prefix, namespace, tags, and starter folders; advanced metadata and external paths remain the only secondary/manual controls.
 
 ## Accessibility
 

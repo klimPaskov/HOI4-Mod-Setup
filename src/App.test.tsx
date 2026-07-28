@@ -127,6 +127,28 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByRole("progressbar", { name: "Project scan progress" })).toHaveAttribute("aria-valuetext", "Scan in progress");
   });
 
+  it("fills generated identity fields from the mod name and description", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    fireEvent.change(screen.getByLabelText("Mod name"), { target: { value: "Iron Dawn" } });
+    fireEvent.change(screen.getByLabelText("Mod description"), { target: { value: "An alternate-history event and decisions mod with new countries." } });
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+
+    expect(screen.getByLabelText("Project ID")).toHaveValue("iron_dawn");
+    expect(screen.getByLabelText("Script prefix")).toHaveValue("id");
+    expect(screen.getByLabelText("Primary namespace")).toHaveValue("id");
+    expect(screen.getByLabelText("Descriptor tags")).toHaveValue("Total Conversion, Alternative History, Events");
+    expect(screen.getByLabelText("Initial folders")).toHaveValue("common, events, localisation/english, gfx, interface, docs, history");
+
+    fireEvent.change(screen.getByLabelText("Script prefix"), { target: { value: "iron" } });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.change(screen.getByLabelText("Mod description"), { target: { value: "A focused portrait workflow." } });
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    expect(screen.getByLabelText("Script prefix")).toHaveValue("iron");
+    expect(screen.getByLabelText("Descriptor tags")).toHaveValue("Portraits");
+  });
+
   it("shows correlated scan stage, path, counters, and cancellation", () => {
     const progress: ScanProgress = { stage: "detecting_git", currentPath: ".git", filesScanned: 12, directoriesScanned: 4, bytesRead: 4096 };
     const onCancel = vi.fn().mockResolvedValue(undefined);

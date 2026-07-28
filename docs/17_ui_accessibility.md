@@ -100,8 +100,8 @@ Do not display permanent keyboard shortcut hints in the footer. Keyboard support
 ## Screen direction
 
 1. **Welcome and project selection**: two choices and a compact recent-project list. Hide source policy and installation policy details.
-2. **New mod description**: one large text field with optional inferred-topic chips.
-3. **Project identity and descriptor setup**: compact form, generated-file rows, previews on demand, advanced fields collapsed.
+2. **New mod description**: mod name plus one large brief field with optional inferred-topic chips.
+3. **Project identity and descriptor setup**: populated generated identity fields, compact form, generated-file rows, previews on demand, advanced fields collapsed.
 4. **Existing project scan**: one progress surface, current scan stage, detected count, cancel or pause.
 5. **Finding review**: compact finding list and one selected finding. Show evidence only for the selected item.
 6. **Component selection**: recommended component rows, sizes, one collapsed dependency and file-list control.

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
 import { applyInstallation, approveInstallation, approveScanEvidence, buildInstallationPlan, buildMaintenancePlan, cancelCodexLogin, cancelScan, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openInCodex, pickLauncherFolder, pickProjectFolder, previewDescriptors, previewInstallationConflict, previewSourceManifest, readAiAccount, readAiProviderProfiles, readCodexAccount, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallation, run3DHealthCheck, runAiAnalysis, runCodexAnalysis, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, waitForCodexLoginResult } from "./lib/tauri";
+import { deriveGeneratedIdentity } from "./identity";
 import type { AiProviderId, AiProviderProfile, CodexAnalysisRequest, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, InstallationPlan, ManifestComponentPreview, PhaseId, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, WizardState, WorkflowHealthResult } from "./types";
 
 const PHASES: Array<{ id: PhaseId; label: string }> = [
@@ -20,17 +21,20 @@ const MAINTENANCE_PHASES = [
   { id: "recovery", label: "Recovery" },
 ] as const;
 
+const DEFAULT_DESCRIPTION = "A Cold War total conversion focused on Southeast Asia, with new countries, political routes, decisions, events, custom doctrines, and long campaigns that can diverge from history.";
+const DEFAULT_GENERATED_IDENTITY = deriveGeneratedIdentity("Cold War Curtain", DEFAULT_DESCRIPTION);
+
 const DEFAULT_IDENTITY: ProjectIdentity = {
   displayName: "Cold War Curtain",
-  projectId: "cold_war_curtain",
+  projectId: DEFAULT_GENERATED_IDENTITY.projectId,
   author: "",
   version: "0.1.0",
   supportedGameVersion: "1.17.*",
   projectRoot: "",
   defaultBranch: "main",
-  scriptPrefix: "",
-  primaryNamespace: "",
-  descriptorTags: [],
+  scriptPrefix: DEFAULT_GENERATED_IDENTITY.scriptPrefix,
+  primaryNamespace: DEFAULT_GENERATED_IDENTITY.primaryNamespace,
+  descriptorTags: DEFAULT_GENERATED_IDENTITY.descriptorTags,
   launcherDescriptorPath: "",
 };
 
@@ -71,7 +75,8 @@ const initialState: WizardState = {
   mode: "new",
   recoveryEntry: false,
   identity: DEFAULT_IDENTITY,
-  description: "A Cold War total conversion focused on Southeast Asia, with new countries, political routes, decisions, events, custom doctrines, and long campaigns that can diverge from history.",
+  identityOverrides: [],
+  description: DEFAULT_DESCRIPTION,
   sourceMode: "latest",
   pinnedRef: "",
   aiProvider: "codex",
@@ -81,6 +86,7 @@ const initialState: WizardState = {
   aiProfiles: undefined,
   selectedComponents: DEFAULT_COMPONENTS.filter((component) => component.selected).map((component) => component.id),
   components: DEFAULT_COMPONENTS,
+  folderProfile: DEFAULT_GENERATED_IDENTITY.folderProfile,
   meshSelected: false,
   meshKeyDraft: "",
   meshKeyStatus: "missing",
@@ -149,6 +155,8 @@ const screenCopy: Record<ScreenId, { title: string; supporting?: string; status?
 function phaseIndex(screen: ScreenId): number {
   return PHASES.findIndex((phase) => phase.id === SCREEN_PHASE[screen]);
 }
+
+const GENERATED_IDENTITY_FIELDS = ["projectId", "scriptPrefix", "primaryNamespace", "descriptorTags", "folderProfile"] as const;
 
 async function sha256Text(value: string): Promise<string> {
   const bytes = new TextEncoder().encode(value);
@@ -326,17 +334,52 @@ export default function App() {
     headingRef.current?.focus({ preventScroll: true });
   }, [state.screen]);
 
-  const update = (patch: Partial<WizardState>) => setState((current) => ({ ...current, ...patch, draftSaved: true }));
+  const update = (patch: Partial<WizardState>) => setState((current) => {
+    const overrides = new Set(current.identityOverrides ?? []);
+    if (Object.prototype.hasOwnProperty.call(patch, "identity")) overrides.clear();
+    if (Object.prototype.hasOwnProperty.call(patch, "folderProfile")) overrides.add("folderProfile");
+    return { ...current, ...patch, identityOverrides: Array.from(overrides), draftSaved: true };
+  });
   const updateIdentity = (patch: Partial<ProjectIdentity>) => setState((current) => {
+    const oldProjectId = current.identity.projectId;
     const identity = { ...current.identity, ...patch };
-    if (patch.projectId && current.identity.launcherDescriptorPath) {
+    const overrides = new Set(current.identityOverrides ?? []);
+    for (const field of GENERATED_IDENTITY_FIELDS) {
+      if (field !== "folderProfile" && Object.prototype.hasOwnProperty.call(patch, field)) overrides.add(field);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "displayName")) {
+      const generated = deriveGeneratedIdentity(identity.displayName, current.description);
+      if (!overrides.has("projectId")) identity.projectId = generated.projectId;
+      if (!overrides.has("scriptPrefix")) identity.scriptPrefix = generated.scriptPrefix;
+      if (!overrides.has("primaryNamespace")) identity.primaryNamespace = generated.primaryNamespace;
+      if (!overrides.has("descriptorTags")) identity.descriptorTags = generated.descriptorTags;
+    }
+    if (identity.projectId !== oldProjectId && current.identity.launcherDescriptorPath) {
       const oldFile = current.identity.launcherDescriptorPath.split(/[\\/]/).pop()?.toLowerCase();
-      const oldProjectFile = `${current.identity.projectId}.mod`.toLowerCase();
+      const oldProjectFile = `${oldProjectId}.mod`.toLowerCase();
       if (oldFile === oldProjectFile || oldFile === "project.mod") {
-        identity.launcherDescriptorPath = current.identity.launcherDescriptorPath.replace(/[^\\/]+$/, `${patch.projectId}.mod`);
+        identity.launcherDescriptorPath = current.identity.launcherDescriptorPath.replace(/[^\\/]+$/, `${identity.projectId}.mod`);
       }
     }
-    return { ...current, identity, transactionError: undefined, draftSaved: true };
+    return { ...current, identity, identityOverrides: Array.from(overrides), transactionError: undefined, draftSaved: true };
+  });
+  const updateDescription = (description: string) => setState((current) => {
+    const overrides = new Set(current.identityOverrides ?? []);
+    const generated = deriveGeneratedIdentity(current.identity.displayName, description);
+    const identity = { ...current.identity };
+    if (!overrides.has("projectId")) identity.projectId = generated.projectId;
+    if (!overrides.has("scriptPrefix")) identity.scriptPrefix = generated.scriptPrefix;
+    if (!overrides.has("primaryNamespace")) identity.primaryNamespace = generated.primaryNamespace;
+    if (!overrides.has("descriptorTags")) identity.descriptorTags = generated.descriptorTags;
+    return {
+      ...current,
+      description,
+      identity,
+      folderProfile: overrides.has("folderProfile") ? current.folderProfile : generated.folderProfile,
+      codexAnalysis: undefined,
+      codexAnalysisRecord: undefined,
+      draftSaved: true,
+    };
   });
   const chooseProjectFolder = () => pickProjectFolder();
   const chooseLauncherFolder = () => pickLauncherFolder();
@@ -439,6 +482,10 @@ export default function App() {
     const scriptPrefix = proposal("script_prefix");
     const primaryNamespace = proposal("primary_namespace");
     const descriptorTags = proposal("descriptor_tags");
+    const generated = deriveGeneratedIdentity(
+      typeof displayName === "string" ? displayName : state.identity.displayName,
+      typeof description === "string" ? description : state.description,
+    );
     setState((current) => ({
       ...current,
       aiAccount: provider === "codex" ? current.aiAccount : providerAccount,
@@ -447,13 +494,13 @@ export default function App() {
       identity: {
         ...current.identity,
         displayName: typeof displayName === "string" ? displayName : current.identity.displayName,
-        projectId: typeof projectId === "string" ? projectId : current.identity.projectId,
-        scriptPrefix: typeof scriptPrefix === "string" ? scriptPrefix : current.identity.scriptPrefix,
-        primaryNamespace: typeof primaryNamespace === "string" ? primaryNamespace : current.identity.primaryNamespace,
-        descriptorTags: Array.isArray(descriptorTags) && descriptorTags.every((item) => typeof item === "string") ? descriptorTags as string[] : current.identity.descriptorTags,
+        projectId: current.identityOverrides?.includes("projectId") ? current.identity.projectId : typeof projectId === "string" ? projectId : current.identity.projectId || generated.projectId,
+        scriptPrefix: current.identityOverrides?.includes("scriptPrefix") ? current.identity.scriptPrefix : typeof scriptPrefix === "string" && scriptPrefix.trim() ? scriptPrefix : current.identity.scriptPrefix || generated.scriptPrefix,
+        primaryNamespace: current.identityOverrides?.includes("primaryNamespace") ? current.identity.primaryNamespace : typeof primaryNamespace === "string" && primaryNamespace.trim() ? primaryNamespace : current.identity.primaryNamespace || generated.primaryNamespace,
+        descriptorTags: current.identityOverrides?.includes("descriptorTags") ? current.identity.descriptorTags : Array.isArray(descriptorTags) && descriptorTags.every((item) => typeof item === "string") && descriptorTags.length > 0 ? descriptorTags as string[] : current.identity.descriptorTags?.length ? current.identity.descriptorTags : generated.descriptorTags,
       },
       description: typeof description === "string" ? description : current.description,
-      folderProfile: Array.isArray(folderProfile) && folderProfile.every((item) => typeof item === "string") ? folderProfile as string[] : current.folderProfile,
+      folderProfile: current.identityOverrides?.includes("folderProfile") ? current.folderProfile : Array.isArray(folderProfile) && folderProfile.every((item) => typeof item === "string") && folderProfile.length > 0 ? folderProfile as string[] : current.folderProfile?.length ? current.folderProfile : generated.folderProfile,
       transactionError: undefined,
       draftSaved: true,
     }));
@@ -831,7 +878,7 @@ export default function App() {
         <main className="main-viewport" aria-labelledby="screen-title" aria-describedby="screen-supporting" onKeyDown={closeDisclosureOnEscape}>
           <div className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{copy.title}</div>
           <ScreenFrame screen={state.screen} copy={copy} state={state} headingRef={headingRef} onBack={goBack} onNext={goNext} onMaintenance={openMaintenance} onPrepareConflicts={prepareSetupPlan}>
-            {renderScreen(state, update, updateIdentity, findings, selectedFinding, setSelectedFinding, setFindings, scanComplete, scanError, scanProgress, scanPartial, scanLimitsHit, scanRequestId, scanCancellationRequested, cancelActiveScan, openMaintenance, startMaintenance, runMaintenanceReanalysis, chooseConflict, chooseProjectFolder, chooseLauncherFolder, confirmAnalysis)}
+            {renderScreen(state, update, updateIdentity, updateDescription, findings, selectedFinding, setSelectedFinding, setFindings, scanComplete, scanError, scanProgress, scanPartial, scanLimitsHit, scanRequestId, scanCancellationRequested, cancelActiveScan, openMaintenance, startMaintenance, runMaintenanceReanalysis, chooseConflict, chooseProjectFolder, chooseLauncherFolder, confirmAnalysis)}
           </ScreenFrame>
         </main>
       </div>
@@ -915,10 +962,10 @@ function recoveryChoiceAllowed(state: WizardState): boolean {
   return state.transaction.recovery.discard_staging_allowed;
 }
 
-function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) => void, updateIdentity: (patch: Partial<ProjectIdentity>) => void, findings: ScanFinding[], selectedFinding: string, setSelectedFinding: (id: string) => void, setFindings: Dispatch<SetStateAction<ScanFinding[]>>, scanComplete: boolean, scanError: string | undefined, scanProgress: ScanProgress, scanPartial: boolean, scanLimitsHit: string[], scanRequestId: string | undefined, scanCancellationRequested: boolean, onCancelScan: () => Promise<void>, onMaintenance: (screen: "update" | "conflict" | "recovery") => void, startMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void, onReanalyze: () => Promise<boolean>, chooseConflict: (choice: ConflictChoice) => void, onPickProjectFolder: () => Promise<FolderSelection | null>, onPickLauncherFolder: () => Promise<FolderSelection | null>, onConfirmAnalysis: () => Promise<void>) {
+function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) => void, updateIdentity: (patch: Partial<ProjectIdentity>) => void, updateDescription: (description: string) => void, findings: ScanFinding[], selectedFinding: string, setSelectedFinding: (id: string) => void, setFindings: Dispatch<SetStateAction<ScanFinding[]>>, scanComplete: boolean, scanError: string | undefined, scanProgress: ScanProgress, scanPartial: boolean, scanLimitsHit: string[], scanRequestId: string | undefined, scanCancellationRequested: boolean, onCancelScan: () => Promise<void>, onMaintenance: (screen: "update" | "conflict" | "recovery") => void, startMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void, onReanalyze: () => Promise<boolean>, chooseConflict: (choice: ConflictChoice) => void, onPickProjectFolder: () => Promise<FolderSelection | null>, onPickLauncherFolder: () => Promise<FolderSelection | null>, onConfirmAnalysis: () => Promise<void>) {
   switch (state.screen) {
     case "welcome": return <Welcome state={state} update={update} />;
-    case "description": return <Description state={state} update={update} />;
+    case "description": return <Description state={state} updateDescription={updateDescription} updateIdentity={updateIdentity} />;
     case "identity": return <Identity state={state} update={update} updateIdentity={updateIdentity} onPickProjectFolder={onPickProjectFolder} onPickLauncherFolder={onPickLauncherFolder} onConfirmAnalysis={onConfirmAnalysis} />;
     case "scan": return <Scan state={state} complete={scanComplete} error={scanError} progress={scanProgress} partial={scanPartial} limitsHit={scanLimitsHit} canCancel={Boolean(scanRequestId)} cancellationRequested={scanCancellationRequested} onCancel={onCancelScan} />;
     case "findings": return <Findings state={state} findings={findings} selected={selectedFinding} setSelected={setSelectedFinding} setFindings={setFindings} onConfirmAnalysis={onConfirmAnalysis} />;
@@ -1039,8 +1086,8 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
   <section><div className="section-label">Recovery</div><div className="panel recent-list"><p className="muted">Rollback, interrupted-transaction recovery, and managed removal stay local and do not require an AI provider connection.</p><button type="button" className="text-button" onClick={() => update({ mode: "existing", recoveryEntry: true, identity: { ...DEFAULT_IDENTITY }, transaction: undefined, transactionError: undefined })}>Recover or remove an installed project</button></div></section></div>;
 }
 
-function Description({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
-  return <div className="stack narrow"><textarea className="brief-input" aria-label="Mod description" value={state.description} onChange={(event) => update({ description: event.target.value, codexAnalysis: undefined, codexAnalysisRecord: undefined })} /><details><summary>{aiProviderLabel(state.aiProvider, state.aiProfiles)} input preview</summary><p className="muted">The brief is sent to the selected local planning adapter with Windows or macOS, lowercase project ID, no Workshop identity, no file writes, and the selected provider optimization profile.</p></details><div className="chips"><span>Natural-language brief</span><span>Reviewable suggestions</span><span>Editable structure</span></div></div>;
+function Description({ state, updateDescription, updateIdentity }: { state: WizardState; updateDescription: (description: string) => void; updateIdentity: (patch: Partial<ProjectIdentity>) => void }) {
+  return <div className="stack narrow"><section className="panel form-panel"><Field label="Mod name" value={state.identity.displayName} onChange={(value) => updateIdentity({ displayName: value })} /><label className="field"><span className="field-label">Description</span><textarea className="brief-input" aria-label="Mod description" value={state.description} onChange={(event) => updateDescription(event.target.value)} /></label><p className="muted">The project ID, script prefix, namespace, tags, and initial folders are filled from these two fields. You can edit any generated value on the next screen.</p></section><details><summary>{aiProviderLabel(state.aiProvider, state.aiProfiles)} input preview</summary><p className="muted">The brief is sent to the selected local planning adapter with Windows or macOS, lowercase project ID, no Workshop identity, no file writes, and the selected provider optimization profile.</p></details><div className="chips"><span>Natural-language brief</span><span>Generated identity</span><span>Editable structure</span></div></div>;
 }
 
 function CodexReview({ state, onConfirmAnalysis }: { state: WizardState; onConfirmAnalysis: () => Promise<void> }) {
@@ -1093,17 +1140,19 @@ function Identity({ state, update, updateIdentity, onPickProjectFolder, onPickLa
   if (state.recoveryEntry) {
     return <RecoveryProjectPicker state={state} updateIdentity={updateIdentity} onPickProjectFolder={onPickProjectFolder} />;
   }
-  return <div className="stack">{state.codexAnalysis && <CodexReview state={state} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel form-panel"><div className="form-grid">
+  return <div className="stack">{state.codexAnalysis && <CodexReview state={state} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel form-panel"><p className="muted">Generated from the mod name and description. Edit any value when you want a different convention.</p><div className="form-grid">
     <Field label="Mod name" value={state.identity.displayName} onChange={(value) => updateIdentity({ displayName: value })} />
     <Field label="Project ID" value={state.identity.projectId} onChange={(value) => updateIdentity({ projectId: value })} mono />
-    <Field label="Author" value={state.identity.author} onChange={(value) => updateIdentity({ author: value })} />
-    <Field label="Version" value={state.identity.version} onChange={(value) => updateIdentity({ version: value })} />
-    <Field label="Supported game version" value={state.identity.supportedGameVersion} onChange={(value) => updateIdentity({ supportedGameVersion: value })} />
-    <Field label="Default branch" value={state.identity.defaultBranch} onChange={(value) => updateIdentity({ defaultBranch: value })} />
     <Field label="Script prefix" value={state.identity.scriptPrefix ?? ""} onChange={(value) => updateIdentity({ scriptPrefix: value })} mono />
     <Field label="Primary namespace" value={state.identity.primaryNamespace ?? ""} onChange={(value) => updateIdentity({ primaryNamespace: value })} mono />
     <Field label="Descriptor tags" value={(state.identity.descriptorTags ?? []).join(", ")} onChange={(value) => updateIdentity({ descriptorTags: value.split(",").map((tag) => tag.trim()).filter(Boolean) })} />
     <Field label="Initial folders" value={(state.folderProfile ?? []).join(", ")} placeholder="common, events, gfx, localisation/english, docs" onChange={(value) => update({ folderProfile: value.split(",").map((folder) => folder.trim()).filter(Boolean) })} />
+    <details><summary>Advanced project metadata</summary>
+    <Field label="Author" value={state.identity.author} onChange={(value) => updateIdentity({ author: value })} />
+    <Field label="Version" value={state.identity.version} onChange={(value) => updateIdentity({ version: value })} />
+    <Field label="Supported game version" value={state.identity.supportedGameVersion} onChange={(value) => updateIdentity({ supportedGameVersion: value })} />
+    <Field label="Default branch" value={state.identity.defaultBranch} onChange={(value) => updateIdentity({ defaultBranch: value })} />
+    </details>
   </div><Field label="Project folder" value={state.identity.projectRoot} placeholder="Choose a project folder" onChange={(value) => updateIdentity({ projectRoot: value })} action="Browse" onAction={() => void chooseFolder()} />{folderMessage && <p className="muted" role="status">{folderMessage}</p>}<Field label="Launcher descriptor path" value={state.identity.launcherDescriptorPath ?? ""} placeholder="Choose <HOI4 user mod directory>/<project_id>.mod" onChange={(value) => updateIdentity({ launcherDescriptorPath: value })} action="Browse" onAction={() => void chooseLauncherFolder()} mono /></section><section className="panel"><PanelTitle title="Generated files" /><div className="list-row"><div><strong>descriptor.mod</strong><span>Inside the project</span></div><button type="button" className="text-button" onClick={() => void showPreviews()}>Preview</button></div><div className="list-row"><div><strong>{state.identity.projectId || "project"}.mod</strong><span>Confirmed external launcher destination</span></div><button type="button" className="text-button" onClick={() => void showPreviews()}>Preview</button></div><div className="list-row"><div><strong>thumbnail.png</strong><span>Replaceable 1x1 placeholder</span></div><button type="button" className="text-button" onClick={() => void showPreviews()}>Preview</button></div>{previewMessage && <p className="muted" role="status">{previewMessage}</p>}{previews.map((artifact) => <details key={artifact.destination} open><summary>{artifact.destination} · SHA-256 verified by core</summary><pre className="report-preview">{artifact.content}</pre></details>)}<details><summary>Advanced fields</summary><p className="muted">The launcher destination must be confirmed. A modified thumbnail is a visible conflict and is never silently replaced.</p></details></section></div></div>;
 }
 
