@@ -30,7 +30,7 @@ Use seven grouped phases:
 - Install
 - Ready
 
-ChatGPT sign-in is a compact blocking step for planning. It uses one primary action, one status line, a device-code fallback link, and a visible cancellation action while the App Server is waiting. Usage-limited state preserves the draft and offers retry or refresh without pretending planning succeeded. Do not show API-key inputs, raw protocol logs, or model billing details.
+Provider selection is the first compact setup step and defaults to Codex. The selected provider's model, optimization profile, and supported credential/endpoint controls must be visible without exposing secret values. Codex uses a compact ChatGPT sign-in with one primary action, one status line, a device-code fallback link, and a visible cancellation action while the App Server is waiting. Usage-limited state preserves the draft and offers retry or refresh without pretending planning succeeded. Never show raw protocol logs or model billing details.
 
 Each screen normally has:
 
@@ -57,6 +57,11 @@ Hide these by default:
 
 Use `Details`, `Preview`, `Advanced`, or `Show log` controls. Preserve state when a section is opened and the user navigates back.
 
+The Components screen's collapsed `Dependencies and file list` disclosure must
+render the exact manifest-declared dependencies, platform routes, destination,
+and declared file count for each component. Keep hashes and full source paths
+in the dry-run evidence instead of expanding the default component rows.
+
 Conflict review is the exception. It may show a three-way comparison and more controls because comparison is the primary task.
 
 ## Interaction rules
@@ -66,12 +71,14 @@ Conflict review is the exception. It may show a three-way comparison and more co
 - Destructive actions require clear scope and confirmation.
 - Disabled actions explain the blocking reason in a tooltip or adjacent concise status.
 - Progress shows current stage and durable checkpoint, not the full log.
-- Existing-project scans show the current stage, bounded relative path, file/directory/byte counters, and an accessible Cancel scan action. Use an indeterminate progress bar until a total is known; partial and cancelled results must remain visibly incomplete and announce that no Codex evidence was approved.
-- Readiness leads with core status and Open in Codex.
+- Existing-project scans show the current stage, bounded relative path, file/directory/byte counters, and an accessible Cancel scan action. Use an indeterminate progress bar until a total is known; partial and cancelled results must remain visibly incomplete and announce that no provider evidence was approved.
+- Readiness leads with core status. Open in Codex is shown only for Codex; other providers receive an honest provider-specific handoff or no opener.
+- Optional source-declared health actions are rendered only when readiness identifies a runnable verified route. `planned_unavailable` and `unsupported_platform` remain visible as status text without an actionable button.
 - When no verified Codex opener is available, keep a passed readiness result visible and expose the validated project path as an announced manual-opening result.
 - Optional incomplete states remain secondary.
 - Keep a local recovery/removal entry reachable from Welcome when signed out; rollback, backup inspection, and managed removal do not depend on Codex.
 - Preserve account and analysis state when logout or usage-limit errors occur, and announce the actionable error without losing focus.
+- The final Git-phase option `Prepare a flattened ChatGPT project-sources folder` is a native keyboard-accessible checkbox shown only when Codex is selected. Its optional extras control is progressive, its mapping and no-upload Chat recommendation are stated concisely, and it never appears for another provider.
 
 ## Accessibility
 

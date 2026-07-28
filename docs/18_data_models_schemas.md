@@ -1,8 +1,12 @@
 # Data models and JSON schemas
 
-## Codex data boundary
+## AI provider data boundary
 
-ChatGPT authentication is required for Create, Import, Update, and Repair planning. Codex owns OAuth tokens and refresh. Project state, plans, locks, readiness reports, logs, and support bundles never contain tokens, full account identity, plan type, usage, rate limits, thread history, or hidden reasoning.
+The selected provider is required for Create, Import, Update, and Repair
+planning. Codex owns ChatGPT OAuth tokens and refresh. Non-Codex keys are
+owned by the OS credential vault. Project state, plans, locks, readiness
+reports, logs, and support bundles never contain tokens, keys, full account
+identity, plan type, usage, rate limits, thread history, or hidden reasoning.
 
 Persist only the integration type, auth state needed by the current application session, analysis ID, schema version, input and output digests, confirmed proposal keys, confirmation time, and a proof that account identity was not persisted.
 
@@ -10,12 +14,12 @@ Persist only the integration type, auth state needed by the current application 
 
 | Schema | Purpose |
 | --- | --- |
-| `codex-analysis.schema.json` | Schema-constrained semantic proposals from a ChatGPT-authenticated App Server turn |
-| `scan-result.schema.json` | Deterministic findings plus required, separately classified Codex suggestions |
-| `project-state.schema.json` | Wizard progress, non-secret preferences, and transient Codex integration state |
+| `codex-analysis.schema.json` | Schema-constrained semantic proposals from a selected provider turn |
+| `scan-result.schema.json` | Deterministic findings plus separately classified provider suggestions |
+| `project-state.schema.json` | Wizard progress, non-secret preferences, and transient AI integration state |
 | `installation-plan.schema.json` | Confirmed semantic analysis, planned project and external operations, approvals, and rollback behavior |
 | `installation-lock.schema.json` | Installed revision, confirmed analysis digests, file ownership, hashes, merge choices, and local modifications |
-| `readiness-report.schema.json` | Evidence-backed core, launcher, Codex, wiki, Git, MCP, and optional workflow status |
+| `readiness-report.schema.json` | Evidence-backed core, launcher, selected AI provider, wiki, Git, MCP, and optional workflow status |
 | `remote-manifest.schema.json` | Source components, files, dependencies, tools, environments, validation, and update rules |
 | `conflict-record.schema.json` | Base, local, incoming, resolution, and evidence for one conflict |
 | `transaction-journal.schema.json` | Durable stage and operation checkpoints for recovery and rollback |
@@ -24,22 +28,27 @@ Persist only the integration type, auth state needed by the current application 
 
 ## Separation
 
-### Codex analysis
+### Provider analysis
 
 The model output contains proposals, confidence, concise reasons, evidence references, component recommendations, and warnings. The app adds engine, transport, auth mode, input manifest, and response digest metadata outside the model output.
 
 ### Scan result
 
-Deterministic findings use `origin: deterministic`. Codex proposals use `origin: codex_suggested`. User-edited or accepted values use `origin: user_confirmed`. The two evidence classes are never merged into one confidence score.
+Deterministic findings use `origin: deterministic`. Provider proposals use
+`origin: provider_suggested`. User-edited or accepted values use
+`origin: user_confirmed`. The two evidence classes are never merged into one
+confidence score.
 
 ### Plan
 
-A plan records one confirmed Codex analysis, the exact manifest
-`wiki.required_pages` list for its resolved revision, and exact operations. It
+A plan records one confirmed provider analysis, the selected provider/model/profile, the exact manifest
+`wiki.required_pages` list and snapshot/media/provenance/license metadata for its resolved revision, and exact operations. It
 may target the project, the external HOI4 launcher directory, or application
 data. It contains no account metadata. Optional workflow credentials are
 represented only by an opaque OS-vault reference; the value is never serialized
-into the plan, state, lock, journal, or logs.
+into the plan, state, lock, journal, or logs. Managed-removal plans may carry
+`codex_analysis: null` because removal is a local recovery operation and does
+not require provider authentication.
 
 Manifest-declared external actions also carry a secret-free argument list,
 working-directory placeholder, environment variable names, expected writes,
@@ -48,19 +57,29 @@ visible as `not_declared` rather than becoming inferred capabilities.
 
 ### Lock
 
-The lock records source revisions, the exact required wiki-page list for that
-revision, generated and downloaded files, external launcher ownership, installed
-hashes, merge decisions, optional states, and confirmed analysis digests. A
-legacy lock missing the list is readable but readiness remains incomplete until
-source evidence is refreshed. It must never be used as an authentication cache.
+The lock records source revisions, the exact required wiki-page list and
+snapshot/media/provenance/license metadata for that revision, generated and
+downloaded files, external launcher ownership, installed hashes, merge
+decisions, optional states, and confirmed analysis digests. A legacy lock
+missing either the list or metadata is readable but readiness remains
+incomplete until source evidence is refreshed. It must never be used as an
+authentication cache.
+Removal clears optional-workflow credential references and does not retain a
+Meshy reference outside the selected `workflow.3d` entry.
 
 ### Project state
 
-Project state records wizard progress, preferences, App Server integration state, and opaque references for non-ChatGPT secrets such as `MESHY_API_KEY`. It can be recreated without changing installation ownership.
+Project state records wizard progress, provider/model/profile, non-secret
+endpoint and flatten preferences, App Server integration state when Codex is
+selected, and opaque references for secrets such as `MESHY_API_KEY` or a
+provider key. It can be recreated without changing installation ownership.
 
 ### Readiness
 
-Readiness records whether ChatGPT authentication was verified during setup, whether required analysis was confirmed, whether account metadata stayed out of artifacts, and which checks block Open in Codex.
+Readiness records whether the selected provider was configured (or ChatGPT
+authentication was verified during a Codex setup), whether required analysis
+was confirmed, whether account metadata stayed out of artifacts, and which
+checks block core readiness. Open in Codex is a Codex-only action.
 
 ### Journal
 
@@ -72,19 +91,23 @@ Generated `descriptor.mod`, the external `<project_id>.mod`, and `thumbnail.png`
 
 ## Credential references
 
-Only optional external workflow credentials use opaque OS-vault references. ChatGPT tokens remain fully owned by Codex and have no project credential reference.
+All secrets use opaque OS-vault references. ChatGPT tokens remain fully owned
+by Codex and have no project credential reference. Hosted-provider references
+are deterministic, provider-scoped vault handles used only by the core and
+never serialized into project state, a plan, or a lock.
 
 ## Evolution
 
 Schemas use explicit versions. The 1.0 lock migration inserts an empty
-`wiki_required_pages` marker for legacy locks; readiness treats that marker as
-incomplete rather than guessing from the current application bundle. Add
-migrations before changing required fields. Unknown major versions block.
+`wiki_required_pages` marker for legacy locks; missing `wiki_metadata` is also
+treated as incomplete rather than guessing from the current application
+bundle. Add migrations before changing required fields. Unknown major versions
+block.
 Unknown minor fields can be ignored only when the schema permits them.
 
 ## Examples
 
-Every schema has a realistic example. Examples must pass Draft 2020-12 validation in CI. New examples include ChatGPT-authenticated analysis, launcher-ready generated files, external destinations, and account-data exclusion.
+Every schema has a realistic example. Examples must pass Draft 2020-12 validation in CI. Examples cover Codex and provider analysis metadata, launcher-ready generated files, external destinations, flattened source preferences, and account/key-data exclusion.
 
 ## Atomic writes
 

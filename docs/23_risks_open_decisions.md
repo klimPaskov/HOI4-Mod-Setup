@@ -65,7 +65,9 @@ README pinned wording differs from latest-at-bootstrap resolution. Choose and en
 
 ### License
 
-A public repository is not enough to grant open-source permissions. Select Apache-2.0, MIT, MPL-2.0, or another reviewed license before the first public source release. Review direct dependencies and bundled assets before the decision is finalized.
+A public repository is not enough to grant open-source permissions. Apache-2.0
+is selected and included in `LICENSE`; review direct dependencies, bundled
+assets, and required third-party notices before the first binary release.
 
 ### Maintainer ownership
 

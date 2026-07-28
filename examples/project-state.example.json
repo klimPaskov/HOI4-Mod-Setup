@@ -38,11 +38,16 @@
     "last_error": null,
     "account_values_persisted": false
   },
+  "ai": {
+    "provider": "codex",
+    "model": "default",
+    "optimization_profile": "Codex project and ChatGPT Chat"
+  },
   "credential_references": [
     {
       "name": "MESHY_API_KEY",
       "provider": "windows_credential_manager",
-      "reference": "credential://meshy/default"
+      "reference": "credential://meshy_api_key/00000000-0000-0000-0000-000000000000"
     }
   ]
 }

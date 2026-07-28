@@ -352,6 +352,19 @@ pub struct SourceIdentity {
     pub manifest_origin: String,
 }
 
+/// Wiki provenance copied from the exact resolved manifest. Readiness and
+/// maintenance must not substitute values from a newer bundled manifest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WikiInstallMetadata {
+    #[serde(default)]
+    pub snapshot_marker: Option<String>,
+    pub required_media_policy: String,
+    pub source_status: String,
+    pub license_status: String,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockSourceIdentity {
     pub repository: String,
@@ -368,6 +381,18 @@ pub struct LockSourceIdentity {
 
 fn default_manifest_origin() -> String {
     "remote".into()
+}
+
+pub(crate) fn default_ai_provider() -> String {
+    "codex".into()
+}
+
+pub(crate) fn default_ai_model() -> String {
+    "default".into()
+}
+
+pub(crate) fn default_ai_optimization_profile() -> String {
+    "Codex project and ChatGPT Chat".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -609,6 +634,24 @@ pub struct ExternalAction {
     pub requires_approval: bool,
     #[serde(default)]
     pub contains_secret: bool,
+    /// Immutable identity evidence for a command that the core may execute.
+    /// Missing evidence keeps the action reviewable but unavailable.
+    #[serde(default)]
+    pub verified_executable_sha256: Option<String>,
+    #[serde(default)]
+    pub verified_executable_size: Option<u64>,
+    /// Immutable identity evidence for the reviewed command interpreter used
+    /// by a wrapper route. Missing evidence keeps the route unavailable.
+    #[serde(default)]
+    pub verified_interpreter_sha256: Option<String>,
+    #[serde(default)]
+    pub verified_interpreter_size: Option<u64>,
+    /// Immutable identity evidence for a runtime dependency resolved by the
+    /// reviewed wrapper, such as Node for an MCP command.
+    #[serde(default)]
+    pub verified_runtime_sha256: Option<String>,
+    #[serde(default)]
+    pub verified_runtime_size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -638,6 +681,18 @@ pub struct InstallationPlan {
     #[serde(default)]
     pub maintenance_mode: Option<String>,
     pub source: SourceIdentity,
+    #[serde(default = "default_ai_provider")]
+    pub ai_provider: String,
+    #[serde(default = "default_ai_model")]
+    pub ai_model: String,
+    #[serde(default)]
+    pub ai_endpoint: Option<String>,
+    #[serde(default = "default_ai_optimization_profile")]
+    pub ai_optimization_profile: String,
+    #[serde(default)]
+    pub flatten_chat_sources: bool,
+    #[serde(default)]
+    pub flatten_additional_files: Vec<String>,
     #[serde(default)]
     pub codex_analysis: Option<CodexAnalysisRecord>,
     pub selected_components: Vec<String>,
@@ -646,6 +701,11 @@ pub struct InstallationPlan {
     /// a newer bundled manifest when a pinned install uses an older revision.
     #[serde(default)]
     pub wiki_required_pages: Vec<String>,
+    /// Provenance and media policy from the exact manifest used for this plan.
+    /// `None` is retained for legacy plans and is treated as incomplete when
+    /// the offline wiki is selected.
+    #[serde(default)]
+    pub wiki_metadata: Option<WikiInstallMetadata>,
     #[serde(default)]
     pub generated_artifacts: Vec<GeneratedArtifact>,
     #[serde(default)]
@@ -735,12 +795,28 @@ pub struct InstallationLock {
     #[serde(default)]
     pub updated_at: Option<String>,
     pub source: LockSourceIdentity,
+    #[serde(default = "default_ai_provider")]
+    pub ai_provider: String,
+    #[serde(default = "default_ai_model")]
+    pub ai_model: String,
+    #[serde(default)]
+    pub ai_endpoint: Option<String>,
+    #[serde(default = "default_ai_optimization_profile")]
+    pub ai_optimization_profile: String,
+    #[serde(default)]
+    pub flatten_chat_sources: bool,
+    #[serde(default)]
+    pub flatten_additional_files: Vec<String>,
     #[serde(default)]
     pub codex_analysis: Option<CodexAnalysisRecord>,
     /// Required wiki pages copied from the exact manifest used for this lock.
     /// An empty value on a legacy lock is treated as incomplete by readiness.
     #[serde(default)]
     pub wiki_required_pages: Vec<String>,
+    /// Provenance and media policy from the exact manifest used for this lock.
+    /// Legacy locks may omit it and remain readable but not fully ready.
+    #[serde(default)]
+    pub wiki_metadata: Option<WikiInstallMetadata>,
     pub components: Vec<LockComponent>,
     pub files: Vec<LockedFile>,
     pub merge_choices: Vec<MergeChoice>,
@@ -776,6 +852,13 @@ pub struct JournalOperation {
     pub ownership: Option<Ownership>,
     #[serde(default)]
     pub component_id: Option<String>,
+    /// Manifest or generated source identity copied from the approved plan.
+    /// Rollback journals may carry the predecessor operation's source for an
+    /// auditable link back to the installation record.
+    #[serde(default)]
+    pub source_path: Option<String>,
+    #[serde(default)]
+    pub source_size: Option<u64>,
     #[serde(default)]
     pub action: Option<OperationAction>,
     #[serde(default)]
@@ -800,8 +883,18 @@ pub struct JournalOperation {
     /// rollback itself.
     #[serde(default)]
     pub rollback_source_path: Option<String>,
+    /// The explicit conflict/removal choice that made the operation safe to
+    /// apply. It is kept separate from action because `skip` can mean keep,
+    /// review, or an intentional managed removal decision.
+    #[serde(default)]
+    pub resolution: Option<String>,
     #[serde(default)]
     pub backup_sha256: Option<String>,
+    /// Hash of the staged bytes before live apply. This is intentionally
+    /// separate from `after_sha256`, which is reserved for observed live
+    /// post-apply bytes.
+    #[serde(default)]
+    pub staged_sha256: Option<String>,
     #[serde(default)]
     pub after_sha256: Option<String>,
     #[serde(default)]
@@ -838,6 +931,8 @@ pub struct TransactionJournal {
     pub result_lock_sha256: Option<String>,
     #[serde(default)]
     pub result_lock_exists: Option<bool>,
+    #[serde(default)]
+    pub rollback_record_sha256: Option<String>,
     pub project_id: String,
     /// Canonical project root bound to this journal. Older journals may omit
     /// it, but recovery must refuse to resume them without a root binding.
@@ -925,6 +1020,8 @@ pub struct ReadinessReport {
     pub codex: ReadinessCodexSummary,
     pub checks: Vec<ReadinessCheck>,
     pub summary: ReadinessSummary,
+    #[serde(default)]
+    pub core_ready: bool,
     pub open_in_codex: OpenInCodex,
     #[serde(default)]
     pub notes: Vec<String>,
@@ -932,6 +1029,10 @@ pub struct ReadinessReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReadinessCodexSummary {
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub model: String,
     pub integration: String,
     pub auth_mode: String,
     pub authenticated_during_setup: bool,
@@ -946,6 +1047,17 @@ pub struct CredentialReference {
     pub name: String,
     pub provider: String,
     pub reference: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiProviderProfile {
+    pub id: String,
+    pub display_name: String,
+    pub protocol: String,
+    pub requires_credential: bool,
+    pub optimization_profile: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -995,6 +1107,12 @@ pub struct CodexAnalysisRecord {
     pub engine: String,
     #[serde(default)]
     pub auth_mode: String,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub optimization_profile: Option<String>,
     pub analysis_id: Uuid,
     pub schema_version: String,
     pub input_sha256: String,

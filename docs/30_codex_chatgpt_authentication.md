@@ -1,8 +1,13 @@
-# Codex subscription and ChatGPT authentication
+# Codex subscription, ChatGPT authentication, and provider adapters
 
 ## Decision
 
-HOI4 Mod Setup uses the user's Codex access through their ChatGPT account for every semantic setup task. The application does not use an application-owned OpenAI API key, does not request a user API key, and does not implement a separate token service.
+Codex is the default semantic provider. HOI4 Mod Setup uses the user's Codex
+access through their ChatGPT account for the Codex route. The application does
+not use an application-owned OpenAI API key, does not request an API key for
+Codex, and does not implement a separate token service. Users may instead
+select a bounded non-Codex provider profile; those routes require an explicit
+endpoint and OS-vault credential when the verified profile requires one.
 
 The integration boundary is the official local `codex app-server` process. The desktop application launches it as a child process and communicates over its default stdio JSONL transport. This is the Codex interface intended for product integrations that need authentication, threads, approvals, and streamed events.
 
@@ -24,6 +29,16 @@ A compatible official Codex installation with `app-server` support is a blocking
 The app may show official installation or update guidance when Codex is absent or incompatible. It must not download, bundle, or replace a Codex executable unless a later release introduces a separately verified and licensed distribution design.
 
 Recovery, rollback, backup inspection, and local removal of managed files remain available without ChatGPT sign-in. These operations must never depend on an online model.
+
+### Non-Codex provider route
+
+Claude uses an Anthropic messages envelope. Kimi, GLM, DeepSeek, local, and
+another configured provider use the OpenAI-compatible envelope. Hosted routes
+accept only a user-supplied HTTPS endpoint and a provider-keyed OS-vault
+reference. Local models accept only a user-supplied loopback HTTP endpoint and
+are described as configured local adapters, not hosted accounts. The app does
+not invent provider URLs, OAuth routes, package names, commands, or model
+names. The first schema-validated request is the capability check.
 
 ## Authentication flow
 
@@ -67,11 +82,11 @@ The app may display the live signed-in email and plan type returned by `account/
 
 Before a semantic analysis turn, read the current account and rate-limit state. A reached usage limit blocks new semantic analysis and produces a clear resumable state. It does not damage the current scan or transaction plan.
 
-Do not silently switch to an API key, another provider, or a weaker local inference path. The user can retry after the account becomes available. Recovery and rollback remain usable.
+Do not silently switch providers, endpoints, models, or credential routes. The user can retry after the selected provider becomes available. Recovery and rollback remain usable.
 
 ## Semantic responsibilities
 
-Codex is required for:
+The selected provider is used for:
 
 - interpreting a new-mod description
 - proposing the display name
@@ -102,11 +117,11 @@ The deterministic Rust core remains authoritative for:
 - transaction safety
 - readiness evidence
 
-Codex cannot override a deterministic failure. It cannot create files during analysis, approve a transaction, resolve a conflict automatically, or mark readiness as passed.
+No provider can override a deterministic failure. It cannot create files during analysis, approve a transaction, resolve a conflict automatically, or mark readiness as passed.
 
 ## Turn contract
 
-Use a dedicated App Server thread for each setup session. Start semantic turns with:
+Use a dedicated App Server thread for each Codex setup session. Start every semantic turn with:
 
 - no model override by default, so the user's Codex configuration controls the available model
 - read-only sandbox policy
@@ -115,6 +130,11 @@ Use a dedicated App Server thread for each setup session. Start semantic turns w
 - explicit approved input excerpts
 - a task-specific `outputSchema`
 - a bounded prompt that asks for proposals and short rationale, not hidden reasoning
+
+Non-Codex adapters use the same approved-input manifest and output schema. The
+Rust core extracts their native response envelope, validates it, binds the
+provider/model/profile to the confirmation record, and never gives the adapter
+write access to the project.
 
 The response must validate against `schemas/codex-analysis.schema.json`. Reject malformed, incomplete, credential-shaped, account-shaped, or extra fields. The response must include the complete ten-key semantic proposal set. Store only:
 
@@ -132,8 +152,8 @@ The Rust core retains a bounded pending analysis session and binds confirmation 
 ## New-project identity sequence
 
 1. Collect the user's plain-language brief.
-2. Verify ChatGPT authentication.
-3. Send only the brief, approved relative evidence, and explicit wizard constraints to Codex; the absolute project root and scan ID remain core-only bindings.
+2. Verify the selected provider, or ChatGPT authentication for Codex.
+3. Send only the brief, approved relative evidence, and explicit wizard constraints to the selected provider; the absolute project root and scan ID remain core-only bindings.
 4. Receive the complete schema-constrained proposal set for name, ID, prefix, namespace, description, tags, folder profile, `AGENTS.md` profile, localisation convention, and documentation convention.
 5. Run deterministic validation over every proposed field.
 6. Show the proposal with concise rationale.
@@ -147,8 +167,8 @@ Codex proposes identity. The renderer owns final bytes.
 1. Run the bounded deterministic scan.
 2. Build an input manifest of approved text excerpts and computed findings.
 3. Show the manifest before transmission.
-4. Verify ChatGPT authentication and available usage.
-5. Send the approved evidence to a read-only Codex turn with the output schema.
+4. Verify the selected provider and available usage.
+5. Send the approved evidence to a read-only provider turn with the output schema.
 6. Validate the response.
 7. Show semantic suggestions separately from detected facts.
 8. Require confirmation before the installation plan can be created.
@@ -165,16 +185,18 @@ Codex proposes identity. The renderer owns final bytes.
 | App Server exits | Mark session interrupted and allow restart | No project mutation |
 | Malformed analysis | Reject response and retry with same approved input | No project mutation |
 | User rejects proposal | Return to editable brief or review | No project mutation |
+| Provider endpoint or key missing | Preserve the draft and block new analysis | Recovery remains available |
+| Provider response too large, malformed, or redirected | Reject response and preserve the draft | No project mutation |
 
 ## Readiness
 
 The final readiness report includes blocking checks for:
 
-- compatible Codex App Server
-- ChatGPT-managed authentication verified during the setup session
+- the selected provider configuration, or compatible Codex App Server
+- ChatGPT-managed authentication verified during a Codex setup session
 - required semantic analysis completed
-- all Codex proposals deterministically validated
+- all provider proposals deterministically validated
 - every required proposal confirmed by the user
-- no account identity or token stored in project artifacts
+- no account identity, provider key, or token stored in project artifacts
 
-Optional 3D and LoRA states remain independent of this core authentication gate.
+Optional 3D and LoRA states remain independent of this core provider gate.

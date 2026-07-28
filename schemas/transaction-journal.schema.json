@@ -86,9 +86,6 @@
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
     },
-    "git_initialized": {
-      "type": "boolean"
-    },
     "git_remote_added_name": {
       "type": [
         "string",
@@ -187,6 +184,19 @@
               "null"
             ]
           },
+          "source_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
           "action": {
             "enum": [
               "create",
@@ -259,7 +269,20 @@
               "null"
             ]
           },
+          "resolution": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "backup_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "staged_sha256": {
             "type": [
               "string",
               "null"
@@ -270,7 +293,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "pattern": "^[0-9a-f]{64}$"
           },
           "after_exists": {
             "type": [
@@ -341,6 +365,13 @@
         "boolean",
         "null"
       ]
+    },
+    "rollback_record_sha256": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{64}$"
     },
     "error": {
       "type": [

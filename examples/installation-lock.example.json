@@ -3,6 +3,12 @@
   "project_id": "cold_war_curtain",
   "installed_at": "2026-07-25T17:42:00+03:00",
   "updated_at": null,
+  "ai_provider": "codex",
+  "ai_model": "default",
+  "ai_endpoint": null,
+  "ai_optimization_profile": "Codex project and ChatGPT Chat",
+  "flatten_chat_sources": false,
+  "flatten_additional_files": [],
   "source": {
     "repository": "klimPaskov/Agentic-HOI4-Modding",
     "mode": "pinned_commit",
@@ -14,6 +20,15 @@
   "wiki_required_pages": [
     "Data structures - Hearts of Iron 4 Wiki.md"
   ],
+  "wiki_metadata": {
+    "snapshot_marker": null,
+    "required_media_policy": "all_declared",
+    "source_status": "repository_only",
+    "license_status": "not_found",
+    "notes": [
+      "Provenance and license remain visibly unverified because the inspected repository did not declare them."
+    ]
+  },
   "components": [
     {
       "id": "project.launcher_scaffold",
@@ -66,7 +81,7 @@
       "platform": "all"
     },
     {
-      "path": "%USERPROFILE%\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain.mod",
+      "path": "C:\\Users\\example\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain.mod",
       "location_scope": "external_launcher",
       "component_id": "project.launcher_scaffold",
       "source_path": "generator://descriptor/launcher",
@@ -75,6 +90,7 @@
       "base_sha256": null,
       "installed_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
       "ownership": "generated",
+      "external": true,
       "executable": false,
       "platform": "windows"
     },
@@ -129,7 +145,7 @@
     "workflow.3d": {
       "state": "ready",
       "reason": null,
-      "credential_reference": "credential://meshy/default"
+      "credential_reference": "credential://meshy_api_key/00000000-0000-0000-0000-000000000000"
     },
     "workflow.lora_comfyui_interest": {
       "state": "planned_unavailable",
@@ -139,7 +155,7 @@
   },
   "local_modifications": [],
   "rollback_records": [
-    "transactions/960ccbb7/rollback-record.json"
+    "transactions/960ccbb7-c36a-41b0-9d76-0105bcd83b05/rollback-record.json"
   ],
   "codex_analysis": {
     "engine": "codex_app_server",

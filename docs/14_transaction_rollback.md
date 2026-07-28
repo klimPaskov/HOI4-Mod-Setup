@@ -26,7 +26,7 @@ macOS:   ~/Library/Application Support/HOI4 Mod Setup/
 
 ### 1. Preflight
 
-Validate root, disk, permissions, process locks, incomplete journal, platform, confirmed Codex analysis metadata, selections, and connectivity. Bind the canonical project root and transaction UUID before any mutation.
+Validate root, disk, permissions, process locks, incomplete journal, platform, confirmed selected-provider analysis metadata, selections, provider connectivity/configuration, and flatten preferences. Bind the canonical project root and transaction UUID before any mutation.
 
 ### 2. Source resolution
 
@@ -50,11 +50,15 @@ Copy every path that may be replaced, merged, removed, or have metadata changed.
 
 ### 7. Staging
 
-Build the complete target outside live paths. Generate both descriptors, the thumbnail, profile folders, and merge results from confirmed values here.
+Build the complete target outside live paths. Generate both descriptors, the thumbnail, profile folders, provider-adapted AGENTS/README files, optional flattened Chat sources, and merge results from confirmed values here.
 
 ### 8. Validation
 
-Run parsers, schemas, containment, wiki coverage, hashes, and component validators against staging. Invalid descriptor, TOML, JSON, AGENTS, PNG, or wiki output cannot reach the live project.
+Run parsers, schemas, containment, wiki coverage and the exact locked wiki
+snapshot/media/provenance/license evidence, hashes, provider output, flatten
+collision/secret/size checks, and component validators against staging. Invalid
+descriptor, TOML, JSON, AGENTS, PNG, flattened source, or wiki output cannot
+reach the live project.
 
 ### 9. Apply
 
@@ -79,12 +83,17 @@ it does not claim success until the reversal is persisted.
 
 Before and after each stage and operation boundary, write a new journal, fsync
 the file, atomically replace the old journal, and fsync its directory where
-supported. The journal includes action, source/result/backup hashes,
+supported. The journal includes action, source path/size, reviewed resolution,
+source/result/backup hashes, separate staged/live hashes,
 ownership/rollback metadata, and the project-root binding. Source resolution,
 selective download, and checksum verification are completed by the core plan
 builder before the reviewed transaction is accepted; their exact revision and
 hash evidence is carried into the journal plan. Never mark complete before
-destination, readiness, and hash evidence are durable.
+destination, readiness, and hash evidence are durable. For any reviewed
+external wrapper action, persist the manifest-declared executable, interpreter,
+and runtime identity evidence in the plan and journal; missing identity keeps
+the action `planned_unavailable` and is never permission to run a same-named
+PATH command.
 
 ## Apply order
 
@@ -126,7 +135,7 @@ are not recreated by this inverse action.
 
 ## Interrupted states
 
-Before apply, resume, rollback, or discard staging after revalidation. During apply, compare each operation's expected before and after hashes. A prior maintenance lock may remain during resume only when its hash matches the journaled predecessor. Unknown state blocks resume or requires manual review. After apply but before readiness, run post-checks and finish or roll back. The final lock write uses a `finalizing` journal state: if the process stops after the lock and rollback record are durable, resume verifies those artifacts and completes only the journal. It never replays file operations. A crash during file rollback leaves `rolling_back` and a per-operation `rollback_applying` checkpoint for a safe retry; a mismatched live state still requires manual review.
+Before apply, resume, rollback, or discard staging after revalidation. During apply, compare each operation's expected before and after hashes. A prior maintenance lock may remain during resume only when its hash matches the journaled predecessor. Unknown state blocks resume or requires manual review. After apply but before readiness, run post-checks and finish or roll back. The final lock write uses a `finalizing` journal state. The journal records the exact pretty-JSON SHA-256 of the success lock before the rollback record is committed; if the process stops after the lock and rollback record are durable, resume verifies the exact lock bytes, rollback record, live operation results, and stage checkpoint before completing only the journal. It never replays file operations. A crash during file rollback leaves `rolling_back` and a per-operation `rollback_applying` checkpoint for a safe retry; inverse backups are validated independently from already-restored live bytes, while a mismatched live state still requires manual review. Resume requires the predecessor lock to exist with the recorded hash (or to remain absent when no predecessor was recorded), and rollback refuses later lock edits before touching project files.
 
 ## Idempotency
 
@@ -142,4 +151,4 @@ Detect common OneDrive and iCloud paths. Warn about synchronization ordering. Pe
 
 ## Fault tests
 
-Crash and fail at every stage and operation, including disk full, permission loss, antivirus lock, network loss, checksum mismatch, user edits during dry run or staging, external health failure, and rollback after Git initialization. The checked-in fault suite covers stage and apply-operation injection, subprocess termination during finalization and rollback backup creation, inverse rollback refusal after a user file or lock edit, plus targeted skipped-file, ownership, remote-approval, reanalysis binding, and separate rollback-transaction backup regressions. Per-operation rollback resume and power-loss behavior outside the tested finalization windows remain release work.
+Crash and fail at every stage and operation, including disk full, permission loss, antivirus lock, network loss, checksum mismatch, user edits during dry run or staging, external health failure, and rollback after Git initialization. The checked-in fault suite covers stage and apply-operation injection, subprocess termination during finalization and rollback backup creation, inverse rollback refusal after a user file or lock edit, plus targeted skipped-file, ownership, remote-approval, reanalysis binding, exact success-lock, predecessor-lock, and separate rollback-transaction backup regressions. Native disk-full, antivirus, network-loss, timeout, cancellation, and journal-write-failure adapters remain release-gate work and must not be represented as passing until exercised on Windows and macOS.

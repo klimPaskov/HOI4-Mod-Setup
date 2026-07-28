@@ -1,12 +1,15 @@
 //! The only filesystem, network, process, and credential boundary exposed to React.
 
+use crate::ai::{self, AiProviderConfig};
 use crate::codex::{
-    find_codex_executable, missing_status, AppServerProtocol, CodexAccountStatus, CodexAnalysis,
-    CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ProcessJsonlTransport,
+    find_codex_executable, missing_status, AiAccountStatus, AiAnalysisRequest, AppServerProtocol,
+    ApprovedEvidence, CodexAccountStatus, CodexAnalysis, CodexAnalysisRequest, CodexAnalysisResult,
+    CodexLoginStart, ProcessJsonlTransport,
 };
 use crate::credentials::{
-    provider_name, save_meshy_key, validate_credential_reference, CredentialStore,
-    OsCredentialStore, ScopedSecretEnvironment, MESHY_ENVIRONMENT_NAME,
+    provider_name, save_ai_provider_key, save_meshy_key, validate_ai_provider_credential_for,
+    validate_credential_reference, CredentialStore, OsCredentialStore, ScopedSecretEnvironment,
+    MESHY_ENVIRONMENT_NAME,
 };
 use crate::descriptors::generated_artifacts as render_generated_artifacts;
 use crate::merge::{
@@ -125,6 +128,7 @@ struct PendingCodexAnalysis {
     confirmed: Option<CodexAnalysisRecord>,
     project_root: Option<PathBuf>,
     scan_id: Option<Uuid>,
+    endpoint_fingerprint: Option<String>,
 }
 
 #[derive(Default)]
@@ -164,6 +168,19 @@ fn clear_approved_scan_evidence() -> Result<(), String> {
 
 fn meshy_credential_reference() -> &'static Mutex<Option<CredentialReference>> {
     MESHY_CREDENTIAL_REFERENCE.get_or_init(|| Mutex::new(None))
+}
+
+fn ai_credential_reference(provider: &str) -> Option<CredentialReference> {
+    let profile = ai::profile(provider.trim())?;
+    if !profile.requires_credential {
+        return None;
+    }
+    Some(CredentialReference {
+        name: crate::credentials::AI_PROVIDER_ENVIRONMENT_NAME.into(),
+        provider: provider_name(Platform::current()).into(),
+        reference: format!("credential://ai_provider_api_key/{}", provider.trim()),
+        provider_id: Some(provider.trim().into()),
+    })
 }
 
 fn three_d_health() -> &'static Mutex<HashMap<String, CachedThreeDHealth>> {
@@ -328,6 +345,28 @@ fn require_codex_chatgpt_session() -> Result<(), AppError> {
     })
 }
 
+fn require_ai_session(state: &Value) -> Result<(), AppError> {
+    let provider = ai_provider_from_state(state)?;
+    if provider == "codex" {
+        return require_codex_chatgpt_session();
+    }
+    let status = ai::account_status(
+        &OsCredentialStore,
+        &AiProviderConfig {
+            provider: provider.clone(),
+            model: ai_model_from_state(state),
+            endpoint: ai_endpoint_from_state(state).unwrap_or_default(),
+            credential_reference: ai_credential_reference(&provider),
+        },
+    );
+    if status.error.is_some() || !status.available || !status.authenticated {
+        return Err(AppError::Credential(format!(
+            "connect the selected {provider} provider before planning"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_codex_planning_account(status: &CodexAccountStatus) -> Result<(), AppError> {
     if let Some(error) = status.error.as_deref() {
         return Err(AppError::Credential(error.into()));
@@ -364,19 +403,24 @@ fn store_prepared_plan(
     canonical_root: PathBuf,
 ) -> Result<InstallationPlan, AppError> {
     let id = plan.plan_id;
+    let mut prepared_plan = PreparedPlan {
+        plan,
+        prepared_files,
+        merge_contexts,
+        canonical_root,
+        approved: false,
+    };
+    // Build the optional flattened view from the currently accepted source
+    // set before exposing the plan to the renderer. In particular, an
+    // unresolved modified AGENTS/skill/subagent file must never leak incoming
+    // bytes into the Chat export merely because the user has not opened the
+    // conflict screen yet.
+    refresh_flattened_outputs(&mut prepared_plan)?;
+    let plan = prepared_plan.plan.clone();
     prepared_plans()
         .lock()
         .map_err(|_| AppError::Transaction("prepared plan store is unavailable".into()))?
-        .insert(
-            id,
-            PreparedPlan {
-                plan: plan.clone(),
-                prepared_files,
-                merge_contexts,
-                canonical_root,
-                approved: false,
-            },
-        );
+        .insert(id, prepared_plan);
     Ok(plan)
 }
 
@@ -414,6 +458,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
+            ai_provider_profiles,
+            ai_account_read,
+            store_ai_provider_credential,
+            remove_ai_provider_credential,
             codex_account_read,
             codex_login_start,
             codex_login_wait,
@@ -421,6 +469,8 @@ pub fn run() {
             open_codex_login_url,
             codex_logout,
             codex_analyze,
+            ai_analyze,
+            approve_scan_evidence,
             confirm_codex_analysis,
             pick_project_folder,
             pick_launcher_folder,
@@ -458,6 +508,58 @@ fn app_info() -> Value {
         "manifest": crate::source::MANIFEST_PATH,
         "supported_platforms": ["windows", "macos"],
     })
+}
+
+#[tauri::command]
+fn ai_provider_profiles() -> Vec<AiProviderProfile> {
+    ai::provider_profiles()
+}
+
+#[tauri::command]
+fn ai_account_read(provider: String, model: String, endpoint: String) -> AiAccountStatus {
+    let credential_reference = ai_credential_reference(&provider);
+    ai::account_status(
+        &OsCredentialStore,
+        &AiProviderConfig {
+            provider,
+            model,
+            endpoint,
+            credential_reference,
+        },
+    )
+}
+
+#[tauri::command]
+fn store_ai_provider_credential(provider: String, value: String) -> Result<bool, String> {
+    if ai::profile(provider.trim())
+        .is_none_or(|profile| provider.trim() == "codex" || !profile.requires_credential)
+    {
+        return Err(
+            "AI provider credentials are available only for a configured hosted provider".into(),
+        );
+    }
+    let reference =
+        save_ai_provider_key(&OsCredentialStore, provider.trim(), &value).map_err(command_error)?;
+    validate_ai_provider_credential_for(&reference, provider.trim()).map_err(command_error)?;
+    Ok(true)
+}
+
+#[tauri::command]
+fn remove_ai_provider_credential(provider: String) -> Result<bool, String> {
+    if ai::profile(provider.trim())
+        .is_none_or(|profile| provider.trim() == "codex" || !profile.requires_credential)
+    {
+        return Err(
+            "AI provider credentials are available only for a configured hosted provider".into(),
+        );
+    }
+    let reference = ai_credential_reference(provider.trim())
+        .ok_or_else(|| "no stored credential exists for the selected provider".to_string())?;
+    validate_ai_provider_credential_for(&reference, provider.trim()).map_err(command_error)?;
+    OsCredentialStore
+        .delete(&reference)
+        .map_err(command_error)?;
+    Ok(true)
 }
 
 #[tauri::command]
@@ -519,6 +621,7 @@ fn open_codex_login_url(url: String) -> Result<(), String> {
         .ok_or_else(|| "No supported system-browser opener is available".to_string())?;
     let spec = crate::process::ProcessSpec {
         executable: executable.clone(),
+        executable_sha256: Some(sha256_file(&executable).map_err(command_error)?),
         args: vec![url],
         cwd: None,
         platform: Platform::current(),
@@ -581,9 +684,109 @@ fn codex_analyze(request: CodexAnalysisRequest) -> Result<CodexAnalysisResult, S
             confirmed: None,
             project_root: request.project_root.clone().map(PathBuf::from),
             scan_id: request.scan_id,
+            endpoint_fingerprint: None,
         },
     );
     Ok(result)
+}
+
+#[tauri::command]
+fn ai_analyze(mut request: AiAnalysisRequest) -> Result<CodexAnalysisResult, String> {
+    if request.provider == "codex" {
+        return Err("Codex analysis must use the official Codex App Server command".into());
+    }
+    if let Some(project_root) = request.analysis.project_root.as_deref() {
+        request.analysis.project_root = Some(
+            validate_project_root(Path::new(project_root))
+                .map_err(command_error)?
+                .display()
+                .to_string(),
+        );
+    }
+    let credential_reference = ai_credential_reference(&request.provider);
+    if let Some(reference) = credential_reference.as_ref() {
+        validate_ai_provider_credential_for(reference, request.provider.trim())
+            .map_err(command_error)?;
+    }
+    validate_codex_evidence_approval(&request.analysis).map_err(command_error)?;
+    let result = ai::analyze(
+        &OsCredentialStore,
+        &AiProviderConfig {
+            provider: request.provider.clone(),
+            model: request.model.clone(),
+            endpoint: request.endpoint.clone(),
+            credential_reference,
+        },
+        &request,
+    )
+    .map_err(command_error)?;
+    let mut analyses = codex_analyses()
+        .lock()
+        .map_err(|_| "AI analysis store is unavailable".to_string())?;
+    if analyses.len() >= 32 {
+        if let Some(oldest) = analyses.keys().next().copied() {
+            analyses.remove(&oldest);
+        }
+    }
+    analyses.insert(
+        result.record.analysis_id,
+        PendingCodexAnalysis {
+            analysis: result.analysis.clone(),
+            record: result.record.clone(),
+            confirmed: None,
+            project_root: request.analysis.project_root.clone().map(PathBuf::from),
+            scan_id: request.analysis.scan_id,
+            endpoint_fingerprint: Some(sha256_bytes(request.endpoint.trim().as_bytes())),
+        },
+    );
+    Ok(result)
+}
+
+#[tauri::command]
+fn approve_scan_evidence(
+    project_root: String,
+    scan_id: String,
+    evidence: Vec<ApprovedEvidence>,
+) -> Result<(), String> {
+    let project_root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
+    let scan_id = Uuid::parse_str(&scan_id).map_err(|_| "scan ID is invalid".to_string())?;
+    crate::codex::validate_analysis_evidence(&evidence).map_err(command_error)?;
+    let mut approved = codex_approved_evidence()
+        .lock()
+        .map_err(|_| "approved scan evidence store is unavailable".to_string())?;
+    if approved
+        .project_root
+        .as_ref()
+        .is_none_or(|root| !same_project_root(root, &project_root))
+        || approved.scan_id != Some(scan_id)
+    {
+        return Err("scan evidence is stale or belongs to a different project".into());
+    }
+    for item in evidence {
+        let entries = approved.entries.get_mut(&item.reference).ok_or_else(|| {
+            format!(
+                "scan evidence reference is not present in the completed scan: {}",
+                item.reference
+            )
+        })?;
+        if !entries.iter().any(|(path, _)| path == &item.path) {
+            return Err(format!(
+                "scan evidence path is not present in the completed scan: {}",
+                item.path
+            ));
+        }
+        let hash = item.excerpt_sha256;
+        if !entries
+            .iter()
+            .any(|(path, existing)| path == &item.path && existing == &hash)
+        {
+            return Err(format!(
+                "scan evidence excerpt is not the exact core-scanned value: {}",
+                item.reference
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_codex_evidence_approval(request: &CodexAnalysisRequest) -> Result<(), AppError> {
@@ -598,18 +801,21 @@ fn validate_codex_evidence_approval(request: &CodexAnalysisRequest) -> Result<()
     let approved = codex_approved_evidence().lock().map_err(|_| {
         AppError::Serialization("approved scan evidence store is unavailable".into())
     })?;
-    if request.analysis_purpose.as_deref() == Some("maintenance_reanalysis") {
+    if matches!(
+        request.analysis_purpose.as_deref(),
+        Some("existing_project_import") | Some("maintenance_reanalysis")
+    ) {
         let requested_root = request.project_root.as_deref().ok_or_else(|| {
-            AppError::PathSecurity("maintenance analysis has no project root".into())
+            AppError::PathSecurity("existing-project analysis has no project root".into())
         })?;
         let requested_root = validate_project_root(Path::new(requested_root))?;
         let approved_root = approved.project_root.as_ref().ok_or_else(|| {
-            AppError::Credential("maintenance analysis has no current read-only scan".into())
+            AppError::Credential("existing-project analysis has no current read-only scan".into())
         })?;
         if !same_project_root(&requested_root, approved_root) || request.scan_id != approved.scan_id
         {
             return Err(AppError::Credential(
-                "maintenance analysis is not bound to the latest read-only scan".into(),
+                "existing-project analysis is not bound to the latest read-only scan".into(),
             ));
         }
     }
@@ -973,13 +1179,12 @@ fn run_3d_health_check(project_root: String) -> Result<WorkflowHealthResult, Str
         .ok_or_else(|| {
             "the 3D bootstrap is not hash-tracked in the installation lock".to_string()
         })?;
-    let metadata = std::fs::symlink_metadata(&target_path)
-        .map_err(|error| format!("the installed 3D bootstrap is unavailable: {error}"))?;
-    if !metadata.is_file()
-        || locked_file
-            .installed_size
-            .is_some_and(|expected| expected != metadata.len())
-        || sha256_file(&target_path).map_err(command_error)? != locked_file.installed_sha256
+    let script_bytes = crate::flatten::read_regular_file_no_follow_under_root(&root, target)
+        .map_err(command_error)?;
+    if locked_file
+        .installed_size
+        .is_some_and(|expected| expected != script_bytes.len() as u64)
+        || sha256_bytes(&script_bytes) != locked_file.installed_sha256
     {
         return Err("the installed 3D bootstrap failed its lock integrity check".into());
     }
@@ -994,6 +1199,7 @@ fn run_3d_health_check(project_root: String) -> Result<WorkflowHealthResult, Str
         name: MESHY_ENVIRONMENT_NAME.into(),
         provider: provider_name(Platform::Windows).into(),
         reference: credential_reference.into(),
+        provider_id: None,
     };
     let environment = ScopedSecretEnvironment::from_credential(
         &OsCredentialStore,
@@ -1003,18 +1209,22 @@ fn run_3d_health_check(project_root: String) -> Result<WorkflowHealthResult, Str
     .map_err(command_error)?;
     let python =
         crate::process::find_path_executable(&["python.exe", "python"]).map_err(command_error)?;
+    let private_script = create_private_verified_script(&script_bytes).map_err(command_error)?;
     let spec = crate::process::ProcessSpec {
         executable: python.clone(),
-        args: vec![target_path.display().to_string()],
+        executable_sha256: Some(sha256_file(&python).map_err(command_error)?),
+        args: vec![private_script.display().to_string()],
         cwd: Some(root.clone()),
         platform: Platform::Windows,
         environment_names: vec![MESHY_ENVIRONMENT_NAME.into()],
         timeout_seconds: 10 * 60,
         max_output_bytes: 2 * 1024 * 1024,
     };
-    let result = spec
-        .run(&[python], Some(&environment))
-        .map_err(command_error)?;
+    let run_result = spec.run(&[python], Some(&environment));
+    let cleanup_result = remove_private_verified_script(&private_script);
+    let result = run_result.map_err(command_error);
+    cleanup_result.map_err(command_error)?;
+    let result = result?;
     let health_state = if result.status_code == Some(0) && !result.timed_out {
         "ready"
     } else {
@@ -1030,10 +1240,89 @@ fn run_3d_health_check(project_root: String) -> Result<WorkflowHealthResult, Str
     })
 }
 
+fn create_private_verified_script(bytes: &[u8]) -> Result<PathBuf, AppError> {
+    let root = application_data_root();
+    if path_has_link_component(&root) {
+        return Err(AppError::PathSecurity(
+            "application data root contains a symlink or junction".into(),
+        ));
+    }
+    let directory = root.join("health-checks").join(Uuid::new_v4().to_string());
+    if path_has_link_component(&directory) {
+        return Err(AppError::PathSecurity(
+            "3D health-check storage contains a symlink or junction".into(),
+        ));
+    }
+    std::fs::create_dir_all(&directory)?;
+    if path_has_link_component(&directory) {
+        return Err(AppError::PathSecurity(
+            "3D health-check storage changed during creation".into(),
+        ));
+    }
+    let path = directory.join("workflow.py");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    use std::io::Write;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    let relative = path
+        .strip_prefix(&root)
+        .map_err(|_| AppError::PathSecurity("private health-check copy escaped its root".into()))?
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    let verified = crate::flatten::read_regular_file_no_follow_under_root(&root, &relative)?;
+    if verified != bytes {
+        return Err(AppError::Transaction(
+            "private 3D health-check copy failed verification".into(),
+        ));
+    }
+    Ok(path)
+}
+
+fn remove_private_verified_script(path: &Path) -> Result<(), AppError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::PathSecurity("private health-check copy has no parent".into()))?;
+    if path_has_link_component(parent) {
+        return Err(AppError::PathSecurity(
+            "private health-check storage changed before cleanup".into(),
+        ));
+    }
+    let metadata = std::fs::symlink_metadata(path)?;
+    if crate::security::is_link_metadata(&metadata) || !metadata.is_file() {
+        return Err(AppError::PathSecurity(
+            "private health-check copy is not a regular file".into(),
+        ));
+    }
+    std::fs::remove_file(path)?;
+    if path.exists() {
+        return Err(AppError::Transaction(
+            "private 3D health-check copy could not be removed".into(),
+        ));
+    }
+    if let Some(directory) = parent.parent() {
+        if path_has_link_component(directory) {
+            return Err(AppError::PathSecurity(
+                "private health-check parent changed before cleanup".into(),
+            ));
+        }
+        let _ = std::fs::remove_dir(parent);
+    }
+    Ok(())
+}
+
 fn mcp_failure(error: AppError) -> WorkflowHealthResult {
     let message = redact_secrets(&error.to_string(), &[]);
+    let status = if matches!(&error, AppError::UnsupportedPlatform(_)) {
+        "planned_unavailable"
+    } else {
+        "incomplete"
+    };
     WorkflowHealthResult {
-        status: "incomplete".into(),
+        status: status.into(),
         exit_code: None,
         timed_out: message.to_ascii_lowercase().contains("timed out"),
         stdout: String::new(),
@@ -1041,7 +1330,10 @@ fn mcp_failure(error: AppError) -> WorkflowHealthResult {
     }
 }
 
-fn installed_mcp_target(project_root: &Path, lock: &InstallationLock) -> Result<String, AppError> {
+fn installed_mcp_target(
+    project_root: &Path,
+    lock: &InstallationLock,
+) -> Result<crate::mcp::VerifiedMcpTarget, AppError> {
     let manifest = resolve_installed_manifest(lock)?;
     let target = crate::mcp::manifest_target(&manifest)?;
     let config_path = safe_join(project_root, ".codex/config.toml")?;
@@ -1055,7 +1347,7 @@ fn installed_mcp_target(project_root: &Path, lock: &InstallationLock) -> Result<
         .and_then(|value| value.get("hoi4_agent_tools"))
         .and_then(|value| value.get("command"))
         .and_then(toml::Value::as_str);
-    if configured != Some(target.as_str()) {
+    if configured != Some(target.target.as_str()) {
         return Err(AppError::Process(
             "installed MCP configuration does not match the locked manifest command".into(),
         ));
@@ -1139,9 +1431,14 @@ fn refresh_installed_mcp_readiness(
         .and_then(|lock| installed_mcp_target(project_root, &lock))
         .and_then(|target| crate::mcp::initialize_health(project_root, &target));
     if let Err(error) = mcp_result {
-        detected.mcp_status = "block".into();
+        detected.mcp_status = if matches!(&error, AppError::UnsupportedPlatform(_)) {
+            "planned_unavailable"
+        } else {
+            "block"
+        }
+        .into();
         detected.notes.push(format!(
-            "MCP initialize health failed: {}",
+            "MCP initialize health unavailable or failed: {}",
             redact_secrets(&error.to_string(), &[])
         ));
     } else {
@@ -1162,15 +1459,39 @@ fn evaluate_installed_readiness(
 ) -> Result<ReadinessReport, AppError> {
     let mut detected = crate::readiness::project_input(project_root, project_id)?;
     refresh_installed_mcp_readiness(project_root, &mut detected)?;
-    let live_codex = with_codex_session(|session| session.account_read(false)).ok();
-    detected.codex_authenticated = detected.codex_authenticated
-        && live_codex.as_ref().is_some_and(|status| {
-            status.error.is_none()
-                && status.authenticated
-                && status.auth_mode == "chatgpt"
-                && !status.usage_limited
-        });
-    if !detected.codex_authenticated {
+    let locked_ai = read_project_lock(project_root).ok();
+    if detected.ai_provider == "codex" {
+        let live_codex = with_codex_session(|session| session.account_read(false)).ok();
+        detected.codex_authenticated = detected.codex_authenticated
+            && live_codex.as_ref().is_some_and(|status| {
+                status.error.is_none()
+                    && status.authenticated
+                    && status.auth_mode == "chatgpt"
+                    && !status.usage_limited
+            });
+        detected.ai_authenticated = detected.codex_authenticated;
+    } else {
+        let endpoint = locked_ai
+            .as_ref()
+            .and_then(|lock| lock.ai_endpoint.clone())
+            .unwrap_or_default();
+        let credential_reference = ai_credential_reference(&detected.ai_provider);
+        let status = ai::account_status(
+            &OsCredentialStore,
+            &AiProviderConfig {
+                provider: detected.ai_provider.clone(),
+                model: detected.ai_model.clone(),
+                endpoint,
+                credential_reference,
+            },
+        );
+        detected.ai_authenticated = detected.ai_authenticated
+            && status.error.is_none()
+            && status.authenticated
+            && !status.usage_limited;
+    }
+    if !detected.ai_authenticated {
+        detected.ai_analysis_status = "blocked".into();
         detected.codex_analysis_status = "blocked".into();
     }
     detected.workflow_3d_state = read_project_lock(project_root)
@@ -1201,14 +1522,9 @@ fn evaluate_readiness(input: ReadinessInput) -> Result<ReadinessReport, String> 
 
 #[tauri::command]
 fn preview_descriptors(state: Value) -> Result<Vec<GeneratedArtifact>, String> {
-    require_codex_chatgpt_session().map_err(command_error)?;
-    let _ = codex_analysis_from_state(&state).map_err(command_error)?;
-    let root = state
-        .pointer("/identity/projectRoot")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    require_ai_session(&state).map_err(command_error)?;
+    let root = project_root_from_state(&state).map_err(command_error)?;
+    let _ = codex_analysis_from_state(&state, &root).map_err(command_error)?;
     let identity = project_identity_from_state(&state, &root).map_err(command_error)?;
     render_generated_artifacts(&identity).map_err(command_error)
 }
@@ -1373,7 +1689,7 @@ fn preview_source_manifest(
     })
 }
 
-fn selected_ids(state: &Value) -> Vec<String> {
+fn selected_ids(state: &Value, provider: &str) -> Vec<String> {
     let mut selected = state
         .get("selectedComponents")
         .and_then(Value::as_array)
@@ -1393,7 +1709,26 @@ fn selected_ids(state: &Value) -> Vec<String> {
     {
         selected.push("workflow.3d".into());
     }
+    if provider != "codex" {
+        selected.retain(|id| id != "codex.config");
+    }
     selected
+}
+
+fn reject_codex_only_dependencies(provider: &str, selected: &[String]) -> Result<(), AppError> {
+    if provider != "codex"
+        && selected.iter().any(|id| {
+            matches!(
+                id.as_str(),
+                "codex.config" | "mcp.hoi4_agent_tools" | "workflow.3d"
+            )
+        })
+    {
+        return Err(AppError::InvalidInput(
+            "the selected source components require the Codex integration; choose Codex or deselect the Codex-dependent MCP and 3D components".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn manifest_external_actions(
@@ -1410,21 +1745,29 @@ fn manifest_external_actions(
                 .iter()
                 .filter(|rule| rule.kind == "command" && rule.target.is_some())
                 .filter_map(|rule| {
-                    let platform =
-                        component
-                            .platforms
-                            .iter()
-                            .find_map(|declared| match declared {
-                                ManifestPlatform::Windows => Some(Platform::Windows),
-                                ManifestPlatform::Macos => Some(Platform::Macos),
-                                ManifestPlatform::All => None,
-                            })?;
+                    let platform = component
+                        .platforms
+                        .iter()
+                        .map(|declared| match declared {
+                            ManifestPlatform::Windows => Some(Platform::Windows),
+                            ManifestPlatform::Macos => Some(Platform::Macos),
+                            // An all-platform command is still an action
+                            // for the current installation target. The
+                            // platform claim comes from the verified
+                            // manifest; no alternate route is invented.
+                            ManifestPlatform::All => Some(Platform::current()),
+                        })
+                        .next()
+                        .flatten()?;
                     let target = rule.target.as_deref()?;
                     Some(ExternalAction {
                         id: format!("external.{}.{}", component.id, rule.id),
                         component_id: component.id.clone(),
                         platform,
-                        command_source: "repository_script".into(),
+                        command_source: match component.source.kind {
+                            SourceKind::Generated => "remote_manifest".into(),
+                            SourceKind::File | SourceKind::Tree => "repository_script".into(),
+                        },
                         executable: Some(if target.to_ascii_lowercase().ends_with(".py") {
                             "manifest-declared Python tool".into()
                         } else {
@@ -1450,6 +1793,33 @@ fn manifest_external_actions(
                         risk: "high".into(),
                         requires_approval: true,
                         contains_secret: false,
+                        verified_executable_sha256: rule
+                            .parameters
+                            .get("executable_sha256")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned),
+                        verified_executable_size: rule
+                            .parameters
+                            .get("executable_size")
+                            .and_then(Value::as_u64),
+                        verified_interpreter_sha256: rule
+                            .parameters
+                            .get("interpreter_sha256")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned),
+                        verified_interpreter_size: rule
+                            .parameters
+                            .get("interpreter_size")
+                            .and_then(Value::as_u64),
+                        verified_runtime_sha256: rule
+                            .parameters
+                            .get("runtime_sha256")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned),
+                        verified_runtime_size: rule
+                            .parameters
+                            .get("runtime_size")
+                            .and_then(Value::as_u64),
                     })
                 })
         })
@@ -1530,6 +1900,58 @@ fn adapt_codex_config_for_selection(bytes: &[u8], mcp_selected: bool) -> Result<
         AppError::Source(format!("adapted Codex configuration is invalid: {error}"))
     })?;
     Ok(rendered.into_bytes())
+}
+
+fn adapt_agents_for_selection(
+    bytes: &[u8],
+    identity: &ProjectIdentity,
+    provider: &str,
+    model: &str,
+) -> Result<Vec<u8>, AppError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| AppError::Source(format!("AGENTS template is not UTF-8: {error}")))?;
+    let prefix = identity
+        .primary_namespace
+        .as_deref()
+        .or(identity.script_prefix.as_deref())
+        .unwrap_or(&identity.project_id);
+    let mut adapted = text
+        .replace("[MOD_NAME]", &identity.display_name)
+        .replace("[MOD_PREFIX]", prefix);
+    if adapted.contains("[MOD_") || adapted.contains("{{PROJECT_") || adapted.contains("<PROJECT_")
+    {
+        return Err(AppError::Source(
+            "AGENTS template contains unresolved project placeholders".into(),
+        ));
+    }
+    let profile = ai::profile(provider)
+        .map(|profile| profile.optimization_profile)
+        .unwrap_or_else(|| "provider conventions".into());
+    adapted.push_str(&format!(
+        "\n\n## Selected AI planning profile\n\n- Provider: `{provider}`\n- Model: `{model}`\n- Optimization profile: {profile}\n- Semantic analysis is advisory; confirm deterministic identifiers, paths, hashes, and file changes before apply.\n"
+    ));
+    Ok(adapted.into_bytes())
+}
+
+fn maintenance_identity(lock: &InstallationLock, root: &Path) -> ProjectIdentity {
+    let display_name = std::fs::read(root.join("descriptor.mod"))
+        .ok()
+        .and_then(|bytes| crate::descriptors::parse_descriptor(&bytes).ok())
+        .and_then(|descriptor| descriptor.fields.get("name").cloned())
+        .unwrap_or_else(|| lock.project_id.clone());
+    ProjectIdentity {
+        display_name,
+        project_id: lock.project_id.clone(),
+        author: String::new(),
+        version: "0.1.0".into(),
+        supported_game_version: "*".into(),
+        project_root: root.to_path_buf(),
+        default_branch: "main".into(),
+        script_prefix: None,
+        primary_namespace: None,
+        descriptor_tags: Vec::new(),
+        launcher_descriptor_path: None,
+    }
 }
 
 fn merge_bytes(context: &MergeContext, path: &str) -> Result<Vec<u8>, AppError> {
@@ -1734,35 +2156,162 @@ fn selected_folder_profile(state: &Value) -> Result<Vec<String>, AppError> {
     Ok(normalized)
 }
 
-fn project_readme(identity: &ProjectIdentity, description: &str) -> Result<String, AppError> {
+fn ai_provider_from_state(state: &Value) -> Result<String, AppError> {
+    let provider = match state.get("aiProvider") {
+        None => "codex",
+        Some(value) => value.as_str().ok_or_else(|| {
+            AppError::InvalidInput("selected AI provider must be a string".into())
+        })?,
+    }
+    .trim();
+    if provider.is_empty() {
+        return Err(AppError::InvalidInput(
+            "selected AI provider cannot be empty".into(),
+        ));
+    }
+    if crate::ai::profile(provider).is_none() {
+        return Err(AppError::InvalidInput(format!(
+            "unsupported AI provider: {provider}"
+        )));
+    }
+    Ok(provider.to_string())
+}
+
+fn ai_model_from_state(state: &Value) -> String {
+    state
+        .get("aiModel")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("default")
+        .to_string()
+}
+
+fn ai_endpoint_from_state(state: &Value) -> Option<String> {
+    state
+        .get("aiEndpoint")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn ai_optimization_profile(provider: &str) -> String {
+    ai::profile(provider)
+        .map(|profile| profile.optimization_profile)
+        .unwrap_or_else(crate::models::default_ai_optimization_profile)
+}
+
+fn flatten_for_chat_from_state(state: &Value) -> bool {
+    state
+        .get("flattenForChat")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn flatten_additional_files_from_state(state: &Value) -> Result<Vec<String>, AppError> {
+    let Some(values) = state
+        .get("flattenAdditionalFiles")
+        .and_then(Value::as_array)
+    else {
+        return Ok(Vec::new());
+    };
+    if values.len() > 64 {
+        return Err(AppError::InvalidInput(
+            "flattened Chat sources allow at most 64 additional files".into(),
+        ));
+    }
+    let mut paths = values
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(crate::security::normalize_relative_path)
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+fn project_readme(
+    identity: &ProjectIdentity,
+    description: &str,
+    provider: &str,
+    model: &str,
+) -> Result<String, AppError> {
     if description.len() > 32 * 1024 || description.contains('\0') {
         return Err(AppError::InvalidInput(
             "project description exceeds the bounded README input limit".into(),
         ));
     }
+    let optimization_profile = ai_optimization_profile(provider);
     Ok(format!(
-        "# {}\n\n{}\n\n## Local development\n\nThis project was prepared by HOI4 Mod Setup for Codex development.\n\n- Project ID: `{}`\n- Supported game version: `{}`\n- Workshop identity: none assigned\n",
+        "# {}\n\n{}\n\n## Local development\n\nThis project was prepared by HOI4 Mod Setup for agentic development.\n\n- Project ID: `{}`\n- Supported game version: `{}`\n- Planning provider: `{}`\n- Model: `{}`\n- Optimization profile: {}\n- Workshop identity: none assigned\n",
         identity.display_name,
         description.trim(),
         identity.project_id,
         identity.supported_game_version,
+        provider,
+        model,
+        optimization_profile,
     ))
 }
 
-fn codex_analysis_from_state(state: &Value) -> Result<CodexAnalysisRecord, AppError> {
+fn codex_analysis_from_state(
+    state: &Value,
+    project_root: &Path,
+) -> Result<CodexAnalysisRecord, AppError> {
     let value = state
         .get("codexAnalysisRecord")
         .or_else(|| state.pointer("/codexAnalysis/record"))
         .ok_or_else(|| {
             AppError::Credential(
-                "ChatGPT-authenticated Codex analysis must be confirmed before planning".into(),
+                "selected-provider analysis must be confirmed before planning".into(),
             )
         })?;
     let record: CodexAnalysisRecord = serde_json::from_value(value.clone())?;
     crate::codex::validate_confirmed_record(&record)?;
-    if !codex_record_confirmed_in_session(&record)? {
+    let provider = ai_provider_from_state(state)?;
+    if record.provider.as_deref().unwrap_or("codex") != provider {
         return Err(AppError::Credential(
-            "Codex confirmation is no longer present in the core session; rerun semantic analysis"
+            "confirmed analysis belongs to a different AI provider".into(),
+        ));
+    }
+    let profile = ai::profile(&provider).ok_or_else(|| {
+        AppError::Credential("confirmed analysis uses an unsupported AI provider".into())
+    })?;
+    if provider != "codex"
+        && (record.model.as_deref() != Some(ai_model_from_state(state).as_str())
+            || record.optimization_profile.as_deref()
+                != Some(profile.optimization_profile.as_str()))
+    {
+        return Err(AppError::Credential(
+            "confirmed analysis does not match the selected provider, model, or optimization profile".into(),
+        ));
+    }
+    if provider == "codex"
+        && record
+            .optimization_profile
+            .as_deref()
+            .is_some_and(|value| value != profile.optimization_profile)
+    {
+        return Err(AppError::Credential(
+            "confirmed Codex analysis uses a different optimization profile".into(),
+        ));
+    }
+    let expected_scan_id = state
+        .pointer("/scanContext/scanId")
+        .and_then(Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok());
+    let endpoint_fingerprint = (provider != "codex")
+        .then(|| sha256_bytes(ai_endpoint_from_state(state).unwrap_or_default().as_bytes()));
+    if !codex_record_confirmed_in_session_with_endpoint(
+        &record,
+        Some(project_root),
+        expected_scan_id,
+        endpoint_fingerprint.as_deref(),
+    )? {
+        return Err(AppError::Credential(
+            "selected-provider confirmation is no longer present in the core session; rerun semantic analysis"
                 .into(),
         ));
     }
@@ -1779,14 +2328,38 @@ fn same_persisted_codex_record(left: &CodexAnalysisRecord, right: &CodexAnalysis
     left == right
 }
 
-fn codex_record_confirmed_in_session(record: &CodexAnalysisRecord) -> Result<bool, AppError> {
+fn codex_record_confirmed_in_session_with_endpoint(
+    record: &CodexAnalysisRecord,
+    expected_project_root: Option<&Path>,
+    expected_scan_id: Option<Uuid>,
+    expected_endpoint_fingerprint: Option<&str>,
+) -> Result<bool, AppError> {
     let analyses = codex_analyses()
         .lock()
         .map_err(|_| AppError::Process("Codex analysis store is unavailable".into()))?;
-    Ok(analyses
-        .get(&record.analysis_id)
-        .and_then(|pending| pending.confirmed.as_ref())
-        .is_some_and(|confirmed| same_persisted_codex_record(confirmed, record)))
+    Ok(analyses.get(&record.analysis_id).is_some_and(|pending| {
+        pending
+            .confirmed
+            .as_ref()
+            .is_some_and(|confirmed| same_persisted_codex_record(confirmed, record))
+            && expected_endpoint_fingerprint
+                .is_none_or(|expected| pending.endpoint_fingerprint.as_deref() == Some(expected))
+            && if record.analysis_purpose.as_deref().is_some_and(|purpose| {
+                matches!(
+                    purpose,
+                    "existing_project_import" | "maintenance_reanalysis"
+                )
+            }) {
+                expected_project_root.is_none_or(|root| {
+                    pending
+                        .project_root
+                        .as_deref()
+                        .is_some_and(|pending_root| same_project_root(pending_root, root))
+                }) && expected_scan_id.is_none_or(|scan_id| pending.scan_id == Some(scan_id))
+            } else {
+                true
+            }
+    }))
 }
 
 fn git_setup_from_state(
@@ -1817,21 +2390,45 @@ fn git_setup_from_state(
 }
 
 fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), AppError> {
-    require_codex_chatgpt_session()?;
+    require_ai_session(state)?;
     let root = project_root_from_state(state)?;
     let identity = project_identity_from_state(state, &root)?;
-    let codex_analysis = codex_analysis_from_state(state)?;
+    let codex_analysis = codex_analysis_from_state(state, &root)?;
+    let ai_provider = ai_provider_from_state(state)?;
+    let ai_model = ai_model_from_state(state);
+    let mesh_selected = state
+        .get("meshSelected")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    ai::validate_config(&AiProviderConfig {
+        provider: ai_provider.clone(),
+        model: ai_model.clone(),
+        endpoint: ai_endpoint_from_state(state).unwrap_or_default(),
+        credential_reference: if ai_provider == "codex" {
+            None
+        } else {
+            ai_credential_reference(&ai_provider)
+        },
+    })?;
+    let flatten_chat_sources = flatten_for_chat_from_state(state);
+    let flatten_additional_files = flatten_additional_files_from_state(state)?;
+    if flatten_chat_sources && ai_provider != "codex" {
+        return Err(AppError::InvalidInput(
+            "flattened ChatGPT Chat sources are available only when Codex is selected".into(),
+        ));
+    }
     let git_setup = git_setup_from_state(state, &root)?;
     let request = source_request_from_state(state)?;
     let client = HttpSourceClient::new()?;
     let resolution = resolve_source(&client, &request)?;
-    let requested = selected_ids(state);
+    let requested = selected_ids(state, &ai_provider);
     if requested.is_empty() {
         return Err(AppError::InvalidInput(
             "select at least one manifest component".into(),
         ));
     }
     let selected = expand_components(&resolution.manifest, &requested)?;
+    reject_codex_only_dependencies(&ai_provider, &selected)?;
     let support = crate::source::resolve_platform_support(
         &resolution.manifest,
         &selected,
@@ -1885,7 +2482,9 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             &source_bytes,
             &resolution.identity.resolved_revision,
         )?;
-        let bytes = if selection.component_id == "codex.config" {
+        let bytes = if selection.component_id == "core.agents" {
+            adapt_agents_for_selection(&source_bytes, &identity, &ai_provider, &ai_model)?
+        } else if selection.component_id == "codex.config" {
             adapt_codex_config_for_selection(&source_bytes, mcp_selected)?
         } else {
             source_bytes
@@ -1992,7 +2591,12 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     let mut generated = render_generated_artifacts(&identity)?;
     if mode == "new" {
         let description = string_field(state, "description").unwrap_or_default();
-        let readme = project_readme(&identity, &description)?;
+        let readme = project_readme(
+            &identity,
+            &description,
+            &ai_provider,
+            &ai_model_from_state(state),
+        )?;
         generated.push(GeneratedArtifact {
             component_id: "project.readme".into(),
             destination: "README.md".into(),
@@ -2014,19 +2618,53 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             });
         }
     }
+    if flatten_chat_sources
+        && !generated
+            .iter()
+            .any(|artifact| artifact.destination == "README.md")
+        && !root.join("README.md").is_file()
+    {
+        let readme = project_readme(
+            &identity,
+            &string_field(state, "description").unwrap_or_default(),
+            &ai_provider,
+            &ai_model_from_state(state),
+        )?;
+        generated.push(GeneratedArtifact {
+            component_id: "project.readme".into(),
+            destination: "README.md".into(),
+            expected_sha256: sha256_bytes(readme.as_bytes()),
+            content: readme,
+            external: false,
+            bytes: None,
+        });
+    }
     let lora_interest = state
         .get("loraInterest")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let credential_references = meshy_credential_reference()
-        .lock()
-        .map_err(|_| {
-            AppError::Credential("Meshy credential reference store is unavailable".into())
-        })?
-        .clone()
-        .into_iter()
-        .collect::<Vec<_>>();
+    let mut credential_references = if mesh_selected {
+        meshy_credential_reference()
+            .lock()
+            .map_err(|_| {
+                AppError::Credential("Meshy credential reference store is unavailable".into())
+            })?
+            .clone()
+            .into_iter()
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    credential_references.sort_by(|left, right| left.reference.cmp(&right.reference));
+    credential_references.dedup_by(|left, right| left.reference == right.reference);
+    for reference in &credential_references {
+        validate_credential_reference(reference)?;
+    }
     if mode == "new" || lora_interest {
+        let provider_profile = ai::profile(&ai_provider).ok_or_else(|| {
+            AppError::InvalidInput(format!("unsupported AI provider: {ai_provider}"))
+        })?;
+        let provider_is_codex = ai_provider == "codex";
         let state_content = serde_json::to_string_pretty(&serde_json::json!({
             "schema_version": "1.0.0",
             "project_id": identity.project_id.clone(),
@@ -2040,10 +2678,17 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                 "lora_comfyui_interest": lora_interest,
                 "telemetry": false
             },
+            "ai": {
+                "provider": ai_provider.clone(),
+                "model": ai_model_from_state(state),
+                "optimization_profile": ai::profile(&ai_provider)
+                    .map(|profile| profile.optimization_profile)
+                    .unwrap_or_else(|| "provider conventions".into())
+            },
             "codex": {
-                "integration": "codex_app_server",
-                "auth_mode": "chatgpt",
-                "auth_status": "signed_in",
+                "integration": if provider_is_codex { "codex_app_server" } else { "provider_api" },
+                "auth_mode": if provider_is_codex { "chatgpt" } else if provider_profile.requires_credential { "api_key" } else { "local_endpoint" },
+                "auth_status": if provider_is_codex { "signed_in" } else { "configured" },
                 "analysis_required": true,
                 "analysis_status": "confirmed",
                 "account_values_persisted": false
@@ -2071,6 +2716,15 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             bytes: None,
         });
     }
+    if flatten_chat_sources {
+        let flatten_artifacts = crate::flatten::build_artifacts(
+            &prepared,
+            &generated,
+            &root,
+            &flatten_additional_files,
+        )?;
+        generated.extend(flatten_artifacts);
+    }
     for (generated_index, artifact) in generated.iter().enumerate() {
         let destination_path = if artifact.external {
             validate_external_destination(&artifact.destination)?
@@ -2096,6 +2750,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             OperationAction::Generate
         };
         let mut operation_local_sha = local_sha;
+        let had_existing_destination = operation_local_sha.is_some();
         let mut selected_choice = None;
         if local_state == LocalState::Modified {
             let options = allowed_choices(
@@ -2166,7 +2821,11 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             local_state,
             resolution: selected_choice,
             external: artifact.external,
-            rollback: if matches!(action, OperationAction::Generate | OperationAction::Rename) {
+            rollback: if action == OperationAction::Rename {
+                RollbackAction::RemoveCreated
+            } else if had_existing_destination && action != OperationAction::Skip {
+                RollbackAction::RestoreBackup
+            } else if action == OperationAction::Generate {
                 RollbackAction::RemoveCreated
             } else {
                 RollbackAction::RestoreBackup
@@ -2188,6 +2847,14 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             optional_workflows.insert(item.component_id.clone(), "unsupported_platform".into());
         }
     }
+    optional_workflows.insert(
+        "codex.chat_flatten".into(),
+        if flatten_chat_sources {
+            "selected_pending".into()
+        } else {
+            "not_selected".into()
+        },
+    );
     let plan = InstallationPlan {
         schema_version: "1.0.0".into(),
         plan_id: Uuid::new_v4(),
@@ -2199,9 +2866,16 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         created_at: Some(chrono::Utc::now().to_rfc3339()),
         maintenance_mode: None,
         source: resolution.identity,
+        ai_optimization_profile: ai_optimization_profile(&ai_provider),
+        ai_provider,
+        ai_model: ai_model_from_state(state),
+        ai_endpoint: ai_endpoint_from_state(state),
+        flatten_chat_sources,
+        flatten_additional_files,
         codex_analysis: Some(codex_analysis),
         selected_components: selected,
         wiki_required_pages: resolution.manifest.wiki.required_pages.clone(),
+        wiki_metadata: Some(crate::source::wiki_install_metadata(&resolution.manifest)),
         generated_artifacts: generated,
         git_setup,
         credential_references,
@@ -2231,7 +2905,303 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             push_approved: false,
         },
     };
+    if plan.flatten_chat_sources {
+        let mut prepared_plan = PreparedPlan {
+            plan,
+            prepared_files: prepared,
+            merge_contexts: HashMap::new(),
+            canonical_root: root,
+            approved: false,
+        };
+        refresh_flattened_outputs(&mut prepared_plan)?;
+        return Ok((prepared_plan.plan, prepared_plan.prepared_files));
+    }
     Ok((plan, prepared))
+}
+
+fn is_flattened_destination(path: &str) -> bool {
+    path.replace('\\', "/")
+        .starts_with(&format!("{}/", crate::flatten::FLAT_DESTINATION_ROOT))
+}
+
+fn is_flattened_source_path(path: Option<&str>) -> bool {
+    path.is_some_and(|value| {
+        value.replace('\\', "/").starts_with(&format!(
+            "generated:{}/",
+            crate::flatten::FLAT_DESTINATION_ROOT
+        ))
+    })
+}
+
+fn flatten_operation_uses_incoming(operation: &PlanOperation) -> bool {
+    if matches!(
+        operation.resolution.as_deref(),
+        Some(
+            "review_required"
+                | "reverse_merge_required"
+                | "user_owned_review"
+                | "keep_user_modification"
+                | "obsolete_review"
+        )
+    ) {
+        return false;
+    }
+    !(matches!(
+        (operation.action, operation.resolution.as_deref()),
+        (OperationAction::Skip, Some("keep" | "skip"))
+    ) || (operation.local_state == LocalState::Modified && operation.resolution.is_none()))
+}
+
+fn accepted_flatten_prepared_files(
+    prepared_files: &[PreparedFile],
+    operations: &[PlanOperation],
+) -> Vec<PreparedFile> {
+    prepared_files
+        .iter()
+        .filter(|file| {
+            operations
+                .iter()
+                .find(|operation| operation.id == file.operation_id)
+                .is_none_or(flatten_operation_uses_incoming)
+        })
+        .cloned()
+        .collect()
+}
+
+#[derive(Clone)]
+struct FlattenedDecision {
+    source_sha256: Option<String>,
+    action: OperationAction,
+    resolution: String,
+    local_sha256: Option<String>,
+    local_state: LocalState,
+    destination: String,
+}
+
+fn refresh_flattened_outputs(prepared_plan: &mut PreparedPlan) -> Result<(), AppError> {
+    if !prepared_plan.plan.flatten_chat_sources {
+        return Ok(());
+    }
+    let previous_decisions = prepared_plan
+        .plan
+        .operations
+        .iter()
+        .filter(|operation| {
+            is_flattened_destination(&operation.destination)
+                || is_flattened_source_path(operation.source_path.as_deref())
+        })
+        .filter_map(|operation| {
+            operation.resolution.clone().map(|resolution| {
+                (
+                    operation.source_path.clone().unwrap_or_else(|| {
+                        format!("generated:{}", operation.destination.replace('\\', "/"))
+                    }),
+                    FlattenedDecision {
+                        source_sha256: operation.source_sha256.clone(),
+                        action: operation.action,
+                        resolution,
+                        local_sha256: operation.local_sha256.clone(),
+                        local_state: operation.local_state,
+                        destination: operation.destination.clone(),
+                    },
+                )
+            })
+        })
+        .collect::<BTreeMap<_, _>>();
+    prepared_plan
+        .plan
+        .generated_artifacts
+        .retain(|artifact| !is_flattened_destination(&artifact.destination));
+    prepared_plan
+        .plan
+        .operations
+        .retain(|operation| !is_flattened_destination(&operation.destination));
+    prepared_plan
+        .plan
+        .conflicts
+        .retain(|conflict| !is_flattened_destination(&conflict.path));
+    prepared_plan
+        .prepared_files
+        .retain(|file| !is_flattened_destination(&file.destination));
+
+    let flatten_prepared = accepted_flatten_prepared_files(
+        &prepared_plan.prepared_files,
+        &prepared_plan.plan.operations,
+    );
+    let accepted_generated = prepared_plan
+        .plan
+        .generated_artifacts
+        .iter()
+        .filter(|artifact| {
+            let source_path = format!("generated:{}", artifact.destination);
+            prepared_plan
+                .plan
+                .operations
+                .iter()
+                .find(|operation| operation.source_path.as_deref() == Some(source_path.as_str()))
+                .is_none_or(|operation| {
+                    operation.destination == artifact.destination
+                        && flatten_operation_uses_incoming(operation)
+                })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let flattened = crate::flatten::build_artifacts(
+        &flatten_prepared,
+        &accepted_generated,
+        &prepared_plan.canonical_root,
+        &prepared_plan.plan.flatten_additional_files,
+    )?;
+    let operation_offset = prepared_plan.plan.operations.len();
+    for (index, artifact) in flattened.iter().enumerate() {
+        let destination_path = safe_join(&prepared_plan.canonical_root, &artifact.destination)?;
+        let local_sha = if destination_path.is_file() {
+            Some(sha256_file(&destination_path)?)
+        } else {
+            None
+        };
+        let local_state = match local_sha.as_deref() {
+            None => LocalState::Absent,
+            Some(hash) if hash == artifact.expected_sha256 => LocalState::Unmodified,
+            Some(_) => LocalState::Modified,
+        };
+        let action = if local_state == LocalState::Absent {
+            OperationAction::Generate
+        } else {
+            OperationAction::Skip
+        };
+        let operation_id = format!("generated-flat-{operation_offset:05}-{index:05}");
+        if local_state == LocalState::Modified {
+            prepared_plan.plan.conflicts.push(PlanConflict {
+                id: format!("conflict.{operation_id}"),
+                path: artifact.destination.clone(),
+                options: vec![
+                    "keep".into(),
+                    "replace".into(),
+                    "rename".into(),
+                    "skip".into(),
+                ],
+                selected: None,
+                apply_to_identical: false,
+            });
+        }
+        prepared_plan
+            .plan
+            .generated_artifacts
+            .push(artifact.clone());
+        prepared_plan.plan.operations.push(PlanOperation {
+            id: operation_id.clone(),
+            component_id: artifact.component_id.clone(),
+            ownership: Some(Ownership::Generated),
+            location_scope: Some("project".into()),
+            action,
+            source_path: Some(format!("generated:{}", artifact.destination)),
+            destination: artifact.destination.clone(),
+            source_sha256: Some(artifact.expected_sha256.clone()),
+            source_size: Some(
+                artifact
+                    .bytes
+                    .as_ref()
+                    .map_or(artifact.content.len(), Vec::len) as u64,
+            ),
+            platform: Some(ManifestPlatform::All),
+            result_sha256: (action != OperationAction::Skip)
+                .then_some(artifact.expected_sha256.clone()),
+            base_sha256: None,
+            local_sha256: local_sha,
+            local_state,
+            resolution: None,
+            external: false,
+            rollback: if local_state == LocalState::Absent {
+                RollbackAction::RemoveCreated
+            } else {
+                RollbackAction::RestoreBackup
+            },
+        });
+        prepared_plan.prepared_files.push(PreparedFile {
+            operation_id,
+            destination: artifact.destination.clone(),
+            bytes: artifact
+                .bytes
+                .clone()
+                .unwrap_or_else(|| artifact.content.as_bytes().to_vec()),
+            expected_sha256: artifact.expected_sha256.clone(),
+        });
+    }
+
+    for operation in prepared_plan
+        .plan
+        .operations
+        .iter_mut()
+        .filter(|operation| is_flattened_destination(&operation.destination))
+    {
+        let Some(source_path) = operation.source_path.as_deref() else {
+            continue;
+        };
+        let Some(previous) = previous_decisions.get(source_path) else {
+            continue;
+        };
+        if previous.source_sha256.as_deref() != operation.source_sha256.as_deref()
+            || previous.resolution == "merge"
+        {
+            continue;
+        }
+
+        let same_local_state = previous.local_state == operation.local_state
+            && previous.local_sha256.as_deref() == operation.local_sha256.as_deref();
+        let preserve_rename = previous.resolution == "rename"
+            && is_flattened_destination(&previous.destination)
+            && previous.destination != operation.destination
+            && safe_join(&prepared_plan.canonical_root, &previous.destination)
+                .is_ok_and(|path| !path.exists());
+        if previous.resolution != "rename" && !same_local_state {
+            continue;
+        }
+        if previous.resolution == "rename" && !preserve_rename {
+            continue;
+        }
+
+        operation.resolution = Some(previous.resolution.clone());
+        match previous.resolution.as_str() {
+            "keep" | "skip" => {
+                operation.action = OperationAction::Skip;
+                operation.result_sha256 = None;
+                prepared_plan
+                    .prepared_files
+                    .retain(|file| file.operation_id != operation.id);
+            }
+            "replace" => {
+                operation.action = previous.action;
+                operation.result_sha256 = operation.source_sha256.clone();
+            }
+            "rename" if preserve_rename => {
+                let destination = previous.destination.clone();
+                operation.action = OperationAction::Rename;
+                operation.destination = destination.clone();
+                operation.local_sha256 = None;
+                operation.local_state = LocalState::Absent;
+                operation.result_sha256 = operation.source_sha256.clone();
+                operation.rollback = RollbackAction::RemoveCreated;
+                if let Some(file) = prepared_plan
+                    .prepared_files
+                    .iter_mut()
+                    .find(|file| file.operation_id == operation.id)
+                {
+                    file.destination = destination;
+                }
+            }
+            _ => continue,
+        }
+        if let Some(conflict) = prepared_plan
+            .plan
+            .conflicts
+            .iter_mut()
+            .find(|conflict| conflict.path == source_path.trim_start_matches("generated:"))
+        {
+            conflict.selected = Some(previous.resolution.clone());
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2271,22 +3241,37 @@ fn require_maintenance_reanalysis(
     mode: &str,
     analysis_override: Option<&CodexAnalysisRecord>,
     project_root: &Path,
+    expected_endpoint: Option<&str>,
 ) -> Result<(), AppError> {
     if mode != "update" {
         return Ok(());
     }
     let record = analysis_override.ok_or_else(|| {
         AppError::Credential(
-            "update planning requires a fresh, confirmed Codex reanalysis of the installed project"
+            "update planning requires a fresh, confirmed provider reanalysis of the installed project"
                 .into(),
         )
     })?;
     crate::codex::validate_confirmed_record(record)?;
     if record.analysis_purpose.as_deref() != Some("maintenance_reanalysis") {
         return Err(AppError::Credential(
-            "update planning requires a maintenance-purpose Codex reanalysis".into(),
+            "update planning requires a maintenance-purpose provider reanalysis".into(),
         ));
     }
+    let expected_endpoint_fingerprint = record
+        .provider
+        .as_deref()
+        .filter(|provider| *provider != "codex")
+        .map(|_| {
+            expected_endpoint
+                .ok_or_else(|| {
+                    AppError::Credential(
+                        "provider reanalysis endpoint is not bound to the installed profile".into(),
+                    )
+                })
+                .map(|endpoint| sha256_bytes(endpoint.trim().as_bytes()))
+        })
+        .transpose()?;
     let (record_root, record_scan_id) = {
         let analyses = codex_analyses()
             .lock()
@@ -2303,6 +3288,14 @@ fn require_maintenance_reanalysis(
         {
             return Err(AppError::Credential(
                 "update reanalysis is not confirmed in the current core session".into(),
+            ));
+        }
+        if expected_endpoint_fingerprint
+            .as_deref()
+            .is_some_and(|expected| pending.endpoint_fingerprint.as_deref() != Some(expected))
+        {
+            return Err(AppError::Credential(
+                "update reanalysis was confirmed against a different provider endpoint".into(),
             ));
         }
         (pending.project_root.clone(), pending.scan_id)
@@ -2342,13 +3335,37 @@ fn build_maintenance_plan(
     project_root: String,
     analysis_override: Option<CodexAnalysisRecord>,
 ) -> Result<InstallationPlan, String> {
-    if mode != "remove" {
-        require_codex_chatgpt_session().map_err(command_error)?;
-    }
     let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
     let lock = read_project_lock(&root).map_err(command_error)?;
-    require_maintenance_reanalysis(&mode, analysis_override.as_ref(), &root)
-        .map_err(command_error)?;
+    if mode != "remove" {
+        if lock.ai_provider == "codex" {
+            require_codex_chatgpt_session().map_err(command_error)?;
+        } else {
+            let credential_reference = ai_credential_reference(&lock.ai_provider);
+            let status = ai::account_status(
+                &OsCredentialStore,
+                &AiProviderConfig {
+                    provider: lock.ai_provider.clone(),
+                    model: lock.ai_model.clone(),
+                    endpoint: lock.ai_endpoint.clone().unwrap_or_default(),
+                    credential_reference,
+                },
+            );
+            if status.error.is_some() || !status.authenticated {
+                return Err(format!(
+                    "{} is not configured for maintenance planning",
+                    lock.ai_provider
+                ));
+            }
+        }
+    }
+    require_maintenance_reanalysis(
+        &mode,
+        analysis_override.as_ref(),
+        &root,
+        lock.ai_endpoint.as_deref(),
+    )
+    .map_err(command_error)?;
     let codex_analysis = if mode == "remove" {
         None
     } else {
@@ -2356,15 +3373,40 @@ fn build_maintenance_plan(
             .clone()
             .or_else(|| lock.codex_analysis.clone())
             .ok_or_else(|| {
-                "the installed project has no confirmed Codex analysis; run Import review before maintenance"
+                "the installed project has no confirmed provider analysis; run Import review before maintenance"
                     .to_string()
-            })?;
+        })?;
         crate::codex::validate_confirmed_record(&record).map_err(command_error)?;
+        let record_provider = record.provider.as_deref().unwrap_or("codex");
+        let profile = ai::profile(&lock.ai_provider).ok_or_else(|| {
+            format!(
+                "installed lock uses an unsupported AI provider: {}",
+                lock.ai_provider
+            )
+        })?;
+        if record_provider != lock.ai_provider
+            || (lock.ai_provider != "codex"
+                && (record.model.as_deref() != Some(lock.ai_model.as_str())
+                    || record.optimization_profile.as_deref()
+                        != Some(profile.optimization_profile.as_str())))
+        {
+            return Err("provider reanalysis does not match the installed provider profile".into());
+        }
         if analysis_override.is_some()
-            && !codex_record_confirmed_in_session(&record).map_err(command_error)?
+            && !codex_record_confirmed_in_session_with_endpoint(
+                &record,
+                Some(&root),
+                None,
+                (lock.ai_provider != "codex")
+                    .then(|| {
+                        sha256_bytes(lock.ai_endpoint.as_deref().unwrap_or_default().as_bytes())
+                    })
+                    .as_deref(),
+            )
+            .map_err(command_error)?
         {
             return Err(
-                "the Codex reanalysis is not confirmed in the current core session; review it again"
+                "the provider reanalysis is not confirmed in the current core session; review it again"
                     .into(),
             );
         }
@@ -2377,6 +3419,7 @@ fn build_maintenance_plan(
         .map(|component| component.id.clone())
         .collect::<Vec<_>>();
     let mut wiki_required_pages = lock.wiki_required_pages.clone();
+    let mut wiki_metadata = lock.wiki_metadata.clone();
     let mut maintenance_mcp_manifest: Option<RemoteManifest> = None;
     let (mut operations, plan_source, source_revision) = if mode == "update" {
         let resolution = resolve_source(
@@ -2413,6 +3456,7 @@ fn build_maintenance_plan(
             .collect::<Vec<_>>();
         let expanded =
             expand_components(&resolution.manifest, &requested).map_err(command_error)?;
+        reject_codex_only_dependencies(&lock.ai_provider, &expanded).map_err(command_error)?;
         maintenance_components = expanded.clone();
         let support = crate::source::resolve_platform_support(
             &resolution.manifest,
@@ -2503,6 +3547,7 @@ fn build_maintenance_plan(
         let operations = crate::transaction::update_operations(&lock, &incoming, &root)
             .map_err(command_error)?;
         wiki_required_pages = resolution.manifest.wiki.required_pages.clone();
+        wiki_metadata = Some(crate::source::wiki_install_metadata(&resolution.manifest));
         (
             operations,
             resolution.identity.clone(),
@@ -2577,12 +3622,20 @@ fn build_maintenance_plan(
                     &source_revision,
                     operation.source_path.as_deref().unwrap_or(""),
                     expected,
-                    None,
+                    operation.source_size,
                 )
                 .map_err(command_error)?
         };
         let mcp_selected = lock_mcp_selected(&lock);
-        let bytes = if operation.component_id == "codex.config"
+        let bytes = if operation.component_id == "core.agents" {
+            adapt_agents_for_selection(
+                &source_bytes,
+                &maintenance_identity(&lock, &root),
+                &lock.ai_provider,
+                &lock.ai_model,
+            )
+            .map_err(command_error)?
+        } else if operation.component_id == "codex.config"
             && !operation
                 .source_path
                 .as_deref()
@@ -2605,12 +3658,16 @@ fn build_maintenance_plan(
                 ));
             }
         } else if actual != expected
-            && operation.component_id != "codex.config"
+            && !matches!(
+                operation.component_id.as_str(),
+                "core.agents" | "codex.config"
+            )
             && operation.result_sha256.is_none()
         {
-            // A transformed configuration has source evidence for the
-            // downloaded blob and a separate result hash for the selected
-            // project output. Other files must still match source evidence.
+            // Provider-adapted AGENTS and MCP-filtered Codex config have source
+            // evidence for the downloaded blob and a separate result hash for
+            // the selected project output. Other files must still match source
+            // evidence.
             return Err(format!(
                 "maintenance checksum mismatch: {}",
                 operation.destination
@@ -2647,6 +3704,14 @@ fn build_maintenance_plan(
                     let base = if current_file.component_id == "codex.config" {
                         adapt_codex_config_for_selection(&base_source, mcp_selected)
                             .map_err(command_error)?
+                    } else if current_file.component_id == "core.agents" {
+                        adapt_agents_for_selection(
+                            &base_source,
+                            &maintenance_identity(&lock, &root),
+                            &lock.ai_provider,
+                            &lock.ai_model,
+                        )
+                        .map_err(command_error)?
                     } else {
                         base_source
                     };
@@ -2673,6 +3738,88 @@ fn build_maintenance_plan(
                     );
                 }
             }
+        }
+    }
+    let mut generated_artifacts = Vec::new();
+    if lock.flatten_chat_sources && mode != "remove" {
+        operations.retain(|operation| {
+            !operation
+                .destination
+                .replace('\\', "/")
+                .starts_with("chatgpt_project_sources/")
+        });
+        prepared.retain(|file| {
+            !file
+                .destination
+                .replace('\\', "/")
+                .starts_with("chatgpt_project_sources/")
+        });
+        let flatten_prepared = accepted_flatten_prepared_files(&prepared, &operations);
+        let flat = crate::flatten::build_artifacts(
+            &flatten_prepared,
+            &[],
+            &root,
+            &lock.flatten_additional_files,
+        )
+        .map_err(command_error)?;
+        generated_artifacts = flat.clone();
+        for (index, artifact) in flat.iter().enumerate() {
+            let destination_path =
+                safe_join(&root, &artifact.destination).map_err(command_error)?;
+            let local_sha = if destination_path.is_file() {
+                Some(sha256_file(&destination_path).map_err(command_error)?)
+            } else {
+                None
+            };
+            let local_state = match local_sha.as_deref() {
+                None => LocalState::Absent,
+                Some(hash) if hash == artifact.expected_sha256 => LocalState::Unmodified,
+                Some(_) => LocalState::Modified,
+            };
+            let action = if local_state == LocalState::Absent {
+                OperationAction::Generate
+            } else {
+                OperationAction::Skip
+            };
+            let operation_id = format!("maintenance-flat-{index:05}");
+            operations.push(PlanOperation {
+                id: operation_id.clone(),
+                component_id: artifact.component_id.clone(),
+                ownership: Some(Ownership::Generated),
+                location_scope: Some("project".into()),
+                action,
+                source_path: Some(format!("generated:{}", artifact.destination)),
+                destination: artifact.destination.clone(),
+                source_sha256: Some(artifact.expected_sha256.clone()),
+                source_size: Some(
+                    artifact
+                        .bytes
+                        .as_ref()
+                        .map_or(artifact.content.len(), Vec::len) as u64,
+                ),
+                platform: Some(ManifestPlatform::All),
+                result_sha256: (action != OperationAction::Skip)
+                    .then_some(artifact.expected_sha256.clone()),
+                base_sha256: None,
+                local_sha256: local_sha,
+                local_state,
+                resolution: None,
+                external: false,
+                rollback: if local_state == LocalState::Absent {
+                    RollbackAction::RemoveCreated
+                } else {
+                    RollbackAction::RestoreBackup
+                },
+            });
+            prepared.push(PreparedFile {
+                operation_id,
+                destination: artifact.destination.clone(),
+                bytes: artifact
+                    .bytes
+                    .clone()
+                    .unwrap_or_else(|| artifact.content.as_bytes().to_vec()),
+                expected_sha256: artifact.expected_sha256.clone(),
+            });
         }
     }
     let conflicts = operations
@@ -2717,7 +3864,6 @@ fn build_maintenance_plan(
         let manifest = maintenance_mcp_manifest.as_ref().ok_or_else(|| {
             "the maintenance plan could not retain the locked MCP manifest evidence".to_string()
         })?;
-        crate::mcp::manifest_target(manifest).map_err(command_error)?;
         let actions = manifest_external_actions(manifest, &[crate::mcp::COMPONENT_ID.to_string()]);
         if actions.len() != 1 {
             return Err(
@@ -2736,10 +3882,17 @@ fn build_maintenance_plan(
         created_at: Some(chrono::Utc::now().to_rfc3339()),
         maintenance_mode: Some(mode.clone()),
         source: plan_source,
+        ai_provider: lock.ai_provider.clone(),
+        ai_model: lock.ai_model.clone(),
+        ai_endpoint: lock.ai_endpoint.clone(),
+        ai_optimization_profile: lock.ai_optimization_profile.clone(),
+        flatten_chat_sources: lock.flatten_chat_sources,
+        flatten_additional_files: lock.flatten_additional_files.clone(),
         codex_analysis,
         selected_components: maintenance_components,
         wiki_required_pages,
-        generated_artifacts: vec![],
+        wiki_metadata,
+        generated_artifacts,
         git_setup: None,
         credential_references: vec![],
         optional_workflows,
@@ -2912,6 +4065,9 @@ fn resolve_installation_conflict(
             prepared.plan.operations[operation_index].result_sha256 = Some(result_sha256);
         }
         _ => {}
+    }
+    if !is_flattened_destination(&path) {
+        refresh_flattened_outputs(prepared).map_err(command_error)?;
     }
     Ok(prepared.plan.clone())
 }
@@ -3104,6 +4260,7 @@ fn open_in_codex(project_root: String) -> Result<OpenInCodexResult, String> {
     };
     let spec = crate::process::ProcessSpec {
         executable: executable.clone(),
+        executable_sha256: Some(sha256_file(&executable).map_err(command_error)?),
         args: vec!["--cd".into(), root.display().to_string()],
         cwd: Some(root),
         platform: Platform::current(),
@@ -3131,7 +4288,17 @@ fn manual_open_in_codex_result(root: &Path) -> OpenInCodexResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::MutexGuard;
     use tempfile::tempdir;
+
+    static COMMAND_TEST_STATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn test_state_guard() -> MutexGuard<'static, ()> {
+        COMMAND_TEST_STATE_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap()
+    }
 
     #[test]
     fn project_identity_reads_nested_descriptor_fields() {
@@ -3168,6 +4335,65 @@ mod tests {
     }
 
     #[test]
+    fn invalid_provider_state_fails_closed_instead_of_falling_back_to_codex() {
+        let error = ai_provider_from_state(&serde_json::json!({
+            "aiProvider": "unlisted-provider"
+        }))
+        .unwrap_err();
+        assert!(error.to_string().contains("unsupported AI provider"));
+
+        let error = ai_provider_from_state(&serde_json::json!({
+            "aiProvider": ""
+        }))
+        .unwrap_err();
+        assert!(error.to_string().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn explicitly_empty_model_is_not_replaced_with_a_default_model() {
+        assert_eq!(ai_model_from_state(&serde_json::json!({"aiModel": ""})), "");
+        assert_eq!(ai_model_from_state(&serde_json::json!({})), "default");
+    }
+
+    #[test]
+    fn generated_readme_records_the_selected_provider_model_and_profile() {
+        let readme = project_readme(
+            &ProjectIdentity {
+                display_name: "Example Mod".into(),
+                project_id: "example_mod".into(),
+                author: String::new(),
+                version: "0.1.0".into(),
+                supported_game_version: "1.17.*".into(),
+                project_root: PathBuf::from("C:/mods/example_mod"),
+                default_branch: "main".into(),
+                script_prefix: None,
+                primary_namespace: None,
+                descriptor_tags: Vec::new(),
+                launcher_descriptor_path: None,
+            },
+            "A provider-profiled project.",
+            "claude",
+            "claude-sonnet",
+        )
+        .unwrap();
+
+        assert!(readme.contains("Planning provider: `claude`"));
+        assert!(readme.contains("Model: `claude-sonnet`"));
+        assert!(readme.contains("Optimization profile: Claude Code / Anthropic conventions"));
+    }
+
+    #[test]
+    fn non_codex_provider_rejects_a_dependency_that_expands_to_codex_config() {
+        let error = reject_codex_only_dependencies(
+            "claude",
+            &["core.agents".into(), "codex.config".into()],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("require the Codex integration"));
+        assert!(reject_codex_only_dependencies("claude", &["core.agents".into()]).is_ok());
+    }
+
+    #[test]
     fn missing_codex_opener_returns_manual_path_result() {
         let root = tempdir().unwrap();
         let result = manual_open_in_codex_result(root.path());
@@ -3200,6 +4426,7 @@ mod tests {
 
     #[test]
     fn login_cancel_command_sets_only_the_in_memory_cancellation_flag() {
+        let _state_guard = test_state_guard();
         CODEX_LOGIN_CANCEL.store(false, Ordering::SeqCst);
 
         codex_login_cancel().unwrap();
@@ -3210,6 +4437,7 @@ mod tests {
 
     #[test]
     fn scan_request_ids_are_bounded_and_cancellation_sets_the_active_flag() {
+        let _state_guard = test_state_guard();
         assert!(validate_scan_request_id("scan-1").is_ok());
         assert!(validate_scan_request_id("").is_err());
         assert!(validate_scan_request_id("scan\n1").is_err());
@@ -3228,6 +4456,7 @@ mod tests {
 
     #[test]
     fn cancelled_scan_clears_previous_approved_evidence() {
+        let _state_guard = test_state_guard();
         *codex_approved_evidence().lock().unwrap() = ApprovedScanEvidence {
             project_root: Some(PathBuf::from("C:/mods/example")),
             scan_id: Some(Uuid::new_v4()),
@@ -3240,6 +4469,37 @@ mod tests {
         assert!(evidence.project_root.is_none());
         assert!(evidence.scan_id.is_none());
         assert!(evidence.entries.is_empty());
+    }
+
+    #[test]
+    fn renderer_cannot_authorize_an_arbitrary_scan_excerpt() {
+        let _state_guard = test_state_guard();
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        let scan_id = Uuid::new_v4();
+        *codex_approved_evidence().lock().unwrap() = ApprovedScanEvidence {
+            project_root: Some(root.clone()),
+            scan_id: Some(scan_id),
+            entries: HashMap::from([(
+                "finding".into(),
+                vec![("descriptor.mod".into(), sha256_bytes(b"core excerpt"))],
+            )]),
+        };
+
+        let error = approve_scan_evidence(
+            root.display().to_string(),
+            scan_id.to_string(),
+            vec![ApprovedEvidence {
+                reference: "finding".into(),
+                path: "descriptor.mod".into(),
+                excerpt: "renderer-authored excerpt".into(),
+                excerpt_sha256: sha256_bytes(b"renderer-authored excerpt"),
+                confidence: Some(1.0),
+            }],
+        )
+        .unwrap_err();
+        assert!(error.contains("exact core-scanned value"));
+        clear_approved_scan_evidence().unwrap();
     }
 
     #[test]
@@ -3279,9 +4539,16 @@ mod tests {
                 manifest_sha256: "a".repeat(64),
                 manifest_origin: "remote".into(),
             },
+            ai_provider: "codex".into(),
+            ai_model: "default".into(),
+            ai_endpoint: None,
+            ai_optimization_profile: ai_optimization_profile("codex"),
+            flatten_chat_sources: false,
+            flatten_additional_files: vec![],
             codex_analysis: None,
             selected_components: vec![],
             wiki_required_pages: vec![],
+            wiki_metadata: None,
             generated_artifacts: vec![],
             git_setup: None,
             credential_references: vec![],
@@ -3316,16 +4583,20 @@ mod tests {
     #[test]
     fn update_maintenance_requires_a_fresh_reanalysis_record() {
         let project = tempfile::tempdir().unwrap();
-        let error = require_maintenance_reanalysis("update", None, project.path()).unwrap_err();
+        let error =
+            require_maintenance_reanalysis("update", None, project.path(), None).unwrap_err();
         assert!(error
             .to_string()
-            .contains("fresh, confirmed Codex reanalysis"));
-        assert!(require_maintenance_reanalysis("repair", None, project.path()).is_ok());
+            .contains("fresh, confirmed provider reanalysis"));
+        assert!(require_maintenance_reanalysis("repair", None, project.path(), None).is_ok());
         assert!(require_maintenance_reanalysis(
             "update",
             Some(&CodexAnalysisRecord {
                 engine: "codex_app_server".into(),
                 auth_mode: "chatgpt".into(),
+                provider: Some("codex".into()),
+                model: None,
+                optimization_profile: Some("Codex project and ChatGPT Chat".into()),
                 analysis_id: Uuid::new_v4(),
                 schema_version: "1.0.0".into(),
                 input_sha256: "a".repeat(64),
@@ -3342,12 +4613,14 @@ mod tests {
                 evidence_sha256: Some("c".repeat(64)),
             }),
             project.path(),
+            None,
         )
         .is_err());
     }
 
     #[test]
     fn update_reanalysis_is_bound_to_the_latest_scan_context() {
+        let _state_guard = test_state_guard();
         let project = tempfile::tempdir().unwrap();
         let root = project.path().canonicalize().unwrap();
         let scan_id = Uuid::new_v4();
@@ -3363,6 +4636,9 @@ mod tests {
         let record = CodexAnalysisRecord {
             engine: "codex_app_server".into(),
             auth_mode: "chatgpt".into(),
+            provider: Some("codex".into()),
+            model: None,
+            optimization_profile: Some("Codex project and ChatGPT Chat".into()),
             analysis_id,
             schema_version: "1.0.0".into(),
             input_sha256: "a".repeat(64),
@@ -3395,14 +4671,393 @@ mod tests {
                 confirmed: Some(record.clone()),
                 project_root: Some(root.clone()),
                 scan_id: Some(scan_id),
+                endpoint_fingerprint: None,
             },
         );
-        assert!(require_maintenance_reanalysis("update", Some(&record), &root).is_ok());
+        assert!(require_maintenance_reanalysis("update", Some(&record), &root, None).is_ok());
         let mut stale = record;
         stale.evidence_sha256 = Some("d".repeat(64));
-        assert!(require_maintenance_reanalysis("update", Some(&stale), &root).is_err());
+        assert!(require_maintenance_reanalysis("update", Some(&stale), &root, None).is_err());
         codex_analyses().lock().unwrap().clear();
         codex_approved_evidence().lock().unwrap().entries.clear();
+    }
+
+    #[test]
+    fn non_codex_confirmation_rejects_a_changed_endpoint() {
+        let _state_guard = test_state_guard();
+        let analysis_id = Uuid::new_v4();
+        let record = CodexAnalysisRecord {
+            engine: "provider_api".into(),
+            auth_mode: "api_key".into(),
+            provider: Some("claude".into()),
+            model: Some("claude-model".into()),
+            optimization_profile: Some("Claude Code / Anthropic conventions".into()),
+            analysis_id,
+            schema_version: "1.0.0".into(),
+            input_sha256: "a".repeat(64),
+            output_sha256: "b".repeat(64),
+            confirmed_fields: crate::codex::REQUIRED_ANALYSIS_PROPOSAL_KEYS
+                .iter()
+                .map(|field| (*field).into())
+                .collect(),
+            confirmed_at: "2026-07-28T00:00:00Z".into(),
+            account_identity_persisted: false,
+            analysis_purpose: None,
+            project_root: None,
+            scan_id: None,
+            evidence_sha256: None,
+        };
+        let endpoint_a = "https://provider.example/a";
+        let endpoint_b = "https://provider.example/b";
+        codex_analyses().lock().unwrap().insert(
+            analysis_id,
+            PendingCodexAnalysis {
+                analysis: CodexAnalysis {
+                    schema_version: "1.0.0".into(),
+                    analysis_id,
+                    mode: crate::codex::AnalysisMode::NewProjectIdentity,
+                    input_sha256: "a".repeat(64),
+                    project_summary: "summary".into(),
+                    proposals: Vec::new(),
+                    component_recommendations: Vec::new(),
+                    warnings: Vec::new(),
+                },
+                record: record.clone(),
+                confirmed: Some(record.clone()),
+                project_root: None,
+                scan_id: None,
+                endpoint_fingerprint: Some(sha256_bytes(endpoint_a.as_bytes())),
+            },
+        );
+        assert!(codex_record_confirmed_in_session_with_endpoint(
+            &record,
+            None,
+            None,
+            Some(&sha256_bytes(endpoint_a.as_bytes()))
+        )
+        .unwrap());
+        assert!(!codex_record_confirmed_in_session_with_endpoint(
+            &record,
+            None,
+            None,
+            Some(&sha256_bytes(endpoint_b.as_bytes()))
+        )
+        .unwrap());
+        codex_analyses().lock().unwrap().remove(&analysis_id);
+    }
+
+    #[test]
+    fn refresh_keeps_a_reviewed_flatten_conflict_when_non_flat_content_changes() {
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join(".agents/skills/one")).unwrap();
+        std::fs::create_dir_all(root.join(".codex/agents")).unwrap();
+        std::fs::create_dir_all(root.join("chatgpt_project_sources")).unwrap();
+        std::fs::write(root.join(".agents/skills/one/SKILL.md"), "local skill").unwrap();
+        std::fs::write(root.join(".codex/agents/worker.toml"), "local agent").unwrap();
+        std::fs::write(root.join("AGENTS.md"), "local agents").unwrap();
+        std::fs::write(root.join("README.md"), "local readme").unwrap();
+        std::fs::write(
+            root.join("chatgpt_project_sources/AGENTS.md"),
+            "older flat agents",
+        )
+        .unwrap();
+
+        let digest = |value: &str| sha256_bytes(value.as_bytes());
+        let operation = |id: &str,
+                         component_id: &str,
+                         source_path: Option<&str>,
+                         destination: &str,
+                         source: &str,
+                         local: &str| PlanOperation {
+            id: id.into(),
+            component_id: component_id.into(),
+            ownership: Some(Ownership::Generated),
+            location_scope: Some("project".into()),
+            action: OperationAction::Skip,
+            source_path: source_path.map(ToOwned::to_owned),
+            destination: destination.into(),
+            source_sha256: Some(digest(source)),
+            source_size: Some(source.len() as u64),
+            platform: Some(ManifestPlatform::All),
+            result_sha256: None,
+            base_sha256: None,
+            local_sha256: Some(digest(local)),
+            local_state: LocalState::Modified,
+            resolution: Some("keep".into()),
+            external: false,
+            rollback: RollbackAction::RestoreBackup,
+        };
+        let prepared_file = |operation_id: &str, destination: &str, content: &str| PreparedFile {
+            operation_id: operation_id.into(),
+            destination: destination.into(),
+            bytes: content.as_bytes().to_vec(),
+            expected_sha256: digest(content),
+        };
+
+        let agents = operation(
+            "generated-agents",
+            "core.agents",
+            Some("generated:AGENTS.md"),
+            "AGENTS.md",
+            "incoming agents",
+            "local agents",
+        );
+        let readme = operation(
+            "generated-readme",
+            "project.readme",
+            Some("generated:README.md"),
+            "README.md",
+            "incoming readme",
+            "local readme",
+        );
+        let skill = operation(
+            "source-skill",
+            "core.skills",
+            Some(".agents/skills/one/SKILL.md"),
+            ".agents/skills/one/SKILL.md",
+            "incoming skill",
+            "local skill",
+        );
+        let subagent = operation(
+            "source-subagent",
+            "core.subagents",
+            Some(".codex/agents/worker.toml"),
+            ".codex/agents/worker.toml",
+            "incoming agent",
+            "local agent",
+        );
+        let mut prepared_plan = PreparedPlan {
+            plan: InstallationPlan {
+                schema_version: "1.0.0".into(),
+                plan_id: Uuid::new_v4(),
+                project_id: "example".into(),
+                created_at: None,
+                maintenance_mode: None,
+                source: SourceIdentity {
+                    repository: "github:example/source".into(),
+                    mode: SourceMode::Latest,
+                    resolved_revision: "a".repeat(40),
+                    requested_ref: None,
+                    release: None,
+                    manifest_sha256: "b".repeat(64),
+                    manifest_origin: "remote".into(),
+                },
+                ai_provider: "codex".into(),
+                ai_model: "default".into(),
+                ai_endpoint: None,
+                ai_optimization_profile: "Codex project and ChatGPT Chat".into(),
+                flatten_chat_sources: true,
+                flatten_additional_files: Vec::new(),
+                codex_analysis: None,
+                selected_components: vec![
+                    "core.agents".into(),
+                    "core.skills".into(),
+                    "core.subagents".into(),
+                ],
+                wiki_required_pages: Vec::new(),
+                wiki_metadata: None,
+                generated_artifacts: vec![
+                    GeneratedArtifact {
+                        component_id: "core.agents".into(),
+                        destination: "AGENTS.md".into(),
+                        content: "incoming agents".into(),
+                        expected_sha256: digest("incoming agents"),
+                        external: false,
+                        bytes: None,
+                    },
+                    GeneratedArtifact {
+                        component_id: "project.readme".into(),
+                        destination: "README.md".into(),
+                        content: "incoming readme".into(),
+                        expected_sha256: digest("incoming readme"),
+                        external: false,
+                        bytes: None,
+                    },
+                ],
+                git_setup: None,
+                credential_references: Vec::new(),
+                optional_workflows: BTreeMap::new(),
+                operations: vec![agents, readme, skill, subagent],
+                conflicts: vec![
+                    PlanConflict {
+                        id: "conflict-agents".into(),
+                        path: "AGENTS.md".into(),
+                        options: vec!["keep".into(), "replace".into()],
+                        selected: Some("keep".into()),
+                        apply_to_identical: false,
+                    },
+                    PlanConflict {
+                        id: "conflict-readme".into(),
+                        path: "README.md".into(),
+                        options: vec!["keep".into(), "replace".into()],
+                        selected: Some("keep".into()),
+                        apply_to_identical: false,
+                    },
+                    PlanConflict {
+                        id: "conflict-skill".into(),
+                        path: ".agents/skills/one/SKILL.md".into(),
+                        options: vec!["keep".into(), "replace".into()],
+                        selected: Some("keep".into()),
+                        apply_to_identical: false,
+                    },
+                    PlanConflict {
+                        id: "conflict-subagent".into(),
+                        path: ".codex/agents/worker.toml".into(),
+                        options: vec!["keep".into(), "replace".into()],
+                        selected: Some("keep".into()),
+                        apply_to_identical: false,
+                    },
+                ],
+                external_actions: Vec::new(),
+                transaction: TransactionPlanInfo {
+                    stages: Vec::new(),
+                    backup_root: String::new(),
+                    staging_root: String::new(),
+                    atomic_apply_expected: true,
+                },
+                approvals: PlanApprovals {
+                    dry_run_reviewed: false,
+                    external_actions_reviewed: false,
+                    git_remote_approved: false,
+                    push_approved: false,
+                },
+            },
+            prepared_files: vec![
+                prepared_file("generated-agents", "AGENTS.md", "incoming agents"),
+                prepared_file("generated-readme", "README.md", "incoming readme"),
+                prepared_file(
+                    "source-skill",
+                    ".agents/skills/one/SKILL.md",
+                    "incoming skill",
+                ),
+                prepared_file(
+                    "source-subagent",
+                    ".codex/agents/worker.toml",
+                    "incoming agent",
+                ),
+            ],
+            merge_contexts: HashMap::new(),
+            canonical_root: root.clone(),
+            approved: false,
+        };
+
+        refresh_flattened_outputs(&mut prepared_plan).unwrap();
+        let flat_agents = "chatgpt_project_sources/AGENTS.md";
+        let flat_agents_operation = prepared_plan
+            .plan
+            .operations
+            .iter_mut()
+            .find(|operation| operation.destination == flat_agents)
+            .unwrap();
+        assert_eq!(flat_agents_operation.local_state, LocalState::Modified);
+        let flat_agents_operation_id = flat_agents_operation.id.clone();
+        flat_agents_operation.action = OperationAction::Skip;
+        flat_agents_operation.resolution = Some("keep".into());
+        flat_agents_operation.result_sha256 = None;
+        prepared_plan
+            .plan
+            .conflicts
+            .iter_mut()
+            .find(|conflict| conflict.path == flat_agents)
+            .unwrap()
+            .selected = Some("keep".into());
+        prepared_plan
+            .prepared_files
+            .retain(|file| file.operation_id != flat_agents_operation_id);
+
+        let skill_id = prepared_plan
+            .plan
+            .operations
+            .iter()
+            .find(|operation| operation.destination == ".agents/skills/one/SKILL.md")
+            .unwrap()
+            .id
+            .clone();
+        let new_skill = "new skill after review";
+        let new_skill_sha = digest(new_skill);
+        prepared_plan
+            .plan
+            .operations
+            .iter_mut()
+            .find(|operation| operation.id == skill_id)
+            .unwrap()
+            .action = OperationAction::Replace;
+        let skill_operation = prepared_plan
+            .plan
+            .operations
+            .iter_mut()
+            .find(|operation| operation.id == skill_id)
+            .unwrap();
+        skill_operation.resolution = Some("replace".into());
+        skill_operation.result_sha256 = Some(new_skill_sha.clone());
+        prepared_plan
+            .prepared_files
+            .iter_mut()
+            .find(|file| file.operation_id == skill_id)
+            .unwrap()
+            .bytes = new_skill.as_bytes().to_vec();
+        prepared_plan
+            .prepared_files
+            .iter_mut()
+            .find(|file| file.operation_id == skill_id)
+            .unwrap()
+            .expected_sha256 = new_skill_sha;
+
+        refresh_flattened_outputs(&mut prepared_plan).unwrap();
+        let preserved = prepared_plan
+            .plan
+            .operations
+            .iter()
+            .find(|operation| operation.destination == flat_agents)
+            .unwrap();
+        assert_eq!(preserved.action, OperationAction::Skip);
+        assert_eq!(preserved.resolution.as_deref(), Some("keep"));
+        assert!(!prepared_plan
+            .prepared_files
+            .iter()
+            .any(|file| file.destination == flat_agents));
+        assert_eq!(
+            prepared_plan
+                .plan
+                .generated_artifacts
+                .iter()
+                .find(|artifact| artifact.destination == "chatgpt_project_sources/one.md")
+                .map(|artifact| artifact.content.as_str()),
+            Some(new_skill)
+        );
+    }
+
+    #[test]
+    fn maintenance_flatten_excludes_review_required_incoming_bytes() {
+        let source_hash = "a".repeat(64);
+        let operation = PlanOperation {
+            id: "review-required".into(),
+            component_id: "core.skills".into(),
+            ownership: Some(Ownership::Managed),
+            location_scope: Some("project".into()),
+            action: OperationAction::Skip,
+            source_path: Some(".agents/skills/example/SKILL.md".into()),
+            destination: ".agents/skills/example/SKILL.md".into(),
+            source_sha256: Some(source_hash.clone()),
+            source_size: Some(1),
+            platform: Some(ManifestPlatform::All),
+            result_sha256: None,
+            base_sha256: None,
+            local_sha256: Some("b".repeat(64)),
+            local_state: LocalState::Modified,
+            resolution: Some("review_required".into()),
+            external: false,
+            rollback: RollbackAction::RestoreBackup,
+        };
+        let prepared = PreparedFile {
+            operation_id: "review-required".into(),
+            destination: ".agents/skills/example/SKILL.md".into(),
+            bytes: b"incoming".to_vec(),
+            expected_sha256: sha256_bytes(b"incoming"),
+        };
+
+        assert!(accepted_flatten_prepared_files(&[prepared], &[operation]).is_empty());
     }
 
     #[test]
@@ -3427,6 +5082,7 @@ mod tests {
 
     #[test]
     fn meshy_vault_changes_invalidate_cached_three_d_health() {
+        let _state_guard = test_state_guard();
         three_d_health().lock().unwrap().insert(
             "C:/mods/example".into(),
             CachedThreeDHealth {
@@ -3440,6 +5096,7 @@ mod tests {
 
     #[test]
     fn logout_clears_local_analysis_and_scan_evidence_without_a_remote_session() {
+        let _state_guard = test_state_guard();
         let analysis_id = Uuid::new_v4();
         *codex_session().lock().unwrap() = None;
         codex_analyses().lock().unwrap().insert(
@@ -3458,6 +5115,9 @@ mod tests {
                 record: CodexAnalysisRecord {
                     engine: "codex_app_server".into(),
                     auth_mode: "chatgpt".into(),
+                    provider: Some("codex".into()),
+                    model: None,
+                    optimization_profile: Some("Codex project and ChatGPT Chat".into()),
                     analysis_id,
                     schema_version: "1.0.0".into(),
                     input_sha256: "a".repeat(64),
@@ -3473,6 +5133,7 @@ mod tests {
                 confirmed: None,
                 project_root: None,
                 scan_id: None,
+                endpoint_fingerprint: None,
             },
         );
         *codex_approved_evidence().lock().unwrap() = ApprovedScanEvidence {

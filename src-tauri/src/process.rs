@@ -12,6 +12,11 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessSpec {
     pub executable: PathBuf,
+    /// SHA-256 identity captured immediately before the reviewed process is
+    /// launched. Manifest-backed callers must provide this; an absent value is
+    /// retained only for non-secret test/diagnostic specs.
+    #[serde(default)]
+    pub executable_sha256: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
@@ -40,6 +45,16 @@ impl ProcessSpec {
             return Err(AppError::Process(
                 "process executable must be an absolute reviewed path".into(),
             ));
+        }
+        if let Some(expected) = self.executable_sha256.as_deref() {
+            crate::source::validate_sha256(expected)?;
+            if crate::security::path_has_link_component(&self.executable)
+                || crate::security::sha256_file(&self.executable)? != expected
+            {
+                return Err(AppError::Process(
+                    "process executable identity changed or contains a link".into(),
+                ));
+            }
         }
         if self.timeout_seconds == 0 || self.timeout_seconds > 60 * 60 {
             return Err(AppError::Process(
@@ -368,6 +383,7 @@ mod tests {
     fn process_preview_contains_names_not_secret_values() {
         let spec = ProcessSpec {
             executable: PathBuf::from("tool.exe"),
+            executable_sha256: None,
             args: vec!["--mode".into(), "health check".into()],
             cwd: None,
             platform: Platform::current(),
@@ -385,6 +401,7 @@ mod tests {
     fn unallowlisted_process_is_rejected() {
         let spec = ProcessSpec {
             executable: PathBuf::from("not-allowed.exe"),
+            executable_sha256: None,
             args: vec![],
             cwd: None,
             platform: Platform::current(),
@@ -393,6 +410,30 @@ mod tests {
             max_output_bytes: 100,
         };
         assert!(spec.validate(&[]).is_err());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn executable_identity_mismatch_is_rejected_before_spawn() {
+        let executable = if cfg!(windows) {
+            std::fs::canonicalize(std::env::var_os("ComSpec").unwrap()).unwrap()
+        } else {
+            std::fs::canonicalize("/bin/sh").unwrap()
+        };
+        let spec = ProcessSpec {
+            executable: executable.clone(),
+            executable_sha256: Some("0".repeat(64)),
+            args: vec!["-c".into(), "exit 0".into()],
+            cwd: None,
+            platform: Platform::current(),
+            environment_names: vec![],
+            timeout_seconds: 5,
+            max_output_bytes: 1024,
+        };
+        let error = spec
+            .validate(std::slice::from_ref(&executable))
+            .unwrap_err();
+        assert!(error.to_string().contains("identity changed"));
     }
 
     #[cfg(target_os = "windows")]
@@ -405,6 +446,7 @@ mod tests {
         let executable = std::fs::canonicalize(std::env::var_os("ComSpec").unwrap()).unwrap();
         let spec = ProcessSpec {
             executable: executable.clone(),
+            executable_sha256: Some(crate::security::sha256_file(&executable).unwrap()),
             args: vec!["/D".into(), "/C".into(), "echo %MESHY_API_KEY%".into()],
             cwd: None,
             platform: Platform::current(),
@@ -428,6 +470,7 @@ mod tests {
         let executable = std::fs::canonicalize("/bin/sh").unwrap();
         let spec = ProcessSpec {
             executable: executable.clone(),
+            executable_sha256: Some(crate::security::sha256_file(&executable).unwrap()),
             args: vec!["-c".into(), "printf '%s' \"$MESHY_API_KEY\"".into()],
             cwd: None,
             platform: Platform::current(),

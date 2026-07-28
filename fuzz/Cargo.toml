@@ -46,4 +46,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "flatten"
+path = "fuzz_targets/flatten.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]

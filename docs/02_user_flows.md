@@ -6,10 +6,11 @@
 2. Check for an incomplete local transaction.
 3. Open recovery first when a journal is incomplete.
 4. Otherwise show Welcome.
-5. Start the local Codex App Server and read account state.
-6. Require ChatGPT sign-in before Create, Import, Update, or Repair planning.
-7. Display current remote source status without downloading selected components yet.
-8. Choose new or existing project.
+5. Show the provider and model selection before semantic planning.
+6. For Codex, start the local Codex App Server and read account state; for other providers, validate the explicit endpoint and vault reference.
+7. Require the selected provider to be configured before Create, Import, Update, or Repair planning.
+8. Display current remote source status without downloading selected components yet.
+9. Choose new or existing project.
 
 ## ChatGPT sign-in flow
 
@@ -24,11 +25,22 @@
 
 The app does not show an OpenAI API key field.
 
+For non-Codex providers, show a model field, an explicit endpoint field, and a
+provider API-key field only when the selected profile requires one. Store the
+key in the OS vault, show names and connection state only, and use the first
+schema-validated semantic request as the capability check. Local models use
+loopback HTTP and are not described as hosted accounts.
+
 ## New mod flow
 
 ### Natural-language description
 
-The user describes the mod. The app verifies ChatGPT authentication and sends the approved brief and wizard constraints to a schema-constrained Codex turn. Codex proposes the normalized description, display name, project ID, script prefix, namespace, tags, folder profile, likely systems, 3D relevance, and component selection. Deterministic validators check every field. The user edits and confirms the proposals before rendering.
+The user describes the mod. The app verifies the selected provider and sends
+the approved brief and wizard constraints to a schema-constrained semantic
+turn. The selected provider proposes the normalized description, display name,
+project ID, script prefix, namespace, tags, folder profile, likely systems, 3D
+relevance, and component selection. Deterministic validators check every
+field. The user edits and confirms the proposals before rendering.
 
 ### Identity and paths
 
@@ -58,7 +70,18 @@ Review server requirements, credential storage, external commands, Git mode, ign
 
 Show every create, merge, replace, rename, skip, external command, Git action, source revision, hash, disk estimate, and rollback rule. Next stays disabled while a blocking conflict is unresolved.
 
-Run the 12-stage transaction. Verify the launcher descriptor resolves to the project, both descriptors agree, the thumbnail decodes, and the selected scaffold exists. Then show readiness and Open in Codex.
+Run the 12-stage transaction. Verify the launcher descriptor resolves to the project, both descriptors agree, the thumbnail decodes, and the selected scaffold exists. Then show readiness. Offer Open in Codex only for the Codex profile.
+
+### Optional flattened Chat sources
+
+Only when Codex is selected, show the final optional checkbox **Prepare a
+flattened ChatGPT project-sources folder**. Review its generated
+`chatgpt_project_sources/` operations. Skills become `<skill>.md`; selected
+subagents, adapted `AGENTS.md`, created or existing `README.md`, and explicitly
+entered project-relative extras are included. Reject traversal, links,
+collisions, secret-shaped paths/content, and oversized files before staging.
+After setup, recommend starting planning using ChatGPT “Chat”. Do not upload,
+open a conversation, or start planning automatically.
 
 ## Existing project flow
 
@@ -83,7 +106,7 @@ Run staged detectors with progress and current-path evidence. Cancellation stops
 9. Git
 10. conflicts and platform limits
 
-Every deterministic finding shows value, confidence, evidence path, line or file set, impact, and recommendation. Required Codex suggestions show the approved input manifest, model metadata when reported by App Server, linked deterministic evidence, and separate confidence. The user can accept, edit, reject, or defer non-required proposals. Every field required for planning must be confirmed.
+Every deterministic finding shows value, confidence, evidence path, line or file set, impact, and recommendation. Required provider suggestions show the approved input manifest, selected provider/model/profile, linked deterministic evidence, and separate confidence. The user can accept, edit, reject, or defer non-required proposals. Every field required for planning must be confirmed.
 
 ### Existing AGENTS.md
 
@@ -123,7 +146,7 @@ Resolve each path with keep, replace, merge, rename, or skip. Binary files do no
 
 ## 3D declined or unsupported
 
-Declined produces no 3D-only operations. Unsupported platform state is shown before dry run. The app never translates commands by guesswork. Neither state blocks core Codex readiness.
+Declined produces no 3D-only operations. Unsupported platform state is shown before dry run. The app never translates commands by guesswork. Neither state blocks core AI readiness.
 
 ## LoRA and ComfyUI placeholder
 
@@ -135,12 +158,12 @@ Declined produces no 3D-only operations. Unsupported platform state is shown bef
 
 ## Update flow
 
-1. Verify ChatGPT authentication and the Codex App Server.
+1. Verify the selected provider configuration, or ChatGPT authentication and the Codex App Server for Codex.
 2. Load the lock.
 3. Verify current local hashes.
 4. Resolve target revision and fetch its manifest.
 5. Run a bounded read-only scan and show its approved evidence manifest.
-6. Run the existing-project schema-constrained Codex reanalysis and confirm its proposals.
+6. Run the existing-project schema-constrained provider reanalysis and confirm its proposals.
 7. Pass the fresh core-confirmed record into planning; no renderer-only record is accepted.
 8. Compare base, local, and incoming.
 9. Show component and dependency changes.
@@ -151,7 +174,7 @@ Declined produces no 3D-only operations. Unsupported platform state is shown bef
 
 ## Repair flow
 
-Verify ChatGPT authentication before creating a repair plan. Classify managed files as healthy, missing, corrupted, or modified. Restore only missing or corrupted unmodified files automatically after review. Modified files enter conflict review. Re-run component health and readiness.
+Verify the selected provider before creating a repair plan. Classify managed files as healthy, missing, corrupted, or modified. Restore only missing or corrupted unmodified files automatically after review. Modified files enter conflict review. Re-run component health and readiness.
 
 ## Removal flow
 
@@ -161,10 +184,10 @@ Show reverse dependencies, solely owned files, merged files, and modified files.
 
 Before apply, offer resume, rollback, or discard staging. After apply starts, verify operation checkpoints and offer resume or rollback. Never delete backup material before a verified terminal state.
 
-## Codex proposal review flow
+## Provider proposal review flow
 
 1. Show the approved input manifest.
-2. Start a read-only schema-constrained Codex turn.
+2. Start a read-only schema-constrained turn through the selected provider adapter.
 3. Reject malformed responses.
 4. Display proposals with short reasons.
 5. Run deterministic validation over names, IDs, namespaces, tags, and profiles.

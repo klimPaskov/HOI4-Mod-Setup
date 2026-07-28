@@ -10,6 +10,13 @@ The inspected `.codex/config.toml` contains `hoi4_agent_tools` with command `hoi
 
 These findings drive the example manifest. They do not authorize macOS equivalents.
 
+The current source does not provide immutable executable, `cmd.exe`, or Node
+hash/size evidence, package identity, or version for `hoi4-agent-tools.cmd`.
+The app therefore records the Windows declaration and exposes it for review,
+but reports its health route as `planned_unavailable` and never executes an
+arbitrary same-named `PATH` entry.
+No package, command, version, or macOS route is invented.
+
 ## MCP component fields
 
 - server ID and display name
@@ -33,11 +40,18 @@ Security-sensitive root values such as `approval_policy` and `sandbox_mode` rece
 
 ## Health check
 
-1. Start the approved server with a sanitized environment.
-2. Send MCP initialize.
-3. Verify protocol response.
-4. List tools or capabilities when safe.
-5. Stop cleanly.
+1. Require manifest executable, command-interpreter, and runtime SHA-256 and
+   size evidence.
+2. Resolve the reviewed bare target and verify the regular, link-free file's
+   size and SHA-256.
+3. Resolve and verify the regular, link-free `cmd.exe` and Node files against
+   the same manifest evidence.
+4. Recheck the interpreter identity immediately before starting the approved
+   server with a sanitized environment.
+5. Send MCP initialize.
+6. Verify protocol response.
+7. List tools or capabilities when safe.
+8. Stop cleanly.
 
 Do not run paid or mutating provider actions as generic health checks unless the repository declares a safe operation.
 

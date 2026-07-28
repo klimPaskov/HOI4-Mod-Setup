@@ -26,6 +26,21 @@ The bridge owns capability detection, account state, browser and device-code log
 
 The React layer never talks to the Codex process directly. It receives redacted typed state through Tauri commands and events. The target project is never a writable root for semantic analysis.
 
+## Provider adapter boundary
+
+`AiProviderAdapter` is a Rust-owned interface behind the same Tauri boundary.
+It exposes provider profiles, local configuration status, scoped vault reads,
+bounded analysis requests, response extraction, and schema validation. The
+renderer never sends a secret in a project state object and never calls a
+provider directly.
+
+Codex delegates to the App Server bridge. Claude delegates to an Anthropic
+messages envelope. Kimi, GLM, DeepSeek, local, and other configured profiles
+use the OpenAI-compatible envelope. Hosted endpoints are explicit HTTPS user
+configuration with redirects disabled; local endpoints are explicit loopback
+HTTP configuration. The adapter does not invent provider login routes,
+endpoints, model names, commands, or packages.
+
 ## Modules
 
 ```text
@@ -108,9 +123,9 @@ Use a platform adapter that detects a supported Codex app or CLI, previews the e
 
 The Tauri command returns a typed non-error result for this opener-unavailable case. The React Ready screen announces the manual path without downgrading readiness; authentication, invalid-root, readiness, and process failures remain errors.
 
-## Codex prerequisite resolution
+## Provider and Codex prerequisite resolution
 
-Windows and macOS resolve the official `codex` executable through an explicit configured path and a narrow allowlisted PATH lookup. The app verifies `app-server` support before login. Missing or incompatible Codex blocks planning and offers official setup guidance. Do not invent a platform-specific installer command in application code.
+For Codex, Windows and macOS resolve the official `codex` executable through an explicit configured path and a narrow allowlisted PATH lookup. The app verifies `app-server` support before login. Missing or incompatible Codex blocks Codex planning and offers official setup guidance. Non-Codex profiles require their user-supplied endpoint and vault reference. Do not invent a platform-specific installer command in application code.
 
 ## App Server process contract
 

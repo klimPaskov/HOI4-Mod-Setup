@@ -28,7 +28,7 @@ A pass, warning, or blocking check.
 
 ## Resolution
 
-1. Verify the required Codex App Server capability, ChatGPT authentication, and confirmed semantic analysis.
+1. Verify the selected provider configuration and confirmed semantic analysis; for Codex, verify the required App Server capability and ChatGPT authentication.
 2. Start from profile defaults and confirmed user selections.
 3. Add transitive dependencies.
 4. Detect cycles.
@@ -43,7 +43,8 @@ The UI shows why every automatic dependency is selected.
 
 | ID | Ownership | Default | Current support |
 | --- | --- | --- | --- |
-| `codex.app_server` | required external capability | yes | Windows and macOS when compatible Codex is installed |
+| `ai.provider` | selected semantic capability | yes | Windows and macOS when the selected route is configured |
+| `codex.app_server` | Codex-only external capability | Codex profile | Windows and macOS when compatible Codex is installed |
 | `project.launcher_scaffold` | generated and external files | new projects | all |
 | `core.agents` | merged template | yes | all |
 | `core.skills` | managed tree | yes | all |
@@ -85,7 +86,7 @@ A component is supported only when its platform declaration and every command-be
 
 ## Readiness aggregation
 
-State derives from file integrity, dependencies, tools, environment, platform, conflicts, and validation. ChatGPT authentication, confirmed Codex analysis, and required launcher artifacts flow into the core Open in Codex gate. Unselected or incomplete optional workflows do not.
+State derives from file integrity, dependencies, tools, environment, platform, conflicts, and validation. Selected-provider configuration, confirmed provider analysis, and required launcher artifacts flow into core readiness. ChatGPT authentication and confirmed Codex analysis flow into the Open in Codex gate only for the Codex profile. Unselected or incomplete optional workflows do not.
 
 ## Removal
 

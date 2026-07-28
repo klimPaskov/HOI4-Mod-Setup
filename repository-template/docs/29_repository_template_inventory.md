@@ -13,7 +13,9 @@ This planning package includes a repository-ready development layer for HOI4 Mod
 | `SECURITY.md` | researchers and maintainers | Private vulnerability reporting and security expectations |
 | `CODE_OF_CONDUCT.md` | community | Contributor conduct |
 | `CHANGELOG.md` | users and maintainers | Release-visible change history |
+| `LICENSE` | users and contributors | Apache License 2.0 terms |
 | `LICENSE_SELECTION.md` | maintainers | Open-source license decision and release gate |
+| `THIRD_PARTY_NOTICES.md` | maintainers and binary users | Generated dependency-license inventory; complete license text review remains required |
 | `AGENTS.md` | Codex and maintainers | Repository-wide implementation rules |
 | `GOAL_PROMPT.md` | Codex | Compact implementation goal |
 
@@ -45,7 +47,10 @@ This planning package includes a repository-ready development layer for HOI4 Mod
 | `.github/workflows/security.yml` | Secret-pattern, npm audit, and Cargo audit checks |
 | `.github/workflows/release.yml` | Tag-based Windows and macOS build and draft release flow |
 
-The build workflows call repository-owned scripts. The coding agent must implement those scripts before making the jobs required.
+The build workflows call repository-owned scripts. The current package includes
+validation, desktop smoke, release build/verification, dependency-notice
+generation, and publication-asset preparation scripts; keep their command names
+stable before making jobs required.
 
 ## Agent development layer
 
@@ -88,3 +93,11 @@ Before using the templates in the application source repository:
 - Codex integration living skill and auditor
 - launcher scaffold ownership for both descriptors and `thumbnail.png`
 - updated plan, lock, scan, project-state, and readiness schemas
+
+## Current implementation additions
+
+- provider-neutral planning profiles and explicit endpoint/vault boundaries
+- selected-provider/model bindings in adapted instructions, plans, locks, and readiness
+- `docs/31_ai_provider_profiles_and_chat_sources.md`
+- Codex-only optional flattened ChatGPT project-sources output
+- checksum coverage for the new planning document and its repository-template mirror

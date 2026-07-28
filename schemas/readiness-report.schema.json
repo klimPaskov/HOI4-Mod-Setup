@@ -12,6 +12,7 @@
     "codex",
     "checks",
     "summary",
+    "core_ready",
     "open_in_codex"
   ],
   "properties": {
@@ -62,6 +63,9 @@
         }
       }
     },
+    "core_ready": {
+      "type": "boolean"
+    },
     "open_in_codex": {
       "type": "object",
       "required": [
@@ -96,6 +100,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "provider",
+        "model",
         "integration",
         "auth_mode",
         "authenticated_during_setup",
@@ -105,11 +111,17 @@
         "blocking_check_ids"
       ],
       "properties": {
+        "provider": {
+          "enum": ["codex", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+        },
+        "model": {
+          "type": "string"
+        },
         "integration": {
-          "const": "codex_app_server"
+          "enum": ["codex_app_server", "provider_api"]
         },
         "auth_mode": {
-          "const": "chatgpt"
+          "enum": ["chatgpt", "api_key", "local_endpoint"]
         },
         "authenticated_during_setup": {
           "type": "boolean"
@@ -159,6 +171,7 @@
             "thumbnail",
             "structure",
             "codex",
+            "ai",
             "skill",
             "subagent",
             "mcp",

@@ -36,6 +36,16 @@ Trusted secret boundary. Project data receives opaque references only.
 
 Git, Node, Python, Blender, Codex, and MCP servers run as separate allowlisted processes.
 
+### AI provider adapters
+
+The renderer calls typed Rust commands only. Codex uses the official local App
+Server; hosted non-Codex adapters use an explicit user endpoint and a
+provider-keyed OS-vault credential; local adapters use loopback HTTP. Hosted
+endpoints require HTTPS, contain no userinfo, use no redirects, and have
+bounded response bodies. Local endpoints cannot leave loopback. Provider
+responses are untrusted text until the common schema and deterministic
+evidence checks pass.
+
 ## Download security
 
 - HTTPS only
@@ -50,11 +60,11 @@ Git, Node, Python, Blender, Codex, and MCP servers run as separate allowlisted p
 
 Normalize Unicode and separators, reject absolute managed destinations and parent traversal, resolve links, verify final parent containment, detect case collisions, reject Windows device names and alternate data streams, and block archive-link escapes.
 
-## ChatGPT and Codex authentication boundary
+## ChatGPT, Codex, and provider credential boundary
 
 The application delegates ChatGPT authentication to the official Codex App Server managed flow. It does not own OAuth tokens and does not read Codex credential storage.
 
-Core rules:
+Codex rules:
 
 - no OpenAI API key field
 - no API-key fallback for core analysis
@@ -69,13 +79,23 @@ Core rules:
 
 Live account metadata returned by `account/read` is transient UI state.
 
+Non-Codex rules:
+
+- keys are saved only to Windows Credential Manager or macOS Keychain;
+- the in-memory reference map is keyed by provider and the key value never
+  crosses into React state, project state, plans, locks, logs, or screenshots;
+- the endpoint and model are user-selected non-secret configuration;
+- a provider switch clears stale analysis and cannot reuse another provider's
+  reference; and
+- the first provider request is a bounded, schema-validated capability check.
+
 ## Secrets
 
-Secret values do not enter logs through debug formatting, are not copied automatically, do not enter crash reports, are not stored or hashed, are not shown in previews, and are injected only into approved child processes.
+Secret values do not enter logs through debug formatting, are not copied automatically, do not enter crash reports, are not stored or hashed, are not shown in previews, and are injected only into the approved request header or verified Meshy child process. State-bearing renderer calls blank the Meshy password draft before Tauri IPC; planning receives only the vault-backed opaque reference. The optional flattened Chat export rejects secret-shaped paths and content before staging.
 
 ## Command execution
 
-Represent commands as executable plus argument array. Do not build a shell string for ordinary execution. A checked repository wrapper is an executable artifact with a verified hash. Display arguments in a safely escaped form with secrets removed.
+Represent commands as executable plus argument array. Do not build a shell string for ordinary execution. A checked repository wrapper is an executable artifact with a verified hash. A wrapper route is executable only when the manifest also supplies size and SHA-256 evidence for each core-resolved interpreter and runtime dependency; verify those identities immediately before spawn. Display arguments in a safely escaped form with secrets removed.
 
 ## Privilege
 
@@ -106,6 +126,6 @@ No telemetry in version 1. Update checks contact only the selected source after 
 
 Traversal, symlink races, Windows junction escape, case collision, reserved names, huge files, malformed TOML, command injection, environment injection, secret redaction, crash reporting, interrupted apply, and compromised manifest fixtures.
 
-## Codex input disclosure
+## Provider input disclosure
 
-Every existing-project Codex request has a visible input manifest. The user can remove files or excerpts before transmission. Exclude binaries, `.git/`, credential stores, environment files, secrets, provider caches, large generated assets, and any path outside approved roots. Hash the approved input and validate the response schema before showing proposals.
+Every existing-project provider request has a visible input manifest. The user can remove files or excerpts before transmission. Exclude binaries, `.git/`, credential stores, environment files, secrets, provider caches, large generated assets, and any path outside approved roots. Hash the approved input and validate the response schema before showing proposals.

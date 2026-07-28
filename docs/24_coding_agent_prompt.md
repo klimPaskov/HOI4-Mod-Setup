@@ -1,6 +1,6 @@
 # Detailed coding-agent implementation prompt
 
-Implement **HOI4 Mod Setup**, a production Windows and macOS desktop application that prepares Hearts of Iron IV mod projects for agentic development in Codex.
+Implement **HOI4 Mod Setup**, a production Windows and macOS desktop application that prepares Hearts of Iron IV mod projects for agentic development with a selected AI provider. Codex is the default.
 
 Read every document, schema, example, Mermaid diagram, UI reference, source audit, and acceptance criterion in this package before coding. Maintain a requirement-to-code matrix.
 
@@ -16,15 +16,15 @@ Use a Tauri shell with Rust core and TypeScript React UI unless a documented spi
 
 Create modules for project identity, scanner, source resolver, manifest, components, cache, hashes, merge, transactions, validators, credentials, MCP, Git, readiness, recovery, and platform adapters.
 
-## ChatGPT and Codex integration
+## AI provider and Codex integration
 
 Implement the semantic layer through the official local `codex app-server` process over stdio JSONL. Complete initialize, account state, browser ChatGPT login, device-code fallback, cancellation, logout, account updates, rate-limit checks, thread lifecycle, turn lifecycle, streamed events, and clean shutdown.
 
-Do not add an OpenAI API key field, API-key fallback, provider selector, or externally managed ChatGPT token path. Do not read Codex token files. Keep full email, account ID, plan, usage, rate limits, tokens, thread history, and hidden reasoning out of project files and locks.
+Do not add an OpenAI API key field or API-key fallback to the Codex route. Add bounded provider profiles for Claude, Kimi, GLM, DeepSeek, local, and another explicitly configured OpenAI-compatible route. Non-Codex hosted routes use a user endpoint and OS-vault key; local uses loopback HTTP. Do not invent provider URLs, OAuth routes, packages, commands, model names, or platform support. Do not read Codex token files. Keep full email, account ID, plan, usage, rate limits, tokens, keys, thread history, and hidden reasoning out of project files and locks.
 
-Use the user's compatible Codex configuration without hardcoding a model. Every semantic turn is read-only and uses the current `codex-analysis` output schema. Codex proposes the description, display name, project ID, prefix, namespace, tags, folder profile, project instructions, components, and existing-project conventions. Deterministic Rust validates and renders after confirmation.
+Use the selected model and optimization profile without hardcoding a non-Codex model. Every semantic turn is read-only and uses the current `codex-analysis` output schema. The selected provider proposes the description, display name, project ID, prefix, namespace, tags, folder profile, project instructions, components, and existing-project conventions. Deterministic Rust validates and renders after confirmation.
 
-Missing authentication, usage availability, or valid analysis blocks Create, Import, Update, and Repair planning. Preserve drafts and scans. Keep recovery, rollback, backup inspection, and managed removal available offline.
+Missing provider configuration, usage availability, or valid analysis blocks Create, Import, Update, and Repair planning. Preserve drafts and scans. Keep recovery, rollback, backup inspection, and managed removal available offline.
 
 ## Repository contract
 
@@ -47,6 +47,12 @@ Never clone Agentic-HOI4-Modding. Repository-declared external dependency script
 Implement the 17 required screen states inside a seven-phase wizard: Project, Review, Components, Integrations, Git, Install, and Ready. Collect a normal-language brief, review suggestions, confirm identity and paths, preview both descriptors on demand, propose editable folders, select source and components, ask both exact optional questions, configure MCP and Git, show dry run, transact, and show readiness.
 
 Create no project file before approval. After approval, generate and validate the internal `descriptor.mod`, the external launcher `<project_id>.mod`, a deterministic replaceable `thumbnail.png`, and the selected folder profile. Preview external destinations. Track every generated artifact and external path in the plan, lock, backup, and rollback record. Never fabricate a Workshop ID or overwrite a user-replaced thumbnail silently.
+
+When Codex is selected, make the final Git phase checkbox optional: prepare
+`chatgpt_project_sources/` by flattening each skill to `<skill>.md` and adding
+selected subagents, adapted AGENTS, the created or existing README, and only
+user-entered project-relative extras. Use the full transaction and recommend
+starting planning with ChatGPT “Chat”; do not upload or start planning.
 
 ## Existing project
 
@@ -100,7 +106,7 @@ Support initialize, preserve, or skip. Merge `.gitignore`, select branch, option
 
 ## Readiness
 
-Verify both descriptors, launcher path and discoverability, descriptor consistency, thumbnail decode and hash, structure, AGENTS, skills, subagents, Codex, MCP, wiki, Git, environment, hashes, conflicts, dependencies, 3D, and LoRA placeholder. Verify ChatGPT authentication and confirmed Codex analysis as blocking core checks. Enable Open in Codex only when core blocking checks pass.
+Verify both descriptors, launcher path and discoverability, descriptor consistency, thumbnail decode and hash, structure, AGENTS, skills, subagents, selected provider, MCP, wiki, Git, environment, hashes, conflicts, dependencies, 3D, and LoRA placeholder. Verify provider configuration or Codex ChatGPT authentication and confirmed provider analysis as blocking core checks. Enable Open in Codex only for Codex when core blocking checks pass.
 
 ## Security
 

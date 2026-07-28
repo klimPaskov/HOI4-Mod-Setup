@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallation, approveInstallation, buildInstallationPlan, buildMaintenancePlan, cancelCodexLogin, cancelScan, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openInCodex, pickLauncherFolder, pickProjectFolder, previewDescriptors, previewInstallationConflict, previewSourceManifest, readCodexAccount, readTransactionJournal, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallation, run3DHealthCheck, runCodexAnalysis, runMcpHealthCheck, scanProject, startCodexLogin, storeMeshyCredential, waitForCodexLoginResult } from "./lib/tauri";
-import type { ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, InstallationPlan, ManifestComponentPreview, PhaseId, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, WizardState, WorkflowHealthResult } from "./types";
+import { applyInstallation, approveInstallation, approveScanEvidence, buildInstallationPlan, buildMaintenancePlan, cancelCodexLogin, cancelScan, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openInCodex, pickLauncherFolder, pickProjectFolder, previewDescriptors, previewInstallationConflict, previewSourceManifest, readAiAccount, readAiProviderProfiles, readCodexAccount, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallation, run3DHealthCheck, runAiAnalysis, runCodexAnalysis, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, waitForCodexLoginResult } from "./lib/tauri";
+import type { AiProviderId, AiProviderProfile, CodexAnalysisRequest, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, InstallationPlan, ManifestComponentPreview, PhaseId, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, WizardState, WorkflowHealthResult } from "./types";
 
 const PHASES: Array<{ id: PhaseId; label: string }> = [
   { id: "project", label: "Project" },
@@ -45,11 +45,26 @@ const INITIAL_SCAN_PROGRESS: ScanProgress = {
 const DEFAULT_COMPONENTS: ComponentRow[] = [
   { id: "core.agents", title: "Project instructions", detail: "AGENTS.md and source record", size: "manifest", selected: true, required: true },
   { id: "core.skills", title: "Skills", detail: "Current HOI4 workflow skills", size: "manifest", selected: true, required: true },
-  { id: "core.subagents", title: "Subagents", detail: "Bounded Codex agent profiles", size: "manifest", selected: true, required: true },
+  { id: "core.subagents", title: "Subagents", detail: "Bounded agent profiles", size: "manifest", selected: true, required: true },
   { id: "codex.config", title: "Codex and MCP", detail: "Project configuration and declared server entry", size: "manifest", selected: true, required: true },
   { id: "mcp.hoi4_agent_tools", title: "HOI4 Agent Tools MCP", detail: "Windows-declared route; macOS remains unsupported", size: "manifest", selected: true, required: false, platform: "windows" },
   { id: "wiki.snapshot", title: "Offline wiki", detail: "Installed under paradox_wiki/", size: "manifest", selected: true, required: true },
 ];
+
+const FALLBACK_AI_PROFILES: AiProviderProfile[] = [
+  { id: "codex", display_name: "Codex", protocol: "codex_app_server", requires_credential: false, optimization_profile: "Codex project and ChatGPT Chat" },
+  { id: "claude", display_name: "Claude", protocol: "anthropic_messages", requires_credential: true, optimization_profile: "Claude Code / Anthropic conventions" },
+  { id: "kimi", display_name: "Kimi", protocol: "openai_compatible", requires_credential: true, optimization_profile: "Kimi coding conventions" },
+  { id: "glm", display_name: "GLM", protocol: "openai_compatible", requires_credential: true, optimization_profile: "GLM coding conventions" },
+  { id: "deepseek", display_name: "DeepSeek", protocol: "openai_compatible", requires_credential: true, optimization_profile: "DeepSeek coding conventions" },
+  { id: "local", display_name: "Local model", protocol: "openai_compatible", requires_credential: false, optimization_profile: "Local model conventions" },
+  { id: "custom", display_name: "Other provider", protocol: "openai_compatible", requires_credential: true, optimization_profile: "User-supplied provider conventions" },
+];
+
+function aiProviderLabel(provider: AiProviderId | undefined, profiles: AiProviderProfile[] = FALLBACK_AI_PROFILES): string {
+  const selectedProvider = provider ?? "codex";
+  return profiles.find((profile) => profile.id === selectedProvider)?.display_name ?? selectedProvider;
+}
 
 const initialState: WizardState = {
   screen: "welcome",
@@ -59,6 +74,11 @@ const initialState: WizardState = {
   description: "A Cold War total conversion focused on Southeast Asia, with new countries, political routes, decisions, events, custom doctrines, and long campaigns that can diverge from history.",
   sourceMode: "latest",
   pinnedRef: "",
+  aiProvider: "codex",
+  aiModel: "default",
+  aiEndpoint: "",
+  aiAccount: null,
+  aiProfiles: undefined,
   selectedComponents: DEFAULT_COMPONENTS.filter((component) => component.selected).map((component) => component.id),
   components: DEFAULT_COMPONENTS,
   meshSelected: false,
@@ -66,6 +86,8 @@ const initialState: WizardState = {
   meshKeyStatus: "missing",
   meshCredentialReference: undefined,
   loraInterest: false,
+  flattenForChat: false,
+  flattenAdditionalFiles: [],
   gitMode: "initialize",
   gitBranch: "main",
   initialCommit: true,
@@ -107,7 +129,7 @@ const SCREEN_PHASE: Record<ScreenId, PhaseId> = {
 const screenCopy: Record<ScreenId, { title: string; supporting?: string; status?: { label: string; tone: StatusTone } }> = {
   welcome: { title: "Start a mod project", supporting: "Choose a starting point." },
   description: { title: "Describe the mod", supporting: "A few sentences are enough." },
-  identity: { title: "Project identity", supporting: "Confirm the names and paths used by HOI4 and Codex.", status: { label: "Descriptors valid", tone: "pass" } },
+  identity: { title: "Project identity", supporting: "Confirm the names and paths used by HOI4 and your selected AI provider.", status: { label: "Descriptors valid", tone: "pass" } },
   scan: { title: "Scanning project", supporting: "Read-only scan in progress.", status: { label: "Read only", tone: "info" } },
   findings: { title: "Confirm scan findings", supporting: "Edit only the values that are wrong." },
   components: { title: "Choose what to install", supporting: "Recommended components are selected.", status: { label: "Recommended", tone: "info" } },
@@ -191,15 +213,25 @@ export default function App() {
 
   useEffect(() => {
     if (state.screen !== "welcome" && state.screen !== "description" && state.screen !== "identity" && state.screen !== "findings") return;
-    if (state.codexAccount !== null) return;
-    void readCodexAccount().then((account) => {
-      if (account) {
-        setState((current) => ({ ...current, codexAccount: account }));
-      } else if (isTauriRuntime()) {
-        setState((current) => ({ ...current, codexAccount: { available: false, authenticated: false, auth_mode: "", usage_limited: false, error: "The official Codex App Server could not be reached." } }));
-      }
+    if (state.aiProvider === "codex") {
+      if (state.codexAccount !== null) return;
+      void readCodexAccount().then((account) => {
+        if (account) {
+          setState((current) => ({ ...current, codexAccount: account }));
+        } else if (isTauriRuntime()) {
+          setState((current) => ({ ...current, codexAccount: { available: false, authenticated: false, auth_mode: "", usage_limited: false, error: "The official Codex App Server could not be reached." } }));
+        }
+      });
+      return;
+    }
+    if (!state.aiProfiles) {
+      void readAiProviderProfiles().then((profiles) => setState((current) => ({ ...current, aiProfiles: profiles.length ? profiles : FALLBACK_AI_PROFILES })));
+    }
+    if (state.aiAccount !== null) return;
+    void readAiAccount(state.aiProvider, state.aiModel, state.aiEndpoint).then((account) => {
+      if (account) setState((current) => ({ ...current, aiAccount: account }));
     });
-  }, [state.screen, state.codexAccount]);
+  }, [state.screen, state.codexAccount, state.aiProvider, state.aiModel, state.aiEndpoint, state.aiAccount, state.aiProfiles]);
 
   useEffect(() => {
     if (state.screen === "scan" && state.mode === "existing") {
@@ -317,21 +349,46 @@ export default function App() {
   })));
   const runSemanticAnalysis = async (mode: "new_project_identity" | "existing_project_semantics"): Promise<boolean> => {
     if (state.codexAnalysisRecord) return true;
-    if (!state.codexAccount?.available) {
-      if (isTauriRuntime()) update({ transactionError: "The official Codex App Server is required for semantic analysis." });
-      return isTauriRuntime();
-    }
-    if (state.codexAccount.error) {
-      update({ transactionError: state.codexAccount.error });
-      return false;
-    }
-    if (state.codexAccount.usage_limited) {
-      update({ transactionError: "Codex usage is currently limited. Planning is paused; recovery remains available." });
-      return false;
-    }
-    if (!state.codexAccount.authenticated || state.codexAccount.auth_mode !== "chatgpt") {
-      update({ transactionError: "Sign in with ChatGPT through Codex before semantic setup analysis." });
-      return false;
+    const provider = state.aiProvider;
+    let accountReady = true;
+    let providerAccount = state.aiAccount;
+    if (provider === "codex") {
+      if (!state.codexAccount?.available) {
+        if (isTauriRuntime()) update({ transactionError: "The official Codex App Server is required for semantic analysis." });
+        return isTauriRuntime();
+      }
+      if (state.codexAccount.error) {
+        update({ transactionError: state.codexAccount.error });
+        return false;
+      }
+      if (state.codexAccount.usage_limited) {
+        update({ transactionError: "Codex usage is currently limited. Planning is paused; recovery remains available." });
+        return false;
+      }
+      accountReady = state.codexAccount.authenticated && state.codexAccount.auth_mode === "chatgpt";
+      if (!accountReady) {
+        update({ transactionError: "Sign in with ChatGPT through Codex before semantic setup analysis." });
+        return false;
+      }
+    } else {
+      providerAccount = providerAccount ?? await readAiAccount(provider, state.aiModel, state.aiEndpoint);
+      if (!providerAccount?.available) {
+        if (isTauriRuntime()) update({ aiAccount: providerAccount, transactionError: `${aiProviderLabel(provider, state.aiProfiles)} is not configured. Enter its endpoint and connect before semantic setup analysis.` });
+        return isTauriRuntime();
+      }
+      if (providerAccount.error) {
+        update({ aiAccount: providerAccount, transactionError: providerAccount.error });
+        return false;
+      }
+      if (providerAccount.usage_limited) {
+        update({ aiAccount: providerAccount, transactionError: `${aiProviderLabel(provider, state.aiProfiles)} usage is currently limited. Planning is paused; recovery remains available.` });
+        return false;
+      }
+      accountReady = providerAccount.authenticated;
+      if (!accountReady) {
+        update({ aiAccount: providerAccount, transactionError: `Connect ${aiProviderLabel(provider, state.aiProfiles)} before semantic setup analysis.` });
+        return false;
+      }
     }
     const evidence = await buildCodexEvidence(findings);
     if (mode === "existing_project_semantics" && !state.scanContext) {
@@ -346,7 +403,14 @@ export default function App() {
       update({ transactionError: "The completed scan did not provide complete evidence for semantic analysis. Rerun the read-only scan." });
       return false;
     }
-    const result = await runCodexAnalysis({
+    if (mode === "existing_project_semantics" && state.scanContext) {
+      const approved = await approveScanEvidence(state.scanContext.projectRoot, state.scanContext.scanId, evidence);
+      if (!approved) {
+        update({ transactionError: "The edited evidence could not be approved by the core. Rerun the read-only scan before semantic analysis." });
+        return false;
+      }
+    }
+    const request: CodexAnalysisRequest = {
       mode,
       brief: state.description,
       evidence: mode === "existing_project_semantics" ? evidence : [],
@@ -354,9 +418,17 @@ export default function App() {
       analysis_purpose: mode === "existing_project_semantics" ? "existing_project_import" : undefined,
       project_root: mode === "existing_project_semantics" ? state.scanContext?.projectRoot : undefined,
       scan_id: mode === "existing_project_semantics" ? state.scanContext?.scanId : undefined,
-    });
+    };
+    const result = provider === "codex"
+      ? await runCodexAnalysis(request)
+      : await runAiAnalysis({
+        ...request,
+        provider,
+        model: state.aiModel,
+        endpoint: state.aiEndpoint,
+      });
     if (!result) {
-      update({ transactionError: "Codex analysis could not be completed. Your draft and scan remain unchanged." });
+      update({ transactionError: `${aiProviderLabel(provider, state.aiProfiles)} analysis could not be completed. Your draft and scan remain unchanged.` });
       return false;
     }
     const proposal = (key: string) => result.analysis.proposals.find((item) => item.key === key)?.value;
@@ -369,6 +441,7 @@ export default function App() {
     const descriptorTags = proposal("descriptor_tags");
     setState((current) => ({
       ...current,
+      aiAccount: provider === "codex" ? current.aiAccount : providerAccount,
       codexAnalysis: result.analysis,
       codexAnalysisRecord: result.record,
       identity: {
@@ -388,7 +461,7 @@ export default function App() {
   };
   const prepareMaintenanceReanalysis = async (): Promise<boolean> => {
     if (!isTauriRuntime()) {
-      update({ transactionError: "Codex reanalysis is available in the packaged desktop app." });
+      update({ transactionError: `${aiProviderLabel(state.aiProvider, state.aiProfiles)} reanalysis is available in the packaged desktop app.` });
       return false;
     }
     if (!state.identity.projectRoot.trim()) {
@@ -419,7 +492,7 @@ export default function App() {
         ? scanned.cancelled
           ? "The read-only scan was cancelled. No evidence is available for reanalysis."
           : "The read-only scan reached a safety limit. Complete an untruncated scan before reanalysis."
-        : "Read-only evidence is ready. Review the input below, then run Codex reanalysis.",
+        : `Read-only evidence is ready. Review the input below, then run ${aiProviderLabel(state.aiProvider, state.aiProfiles)} reanalysis.`,
     });
     return !scanWasPartial;
   };
@@ -429,29 +502,54 @@ export default function App() {
       update({ transactionError: "Prepare the latest read-only evidence before reanalysis." });
       return false;
     }
-    const account = state.codexAccount ?? await readCodexAccount();
-    if (!account || !account.available) {
-      update({ transactionError: "The official Codex App Server is required for reanalysis." });
-      return false;
-    }
-    if (account.error) {
-      update({ codexAccount: account, transactionError: account.error });
-      return false;
-    }
-    if (account.usage_limited) {
-      update({ codexAccount: account, transactionError: "Codex usage is currently limited. Reanalysis is paused; recovery remains available." });
-      return false;
-    }
-    if (!account.authenticated || account.auth_mode !== "chatgpt") {
-      update({ codexAccount: account, transactionError: "Sign in with ChatGPT through Codex before reanalysis." });
-      return false;
+    const provider = state.aiProvider ?? "codex";
+    const providerLabel = aiProviderLabel(provider, state.aiProfiles);
+    let codexAccount = state.codexAccount;
+    let aiAccount = state.aiAccount;
+    if (provider === "codex") {
+      codexAccount = codexAccount ?? await readCodexAccount();
+      if (!codexAccount || !codexAccount.available) {
+        update({ transactionError: "The official Codex App Server is required for reanalysis." });
+        return false;
+      }
+      if (codexAccount.error) {
+        update({ codexAccount, transactionError: codexAccount.error });
+        return false;
+      }
+      if (codexAccount.usage_limited) {
+        update({ codexAccount, transactionError: "Codex usage is currently limited. Reanalysis is paused; recovery remains available." });
+        return false;
+      }
+      if (!codexAccount.authenticated || codexAccount.auth_mode !== "chatgpt") {
+        update({ codexAccount, transactionError: "Sign in with ChatGPT through Codex before reanalysis." });
+        return false;
+      }
+    } else {
+      aiAccount = aiAccount ?? await readAiAccount(provider, state.aiModel, state.aiEndpoint);
+      if (!aiAccount || !aiAccount.available) {
+        update({ aiAccount, transactionError: `${providerLabel} is not configured for reanalysis. Check the endpoint and connection.` });
+        return false;
+      }
+      if (aiAccount.error) {
+        update({ aiAccount, transactionError: aiAccount.error });
+        return false;
+      }
+      if (aiAccount.usage_limited || !aiAccount.authenticated) {
+        update({ aiAccount, transactionError: `${providerLabel} is not available for reanalysis. Planning is paused; recovery remains available.` });
+        return false;
+      }
     }
     const evidence = await buildCodexEvidence(findings);
     if (!evidence.length || evidence.some((item) => !item.path || !item.excerpt)) {
       update({ transactionError: "The approved scan did not provide complete evidence for reanalysis. Prepare the read-only evidence again." });
       return false;
     }
-    const result = await runCodexAnalysis({
+    const approved = await approveScanEvidence(state.scanContext.projectRoot, state.scanContext.scanId, evidence);
+    if (!approved) {
+      update({ transactionError: "The edited evidence could not be approved by the core. Prepare the read-only evidence again." });
+      return false;
+    }
+    const request: CodexAnalysisRequest = {
       mode: "existing_project_semantics",
       brief: "Review the installed HOI4 project for semantic changes before a workflow update. Preserve deterministic facts, identify convention or instruction changes, and propose only reviewable values. Do not write files or approve operations.",
       evidence,
@@ -464,17 +562,26 @@ export default function App() {
       analysis_purpose: "maintenance_reanalysis",
       project_root: state.scanContext.projectRoot,
       scan_id: state.scanContext.scanId,
-    });
+    };
+    const result = provider === "codex"
+      ? await runCodexAnalysis(request)
+      : await runAiAnalysis({
+        ...request,
+        provider,
+        model: state.aiModel,
+        endpoint: state.aiEndpoint,
+      });
     if (!result) {
-      update({ transactionError: "Codex reanalysis could not be completed. The installed project and evidence remain unchanged." });
+      update({ transactionError: `${providerLabel} reanalysis could not be completed. The installed project and evidence remain unchanged.` });
       return false;
     }
     update({
-      codexAccount: account,
+      codexAccount,
+      aiAccount,
       codexAnalysis: result.analysis,
       codexAnalysisRecord: result.record,
       maintenanceCodexAnalysisRecord: result.record,
-      transactionError: "Review and confirm the Codex reanalysis before creating the update plan.",
+      transactionError: `Review and confirm the ${providerLabel} reanalysis before creating the update plan.`,
       screen: "update",
     });
     return true;
@@ -484,7 +591,7 @@ export default function App() {
     const confirmedFields = state.codexAnalysis.proposals.map((proposal) => proposal.key);
     const record = await confirmCodexAnalysis(state.codexAnalysisRecord, confirmedFields);
     if (!record) {
-      update({ transactionError: "Codex proposals could not be confirmed by the core." });
+      update({ transactionError: `${aiProviderLabel(state.aiProvider, state.aiProfiles)} proposals could not be confirmed by the core.` });
       return;
     }
     update({
@@ -541,9 +648,9 @@ export default function App() {
       if (!state.maintenanceEvidenceReady) {
         await prepareMaintenanceReanalysis();
       } else if (!state.maintenanceCodexAnalysisRecord) {
-        update({ transactionError: "Run Codex reanalysis and confirm its proposals before checking for updates." });
+        update({ transactionError: `Run ${aiProviderLabel(state.aiProvider, state.aiProfiles)} reanalysis and confirm its proposals before checking for updates.` });
       } else {
-        update({ transactionError: "Confirm the Codex reanalysis before checking for updates." });
+        update({ transactionError: `Confirm the ${aiProviderLabel(state.aiProvider, state.aiProfiles)} reanalysis before checking for updates.` });
       }
       return;
     }
@@ -617,8 +724,11 @@ export default function App() {
       await handleRecovery();
       return;
     }
-    if (state.screen === "welcome" && !state.recoveryEntry && ((isTauriRuntime() && !state.codexAccount) || (state.codexAccount && (!state.codexAccount.available || !state.codexAccount.authenticated || state.codexAccount.auth_mode !== "chatgpt" || Boolean(state.codexAccount.error))))) {
-      update({ transactionError: "Sign in with ChatGPT through Codex before starting setup. Recovery remains available." });
+    const providerReady = state.aiProvider === "codex"
+      ? Boolean(state.codexAccount?.available && state.codexAccount.authenticated && state.codexAccount.auth_mode === "chatgpt" && !state.codexAccount.error)
+      : Boolean(state.aiAccount?.available && state.aiAccount.authenticated && !state.aiAccount.error);
+    if (state.screen === "welcome" && !state.recoveryEntry && isTauriRuntime() && !providerReady) {
+      update({ transactionError: state.aiProvider === "codex" ? "Sign in with ChatGPT through Codex before starting setup. Recovery remains available." : `Connect ${aiProviderLabel(state.aiProvider, state.aiProfiles)} before starting setup. Recovery remains available.` });
       return;
     }
     if (state.screen === "description" && state.mode === "new" && !state.codexAnalysisRecord) {
@@ -627,7 +737,7 @@ export default function App() {
         return;
       }
       const handled = await runSemanticAnalysis("new_project_identity");
-      if (handled && state.codexAccount?.available) {
+      if (handled) {
         update({ screen: "identity" });
         return;
       }
@@ -647,18 +757,18 @@ export default function App() {
         return;
       }
       const handled = await runSemanticAnalysis("existing_project_semantics");
-      if (handled && state.codexAccount?.available) return;
+      if (handled) return;
       if (isTauriRuntime()) return;
     }
     if ((state.screen === "identity" && state.mode === "new")
       || (state.screen === "findings" && state.mode === "existing")) {
       if (isTauriRuntime() && !state.codexAnalysisRecord?.confirmed_fields.length) {
-        update({ transactionError: "Review and confirm the Codex proposals before continuing." });
+        update({ transactionError: `Review and confirm the ${aiProviderLabel(state.aiProvider, state.aiProfiles)} proposals before continuing.` });
         return;
       }
     }
     if (state.screen === "findings" && isTauriRuntime() && !state.codexAnalysisRecord) {
-      update({ transactionError: "Review and confirm the Codex proposals before continuing." });
+      update({ transactionError: `Review and confirm the ${aiProviderLabel(state.aiProvider, state.aiProfiles)} proposals before continuing.` });
       return;
     }
     if (state.screen === "dry-run") {
@@ -704,8 +814,8 @@ export default function App() {
   const copy = state.screen === "ready"
     ? {
       title: "Project ready",
-      supporting: state.readiness ? state.readiness.openInCodex ? "Core requirements passed." : "Resolve blocking checks before opening in Codex." : "Checking core requirements.",
-      status: state.readiness ? state.readiness.openInCodex ? { label: "Ready for Codex", tone: "pass" as const } : { label: "Needs review", tone: "block" as const } : { label: "Checking readiness", tone: "info" as const },
+      supporting: state.readiness ? state.readiness.coreReady ? `Core requirements passed for ${aiProviderLabel(state.aiProvider, state.aiProfiles)}.` : "Resolve blocking checks before continuing." : "Checking core requirements.",
+      status: state.readiness ? state.readiness.coreReady ? { label: `Ready for ${aiProviderLabel(state.aiProvider, state.aiProfiles)}`, tone: "pass" as const } : { label: "Needs review", tone: "block" as const } : { label: "Checking readiness", tone: "info" as const },
     }
     : screenCopy[state.screen];
   return (
@@ -828,6 +938,28 @@ function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) 
 }
 
 export function Welcome({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
+  const [aiKeyDraft, setAiKeyDraft] = useState("");
+  const selectedProvider = state.aiProvider ?? "codex";
+  const profiles = state.aiProfiles?.length ? state.aiProfiles : FALLBACK_AI_PROFILES;
+  const profile = profiles.find((candidate) => candidate.id === selectedProvider) ?? profiles[0];
+  const selectedLabel = aiProviderLabel(selectedProvider, profiles);
+  const selectProvider = (provider: AiProviderId) => {
+    update({
+      aiProvider: provider,
+      aiModel: provider === "codex" ? "default" : "",
+      aiEndpoint: "",
+      aiAccount: null,
+      codexAnalysis: undefined,
+      codexAnalysisRecord: undefined,
+      flattenForChat: provider === "codex" ? state.flattenForChat : false,
+      meshSelected: provider === "codex" ? state.meshSelected : false,
+      selectedComponents: provider === "codex"
+        ? Array.from(new Set([...state.selectedComponents, "codex.config"]))
+        : state.selectedComponents.filter((id) => !["codex.config", "mcp.hoi4_agent_tools", "workflow.3d"].includes(id)),
+      transactionError: undefined,
+    });
+    setAiKeyDraft("");
+  };
   const account = state.codexAccount;
   const signIn = async (mode: "browser" | "device") => {
     if (state.codexLoginPending) await cancelCodexLogin();
@@ -866,6 +998,31 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
       transactionError: result.error ?? undefined,
     });
   };
+  const refreshProvider = async () => {
+    const next = await readAiAccount(selectedProvider, state.aiModel, state.aiEndpoint);
+    if (next) update({ aiAccount: next, transactionError: next.error ?? undefined });
+    else if (isTauriRuntime()) update({ aiAccount: { available: false, authenticated: false, provider: selectedProvider, model: state.aiModel, auth_mode: "unconfigured", usage_limited: false, error: "The selected provider could not be reached by the desktop bridge." } });
+  };
+  const connectProvider = async () => {
+    if (!aiKeyDraft.trim()) {
+      await refreshProvider();
+      return;
+    }
+    const stored = await storeAiProviderCredential(selectedProvider, aiKeyDraft);
+    setAiKeyDraft("");
+    if (!stored) {
+      update({ transactionError: `The ${selectedLabel} credential could not be stored. No project files were changed.` });
+      return;
+    }
+    update({ aiAccount: null, transactionError: undefined });
+  };
+  const removeProviderCredential = async () => {
+    if (await removeAiProviderCredential(selectedProvider)) {
+      update({ aiAccount: null, transactionError: undefined });
+    } else {
+      update({ transactionError: `The ${selectedLabel} credential was not removed; no project files were changed.` });
+    }
+  };
   return <div className="stack wide"><div className="choice-grid">
     <button type="button" className={`choice-card ${state.mode === "new" ? "selected" : ""}`} aria-pressed={state.mode === "new"} onClick={() => update({ mode: "new" })}>
       <span className="choice-icon">＋</span><span className="choice-radio" aria-hidden="true" /><h2>Create new mod</h2><p>Start from a short description.</p>
@@ -873,23 +1030,25 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
     <button type="button" className={`choice-card ${state.mode === "existing" ? "selected" : ""}`} aria-pressed={state.mode === "existing"} onClick={() => update({ mode: "existing" })}>
       <span className="choice-icon">⌕</span><span className="choice-radio" aria-hidden="true" /><h2>Import existing mod</h2><p>Scan the project without changing it.</p>
     </button>
-  </div><section><div className="section-label">Codex access</div><div className="panel recent-list">
+  </div><section><div className="section-label">Planning provider</div><div className="panel recent-list"><label className="field"><span className="field-label">AI provider</span><select className="text-input" value={state.aiProvider} onChange={(event) => selectProvider(event.target.value as AiProviderId)}>{profiles.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>)}</select></label><p className="muted">Codex is the default. The selected provider profile shapes project instructions, review language, and semantic planning; deterministic Rust still validates every result.</p>{state.aiProvider !== "codex" && <><Field label="Model" value={state.aiModel} onChange={(value) => update({ aiModel: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder="Enter the provider-supplied model identifier" mono /><Field label="Endpoint" value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder={state.aiProvider === "local" ? "Enter the loopback HTTP endpoint" : "Enter the provider-supplied HTTPS endpoint"} mono /><p className="muted">Hosted endpoints must use HTTPS. Local models are limited to loopback HTTP. No endpoint credentials are accepted.</p>{profile?.requires_credential && <><label className="field"><span className="field-label">Provider API key</span><input className="text-input" type="password" value={aiKeyDraft} onChange={(event) => setAiKeyDraft(event.target.value)} autoComplete="off" /></label><p className="muted">The key is stored in Windows Credential Manager or macOS Keychain and is never serialized or logged.</p></>}<div className="button-row"><button type="button" className="button secondary" onClick={() => void connectProvider()}>{aiKeyDraft ? "Store and connect" : "Check configuration"}</button>{state.aiAccount?.authenticated && profile?.requires_credential && <button type="button" className="text-button" onClick={() => void removeProviderCredential()}>Delete stored key</button>}</div>{state.aiAccount && <p className="callout" role="status">{state.aiAccount.error ?? (state.aiAccount.authenticated ? `${selectedLabel} is configured for ${state.aiModel}; the first request checks capability.` : `Connect ${selectedLabel} before continuing.`)}</p>}{state.aiProvider === "local" && <p className="muted">A local model has no hosted account. The endpoint is checked as a local configuration; the first semantic request remains the authoritative capability check.</p>}</>}</div></section>{state.aiProvider === "codex" && <section><div className="section-label">Codex access</div><div className="panel recent-list">
     {!account && <p className="muted" role="status">Checking the official Codex App Server…</p>}
     {account && account.available && account.authenticated && account.auth_mode === "chatgpt" && <><p><strong>Signed in with ChatGPT</strong>{account.email ? ` · ${account.email}` : ""}</p>{account.usage_limited && <p className="callout review" role="status">Codex usage is currently limited. Planning is paused until usage is available again; recovery remains available.</p>}<button type="button" className="text-button" onClick={() => void refresh()}>Refresh account status</button><button type="button" className="text-button" onClick={() => void signOut()}>Sign out</button></>}
     {account && (!account.available || !account.authenticated || account.auth_mode !== "chatgpt") && <><p className="muted">Create, Import, Update, and Repair use your ChatGPT Codex access. No API key is requested.</p><div className="button-row"><button type="button" className="button secondary" onClick={() => void signIn("browser")} disabled={state.codexLoginPending}>Sign in with ChatGPT</button><button type="button" className="text-button" onClick={() => void signIn("device")}>Use device code</button>{state.codexLoginPending && <button type="button" className="text-button" onClick={() => void cancel()}>Cancel sign-in</button>}</div>{state.codexLogin?.auth_url && <p><button type="button" className="text-button" onClick={() => void openLoginUrl(state.codexLogin?.auth_url ?? "")}>Open the ChatGPT sign-in page</button></p>}{state.codexLogin?.verification_url && <p className="muted"><button type="button" className="text-button" onClick={() => void openLoginUrl(state.codexLogin?.verification_url ?? "")}>Open the device-code page</button> and enter <strong>{state.codexLogin.user_code}</strong>.</p>}<button type="button" className="text-button" onClick={() => void refresh()}>Check again</button></>}
     {!account && <p className="muted">The browser preview does not start a local process. The packaged desktop app checks Codex before planning.</p>}
-  </div></section><section><div className="section-label">Recovery</div><div className="panel recent-list"><p className="muted">Rollback, interrupted-transaction recovery, and managed removal stay local and do not require Codex sign-in.</p><button type="button" className="text-button" onClick={() => update({ mode: "existing", recoveryEntry: true, identity: { ...DEFAULT_IDENTITY }, transaction: undefined, transactionError: undefined })}>Recover or remove an installed project</button></div></section></div>;
+  </div></section>}
+  <section><div className="section-label">Recovery</div><div className="panel recent-list"><p className="muted">Rollback, interrupted-transaction recovery, and managed removal stay local and do not require an AI provider connection.</p><button type="button" className="text-button" onClick={() => update({ mode: "existing", recoveryEntry: true, identity: { ...DEFAULT_IDENTITY }, transaction: undefined, transactionError: undefined })}>Recover or remove an installed project</button></div></section></div>;
 }
 
 function Description({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
-  return <div className="stack narrow"><textarea className="brief-input" aria-label="Mod description" value={state.description} onChange={(event) => update({ description: event.target.value, codexAnalysis: undefined, codexAnalysisRecord: undefined })} /><details><summary>Codex input preview</summary><p className="muted">The brief above and these constraints are sent to the signed-in local Codex App Server: Windows or macOS, lowercase project ID, no Workshop identity, no file writes.</p></details><div className="chips"><span>Natural-language brief</span><span>Reviewable suggestions</span><span>Editable structure</span></div></div>;
+  return <div className="stack narrow"><textarea className="brief-input" aria-label="Mod description" value={state.description} onChange={(event) => update({ description: event.target.value, codexAnalysis: undefined, codexAnalysisRecord: undefined })} /><details><summary>{aiProviderLabel(state.aiProvider, state.aiProfiles)} input preview</summary><p className="muted">The brief is sent to the selected local planning adapter with Windows or macOS, lowercase project ID, no Workshop identity, no file writes, and the selected provider optimization profile.</p></details><div className="chips"><span>Natural-language brief</span><span>Reviewable suggestions</span><span>Editable structure</span></div></div>;
 }
 
 function CodexReview({ state, onConfirmAnalysis }: { state: WizardState; onConfirmAnalysis: () => Promise<void> }) {
   const analysis = state.codexAnalysis;
   if (!analysis) return null;
   const confirmed = (state.codexAnalysisRecord?.confirmed_fields.length ?? 0) > 0;
-  return <section className="panel" aria-label="Codex proposal review"><div className="list-row"><div><strong>{confirmed ? "Codex proposals confirmed" : "Suggested by Codex"}</strong><span>{analysis.project_summary}</span></div><Status label={confirmed ? "Confirmed" : "Review required"} tone={confirmed ? "pass" : "review"} /></div><details open={!confirmed}><summary>{analysis.proposals.length} semantic proposals · schema {analysis.schema_version}</summary><div className="manifest-details">{analysis.proposals.map((proposal) => <div key={proposal.key}><strong>{proposal.key}</strong><span>{typeof proposal.value === "string" ? proposal.value : JSON.stringify(proposal.value)} · {Math.round(proposal.confidence * 100)}% confidence</span><small>{proposal.reason}</small></div>)}</div></details>{analysis.warnings.length > 0 && <p className="callout review">{analysis.warnings.join(" ")}</p>}{!confirmed && <button type="button" className="button primary" onClick={() => void onConfirmAnalysis()}>Confirm Codex proposals</button>}</section>;
+  const providerLabel = aiProviderLabel(state.aiProvider, state.aiProfiles);
+  return <section className="panel" aria-label={`${providerLabel} proposal review`}><div className="list-row"><div><strong>{confirmed ? `${providerLabel} proposals confirmed` : `Suggested by ${providerLabel}`}</strong><span>{analysis.project_summary}</span></div><Status label={confirmed ? "Confirmed" : "Review required"} tone={confirmed ? "pass" : "review"} /></div><details open={!confirmed}><summary>{analysis.proposals.length} semantic proposals · schema {analysis.schema_version}</summary><div className="manifest-details">{analysis.proposals.map((proposal) => <div key={proposal.key}><strong>{proposal.key}</strong><span>{typeof proposal.value === "string" ? proposal.value : JSON.stringify(proposal.value)} · {Math.round(proposal.confidence * 100)}% confidence</span><small>{proposal.reason}</small></div>)}</div></details>{analysis.warnings.length > 0 && <p className="callout review">{analysis.warnings.join(" ")}</p>}{!confirmed && <button type="button" className="button primary" onClick={() => void onConfirmAnalysis()}>Confirm {providerLabel} proposals</button>}</section>;
 }
 
 function RecoveryProjectPicker({ state, updateIdentity, onPickProjectFolder }: { state: WizardState; updateIdentity: (patch: Partial<ProjectIdentity>) => void; onPickProjectFolder: () => Promise<FolderSelection | null> }) {
@@ -901,7 +1060,7 @@ function RecoveryProjectPicker({ state, updateIdentity, onPickProjectFolder }: {
     else if (selected?.error) setMessage(`The selected folder could not be used: ${selected.error}`);
     else setMessage("No folder selected.");
   };
-  return <div className="stack narrow"><section className="panel form-panel"><PanelTitle title="Choose an installed project" /><p className="muted">This local route can inspect interrupted transactions, restore backups, discard staging, or remove managed files without Codex sign-in.</p><Field label="Project folder" value={state.identity.projectRoot} placeholder="Choose an installed project folder" onChange={(value) => updateIdentity({ projectRoot: value })} action="Browse" onAction={() => void choose()} />{message && <p className="muted" role="status">{message}</p>}</section></div>;
+  return <div className="stack narrow"><section className="panel form-panel"><PanelTitle title="Choose an installed project" /><p className="muted">This local route can inspect interrupted transactions, restore backups, discard staging, or remove managed files without connecting an AI provider.</p><Field label="Project folder" value={state.identity.projectRoot} placeholder="Choose an installed project folder" onChange={(value) => updateIdentity({ projectRoot: value })} action="Browse" onAction={() => void choose()} />{message && <p className="muted" role="status">{message}</p>}</section></div>;
 }
 
 function Identity({ state, update, updateIdentity, onPickProjectFolder, onPickLauncherFolder, onConfirmAnalysis }: { state: WizardState; update: (patch: Partial<WizardState>) => void; updateIdentity: (patch: Partial<ProjectIdentity>) => void; onPickProjectFolder: () => Promise<FolderSelection | null>; onPickLauncherFolder: () => Promise<FolderSelection | null>; onConfirmAnalysis: () => Promise<void> }) {
@@ -957,7 +1116,7 @@ const SCAN_STAGE_LABELS: Record<string, string> = {
   detecting_identifiers: "Checking identifiers and namespaces",
   detecting_localisation: "Checking localisation",
   detecting_documentation: "Checking documentation",
-  detecting_agentic_files: "Checking Codex files and skills",
+  detecting_agentic_files: "Checking agent files and skills",
   detecting_paths: "Checking project paths",
   detecting_components: "Checking managed components",
   complete: "Read-only scan complete",
@@ -1000,7 +1159,7 @@ function ScanLegacy({ state, complete, error }: { state: WizardState; complete: 
 
 function Findings({ state, findings, selected, setSelected, setFindings, onConfirmAnalysis }: { state: WizardState; findings: ScanFinding[]; selected: string; setSelected: (id: string) => void; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onConfirmAnalysis: () => Promise<void> }) {
   const active = findings.find((finding) => finding.id === selected) ?? findings[0];
-  return <div className="stack"><details><summary>Codex input preview</summary><div className="manifest-details">{findings.map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.value}</small></div>)}</div></details>{state.codexAnalysis && <CodexReview state={state} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel"><PanelTitle title="Project facts" />{findings.length ? <div>{findings.map((finding) => <button type="button" key={finding.id} className={`finding-row ${finding.status === "needs_review" ? "review" : ""}`} aria-pressed={finding.id === active?.id} onClick={() => setSelected(finding.id)}><span className={`state-icon ${finding.status === "needs_review" ? "review" : "pass"}`}>{finding.status === "needs_review" ? "!" : "✓"}</span><span><strong>{finding.label}</strong><small>{finding.value}</small></span><span className="text-button">{finding.status === "needs_review" ? "Review" : "Edit"}</span></button>)}</div> : <p className="muted">No scan findings are available in this runtime. The desktop scanner must return evidence before values can be accepted.</p>}</section><section className="panel selected-finding"><PanelTitle title="Selected finding" />{active ? <div className="selected-body"><label className="field-label" htmlFor="finding-value">{active.label}</label><input id="finding-value" className="text-input focused" value={active.value} onChange={(event) => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, value: event.target.value, status: "edited" } : finding))} /><span className="confidence">{Math.round(active.confidence * 100)}% confidence</span><div className="evidence-block"><span>Evidence</span><p>{active.evidence}</p></div><details><summary>Show matching files</summary><p className="muted">Full evidence and hashes stay behind progressive disclosure.</p></details></div> : <p className="muted">Select a finding after the bounded scan returns.</p>}</section></div></div>;
+  return <div className="stack"><details><summary>{aiProviderLabel(state.aiProvider, state.aiProfiles)} input preview</summary><div className="manifest-details">{findings.map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.value}</small></div>)}</div></details>{state.codexAnalysis && <CodexReview state={state} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel"><PanelTitle title="Project facts" />{findings.length ? <div>{findings.map((finding) => <button type="button" key={finding.id} className={`finding-row ${finding.status === "needs_review" ? "review" : ""}`} aria-pressed={finding.id === active?.id} onClick={() => setSelected(finding.id)}><span className={`state-icon ${finding.status === "needs_review" ? "review" : "pass"}`}>{finding.status === "needs_review" ? "!" : "✓"}</span><span><strong>{finding.label}</strong><small>{finding.value}</small></span><span className="text-button">{finding.status === "needs_review" ? "Review" : "Edit"}</span></button>)}</div> : <p className="muted">No scan findings are available in this runtime. The desktop scanner must return evidence before values can be accepted.</p>}</section><section className="panel selected-finding"><PanelTitle title="Selected finding" />{active ? <div className="selected-body"><label className="field-label" htmlFor="finding-value">{active.label}</label><input id="finding-value" className="text-input focused" value={active.value} onChange={(event) => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, value: event.target.value, status: "edited" } : finding))} /><span className="confidence">{Math.round(active.confidence * 100)}% confidence</span><div className="evidence-block"><span>Evidence</span><p>{active.evidence}</p></div><details><summary>Show matching files</summary><p className="muted">Full evidence and hashes stay behind progressive disclosure.</p></details></div> : <p className="muted">Select a finding after the bounded scan returns.</p>}</section></div></div>;
 }
 
 function formatManifestSize(component: ManifestComponentPreview): string {
@@ -1009,20 +1168,35 @@ function formatManifestSize(component: ManifestComponentPreview): string {
   return `${component.expected_files.length} files · ${size}`;
 }
 
-function manifestRow(component: ManifestComponentPreview, selected: boolean): ComponentRow {
+function manifestRow(component: ManifestComponentPreview, selected: boolean, provider: AiProviderId = "codex", components: ManifestComponentPreview[] = [component]): ComponentRow {
   const platform = component.platforms.length === 1 && (component.platforms[0] === "windows" || component.platforms[0] === "macos") ? component.platforms[0] : "all";
+  const providerBlocked = provider !== "codex" && dependsOn(component.id, "codex.config", components);
   return {
     id: component.id,
     title: component.display_name,
-    detail: component.description ?? `${component.category} component from the resolved manifest`,
+    detail: providerBlocked && component.id !== "codex.config"
+      ? `${component.description ?? `${component.category} component from the resolved manifest`} Not available for the selected provider because the verified manifest requires Codex.`
+      : component.description ?? `${component.category} component from the resolved manifest`,
     size: formatManifestSize(component),
     selected,
-    required: !component.optional,
+    required: component.id === "codex.config" ? provider === "codex" : !component.optional,
     platform,
+    state: providerBlocked ? "blocked" : "supported",
   };
 }
 
-function Components({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
+function dependsOn(componentId: string, targetId: string, components: ManifestComponentPreview[], seen = new Set<string>()): boolean {
+  if (componentId === targetId) return true;
+  if (!seen.add(componentId)) return false;
+  const component = components.find((candidate) => candidate.id === componentId);
+  return component?.dependencies.some((dependency) => dependsOn(dependency, targetId, components, seen)) ?? false;
+}
+
+function providerSupportsComponent(component: ManifestComponentPreview, components: ManifestComponentPreview[], provider: AiProviderId): boolean {
+  return provider === "codex" || !dependsOn(component.id, "codex.config", components);
+}
+
+export function Components({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
   const [manifest, setManifest] = useState<SourceManifestPreview | null>(state.manifestPreview ?? null);
   const [manifestMessage, setManifestMessage] = useState(state.manifestPreview ? "Manifest loaded; source revision is recorded below." : "Resolving the exact source manifest…");
 
@@ -1037,32 +1211,35 @@ function Components({ state, update }: { state: WizardState; update: (patch: Par
         setManifestMessage("The desktop core could not resolve the manifest. No component claims are shown.");
         return;
       }
-      const requiredIds = result.components.filter((component) => !component.optional).map((component) => component.id);
+      const requiredIds = result.components.filter((component) => providerSupportsComponent(component, result.components, state.aiProvider) && (component.id === "codex.config" ? state.aiProvider === "codex" : !component.optional)).map((component) => component.id);
       const availableIds = new Set(result.components.map((component) => component.id));
+      const supportedIds = new Set(result.components.filter((component) => providerSupportsComponent(component, result.components, state.aiProvider)).map((component) => component.id));
       const selectedComponents = Array.from(new Set([
-        ...state.selectedComponents.filter((id) => availableIds.has(id)),
+        ...state.selectedComponents.filter((id) => availableIds.has(id) && supportedIds.has(id)),
         ...requiredIds,
       ]));
-      const rows = result.components.map((component) => manifestRow(component, selectedComponents.includes(component.id)));
+      const rows = result.components.map((component) => manifestRow(component, selectedComponents.includes(component.id), state.aiProvider, result.components));
       setManifest(result);
       setManifestMessage(`Exact source ${result.source.resolved_revision.slice(0, 12)} · ${result.components.length} manifest components`);
       update({ manifestPreview: result, components: rows, selectedComponents, sourceStatus: `Exact source ${result.source.resolved_revision.slice(0, 12)} selected` });
     });
     return () => { active = false; };
-  }, [state.sourceMode, state.pinnedRef]);
+  }, [state.sourceMode, state.pinnedRef, state.aiProvider]);
 
-  const rows = manifest?.components.map((component) => manifestRow(component, state.selectedComponents.includes(component.id))) ?? [];
+  const rows = manifest?.components.map((component) => manifestRow(component, state.selectedComponents.includes(component.id), state.aiProvider, manifest.components)) ?? [];
   const toggle = (id: string) => {
     const component = rows.find((row) => row.id === id);
-    if (!component || component.required) return;
+    if (!component || component.required || component.state === "blocked") return;
     const selected = component.selected ? state.selectedComponents.filter((value) => value !== id) : [...state.selectedComponents, id];
     update({ selectedComponents: selected, components: rows.map((row) => row.id === id ? { ...row, selected: !row.selected } : row) });
   };
-  return <div className="stack narrow"><section className="panel">{manifest ? rows.map((component) => <button type="button" key={component.id} className="component-row" onClick={() => toggle(component.id)} aria-pressed={component.selected} aria-disabled={component.required || undefined}><span className={`checkbox ${component.selected ? "checked" : ""}`}>{component.selected ? "✓" : ""}</span><span><strong>{component.title}</strong><small>{component.detail}</small></span><span className="size">{component.size}</span></button>) : null}<p className="muted" role="status">{manifestMessage}</p><details><summary>Dependencies and file list</summary><p className="muted">Dependencies, platform support, destinations, and declared files come from the exact manifest revision. Full verified file hashes appear in the dry run.</p></details><details><summary>Source revision</summary><label className="field"><span className="field-label">Install source</span><select className="text-input" value={state.sourceMode} onChange={(event) => update({ sourceMode: event.target.value as WizardState["sourceMode"], manifestPreview: undefined, components: [] })}><option value="latest">Latest default branch (resolved to an exact commit)</option><option value="pinned_commit">Pinned commit</option><option value="pinned_release">Pinned release</option></select></label>{state.sourceMode !== "latest" && <Field label={state.sourceMode === "pinned_commit" ? "Commit SHA" : "Release tag"} value={state.pinnedRef} onChange={(value) => update({ pinnedRef: value, manifestPreview: undefined })} mono placeholder={state.sourceMode === "pinned_commit" ? "40-character commit SHA" : "v1.0.0"} />}<p className="muted">The manifest and every selected file use one immutable resolved revision.</p></details></section><div className="disclosure-note">Download size is calculated from the verified manifest during dry run.</div></div>;
+  return <div className="stack narrow"><section className="panel">{manifest ? rows.map((component) => <button type="button" key={component.id} className="component-row" onClick={() => toggle(component.id)} aria-pressed={component.selected} aria-disabled={component.required || undefined}><span className={`checkbox ${component.selected ? "checked" : ""}`}>{component.selected ? "✓" : ""}</span><span><strong>{component.title}</strong><small>{component.detail}</small></span><span className="size">{component.size}</span></button>) : null}<p className="muted" role="status">{manifestMessage}</p><details><summary>Dependencies and file list</summary>{manifest ? <div className="manifest-details">{manifest.components.map((component) => <div key={component.id}><strong>{component.display_name}</strong><span>{component.dependencies.length ? `Requires ${component.dependencies.join(", ")}` : "No dependencies"} · {component.platforms.join(" / ")}</span><small>{component.expected_files.length} declared files · destination: {component.destination.path}</small></div>)}</div> : <p className="muted">Dependencies appear after the exact manifest is resolved.</p>}</details><details><summary>Source revision</summary><label className="field"><span className="field-label">Install source</span><select className="text-input" value={state.sourceMode} onChange={(event) => update({ sourceMode: event.target.value as WizardState["sourceMode"], manifestPreview: undefined, components: [] })}><option value="latest">Latest default branch (resolved to an exact commit)</option><option value="pinned_commit">Pinned commit</option><option value="pinned_release">Pinned release</option></select></label>{state.sourceMode !== "latest" && <Field label={state.sourceMode === "pinned_commit" ? "Commit SHA" : "Release tag"} value={state.pinnedRef} onChange={(value) => update({ pinnedRef: value, manifestPreview: undefined })} mono placeholder={state.sourceMode === "pinned_commit" ? "40-character commit SHA" : "v1.0.0"} />}<p className="muted">The manifest and every selected file use one immutable resolved revision.</p></details></section><div className="disclosure-note">Download size is calculated from the verified manifest during dry run.</div></div>;
 }
 
 function Workflows({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
-  return <div className="stack narrow"><section className="panel"><ToggleRow label="Do you want to set up the 3D models workflow?" detail="Manifest-declared workflow files and checks" checked={state.meshSelected} onChange={(checked) => update({ meshSelected: checked })} /><ToggleRow label="Do you want to set up LoRAs and ComfyUI for portrait generation?" detail="Interest only in this version" checked={state.loraInterest} onChange={(checked) => update({ loraInterest: checked })} /></section></div>;
+  const meshComponent = state.manifestPreview?.components.find((component) => component.id === "workflow.3d");
+  const meshUnavailable = state.aiProvider !== "codex" && meshComponent && !providerSupportsComponent(meshComponent, state.manifestPreview?.components ?? [], state.aiProvider);
+  return <div className="stack narrow"><section className="panel"><ToggleRow label="Do you want to set up the 3D models workflow?" detail={meshUnavailable ? "Unavailable for this provider; the verified source declares a Codex dependency" : "Manifest-declared workflow files and checks"} checked={state.meshSelected} disabled={Boolean(meshUnavailable)} onChange={(checked) => update({ meshSelected: checked })} /><ToggleRow label="Do you want to set up LoRAs and ComfyUI for portrait generation?" detail="Interest only in this version" checked={state.loraInterest} onChange={(checked) => update({ loraInterest: checked })} /></section></div>;
 }
 
 function WorkflowDeclaration({ state }: { state: WizardState }) {
@@ -1107,8 +1284,8 @@ function Mcp({ state }: { state: WizardState }) {
   return <div className="two-column"><section className="panel"><PanelTitle title="Servers" />{component ? <div className="server-row"><span className="server-icon">{component.display_name.slice(0, 1).toUpperCase()}</span><span><strong>{component.display_name}</strong><small>{component.description ?? "Manifest-declared MCP component"}</small></span><Status label={`Declared for ${component.platforms.join(" / ")}`} tone="info" /></div> : <p className="muted">MCP details remain unavailable until the verified manifest is resolved, or no manifest-declared MCP server is selected.</p>}{component && <details><summary>Requirements and health</summary><div className="manifest-details"><div><strong>Tools</strong><span>{toolText}</span></div><div><strong>Environment names</strong><span>{environmentText}</span></div><div><strong>Capabilities</strong><span>{capabilityText}</span></div><div><strong>Health checks</strong><span>{healthText}</span></div><div><strong>Validation</strong><span>{component.validation.map((rule) => `${rule.id} · ${rule.severity}`).join(", ") || "None declared"}</span></div></div></details>}</section><section className="panel"><PanelTitle title="Credentials" /><div className="list-row"><div><strong>MESHY_API_KEY</strong><span>Operating-system credential vault; injected only for approved processes</span></div><Status label={state.meshSelected && state.meshKeyStatus === "present" ? "Stored" : state.meshSelected ? "Not stored" : "Not selected"} tone={state.meshSelected && state.meshKeyStatus === "present" ? "review" : "muted"} /></div><div className="list-row"><div><strong>Project secrets</strong><span>Values are never displayed or written by the UI.</span></div><Status label="Core controlled" tone="info" /></div><details><summary>Manage credentials</summary><p className="muted">Only opaque references enter project state and locks.</p></details></section></div>;
 }
 
-function Git({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
-  return <div className="stack narrow"><section className="panel">{(["initialize", "preserve", "skip"] as const).map((mode) => <label key={mode} className="radio-row"><input type="radio" name="git-mode" checked={state.gitMode === mode} onChange={() => update({ gitMode: mode })} /><span><strong>{mode === "initialize" ? "Initialize a Git repository" : mode === "preserve" ? "Preserve the existing repository" : "Skip Git setup"}</strong><small>{mode === "initialize" ? "Create .git, merge .gitignore, and prepare an initial commit" : mode === "preserve" ? "Keep remotes, history, and branch state" : "Continue without repository changes"}</small></span>{mode === "initialize" && <Status label="Recommended" tone="info" />}</label>)}</section><section className="panel form-panel"><div className="form-grid"><Field label="Default branch" value={state.gitBranch} onChange={(value) => update({ gitBranch: value })} /><label className="field"><span className="field-label">Initial commit</span><select className="text-input" value={state.initialCommit ? "after-validation" : "none"} onChange={(event) => update({ initialCommit: event.target.value === "after-validation" })}><option value="after-validation">Create after validation</option><option value="none">Do not create</option></select></label></div><details><summary>Remote and advanced options</summary><div className="form-grid"><Field label="Remote name" value={state.gitRemoteName} onChange={(value) => update({ gitRemoteName: value })} placeholder="origin" /><Field label="Remote URL" value={state.gitRemoteUrl} onChange={(value) => update({ gitRemoteUrl: value })} placeholder="https://github.com/owner/repo.git" mono /></div><p className="muted">A remote is configured locally only. Online repository creation and push are separate actions and remain off.</p></details></section></div>;
+export function Git({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
+  return <div className="stack narrow"><section className="panel">{(["initialize", "preserve", "skip"] as const).map((mode) => <label key={mode} className="radio-row"><input type="radio" name="git-mode" checked={state.gitMode === mode} onChange={() => update({ gitMode: mode })} /><span><strong>{mode === "initialize" ? "Initialize a Git repository" : mode === "preserve" ? "Preserve the existing repository" : "Skip Git setup"}</strong><small>{mode === "initialize" ? "Create .git, merge .gitignore, and prepare an initial commit" : mode === "preserve" ? "Keep remotes, history, and branch state" : "Continue without repository changes"}</small></span>{mode === "initialize" && <Status label="Recommended" tone="info" />}</label>)}</section><section className="panel form-panel"><div className="form-grid"><Field label="Default branch" value={state.gitBranch} onChange={(value) => update({ gitBranch: value })} /><label className="field"><span className="field-label">Initial commit</span><select className="text-input" value={state.initialCommit ? "after-validation" : "none"} onChange={(event) => update({ initialCommit: event.target.value === "after-validation" })}><option value="after-validation">Create after validation</option><option value="none">Do not create</option></select></label></div><details><summary>Remote and advanced options</summary><div className="form-grid"><Field label="Remote name" value={state.gitRemoteName} onChange={(value) => update({ gitRemoteName: value })} placeholder="origin" /><Field label="Remote URL" value={state.gitRemoteUrl} onChange={(value) => update({ gitRemoteUrl: value })} placeholder="https://github.com/owner/repo.git" mono /></div><p className="muted">A remote is configured locally only. Online repository creation and push are separate actions and remain off.</p></details></section>{state.aiProvider === "codex" && <section className="panel form-panel"><label className="check-row"><input type="checkbox" checked={state.flattenForChat} onChange={(event) => update({ flattenForChat: event.target.checked })} /><span><strong>Prepare a flattened ChatGPT project-sources folder</strong><small>Optional final setup operation. Skills become &lt;skill&gt;.md, subagents stay as files, and adapted AGENTS.md plus README.md are included.</small></span></label>{state.flattenForChat && <><label className="field"><span className="field-label">Additional project files</span><textarea className="text-input mono" rows={4} value={state.flattenAdditionalFiles.join("\n")} onChange={(event) => update({ flattenAdditionalFiles: event.target.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) })} placeholder="docs/overview.md\ncommon/names/00_names.txt" /></label><p className="muted">Use project-relative paths only. The core checks containment, links, size, hashes, and secret-shaped content during dry run.</p><p className="callout info">After setup, start planning using ChatGPT &quot;Chat&quot;. The folder is prepared locally; no upload or planning action starts automatically.</p></>}</section>}</div>;
 }
 
 function DryRun({ state }: { state: WizardState }) {
@@ -1135,7 +1312,10 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
   const [mcpCheck, setMcpCheck] = useState<WorkflowHealthResult>();
   const [openMessage, setOpenMessage] = useState<string>();
   const report = state.readiness;
-  const open = report?.openInCodex === true;
+  const selectedProvider = state.aiProvider ?? "codex";
+  const providerLabel = aiProviderLabel(selectedProvider, state.aiProfiles);
+  const coreReady = report?.coreReady === true;
+  const open = selectedProvider === "codex" && report?.openInCodex === true;
   const readinessPending = report === null;
   const rollbackTransactionId = state.transaction?.transaction_kind === "installation"
     && state.transaction.state === "rolled_back"
@@ -1144,6 +1324,8 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
   const project = readinessRow(report, ["descriptor.project", "structure.core"]);
   const codex = readinessRow(report, ["codex.agents", "skills.core", "subagents.core", "codex.config"]);
   const mcpWiki = readinessRow(report, ["mcp.hoi4", "wiki.coverage"]);
+  const mcpStatus = report?.checks.find((check) => check.id === "mcp.hoi4")?.status;
+  const mcpRouteUnavailable = mcpStatus === "planned_unavailable" || mcpStatus === "unsupported_platform";
   const gitHashes = readinessRow(report, ["git.project", "hashes.managed", "conflicts.resolved", "dependencies.core"]);
   const mesh = readinessRow(report, ["workflow.3d"]);
   const lora = readinessRow(report, ["workflow.lora_comfyui_interest"]);
@@ -1187,7 +1369,7 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
     }
     update({ transaction: restored, readiness: null, transactionError: undefined });
   };
-  return <div className="stack"><section className={`ready-banner ${open ? "pass" : "block"}`} aria-live="polite"><span className="ready-icon">{readinessPending ? "…" : open ? "✓" : "!"}</span><div><h2>{readinessPending ? "Checking readiness" : `${state.identity.displayName || "Project"} ${open ? "is ready" : "needs review"}`}</h2><p>{readinessPending ? "Core checks are still being evaluated." : open ? "Optional workflow status does not block Codex." : "Resolve blocking checks before opening in Codex."}</p></div><div className="ready-action"><button type="button" className="button primary" disabled={!open} aria-describedby="open-in-codex-help" onClick={() => void handleOpen()}>Open in Codex ↗</button>{openMessage && <p className="ready-action-message" role="status">{openMessage}</p>}</div><span id="open-in-codex-help" className="visually-hidden">{readinessPending ? "Readiness checks are still running." : open ? "Opens the verified project in Codex, or shows a manual folder-opening instruction if no verified opener is installed." : "Resolve blocking checks before opening in Codex."}</span></section><div className="two-column"><section className="panel"><CheckRow label="Project and descriptors" status={project.status} tone={project.tone} /><CheckRow label="Codex instructions and skills" status={codex.status} tone={codex.tone} /> <CheckRow label="MCP and offline wiki" status={mcpWiki.status} tone={mcpWiki.tone} />{state.selectedComponents.includes("mcp.hoi4_agent_tools") && <><button type="button" className="button secondary" onClick={() => void runMcpCheck()}>Run source-declared MCP check</button>{mcpCheck && <p className="muted" role="status">{mcpCheck.status === "ready" ? `MCP initialize passed${mcpCheck.stdout ? ` · ${mcpCheck.stdout}` : ""}` : `MCP check: ${mcpCheck.status}`}</p>}</>}<CheckRow label="Git and managed hashes" status={gitHashes.status} tone={gitHashes.tone} /></section><section className="panel"><CheckRow label="3D model workflow" status={mesh.status} tone={mesh.tone} /><CheckRow label="LoRA and ComfyUI" status={lora.status} tone={lora.tone} />{state.meshSelected && <button type="button" className="button secondary" onClick={() => void run3dCheck()}>Run source-declared 3D check</button>}<details><summary>Open readiness report</summary><pre className="report-preview">{report ? JSON.stringify(report.checks, null, 2) : "Report will be stored after post-install verification."}</pre></details></section></div><div className="button-row end">{rollbackTransactionId && <button type="button" className="text-button" onClick={() => void handleRestoreRolledBackState()}>Restore rolled-back state</button>}<button type="button" className="text-button" onClick={() => onMaintenance("update")}>Manage installation</button><button type="button" className="text-button" onClick={() => update({ readiness: null })}>Refresh checks</button></div></div>;
+  return <div className="stack"><section className={`ready-banner ${coreReady ? "pass" : "block"}`} aria-live="polite"><span className="ready-icon">{readinessPending ? "…" : coreReady ? "✓" : "!"}</span><div><h2>{readinessPending ? "Checking readiness" : `${state.identity.displayName || "Project"} ${coreReady ? "is ready" : "needs review"}`}</h2><p>{readinessPending ? "Core checks are still being evaluated." : coreReady ? `Optional workflow status does not block ${providerLabel}.` : "Resolve blocking checks before continuing."}</p></div><div className="ready-action">{selectedProvider === "codex" && <button type="button" className="button primary" disabled={!open} aria-describedby="open-in-codex-help" onClick={() => void handleOpen()}>Open in Codex ↗</button>}{openMessage && <p className="ready-action-message" role="status">{openMessage}</p>}</div><span id="open-in-codex-help" className="visually-hidden">{readinessPending ? "Readiness checks are still running." : open ? "Opens the verified project in Codex, or shows a manual folder-opening instruction if no verified opener is installed." : selectedProvider === "codex" ? "Resolve blocking checks before opening in Codex." : `The project is ready for ${providerLabel}; no Codex opener is offered for this provider.`}</span></section><div className="two-column"><section className="panel"><CheckRow label="Project and descriptors" status={project.status} tone={project.tone} /><CheckRow label={`${providerLabel} instructions and skills`} status={codex.status} tone={codex.tone} /> <CheckRow label="MCP and offline wiki" status={mcpWiki.status} tone={mcpWiki.tone} />{state.selectedComponents.includes("mcp.hoi4_agent_tools") && <>{mcpRouteUnavailable ? <p className="muted" role="status">The source-declared MCP health route is planned but unavailable on this platform or lacks immutable executable evidence.</p> : <button type="button" className="button secondary" onClick={() => void runMcpCheck()}>Run source-declared MCP check</button>}{mcpCheck && <p className="muted" role="status">{mcpCheck.status === "ready" ? `MCP initialize passed${mcpCheck.stdout ? ` · ${mcpCheck.stdout}` : ""}` : `MCP check: ${mcpCheck.status}`}</p>}</>}<CheckRow label="Git and managed hashes" status={gitHashes.status} tone={gitHashes.tone} /></section><section className="panel"><CheckRow label="3D model workflow" status={mesh.status} tone={mesh.tone} /><CheckRow label="LoRA and ComfyUI" status={lora.status} tone={lora.tone} />{state.flattenForChat && selectedProvider === "codex" && <div className="callout info"><strong>ChatGPT Chat sources prepared</strong><p>After setup, start planning using ChatGPT &quot;Chat&quot;. No upload or planning action starts automatically.</p></div>}{state.meshSelected && <button type="button" className="button secondary" onClick={() => void run3dCheck()}>Run source-declared 3D check</button>}<details><summary>Open readiness report</summary><pre className="report-preview">{report ? JSON.stringify(report.checks, null, 2) : "Report will be stored after post-install verification."}</pre></details></section></div><div className="button-row end">{rollbackTransactionId && <button type="button" className="text-button" onClick={() => void handleRestoreRolledBackState()}>Restore rolled-back state</button>}<button type="button" className="text-button" onClick={() => onMaintenance("update")}>Manage installation</button><button type="button" className="text-button" onClick={() => update({ readiness: null })}>Refresh checks</button></div></div>;
 }
 
 function readinessRow(report: ReadinessReport | null, ids: string[]): { status: string; tone: StatusTone } {
@@ -1204,8 +1386,9 @@ function readinessRow(report: ReadinessReport | null, ids: string[]): { status: 
 function Update({ state, findings, setFindings, onMaintenance, onStartMaintenance, onReanalyze }: { state: WizardState; findings: ScanFinding[]; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void; onReanalyze: () => Promise<boolean> }) {
   const plan = state.plan;
   const optional3d = state.meshSelected ? state.meshKeyStatus === "present" ? "Stored; health check pending" : "Selected; key not stored" : "Not selected";
-  const reanalysisLabel = state.maintenanceEvidenceReady ? state.maintenanceCodexAnalysisRecord ? "Run again" : "Run Codex reanalysis" : "Prepare read-only evidence";
-  return <div className="stack"><div className="action-grid"><ActionTile title="Check for updates" detail="Compare with the latest or a pinned revision." onClick={() => onStartMaintenance("update")} /><ActionTile title="Repair installation" detail="Restore missing or corrupted managed files." onClick={() => onStartMaintenance("repair")} /><ActionTile title="Roll back" detail="Return to a recorded installation state." onClick={() => onMaintenance("recovery")} /><ActionTile title="Remove components" detail="Review managed files before removal." onClick={() => onStartMaintenance("remove")} /></div><section className="panel"><PanelTitle title="Codex reanalysis" /><p className="muted">Updates use a fresh semantic review when project instructions, component choices, or conventions may have changed. The scan is read-only and must be reviewed before transmission.</p><button type="button" className="button secondary" onClick={() => void onReanalyze()}>{reanalysisLabel}</button>{state.maintenanceEvidenceReady && <details open><summary>{findings.filter((finding) => finding.status !== "rejected").length} approved scan findings</summary><div className="manifest-details">{findings.map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small><button type="button" className="text-button" aria-pressed={finding.status !== "rejected"} onClick={() => setFindings((current) => current.map((candidate) => candidate.id === finding.id ? { ...candidate, status: candidate.status === "rejected" ? "accepted" : "rejected" } : candidate))}>{finding.status === "rejected" ? "Include" : "Exclude"}</button></div>)}</div></details>}{state.maintenanceCodexAnalysisRecord && <p className="muted" role="status">Reanalysis returned. Confirm the Codex proposals above before checking for updates.</p>}</section><section className="panel"><PanelTitle title="Installed state" /><CheckRow label="Core workflow" status={plan ? `${plan.operations.length} planned operations` : "No plan loaded"} tone={plan ? "info" : "muted"} /><CheckRow label="Optional 3D workflow" status={optional3d} tone={state.meshSelected ? "review" : "muted"} /><CheckRow label="Modified managed files" status={plan ? String(plan.conflicts.length) : "Not evaluated"} tone={plan?.conflicts.length ? "review" : "muted"} />{plan && <details open><summary>Reviewed maintenance plan</summary><p className="muted">Source {plan.source.resolved_revision}; modified files remain explicit conflicts until resolved.</p></details>}</section></div>;
+  const providerLabel = aiProviderLabel(state.aiProvider, state.aiProfiles);
+  const reanalysisLabel = state.maintenanceEvidenceReady ? state.maintenanceCodexAnalysisRecord ? "Run again" : `Run ${providerLabel} reanalysis` : "Prepare read-only evidence";
+  return <div className="stack"><div className="action-grid"><ActionTile title="Check for updates" detail="Compare with the latest or a pinned revision." onClick={() => onStartMaintenance("update")} /><ActionTile title="Repair installation" detail="Restore missing or corrupted managed files." onClick={() => onStartMaintenance("repair")} /><ActionTile title="Roll back" detail="Return to a recorded installation state." onClick={() => onMaintenance("recovery")} /><ActionTile title="Remove components" detail="Review managed files before removal." onClick={() => onStartMaintenance("remove")} /></div><section className="panel"><PanelTitle title={`${providerLabel} reanalysis`} /><p className="muted">Updates use a fresh semantic review when project instructions, component choices, or conventions may have changed. The scan is read-only and must be reviewed before transmission.</p><button type="button" className="button secondary" onClick={() => void onReanalyze()}>{reanalysisLabel}</button>{state.maintenanceEvidenceReady && <details open><summary>{findings.filter((finding) => finding.status !== "rejected").length} approved scan findings</summary><div className="manifest-details">{findings.map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small><button type="button" className="text-button" aria-pressed={finding.status !== "rejected"} onClick={() => setFindings((current) => current.map((candidate) => candidate.id === finding.id ? { ...candidate, status: candidate.status === "rejected" ? "accepted" : "rejected" } : candidate))}>{finding.status === "rejected" ? "Include" : "Exclude"}</button></div>)}</div></details>}{state.maintenanceCodexAnalysisRecord && <p className="muted" role="status">Reanalysis returned. Confirm the {providerLabel} proposals above before checking for updates.</p>}</section><section className="panel"><PanelTitle title="Installed state" /><CheckRow label="Core workflow" status={plan ? `${plan.operations.length} planned operations` : "No plan loaded"} tone={plan ? "info" : "muted"} /><CheckRow label="Optional 3D workflow" status={optional3d} tone={state.meshSelected ? "review" : "muted"} /><CheckRow label="Modified managed files" status={plan ? String(plan.conflicts.length) : "Not evaluated"} tone={plan?.conflicts.length ? "review" : "muted"} />{plan && <details open><summary>Reviewed maintenance plan</summary><p className="muted">Source {plan.source.resolved_revision}; modified files remain explicit conflicts until resolved.</p></details>}</section></div>;
 }
 
 function Conflict({ state, update, onChoice }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onChoice: (choice: ConflictChoice) => void }) {
@@ -1260,7 +1443,7 @@ function Recovery({ state, update, onPickProjectFolder, onStartMaintenance }: { 
       if (selected?.path) update({ identity: { ...state.identity, projectRoot: selected.path }, transactionError: undefined });
       else if (selected?.error) update({ transactionError: `The selected folder could not be used: ${selected.error}` });
     };
-    return <div className="stack narrow"><section className="panel"><PanelTitle title="Local recovery" /><p className="muted">No interrupted transaction is loaded yet. Choose an installed project to inspect its journal, or remove its managed components without signing in to Codex.</p><div className="button-row"><button type="button" className="button secondary" onClick={() => void choose()}>Choose another project</button><button type="button" className="button secondary" disabled={!state.identity.projectRoot.trim()} onClick={() => void onStartMaintenance("remove")}>Remove managed components</button></div></section></div>;
+    return <div className="stack narrow"><section className="panel"><PanelTitle title="Local recovery" /><p className="muted">No interrupted transaction is loaded yet. Choose an installed project to inspect its journal, or remove its managed components without connecting an AI provider.</p><div className="button-row"><button type="button" className="button secondary" onClick={() => void choose()}>Choose another project</button><button type="button" className="button secondary" disabled={!state.identity.projectRoot.trim()} onClick={() => void onStartMaintenance("remove")}>Remove managed components</button></div></section></div>;
   }
   const options: Array<{ id: RecoveryChoice; title: string; detail: string; allowed: boolean }> = [
     { id: "resume", title: "Resume", detail: "Revalidate staging and replay the pre-apply transaction.", allowed: transaction.recovery.resume_allowed },
@@ -1287,7 +1470,7 @@ function Progress({ value, label, valueText }: { value?: number; label: string; 
   const bounded = value === undefined ? undefined : Math.min(100, Math.max(0, value));
   return <div className={`progress ${bounded === undefined ? "indeterminate" : ""}`} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuetext={valueText ?? (bounded === undefined ? "In progress" : `${bounded}% complete`)} {...(bounded === undefined ? {} : { "aria-valuenow": bounded })}><span style={bounded === undefined ? undefined : { width: `${bounded}%` }} /></div>;
 }
-function ToggleRow({ label, detail, checked, onChange }: { label: string; detail: string; checked: boolean; onChange: (checked: boolean) => void }) { return <button type="button" className="toggle-row" role="switch" aria-checked={checked} onClick={() => onChange(!checked)}><span className="server-icon">{checked ? "◈" : "○"}</span><span><strong>{label}</strong><small>{detail}</small></span><span className={`toggle ${checked ? "on" : ""}`} aria-hidden="true"><i /></span></button>; }
+function ToggleRow({ label, detail, checked, disabled = false, onChange }: { label: string; detail: string; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void }) { return <button type="button" className="toggle-row" role="switch" aria-checked={checked} aria-disabled={disabled || undefined} disabled={disabled} onClick={() => onChange(!checked)}><span className="server-icon">{checked ? "◈" : "○"}</span><span><strong>{label}</strong><small>{detail}</small></span><span className={`toggle ${checked ? "on" : ""}`} aria-hidden="true"><i /></span></button>; }
 function Metric({ label, value, tone }: { label: string; value: string; tone: StatusTone }) { return <div className={`metric metric-${tone}`}><span>{label}</span><strong>{value}</strong></div>; }
 function ChangeRow({ title, detail, value, status }: { title: string; detail: string; value?: string; status?: string }) { return <div className="change-row"><span className="change-icon">◆</span><span><strong>{title}</strong><small className="mono">{detail}</small></span>{value && <span className="size">{value}</span>}{status && <Status label={status} tone="review" />}</div>; }
 function CheckRow({ label, status, tone }: { label: string; status: string; tone: StatusTone }) { return <div className="check-row"><strong>{label}</strong><Status label={status} tone={tone} /></div>; }

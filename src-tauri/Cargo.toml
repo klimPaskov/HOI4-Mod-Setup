@@ -3,6 +3,7 @@ name = "hoi4-mod-setup"
 version = "0.1.0"
 description = "Safe, evidence-backed setup for agentic Hearts of Iron IV mod projects"
 authors = ["HOI4 Mod Setup contributors"]
+license = "Apache-2.0"
 edition = "2021"
 rust-version = "1.88"
 build = "build.rs"
@@ -31,6 +32,7 @@ sha2 = "0.10"
 thiserror = "2.0"
 toml = "0.8"
 uuid = { version = "1.17", features = ["serde", "v4"] }
+unicode-normalization = "0.1.24"
 tauri = { version = "2.5", optional = true , features = [] }
 tauri-plugin-dialog = { version = "2.7", optional = true }
 
@@ -47,3 +49,6 @@ windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

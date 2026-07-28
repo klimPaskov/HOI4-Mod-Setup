@@ -12,6 +12,7 @@
     "wizard",
     "preferences",
     "codex",
+    "ai",
     "credential_references"
   ],
   "properties": {
@@ -73,6 +74,7 @@
       "type": "array",
       "items": {
         "type": "object",
+        "additionalProperties": false,
         "required": [
           "name",
           "provider",
@@ -80,7 +82,7 @@
         ],
         "properties": {
           "name": {
-            "type": "string"
+            "const": "MESHY_API_KEY"
           },
           "provider": {
             "enum": [
@@ -89,7 +91,8 @@
             ]
           },
           "reference": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^credential://meshy_api_key/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
           },
           "secret_value": {
             "not": {}
@@ -110,16 +113,24 @@
       ],
       "properties": {
         "integration": {
-          "const": "codex_app_server"
+          "enum": [
+            "codex_app_server",
+            "provider_api"
+          ]
         },
         "auth_mode": {
-          "const": "chatgpt"
+          "enum": [
+            "chatgpt",
+            "api_key",
+            "local_endpoint"
+          ]
         },
         "auth_status": {
           "enum": [
             "signed_out",
             "signing_in",
             "signed_in",
+            "configured",
             "failed",
             "usage_limited"
           ]
@@ -144,6 +155,24 @@
         },
         "account_values_persisted": {
           "const": false
+        }
+      }
+    },
+    "ai": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "model", "optimization_profile"],
+      "properties": {
+        "provider": {
+          "enum": ["codex", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "optimization_profile": {
+          "type": "string",
+          "minLength": 1
         }
       }
     }

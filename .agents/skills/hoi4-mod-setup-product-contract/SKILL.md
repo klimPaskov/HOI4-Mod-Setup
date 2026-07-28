@@ -32,7 +32,8 @@ Read:
 
 ## Core invariants
 
-- ChatGPT sign-in and confirmed Codex analysis are required before Create, Import, Update, or Repair planning.
+- The user selects an AI provider and model at the start; Codex/ChatGPT is the default, and selected-provider authentication plus confirmed schema-valid analysis are required before Create, Import, Update, or Repair planning.
+- Provider optimization changes semantic conventions only; deterministic validation, source trust, transaction safety, and readiness rules are provider-independent.
 - New projects create both descriptors, a valid replaceable thumbnail, and the selected folder profile.
 - Existing projects are scanned before mutation.
 - No target project file is written before dry-run approval.
@@ -43,6 +44,7 @@ Read:
 - Secrets never enter target project files or locks.
 - Transactions are staged and reversible.
 - Optional workflows cannot block core readiness when unselected or incomplete.
+- The optional flattened ChatGPT project-sources export is visible only for Codex, maps skill `SKILL.md` files to `<skill>.md`, includes the adapted AGENTS/README/subagents and approved extras, and recommends Chat without uploading or planning.
 - Unsupported platform routes remain honest and visible.
 - The UI stays focused and uses progressive disclosure.
 
@@ -78,6 +80,7 @@ A broad product change needs:
 - tests and fault scenarios
 - documentation and skill updates
 - blockers and unsupported routes
+- selected provider/model/profile and Codex-only flatten behavior
 
 ## Update this skill when
 

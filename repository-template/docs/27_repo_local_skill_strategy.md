@@ -26,7 +26,7 @@ When implementation changes one of these workflows, the owning skill should chan
 | Skill | Owns |
 | --- | --- |
 | `hoi4-mod-setup-product-contract` | Product scope, architecture boundaries, completion proof |
-| `hoi4-mod-setup-codex-integration` | ChatGPT sign-in, App Server lifecycle, structured semantic turns, redaction, usage limits, proposal confirmation |
+| `hoi4-mod-setup-codex-integration` | Codex ChatGPT sign-in, App Server lifecycle, provider-neutral semantic boundary, redaction, usage limits, proposal confirmation |
 | `hoi4-mod-setup-source-manifest` | GitHub source resolution, remote manifest, selective fetch, hashes, wiki distribution |
 | `hoi4-mod-setup-project-scanner` | Existing-project read-only scanning, evidence, confidence, findings |
 | `hoi4-mod-setup-transactions` | Plans, backups, staging, journal, apply, recovery, rollback, repair, removal |
@@ -130,6 +130,13 @@ Never convert a planned macOS route into a supported route because a similar Win
 
 Do not place every detail in `AGENTS.md`. Do not create a central mega-skill that repeats the whole project. Keep each layer focused.
 
-## Codex integration skill
+## AI provider integration skill
 
-`hoi4-mod-setup-codex-integration` owns App Server lifecycle, ChatGPT authentication, account state, structured semantic turns, usage-limit behavior, redaction, and the proposal-to-renderer boundary. Update it whenever any method, schema, process rule, or privacy boundary changes.
+`hoi4-mod-setup-codex-integration` owns the Codex App Server lifecycle,
+ChatGPT authentication, the provider-neutral structured semantic boundary,
+account state, usage-limit behavior, redaction, provider/model binding, and the
+proposal-to-renderer boundary. Update it whenever any provider adapter, method,
+schema, process rule, credential boundary, or privacy rule changes. Provider
+profiles and the Codex-only flattened Chat export are documented in
+`docs/31_ai_provider_profiles_and_chat_sources.md` and must stay aligned with
+the source contract, schemas, and UI.

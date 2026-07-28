@@ -34,6 +34,7 @@ COMMON_EXPECTED = [
     "docs/28_agents_subagent_architecture.md",
     "docs/29_repository_template_inventory.md",
     "docs/30_codex_chatgpt_authentication.md",
+    "docs/31_ai_provider_profiles_and_chat_sources.md",
     ".agents/skills/hoi4-mod-setup-codex-integration/SKILL.md",
     ".codex/agents/hoi4setup_codex_integration_auditor.toml",
     ".github/CODEOWNERS",
@@ -51,7 +52,10 @@ FULL_EXPECTED = [
     "source-audit/openai_codex_app_server.json",
     "scripts/release_build.mjs",
     "scripts/release_verify.mjs",
+    "scripts/generate_third_party_notices.mjs",
+    "scripts/prepare_release_assets.mjs",
     "scripts/run_desktop_e2e.mjs",
+    "THIRD_PARTY_NOTICES.md",
 ]
 
 EXAMPLE_SCHEMA_MAP = {
@@ -108,6 +112,11 @@ def validate_schema_contracts() -> None:
     lock_schema = json.loads((ROOT / "schemas" / "installation-lock.schema.json").read_text(encoding="utf-8"))
     if "credential_values" not in lock_schema.get("properties", {}):
         fail("installation-lock.schema.json must explicitly reject credential_values")
+    for schema_name in ("installation-plan.schema.json", "installation-lock.schema.json"):
+        schema = json.loads((ROOT / "schemas" / schema_name).read_text(encoding="utf-8"))
+        for key in ("ai_provider", "ai_model", "ai_optimization_profile", "flatten_chat_sources"):
+            if key not in schema.get("properties", {}):
+                fail(f"{schema_name} is missing persisted AI/flatten property: {key}")
 
 
 def validate_implementation_boundary() -> None:
@@ -125,11 +134,15 @@ def validate_implementation_boundary() -> None:
         "codex_account_read",
         "codex_login_start",
         "codex_analyze",
+        "ai_account_read",
+        "store_ai_provider_credential",
+        "ai_analyze",
         "confirm_codex_analysis",
         "pick_project_folder",
         "pick_launcher_folder",
         "preview_source_manifest",
         "preview_installation_conflict",
+        "build_installation_plan",
     ):
         if token not in commands or token not in tauri_boundary:
             fail(f"typed desktop boundary is missing {token}")
@@ -224,7 +237,7 @@ def validate_repository_template_mirrors() -> None:
         return
     mirrored_roots = [
         "README.md", "AGENTS.md", "GOAL_PROMPT.md", "CONTRIBUTING.md", "DEVELOPMENT.md",
-        "RELEASING.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "CHANGELOG.md", "LICENSE_SELECTION.md",
+        "RELEASING.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "CHANGELOG.md", "LICENSE", "LICENSE_SELECTION.md",
         ".editorconfig", ".gitattributes", ".gitignore",
     ]
     for rel in mirrored_roots:
@@ -247,6 +260,7 @@ def validate_repository_template_mirrors() -> None:
         "docs/28_agents_subagent_architecture.md",
         "docs/29_repository_template_inventory.md",
         "docs/30_codex_chatgpt_authentication.md",
+        "docs/31_ai_provider_profiles_and_chat_sources.md",
         "scripts/check_committed_secrets.py",
         "scripts/validate_repository_templates.py",
     ]:

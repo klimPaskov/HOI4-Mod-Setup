@@ -76,6 +76,41 @@
       "evidence": [
         "staging-ledger.json"
       ]
+    },
+    {
+      "id": "validation",
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "evidence": []
+    },
+    {
+      "id": "apply",
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "evidence": []
+    },
+    {
+      "id": "post-install checks",
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "evidence": []
+    },
+    {
+      "id": "readiness report",
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "evidence": []
+    },
+    {
+      "id": "rollback record",
+      "status": "pending",
+      "started_at": null,
+      "completed_at": null,
+      "evidence": []
     }
   ],
   "operations": [
@@ -85,16 +120,21 @@
       "destination": "AGENTS.md",
       "ownership": "merged",
       "component_id": "core.agents",
+      "source_path": "AGENTS_template.md",
+      "source_size": 12,
       "action": "replace",
       "location_scope": "project",
-      "backup_path": "backup/AGENTS.md",
+      "backup_path": "C:\\Users\\example\\AppData\\Local\\HOI4 Mod Setup\\backups\\960ccbb7-c36a-41b0-9d76-0105bcd83b05\\op-001.bak",
       "rollback_source_path": null,
+      "resolution": "replace",
       "source_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
       "result_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
       "rollback": "restore_backup",
       "backup_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "staged_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
       "before_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
-      "after_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+      "staged_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "after_sha256": null
     },
     {
       "id": "op-002",
@@ -102,16 +142,21 @@
       "destination": ".agents/skills/hoi4-events/SKILL.md",
       "ownership": "managed",
       "component_id": "core.skills",
+      "source_path": ".agents/skills/hoi4-events/SKILL.md",
+      "source_size": 14,
       "action": "create",
       "location_scope": "project",
       "backup_path": null,
       "rollback_source_path": null,
+      "resolution": null,
       "source_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
       "result_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
       "rollback": "remove_created",
       "backup_sha256": null,
+      "staged_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
       "before_sha256": null,
-      "after_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+      "staged_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "after_sha256": null
     }
   ],
   "recovery": {
@@ -121,6 +166,7 @@
     "project_apply_started": false,
     "recommended_action": "resume"
   },
+  "git_initialized": false,
   "previous_lock_backup_path": "C:\\Users\\example\\AppData\\Local\\HOI4 Mod Setup\\backups\\960ccbb7-c36a-41b0-9d76-0105bcd83b05\\install.lock.json.bak",
   "previous_lock_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
   "error": {

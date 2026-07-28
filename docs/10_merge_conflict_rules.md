@@ -51,7 +51,7 @@ Do not write conflict markers into the live project unless the user explicitly e
 
 ## AGENTS.md
 
-Preserve project restrictions and valid local paths. Highlight foreign project names, stale absolute paths, references to missing skills or agents, unresolved template tokens, and security-sensitive settings. Validate final size against Codex project-document limits.
+Preserve project restrictions and valid local paths. Highlight foreign project names, stale absolute paths, references to missing skills or agents, unresolved template tokens, and security-sensitive settings. Validate final size against the selected provider's verified project-document limits when such limits are declared; never invent a provider limit.
 
 ## TOML
 

@@ -9,6 +9,11 @@
     "plan_id",
     "project_id",
     "source",
+    "ai_provider",
+    "ai_model",
+    "ai_optimization_profile",
+    "flatten_chat_sources",
+    "flatten_additional_files",
     "codex_analysis",
     "selected_components",
     "wiki_required_pages",
@@ -17,6 +22,20 @@
     "conflicts",
     "transaction",
     "approvals"
+  ],
+  "allOf": [
+    {
+      "if": { "properties": { "ai_provider": { "const": "codex" } } },
+      "then": { "properties": { "ai_endpoint": { "type": ["null", "string"], "maxLength": 0 } } }
+    },
+    {
+      "if": { "properties": { "flatten_chat_sources": { "const": false } } },
+      "then": { "properties": { "flatten_additional_files": { "maxItems": 0 } } }
+    },
+    {
+      "if": { "properties": { "ai_provider": { "enum": ["claude", "kimi", "glm", "deepseek", "local", "custom"] } } },
+      "then": { "required": ["ai_endpoint"], "properties": { "ai_endpoint": { "type": "string", "minLength": 1 } } }
+    }
   ],
   "properties": {
     "schema_version": {
@@ -28,6 +47,28 @@
     },
     "project_id": {
       "type": "string"
+    },
+    "ai_provider": {
+      "enum": ["codex", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+    },
+    "ai_model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ai_endpoint": {
+      "type": ["string", "null"]
+    },
+    "ai_optimization_profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "flatten_chat_sources": {
+      "type": "boolean"
+    },
+    "flatten_additional_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 64
     },
     "created_at": {
       "type": "string",
@@ -104,6 +145,9 @@
         "type": "string"
       }
     },
+    "wiki_metadata": {
+      "$ref": "#/$defs/wiki_metadata"
+    },
     "credential_references": {
       "type": "array",
       "items": {
@@ -113,7 +157,7 @@
         "properties": {
           "name": { "const": "MESHY_API_KEY" },
           "provider": { "enum": ["windows_credential_manager", "macos_keychain"] },
-          "reference": { "type": "string", "pattern": "^credential://[^\\s]+$" }
+          "reference": { "type": "string", "pattern": "^credential://meshy_api_key/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }
         }
       }
     },
@@ -279,10 +323,19 @@
       ],
       "properties": {
         "engine": {
-          "const": "codex_app_server"
+          "enum": ["codex_app_server", "provider_api"]
         },
         "auth_mode": {
-          "const": "chatgpt"
+          "enum": ["chatgpt", "api_key", "local_endpoint"]
+        },
+        "provider": {
+          "enum": ["codex", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+        },
+        "model": {
+          "type": ["string", "null"]
+        },
+        "optimization_profile": {
+          "type": ["string", "null"]
         },
         "analysis_id": {
           "type": "string",
@@ -332,6 +385,35 @@
     }
   },
   "$defs": {
+    "wiki_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_media_policy",
+        "source_status",
+        "license_status"
+      ],
+      "properties": {
+        "snapshot_marker": {
+          "type": ["string", "null"]
+        },
+        "required_media_policy": {
+          "enum": ["all_declared", "referenced_only", "none"]
+        },
+        "source_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
     "operation": {
       "type": "object",
       "additionalProperties": false,
@@ -591,6 +673,48 @@
         },
         "contains_secret": {
           "const": false
+        },
+        "verified_executable_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "verified_executable_size": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "verified_interpreter_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "verified_interpreter_size": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "verified_runtime_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "verified_runtime_size": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
         }
       }
     }

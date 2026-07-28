@@ -9,7 +9,7 @@
 use crate::codex::{AppServerProtocol, ProcessJsonlTransport};
 use crate::models::{ExternalAction, Platform, RemoteManifest};
 use crate::process::find_path_executable;
-use crate::security::path_has_link_component;
+use crate::security::{is_link_metadata, path_has_link_component, sha256_file};
 use crate::AppError;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -30,8 +30,45 @@ pub struct HealthEvidence {
     pub tool_count: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedMcpTarget {
+    pub target: String,
+    pub sha256: String,
+    pub size: u64,
+    pub interpreter_sha256: String,
+    pub interpreter_size: u64,
+    pub runtime_sha256: String,
+    pub runtime_size: u64,
+}
+
+fn required_identity(
+    rule: &crate::models::ValidationRule,
+    key: &str,
+) -> Result<(String, u64), AppError> {
+    let sha256 = rule
+        .parameters
+        .get(&format!("{key}_sha256"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            AppError::UnsupportedPlatform(format!(
+                "the MCP route has no immutable {key} SHA-256 evidence"
+            ))
+        })?;
+    crate::source::validate_sha256(sha256)?;
+    let size = rule
+        .parameters
+        .get(&format!("{key}_size"))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            AppError::UnsupportedPlatform(format!(
+                "the MCP route has no immutable {key} size evidence"
+            ))
+        })?;
+    Ok((sha256.to_owned(), size))
+}
+
 /// Return the one command target declared by the verified manifest.
-pub fn manifest_target(manifest: &RemoteManifest) -> Result<String, AppError> {
+pub fn manifest_target(manifest: &RemoteManifest) -> Result<VerifiedMcpTarget, AppError> {
     let component = manifest
         .components
         .iter()
@@ -63,20 +100,52 @@ pub fn manifest_target(manifest: &RemoteManifest) -> Result<String, AppError> {
         .as_deref()
         .ok_or_else(|| AppError::Source("the MCP health command target is missing".into()))?;
     validate_bare_command_name(target)?;
-    Ok(target.to_owned())
+    let sha256 = rules[0]
+        .parameters
+        .get("executable_sha256")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            AppError::UnsupportedPlatform(
+                "the MCP route has no immutable executable SHA-256 evidence".into(),
+            )
+        })?;
+    crate::source::validate_sha256(sha256)?;
+    let size = rules[0]
+        .parameters
+        .get("executable_size")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            AppError::UnsupportedPlatform(
+                "the MCP route has no immutable executable size evidence".into(),
+            )
+        })?;
+    let (interpreter_sha256, interpreter_size) = required_identity(rules[0], "interpreter")?;
+    let (runtime_sha256, runtime_size) = required_identity(rules[0], "runtime")?;
+    Ok(VerifiedMcpTarget {
+        target: target.to_owned(),
+        sha256: sha256.to_owned(),
+        size,
+        interpreter_sha256,
+        interpreter_size,
+        runtime_sha256,
+        runtime_size,
+    })
 }
 
 /// Extract the target from the external action captured in an installation
 /// plan. This keeps transaction readiness bound to the exact source-declared
 /// action that the user reviewed.
-pub fn reviewed_plan_target(actions: &[ExternalAction]) -> Result<String, AppError> {
+pub fn reviewed_plan_target(actions: &[ExternalAction]) -> Result<VerifiedMcpTarget, AppError> {
     let matches = actions
         .iter()
         .filter(|action| {
             action.component_id == COMPONENT_ID
                 && action.id == format!("external.{COMPONENT_ID}.{HEALTH_RULE_ID}")
                 && action.platform == Platform::Windows
-                && action.command_source == "repository_script"
+                && matches!(
+                    action.command_source.as_str(),
+                    "remote_manifest" | "repository_script"
+                )
                 && action.environment_names.is_empty()
                 && action.arguments.len() == 1
         })
@@ -88,19 +157,73 @@ pub fn reviewed_plan_target(actions: &[ExternalAction]) -> Result<String, AppErr
     }
     let target = matches[0].arguments[0].as_str();
     validate_bare_command_name(target)?;
-    Ok(target.to_owned())
+    let sha256 = matches[0]
+        .verified_executable_sha256
+        .as_deref()
+        .ok_or_else(|| {
+            AppError::UnsupportedPlatform(
+                "the reviewed MCP action has no immutable executable SHA-256 evidence".into(),
+            )
+        })?;
+    crate::source::validate_sha256(sha256)?;
+    let size = matches[0].verified_executable_size.ok_or_else(|| {
+        AppError::UnsupportedPlatform(
+            "the reviewed MCP action has no immutable executable size evidence".into(),
+        )
+    })?;
+    let interpreter_sha256 = matches[0]
+        .verified_interpreter_sha256
+        .as_deref()
+        .ok_or_else(|| {
+            AppError::UnsupportedPlatform(
+                "the reviewed MCP action has no immutable command-interpreter SHA-256 evidence"
+                    .into(),
+            )
+        })?;
+    crate::source::validate_sha256(interpreter_sha256)?;
+    let interpreter_size = matches[0].verified_interpreter_size.ok_or_else(|| {
+        AppError::UnsupportedPlatform(
+            "the reviewed MCP action has no immutable command-interpreter size evidence".into(),
+        )
+    })?;
+    let runtime_sha256 = matches[0]
+        .verified_runtime_sha256
+        .as_deref()
+        .ok_or_else(|| {
+            AppError::UnsupportedPlatform(
+                "the reviewed MCP action has no immutable runtime SHA-256 evidence".into(),
+            )
+        })?;
+    crate::source::validate_sha256(runtime_sha256)?;
+    let runtime_size = matches[0].verified_runtime_size.ok_or_else(|| {
+        AppError::UnsupportedPlatform(
+            "the reviewed MCP action has no immutable runtime size evidence".into(),
+        )
+    })?;
+    Ok(VerifiedMcpTarget {
+        target: target.to_owned(),
+        sha256: sha256.to_owned(),
+        size,
+        interpreter_sha256: interpreter_sha256.to_owned(),
+        interpreter_size,
+        runtime_sha256: runtime_sha256.to_owned(),
+        runtime_size,
+    })
 }
 
 /// Start the source-declared Windows wrapper through the canonical Windows
 /// command interpreter. The `/c` value is assembled only from a canonical,
 /// PATH-resolved executable and is never supplied by the renderer.
-pub fn initialize_health(project_root: &Path, target: &str) -> Result<HealthEvidence, AppError> {
+pub fn initialize_health(
+    project_root: &Path,
+    target: &VerifiedMcpTarget,
+) -> Result<HealthEvidence, AppError> {
     if Platform::current() != Platform::Windows {
         return Err(AppError::UnsupportedPlatform(
             "the verified MCP route is currently supported only on Windows".into(),
         ));
     }
-    validate_bare_command_name(target)?;
+    validate_bare_command_name(&target.target)?;
     if !project_root.is_absolute() || !project_root.is_dir() {
         return Err(AppError::PathSecurity(
             "MCP health working directory must be an existing absolute directory".into(),
@@ -111,18 +234,52 @@ pub fn initialize_health(project_root: &Path, target: &str) -> Result<HealthEvid
             "MCP health working directory contains a symlink or junction".into(),
         ));
     }
-    let wrapper = find_path_executable(&[target])?;
+    let wrapper = find_path_executable(&[target.target.as_str()])?;
+    let metadata = std::fs::symlink_metadata(&wrapper)?;
+    if is_link_metadata(&metadata) || !metadata.is_file() || path_has_link_component(&wrapper) {
+        return Err(AppError::PathSecurity(
+            "the resolved MCP executable is not a regular, link-free file".into(),
+        ));
+    }
+    if metadata.len() != target.size || sha256_file(&wrapper)? != target.sha256 {
+        return Err(AppError::Credential(
+            "the resolved MCP executable does not match the manifest identity evidence".into(),
+        ));
+    }
     let command_interpreter = find_path_executable(&["cmd.exe"])?;
+    let interpreter_metadata = std::fs::symlink_metadata(&command_interpreter)?;
+    if is_link_metadata(&interpreter_metadata)
+        || !interpreter_metadata.is_file()
+        || path_has_link_component(&command_interpreter)
+        || interpreter_metadata.len() != target.interpreter_size
+        || sha256_file(&command_interpreter)? != target.interpreter_sha256
+    {
+        return Err(AppError::UnsupportedPlatform(
+            "the resolved command interpreter does not match the manifest identity evidence".into(),
+        ));
+    }
     let node = find_path_executable(&["node.exe", "node"])?;
+    let node_metadata = std::fs::symlink_metadata(&node)?;
+    if is_link_metadata(&node_metadata)
+        || !node_metadata.is_file()
+        || path_has_link_component(&node)
+        || node_metadata.len() != target.runtime_size
+        || sha256_file(&node)? != target.runtime_sha256
+    {
+        return Err(AppError::UnsupportedPlatform(
+            "the resolved MCP runtime does not match the manifest identity evidence".into(),
+        ));
+    }
     let node_directory = node.parent().map(Path::to_path_buf).ok_or_else(|| {
         AppError::Process("the resolved Node executable has no containing directory".into())
     })?;
     let command_line = format!("\"{}\"", wrapper.display());
-    let transport = ProcessJsonlTransport::start_command_with_path(
+    let transport = ProcessJsonlTransport::start_command_with_path_and_identity(
         command_interpreter,
         vec!["/d".into(), "/s".into(), "/c".into(), command_line],
         Some(project_root.to_path_buf()),
         Some(node_directory),
+        &target.interpreter_sha256,
     )?;
     let mut protocol = AppServerProtocol::with_timeout(transport, Duration::from_secs(10));
     let initialized = protocol.initialize()?;
@@ -262,7 +419,7 @@ mod tests {
             "../../source-manifest/hoi4-mod-setup.manifest.json"
         ))
         .unwrap();
-        assert_eq!(manifest_target(&manifest).unwrap(), "hoi4-agent-tools.cmd");
+        assert!(manifest_target(&manifest).is_err());
     }
 
     #[test]
@@ -284,11 +441,14 @@ mod tests {
             risk: "high".into(),
             requires_approval: true,
             contains_secret: false,
+            verified_executable_sha256: None,
+            verified_executable_size: None,
+            verified_interpreter_sha256: None,
+            verified_interpreter_size: None,
+            verified_runtime_sha256: None,
+            verified_runtime_size: None,
         };
-        assert_eq!(
-            reviewed_plan_target(std::slice::from_ref(&action)).unwrap(),
-            "hoi4-agent-tools.cmd"
-        );
+        assert!(reviewed_plan_target(std::slice::from_ref(&action)).is_err());
         let mut tampered = action;
         tampered.arguments = vec!["C:\\outside\\evil.cmd".into()];
         assert!(reviewed_plan_target(&[tampered]).is_err());

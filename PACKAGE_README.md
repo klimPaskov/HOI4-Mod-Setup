@@ -15,7 +15,9 @@ The root `README.md` is deliberately user-facing. Contributor and package-mainta
 - `SECURITY.md`: vulnerability reporting and security expectations
 - `CODE_OF_CONDUCT.md`: contributor conduct
 - `CHANGELOG.md`: release-visible change history
-- `LICENSE_SELECTION.md`: open-source license decision gate
+- `LICENSE`: Apache License 2.0 for the application repository
+- `LICENSE_SELECTION.md`: recorded open-source license decision and release gate
+- `THIRD_PARTY_NOTICES.md`: generated dependency-license inventory for source and release review
 - `.agents/skills/`: ten living development skill templates
 - `.codex/agents/`: nine narrow project subagent templates
 - `.github/`: issue forms, pull request template, CODEOWNERS, Dependabot, CI, security, and release workflows
@@ -25,7 +27,7 @@ The root `README.md` is deliberately user-facing. Contributor and package-mainta
 - `diagrams/`: Mermaid diagrams
 - `ui-references/`: 17 full-resolution minimal desktop screen references
 - `source-audit/`: source inventories and verification limits
-- `scripts/`: repository template and secret-pattern validation
+- `scripts/`: repository validation, native desktop smoke, release build/verification, dependency notices, and publication-asset preparation
 - `HOI4_MOD_SETUP_COMBINED.md`: combined text version
 - `CHECKSUMS.sha256`: package-content checksums
 
@@ -81,3 +83,12 @@ This revision makes ChatGPT-managed Codex authentication a core setup requiremen
 ## Revision 4 additions
 
 This revision makes ChatGPT-authenticated Codex analysis mandatory for semantic setup, adds the official App Server integration contract, and promotes both descriptors plus `thumbnail.png` to first-class generated and lock-managed artifacts.
+
+## Current implementation additions
+
+The implementation package also documents provider-neutral semantic planning in
+`docs/31_ai_provider_profiles_and_chat_sources.md`. Codex remains the default;
+Claude, Kimi, GLM, DeepSeek, local, and explicitly configured compatible
+providers use the same schema-bound proposal boundary. When Codex is selected,
+the setup can optionally create a transaction-managed flattened ChatGPT source
+folder with safe skill-name mappings and user-selected extra files.

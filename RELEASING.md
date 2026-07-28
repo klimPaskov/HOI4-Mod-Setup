@@ -18,7 +18,7 @@ Pre-releases use identifiers such as `v0.3.0-beta.1`.
 2. Confirm schema migrations and rollback behavior.
 3. Confirm the remote workflow manifest is compatible with the application release.
 4. Confirm user-facing README, release notes, support status, and known limitations.
-5. Confirm every bundled dependency and notice required by the selected license policy.
+5. Run `pnpm release:notices` and review the generated `THIRD_PARTY_NOTICES.md` inventory together with bundled assets and dependency license text.
 6. Confirm no credentials or private paths are present in artifacts, logs, source maps, or debug symbols.
 7. Update the changelog and version through the repository-owned release script.
 8. Update affected repo-local skills when release, signing, packaging, or validation steps changed.
@@ -41,10 +41,15 @@ The tag workflow should build from that exact commit. Release jobs must not modi
 - Windows signed installer or signed application package
 - macOS signed and notarized application package for each supported architecture
 - SHA-256 checksum file
+- generated third-party dependency notice inventory
 - software bill of materials when the release pipeline supports it
 - release notes
 - source archive produced by GitHub from the tag
 - signatures or provenance attestations when enabled
+
+Automatic application updates are explicitly deferred for version 0.1.0. Do
+not publish updater metadata or claim update support until the signed update
+channel, rollback behavior, and clean-machine tests are implemented.
 
 ## Publication gate
 
@@ -58,11 +63,22 @@ Do not move or reuse a published tag. If an artifact is wrong, withdraw the rele
 
 Use protected GitHub environments for stable release credentials. The release workflow must receive only the minimum platform-specific secrets and permissions required for its job. Fork pull requests never receive these secrets.
 
-The repository-owned `pnpm release:build` and `pnpm release:verify` scripts are the stable automation surface. `release:build` clears generated `dist/release` output before copying the current frontend and native bundle, and `release:verify` checks the artifact manifest plus the package extension expected for the runner platform. Implement and document them before enabling tag publication. When their behavior changes, update this file and `hoi4-mod-setup-open-source-release` in the same pull request.
+The repository-owned `pnpm release:build` and `pnpm release:verify` scripts are the stable automation surface. `release:build` clears generated `dist/release` output before copying the current frontend and only the requested native bundle (`nsis` or `dmg`), and `release:verify` checks the artifact manifest plus the package extension expected for that runner target. CI sets `HOI4_MOD_SETUP_REQUIRE_TAURI=1` and `HOI4_MOD_SETUP_REQUIRE_SIGNING=1`; the latter performs Authenticode verification on Windows or codesign plus `xcrun stapler validate` on macOS and requires the protected signer identity variables. Native release metadata must match checked-out `HEAD`, `GITHUB_SHA`, and the tag target; a local build without that exact revision binding is intentionally not release evidence. When their behavior changes, update this file and `hoi4-mod-setup-open-source-release` in the same pull request.
+
+### Signing configuration
+
+The release workflow fails closed until its protected environment is configured. It imports runner-only signing material, passes a temporary Tauri configuration for the Windows certificate thumbprint and timestamp URL, and removes the temporary certificate/keychain after the verification steps. Configure these values only as GitHub environment secrets or variables:
+
+- Windows secrets: `HOI4_MOD_SETUP_WINDOWS_CERTIFICATE` (base64 `.pfx`) and `HOI4_MOD_SETUP_WINDOWS_CERTIFICATE_PASSWORD`.
+- Windows variables: `HOI4_MOD_SETUP_WINDOWS_SIGNER` (the expected Authenticode subject) and `HOI4_MOD_SETUP_WINDOWS_TIMESTAMP_URL`.
+- macOS secrets: `HOI4_MOD_SETUP_APPLE_CERTIFICATE` (base64 `.p12`), `HOI4_MOD_SETUP_APPLE_CERTIFICATE_PASSWORD`, `HOI4_MOD_SETUP_APPLE_ID`, and `HOI4_MOD_SETUP_APPLE_PASSWORD` (an Apple app-specific password).
+- macOS variables: `HOI4_MOD_SETUP_MACOS_SIGNING_IDENTITY` and `HOI4_MOD_SETUP_MACOS_TEAM_ID`.
+
+The workflow never commits these values, copies them into `dist/release`, or prints them. The macOS runner unwraps the certificate passphrase through an environment-only OpenSSL input and uses a random disposable keychain password; no keychain password secret is required. The first public release still requires dependency and third-party notice review, upstream source-manifest publication, clean-machine evidence, and maintainer approval.
 
 ## Public source gate
 
-Do not publish the first public source release until `LICENSE` exists, third-party notices are reviewed, the user-facing README names the license, and the repository security and contribution files are active on the default branch.
+Do not publish the first public source release until the Apache 2.0 `LICENSE` is included, third-party notices are reviewed, the user-facing README names the license, and the repository security and contribution files are active on the default branch.
 
 ## Codex integration release gate
 

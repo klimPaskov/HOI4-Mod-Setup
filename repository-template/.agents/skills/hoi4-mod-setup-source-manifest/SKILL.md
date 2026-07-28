@@ -68,18 +68,21 @@ MCP servers and external dependencies are components. Their command, arguments, 
 ## Current implementation boundaries
 
 - The application consumes `hoi4-mod-setup.manifest.json` from the approved GitHub source at one verified commit. The local evidence generator is `scripts/generate_manifest_evidence.py`; it accepts only an explicitly supplied source root and must not discover checkouts.
-- A non-generated component is not downloadable unless every selected file has lowercase SHA-256 and size evidence. The local live source manifest is a publication staging artifact until it is committed at a self-consistent upstream revision.
+- A non-generated component is not downloadable unless every selected file has lowercase SHA-256 and size evidence. The published live-source manifest records the tracked snapshot used to generate its evidence; the runtime binds the manifest and all selected blobs to the one resolved commit and rechecks those hashes.
 - An immutable install requires `generated_for_revision` in the manifest; the runtime schema and validator reject a manifest that cannot prove which commit produced its evidence.
 - Verified blobs are cached under the application data cache by `<revision>/<sha256>` and are accepted only after size (when declared) and SHA-256 revalidation. A corrupt cache entry is discarded and fetched again.
+- Verified blob downloads retain only a bounded `.part` cache entry after an interrupted read; a retry may use a validated HTTP range, and the hash-addressed cache is promoted only after the complete size and SHA-256 checks pass. Partial bytes are never staged.
+- Manifest paths must use canonical slash-separated spelling (with an optional directory trailing slash); collision keys use Unicode NFC plus case folding so composed and decomposed macOS names cannot map to two managed destinations.
 - Release tags are resolved through typed GitHub objects, including annotated-tag dereferencing, and pinned revisions are verified as commit objects before manifest or file access.
-- The MCP component is optional and Windows-only; selecting it changes the structurally generated Codex TOML, while macOS retains an explicit unsupported state and never receives a substitute command. The offline wiki is always rooted at `paradox_wiki/`; the plan and lock copy the exact manifest `wiki.required_pages` list for the resolved revision, and readiness blocks legacy locks that lack that evidence instead of using a newer bundle.
-- If the remote manifest's `generated_for_revision` is stale, the resolver may use the bundled manifest only when its evidence is generated for the same resolved commit; the plan and lock record `manifest_origin: bundled_revision_bootstrap`, and a mixed-revision install is rejected.
-- Expected file evidence carries both SHA-256 and byte size into selected-file records, operations, locks, and readiness. Command-bearing validation rules become plan-visible, approval-bound external actions; their target, platform, and risk come from the verified manifest rather than renderer input.
+- The MCP component is optional and Windows-only; selecting it changes the structurally generated Codex TOML, while macOS retains an explicit unsupported state and never receives a substitute command. A wrapper action requires immutable executable, command-interpreter, and runtime hash/size evidence; if any is absent, the MCP action is visible but `planned_unavailable` and no same-named `PATH` command is run. The offline wiki is always rooted at `paradox_wiki/`; the plan and lock copy the exact manifest `wiki.required_pages` list plus snapshot/media/provenance/license metadata for the resolved revision, and readiness blocks legacy locks that lack that evidence instead of using a newer bundle.
+- `generated_for_revision` is required immutable provenance but may precede the publication commit because a manifest cannot contain the final hash of the commit that contains it. The resolver consumes the remote manifest at the resolved commit, and selective download fails closed when its per-file size or SHA-256 evidence does not match that same commit. A bundled bootstrap is never substituted for a newly resolved remote commit.
+- Expected file evidence carries both SHA-256 and byte size into selected-file records, operations, locks, and readiness. Command-bearing validation rules become plan-visible, approval-bound external actions; their target, platform, and risk come from the verified manifest rather than renderer input. All-platform command declarations are bound to the current supported platform so they are not silently dropped.
+- Dependency resolution exposes a deterministic reverse-dependency map for update/removal impact review; provider constraints are applied after forward dependency expansion.
 - External-action dry runs carry reviewed arguments, cwd, environment names, manifest-declared expected writes, network/privilege evidence, and rollback boundary. Missing manifest declarations remain `not_declared`; they are not inferred from a repository script.
 
 ## Required tests
 
-- branch to commit resolution
+- branch to commit resolution and publication-commit manifest binding
 - commit immutability
 - manifest major rejection
 - dependency cycle
@@ -100,6 +103,7 @@ Update this skill when the manifest schema, source API, cache layout, checksum p
 ## Completion standard
 
 Source work is complete only when one exact revision is bound to the manifest,
-selected files, sizes, hashes, platform evidence, and required wiki-page list;
+selected files, sizes, hashes, platform evidence, required wiki-page list, and
+the manifest's wiki provenance/media metadata;
 unsupported routes remain explicit; and the relevant hostile-source and
 external-action tests pass.

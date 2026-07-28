@@ -21,6 +21,7 @@ Read:
 ## Repository rules
 
 - Keep `README.md` user-facing.
+- Document the provider-neutral setup in README, including Codex default, explicit model/provider selection, honest local/hosted routes, and the Codex-only ChatGPT project-source flatten option.
 - Use pull requests for `main`.
 - Require stable status checks through a ruleset.
 - Keep CODEOWNERS current for sensitive paths.
@@ -46,7 +47,10 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - Generated artifacts are uploaded only after tests pass.
 - Linux CI runners install the Tauri/WebKit/GTK build dependencies before all-feature Rust checks; native Windows and macOS release jobs remain the packaging evidence path.
 - Release runners install the pinned Python validation dependencies before invoking repository-integrity checks, and draft-release asset arguments are built from an explicit `find` file list rather than an unexpanded recursive glob.
-- Tauri native bundles are copied from the workspace-root `target/release/bundle` or the alternate `src-tauri/target/release/bundle` layout; `src-tauri/icons/icon.svg` is the text source for generated Windows and macOS icon assets.
+- Tauri native bundles are copied from the workspace-root `target/release/bundle` or the alternate `src-tauri/target/release/bundle` layout; when `HOI4_MOD_SETUP_BUNDLE` is set, only that requested `nsis` or `dmg` subdirectory is copied so stale cross-target packages cannot enter a release. `src-tauri/icons/icon.svg` is the text source for generated Windows and macOS icon assets.
+- Release build jobs are tag-only and attach the protected `release` environment to the platform build job that consumes signing material. Windows and macOS signing inputs are kept in separate platform build steps, and cleanup removes temporary roots plus imported Windows certificates or macOS keychains even after an import/build failure.
+- The draft job runs `scripts/prepare_release_assets.mjs`, which rechecks every downloaded platform manifest, source/tag/architecture binding, package hash, and exact platform set before creating uniquely named GitHub assets. It refuses to reuse an existing tag release and verifies that the created release remains a draft.
+- `scripts/generate_third_party_notices.mjs` derives the JavaScript and Rust dependency inventory from the locked pnpm and Cargo metadata and places it in native release output. The inventory is evidence for maintainer review, not a substitute for reviewing bundled assets or complete dependency license text.
 
 ## Release rules
 
@@ -56,6 +60,7 @@ Stable release evidence includes:
 
 - Windows artifact
 - macOS artifact for each supported architecture
+- User-facing Windows `.exe` installer and macOS `.dmg` installer, with extension and platform checks in the release verification script
 - signatures and notarization where required
 - SHA-256 checksums
 - source archive
@@ -67,15 +72,23 @@ Stable release evidence includes:
 
 Never move a published tag. Withdraw a bad release and publish a new version.
 
-The current release workflow builds Tauri packages on explicit Windows x64, macOS arm64, and macOS x64 runners, verifies a cleanly regenerated `ARTIFACTS.sha256` manifest and platform-appropriate package extension, and keeps publication behind the `release` environment plus repository variables for signing and publication. CI additionally runs the same package verification and `pnpm desktop:e2e` launch smoke on those runners. `.github/rulesets/main-protected.json` is the declarative protection baseline and still requires administrator activation. Unsigned package builds may be evidence artifacts; they must not be described or published as signed releases. Third-party Actions are pinned to reviewed full commit SHAs.
+The current release workflow builds Tauri packages on explicit Windows x64, macOS arm64, and macOS x64 runners, verifies a cleanly regenerated `ARTIFACTS.sha256` manifest, exact PE or Mach-O architecture, and platform-appropriate package extension, and keeps publication behind the protected `release` environment plus repository variables for signing and publication. CI additionally runs the same package verification and `pnpm desktop:e2e` launch smoke on those runners. Before a tagged build, the Windows job imports a protected base64 `.pfx` into the runner certificate store and passes a temporary Tauri config with the imported thumbprint, while the macOS jobs unwrap the protected P12 passphrase through an environment-only OpenSSL input, import it into a random disposable keychain, and pass the Apple notarization environment. Temporary signing roots, certificate entries, and keychains are removed after verification. With `HOI4_MOD_SETUP_REQUIRE_SIGNING=1`, the verifier performs Authenticode verification on Windows or codesign plus `xcrun stapler validate` on macOS and requires protected signer identity variables; metadata alone cannot pass the gate. `.github/rulesets/main-protected.json` is the declarative protection baseline and still requires administrator activation. Unsigned package builds may be evidence artifacts; they must not be described or published as signed releases. Third-party Actions are pinned to reviewed full commit SHAs.
 
 The required platform-verification mode rejects local uncommitted builds whose
-source revision is `unresolved-local`; tagged CI builds must provide the exact
-`GITHUB_SHA` before a package is treated as release evidence.
+source revision is `unresolved-local`; release builds bind metadata to the
+checked-out `HEAD`, `GITHUB_SHA`, and the annotated tag target before a package
+is treated as release evidence. A local build may still produce an unsigned
+inspection artifact, but it is not release evidence.
 
-## License gate
+## License and updater gates
 
-A public source release needs a real `LICENSE`. Do not call the repository open source only because it is public. Update README and distributions after the license decision.
+The repository is licensed under Apache 2.0 in `LICENSE`, and the decision is
+recorded in `LICENSE_SELECTION.md`. Run `pnpm release:notices`, keep the
+license and generated notices in source and binary distributions, and review
+third-party notices before publication. Automatic
+application updates are explicitly deferred for the 0.1.0 release; do not
+claim updater support or publish updater metadata until the update channel,
+signature policy, rollback behavior, and clean-machine tests are implemented.
 
 ## Skill and docs alignment
 

@@ -28,7 +28,7 @@ The parent reviews every output and owns final integration and completion.
 
 | Subagent | Mode | Use |
 | --- | --- | --- |
-| `hoi4setup_codex_integration_auditor` | read-only | Audit ChatGPT authentication, App Server lifecycle, structured analysis, redaction, and deterministic proposal validation |
+| `hoi4setup_codex_integration_auditor` | read-only | Audit Codex ChatGPT authentication, App Server lifecycle, provider-neutral structured analysis, redaction, and deterministic proposal validation |
 | `hoi4setup_source_manifest_auditor` | read-only | Audit source revision, manifest, downloads, hashes, component graph, wiki distribution |
 | `hoi4setup_scanner_auditor` | read-only | Audit read-only scan behavior, evidence, confidence, and finding review |
 | `hoi4setup_transaction_recovery_auditor` | read-only | Audit journal, stages, operation checkpoints, recovery, rollback, and fault tests |
@@ -84,6 +84,10 @@ Use subagents when a surface is risky, cross-file, platform-sensitive, security-
 7. Parent runs final platform and acceptance checks.
 8. Parent writes the completion report.
 
-## Codex integration auditor
+## AI integration auditor
 
-Use `hoi4setup_codex_integration_auditor` after meaningful authentication, App Server, semantic analysis, redaction, or proposal-rendering changes. It is read-only and checks protocol lifecycle, login flows, no-API-key policy, token containment, output schema, deterministic validation, recovery access, and tests.
+Use `hoi4setup_codex_integration_auditor` after meaningful authentication,
+App Server, provider adapter, semantic analysis, redaction, or
+proposal-rendering changes. It is read-only and checks Codex protocol
+lifecycle, provider configuration, credential containment, output schema,
+deterministic validation, recovery access, and tests.

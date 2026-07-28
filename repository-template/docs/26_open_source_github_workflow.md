@@ -13,7 +13,7 @@ HOI4-Mod-Setup
 Recommended description:
 
 ```text
-A Windows and macOS desktop wizard that prepares Hearts of Iron IV mods for agentic development in Codex.
+A Windows and macOS desktop wizard that prepares Hearts of Iron IV mods for agentic development with a selected AI provider.
 ```
 
 Recommended topics:
@@ -23,13 +23,16 @@ hearts-of-iron-iv
 hoi4
 modding
 codex
+ai-agents
 tauri
 rust
 react
 desktop-app
 ```
 
-Keep the repository public only after a real `LICENSE` file is selected and the initial security review is complete.
+The public source repository is `klimPaskov/HOI4-Mod-Setup`. Keep public binary
+releases gated until the real `LICENSE` file, source security review, signing,
+and native-platform evidence are complete.
 
 ## Local repository bootstrap
 
@@ -241,6 +244,40 @@ The repository-owned workflows call `pnpm release:build`, `pnpm release:verify`,
 
 ## Releases
 
+The public release path must publish clean, signed, user-facing artifacts: a
+Windows `.exe` installer and a macOS `.dmg` built on native runners. Each
+artifact needs a SHA-256 manifest, source/tag identity, SBOM/provenance, and
+platform verification. Windows signing and macOS Developer ID signing plus
+notarization are release gates; do not publish unsigned placeholders as a
+finished release. The root README links only to verified GitHub Releases.
+
+The release workflow fails closed until the protected environment provides the
+signing material. It imports `HOI4_MOD_SETUP_WINDOWS_CERTIFICATE` and
+`HOI4_MOD_SETUP_WINDOWS_CERTIFICATE_PASSWORD` into the Windows runner, using
+the variables `HOI4_MOD_SETUP_WINDOWS_SIGNER` and
+`HOI4_MOD_SETUP_WINDOWS_TIMESTAMP_URL` for verification and a temporary Tauri
+config. macOS uses the secrets `HOI4_MOD_SETUP_APPLE_CERTIFICATE`,
+`HOI4_MOD_SETUP_APPLE_CERTIFICATE_PASSWORD`, `HOI4_MOD_SETUP_APPLE_ID`, and
+`HOI4_MOD_SETUP_APPLE_PASSWORD`, plus the variables
+`HOI4_MOD_SETUP_MACOS_SIGNING_IDENTITY` and
+`HOI4_MOD_SETUP_MACOS_TEAM_ID`. Temporary certificates and keychains are
+removed after verification and never enter the repository or release assets.
+The macOS job unwraps the P12 passphrase through an environment-only OpenSSL
+input and creates a random disposable keychain password, so no keychain
+password secret is passed as a process argument.
+
+`pnpm release:notices` derives a deterministic dependency inventory from the
+locked pnpm and Cargo metadata. The inventory is included in native release
+outputs, but it does not waive maintainer review of bundled assets or complete
+license text before publication.
+
+After platform jobs finish, the draft job runs
+`scripts/prepare_release_assets.mjs` to revalidate downloaded manifests,
+source/tag/architecture identity, signed-evidence markers, package hashes, and
+the exact Windows/macOS asset set before the write-capable GitHub release
+operation. It uses unique platform-prefixed filenames and refuses to reuse an
+existing release tag.
+
 Use semantic version tags:
 
 ```text
@@ -266,6 +303,10 @@ git push origin vX.Y.Z
 ```
 
 The tag workflow builds from the exact tag commit. It should publish a draft release first. Verify Windows and macOS installation, signatures, notarization, checksums, updater metadata, and clean-machine behavior before publication.
+
+Updater metadata and automatic application updates are intentionally deferred
+for version 0.1.0. A future update channel must define signed metadata,
+rollback behavior, and clean-machine tests before it is enabled.
 
 Never move or reuse a published tag. Fix problems in a new version.
 

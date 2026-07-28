@@ -3,6 +3,12 @@
   "plan_id": "960ccbb7-c36a-41b0-9d76-0105bcd83b05",
   "project_id": "cold_war_curtain",
   "created_at": "2026-07-25T17:35:00+03:00",
+  "ai_provider": "codex",
+  "ai_model": "default",
+  "ai_endpoint": null,
+  "ai_optimization_profile": "Codex project and ChatGPT Chat",
+  "flatten_chat_sources": false,
+  "flatten_additional_files": [],
   "source": {
     "mode": "pinned_commit",
     "repository": "klimPaskov/Agentic-HOI4-Modding",
@@ -25,11 +31,20 @@
   "wiki_required_pages": [
     "Data structures - Hearts of Iron 4 Wiki.md"
   ],
+  "wiki_metadata": {
+    "snapshot_marker": null,
+    "required_media_policy": "all_declared",
+    "source_status": "repository_only",
+    "license_status": "not_found",
+    "notes": [
+      "Provenance and license remain visibly unverified because the inspected repository did not declare them."
+    ]
+  },
   "credential_references": [
     {
       "name": "MESHY_API_KEY",
       "provider": "windows_credential_manager",
-      "reference": "credential://meshy_api_key/opaque-reference"
+      "reference": "credential://meshy_api_key/00000000-0000-0000-0000-000000000000"
     }
   ],
   "optional_workflows": {
@@ -43,6 +58,7 @@
       "ownership": "generated",
       "action": "generate",
       "source_path": null,
+      "external": false,
       "location_scope": "project",
       "destination": "descriptor.mod",
       "source_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
@@ -59,7 +75,8 @@
       "action": "generate",
       "source_path": null,
       "location_scope": "external_launcher",
-      "destination": "%USERPROFILE%\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain.mod",
+      "destination": "C:\\Users\\example\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain.mod",
+      "external": true,
       "source_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
       "base_sha256": null,
       "local_sha256": null,
@@ -73,6 +90,7 @@
       "ownership": "generated",
       "action": "generate",
       "source_path": null,
+      "external": false,
       "location_scope": "project",
       "destination": "thumbnail.png",
       "source_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
@@ -88,10 +106,13 @@
       "ownership": "merged",
       "action": "merge",
       "source_path": "AGENTS_template.md",
+      "external": false,
       "destination": "AGENTS.md",
       "source_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "source_size": 12,
       "base_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
       "local_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "result_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
       "local_state": "modified",
       "resolution": "merge",
       "rollback": "restore_backup",
@@ -110,6 +131,7 @@
       "local_state": "absent",
       "resolution": null,
       "rollback": "remove_created",
+      "external": false,
       "location_scope": "project"
     }
   ],
@@ -134,16 +156,16 @@
       "component_id": "mcp.hoi4_agent_tools",
       "platform": "windows",
       "command_source": "remote_manifest",
-      "executable": "manifest-declared package tool",
-      "arguments": ["hoi4-agent-tools"],
+      "executable": "hoi4-agent-tools.cmd",
+      "arguments": ["hoi4-agent-tools.cmd"],
       "working_directory": "<project_root>",
       "environment_names": [],
       "network_access": "not_declared",
       "expected_writes": [],
       "privilege": "not_declared",
       "rollback_boundary": "transaction-managed project files",
-      "display_command": "npm install --global hoi4-agent-tools@latest",
-      "risk": "medium",
+      "display_command": "Repository-declared validation target",
+      "risk": "high",
       "requires_approval": true,
       "contains_secret": false
     },

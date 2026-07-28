@@ -4,13 +4,13 @@ This file governs development of the **HOI4 Mod Setup** desktop application. It 
 
 ## 1. Product promise
 
-HOI4 Mod Setup prepares a new or existing Hearts of Iron IV mod for agentic development in Codex.
+HOI4 Mod Setup prepares a new or existing Hearts of Iron IV mod for agentic development with a user-selected AI provider. Codex is the default.
 
 Every implementation must preserve these promises:
 
 - inspect before changing an existing project
 - create a launcher-discoverable, game-loadable new project with both descriptors and a valid placeholder thumbnail
-- keep deterministic facts separate from required Codex semantic proposals until the user confirms them
+- keep deterministic facts separate from required semantic proposals until the user confirms them
 - never clone the complete Agentic HOI4 Modding source repository
 - resolve latest mode to an exact commit before downloading files
 - support immutable pinned commit or release installs
@@ -19,7 +19,7 @@ Every implementation must preserve these promises:
 - never overwrite a user-modified file silently
 - keep credentials outside the target project and installation lock
 - use staged, journaled, reversible transactions
-- keep optional workflows non-blocking for core Codex readiness
+- keep optional workflows non-blocking for core AI readiness
 - show honest unsupported and incomplete states
 - keep the desktop interface restrained and task-focused
 - support Windows and macOS without inventing unsupported platform routes
@@ -48,7 +48,8 @@ For a first implementation pass or a broad architectural change, read:
 16. `docs/27_repo_local_skill_strategy.md`
 17. `docs/28_agents_subagent_architecture.md`
 18. `docs/30_codex_chatgpt_authentication.md` when authentication or analysis is involved
-19. the repo-local skill that owns the current task
+19. `docs/31_ai_provider_profiles_and_chat_sources.md` when provider selection or flattened Chat sources are involved
+20. the repo-local skill that owns the current task
 
 For a bounded change, read the owning skill and the directly relevant design documents. Do not scan unrelated source trees or generated artifacts when exact files are already known.
 
@@ -127,9 +128,11 @@ The application must not:
 
 Use `hoi4-mod-setup-source-manifest` for changes to this surface.
 
-## 5A. ChatGPT authentication and Codex App Server
+## 5A. AI provider authentication and Codex App Server
 
-ChatGPT sign-in is a core prerequisite for Create, Import, Update, and Repair planning. Use the official local `codex app-server` process over stdio JSONL. Do not implement an OpenAI API key field or an application-owned OAuth service.
+Codex remains the default provider. ChatGPT sign-in is a core prerequisite for Codex Create, Import, Update, and Repair planning. Use the official local `codex app-server` process over stdio JSONL. Do not implement an application-owned OAuth service or an OpenAI API-key fallback for the Codex route.
+
+The first setup screen also supports the bounded provider registry in `docs/31_ai_provider_profiles_and_chat_sources.md`. Claude, Kimi, GLM, DeepSeek, and other hosted routes require an explicit user endpoint and OS-vault API key. Local models require an explicit loopback HTTP endpoint and do not claim a hosted account. The app must not invent provider URLs, login routes, packages, commands, model names, MCP servers, or platform support.
 
 Required behavior:
 
@@ -144,17 +147,17 @@ Required behavior:
 - never inspect, copy, persist, or log ChatGPT tokens
 - never write email, account ID, plan type, usage, or rate limits into a project or installation lock
 - do not use the experimental externally managed token mode
-- do not hardcode a model name for the normal path
+- do not hardcode a model name for the Codex path; non-Codex models are user-selected and persisted as non-secret configuration
 
-Every semantic turn uses a dedicated thread, read-only sandboxing, approved inputs, and the current `codex-analysis` output schema. Codex proposes names, IDs, namespaces, descriptions, tags, folder profiles, project instructions, and component choices. Deterministic Rust validates and renders the final bytes after user confirmation.
+Every semantic turn uses approved inputs and the current `codex-analysis` output schema. Codex turns use a dedicated App Server thread and restricted read-only sandbox. Provider adapters never write files or approve transactions. The selected profile shapes names, IDs, namespaces, descriptions, tags, folder profiles, project instructions, and component choices. Deterministic Rust validates and renders the final bytes after user confirmation.
 
-Codex cannot write project files during analysis, approve a transaction, resolve conflicts automatically, or pass readiness checks. Missing authentication or usage availability blocks new planning. Recovery, rollback, backup inspection, and managed removal remain locally available while signed out.
+No AI provider can write project files during analysis, approve a transaction, resolve conflicts automatically, or pass readiness checks. Missing authentication/configuration or usage availability blocks new planning. Recovery, rollback, backup inspection, and managed removal remain locally available while signed out or disconnected.
 
 Use `hoi4-mod-setup-codex-integration` for changes to this boundary.
 
 ## 6. Existing project scanner
 
-The existing-project scan is read-only. It may read the selected project root and explicitly approved external descriptor paths. It must not create cache markers, temporary files, Git locks, or transaction folders inside the project during scan. The scanner is deterministic Rust code and owns all observable facts. Required Codex semantic analysis runs only after ChatGPT-managed authentication, receives only approved inputs, returns schema-validated proposals, and performs no writes.
+The existing-project scan is read-only. It may read the selected project root and explicitly approved external descriptor paths. It must not create cache markers, temporary files, Git locks, or transaction folders inside the project during scan. The scanner is deterministic Rust code and owns all observable facts. Required semantic analysis runs only after the selected provider is configured or Codex is ChatGPT-authenticated, receives only approved inputs, returns schema-validated proposals, and performs no writes.
 
 Every finding needs:
 
@@ -167,7 +170,7 @@ Every finding needs:
 - editable user decision
 - blocking or non-blocking severity
 
-Low confidence is a visible state. Do not turn a guess into a detected fact. Label values as `Detected`, `Suggested by Codex`, or `Confirmed`. Codex proposals never override descriptor validity, hashes, paths, encoding, Git state, file existence, identifier validity, collisions, or other deterministic evidence.
+Low confidence is a visible state. Do not turn a guess into a detected fact. Label values as `Detected`, `Suggested by <selected provider>`, or `Confirmed`. Provider proposals never override descriptor validity, hashes, paths, encoding, Git state, file existence, identifier validity, collisions, or other deterministic evidence.
 
 Use `hoi4-mod-setup-project-scanner` for scanner changes.
 

@@ -9,6 +9,11 @@
     "project_id",
     "installed_at",
     "source",
+    "ai_provider",
+    "ai_model",
+    "ai_optimization_profile",
+    "flatten_chat_sources",
+    "flatten_additional_files",
     "codex_analysis",
     "wiki_required_pages",
     "components",
@@ -17,12 +22,48 @@
     "optional_workflows",
     "local_modifications"
   ],
+  "allOf": [
+    {
+      "if": { "properties": { "ai_provider": { "const": "codex" } } },
+      "then": { "properties": { "ai_endpoint": { "type": ["null", "string"], "maxLength": 0 } } }
+    },
+    {
+      "if": { "properties": { "flatten_chat_sources": { "const": false } } },
+      "then": { "properties": { "flatten_additional_files": { "maxItems": 0 } } }
+    },
+    {
+      "if": { "properties": { "ai_provider": { "enum": ["claude", "kimi", "glm", "deepseek", "local", "custom"] } } },
+      "then": { "required": ["ai_endpoint"], "properties": { "ai_endpoint": { "type": "string", "minLength": 1 } } }
+    }
+  ],
   "properties": {
     "schema_version": {
       "type": "string"
     },
     "project_id": {
       "type": "string"
+    },
+    "ai_provider": {
+      "enum": ["codex", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+    },
+    "ai_model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ai_endpoint": {
+      "type": ["string", "null"]
+    },
+    "ai_optimization_profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "flatten_chat_sources": {
+      "type": "boolean"
+    },
+    "flatten_additional_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "maxItems": 64
     },
     "installed_at": {
       "type": "string",
@@ -88,6 +129,9 @@
       "items": {
         "type": "string"
       }
+    },
+    "wiki_metadata": {
+      "$ref": "#/$defs/wiki_metadata"
     },
     "components": {
       "type": "array",
@@ -198,7 +242,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "pattern": "^credential://meshy_api_key/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
           }
         }
       }
@@ -242,7 +287,7 @@
       "not": {}
     },
     "codex_analysis": {
-      "type": "object",
+      "type": ["object", "null"],
       "additionalProperties": false,
       "required": [
         "engine",
@@ -256,7 +301,7 @@
       ],
       "properties": {
         "engine": {
-          "const": "codex_app_server"
+          "enum": ["codex_app_server", "provider_api"]
         },
         "analysis_id": {
           "type": "string",
@@ -286,7 +331,16 @@
           "format": "date-time"
         },
         "auth_mode": {
-          "const": "chatgpt"
+          "enum": ["chatgpt", "api_key", "local_endpoint"]
+        },
+        "provider": {
+          "enum": ["codex", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+        },
+        "model": {
+          "type": ["string", "null"]
+        },
+        "optimization_profile": {
+          "type": ["string", "null"]
         },
         "account_identity_persisted": {
           "const": false
@@ -309,6 +363,35 @@
     }
   },
   "$defs": {
+    "wiki_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_media_policy",
+        "source_status",
+        "license_status"
+      ],
+      "properties": {
+        "snapshot_marker": {
+          "type": ["string", "null"]
+        },
+        "required_media_policy": {
+          "enum": ["all_declared", "referenced_only", "none"]
+        },
+        "source_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
     "file": {
       "type": "object",
       "additionalProperties": false,

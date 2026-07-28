@@ -1,21 +1,23 @@
 ---
 name: hoi4-mod-setup-codex-integration
-description: Use when implementing or changing ChatGPT sign-in, Codex App Server lifecycle, structured semantic analysis, usage-limit handling, or the boundary between Codex proposals and deterministic project generation.
+description: Use when implementing or changing provider authentication, model profiles, Codex App Server lifecycle, structured semantic analysis, usage-limit handling, or the boundary between AI proposals and deterministic project generation.
 ---
 
 # HOI4 Mod Setup Codex Integration
 
-Use this skill for the core subscription-backed semantic layer of HOI4 Mod Setup.
+Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The user selects a provider and model at the start; Codex is the default profile.
 
 ## Product rule
 
-Create, Import, Update, and Repair planning require a ChatGPT-managed Codex session. The application uses the official local `codex app-server` interface. Do not add an OpenAI API key field or a provider fallback for core setup.
+Create, Import, Update, and Repair planning require an authenticated, selected AI capability. Codex uses the official local `codex app-server` interface and ChatGPT-managed sign-in. Other providers use only their verified adapter profile, explicit user endpoint where supported, and an OS-vault credential where required. Do not silently switch providers or invent a provider route.
 
 Recovery, rollback, backup inspection, and managed removal remain locally usable while signed out.
 
 ## Required contract
 
-- launch `codex app-server` as a child process
+- persist the selected provider, model, and optimization profile in typed state; never infer them from a display label
+- derive endpoint, protocol, credential environment, limits, and supported platform from a checked-in provider profile
+- launch `codex app-server` as a child process for Codex
 - use stdio JSONL transport
 - complete the initialize handshake before other requests
 - use `account/read` for current state
@@ -28,12 +30,15 @@ Recovery, rollback, backup inspection, and managed removal remain locally usable
 - never read or copy Codex token storage
 - never serialize account identity, tokens, plan details, rate limits, or usage into a mod project or installation lock
 - do not use experimental externally managed ChatGPT tokens
+- store non-Codex provider keys only in Windows Credential Manager or macOS Keychain under a provider-keyed opaque reference; bind the non-secret reference scope to the selected provider and reject unscoped or cross-provider reuse
+- inject a non-Codex key only as the adapter's approved environment/header input for the bounded request; never put it in project state, plan, lock, or logs
+- treat local-model access as an explicit loopback route and do not claim hosted authentication for it
 
 ## Analysis boundary
 
-Codex owns semantic proposals. Deterministic Rust owns facts, validation, rendering, transactions, and readiness.
+The selected provider owns semantic proposals. Deterministic Rust owns facts, validation, rendering, transactions, and readiness. The common `codex-analysis` schema is the boundary even when the selected provider is not Codex.
 
-Use Codex for project description interpretation, display name, project ID, script prefix, namespace, descriptor tags, folder profile, `AGENTS.md` adaptation, component recommendations, existing-project purpose, and conflict explanation.
+Use the selected provider for project description interpretation, display name, project ID, script prefix, namespace, descriptor tags, folder profile, `AGENTS.md` adaptation, component recommendations, existing-project purpose, and conflict explanation. The optimization profile changes the prompt and presentation convention, not deterministic safety rules.
 
 Use the scanner and validators for paths, hashes, descriptors, PNGs, encodings, Git state, identifier syntax, collisions, manifest checks, and file ownership.
 
@@ -44,7 +49,7 @@ Every analysis turn must:
 - expose no writable project root
 - contain only user-approved inputs
 - exclude secrets, binaries, Git objects, and credential stores
-- set `outputSchema` to the current Codex analysis schema
+  - set the current `codex-analysis` output schema for every adapter
 - reject additional or malformed fields
 - require the complete ten-key proposal set before confirmation or planning
 - return concise proposal reasons, not hidden reasoning
@@ -75,7 +80,7 @@ documented locked-analysis or signed-out recovery rules.
 
 ## Current implementation boundary
 
-The Rust implementation is in `src-tauri/src/codex.rs`. It starts only an absolute
+The Rust implementation is in `src-tauri/src/ai.rs` and `src-tauri/src/codex.rs`. It starts only an absolute
 `codex` executable discovered on the reviewed PATH, clears the child environment,
 passes a small non-secret environment allowlist, and communicates with bounded
 JSONL lines. `src-tauri/src/commands.rs` owns the process singleton and exposes
@@ -88,7 +93,7 @@ exited App Server. Logout always tears down the local process and clears
 pending analyses and approved evidence even when the remote logout request
 returns an error.
 
-`turn/start` receives the checked-in `schemas/codex-analysis.schema.json` as its
+Codex `turn/start` receives the checked-in `schemas/codex-analysis.schema.json` as its
 `outputSchema`, uses `approvalPolicy: never` and a restricted read-only sandbox
 with no project-readable roots, and the core rejects extra fields, duplicate
 proposal keys, incomplete proposal sets, invalid evidence references, incorrect
@@ -110,9 +115,9 @@ agreement, and replaceable PNG placeholder; these are deterministic Rust checks.
 
 ## Failure handling
 
-Missing Codex, signed-out state, cancelled login, usage limits, App Server exit, malformed output, or rejected proposals must preserve the local draft and scan. No failure may start a project transaction.
+Missing selected provider capability, signed-out state, cancelled login, usage limits, App Server or HTTP adapter exit, malformed output, or rejected proposals must preserve the local draft and scan. No failure may start a project transaction.
 
-Do not silently switch to API access, another model provider, heuristic-only identity generation, or direct model writes.
+Do not silently switch to another provider, an unverified endpoint, heuristic-only identity generation, or direct model writes.
 
 ## Tests
 
@@ -131,7 +136,9 @@ Cover:
 - no token or account data in logs, state, lock, crash output, or project files
 - deterministic rejection of invalid Codex identifiers
 - recovery access while signed out
+- provider-profile/model optimization binding and non-Codex credential isolation, including cross-provider reference rejection
+- Codex-only flatten visibility, mapping, collision rejection, secret rejection, and recommendation copy
 
 ## Update this skill when
 
-Update this skill in the same change when App Server methods, authentication behavior, analysis schemas, process lifecycle, model-selection policy, redaction rules, usage-limit handling, or the Codex-to-renderer boundary changes.
+Update this skill in the same change when provider profiles, authentication behavior, App Server methods, analysis schemas, process lifecycle, model-optimization policy, redaction rules, usage-limit handling, flattening behavior, or the AI-to-renderer boundary changes.

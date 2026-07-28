@@ -22,8 +22,8 @@ Use the smallest useful layer and keep high-risk behavior covered at more than o
 - unit tests for deterministic domain functions
 - property tests for invariants
 - fuzzing for parsers and hostile input; the checked-in cargo-fuzz targets cover
-  manifests, relative paths, Codex analysis payloads, descriptors/thumbnail
-  PNGs, and structured TOML merges
+  manifests, relative paths, provider analysis payloads, descriptors/thumbnail
+  PNGs, structured TOML merges, and flattened ChatGPT-source mappings
 - integration tests for adapters and cross-module behavior
 - transaction fault injection
 - security tests
@@ -43,12 +43,16 @@ Provide deterministic fakes for:
 - credential store
 - external process runner
 - Codex App Server protocol and streamed notifications
+- provider adapters, endpoint validation, bounded responses, and model profiles
 - Git
 - MCP health server
 - platform paths
 - disk and permission failures
 
-Tests must not require a real Meshy key or paid provider call.
+Tests must not require a real Meshy key, ChatGPT login, or paid provider call.
+Tests that mutate process-global command state must take the shared test-state
+guard so the default parallel Rust test runner cannot cross-contaminate evidence,
+session, cancellation, credential-health, or analysis assertions.
 
 ## Property examples
 
@@ -60,6 +64,10 @@ Tests must not require a real Meshy key or paid provider call.
 - one plan revision produces one file set
 - scan produces no project mutation
 - no launcher artifact is generated before confirmed Codex proposals
+- provider/model/profile stays bound from the start gate through analysis, plan,
+  lock, readiness, and any Codex-only flatten export
+- flattening rejects output collisions, traversal, links, secret-shaped paths,
+  and secret-shaped content while preserving the source transaction boundary
 - App Server account data and tokens never survive serialization
 - an approved process receives only `MESHY_API_KEY`, while known secret values are absent from both output streams and serialized artifacts
 - an MCP health probe accepts only the manifest-declared Windows wrapper,
@@ -104,7 +112,7 @@ A release is blocked by:
 - inaccessible core UI
 - unsigned or unverified stable artifacts when signing is required
 - missing license for public release
-- failing ChatGPT authentication or Codex analysis contract tests
+- failing ChatGPT authentication, provider adapter, or common analysis contract tests
 - launcher scaffold failure on either supported platform
 
 On Windows, activate the MSVC environment with `vcvars64.bat` before

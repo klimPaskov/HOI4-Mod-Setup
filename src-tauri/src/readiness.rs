@@ -37,23 +37,17 @@ fn manifest_provenance_statuses() -> (String, String) {
     .unwrap_or_else(|_| ("unknown".into(), "unknown".into()))
 }
 
-pub(crate) fn mcp_command_available() -> bool {
-    std::env::var_os("PATH")
-        .map(|path| {
-            std::env::split_paths(&path).any(|entry| {
-                let candidate = entry.join("hoi4-agent-tools.cmd");
-                fs::symlink_metadata(&candidate)
-                    .ok()
-                    .is_some_and(|metadata| {
-                        metadata.file_type().is_file() && !path_has_link_component(&candidate)
-                    })
-            })
-        })
-        .unwrap_or(false)
-}
-
 fn mcp_component_is_selected(state: &str) -> bool {
     !matches!(state, "not_selected" | "removed" | "unsupported_platform")
+}
+
+fn component_dependency_is_satisfied(component: &LockComponent) -> bool {
+    component.validation.as_deref() == Some("pass")
+        || (component.id == "mcp.hoi4_agent_tools"
+            && matches!(
+                component.validation.as_deref(),
+                Some("planned_unavailable" | "unsupported_platform")
+            ))
 }
 
 const AGENT_TREE_MAX_FILES: usize = 20_000;
@@ -139,6 +133,61 @@ pub(crate) fn valid_subagent_tree(project_root: &Path) -> bool {
         })
 }
 
+pub(crate) fn flattened_artifact_status(
+    project_root: &Path,
+    artifacts: &[GeneratedArtifact],
+) -> String {
+    if artifacts.is_empty()
+        || artifacts.iter().any(|artifact| {
+            !artifact
+                .destination
+                .replace('\\', "/")
+                .starts_with("chatgpt_project_sources/")
+                || safe_join(project_root, &artifact.destination)
+                    .ok()
+                    .and_then(|path| fs::symlink_metadata(path).ok())
+                    .is_none_or(|metadata| is_link_metadata(&metadata) || !metadata.is_file())
+                || safe_join(project_root, &artifact.destination)
+                    .ok()
+                    .and_then(|path| sha256_file(&path).ok())
+                    .is_none_or(|hash| hash != artifact.expected_sha256)
+        })
+    {
+        return "block".into();
+    }
+    let has_agents = artifacts
+        .iter()
+        .any(|artifact| artifact.destination == "chatgpt_project_sources/AGENTS.md");
+    let has_readme = artifacts
+        .iter()
+        .any(|artifact| artifact.destination == "chatgpt_project_sources/README.md");
+    if has_agents && has_readme {
+        "pass".into()
+    } else {
+        "block".into()
+    }
+}
+
+pub(crate) fn flattened_lock_status(project_root: &Path, lock: &InstallationLock) -> String {
+    if !lock.flatten_chat_sources {
+        return "not_selected".into();
+    }
+    let artifacts = lock
+        .files
+        .iter()
+        .filter(|file| file.component_id == "codex.chat_flatten" && !file.external)
+        .map(|file| GeneratedArtifact {
+            component_id: file.component_id.clone(),
+            destination: file.path.clone(),
+            content: file.generated_content.clone().unwrap_or_default(),
+            expected_sha256: file.installed_sha256.clone(),
+            external: false,
+            bytes: file.generated_bytes.clone(),
+        })
+        .collect::<Vec<_>>();
+    flattened_artifact_status(project_root, &artifacts)
+}
+
 fn locked_file_destination(
     project_root: &Path,
     file: &LockedFile,
@@ -180,6 +229,18 @@ pub struct ReadinessInput {
     pub codex_analysis_status: String,
     #[serde(default)]
     pub codex_confirmed_field_count: u32,
+    #[serde(default = "crate::models::default_ai_provider")]
+    pub ai_provider: String,
+    #[serde(default = "crate::models::default_ai_model")]
+    pub ai_model: String,
+    #[serde(default)]
+    pub ai_authenticated: bool,
+    #[serde(default)]
+    pub ai_analysis_status: String,
+    #[serde(default)]
+    pub ai_confirmed_field_count: u32,
+    #[serde(default)]
+    pub flatten_status: String,
     #[serde(default)]
     pub mcp_status: String,
     #[serde(default)]
@@ -226,6 +287,12 @@ impl Default for ReadinessInput {
             codex_authenticated: false,
             codex_analysis_status: "blocked".into(),
             codex_confirmed_field_count: 0,
+            ai_provider: crate::models::default_ai_provider(),
+            ai_model: crate::models::default_ai_model(),
+            ai_authenticated: false,
+            ai_analysis_status: "blocked".into(),
+            ai_confirmed_field_count: 0,
+            flatten_status: "not_selected".into(),
             mcp_status: "not_selected".into(),
             mcp_blocking: false,
             wiki_status: "not_selected".into(),
@@ -245,6 +312,16 @@ impl Default for ReadinessInput {
 
 pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
     let mut checks = Vec::new();
+    let ai_provider = if input.ai_provider.trim().is_empty() {
+        "codex"
+    } else {
+        input.ai_provider.trim()
+    };
+    let ai_model = if input.ai_model.trim().is_empty() {
+        "default"
+    } else {
+        input.ai_model.trim()
+    };
     let launcher_required = input.selected_components.iter().any(|component| {
         matches!(
             component.as_str(),
@@ -356,36 +433,98 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         "Selected subagent definitions parse and require fork_context=false.",
         ".codex/agents/",
     );
+    let integration_label = if ai_provider == "codex" {
+        "Codex configuration".to_string()
+    } else {
+        format!("{ai_provider} project integration")
+    };
+    let integration_message = if ai_provider == "codex" {
+        "Project Codex configuration parses and preserves unrelated entries.".to_string()
+    } else {
+        format!("The selected {ai_provider} project profile is recorded without a Codex opener.")
+    };
     add_bool_check(
         &mut checks,
         "codex.config",
-        "Codex configuration",
-        "codex",
-        input.codex_valid,
+        &integration_label,
+        "ai",
+        ai_provider != "codex" || input.codex_valid,
         true,
-        "Project Codex configuration parses and preserves unrelated entries.",
+        &integration_message,
         ".codex/config.toml",
     );
+    let authenticated = if ai_provider == "codex" {
+        input.codex_authenticated
+    } else {
+        input.ai_authenticated
+    };
+    let analysis_status = if ai_provider == "codex" {
+        input.codex_analysis_status.as_str()
+    } else {
+        input.ai_analysis_status.as_str()
+    };
+    let confirmed_field_count = if ai_provider == "codex" {
+        input.codex_confirmed_field_count
+    } else {
+        input.ai_confirmed_field_count
+    };
+    let analysis_passed = analysis_status == "confirmed" && confirmed_field_count > 0;
+    let auth_check_id = if ai_provider == "codex" {
+        "codex.authenticated"
+    } else {
+        "ai.authenticated"
+    };
+    let auth_label = if ai_provider == "codex" {
+        "ChatGPT Codex authentication".to_string()
+    } else {
+        format!("{ai_provider} connection")
+    };
+    let auth_message = if ai_provider == "codex" {
+        "The official Codex App Server reported an authenticated ChatGPT account during setup."
+            .to_string()
+    } else {
+        format!("The {ai_provider} provider connection is available for semantic planning.")
+    };
+    let auth_path = if ai_provider == "codex" {
+        "codex app-server account/read"
+    } else {
+        "OS credential vault or local endpoint"
+    };
     add_bool_check(
         &mut checks,
-        "codex.authenticated",
-        "ChatGPT Codex authentication",
-        "codex",
-        input.codex_authenticated,
+        auth_check_id,
+        &auth_label,
+        "ai",
+        authenticated,
         true,
-        "The official Codex App Server reported an authenticated ChatGPT account during setup.",
-        "codex app-server account/read",
+        &auth_message,
+        auth_path,
     );
-    let analysis_passed =
-        input.codex_analysis_status == "confirmed" && input.codex_confirmed_field_count > 0;
+    let analysis_check_id = if ai_provider == "codex" {
+        "analysis.chatgpt"
+    } else {
+        "analysis.ai"
+    };
+    let analysis_label = if ai_provider == "codex" {
+        "ChatGPT Codex analysis".to_string()
+    } else {
+        format!("{ai_provider} semantic analysis")
+    };
+    let analysis_message = if ai_provider == "codex" {
+        "Required schema-constrained Codex proposals were confirmed before planning.".to_string()
+    } else {
+        format!(
+            "Required schema-constrained {ai_provider} proposals were confirmed before planning."
+        )
+    };
     add_bool_check(
         &mut checks,
-        "analysis.chatgpt",
-        "ChatGPT Codex analysis",
+        analysis_check_id,
+        &analysis_label,
         "analysis",
         analysis_passed,
         true,
-        "Required schema-constrained Codex proposals were confirmed before planning.",
+        &analysis_message,
         ".hoi4-mod-setup/install.lock.json",
     );
     add_status_check(
@@ -397,6 +536,16 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         input.mcp_blocking,
         "MCP state comes from the manifest-declared route; unsupported commands are not run.",
         ".codex/config.toml",
+    );
+    add_status_check(
+        &mut checks,
+        "codex.chat_flatten",
+        "ChatGPT Chat sources",
+        "ai",
+        &input.flatten_status,
+        false,
+        "The optional flattened source folder is checked against its installed hashes.",
+        "chatgpt_project_sources/",
     );
     add_wiki_check(&mut checks, input);
     add_status_check(
@@ -487,8 +636,8 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
     }
     let enabled = blocking_ids.is_empty();
     let mut notes = input.notes.clone();
-    notes.push("Optional workflow status does not block core Codex readiness.".into());
-    let analysis_status = if analysis_passed {
+    notes.push("Optional workflow status does not block core AI readiness.".into());
+    let persisted_analysis_status = if analysis_passed {
         "confirmed"
     } else {
         "block"
@@ -500,20 +649,34 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         project_id: input.project_id.clone(),
         generated_at: Utc::now().to_rfc3339(),
         codex: ReadinessCodexSummary {
-            integration: "codex_app_server".into(),
-            auth_mode: "chatgpt".into(),
-            authenticated_during_setup: input.codex_authenticated,
-            analysis_status: analysis_status.into(),
-            confirmed_field_count: input.codex_confirmed_field_count,
+            provider: ai_provider.into(),
+            model: ai_model.into(),
+            integration: if ai_provider == "codex" {
+                "codex_app_server".into()
+            } else {
+                "provider_api".into()
+            },
+            auth_mode: if ai_provider == "codex" {
+                "chatgpt".into()
+            } else if ai_provider == "local" {
+                "local_endpoint".into()
+            } else {
+                "api_key".into()
+            },
+            authenticated_during_setup: authenticated,
+            analysis_status: persisted_analysis_status.into(),
+            confirmed_field_count,
             no_account_metadata_persisted: true,
             blocking_check_ids: blocking_check_ids.clone(),
         },
         checks,
         summary,
+        core_ready: enabled,
         open_in_codex: OpenInCodex {
-            enabled,
+            enabled: ai_provider == "codex" && enabled,
             blocking_check_ids,
-            command_preview: enabled.then(|| format!("codex --cd \"{}\"", input.project_root)),
+            command_preview: (ai_provider == "codex" && enabled)
+                .then(|| format!("codex --cd \"{}\"", input.project_root)),
         },
         notes,
     }
@@ -826,7 +989,7 @@ fn add_workflow_3d_check(checks: &mut Vec<ReadinessCheck>, status: &str) {
 }
 
 pub fn core_ready(report: &ReadinessReport) -> bool {
-    report.open_in_codex.enabled
+    report.core_ready
 }
 
 pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessInput, AppError> {
@@ -923,6 +1086,12 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
             component.id == "mcp.hoi4_agent_tools" && mcp_component_is_selected(&component.state)
         })
     });
+    let mcp_planned_unavailable = lock.as_ref().is_some_and(|lock| {
+        lock.components.iter().any(|component| {
+            component.id == "mcp.hoi4_agent_tools"
+                && component.validation.as_deref() == Some("planned_unavailable")
+        })
+    });
     let mcp_declared = codex_text.as_deref().is_some_and(|text| {
         text.contains("[mcp_servers.hoi4_agent_tools]")
             && text.contains("command = \"hoi4-agent-tools.cmd\"")
@@ -933,12 +1102,10 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         "not_selected".into()
     } else if !mcp_declared {
         "block".into()
+    } else if on_windows && mcp_planned_unavailable {
+        "planned_unavailable".into()
     } else if on_windows {
-        if mcp_command_available() {
-            "health_not_run".into()
-        } else {
-            "block".into()
-        }
+        "health_not_run".into()
     } else {
         "unsupported_platform".into()
     };
@@ -957,9 +1124,9 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         vec!["paradox_wiki/".into()]
     };
     let wiki_metadata_valid = !wiki_selected
-        || !lock
-            .as_ref()
-            .is_some_and(|lock| lock.wiki_required_pages.is_empty());
+        || lock.as_ref().is_some_and(|lock| {
+            !lock.wiki_required_pages.is_empty() && lock.wiki_metadata.is_some()
+        });
     let wiki_status = if !wiki_selected {
         "not_selected".into()
     } else if project_root.join("paradox_wiki").is_dir()
@@ -1001,9 +1168,19 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         })
         .unwrap_or_else(|| ("not_selected".into(), false));
     let codex_analysis = lock.as_ref().and_then(|lock| lock.codex_analysis.as_ref());
-    let codex_authenticated = codex_analysis
+    let ai_provider = lock
+        .as_ref()
+        .map(|lock| lock.ai_provider.clone())
+        .filter(|provider| !provider.trim().is_empty())
+        .unwrap_or_else(|| "codex".into());
+    let ai_model = lock
+        .as_ref()
+        .map(|lock| lock.ai_model.clone())
+        .filter(|model| !model.trim().is_empty())
+        .unwrap_or_else(|| "default".into());
+    let ai_authenticated = codex_analysis
         .is_some_and(|record| crate::codex::validate_confirmed_record(record).is_ok());
-    let codex_analysis_status = if codex_authenticated {
+    let ai_analysis_status = if ai_authenticated {
         "confirmed"
     } else {
         "blocked"
@@ -1014,12 +1191,13 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
     let dependency_status = if lock.as_ref().is_some_and(|lock| {
         lock.components
             .iter()
-            .all(|component| component.validation.as_deref() == Some("pass"))
+            .all(component_dependency_is_satisfied)
     }) {
         "pass"
     } else {
         "block"
     };
+    let mcp_blocking = on_windows && mcp_selected && mcp_status != "planned_unavailable";
     Ok(ReadinessInput {
         project_id: project_id.into(),
         project_root: project_root.display().to_string(),
@@ -1036,11 +1214,24 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         skills_valid: valid_skill_tree(project_root),
         subagents_valid: valid_subagent_tree(project_root),
         codex_valid,
-        codex_authenticated,
-        codex_analysis_status: codex_analysis_status.into(),
+        codex_authenticated: ai_provider == "codex" && ai_authenticated,
+        codex_analysis_status: if ai_provider == "codex" {
+            ai_analysis_status.into()
+        } else {
+            "blocked".into()
+        },
         codex_confirmed_field_count,
+        ai_provider,
+        ai_model,
+        ai_authenticated,
+        ai_analysis_status: ai_analysis_status.into(),
+        ai_confirmed_field_count: codex_confirmed_field_count,
+        flatten_status: lock
+            .as_ref()
+            .map(|lock| flattened_lock_status(project_root, lock))
+            .unwrap_or_else(|| "not_selected".into()),
         mcp_status,
-        mcp_blocking: on_windows && mcp_selected,
+        mcp_blocking,
         wiki_status,
         wiki_required_pages: wiki_pages,
         git_status,
@@ -1149,6 +1340,20 @@ mod tests {
         assert!(!mcp_component_is_selected("not_selected"));
         assert!(!mcp_component_is_selected("unsupported_platform"));
         assert!(mcp_component_is_selected("installed"));
+        assert!(component_dependency_is_satisfied(&LockComponent {
+            id: "mcp.hoi4_agent_tools".into(),
+            version: None,
+            state: "installed".into(),
+            source_revision: None,
+            validation: Some("planned_unavailable".into()),
+        }));
+        assert!(!component_dependency_is_satisfied(&LockComponent {
+            id: "core.skills".into(),
+            version: None,
+            state: "installed".into(),
+            source_revision: None,
+            validation: Some("planned_unavailable".into()),
+        }));
     }
 
     #[test]

@@ -250,6 +250,7 @@ fn run_git_capture(root: &Path, args: &[&str]) -> Result<ProcessResult, AppError
     let executable = find_git_executable()?;
     let spec = ProcessSpec {
         executable: executable.clone(),
+        executable_sha256: Some(crate::security::sha256_file(&executable)?),
         args: args.iter().map(|value| (*value).to_string()).collect(),
         cwd: Some(root.to_path_buf()),
         platform: Platform::current(),
@@ -264,6 +265,7 @@ fn run_git_read_only(root: &Path, args: &[&str]) -> Result<ProcessResult, AppErr
     let executable = find_git_executable()?;
     let spec = ProcessSpec {
         executable: executable.clone(),
+        executable_sha256: Some(crate::security::sha256_file(&executable)?),
         args: args.iter().map(|value| (*value).to_string()).collect(),
         cwd: Some(root.to_path_buf()),
         platform: Platform::current(),

@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
+use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 /// Normalizes a manifest or project-relative path without following links.
@@ -98,7 +99,10 @@ pub fn is_reserved_windows_name(value: &str) -> bool {
 }
 
 pub fn canonical_relative_key(path: &str) -> Result<String, AppError> {
-    Ok(normalize_relative_path(path)?.to_lowercase())
+    Ok(normalize_relative_path(path)?
+        .nfc()
+        .collect::<String>()
+        .to_lowercase())
 }
 
 pub fn safe_join(root: &Path, relative: &str) -> Result<PathBuf, AppError> {
@@ -407,6 +411,13 @@ pub fn redact_secrets(value: &str, known_secrets: &[String]) -> String {
         Regex::new(r"(?i)(api[_-]?key\s*[=:]\s*)[^\s,;&]+"),
         Regex::new(r"(?i)(meshy_api_key\s*[=:]\s*)[^\s,;&]+"),
         Regex::new(r"\bmsy_[A-Za-z0-9_-]{8,}\b"),
+        // Common hosted-provider key shapes. These are intentionally bounded
+        // to high-signal prefixes so ordinary model IDs and endpoint names do
+        // not become credentials by guesswork.
+        Regex::new(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b"),
+        Regex::new(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b"),
+        Regex::new(r"\bAIza[A-Za-z0-9_-]{20,}\b"),
+        Regex::new(r"\bxai-[A-Za-z0-9_-]{20,}\b"),
     ];
     for pattern in patterns.into_iter().flatten() {
         redacted = pattern
@@ -543,6 +554,32 @@ mod tests {
         assert!(!output.contains("abc123"));
         assert!(!output.contains("apiKeySuperSecretValue"));
         assert!(output.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn redacts_supported_hosted_provider_key_shapes() {
+        let keys = [
+            format!("{}{}", "sk-ant-", "123456789012345678901234"),
+            format!("{}{}", "sk-proj-", "123456789012345678901234"),
+            format!("{}{}", "AIza", "123456789012345678901234"),
+            format!("{}{}", "xai-", "123456789012345678901234"),
+        ];
+        let output = redact_secrets(&keys.join(" "), &[]);
+        for key in &keys {
+            assert!(!output.contains(key));
+        }
+        assert_eq!(output.matches("[REDACTED]").count(), 4);
+    }
+
+    #[test]
+    fn canonical_keys_normalize_unicode_before_case_collision_checks() {
+        let composed = "localé.txt";
+        let decomposed = "locale\u{301}.txt";
+        assert_ne!(composed, decomposed);
+        assert_eq!(
+            canonical_relative_key(composed).unwrap(),
+            canonical_relative_key(decomposed).unwrap()
+        );
     }
 
     proptest! {

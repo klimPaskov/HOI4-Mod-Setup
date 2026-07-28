@@ -59,7 +59,7 @@ when using PowerShell:
 ```powershell
 cmd.exe /d /s /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && cargo fmt --all -- --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features'
 cargo check --manifest-path fuzz/Cargo.toml --bins
-$env:HOI4_MOD_SETUP_TAURI="1"; $env:HOI4_MOD_SETUP_BUNDLE="msi"; pnpm release:build
+$env:HOI4_MOD_SETUP_TAURI="1"; $env:HOI4_MOD_SETUP_BUNDLE="nsis"; pnpm release:build
 pnpm release:verify
 pnpm desktop:e2e
 ```

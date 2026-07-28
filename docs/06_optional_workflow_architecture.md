@@ -38,11 +38,11 @@ Every optional workflow provides:
 
 Optional checks use `blocking: false` for the core readiness gate. A selected workflow can still fail its own Ready state. The final report separates:
 
-- core ready for Codex
+- core ready for the selected AI provider
 - 3D workflow state
 - LoRA and ComfyUI state
 
-This prevents a missing provider key from blocking normal Codex use and prevents an incomplete workflow from looking ready.
+This prevents a missing optional workflow key from blocking normal provider use and prevents an incomplete workflow from looking ready. A missing selected-provider configuration still blocks semantic planning; Codex-only controls remain hidden for other providers.
 
 ## Dependencies
 

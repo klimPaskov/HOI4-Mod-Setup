@@ -162,3 +162,17 @@ on update, dependency-closure selection, source size/platform provenance in
 plans and locks, bounded expected-size fetching, and schema/example coverage.
 The upstream publication drift and the current Windows linker/SDK limitation
 remain explicit blockers rather than being treated as solved by self-hashing.
+
+## Parent remediation addendum, 2026-07-28
+
+The checked-in workspace manifest is now generated for the supplied live source
+revision `27128a7b311d728a959afff7238a9aeeb9987f2b` and has SHA-256
+`cddb7ece7235d033888d85508455c255ffe320f0f28bc924999e8f4ddd1c19b5`.
+The current manifest marks `mcp.hoi4_agent_tools` optional and Windows-only.
+`resolve_platform_support` therefore reports it as `unsupported_platform` on
+macOS, while the platform-neutral core components remain supported and no
+required component is blocked. The regression
+`source::tests::core_profile_keeps_windows_only_mcp_nonblocking_on_macos`
+locks this contract. The earlier SM-005 finding is closed; the other findings
+remain historical evidence or external publication/release work unless a
+later remediation addendum says otherwise.

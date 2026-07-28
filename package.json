@@ -2,6 +2,7 @@
   "name": "hoi4-mod-setup",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "Windows and macOS desktop wizard for preparing HOI4 mods for agentic development in Codex.",
   "type": "module",
   "packageManager": "pnpm@11.9.0",
@@ -17,7 +18,9 @@
     "validate": "python scripts/validate_repository_templates.py",
     "validate:secrets": "python scripts/check_committed_secrets.py",
     "release:build": "node scripts/release_build.mjs",
+    "release:prepare": "node scripts/prepare_release_assets.mjs",
     "release:verify": "node scripts/release_verify.mjs",
+    "release:notices": "node scripts/generate_third_party_notices.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

@@ -12,13 +12,14 @@ permissions:
 jobs:
   build:
     name: Build ${{ matrix.platform }}
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: windows-x64
             os: windows-latest
-            bundle: msi
+            bundle: nsis
           - platform: macos-arm64
             os: macos-14
             bundle: dmg
@@ -26,6 +27,7 @@ jobs:
             os: macos-13
             bundle: dmg
     runs-on: ${{ matrix.os }}
+    environment: release
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -49,10 +51,75 @@ jobs:
           corepack enable
           pnpm install --frozen-lockfile
           python -m pip install --disable-pip-version-check "jsonschema==4.25.1" "PyYAML==6.0.3"
+      - name: Import Windows signing certificate
+        if: matrix.platform == 'windows-x64'
+        shell: pwsh
+        env:
+          HOI4_WINDOWS_CERTIFICATE: ${{ secrets.HOI4_MOD_SETUP_WINDOWS_CERTIFICATE }}
+          HOI4_WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.HOI4_MOD_SETUP_WINDOWS_CERTIFICATE_PASSWORD }}
+          HOI4_MOD_SETUP_WINDOWS_SIGNER: ${{ vars.HOI4_MOD_SETUP_WINDOWS_SIGNER }}
+          HOI4_MOD_SETUP_WINDOWS_TIMESTAMP_URL: ${{ vars.HOI4_MOD_SETUP_WINDOWS_TIMESTAMP_URL }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:HOI4_WINDOWS_CERTIFICATE) -or [string]::IsNullOrWhiteSpace($env:HOI4_WINDOWS_CERTIFICATE_PASSWORD)) { throw "Windows signing certificate secrets are not configured" }
+          if ([string]::IsNullOrWhiteSpace($env:HOI4_MOD_SETUP_WINDOWS_SIGNER) -or [string]::IsNullOrWhiteSpace($env:HOI4_MOD_SETUP_WINDOWS_TIMESTAMP_URL)) { throw "Windows signing identity and timestamp URL variables are not configured" }
+          if ($env:HOI4_MOD_SETUP_WINDOWS_SIGNER.Contains("`n") -or $env:HOI4_MOD_SETUP_WINDOWS_SIGNER.Contains("`r") -or $env:HOI4_MOD_SETUP_WINDOWS_TIMESTAMP_URL.Contains("`n") -or $env:HOI4_MOD_SETUP_WINDOWS_TIMESTAMP_URL.Contains("`r")) { throw "Windows signing configuration contains a newline" }
+          $signingRoot = Join-Path $env:RUNNER_TEMP "hoi4-mod-setup-signing"
+          New-Item -ItemType Directory -Force -Path $signingRoot | Out-Null
+          "HOI4_MOD_SETUP_WINDOWS_SIGNING_ROOT=$signingRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          @(Get-ChildItem -Path Cert:\CurrentUser\My | ForEach-Object Thumbprint) | Set-Content -LiteralPath (Join-Path $signingRoot "preexisting-thumbprints.txt") -Encoding ascii
+          $pfxPath = Join-Path $signingRoot "certificate.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:HOI4_WINDOWS_CERTIFICATE))
+          $certificates = @(Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password (ConvertTo-SecureString -String $env:HOI4_WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText))
+          $certificate = @($certificates | Where-Object { $_.HasPrivateKey -and $_.Subject -eq $env:HOI4_MOD_SETUP_WINDOWS_SIGNER })
+          if ($certificate.Count -ne 1 -or [string]::IsNullOrWhiteSpace($certificate[0].Thumbprint)) { throw "Windows signing certificate import did not produce exactly one matching private-key certificate" }
+          $configPath = Join-Path $signingRoot "tauri.release.conf.json"
+          $config = [ordered]@{ bundle = [ordered]@{ windows = [ordered]@{ certificateThumbprint = $certificate[0].Thumbprint; digestAlgorithm = "sha256"; timestampUrl = $env:HOI4_MOD_SETUP_WINDOWS_TIMESTAMP_URL } } }
+          $config | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $configPath -Encoding utf8NoBOM
+          "HOI4_MOD_SETUP_TAURI_CONFIG=$configPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "HOI4_MOD_SETUP_SIGNING_CONFIGURED=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "HOI4_MOD_SETUP_WINDOWS_SIGNER=$env:HOI4_MOD_SETUP_WINDOWS_SIGNER" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "HOI4_MOD_SETUP_WINDOWS_CERT_THUMBPRINT=$($certificate[0].Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Import macOS signing certificate
+        if: startsWith(matrix.platform, 'macos-')
+        shell: bash
+        env:
+          HOI4_APPLE_CERTIFICATE: ${{ secrets.HOI4_MOD_SETUP_APPLE_CERTIFICATE }}
+          HOI4_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.HOI4_MOD_SETUP_APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.HOI4_MOD_SETUP_APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.HOI4_MOD_SETUP_APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.HOI4_MOD_SETUP_MACOS_TEAM_ID }}
+          HOI4_MOD_SETUP_MACOS_SIGNING_IDENTITY: ${{ vars.HOI4_MOD_SETUP_MACOS_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          : "${HOI4_APPLE_CERTIFICATE:?macOS signing certificate secret is not configured}"
+          : "${HOI4_APPLE_CERTIFICATE_PASSWORD:?macOS certificate password secret is not configured}"
+          : "${APPLE_ID:?Apple ID secret is not configured}"
+          : "${APPLE_PASSWORD:?Apple app-specific password secret is not configured}"
+          : "${APPLE_TEAM_ID:?Apple team ID variable is not configured}"
+          : "${HOI4_MOD_SETUP_MACOS_SIGNING_IDENTITY:?macOS signing identity variable is not configured}"
+          if [[ "$HOI4_MOD_SETUP_MACOS_SIGNING_IDENTITY" == *$'\n'* || "$HOI4_MOD_SETUP_MACOS_SIGNING_IDENTITY" == *$'\r'* ]]; then echo "macOS signing identity contains a newline" >&2; exit 1; fi
+          signing_root="${RUNNER_TEMP}/hoi4-mod-setup-signing"
+          keychain_path="${signing_root}/build.keychain-db"
+          mkdir -p "$signing_root"
+          printf 'HOI4_MOD_SETUP_MACOS_SIGNING_ROOT=%s\nHOI4_MOD_SETUP_MACOS_KEYCHAIN_PATH=%s\n' "$signing_root" "$keychain_path" >> "$GITHUB_ENV"
+          security default-keychain | tr -d '"' > "${signing_root}/previous-default-keychain.txt"
+          keychain_password="$(openssl rand -hex 32)"
+          printf '%s' "$HOI4_APPLE_CERTIFICATE" | base64 --decode > "${signing_root}/certificate.p12"
+          openssl pkcs12 -in "${signing_root}/certificate.p12" -passin env:HOI4_APPLE_CERTIFICATE_PASSWORD -nodes -out "${signing_root}/identity.pem"
+          openssl pkcs12 -export -in "${signing_root}/identity.pem" -out "${signing_root}/unlocked.p12" -passout pass:
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security default-keychain -s "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -t 3600 -u "$keychain_path"
+          security import "${signing_root}/unlocked.p12" -k "$keychain_path" -P "" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path"
+          security find-identity -v -p codesigning "$keychain_path" | grep -F "$HOI4_MOD_SETUP_MACOS_SIGNING_IDENTITY" >/dev/null
+          printf 'HOI4_MOD_SETUP_SIGNING_CONFIGURED=1\n' >> "$GITHUB_ENV"
+          printf 'HOI4_MOD_SETUP_MACOS_SIGNING_IDENTITY=%s\n' "$HOI4_MOD_SETUP_MACOS_SIGNING_IDENTITY" >> "$GITHUB_ENV"
       - name: Validate release tag
-        if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
+          [[ "$GITHUB_REF" == "refs/tags/$GITHUB_REF_NAME" ]]
           [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
       - name: Run release gates
         shell: bash
@@ -65,22 +132,72 @@ jobs:
           python scripts/validate_repository_templates.py
           python scripts/check_committed_secrets.py
           cargo fmt --all -- --check
-      - name: Build Tauri release artifacts
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-features --all-targets -- -D warnings
+          cargo test --manifest-path src-tauri/Cargo.toml --all-features -- --test-threads=1
+          cargo check --manifest-path fuzz/Cargo.toml --bins
+      - name: Build Windows Tauri release artifacts
+        if: matrix.platform == 'windows-x64'
         shell: bash
         env:
           HOI4_MOD_SETUP_BUNDLE: ${{ matrix.bundle }}
           HOI4_MOD_SETUP_RELEASE: "1"
           HOI4_MOD_SETUP_TAURI: "1"
         run: pnpm release:build
+      - name: Build macOS Tauri release artifacts
+        if: startsWith(matrix.platform, 'macos-')
+        shell: bash
+        env:
+          HOI4_MOD_SETUP_BUNDLE: ${{ matrix.bundle }}
+          HOI4_MOD_SETUP_RELEASE: "1"
+          HOI4_MOD_SETUP_TAURI: "1"
+          APPLE_CERTIFICATE: ${{ secrets.HOI4_MOD_SETUP_APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.HOI4_MOD_SETUP_APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.HOI4_MOD_SETUP_APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.HOI4_MOD_SETUP_APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.HOI4_MOD_SETUP_MACOS_TEAM_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.HOI4_MOD_SETUP_MACOS_SIGNING_IDENTITY }}
+        run: pnpm release:build
       - name: Verify release artifacts
         shell: bash
         run: pnpm release:verify
         env:
           HOI4_MOD_SETUP_REQUIRE_TAURI: "1"
+          HOI4_MOD_SETUP_REQUIRE_RELEASE_IDENTITY: "1"
+          HOI4_MOD_SETUP_REQUIRE_SIGNING: "1"
       - name: Launch native application smoke test
         shell: bash
         run: pnpm desktop:e2e
+      - name: Remove Windows signing material
+        if: always() && matrix.platform == 'windows-x64'
+        shell: pwsh
+        env:
+          HOI4_MOD_SETUP_WINDOWS_SIGNER: ${{ vars.HOI4_MOD_SETUP_WINDOWS_SIGNER }}
+        run: |
+          $root = $env:HOI4_MOD_SETUP_WINDOWS_SIGNING_ROOT
+          $previousPath = if ($root) { Join-Path $root "preexisting-thumbprints.txt" } else { $null }
+          $previous = if ($previousPath -and (Test-Path -LiteralPath $previousPath)) { @(Get-Content -LiteralPath $previousPath) } else { @() }
+          $thumbprints = @()
+          if ($env:HOI4_MOD_SETUP_WINDOWS_CERT_THUMBPRINT) { $thumbprints += $env:HOI4_MOD_SETUP_WINDOWS_CERT_THUMBPRINT }
+          if ($env:HOI4_MOD_SETUP_WINDOWS_SIGNER) {
+            $thumbprints += @(Get-ChildItem -Path Cert:\CurrentUser\My | Where-Object { $_.Subject -eq $env:HOI4_MOD_SETUP_WINDOWS_SIGNER -and $_.HasPrivateKey -and $previous -notcontains $_.Thumbprint } | ForEach-Object Thumbprint)
+          }
+          foreach ($thumbprint in ($thumbprints | Sort-Object -Unique)) { Remove-Item -LiteralPath "Cert:\CurrentUser\My\$thumbprint" -Force -ErrorAction SilentlyContinue }
+          if ($root) { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+      - name: Remove macOS signing material
+        if: always() && startsWith(matrix.platform, 'macos-')
+        shell: bash
+        run: |
+          set +e
+          keychain_path="${HOI4_MOD_SETUP_MACOS_KEYCHAIN_PATH:-}"
+          previous_default=""
+          if [[ -n "${HOI4_MOD_SETUP_MACOS_SIGNING_ROOT:-}" && -f "$HOI4_MOD_SETUP_MACOS_SIGNING_ROOT/previous-default-keychain.txt" ]]; then
+            previous_default="$(cat "$HOI4_MOD_SETUP_MACOS_SIGNING_ROOT/previous-default-keychain.txt")"
+          fi
+          if [[ -n "$keychain_path" ]]; then security delete-keychain "$keychain_path" >/dev/null 2>&1 || true; fi
+          if [[ -n "$previous_default" ]]; then security default-keychain -s "$previous_default" >/dev/null 2>&1 || true; fi
+          if [[ -n "${HOI4_MOD_SETUP_MACOS_SIGNING_ROOT:-}" ]]; then rm -rf "$HOI4_MOD_SETUP_MACOS_SIGNING_ROOT"; fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ success() }}
         with:
           name: hoi4-mod-setup-${{ matrix.platform }}
           path: dist/release/**
@@ -98,11 +215,20 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: release-artifacts
+      - name: Curate and reverify publication assets
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: node scripts/prepare_release_assets.mjs release-artifacts publication-assets
       - name: Create draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mapfile -d '' assets < <(find release-artifacts -type f -print0)
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "A release already exists for ${GITHUB_REF_NAME}; published tags are never reused" >&2
+            exit 1
+          fi
+          mapfile -d '' assets < <(find publication-assets -maxdepth 1 -type f -print0 | sort -z)
           if (( ${#assets[@]} == 0 )); then
             echo "No release assets were downloaded" >&2
             exit 1
@@ -113,3 +239,4 @@ jobs:
             --verify-tag \
             --title "HOI4 Mod Setup ${GITHUB_REF_NAME}" \
             --generate-notes
+          [[ "$(gh release view "${GITHUB_REF_NAME}" --json isDraft --jq '.isDraft')" == "true" ]]

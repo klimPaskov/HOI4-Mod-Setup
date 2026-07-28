@@ -75,14 +75,27 @@ Persist the journal before and after irreversible boundaries. Use atomic file re
 - Persist an `applying` operation intent before replacing or deleting a live destination. Use the platform atomic replace route where available and verify the expected incoming hash, not only an observed self-hash.
 - Bind UI apply to a core-owned reviewed plan session and prepared bytes; do not accept a renderer-edited plan as authoritative.
 - Track source hash separately from result hash: generated files, structured merges, and optional MCP TOML adaptation may have a verified incoming source hash and a different deterministic installed hash.
-- Carry the resolved manifest's exact `wiki.required_pages` list in both plan and lock. Readiness must use that list; if a legacy lock lacks it, keep the lock readable but report source/wiki evidence incomplete until update or repair refreshes the lock.
+- Treat provider/model/profile selection and the Codex-only flattened ChatGPT-source export as reviewed plan inputs. Flattening is a generated, root-contained operation: direct skill `SKILL.md` files become `<skill>.md`, required adapted `AGENTS.md`, README, subagents, and user-approved extras are included, and collisions/links/secrets are rejected before staging.
+- When a non-flattened conflict changes the accepted source set, rebuild the flat
+  view from accepted bytes only. Preserve an already reviewed flat keep/replace/
+  rename decision only when its incoming hash and local precondition still
+  match; otherwise recreate the conflict and require review again.
+- Carry the resolved manifest's exact `wiki.required_pages` list and its
+  snapshot/media/provenance/license metadata in both plan and lock. Readiness
+  must use that exact evidence; if a legacy lock lacks either the page list or
+  metadata, keep the lock readable but report source/wiki evidence incomplete
+  until update or repair refreshes the lock.
 - External launcher descriptors are represented by an explicit absolute destination plus `external=true`; lock and readiness code must validate that path separately from project-relative destinations.
 - Manifest-declared repository scripts are surfaced as high-risk external actions in the dry run and remain approval-bound. Their command source and platform are copied from the verified manifest; a successful project transaction must not imply that an optional external action or provider health check passed.
-- When the MCP component is selected, transaction readiness must use the
-  reviewed manifest external action to perform the bounded initialize and
-  read-only `tools/list` probe after apply; failure blocks the success lock.
-  Installed-project refresh performs the same lock/config/source binding, while
-  deselected and unsupported-platform MCP states remain non-blocking.
+- When the MCP component is selected and the reviewed manifest supplies
+  immutable executable, command-interpreter, and runtime identity evidence,
+  transaction readiness must use the reviewed external action to perform the
+  bounded initialize and read-only `tools/list` probe after apply; a verified
+  route failure blocks the success lock. When any identity evidence is absent, the action is
+  `planned_unavailable`, no same-named `PATH` command is run, and the optional
+  state remains non-blocking. Installed-project refresh performs the same
+  lock/config/source binding, while deselected and unsupported-platform MCP
+  states remain non-blocking.
 - External-action details in the plan are secret-free and include argument arrays, cwd, environment names, declared writes, network/privilege evidence, and rollback boundary. `not_declared_by_source` is an honest boundary, not permission to assume rollback.
 - A configured Git remote requires `git_remote_approved` in the core-owned
   reviewed plan. Final dry-run approval may set that flag for the local remote
@@ -102,11 +115,15 @@ Persist the journal before and after irreversible boundaries. Use atomic file re
 
 On startup, detect incomplete journals. Offer resume, rollback, or discard staging only when the recorded state makes the action safe.
 
-Resume must compare the recorded plan hash, operation preconditions, journal expectations, staged-file hashes, and observed filesystem state. `resume_transaction` replays the full runner only from a pre-apply interrupted checkpoint; once project apply has started it refuses resume and requires rollback or manual review. Never trust the last journal line alone.
+Resume must compare the recorded plan hash, operation preconditions, journal expectations, staged-file hashes, the exact predecessor-lock existence/hash state, and observed filesystem state. `resume_transaction` replays the full runner only from a pre-apply interrupted checkpoint; once project apply has started it refuses resume and requires rollback or manual review. Never trust the last journal line alone.
 
-The final lock write has a separate `finalizing` journal state. If the process
-stops after the lock and rollback record are durable, resume verifies both
-artifacts and only completes the journal; it never replays file operations.
+The final lock write has a separate `finalizing` journal state. The journal
+records the exact serialized success-lock hash before the rollback record is
+written. If the process stops after the lock and rollback record are durable,
+resume verifies the exact lock bytes, rollback-record path/checksum,
+transaction/project binding, live operation observations, and stage checkpoint
+before completing the journal; it never replays file operations.
+`staged_sha256` is separate from the observed live `after_sha256`.
 Rollback uses `rolling_back` plus `rollback_applying` per-operation
 checkpoints, verifies an already-restored destination before retrying, and
 leaves rollback enabled when an error requires reinspection. Before restoring
@@ -129,9 +146,9 @@ Discard staging removes only the exact transaction UUID staging directory after 
 
 Rollback restores original content and metadata within supported limits. It must not delete user work created after the transaction without review.
 
-When a prior installation lock exists, copy and hash it into the transaction backup before mutation. A maintenance lock refresh carries forward skipped files, ownership, merge choices, local modifications, optional states, and rollback history. Rollback restores the verified predecessor lock; it removes a current lock only when no predecessor exists and the current lock contains this transaction's rollback record. Explicit `skip`, `external`, and `rollback: none` operations are rollback no-ops and must never delete the user's preserved destination.
+When a prior installation lock exists, copy and hash it into the transaction backup before mutation. A maintenance lock refresh carries forward skipped files, ownership, merge choices, local modifications, optional states, and rollback history. Rollback validates the current lock against the exact recorded result or already-restored predecessor before touching project files, restores the verified predecessor lock, and removes a current lock only when no predecessor exists. Explicit `skip`, `external`, and `rollback: none` operations are rollback no-ops and must never delete the user's preserved destination.
 
-Opaque OS-vault credential references are carried separately from secret values. A lock refresh preserves the prior Meshy reference when no new reference is supplied; managed removal does not delete the OS credential implicitly.
+Opaque OS-vault credential references are carried separately from secret values. A lock refresh may preserve the non-secret Meshy reference only in the selected `workflow.3d` entry; provider-key references remain core-owned and outside project state, plans, and locks. Managed removal clears optional-workflow references without deleting an OS credential implicitly. A flatten preference is copied only when the selected provider is Codex.
 
 ## Maintenance
 
@@ -140,15 +157,15 @@ Opaque OS-vault credential references are carried separately from secret values.
 - Reinstall preserves local modifications through the same conflict engine.
 - Managed removal deletes only owned, unmodified content by default.
 - A credential removal is a separate explicit choice.
-- Optional workflow health is separate from the core lock gate. A stored Meshy reference may be carried forward, but a workflow is `incomplete` or `selected_pending` until its approved, manifest-derived health route reports success; missing optional credentials never block the core readiness gate.
+- Optional workflow health is separate from the core lock gate. A stored Meshy reference may be carried forward only for `workflow.3d`, but a workflow is `incomplete` or `selected_pending` until its approved, manifest-derived health route reports success; missing optional credentials never block the core readiness gate.
 - Reinstall and repair must re-read the locked revision and preserve modified files for review. Managed removal must not delete merged ownership wholesale. The current planners are `repair_operations`, `reinstall_operations`, `update_operations`, and `managed_removal_operations` in `src-tauri/src/transaction.rs`.
 - Update preserves the lock's latest/pinned source mode and filters generated artifact IDs out of manifest component expansion. Descriptor, external launcher, and thumbnail artifacts are planned independently for both new and existing projects.
 - Repair and reinstall do not reconstruct a merged file from a raw source blob without a verified merge base; missing or changed merged files become reverse-merge review entries.
-- Update planning requires a fresh confirmed Codex semantic reanalysis record from the current core session. The UI must first complete a bounded read-only scan, show the approved evidence manifest, run the existing-project schema-constrained turn, and pass only the core-confirmed record into `build_maintenance_plan`. The record is bound to the canonical project root, latest scan ID, and evidence-manifest SHA-256; repair, reinstall, and managed removal may continue from the validated locked analysis according to their signed-in/recovery rules.
+- Update planning requires a fresh confirmed selected-provider semantic reanalysis record from the current core session. The UI must first complete a bounded read-only scan, show the approved evidence manifest, run the existing-project common-schema turn, and pass only the core-confirmed record into `build_maintenance_plan`. The record is bound to the canonical project root, latest scan ID, evidence-manifest SHA-256, provider, model, and optimization profile; repair, reinstall, and managed removal may continue from the validated locked analysis according to their authenticated/recovery rules.
 
 ## Lock and rollback evidence
 
-Read journals through `migrations::migrate_journal`. The journal records action, component, location scope, source/result/backup hashes, expected and observed hashes, whether a destination existed after apply, and per-operation intent. Rollback must refuse ambiguous later user work, restore verified backups and lock state, and persist both the parent and child rollback records after the state transition. `rollback_source_path` identifies the parent backup that supplies restored bytes; the child `backup_path` identifies the inverse backup; completed child journals also record the lock state expected before an inverse action.
+Read journals through `migrations::migrate_journal`. The journal records action, component, location scope, source path/size, reviewed resolution, source/result/backup hashes, staged and observed live hashes, expected and observed existence, and per-operation intent. Rollback must refuse ambiguous later user work, restore verified backups and lock state, and persist both the parent and child rollback records after the state transition. `rollback_source_path` identifies the parent backup that supplies restored bytes; the child `backup_path` identifies the inverse backup; completed child journals also record the lock state expected before an inverse action.
 
 ## Fault testing
 

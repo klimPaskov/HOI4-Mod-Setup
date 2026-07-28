@@ -39,18 +39,30 @@ Never serialize a secret to project files, lock files, plans, manifests, logs, c
 
 Inject a secret only into an allowlisted process environment for the lifetime of that process. Redact known values and credential-shaped output before storage or display.
 
-Version 1 has one supported secret route: the Meshy value lives in the OS
+Version 1 has two distinct secret routes. The Meshy value lives in the OS
 credential vault under an opaque reference and may be injected only as
 `MESHY_API_KEY`. Reject other secret environment declarations and reject
 credential-shaped keys or values before serializing plans, locks, journals,
 diagnostics, or generated artifacts.
 The typed plan and generated project state may carry only the opaque
-`credential://` reference returned by the OS vault adapter, and only for the
-manifest-declared `MESHY_API_KEY`; validate the reference shape during
+`credential://meshy_api_key/<uuid>` reference returned by the OS vault adapter,
+only when `workflow.3d` is selected; validate the exact reference shape during
 migration and never accept a renderer-supplied secret or arbitrary provider.
 The explicit delete route accepts only the platform's generated Meshy UUID
 reference and clears the in-memory reference after the vault operation. A
-managed component removal never deletes an OS credential implicitly.
+  managed component removal never deletes an OS credential implicitly.
+Renderer state calls must blank the Meshy password draft before Tauri IPC; only
+the vault-backed opaque reference may enter planning state.
+
+Non-Codex AI provider keys use a provider-keyed opaque vault reference. The
+reference may carry only a non-secret provider scope; the core rejects a
+reference scoped to another provider and rejects legacy unscoped references at
+use time until the user reconnects. Codex keys are never collected: ChatGPT
+authentication and token persistence belong to Codex App Server. Local models
+may use a loopback endpoint without a key. Hosted or
+custom endpoints must pass the core URL policy (HTTPS, no userinfo, query, or
+fragment; loopback HTTP only for the local profile), and requests/responses are
+bounded and schema-validated before any proposal is accepted.
 
 ## Filesystem
 
@@ -58,6 +70,10 @@ managed component removal never deletes an OS credential implicitly.
 - Reject traversal, absolute destination, reserved names, case collisions, and invalid encodings.
 - Enforce total path, segment, and depth limits before filesystem access.
 - Defend against symlink and junction swaps between validation and apply.
+- Flattened-source reads walk Unix ancestors through no-follow directory handles
+  and verify the opened Windows file handle's final path remains under the
+  canonical root. Keep adversarial swap tests as release evidence before
+  describing the boundary as race-proof.
 - Use the shared `is_link_metadata` boundary for filesystem metadata; on Windows it treats reparse points/junctions as links, not only `is_symlink()` results.
 - Use safe archive extraction with file count, size, ratio, depth, and path limits.
 - Do not follow project links outside approved roots.
@@ -69,9 +85,14 @@ managed component removal never deletes an OS credential implicitly.
 - Do not build shell strings from user or manifest input.
 - Allowlist executable identity and working roots.
 - Open Codex login URLs only through the HTTPS-validated system-browser command using fixed OS-owned opener paths (`explorer.exe` on Windows or `/usr/bin/open` on macOS); never navigate an arbitrary renderer URL through a shell or PATH shim.
-- Do not accept PATH script shims as the Codex executable route; use one
-  canonical core-owned executable identity for login, analysis, and Open in Codex.
+- Do not treat a regular file found on `PATH` as independent executable trust.
+  Every process identity must be hash-checked immediately before spawn; a
+  manifest route without immutable executable evidence is unavailable. Codex
+  still requires a core-owned or platform-verified executable identity before
+  a production release can claim the login, analysis, or opener boundary.
 - Preview environment variable names, never values.
+- Provider/model, endpoint, network access, and environment names may appear in
+  dry-run evidence; secret values and account metadata may not.
 - Bound runtime, output, network, and expected writes.
 - Do not elevate core setup.
 - Treat tool health output as untrusted and redact it.
@@ -81,18 +102,21 @@ managed component removal never deletes an OS credential implicitly.
 - Readiness must parse installed skill frontmatter and subagent TOML, require
   explicit `fork_context=false`, reject link-containing agent trees, and avoid
   claiming the manifest-declared MCP wrapper is healthy when its PATH entry is
-  a link or junction.
-- MCP readiness must bind the target to the locked manifest/config and use a
-  canonical `cmd.exe` plus wrapper path with a cleared, non-secret environment;
+  a link, junction, or lacks immutable manifest identity evidence.
+- MCP readiness must bind the target to the locked manifest/config, require
+  manifest SHA-256 and size verification for the wrapper, command interpreter,
+  and runtime before resolving PATH, and use a canonical `cmd.exe` plus wrapper
+  path with a cleared, non-secret environment;
   the bounded probe may initialize and list tool metadata but must never call
-  an MCP tool or serialize raw protocol output.
+  an MCP tool or serialize raw protocol output. Missing identity is
+  `planned_unavailable`, not permission to execute a same-named command.
 - Windows JSONL wrapper shutdown must terminate the reviewed process tree with
   the canonical system `taskkill.exe` route so a child Node server cannot
   survive a health timeout or protocol failure.
 - The shared `ProcessSpec` timeout path uses the same canonical Windows
   process-tree termination for credential-bearing external checks; direct
   child kill is only the bounded fallback when the system tool is unavailable.
-- The 3D route may inject `MESHY_API_KEY` only after the installed manifest is re-resolved at the lock revision, the bootstrap target is a hash- and size-verified project file, and the Python executable is canonicalized from the approved PATH. A missing opaque reference must fail without starting the process; macOS must report the current Windows-only route as unsupported.
+- The 3D route may inject `MESHY_API_KEY` only after the installed manifest is re-resolved at the lock revision, the bootstrap target is read through the no-follow core reader, and the Python executable is hash-checked immediately before spawn. Execute a private, hash-verified copy of the bootstrap, remove it after the supervised run, and fail without starting when cleanup or identity verification fails. A missing opaque reference must fail without starting the process; macOS must report the current Windows-only route as unsupported.
 - A 3D health result is cached only as `ready` or `incomplete`, keyed by the canonical project root and a fingerprint of the locked workflow revision, manifest hash, and installed workflow file hashes. The cache stores no credential, command output, or provider response; a lock or Meshy-vault change or process restart invalidates the result and requires a new explicit health run.
 
 ## Source and update trust
@@ -123,15 +147,20 @@ Use read-only default permissions. Grant write permission only to a release job 
 - updater metadata tampering
 - support bundle redaction
 - scoped Meshy injection into an approved child with secret-free stdout/stderr
+- provider-keyed AI credential isolation, endpoint validation, bounded response
+  handling, and no-secret flatten output
 
 ## Update this skill when
 
 Update this skill when credential storage, redaction, path containment, archive rules, process policy, source trust, updater trust, Git safety, GitHub Actions permissions, or security test expectations change.
 
-## ChatGPT authentication rules
+## AI provider and ChatGPT authentication rules
 
 Codex App Server owns ChatGPT OAuth, token persistence, and refresh. The app uses managed browser login and device code only. It never reads Codex auth storage, implements an API-key fallback, accepts externally managed tokens, or persists full account identity, plan, usage, or rate-limit data. Treat approved analysis input as a disclosure surface and test redaction, root boundaries, and support bundles.
 
-Existing-project Codex evidence must be bound to the current core-owned
-read-only scan. Never trust renderer-created excerpts solely because their
-hashes are internally consistent.
+Existing-project provider evidence must be bound to the current core-owned
+read-only scan. The approval store accepts only the exact core-derived
+path/hash pair; renderer-authored excerpts, even with self-consistent hashes,
+are rejected. Flattened reads remain link-aware and leaf-no-follow; do not call
+them race-proof until handle-relative ancestor traversal and adversarial swap
+tests exist on both supported platforms.

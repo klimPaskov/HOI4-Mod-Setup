@@ -2,7 +2,7 @@
 
 ## Product statement
 
-**HOI4 Mod Setup** is a Windows and macOS desktop application that prepares a Hearts of Iron IV mod project for agentic development in Codex. It creates a new launcher-ready mod from a guided brief or imports an existing project through an evidence-backed read-only scan. It installs a selected workflow package from `klimPaskov/Agentic-HOI4-Modding` without cloning the complete source repository. Structural analysis is deterministic. Required Codex semantic analysis uses the user's ChatGPT-managed Codex access and produces reviewable proposals after the deterministic evidence is collected.
+**HOI4 Mod Setup** is a Windows and macOS desktop application that prepares a Hearts of Iron IV mod project for agentic development with a user-selected AI provider. Codex is the default. It creates a new launcher-ready mod from a guided brief or imports an existing project through an evidence-backed read-only scan. It installs a selected workflow package from `klimPaskov/Agentic-HOI4-Modding` without cloning the complete source repository. Structural analysis is deterministic. Required semantic analysis uses the selected provider adapter and produces reviewable proposals after deterministic evidence is collected.
 
 ## Primary outcome
 
@@ -54,11 +54,17 @@ Needs pinned installs, optional 3D support, exact provenance, update and repair,
 11. Deterministic facts and Codex proposals are never presented as the same evidence class.
 12. A new project is not ready until both descriptors and the thumbnail pass validation.
 
-## Codex subscription requirement
+## Planning provider requirement
 
-The user signs in with a ChatGPT account through the official local Codex App Server. The application uses the Codex access and limits attached to that account. It does not request an OpenAI API key and does not switch to API-key billing when the account is unavailable.
+The first setup screen selects Codex, Claude, Kimi, GLM, DeepSeek, a local
+model, or another bounded provider profile. Codex uses the official local Codex
+App Server and ChatGPT-managed browser or device-code authentication. Hosted
+non-Codex profiles use a user-supplied endpoint and an API key stored in the OS
+credential vault. Local models use an explicit loopback HTTP endpoint. The
+application does not invent provider URLs, OAuth routes, package names,
+commands, model names, MCP servers, or platform support.
 
-All semantic fields use Codex:
+All semantic fields use the selected provider profile:
 
 - normalized project description
 - display name proposal
@@ -73,7 +79,13 @@ All semantic fields use Codex:
 
 The deterministic core validates syntax, collisions, paths, hashes, descriptors, PNG files, encodings, Git state, manifest rules, and transaction safety. The user confirms each proposal before rendering.
 
-The core integration is `codex app-server` over stdio JSONL. Authentication uses the App Server managed ChatGPT browser flow with device-code fallback. Codex owns tokens and refresh. No ChatGPT credential or account identity is stored in the target project or installation lock.
+The Codex integration is `codex app-server` over stdio JSONL. Authentication
+uses the App Server managed ChatGPT browser flow with device-code fallback;
+Codex owns tokens and refresh. Non-Codex credentials are read only from the OS
+vault for the scoped provider request. No ChatGPT token, provider key, account
+identity, or credential value is stored in the target project or installation
+lock. All provider responses validate against the same `codex-analysis`
+schema, and Rust remains the authority for deterministic facts and writes.
 
 ## Functional requirements
 
@@ -85,7 +97,8 @@ The welcome screen offers **Create a new mod** and **Import an existing project*
 
 Collect and review:
 
-- ChatGPT sign-in through Codex App Server and required Codex semantic analysis
+- selected provider configuration or ChatGPT sign-in through Codex App Server
+  and required provider semantic analysis
 - natural-language mod description
 - display name
 - stable project ID
@@ -138,25 +151,30 @@ The user selects one root. The scanner detects:
 
 Findings are grouped into reviewable steps and can be accepted, edited, rejected, or deferred when the value is not needed for generation. Deterministic findings remain authoritative for observable facts.
 
-### Required Codex semantic analysis
+### Required provider semantic analysis
 
-A valid ChatGPT-authenticated Codex analysis is required before Create, Import, Update, or Repair can produce an installation plan.
+A valid analysis from the selected provider is required before Create, Import,
+Update, or Repair can produce an installation plan. Codex uses the official
+local App Server and ChatGPT-managed login. Other hosted providers require an
+explicit HTTPS endpoint and OS-vault key; local requires an explicit loopback
+HTTP endpoint. Do not create unverified provider login routes or silently
+switch providers.
 
-- Launch the official local `codex app-server` and use its stdio JSONL transport.
-- Use App Server managed ChatGPT browser login with device-code fallback.
-- Use the Codex access attached to the signed-in ChatGPT account.
-- Do not expose an OpenAI API key field, API-key fallback, provider selector, or external-token mode in the core product.
-- Do not hardcode a model. Use the compatible model selected by Codex configuration and workspace policy.
+- complete the selected provider connection or Codex App Server handshake;
+- use the chosen model and optimization profile;
 - Preview the exact structured findings and text excerpts before each turn.
 - Exclude binaries, secrets, credential stores, Git objects, unapproved paths, and unrelated content.
 - Require output that validates against `schemas/codex-analysis.schema.json`.
-- Use Codex for project identity, description, namespace and prefix proposals, tags, folder profile, AGENTS adaptation, component selection, convention interpretation, and semantic conflict explanations.
+- Use the selected provider for project identity, description, namespace and
+  prefix proposals, tags, folder profile, AGENTS adaptation, component
+  selection, convention interpretation, and semantic conflict explanations.
 - Keep paths, hashes, descriptor validity, PNG validity, encodings, Git state, identifier syntax, collisions, manifest checks, and transaction safety under deterministic Rust ownership.
 - Label values as `Detected`, `Suggested by Codex`, or `Confirmed`.
 - Require deterministic validation and user confirmation before file rendering.
 - Preserve the draft when sign-in, usage, process, or schema validation fails. Start no transaction.
 
-Recovery, rollback, backup inspection, and managed removal remain available while signed out.
+Recovery, rollback, backup inspection, and managed removal remain available
+while signed out or disconnected.
 
 ### Remote source resolution
 
@@ -242,7 +260,7 @@ Support update, repair, reinstall, rollback, managed removal, optional-workflow 
 
 ### Readiness
 
-Check the internal descriptor, external launcher descriptor, external destination, descriptor agreement, thumbnail existence and decoding, selected structure, AGENTS, skills, subagents, Codex, MCP, wiki integrity and page coverage, Git, environment variables, hashes, conflicts, external dependencies, 3D state, and LoRA placeholder state. ChatGPT authentication and confirmed Codex analysis are blocking core checks.
+Check the internal descriptor, external launcher descriptor, external destination, descriptor agreement, thumbnail existence and decoding, selected structure, AGENTS, skills, subagents, selected provider instructions, MCP, wiki integrity and page coverage, Git, environment variables, hashes, conflicts, external dependencies, 3D state, and LoRA placeholder state. Codex authentication or selected-provider configuration and confirmed analysis are blocking core checks.
 
 Open in Codex is enabled only when blocking core checks pass.
 
@@ -316,4 +334,4 @@ Repo-local skills are living implementation memory. A pull request that changes 
 
 ## Core authentication readiness
 
-A setup session is core-ready only when a compatible App Server is initialized, ChatGPT-managed authentication is active, required semantic analysis validates against the current schema, and every required proposal is confirmed. Optional 3D and LoRA workflow states remain independent.
+A setup session is core-ready only when the selected provider is configured (or a compatible Codex App Server is initialized with active ChatGPT-managed authentication), required semantic analysis validates against the current schema, and every required proposal is confirmed. Optional 3D, LoRA, and Codex-only flattened Chat-source states remain independent.

@@ -53,6 +53,18 @@ pub struct CodexAccountStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AiAccountStatus {
+    pub available: bool,
+    pub authenticated: bool,
+    pub provider: String,
+    pub model: String,
+    pub auth_mode: String,
+    pub usage_limited: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CodexLoginStart {
     pub available: bool,
     #[serde(default)]
@@ -94,6 +106,15 @@ pub struct CodexAnalysisRequest {
     pub project_root: Option<String>,
     #[serde(default)]
     pub scan_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiAnalysisRequest {
+    pub provider: String,
+    pub model: String,
+    pub endpoint: String,
+    #[serde(flatten)]
+    pub analysis: CodexAnalysisRequest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -381,7 +402,8 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
         )?;
         let thread_id = thread_id(&thread)?;
         let input_sha256 = analysis_input_sha256(request)?;
-        let prompt = analysis_prompt(request, &input_sha256)?;
+        let prompt =
+            analysis_prompt_for_provider(request, &input_sha256, "Codex project and ChatGPT Chat")?;
         let schema: Value =
             serde_json::from_slice(include_bytes!("../../schemas/codex-analysis.schema.json"))?;
         let turn = self.request(
@@ -405,15 +427,24 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
             &thread_id,
             turn_id.as_deref(),
         )?);
-        let output = messages.iter().find_map(structured_output).ok_or_else(|| {
-            AppError::Serialization("Codex returned no schema-constrained analysis output".into())
-        })?;
+        let output = messages
+            .iter()
+            .filter(|message| event_completes_turn(message, &thread_id, turn_id.as_deref()))
+            .find_map(structured_output)
+            .ok_or_else(|| {
+                AppError::Serialization(
+                    "Codex returned no schema-constrained analysis output".into(),
+                )
+            })?;
         let analysis =
             validate_analysis_output(output, &request.mode, &input_sha256, &request.evidence)?;
         let output_bytes = serde_json::to_vec(&analysis)?;
         let record = CodexAnalysisRecord {
             engine: "codex_app_server".into(),
             auth_mode: "chatgpt".into(),
+            provider: Some("codex".into()),
+            model: None,
+            optimization_profile: Some("Codex project and ChatGPT Chat".into()),
             analysis_id: analysis.analysis_id,
             schema_version: analysis.schema_version.clone(),
             input_sha256,
@@ -449,7 +480,7 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
             match self.transport.receive(Duration::from_millis(200)) {
                 Ok(Some(message)) => {
                     let correlated = event_matches_turn(&message, thread_id, turn_id);
-                    let complete = correlated
+                    let complete = event_completes_turn(&message, thread_id, turn_id)
                         && (structured_output(&message).is_some()
                             || message
                                 .get("method")
@@ -514,7 +545,7 @@ fn protocol_event_ids(value: &Value, keys: &[&str], ids: &mut Vec<String>) {
 fn event_matches_turn(value: &Value, thread_id: &str, turn_id: Option<&str>) -> bool {
     let mut thread_ids = Vec::new();
     protocol_event_ids(value, &["threadId", "thread_id"], &mut thread_ids);
-    if thread_ids.iter().any(|id| id != thread_id) {
+    if thread_ids.is_empty() || thread_ids.iter().any(|id| id != thread_id) {
         return false;
     }
     if let Some(turn_id) = turn_id {
@@ -525,6 +556,18 @@ fn event_matches_turn(value: &Value, thread_id: &str, turn_id: Option<&str>) -> 
         }
     }
     true
+}
+
+fn event_completes_turn(value: &Value, thread_id: &str, turn_id: Option<&str>) -> bool {
+    if !event_matches_turn(value, thread_id, turn_id) {
+        return false;
+    }
+    let Some(turn_id) = turn_id else {
+        return true;
+    };
+    let mut turn_ids = Vec::new();
+    protocol_event_ids(value, &["turnId", "turn_id"], &mut turn_ids);
+    !turn_ids.is_empty() && turn_ids.iter().all(|id| id == turn_id)
 }
 
 fn validate_analysis_request(request: &CodexAnalysisRequest) -> Result<(), AppError> {
@@ -550,14 +593,16 @@ fn validate_analysis_request(request: &CodexAnalysisRequest) -> Result<(), AppEr
                 "unsupported Codex analysis purpose".into(),
             ));
         }
-        if purpose == "maintenance_reanalysis"
-            && (request.mode != "existing_project_semantics"
-                || request.evidence.is_empty()
-                || request.project_root.is_none()
-                || request.scan_id.is_none())
+        if matches!(
+            purpose,
+            "existing_project_import" | "maintenance_reanalysis"
+        ) && (request.mode != "existing_project_semantics"
+            || request.evidence.is_empty()
+            || request.project_root.is_none()
+            || request.scan_id.is_none())
         {
             return Err(AppError::InvalidInput(
-                "maintenance reanalysis requires a project root, scan ID, and approved evidence"
+                "existing-project analysis requires a project root, scan ID, and approved evidence"
                     .into(),
             ));
         }
@@ -678,6 +723,21 @@ pub fn analysis_input_sha256(request: &CodexAnalysisRequest) -> Result<String, A
     )?))
 }
 
+/// Validate evidence bytes before the user-approved evidence set is added to
+/// the core-owned scan binding. This keeps the bridge from authorizing paths,
+/// secrets, oversized excerpts, or stale hashes by accident.
+pub fn validate_analysis_evidence(evidence: &[ApprovedEvidence]) -> Result<(), AppError> {
+    validate_analysis_request(&CodexAnalysisRequest {
+        mode: "existing_project_semantics".into(),
+        brief: String::new(),
+        evidence: evidence.to_vec(),
+        constraints: json!({"platform": "windows_or_macos"}),
+        analysis_purpose: None,
+        project_root: None,
+        scan_id: None,
+    })
+}
+
 pub fn evidence_manifest_sha256(evidence: &[ApprovedEvidence]) -> Result<String, AppError> {
     Ok(sha256_bytes(&serde_json::to_vec(evidence)?))
 }
@@ -700,14 +760,23 @@ pub fn validate_analysis_payload(bytes: &[u8]) -> Result<(), AppError> {
     validate_analysis_output(value, &requested_mode, &input_sha256, &[]).map(|_| ())
 }
 
-fn analysis_prompt(request: &CodexAnalysisRequest, input_sha256: &str) -> Result<String, AppError> {
+pub(crate) fn analysis_prompt_for_provider(
+    request: &CodexAnalysisRequest,
+    input_sha256: &str,
+    optimization_profile: &str,
+) -> Result<String, AppError> {
     let input = serde_json::to_string(&model_visible_analysis_input(request))?;
     Ok(format!(
-        "Interpret this approved HOI4 setup input. Return only an object matching the supplied output schema. Propose values with concise reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs; never invent paths or references. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
+        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Propose values with concise reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs; never invent paths or references. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
     ))
 }
 
-fn validate_analysis_output(
+#[cfg(test)]
+fn analysis_prompt(request: &CodexAnalysisRequest, input_sha256: &str) -> Result<String, AppError> {
+    analysis_prompt_for_provider(request, input_sha256, "Codex project and ChatGPT Chat")
+}
+
+pub(crate) fn validate_analysis_output(
     value: Value,
     requested_mode: &str,
     input_sha256: &str,
@@ -1211,6 +1280,23 @@ impl ProcessJsonlTransport {
         cwd: Option<PathBuf>,
         safe_path: Option<PathBuf>,
     ) -> Result<Self, AppError> {
+        let executable_sha256 = crate::security::sha256_file(&executable)?;
+        Self::start_command_with_path_and_identity(
+            executable,
+            args,
+            cwd,
+            safe_path,
+            &executable_sha256,
+        )
+    }
+
+    pub(crate) fn start_command_with_path_and_identity(
+        executable: PathBuf,
+        args: Vec<String>,
+        cwd: Option<PathBuf>,
+        safe_path: Option<PathBuf>,
+        executable_sha256: &str,
+    ) -> Result<Self, AppError> {
         if !executable.is_absolute() {
             return Err(AppError::Process(
                 "JSONL process executable must be an absolute path".into(),
@@ -1219,6 +1305,11 @@ impl ProcessJsonlTransport {
         if crate::security::path_has_link_component(&executable) {
             return Err(AppError::Process(
                 "JSONL process executable contains a symlink or junction".into(),
+            ));
+        }
+        if crate::security::sha256_file(&executable)? != executable_sha256 {
+            return Err(AppError::Process(
+                "JSONL process executable identity changed before spawn".into(),
             ));
         }
         let mut command = Command::new(executable);
@@ -1433,8 +1524,21 @@ pub fn validate_confirmed_record(record: &CodexAnalysisRecord) -> Result<(), App
         "localisation_convention",
         "documentation_convention",
     ];
-    if record.engine != "codex_app_server"
-        || record.auth_mode != "chatgpt"
+    let provider = record.provider.as_deref().unwrap_or("codex");
+    let valid_engine = (record.engine == "codex_app_server"
+        && provider == "codex"
+        && record.auth_mode == "chatgpt")
+        || (record.engine == "provider_api"
+            && matches!(
+                provider,
+                "claude" | "kimi" | "glm" | "deepseek" | "local" | "custom"
+            )
+            && matches!(record.auth_mode.as_str(), "api_key" | "local_endpoint")
+            && record
+                .model
+                .as_deref()
+                .is_some_and(|model| !model.trim().is_empty()));
+    if !valid_engine
         || record.schema_version != CODEX_SCHEMA_VERSION
         || record.account_identity_persisted
         || !is_sha256(&record.input_sha256)
@@ -1467,6 +1571,11 @@ pub fn validate_confirmed_record(record: &CodexAnalysisRecord) -> Result<(), App
             .evidence_sha256
             .as_deref()
             .is_some_and(|hash| !is_sha256(hash))
+        || (provider != "codex"
+            && record
+                .optimization_profile
+                .as_deref()
+                .is_none_or(|profile| profile.trim().is_empty()))
         || record.analysis_purpose.as_deref() == Some("maintenance_reanalysis")
             && record.evidence_sha256.is_none()
     {
@@ -1489,8 +1598,11 @@ pub fn confirm_analysis_record(
         || !record.confirmed_fields.is_empty()
         || record.input_sha256 != analysis.input_sha256
         || record.schema_version != analysis.schema_version
-        || record.engine != "codex_app_server"
-        || record.auth_mode != "chatgpt"
+        || (record.engine == "codex_app_server"
+            && (record.auth_mode != "chatgpt"
+                || record.provider.as_deref().unwrap_or("codex") != "codex"))
+        || (record.engine == "provider_api"
+            && !matches!(record.auth_mode.as_str(), "api_key" | "local_endpoint"))
         || record.account_identity_persisted
         || record.output_sha256 != sha256_bytes(&serde_json::to_vec(analysis)?)
     {
@@ -1962,6 +2074,9 @@ mod tests {
         let record = CodexAnalysisRecord {
             engine: "codex_app_server".into(),
             auth_mode: "chatgpt".into(),
+            provider: Some("codex".into()),
+            model: None,
+            optimization_profile: Some("Codex project and ChatGPT Chat".into()),
             analysis_id: Uuid::new_v4(),
             schema_version: CODEX_SCHEMA_VERSION.into(),
             input_sha256: "a".repeat(64),
@@ -2079,6 +2194,9 @@ mod tests {
         let record = CodexAnalysisRecord {
             engine: "codex_app_server".into(),
             auth_mode: "chatgpt".into(),
+            provider: Some("codex".into()),
+            model: None,
+            optimization_profile: Some("Codex project and ChatGPT Chat".into()),
             analysis_id: analysis.analysis_id,
             schema_version: analysis.schema_version.clone(),
             input_sha256: analysis.input_sha256.clone(),

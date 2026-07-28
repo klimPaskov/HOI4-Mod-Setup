@@ -12,7 +12,7 @@ The preview shows revision, manifest version, component additions and removals, 
 
 For each file, compare installed result to current local and old source to new source. Reuse a prior merge choice only when the conflict signature is unchanged. Generated descriptor, external launcher, and thumbnail artifacts are reviewed independently, including when an existing project already has `descriptor.mod`.
 
-Before an update plan is created, run a new bounded read-only scan. Show the resulting evidence manifest to the user, send only those approved text excerpts to the ChatGPT-authenticated Codex App Server, and require confirmation of the schema-constrained semantic proposals. The fresh core-session confirmation is passed into the update plan; an old lock record or renderer-supplied record cannot satisfy this update gate. If the scan, authentication, analysis, or confirmation fails, no update plan or transaction starts.
+Before an update plan is created, run a new bounded read-only scan. Show the resulting evidence manifest to the user, send only those approved text excerpts to the selected provider (the ChatGPT-authenticated Codex App Server for Codex), and require confirmation of the schema-constrained semantic proposals. The fresh core-session confirmation is passed into the update plan; an old lock record or renderer-supplied record cannot satisfy this update gate. If the scan, provider configuration, analysis, or confirmation fails, no update plan or transaction starts.
 
 ## Repair
 
@@ -28,7 +28,7 @@ Select a rollback record and preview source revision, restored or removed files,
 
 ## Removal
 
-Use reverse dependencies. Default to deleting unmodified managed files, removing managed structured contributions, preserving modified or merged files, preserving local additions, keeping global tools, and removing only project credential references. Deleting the OS credential is a separate explicit vault action and requires the opaque Meshy reference; managed removal never performs it implicitly. The final removal report records transaction completion without claiming that the now-unconfigured project is Codex-ready; the lock remains available for audit and rollback.
+Use reverse dependencies. Default to deleting unmodified managed files, removing managed structured contributions, preserving modified or merged files, preserving local additions, keeping global tools, and removing only project credential references. Deleting the OS credential is a separate explicit vault action and requires the opaque Meshy reference; managed removal never performs it implicitly. The final removal report records transaction completion without claiming that the now-unconfigured project is AI-ready; the lock remains available for audit and rollback.
 
 ## Optional workflow maintenance
 
@@ -44,6 +44,6 @@ Version 1 allows changing or clearing the interest preference only.
 
 Every successful maintenance transaction writes source revision, component states, per-file hashes, preserved ownership and skipped files, preserved choices, local modification records, and a new rollback record. The predecessor lock is backed up and restored if the maintenance transaction is rolled back. Configured remotes require explicit final dry-run approval; push and online repository creation remain outside the transaction.
 
-## Signed-out operations
+## Signed-out or disconnected operations
 
-Recovery, rollback, backup inspection, and managed removal remain available while signed out. Repair and reinstall use the validated locked analysis after ChatGPT authentication; update additionally requires the fresh reanalysis described above. An already approved interrupted transaction can resume without repeating Codex analysis when its plan and hashes still validate.
+Recovery, rollback, backup inspection, and managed removal remain available while signed out or disconnected. Repair and reinstall use the validated locked analysis after the selected provider is configured; update additionally requires the fresh reanalysis described above. An already approved interrupted transaction can resume without repeating provider analysis when its plan and hashes still validate.

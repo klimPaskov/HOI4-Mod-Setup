@@ -10,10 +10,15 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::fs;
-use std::io::Read;
-use std::path::PathBuf;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 
 pub const SOURCE_REPOSITORY: &str = "https://github.com/klimPaskov/Agentic-HOI4-Modding";
 pub const SOURCE_OWNER: &str = "klimPaskov";
@@ -21,6 +26,7 @@ pub const SOURCE_NAME: &str = "Agentic-HOI4-Modding";
 pub const MANIFEST_PATH: &str = "hoi4-mod-setup.manifest.json";
 const MAX_SELECTED_FILES: usize = 20_000;
 const MAX_SELECTED_BYTES: u64 = 1024 * 1024 * 1024;
+const MAX_SOURCE_FILE_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceRequest {
@@ -45,6 +51,8 @@ pub struct ComponentSupport {
     pub selected: bool,
     pub state: String,
     pub reason: Option<String>,
+    #[serde(default)]
+    pub dependents: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -403,25 +411,185 @@ impl HttpSourceClient {
                 .map_err(|error| AppError::Source(format!("read verified cache: {error}")));
         }
         let fetch_limit = match expected_size {
-            Some(size) if size > 512 * 1024 * 1024 => {
+            Some(size) if size > MAX_SOURCE_FILE_BYTES => {
                 return Err(AppError::Source(format!(
                     "declared source file exceeds size limit: {normalized}"
                 )))
             }
-            Some(size) => size.saturating_add(1) as usize,
-            None => 512 * 1024 * 1024,
+            Some(size) => size
+                .checked_add(1)
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| AppError::Source("declared source file size overflows".into()))?,
+            None => usize::try_from(MAX_SOURCE_FILE_BYTES)
+                .expect("source file limit fits on supported desktop targets"),
         };
-        let bytes = self.fetch_file_with_limit(revision, &normalized, fetch_limit)?;
+        let partial_path = cache_path.with_extension("part");
+        let bytes = self.download_verified_blob(
+            revision,
+            &normalized,
+            &partial_path,
+            fetch_limit,
+            expected_size,
+            expected_sha256,
+        )?;
         if expected_size.is_some_and(|size| bytes.len() as u64 != size)
             || sha256_bytes(&bytes) != expected_sha256
         {
+            let _ = fs::remove_file(&partial_path);
             return Err(AppError::Source(format!(
                 "verified download evidence does not match {normalized}"
             )));
         }
         atomic_write(&cache_path, &bytes)
             .map_err(|error| AppError::Source(format!("write verified cache: {error}")))?;
+        let _ = fs::remove_file(&partial_path);
         Ok(bytes)
+    }
+
+    fn download_verified_blob(
+        &self,
+        revision: &str,
+        path: &str,
+        partial_path: &Path,
+        limit: usize,
+        expected_size: Option<u64>,
+        expected_sha256: &str,
+    ) -> Result<Vec<u8>, AppError> {
+        validate_commit(revision)?;
+        if path_has_link_component(partial_path) {
+            return Err(AppError::PathSecurity(
+                "source partial-cache path contains a symlink or junction".into(),
+            ));
+        }
+        let mut partial = if partial_path.is_file() {
+            let metadata = fs::symlink_metadata(partial_path)?;
+            if crate::security::is_link_metadata(&metadata) || !metadata.is_file() {
+                return Err(AppError::PathSecurity(
+                    "source partial-cache entry is not a regular file".into(),
+                ));
+            }
+            let bytes = fs::read(partial_path)
+                .map_err(|error| AppError::Source(format!("read partial source cache: {error}")))?;
+            if bytes.len() > limit || expected_size.is_some_and(|size| bytes.len() as u64 > size) {
+                let _ = fs::remove_file(partial_path);
+                Vec::new()
+            } else {
+                bytes
+            }
+        } else {
+            Vec::new()
+        };
+
+        if expected_size.is_some_and(|size| partial.len() as u64 == size)
+            && expected_size.is_some_and(|size| size <= MAX_SOURCE_FILE_BYTES)
+            && sha256_bytes(&partial) == expected_sha256
+        {
+            let file_size = partial.len() as u64;
+            if file_size == expected_size.unwrap_or(file_size) {
+                return Ok(partial);
+            }
+        }
+
+        let url = format!(
+            "https://raw.githubusercontent.com/{}/{}/{}/{}",
+            self.owner,
+            self.name,
+            revision,
+            encode_source_path(path)
+        );
+        let parsed = reqwest::Url::parse(&url)
+            .map_err(|error| AppError::Source(format!("invalid source URL: {error}")))?;
+        if !approved_source_url(&parsed) {
+            return Err(AppError::Source(
+                "verified source blob URL is not an approved endpoint".into(),
+            ));
+        }
+        let offset = partial.len();
+        let mut request = self
+            .client
+            .get(&url)
+            .header("Accept", "application/octet-stream");
+        if offset > 0 {
+            request = request.header("Range", format!("bytes={offset}-"));
+        }
+        let mut response = request
+            .send()
+            .map_err(|error| AppError::Source(format!("source blob request failed: {error}")))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(AppError::Source(format!(
+                "source blob returned HTTP {status}"
+            )));
+        }
+        if !approved_source_url(response.url()) {
+            return Err(AppError::Source(format!(
+                "source redirect ended at an unapproved endpoint: {}",
+                response.url()
+            )));
+        }
+        let resumed = offset > 0
+            && status == reqwest::StatusCode::PARTIAL_CONTENT
+            && response
+                .headers()
+                .get(reqwest::header::CONTENT_RANGE)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| content_range_starts_at(value, offset));
+        if offset > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT && !resumed {
+            return Err(AppError::Source(
+                "source server returned an invalid range response; partial cache retained".into(),
+            ));
+        }
+        if !resumed {
+            partial.clear();
+        }
+        let remaining = limit.saturating_sub(partial.len());
+        if response
+            .content_length()
+            .is_some_and(|size| size > remaining as u64)
+        {
+            return Err(AppError::Source(
+                "source blob response exceeds its bounded size limit".into(),
+            ));
+        }
+        if resumed && status != reqwest::StatusCode::PARTIAL_CONTENT {
+            return Err(AppError::Source(
+                "source server did not return a valid range response".into(),
+            ));
+        }
+        let mut file = open_partial_cache(partial_path, !resumed)?;
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = match response.read(&mut buffer) {
+                Ok(read) => read,
+                Err(error) => {
+                    let _ = file.sync_all();
+                    return Err(AppError::Source(format!(
+                        "source blob interrupted; partial cache retained: {error}"
+                    )));
+                }
+            };
+            if read == 0 {
+                break;
+            }
+            if partial.len().saturating_add(read) > limit {
+                let _ = file.sync_all();
+                return Err(AppError::Source(
+                    "source blob response exceeds its bounded size limit".into(),
+                ));
+            }
+            file.write_all(&buffer[..read]).map_err(|error| {
+                AppError::Source(format!("write partial source cache: {error}"))
+            })?;
+            partial.extend_from_slice(&buffer[..read]);
+        }
+        file.sync_all()
+            .map_err(|error| AppError::Source(format!("sync partial source cache: {error}")))?;
+        if expected_size.is_some_and(|size| partial.len() as u64 != size) {
+            return Err(AppError::Source(
+                "source blob ended before its declared size; partial cache retained".into(),
+            ));
+        }
+        Ok(partial)
     }
 
     fn verify_commit_object(&self, revision: &str) -> Result<(), AppError> {
@@ -451,6 +619,50 @@ fn approved_source_url(url: &reqwest::Url) -> bool {
         )
 }
 
+fn content_range_starts_at(value: &str, offset: usize) -> bool {
+    let prefix = format!("bytes {offset}-");
+    value.starts_with(&prefix)
+}
+
+fn open_partial_cache(path: &Path, truncate: bool) -> Result<File, AppError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::Source("partial source cache has no parent".into()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| AppError::Source(format!("create partial source cache: {error}")))?;
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).write(true);
+    if truncate {
+        options.truncate(true);
+    } else {
+        options.append(true);
+    }
+    #[cfg(unix)]
+    options.custom_flags(source_open_no_follow_flag());
+    #[cfg(windows)]
+    options.custom_flags(0x0020_0000);
+    let file = options
+        .open(path)
+        .map_err(|error| AppError::Source(format!("open partial source cache: {error}")))?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || crate::security::is_link_metadata(&metadata) {
+        return Err(AppError::PathSecurity(
+            "partial source cache is not a regular file".into(),
+        ));
+    }
+    Ok(file)
+}
+
+#[cfg(target_os = "macos")]
+fn source_open_no_follow_flag() -> i32 {
+    0x0100
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn source_open_no_follow_flag() -> i32 {
+    0x20000
+}
+
 fn encode_source_path(path: &str) -> String {
     path.split('/')
         .map(HttpSourceClient::encode_path_segment)
@@ -464,26 +676,8 @@ pub fn resolve_source(
 ) -> Result<SourceResolution, AppError> {
     let (revision, branch, canonical_release) = client.resolve_commit(request)?;
     let remote_manifest_bytes = client.fetch_manifest(&revision)?;
-    let remote_manifest = parse_manifest(&remote_manifest_bytes, Some(&revision))?;
     let (manifest_bytes, manifest, manifest_origin) =
-        if remote_manifest.generated_for_revision.as_deref() == Some(revision.as_str()) {
-            (remote_manifest_bytes, remote_manifest, "remote")
-        } else {
-            // The live source may contain a manifest committed after its evidence
-            // was generated. Use the versioned application bootstrap only when it
-            // is explicitly generated for this exact source revision; otherwise
-            // fail honestly and require the upstream publication to catch up.
-            let bundled_bytes =
-                include_bytes!("../../source-manifest/hoi4-mod-setup.manifest.json").to_vec();
-            let bundled = parse_manifest(&bundled_bytes, Some(&revision))?;
-            if bundled.generated_for_revision.as_deref() != Some(revision.as_str()) {
-                return Err(AppError::Source(
-                    "remote manifest evidence is stale and no exact bundled manifest is available"
-                        .into(),
-                ));
-            }
-            (bundled_bytes, bundled, "bundled_revision_bootstrap")
-        };
+        select_manifest_for_revision(&remote_manifest_bytes, &revision)?;
     let manifest_sha256 = sha256_bytes(&manifest_bytes);
     let mode = request.mode;
     let identity = SourceIdentity {
@@ -503,11 +697,46 @@ pub fn resolve_source(
     })
 }
 
+fn select_manifest_for_revision(
+    remote_manifest_bytes: &[u8],
+    revision: &str,
+) -> Result<(Vec<u8>, RemoteManifest, &'static str), AppError> {
+    // A manifest is committed after the source snapshot it describes. Requiring
+    // the manifest to contain the hash of the commit that contains the manifest
+    // would be self-referential: changing the field changes the commit hash.
+    // `generated_for_revision` remains required provenance, while the resolved
+    // revision below binds the manifest bytes and every selected source blob.
+    let remote_manifest = parse_manifest(remote_manifest_bytes, Some(revision))?;
+    Ok((remote_manifest_bytes.to_vec(), remote_manifest, "remote"))
+}
+
 pub fn parse_manifest(bytes: &[u8], revision: Option<&str>) -> Result<RemoteManifest, AppError> {
     let manifest: RemoteManifest = serde_json::from_slice(bytes)
         .map_err(|error| AppError::Source(format!("manifest JSON is invalid: {error}")))?;
     validate_manifest(&manifest, revision)?;
     Ok(manifest)
+}
+
+pub fn wiki_install_metadata(manifest: &RemoteManifest) -> WikiInstallMetadata {
+    WikiInstallMetadata {
+        snapshot_marker: manifest.wiki.snapshot_marker.clone(),
+        required_media_policy: manifest.wiki.required_media_policy.clone(),
+        source_status: manifest.wiki.provenance.source_status.clone(),
+        license_status: manifest.wiki.provenance.license_status.clone(),
+        notes: manifest.wiki.provenance.notes.clone(),
+    }
+}
+
+fn require_canonical_manifest_path(raw: &str, label: &str) -> Result<String, AppError> {
+    let normalized = normalize_relative_path(raw)
+        .map_err(|error| AppError::Source(format!("invalid {label} path: {error}")))?;
+    let canonical_raw = raw.replace('\\', "/").trim_end_matches('/').to_owned();
+    if canonical_raw != normalized {
+        return Err(AppError::Source(format!(
+            "{label} path is not in canonical slash-separated form: {raw}"
+        )));
+    }
+    Ok(normalized)
 }
 
 pub fn validate_manifest(
@@ -555,7 +784,9 @@ pub fn validate_manifest(
     if let Some(revision) = revision {
         validate_commit(revision)?;
         match manifest.generated_for_revision.as_deref() {
-            Some(declared) => validate_commit(declared)?,
+            Some(declared) => {
+                validate_commit(declared)?;
+            }
             None => {
                 return Err(AppError::Source(
                     "manifest must declare the immutable revision used to generate its evidence"
@@ -593,10 +824,8 @@ pub fn validate_manifest(
                 component.id
             )));
         }
-        normalize_relative_path(&component.source.path)
-            .map_err(|error| AppError::Source(error.to_string()))?;
-        normalize_relative_path(&component.destination.path)
-            .map_err(|error| AppError::Source(error.to_string()))?;
+        require_canonical_manifest_path(&component.source.path, "component source")?;
+        require_canonical_manifest_path(&component.destination.path, "component destination")?;
         if !matches!(component.source.kind, SourceKind::Generated)
             && component.expected_files.is_empty()
         {
@@ -607,8 +836,7 @@ pub fn validate_manifest(
         }
         let mut evidence_paths = HashSet::new();
         for expected in &component.expected_files {
-            normalize_relative_path(&expected.path)
-                .map_err(|error| AppError::Source(error.to_string()))?;
+            require_canonical_manifest_path(&expected.path, "expected file")?;
             let evidence_key = canonical_relative_key(&expected.path)
                 .map_err(|error| AppError::Source(error.to_string()))?;
             if !evidence_paths.insert(evidence_key) {
@@ -684,13 +912,48 @@ pub fn validate_manifest(
                     component.id
                 )));
             }
+            if rule.kind == "command" {
+                for identity in ["executable", "interpreter", "runtime"] {
+                    let hash_key = format!("{identity}_sha256");
+                    let size_key = format!("{identity}_size");
+                    let hash_value = rule.parameters.get(&hash_key);
+                    let size_value = rule.parameters.get(&size_key);
+                    if hash_value.is_none() != size_value.is_none() {
+                        return Err(AppError::Source(format!(
+                            "component {} command identity must declare both {hash_key} and {size_key}",
+                            component.id
+                        )));
+                    }
+                    if let Some(value) = hash_value {
+                        let hash = value.as_str().ok_or_else(|| {
+                            AppError::Source(format!(
+                                "component {} command identity SHA-256 must be a string",
+                                component.id
+                            ))
+                        })?;
+                        validate_sha256(hash)?;
+                    }
+                    if let Some(value) = size_value {
+                        if value.as_u64().is_none() {
+                            return Err(AppError::Source(format!(
+                                "component {} command identity size must be a non-negative integer",
+                                component.id
+                            )));
+                        }
+                    }
+                }
+            }
         }
         for platform in &component.platforms {
             if matches!(platform, ManifestPlatform::All)
-                && component
+                && (component
                     .required_tools
                     .iter()
                     .any(|tool| !tool.commands.is_empty())
+                    || component
+                        .validation
+                        .iter()
+                        .any(|rule| rule.kind == "command"))
             {
                 return Err(AppError::Source(format!(
                     "command-bearing component {} must declare explicit platform routes",
@@ -746,7 +1009,7 @@ pub fn validate_manifest(
     }
     let mut required_pages = HashSet::new();
     for page in &manifest.wiki.required_pages {
-        let page = normalize_relative_path(page)
+        let page = require_canonical_manifest_path(page, "required wiki page")
             .map_err(|error| AppError::Source(format!("invalid required wiki page: {error}")))?;
         if !required_pages.insert(page.clone()) {
             return Err(AppError::Source(format!(
@@ -889,6 +1152,30 @@ pub fn expand_components(
     Ok(ordered)
 }
 
+/// Return the reverse dependency graph for the verified manifest. The map is
+/// used to explain removal/update impact; it never grants a dependent the
+/// right to bypass the forward dependency closure.
+pub fn reverse_dependencies(manifest: &RemoteManifest) -> HashMap<String, Vec<String>> {
+    let mut reverse = manifest
+        .components
+        .iter()
+        .map(|component| (component.id.clone(), Vec::new()))
+        .collect::<HashMap<_, _>>();
+    for component in &manifest.components {
+        for dependency in &component.dependencies {
+            reverse
+                .entry(dependency.clone())
+                .or_default()
+                .push(component.id.clone());
+        }
+    }
+    for dependents in reverse.values_mut() {
+        dependents.sort();
+        dependents.dedup();
+    }
+    reverse
+}
+
 pub fn resolve_platform_support(
     manifest: &RemoteManifest,
     selected: &[String],
@@ -899,12 +1186,14 @@ pub fn resolve_platform_support(
         .iter()
         .map(|component| (component.id.as_str(), component))
         .collect();
+    let reverse = reverse_dependencies(manifest);
     selected
         .iter()
         .map(|id| {
             let component = by_id
                 .get(id.as_str())
                 .ok_or_else(|| AppError::Source(format!("unknown selected component: {id}")))?;
+            let dependents = reverse.get(id).cloned().unwrap_or_default();
             if component
                 .platforms
                 .iter()
@@ -915,6 +1204,7 @@ pub fn resolve_platform_support(
                     selected: true,
                     state: "supported".into(),
                     reason: None,
+                    dependents,
                 })
             } else if component.optional {
                 Ok(ComponentSupport {
@@ -926,6 +1216,7 @@ pub fn resolve_platform_support(
                         component.display_name,
                         platform.manifest_name()
                     )),
+                    dependents,
                 })
             } else {
                 Ok(ComponentSupport {
@@ -937,6 +1228,7 @@ pub fn resolve_platform_support(
                         component.id,
                         platform.manifest_name()
                     )),
+                    dependents,
                 })
             }
         })
@@ -1230,10 +1522,81 @@ mod tests {
     }
 
     #[test]
+    fn published_manifest_is_consumed_at_the_resolved_revision() {
+        let bundled_bytes = include_bytes!("../../source-manifest/hoi4-mod-setup.manifest.json");
+        let remote_bytes = bundled_bytes.to_vec();
+        let resolved_revision = "54da3e7b311d728a959afff7238a9aeeb9987f2b";
+
+        let (selected_bytes, manifest, origin) =
+            select_manifest_for_revision(&remote_bytes, resolved_revision).unwrap();
+
+        assert_eq!(origin, "remote");
+        assert_eq!(selected_bytes, remote_bytes);
+        assert_eq!(
+            manifest.generated_for_revision.as_deref(),
+            Some("27128a7b311d728a959afff7238a9aeeb9987f2b")
+        );
+    }
+
+    #[test]
+    fn repository_manifest_example_is_runtime_valid_for_its_declared_revision() {
+        let manifest = parse_manifest(
+            include_bytes!("../../examples/repository-manifest.example.json"),
+            Some("27128a7b311d728a959afff7238a9aeeb9987f2b"),
+        )
+        .unwrap();
+        assert_eq!(manifest.components.len(), 10);
+        assert_eq!(
+            manifest.generated_for_revision.as_deref(),
+            Some("27128a7b311d728a959afff7238a9aeeb9987f2b")
+        );
+    }
+
+    #[test]
+    fn core_profile_keeps_windows_only_mcp_nonblocking_on_macos() {
+        let bytes = include_bytes!("../../source-manifest/hoi4-mod-setup.manifest.json");
+        let manifest =
+            parse_manifest(bytes, Some("27128a7b311d728a959afff7238a9aeeb9987f2b")).unwrap();
+        let profile = manifest
+            .profiles
+            .iter()
+            .find(|profile| profile.default)
+            .expect("checked-in manifest must have a default profile");
+        let selected = expand_components(&manifest, &profile.components).unwrap();
+        let macos = resolve_platform_support(&manifest, &selected, Platform::Macos).unwrap();
+        let mcp = macos
+            .iter()
+            .find(|item| item.component_id == "mcp.hoi4_agent_tools")
+            .expect("core profile must include the declared MCP component");
+
+        assert_eq!(mcp.state, "unsupported_platform");
+        assert!(!macos.iter().any(|item| item.state == "blocked"));
+        assert!(macos
+            .iter()
+            .filter(|item| item.component_id != "mcp.hoi4_agent_tools")
+            .all(|item| item.state == "supported"));
+    }
+
+    #[test]
     fn dependency_expansion_is_topological() {
         let manifest = minimal_manifest(vec![component("root", &["base"]), component("base", &[])]);
         let selected = expand_components(&manifest, &["root".into()]).unwrap();
         assert_eq!(selected, vec!["base", "root"]);
+    }
+
+    #[test]
+    fn reverse_dependency_evidence_lists_dependents_deterministically() {
+        let manifest = minimal_manifest(vec![
+            component("root", &["base"]),
+            component("other", &["base"]),
+            component("base", &[]),
+        ]);
+        let reverse = reverse_dependencies(&manifest);
+        assert_eq!(
+            reverse.get("base"),
+            Some(&vec!["other".into(), "root".into()])
+        );
+        assert!(reverse.get("root").is_some_and(Vec::is_empty));
     }
 
     #[test]
@@ -1282,6 +1645,14 @@ mod tests {
     }
 
     #[test]
+    fn manifest_generation_revision_may_precede_publication_revision() {
+        let bytes = include_bytes!("../../source-manifest/hoi4-mod-setup.manifest.json");
+        let mut manifest: RemoteManifest = serde_json::from_slice(bytes).unwrap();
+        manifest.generated_for_revision = Some("599497ea2f93612d9094461c6fde114fc87a5c0f".into());
+        validate_manifest(&manifest, Some("27128a7b311d728a959afff7238a9aeeb9987f2b")).unwrap();
+    }
+
+    #[test]
     fn glob_selection_does_not_include_excluded_files() {
         assert!(glob_matches("hoi4-*/**", "hoi4-events/SKILL.md"));
         assert!(!glob_matches("hoi4-*/**", "vendor/SKILL.md"));
@@ -1293,6 +1664,13 @@ mod tests {
             HttpSourceClient::encode_path_segment("v1/release"),
             "v1%2Frelease"
         );
+    }
+
+    #[test]
+    fn range_resume_requires_the_requested_start_offset() {
+        assert!(content_range_starts_at("bytes 12-99/100", 12));
+        assert!(!content_range_starts_at("bytes 11-99/100", 12));
+        assert!(!content_range_starts_at("12-99/100", 12));
     }
 
     fn minimal_manifest(components: Vec<ComponentDefinition>) -> RemoteManifest {

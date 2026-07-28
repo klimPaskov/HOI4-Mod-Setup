@@ -19,6 +19,7 @@ Keep `.agents/skills/` aligned with the current repository. Skills capture recur
 - a common failure and recovery method is learned
 - several skills overlap or contradict each other
 - a skill references stale implementation
+- provider/model optimization, Codex-only flattening, or a new credential boundary changes
 
 ## Workflow
 
@@ -66,6 +67,7 @@ Before completion, answer:
 - Did a repeated workflow change?
 - Did a command or file location change?
 - Did an invariant, schema, platform route, validation, or recovery method change?
+- Did the selected-provider profiles, model binding, or flatten mapping change?
 - Which skill owns it?
 - Was the owning skill updated?
 - Do adjacent skills remain consistent?

@@ -45,9 +45,14 @@ Evidence, hashes, source paths, detector notes, full dependency graphs, file lis
 
 The application must never require a hidden detail panel to understand the primary decision. Details support review. They do not carry essential instructions.
 
-## Authentication gate
+## Provider gate
 
-Before project selection, show a compact ChatGPT account gate with the product name, one sentence explaining that setup uses the user's Codex access, a **Sign in with ChatGPT** action, a device-code fallback behind a secondary action, current account state, and a local recovery link when an interrupted transaction exists.
+Before project selection, show a compact provider gate with the product name,
+provider and model selection, and one short configuration state. Codex shows a
+**Sign in with ChatGPT** action and device-code fallback through the official
+App Server. Other hosted profiles show explicit endpoint and OS-vault key
+controls; local profiles show a loopback endpoint and no hosted account claim.
+Keep a local recovery link when an interrupted transaction exists.
 
 Do not show token fields, model marketing copy, plan comparisons, protocol details, or long privacy text. Put technical details behind one disclosure.
 
@@ -107,7 +112,8 @@ Do not display permanent keyboard shortcut hints in the footer. Keyboard support
 11. **Git setup**: three choices, branch and commit fields for the selected choice, remote and advanced options collapsed.
 12. **Dry run**: change counts, short plan summary, preflight state, full file plan on demand.
 13. **Installation progress**: one progress bar, six grouped stages, current item, transaction log collapsed.
-14. **Final readiness**: one success state, Open in Codex, four grouped core checks, compact optional-workflow state.
+14. **Final readiness**: one success state, an Open in Codex action only for Codex, four grouped core checks, compact optional-workflow state.
+18. **Flattened Chat sources**: only in the Codex Git phase; one native checkbox, an optional project-relative file list, and one final ChatGPT “Chat” recommendation.
 15. **Update and repair**: four primary maintenance actions and a short installed-state list.
 16. **Merge conflict review**: local and incoming comparison, resolution choices, result preview after selection.
 17. **Interrupted recovery**: one checkpoint summary and three recovery choices.
@@ -184,4 +190,9 @@ Semantic analysis uses one progress region with plain states: Preparing approved
 
 ## Semantic review density
 
-The sign-in screen shows one ChatGPT action, one compact status, and a device-code fallback link. Do not show OAuth fields, API-key inputs, model prices, raw protocol events, or token locations. Semantic review uses one compact table for Detected, Suggested by Codex, and Confirmed values. Reasons and input evidence open on demand.
+The Codex screen shows one ChatGPT action, one compact status, and a
+device-code fallback link. Other profiles show only the endpoint, model, and
+vault-key controls needed by their verified adapter. Do not show provider
+prices, raw protocol events, or token locations. Semantic review uses one
+compact table for Detected, Suggested by the selected provider, and Confirmed
+values. Reasons and input evidence open on demand.

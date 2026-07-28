@@ -42,6 +42,7 @@ PATTERNS = [
     ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}\b")),
     ("AWS access key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("Meshy key", re.compile(r"\bmsy_(?!your_actual_key_here\b)[A-Za-z0-9_-]{12,}\b")),
+    ("hosted provider key", re.compile(r"\b(?:sk-ant-|sk-(?:proj-)?|AIza|xai-)[A-Za-z0-9_-]{20,}\b")),
 ]
 
 ASSIGNMENT = re.compile(

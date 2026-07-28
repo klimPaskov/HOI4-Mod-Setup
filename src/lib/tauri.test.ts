@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { cancelScan, scanProject } from "./tauri";
-import type { ScanProgress } from "../types";
+import { buildInstallationPlan, cancelScan, previewDescriptors, scanProject } from "./tauri";
+import type { ScanProgress, WizardState } from "../types";
 
 const { invoke, listen, unlisten } = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -49,5 +49,17 @@ describe("typed scanner bridge", () => {
     expect(result.value).toBeUndefined();
     expect(result.error).toBeUndefined();
     expect(invoke).toHaveBeenCalledWith("cancel_scan", { requestId: "scan-request" });
+  });
+
+  it("never serializes the Meshy password draft in state-bearing core commands", async () => {
+    invoke.mockResolvedValue([]);
+    const state = { meshKeyDraft: "test-meshy-draft-not-for-transport" } as unknown as WizardState;
+
+    await previewDescriptors(state);
+    await buildInstallationPlan(state);
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "preview_descriptors", { state: { meshKeyDraft: "" } });
+    expect(invoke).toHaveBeenNthCalledWith(2, "build_installation_plan", { state: { meshKeyDraft: "" } });
+    expect(JSON.stringify(invoke.mock.calls)).not.toContain("test-meshy-draft-not-for-transport");
   });
 });

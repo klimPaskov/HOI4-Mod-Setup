@@ -21,6 +21,8 @@ export type PhaseId = "project" | "review" | "components" | "integrations" | "gi
 
 export type SourceMode = "latest" | "pinned_commit" | "pinned_release";
 
+export type AiProviderId = "codex" | "claude" | "kimi" | "glm" | "deepseek" | "local" | "custom";
+
 export type WorkflowState = "not_selected" | "selected_pending" | "ready" | "incomplete" | "interest_recorded" | "planned_unavailable" | "unsupported_platform";
 
 export type StatusTone = "pass" | "review" | "block" | "info" | "muted";
@@ -60,6 +62,24 @@ export interface CodexAccountStatus {
   error?: string | null;
 }
 
+export interface AiProviderProfile {
+  id: AiProviderId;
+  display_name: string;
+  protocol: string;
+  requires_credential: boolean;
+  optimization_profile: string;
+}
+
+export interface AiAccountStatus {
+  available: boolean;
+  authenticated: boolean;
+  provider: AiProviderId;
+  model: string;
+  auth_mode: string;
+  usage_limited: boolean;
+  error?: string | null;
+}
+
 export interface CodexLoginStart {
     available: boolean;
     login_id?: string | null;
@@ -92,6 +112,9 @@ export interface CodexAnalysis {
 export interface CodexAnalysisRecord {
   engine: string;
   auth_mode: string;
+  provider?: AiProviderId | string | null;
+  model?: string | null;
+  optimization_profile?: string | null;
   analysis_id: string;
   schema_version: string;
   input_sha256: string;
@@ -116,6 +139,12 @@ export interface CodexAnalysisRequest {
 export interface CodexAnalysisResult {
   analysis: CodexAnalysis;
   record: CodexAnalysisRecord;
+}
+
+export interface AiAnalysisRequest extends CodexAnalysisRequest {
+  provider: AiProviderId;
+  model: string;
+  endpoint: string;
 }
 
 export interface ScanFinding {
@@ -164,6 +193,7 @@ export interface ComponentRow {
 
 export interface ReadinessReport {
   openInCodex: boolean;
+  coreReady: boolean;
   blockingCheckIds: string[];
   checks: Array<{ id: string; label: string; status: string; blocking: boolean; message: string }>;
   codex?: { authenticated_during_setup: boolean; analysis_status: string; confirmed_field_count: number };
@@ -279,6 +309,8 @@ export interface InstallationExternalAction {
   risk: string;
   requires_approval: boolean;
   contains_secret?: boolean;
+  verified_executable_sha256?: string | null;
+  verified_executable_size?: number | null;
 }
 
 export interface InstallationPlan {
@@ -296,9 +328,22 @@ export interface InstallationPlan {
     manifest_sha256: string;
     manifest_origin?: "remote" | "bundled_revision_bootstrap" | string;
   };
+  ai_provider?: AiProviderId | string;
+  ai_model?: string;
+  ai_endpoint?: string | null;
+  ai_optimization_profile?: string;
+  flatten_chat_sources?: boolean;
+  flatten_additional_files?: string[];
   codex_analysis?: CodexAnalysisRecord | null;
   selected_components: string[];
   wiki_required_pages: string[];
+  wiki_metadata?: {
+    snapshot_marker?: string | null;
+    required_media_policy: "all_declared" | "referenced_only" | "none";
+    source_status: string;
+    license_status: string;
+    notes?: string[];
+  } | null;
   generated_artifacts?: Array<{ component_id: string; destination: string; content: string; expected_sha256: string; external?: boolean; bytes?: number[] }>;
   git_setup?: { mode: "initialize" | "preserve" | "skip"; branch: string; initial_commit: boolean; remote_name?: string | null; remote_url?: string | null; push_approved: boolean } | null;
   credential_references?: CredentialReference[];
@@ -324,6 +369,7 @@ export interface CredentialReference {
   name: string;
   provider: "windows_credential_manager" | "macos_keychain";
   reference: string;
+  provider_id?: AiProviderId | string;
 }
 
 export interface TransactionJournal {
@@ -356,6 +402,11 @@ export interface WizardState {
   folderProfile?: string[];
   sourceMode: SourceMode;
   pinnedRef: string;
+  aiProvider: AiProviderId;
+  aiModel: string;
+  aiEndpoint: string;
+  aiAccount: AiAccountStatus | null;
+  aiProfiles?: AiProviderProfile[];
   selectedComponents: string[];
   components: ComponentRow[];
   meshSelected: boolean;
@@ -363,6 +414,8 @@ export interface WizardState {
   meshKeyStatus: "missing" | "present" | "verified" | "unsupported";
   meshCredentialReference?: CredentialReference;
   loraInterest: boolean;
+  flattenForChat: boolean;
+  flattenAdditionalFiles: string[];
   gitMode: "initialize" | "preserve" | "skip";
   gitBranch: string;
   initialCommit: boolean;

@@ -3,9 +3,11 @@
 //! The React surface is intentionally a client of these types and commands.
 //! It never receives filesystem or credential authority directly.
 
+pub mod ai;
 pub mod codex;
 pub mod credentials;
 pub mod descriptors;
+pub mod flatten;
 pub mod git;
 pub mod mcp;
 pub mod merge;

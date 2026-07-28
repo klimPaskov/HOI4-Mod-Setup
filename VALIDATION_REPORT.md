@@ -4,18 +4,23 @@
 
 The revision 4 planning package passed its integrity checks. The current
 workspace implementation passes the frontend, schema, security, template,
-formatting, all-feature Rust, Windows packaging, artifact, and native launch
-gates available on this host. macOS, signing, and public-release gates remain
-explicitly bounded below.
+formatting, and all-feature Rust gates exercised after the provider,
+flattening, journal, and release-metadata changes. A fresh unsigned Windows
+NSIS package was built, architecture-checked, hash-verified, and launch-smoke
+tested. The release workflow contains runner-only Windows and macOS signing
+setup, signed-evidence markers, and curated publication-asset verification;
+it fails closed when protected material is absent. macOS, signing, and
+public-release gates remain explicitly bounded below.
 
 ## Verified package contract
 
-- ChatGPT sign-in is required for Create, Import, Update, and Repair planning.
-- Semantic work uses the local Codex App Server and the user's ChatGPT-managed Codex access.
-- The normal product has no OpenAI API key field, provider selector, or externally managed ChatGPT token path.
-- Codex proposes semantic fields and returns schema-constrained output.
+- The first setup screen selects Codex (default), Claude, Kimi, GLM, DeepSeek, a local model, or another configured provider; the selected model and optimization profile are persisted.
+- Codex uses the official local Codex App Server and ChatGPT-managed access; other providers use only their verified adapter, explicit endpoint, and OS-vault key route when required.
+- All providers return the same schema-constrained proposal shape; no provider response can write files or approve a transaction.
+- The Codex-only final option prepares a staged flattened ChatGPT project-sources folder with `<skill>.md` mappings and an offline Chat recommendation.
+- Maintenance updates rebuild that view only from accepted source bytes and preserve a reviewed flat conflict when later non-flat content changes.
 - Deterministic Rust validates facts, identifiers, paths, conflicts, descriptors, PNGs, plans, transactions, and readiness.
-- Update planning requires a fresh bounded scan, visible approved evidence, and a core-session-confirmed Codex reanalysis record; the record is bound into the typed maintenance plan.
+- Update planning requires a fresh bounded scan, visible approved evidence, and a core-session-confirmed selected-provider reanalysis record; provider, model, profile, and evidence bindings are carried into the typed maintenance plan and lock.
 - Existing-project Git evidence is bounded and read-only: branch or detached state, commit, dirty buckets, remotes, submodules, hooks, ignore files, and tracked secret-like paths are surfaced without following external linked-worktree metadata.
 - Existing-project scan progress is request-correlated and read-only; stage/path/counter events feed an indeterminate UI, while cancelled or safety-limited results clear Codex evidence and block semantic analysis until a complete scan is available.
 - Transaction operations carry immutable ownership evidence through plan, journal, lock, and rollback; explicit skipped or external operations are rollback no-ops, and configured remotes require explicit final dry-run approval.
@@ -34,6 +39,7 @@ explicitly bounded below.
 | Full package validator | Pass, Validated 12 integrity groups for full planning package. |
 | Repository-template validator | Pass, Validated 12 integrity groups for repository template. |
 | Secret-pattern scan | Pass, No committed secret patterns found. |
+| Planning-package checksum inventory | Pass, 197 entries recomputed and matched. |
 | JSON Schemas | Pass, 9 schemas parsed and 10 examples validated by the package validator |
 | Subagent TOML | Pass, 9 files parsed |
 | Living skill frontmatter and update triggers | Pass, 10 skills checked |
@@ -43,18 +49,20 @@ explicitly bounded below.
 | Markdown style | Pass, no em dash characters or semicolons |
 | Mermaid source inventory | Pass, 10 diagram files present |
 | UI references | Pass, 17 full-resolution PNG files retained |
-| Frontend typecheck, lint, unit (15 tests), accessibility, browser smoke | Pass |
+| Frontend typecheck, lint, unit (20 tests), accessibility, browser smoke | Pass |
 | Frontend production build | Pass, Vite build completed on the elevated host run |
 | JSON-schema examples (manifest, plan, lock, journal) | Pass |
 | Cargo formatting | Pass |
 | Rust toolchain | Pass, pinned to Rust 1.88.0 by `rust-toolchain.toml` |
-| Rust all-feature tests | Pass, 118 tests under pinned Rust 1.88.0 |
+| Rust all-feature tests | Pass, 164 tests under pinned Rust 1.88.0 |
 | Rust all-feature clippy | Pass with `-D warnings` under pinned Rust 1.88.0 |
-| Fuzz target compilation | Pass, manifest, relative-path, Codex-analysis, descriptor/thumbnail, and structured-TOML targets |
+| Fuzz target compilation | Pass, manifest, relative-path, Codex-analysis, descriptor/thumbnail, structured-TOML, and flattened-source targets |
 | Committed-secret scan | Pass |
-| Windows Tauri release build | Pass, x64 executable and MSI bundle |
-| Release artifact hash verification | Pass, local `ARTIFACTS.sha256` and strict exact-revision package mode verified against the committed bootstrap revision |
+| Windows Tauri release build | Pass locally, unsigned NSIS `.exe` package built |
+| Release artifact hash and architecture verification | Pass locally for frontend and NSIS package artifacts |
+| Release signing configuration contract | Pass, workflow imports runner-only certificates/keychains and removes temporary signing roots; live credentials not available locally |
 | Windows native desktop launch smoke | Pass |
+| Release script syntax and revision-binding checks | Pass, `node --check` for build, verify, and publication-asset scripts; native strict verification remains gated on signed CI metadata |
 
 ## Manual implementation gates retained
 
@@ -78,13 +86,13 @@ The supplied project Markdown, TOML, and CSV sources were previously loaded and 
 
 The installed Codex executable, `app-server --help`, and live JSONL `initialize` plus `account/read` exchange were verified on 26 July 2026. The current account is unauthenticated with `auth_mode=chatgpt`; browser/device login completion was not exercised because it requires the user to complete authentication. Mocked transport and schema-boundary tests remain the deterministic automated contract layer.
 
-The source-declared Windows MCP wrapper was also manually probed through its
-fixed JSONL route on 26 July 2026. The application now binds installed-project
-readiness and transaction readiness to the locked manifest/config, resolves a
-canonical `cmd.exe` and wrapper, performs bounded MCP `initialize` plus
-read-only `tools/list` metadata validation, never invokes a tool, passes no
-credential environment, and terminates the wrapper's child process tree after
-the probe.
+The current verified source manifest intentionally does not provide immutable
+wrapper, command-interpreter, or runtime identity evidence for its Windows MCP
+route. The application therefore binds readiness and transaction planning to
+the locked manifest/config but reports that route as `planned_unavailable` and
+does not execute a same-named PATH command. A live MCP health probe is not
+release evidence until independently trusted executable provenance and
+descendant launch containment are available.
 
 Filesystem containment now treats Windows reparse points as link components in
 the shared security boundary, so junctions are rejected alongside symbolic

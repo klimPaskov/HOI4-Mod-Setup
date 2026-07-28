@@ -1,97 +1,105 @@
 # HOI4 Mod Setup
 
-HOI4 Mod Setup prepares a new or existing Hearts of Iron IV mod for development in Codex. It creates the launcher files, project structure, Codex instructions, selected workflows, and local validation needed to begin work without manual setup.
+HOI4 Mod Setup is a Windows and macOS desktop wizard that prepares a new or
+existing Hearts of Iron IV mod for agentic development. It creates launcher
+files, project structure, verified workflow files, and a readiness report
+without silently replacing user work.
 
-> **Status:** in development. Public builds will be published through GitHub Releases after the transaction, recovery, security, and platform gates pass.
+> **Status:** in development. Public installers will be linked from GitHub
+> Releases only after the security, recovery, signing, and native platform
+> gates pass.
 
-## What you need
+## Install
 
-- Windows or macOS
-- Hearts of Iron IV installed or a chosen local mod workspace
-- a ChatGPT account with Codex access
-- the official Codex client installed with App Server support
-- internet access while signing in and downloading selected workflow components
+The public source repository is [klimPaskov/HOI4-Mod-Setup](https://github.com/klimPaskov/HOI4-Mod-Setup).
+Public binary releases will be linked from its GitHub Releases page: a signed
+Windows `.exe` installer and a signed/notarized macOS `.dmg`. Until the first
+release is published, contributors can use the setup in
+[DEVELOPMENT.md](DEVELOPMENT.md). Do not download installers from unverified
+mirrors.
 
-HOI4 Mod Setup uses the Codex access included with the signed-in ChatGPT account. It does not ask for an OpenAI API key.
+## Choose a planning provider
 
-## New mods
+Codex is the default. The first screen lets you choose:
 
-Describe the mod in plain language. Codex proposes the project identity and setup, including:
+- Codex through the official local Codex App Server and ChatGPT sign-in;
+- Claude through an Anthropic-compatible endpoint and an API key in the OS
+  credential vault;
+- Kimi, GLM, or DeepSeek through a user-supplied OpenAI-compatible HTTPS
+  endpoint and vault key;
+- a local model through a user-supplied loopback HTTP endpoint; or
+- another OpenAI-compatible provider through its explicit HTTPS endpoint and
+  vault key.
 
-- mod display name
-- stable project ID
-- script prefix and namespace
-- short project description
-- descriptor tags
-- initial folder profile
-- project-specific `AGENTS.md`
-- recommended skills, subagents, and components
+The selected model and provider profile shape the analysis prompt, adapted
+`AGENTS.md`, project `README.md`, and maintenance review. The app does not
+invent provider URLs, OAuth routes, commands, packages, or model names. Rust
+validates every provider response against the same review schema before the
+user can approve a plan.
 
-Every proposal is editable. Deterministic validation checks paths, identifier syntax, collisions, descriptor structure, and file safety before anything is written.
+## Create or import a mod
 
-After approval, the app creates and validates:
+For a new project, describe the mod in plain language. The selected provider
+proposes an editable identity, project ID, namespaces, tags, folder profile,
+instructions, skills, subagents, and components. For an existing project, a
+bounded read-only scan records evidence for descriptors, launcher state,
+structure, Git, identifiers, naming, localisation, docs, skills, subagents,
+Codex/MCP files, paths, and conflicts before semantic review.
 
-- `<mod_project>/descriptor.mod`
-- `<HOI4 user mod directory>/<project_id>.mod`
-- `<mod_project>/thumbnail.png`
-- the selected HOI4 folder scaffold
-- `AGENTS.md`
-- selected `.agents/skills/`
-- selected `.codex/agents/`
-- `.codex/config.toml`
-- `<mod_project>/paradox_wiki/`
-- selected documentation, scripts, validators, and templates
-- `.hoi4-mod-setup/installation-lock.json`
+After review and dry-run approval, the app can create and validate:
 
-The generated thumbnail is a replaceable local placeholder. Updates never overwrite a replacement silently.
+- `descriptor.mod`, the launcher descriptor, and a replaceable `thumbnail.png`;
+- the selected HOI4 folder scaffold;
+- adapted `AGENTS.md`, `README.md`, skills, subagents, Codex/MCP files;
+- selected scripts, validators, templates, docs, and
+  `<mod_project>/paradox_wiki/`; and
+- `.hoi4-mod-setup/installation-lock.json` after final verification.
 
-## Existing mods
+## Optional ChatGPT sources folder
 
-The app first runs a bounded read-only scanner over the selected project and approved companion paths. It detects descriptors, launcher registration, folder structure, Git state, identifiers, namespaces, naming patterns, localisation conventions, documentation, skills, subagents, Codex configuration, MCP configuration, and conflicts.
+When Codex is selected, the Git phase offers an optional final checkbox to
+prepare `<mod_project>/chatgpt_project_sources/`. It includes the adapted
+`AGENTS.md`, created `README.md`, every skill as `<skill>.md`, every selected
+subagent, and only the additional project-relative files the user names. The
+normal source trees remain intact. The app checks containment, links, hashes,
+collisions, file sizes, and secret-shaped content through the transaction.
 
-Codex then interprets the approved scan evidence and proposes project-specific conventions and installation choices. Findings remain separated as **Detected**, **Suggested by Codex**, and **Confirmed**.
-
-## ChatGPT sign-in
-
-The app opens the official ChatGPT sign-in flow through the local Codex App Server. Codex manages and refreshes its own authentication. HOI4 Mod Setup does not read, copy, store, or log ChatGPT tokens.
-
-A browser flow is used by default. A device-code flow is available when the browser callback cannot complete. Signing out removes the active Codex session through the same official interface.
-
-Setup analysis requires an authenticated ChatGPT session. Local recovery and rollback remain available when signed out.
+The final screen only recommends: **After setup, start planning using ChatGPT
+"Chat".** No upload, conversation, or planning action starts automatically.
 
 ## Safe installation and updates
 
-No project file changes before dry-run approval. Every installation uses preflight, exact source resolution, selective download, checksum verification, dry-run review, backup, staging, validation, apply, post-install checks, readiness, and a rollback record.
-
-Modified files receive a comparison and an explicit keep, replace, merge, rename, or skip choice. The same project can later be updated, repaired, reinstalled, rolled back, or have managed components removed. Updates also run a fresh read-only Codex semantic review over approved scan evidence before an update plan is created.
+Every mutation uses preflight, exact source resolution, selective download,
+SHA-256 verification, dry-run review, backup, staging, validation, apply,
+post-install checks, readiness, and a rollback record. Modified files receive
+base/local/incoming comparison and only valid keep, replace, merge, rename, or
+skip choices. Update, repair, reinstall, rollback, and managed removal remain
+available with honest incomplete or unsupported states.
 
 ## Optional workflows
 
-### 3D models
+The app asks exactly **Do you want to set up the 3D models workflow?** A Meshy
+key is stored in Windows Credential Manager or macOS Keychain and injected only
+as `MESHY_API_KEY`. A missing key leaves 3D incomplete without blocking core
+setup; Windows-oriented repository steps are not translated into invented
+macOS commands.
 
-The optional 3D workflow requires `MESHY_API_KEY`. The key stays in Windows Credential Manager or macOS Keychain and is injected only into the process that needs it. A missing key leaves the 3D workflow incomplete without blocking the normal mod setup.
-
-### LoRA and ComfyUI portraits
-
-Version 1 records interest only. It does not install or modify ComfyUI, models, LoRAs, Python environments, GPU software, or drivers.
+It also asks exactly **Do you want to set up LoRAs and ComfyUI for portrait
+generation?** Version 1 records interest only. It does not install or modify
+ComfyUI, models, LoRAs, Python, GPU software, or drivers.
 
 ## Privacy and security
 
-- no telemetry in version 1
-- no OpenAI API key field
-- ChatGPT tokens remain owned by Codex
-- approved text excerpts only are sent for semantic analysis
-- secrets, binaries, Git objects, and credential stores are excluded
-- downloads resolve to an exact source revision and are checked with SHA-256
-- external commands appear in the dry run before execution
-- user-modified files are never replaced silently
+The app has no telemetry in version 1. Provider keys and ChatGPT tokens never
+enter project files, plans, locks, logs, or screenshots. Only approved evidence
+is sent for semantic analysis. Source files are resolved to one exact manifest
+revision and SHA-256 checked. External actions appear in the dry run, and
+user-modified files are never silently replaced.
 
-## Help, security, and contributing
-
-Use [GitHub Issues](../../issues) for reproducible bugs and feature requests. Remove private paths, project content, and credentials before posting evidence.
-
-Report vulnerabilities through [SECURITY.md](SECURITY.md). Contributor setup and Git instructions are in [CONTRIBUTING.md](CONTRIBUTING.md) and [DEVELOPMENT.md](DEVELOPMENT.md).
+Contributor setup, security reporting, and release maintenance are in
+[CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),
+[DEVELOPMENT.md](DEVELOPMENT.md), and [RELEASING.md](RELEASING.md).
 
 ## License
 
-A formal open-source license must be selected before the first public source release. The current decision record is in [LICENSE_SELECTION.md](LICENSE_SELECTION.md).
+HOI4 Mod Setup is released under the [Apache License 2.0](LICENSE).

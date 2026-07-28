@@ -1,8 +1,8 @@
 # Testing strategy
 
-## Codex integration test matrix
+## AI provider integration matrix
 
-Use a protocol fixture that emulates App Server JSONL without real account credentials in ordinary CI. Cover process absence, incompatible versions, initialize ordering, an existing ChatGPT session, browser login, cancellation, device-code fallback, logout, account updates, usage limits, App Server crash, turn cancellation, output schema acceptance and rejection, unexpected fields, deterministic rejection of bad identifiers, token and account-data absence, and recovery while signed out.
+Use a protocol fixture that emulates App Server JSONL without real account credentials in ordinary CI. Cover process absence, incompatible versions, initialize ordering, an existing ChatGPT session, browser login, cancellation, device-code fallback, logout, account updates, usage limits, App Server crash, turn cancellation, output schema acceptance and rejection, unexpected fields, deterministic rejection of bad identifiers, token and account-data absence, and recovery while signed out. Add fake Anthropic, OpenAI-compatible, and loopback adapters for configured, missing-key, malformed-response, endpoint, redirect, bounded-response, provider-switch, and no-secret-persistence cases.
 
 Run a controlled manual release test against a real ChatGPT account. Never place real credentials in CI.
 
@@ -20,6 +20,8 @@ Run a controlled manual release test against a real ChatGPT account. Never place
 - secret redaction
 - readiness aggregation
 - journal transitions
+- provider profile and model binding
+- flattened Chat-source mapping and size/collision policy
 
 ## Property tests
 
@@ -28,16 +30,23 @@ Run a controlled manual release test against a real ChatGPT account. Never place
 - verified operations are idempotent
 - removal never deletes unowned files
 - secret-like values never survive serialization
+- provider credential references remain keyed and never cross provider switches
+- flattening is deterministic and rejects traversal, links, collisions, secret-shaped content, and oversized files
 
 ## Fuzzing
 
 Descriptor syntax, thumbnail PNG decoding, TOML parsing and structured merge,
-manifest JSON, Codex analysis JSON, relative paths, Markdown link extraction,
-localisation keys, encodings, huge files, and deep trees. The checked-in
-`fuzz/` package provides bounded `descriptor` and `toml_merge` targets in
-addition to the manifest, path, and Codex targets.
+manifest JSON, provider/Codex analysis JSON, relative paths, flattened
+Chat-source mappings, Markdown link extraction, localisation keys, encodings,
+huge files, and deep trees. The checked-in `fuzz/` package provides bounded
+`descriptor`, `toml_merge`, and `flatten` targets in addition to the manifest,
+path, and Codex targets.
 
 ## Integration tests
+
+- Command tests that mutate process-global session, evidence, cancellation,
+  health, or analysis stores must use a shared test-state guard so default
+  parallel runs remain deterministic.
 
 - fake GitHub latest and pinned server
 - manifest and tree mismatch
@@ -50,6 +59,8 @@ addition to the manifest, path, and Codex targets.
 - Git fixtures
 - MCP test server
 - launcher descriptor outside project
+- provider API envelopes and bounded response bodies
+- flattened source file names and user-selected extra paths
 
 ## Transaction fault injection
 
@@ -81,9 +92,19 @@ Record interest and assert zero forbidden operations.
 
 Terminate during staging and apply. Verify resume and rollback.
 
+### Provider selection and Chat sources
+
+Run each provider profile through new and existing-project planning with a fake
+adapter. Change provider and model after a proposal is returned and verify the
+old record cannot enter a plan. For Codex, select the flatten checkbox and
+verify skill renames, subagents, adapted AGENTS, README, extras, conflicts,
+flat-conflict preservation across a later source conflict, backup, interruption
+recovery, and rollback. For non-Codex profiles, verify
+the checkbox and Open in Codex action are absent.
+
 ## Golden files
 
-Descriptors, adapted AGENTS, TOML merge, scan, plan, lock, readiness, journal, and conflict preview. Golden updates require review.
+Descriptors, provider-adapted AGENTS and README, flattened Chat sources, TOML merge, scan, plan, lock, readiness, journal, and conflict preview. Golden updates require review.
 
 ## UI tests
 
@@ -134,4 +155,4 @@ For broad changes, compare touched product surfaces with the skill ownership tab
 
 ## Launcher-ready scaffold tests
 
-Create clean temporary projects on both platforms and verify the internal descriptor, external launcher descriptor, thumbnail decode, picture reference, folder profile, backup, rollback, repair, and modified-thumbnail preservation. Prove that rendering uses confirmed Codex proposals and deterministic validators.
+Create clean temporary projects on both platforms and verify the internal descriptor, external launcher descriptor, thumbnail decode, picture reference, folder profile, backup, rollback, repair, and modified-thumbnail preservation. Prove that rendering uses confirmed provider proposals and deterministic validators.

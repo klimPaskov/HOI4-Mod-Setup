@@ -1,4 +1,4 @@
-import type { CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, InstallationPlan, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
+import type { AiAccountStatus, AiAnalysisRequest, AiProviderProfile, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, InstallationPlan, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
   id: string;
@@ -33,6 +33,7 @@ interface RawScanProgress {
 interface RawReadinessReport {
   checks: Array<{ id: string; label: string; status: string; blocking: boolean; message?: string }>;
   open_in_codex: { enabled: boolean; blocking_check_ids: string[] };
+  core_ready: boolean;
   codex?: { authenticated_during_setup: boolean; analysis_status: string; confirmed_field_count: number };
 }
 
@@ -44,6 +45,12 @@ interface ReadinessInput {
 }
 
 interface TauriCommandMap {
+  ai_provider_profiles: { args: Record<string, never>; result: AiProviderProfile[] };
+  ai_account_read: { args: { provider: string; model: string; endpoint: string }; result: AiAccountStatus };
+  store_ai_provider_credential: { args: { provider: string; value: string }; result: boolean };
+  remove_ai_provider_credential: { args: { provider: string }; result: boolean };
+  ai_analyze: { args: AiAnalysisRequest; result: CodexAnalysisResult };
+  approve_scan_evidence: { args: { projectRoot: string; scanId: string; evidence: Array<{ reference: string; path: string; excerpt: string; excerpt_sha256: string; confidence?: number | null }> }; result: void };
   codex_account_read: { args: Record<string, never>; result: CodexAccountStatus };
   codex_login_start: { args: { mode: "browser" | "device" }; result: CodexLoginStart };
   codex_login_wait: { args: { loginId: string }; result: CodexAccountStatus };
@@ -133,6 +140,31 @@ export async function readCodexAccount(): Promise<CodexAccountStatus | null> {
   return invokeCommand("codex_account_read", {});
 }
 
+export async function readAiProviderProfiles(): Promise<AiProviderProfile[]> {
+  return (await invokeCommand("ai_provider_profiles", {})) ?? [];
+}
+
+export async function readAiAccount(
+  provider: string,
+  model: string,
+  endpoint: string,
+): Promise<AiAccountStatus | null> {
+  return invokeCommand("ai_account_read", {
+    provider,
+    model,
+    endpoint,
+  });
+}
+
+export async function storeAiProviderCredential(provider: string, value: string): Promise<boolean> {
+  if (!value.trim()) return false;
+  return (await invokeCommand("store_ai_provider_credential", { provider, value })) === true;
+}
+
+export async function removeAiProviderCredential(provider: string): Promise<boolean> {
+  return (await invokeCommand("remove_ai_provider_credential", { provider })) === true;
+}
+
 export async function startCodexLogin(mode: "browser" | "device"): Promise<CodexLoginStart | null> {
   return invokeCommand("codex_login_start", { mode });
 }
@@ -163,6 +195,18 @@ export async function logoutCodexResult(): Promise<CommandResult<void>> {
 
 export async function runCodexAnalysis(request: CodexAnalysisRequest): Promise<CodexAnalysisResult | null> {
   return invokeCommand("codex_analyze", request);
+}
+
+export async function runAiAnalysis(request: AiAnalysisRequest): Promise<CodexAnalysisResult | null> {
+  return invokeCommand("ai_analyze", request);
+}
+
+export async function approveScanEvidence(
+  projectRoot: string,
+  scanId: string,
+  evidence: Array<{ reference: string; path: string; excerpt: string; excerpt_sha256: string; confidence?: number | null }>,
+): Promise<boolean> {
+  return (await invokeCommand("approve_scan_evidence", { projectRoot, scanId, evidence })) !== null;
 }
 
 export async function confirmCodexAnalysis(record: CodexAnalysisRecord, confirmedFields: string[]): Promise<CodexAnalysisRecord | null> {
@@ -284,6 +328,7 @@ export async function evaluateReadiness(projectRoot: string, projectId: string, 
   if (!raw) return null;
   return {
     openInCodex: raw.open_in_codex.enabled,
+    coreReady: raw.core_ready,
     blockingCheckIds: raw.open_in_codex.blocking_check_ids,
     codex: raw.codex,
     checks: raw.checks.map((check) => ({
@@ -305,7 +350,7 @@ export async function runMcpHealthCheck(projectRoot: string): Promise<WorkflowHe
 }
 
 export async function previewDescriptors(state: WizardState): Promise<GeneratedArtifactPreview[]> {
-  return (await invokeCommand("preview_descriptors", { state })) ?? [];
+  return (await invokeCommand("preview_descriptors", { state: stateForCore(state) })) ?? [];
 }
 
 export async function previewInstallationConflict(planId: string, path: string): Promise<ConflictPreview | null> {
@@ -313,7 +358,13 @@ export async function previewInstallationConflict(planId: string, path: string):
 }
 
 export async function buildInstallationPlan(state: WizardState): Promise<InstallationPlan | null> {
-  return invokeCommand("build_installation_plan", { state });
+  return invokeCommand("build_installation_plan", { state: stateForCore(state) });
+}
+
+function stateForCore(state: WizardState): WizardState {
+  // Meshy input is a password draft. Keep the field for the typed command
+  // shape, but never serialize its value across the renderer/core boundary.
+  return { ...state, meshKeyDraft: "" };
 }
 
 export async function approveInstallation(planId: string): Promise<boolean> {

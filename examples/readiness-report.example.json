@@ -132,6 +132,7 @@
     "not_selected": 0,
     "planned_unavailable": 1
   },
+  "core_ready": true,
   "open_in_codex": {
     "enabled": true,
     "blocking_check_ids": [],
@@ -142,6 +143,8 @@
     "Optional workflow status does not block core Codex readiness."
   ],
   "codex": {
+    "provider": "codex",
+    "model": "default",
     "integration": "codex_app_server",
     "auth_mode": "chatgpt",
     "authenticated_during_setup": true,

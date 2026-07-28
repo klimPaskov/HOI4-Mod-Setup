@@ -33,6 +33,46 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
     }
     crate::source::validate_commit(&plan.source.resolved_revision)?;
     crate::source::validate_sha256(&plan.source.manifest_sha256)?;
+    let ai_profile = crate::ai::profile(&plan.ai_provider).ok_or_else(|| {
+        AppError::Credential(format!(
+            "plan uses an unsupported AI provider: {}",
+            plan.ai_provider
+        ))
+    })?;
+    if plan.ai_model.trim().is_empty() || plan.ai_model.len() > 256 {
+        return Err(AppError::Credential(
+            "plan AI model must be non-empty and bounded".into(),
+        ));
+    }
+    if plan.ai_optimization_profile != ai_profile.optimization_profile {
+        return Err(AppError::Credential(
+            "plan AI optimization profile does not match the selected provider".into(),
+        ));
+    }
+    if plan.ai_provider != "codex"
+        && plan
+            .selected_components
+            .iter()
+            .any(|id| id == "codex.config")
+    {
+        return Err(AppError::Transaction(
+            "non-Codex plans cannot install Codex configuration".into(),
+        ));
+    }
+    if plan.flatten_chat_sources && plan.ai_provider != "codex" {
+        return Err(AppError::Transaction(
+            "flattened ChatGPT sources require the Codex provider".into(),
+        ));
+    }
+    if !plan.flatten_chat_sources && !plan.flatten_additional_files.is_empty() {
+        return Err(AppError::Transaction(
+            "flattened Chat source extras require flattening to be enabled".into(),
+        ));
+    }
+    crate::ai::validate_endpoint_for_provider(
+        plan.ai_provider.as_str(),
+        plan.ai_endpoint.as_deref(),
+    )?;
     if !matches!(
         plan.source.manifest_origin.as_str(),
         "remote" | "bundled_revision_bootstrap"
@@ -56,7 +96,7 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
         crate::codex::validate_confirmed_record(codex_analysis)?;
     } else if !removing {
         return Err(AppError::Credential(
-            "a confirmed ChatGPT-authenticated Codex analysis is required before apply".into(),
+            "a confirmed selected-provider analysis is required before apply".into(),
         ));
     }
     if plan.source.repository
@@ -203,6 +243,29 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
                 operation.destination
             )));
         }
+        if operation
+            .source_path
+            .as_deref()
+            .is_some_and(|path| path.starts_with("generated:"))
+        {
+            let expected = if operation.action == OperationAction::Rename {
+                RollbackAction::RemoveCreated
+            } else if operation.action == OperationAction::Generate
+                && operation.local_sha256.is_some()
+            {
+                RollbackAction::RestoreBackup
+            } else if operation.action == OperationAction::Generate {
+                RollbackAction::RemoveCreated
+            } else {
+                operation.rollback
+            };
+            if operation.action != OperationAction::Skip && operation.rollback != expected {
+                return Err(AppError::Transaction(format!(
+                    "generated operation has inconsistent rollback metadata: {}",
+                    operation.destination
+                )));
+            }
+        }
     }
     for conflict in &plan.conflicts {
         if conflict.selected.is_none() {
@@ -264,6 +327,7 @@ pub fn new_journal(
         rollback_transaction_id: None,
         result_lock_sha256: None,
         result_lock_exists: None,
+        rollback_record_sha256: None,
         project_id: project_id.into(),
         project_root: project_root.display().to_string(),
         state: "preflight".into(),
@@ -292,6 +356,8 @@ pub fn new_journal(
                 destination: operation.destination.clone(),
                 ownership: operation.ownership,
                 component_id: Some(operation.component_id.clone()),
+                source_path: operation.source_path.clone(),
+                source_size: operation.source_size,
                 action: Some(operation.action),
                 location_scope: operation.location_scope.clone(),
                 external: operation.external,
@@ -305,7 +371,9 @@ pub fn new_journal(
                 result_sha256: operation.result_sha256.clone(),
                 rollback: Some(operation.rollback),
                 rollback_source_path: None,
+                resolution: operation.resolution.clone(),
                 backup_sha256: None,
+                staged_sha256: None,
                 after_sha256: None,
                 after_exists: None,
             })
@@ -438,6 +506,7 @@ pub fn run_transaction(
 ) -> Result<(TransactionJournal, InstallationLock), AppError> {
     validate_plan(plan)?;
     let project_root = validate_project_root(project_root)?;
+    validate_flatten_transaction_inputs(plan, prepared_files, &project_root)?;
     let app_root = options
         .app_data_root
         .clone()
@@ -492,6 +561,17 @@ pub fn run_transaction(
             &journal_path,
             options.fail_before_stage,
         )?;
+        add_stage_evidence(
+            &mut journal,
+            1,
+            vec![
+                format!("repository={}", plan.source.repository),
+                format!("revision={}", plan.source.resolved_revision),
+                format!("manifest_sha256={}", plan.source.manifest_sha256),
+                format!("manifest_origin={}", plan.source.manifest_origin),
+            ],
+            &journal_path,
+        )?;
         stage_complete(
             &mut journal,
             1,
@@ -506,6 +586,8 @@ pub fn run_transaction(
             &journal_path,
             options.fail_before_stage,
         )?;
+        let selected_evidence = validate_prepared_files(plan, prepared_files)?;
+        add_stage_evidence(&mut journal, 2, selected_evidence, &journal_path)?;
         stage_complete(
             &mut journal,
             2,
@@ -520,6 +602,8 @@ pub fn run_transaction(
             &journal_path,
             options.fail_before_stage,
         )?;
+        let verified_evidence = validate_prepared_files(plan, prepared_files)?;
+        add_stage_evidence(&mut journal, 3, verified_evidence, &journal_path)?;
         stage_complete(
             &mut journal,
             3,
@@ -695,6 +779,7 @@ pub fn run_transaction(
                 blocking_checks.join(", ")
             )));
         }
+        final_live_verification(&project_root, plan, &journal)?;
         let lock = build_lock(
             plan,
             prepared_files,
@@ -702,6 +787,9 @@ pub fn run_transaction(
             previous_lock.as_ref(),
             &project_root,
         )?;
+        let lock_bytes = serialized_json_bytes(&lock)?;
+        journal.result_lock_exists = Some(true);
+        journal.result_lock_sha256 = Some(sha256_bytes(&lock_bytes));
         stage_start(
             &mut journal,
             11,
@@ -723,14 +811,16 @@ pub fn run_transaction(
         };
         persist_journal(&journal_path, &mut journal)?;
         atomic_write_json(&roots.transaction.join("rollback-record.json"), &journal)?;
+        journal.rollback_record_sha256 = Some(sha256_file(
+            &roots.transaction.join("rollback-record.json"),
+        )?);
+        persist_journal(&journal_path, &mut journal)?;
         maybe_abort_for_test("after_rollback_record");
-        stage_complete(
-            &mut journal,
-            11,
-            "rollback record",
-            &journal_path,
-            options.fail_after_stage,
-        )?;
+        if options.fail_after_stage == Some(11) {
+            return Err(AppError::Transaction(
+                "fault injected after stage rollback record".into(),
+            ));
+        }
         let metadata_root = project_root.join(".hoi4-mod-setup");
         fs::create_dir_all(&metadata_root)?;
         // The lock is the final success artifact. Journal finalization after
@@ -738,6 +828,7 @@ pub fn run_transaction(
         // reconciled by resume only after the lock and rollback record verify.
         atomic_write_json(&metadata_root.join("install.lock.json"), &lock)?;
         maybe_abort_for_test("after_lock_write");
+        stage_complete(&mut journal, 11, "rollback record", &journal_path, None)?;
         journal.state = "completed".into();
         journal.recovery = RecoveryState {
             resume_allowed: false,
@@ -774,6 +865,15 @@ pub fn run_transaction(
 fn persist_journal(path: &Path, journal: &mut TransactionJournal) -> Result<(), AppError> {
     journal.updated_at = Utc::now().to_rfc3339();
     atomic_write_json(path, journal)
+}
+
+/// Return the exact bytes written by `atomic_write_json`. Keeping the lock
+/// hash tied to this representation lets finalization recovery reject a
+/// substituted but otherwise parseable success lock.
+fn serialized_json_bytes<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, AppError> {
+    let json = serde_json::to_value(value)?;
+    crate::security::reject_secret_like_keys(&json)?;
+    Ok(serde_json::to_vec_pretty(&json)?)
 }
 
 fn operation_destination(
@@ -875,6 +975,272 @@ fn stage_complete(
         stage.completed_at = Some(Utc::now().to_rfc3339());
     }
     persist_journal(journal_path, journal)
+}
+
+fn add_stage_evidence(
+    journal: &mut TransactionJournal,
+    index: usize,
+    evidence: Vec<String>,
+    journal_path: &Path,
+) -> Result<(), AppError> {
+    if evidence.len() > 4096 || evidence.iter().any(|item| item.len() > 1024) {
+        return Err(AppError::Transaction(
+            "transaction stage evidence exceeds the bounded limit".into(),
+        ));
+    }
+    let stage = journal
+        .stages
+        .get_mut(index)
+        .ok_or_else(|| AppError::Transaction("transaction stage index is invalid".into()))?;
+    stage.evidence = evidence;
+    persist_journal(journal_path, journal)
+}
+
+/// Revalidate the exact bytes handed from the read-only plan builder to the
+/// mutation transaction. Planning may have fetched remote content before the
+/// user reviewed the dry run; the journaled transaction must still bind every
+/// selected payload to its operation and checksum before it creates backups.
+fn validate_prepared_files(
+    plan: &InstallationPlan,
+    prepared_files: &[PreparedFile],
+) -> Result<Vec<String>, AppError> {
+    if prepared_files.len() > 4096 {
+        return Err(AppError::Transaction(
+            "prepared transaction payload exceeds the bounded file limit".into(),
+        ));
+    }
+    let operations: HashMap<&str, &PlanOperation> = plan
+        .operations
+        .iter()
+        .map(|operation| (operation.id.as_str(), operation))
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut evidence = Vec::with_capacity(prepared_files.len());
+    for prepared in prepared_files {
+        if !seen.insert(prepared.operation_id.as_str()) {
+            return Err(AppError::Transaction(format!(
+                "prepared transaction payload has a duplicate operation: {}",
+                prepared.operation_id
+            )));
+        }
+        let operation = operations
+            .get(prepared.operation_id.as_str())
+            .ok_or_else(|| {
+                AppError::Transaction(format!(
+                    "prepared transaction payload is not bound to an operation: {}",
+                    prepared.operation_id
+                ))
+            })?;
+        let destinations_match = if operation.external {
+            validate_external_destination(&prepared.destination)
+                .map_err(|error| AppError::Transaction(error.to_string()))?
+                == validate_external_destination(&operation.destination)
+                    .map_err(|error| AppError::Transaction(error.to_string()))?
+        } else {
+            canonical_relative_key(&prepared.destination)
+                .map_err(|error| AppError::Transaction(error.to_string()))?
+                == canonical_relative_key(&operation.destination)
+                    .map_err(|error| AppError::Transaction(error.to_string()))?
+        };
+        if !destinations_match {
+            return Err(AppError::Transaction(format!(
+                "prepared destination is not bound to operation {}",
+                operation.destination
+            )));
+        }
+        crate::source::validate_sha256(&prepared.expected_sha256)?;
+        let actual = sha256_bytes(&prepared.bytes);
+        if actual != prepared.expected_sha256 {
+            return Err(AppError::Transaction(format!(
+                "prepared checksum mismatch: {}",
+                operation.destination
+            )));
+        }
+        if matches!(operation.action, OperationAction::DeleteManaged) {
+            return Err(AppError::Transaction(format!(
+                "delete operation has prepared content: {}",
+                operation.destination
+            )));
+        }
+        if operation.action != OperationAction::Skip {
+            let expected = operation
+                .result_sha256
+                .as_deref()
+                .or(operation.source_sha256.as_deref())
+                .ok_or_else(|| {
+                    AppError::Transaction(format!(
+                        "mutating operation has no checksum expectation: {}",
+                        operation.destination
+                    ))
+                })?;
+            if expected != actual {
+                return Err(AppError::Transaction(format!(
+                    "prepared content is not the reviewed operation result: {}",
+                    operation.destination
+                )));
+            }
+        } else if operation.source_sha256.is_some()
+            && !matches!(operation.resolution.as_deref(), Some("keep" | "skip"))
+        {
+            let expected = operation
+                .result_sha256
+                .as_deref()
+                .or(operation.source_sha256.as_deref())
+                .ok_or_else(|| {
+                    AppError::Transaction(format!(
+                        "skipped operation has no checksum expectation: {}",
+                        operation.destination
+                    ))
+                })?;
+            if expected != actual {
+                return Err(AppError::Transaction(format!(
+                    "prepared content is not the reviewed skipped baseline: {}",
+                    operation.destination
+                )));
+            }
+        }
+        if operation
+            .source_sha256
+            .as_deref()
+            .is_some_and(|expected| expected == actual)
+            && operation
+                .source_size
+                .is_some_and(|expected| expected != prepared.bytes.len() as u64)
+        {
+            return Err(AppError::Transaction(format!(
+                "prepared source size mismatch: {}",
+                operation.destination
+            )));
+        }
+        evidence.push(format!("{}={actual}", operation.destination));
+    }
+    for operation in &plan.operations {
+        if operation.action != OperationAction::Skip
+            && operation.action != OperationAction::DeleteManaged
+            && !seen.contains(operation.id.as_str())
+        {
+            return Err(AppError::Transaction(format!(
+                "mutating operation has no prepared content: {}",
+                operation.destination
+            )));
+        }
+        if operation.action == OperationAction::Skip
+            && operation.source_sha256.is_some()
+            && !matches!(operation.resolution.as_deref(), Some("keep" | "skip"))
+            && !seen.contains(operation.id.as_str())
+        {
+            return Err(AppError::Transaction(format!(
+                "skipped operation has no verified incoming content: {}",
+                operation.destination
+            )));
+        }
+    }
+    evidence.sort();
+    Ok(evidence)
+}
+
+fn flatten_destination(path: &str) -> bool {
+    path.replace('\\', "/")
+        .starts_with(&format!("{}/", crate::flatten::FLAT_DESTINATION_ROOT))
+}
+
+fn flatten_input_uses_incoming(operation: &PlanOperation) -> bool {
+    if matches!(
+        operation.resolution.as_deref(),
+        Some(
+            "review_required"
+                | "reverse_merge_required"
+                | "user_owned_review"
+                | "keep_user_modification"
+                | "obsolete_review"
+        )
+    ) {
+        return false;
+    }
+    !(matches!(
+        (operation.action, operation.resolution.as_deref()),
+        (OperationAction::Skip, Some("keep" | "skip"))
+    ) || (operation.local_state == LocalState::Modified && operation.resolution.is_none()))
+}
+
+/// Rebuild the optional flat Chat view from the reviewed, non-flat inputs at
+/// the mutation boundary. This prevents a tampered plan or changed user extra
+/// from bypassing the flattener's link, secret, collision, and size checks.
+fn validate_flatten_transaction_inputs(
+    plan: &InstallationPlan,
+    prepared_files: &[PreparedFile],
+    project_root: &Path,
+) -> Result<(), AppError> {
+    if !plan.flatten_chat_sources {
+        return Ok(());
+    }
+    let operations = plan
+        .operations
+        .iter()
+        .map(|operation| (operation.id.as_str(), operation))
+        .collect::<HashMap<_, _>>();
+    let accepted_prepared = prepared_files
+        .iter()
+        .filter(|file| !flatten_destination(&file.destination))
+        .filter(|file| {
+            operations
+                .get(file.operation_id.as_str())
+                .is_none_or(|operation| flatten_input_uses_incoming(operation))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let accepted_generated = plan
+        .generated_artifacts
+        .iter()
+        .filter(|artifact| !flatten_destination(&artifact.destination))
+        .filter(|artifact| {
+            let source_path = format!("generated:{}", artifact.destination);
+            plan.operations
+                .iter()
+                .find(|operation| operation.source_path.as_deref() == Some(source_path.as_str()))
+                .is_none_or(flatten_input_uses_incoming)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let rebuilt = crate::flatten::build_artifacts(
+        &accepted_prepared,
+        &accepted_generated,
+        project_root,
+        &plan.flatten_additional_files,
+    )?;
+    let expected = plan
+        .generated_artifacts
+        .iter()
+        .filter(|artifact| flatten_destination(&artifact.destination))
+        .filter(|artifact| {
+            let source_path = format!("generated:{}", artifact.destination);
+            plan.operations
+                .iter()
+                .find(|operation| operation.source_path.as_deref() == Some(source_path.as_str()))
+                .is_none_or(flatten_input_uses_incoming)
+        })
+        .map(|artifact| {
+            (
+                artifact.destination.clone(),
+                (artifact.expected_sha256.clone(), artifact.content.clone()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let rebuilt_map = rebuilt
+        .iter()
+        .map(|artifact| {
+            (
+                artifact.destination.clone(),
+                (artifact.expected_sha256.clone(), artifact.content.clone()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    if expected != rebuilt_map {
+        return Err(AppError::Transaction(
+            "flattened Chat source inputs changed after review; rebuild the plan".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn backup_existing(
@@ -1022,7 +1388,7 @@ fn stage_files(
             .find(|record| record.id == operation.id)
         {
             record.status = "staged".into();
-            record.after_sha256 = Some(hash);
+            record.staged_sha256 = Some(hash);
         }
         journal.last_checkpoint = format!("stage-file-{}", operation.id);
         persist_journal(journal_path, journal)?;
@@ -1186,7 +1552,7 @@ fn apply_operations(
                 staged.display()
             )));
         }
-        if operation.action != OperationAction::DeleteManaged {
+        let staged_hash = if operation.action != OperationAction::DeleteManaged {
             let staged_metadata = fs::symlink_metadata(&staged)?;
             if is_link_metadata(&staged_metadata) || !staged_metadata.is_file() {
                 return Err(AppError::PathSecurity(format!(
@@ -1205,13 +1571,17 @@ fn apply_operations(
                     operation.destination
                 )));
             }
-        }
+            Some(staged_hash)
+        } else {
+            None
+        };
         if let Some(record) = journal
             .operations
             .iter_mut()
             .find(|record| record.id == operation.id)
         {
             record.status = "applying".into();
+            record.after_sha256 = None;
             record.after_exists = None;
         }
         journal.last_checkpoint = format!("apply-intent-{}", operation.id);
@@ -1241,6 +1611,7 @@ fn apply_operations(
             .find(|record| record.id == operation.id)
         {
             record.status = "applied".into();
+            record.staged_sha256 = staged_hash;
             record.after_sha256 = after_hash;
             record.after_exists = Some(destination.is_file());
         }
@@ -1413,15 +1784,79 @@ fn post_install_checks(
     persist_journal(journal_path, journal)
 }
 
+/// Re-check every destination immediately before the success lock is built.
+/// The apply and readiness passes are necessary but not sufficient: a local
+/// editor or another process may have changed a skipped or applied file after
+/// those checkpoints. A changed live precondition fails closed instead of
+/// allowing the lock to record bytes that were never reviewed.
+fn final_live_verification(
+    project_root: &Path,
+    plan: &InstallationPlan,
+    journal: &TransactionJournal,
+) -> Result<(), AppError> {
+    for operation in &plan.operations {
+        let destination = operation_destination(project_root, operation)?;
+        let current = regular_file_hash(&destination)?;
+        let journal_operation = journal
+            .operations
+            .iter()
+            .find(|record| record.id == operation.id)
+            .ok_or_else(|| {
+                AppError::Transaction(format!(
+                    "journal operation is missing before final verification: {}",
+                    operation.id
+                ))
+            })?;
+        match operation.action {
+            OperationAction::Skip | OperationAction::External => {
+                if current.as_deref() != operation.local_sha256.as_deref() {
+                    return Err(AppError::Transaction(format!(
+                        "skipped destination changed before lock finalization: {}",
+                        operation.destination
+                    )));
+                }
+            }
+            OperationAction::DeleteManaged => {
+                if current.is_some() || journal_operation.after_exists != Some(false) {
+                    return Err(AppError::Transaction(format!(
+                        "managed delete changed before lock finalization: {}",
+                        operation.destination
+                    )));
+                }
+            }
+            _ => {
+                let expected = operation
+                    .result_sha256
+                    .as_deref()
+                    .or(operation.source_sha256.as_deref())
+                    .ok_or_else(|| {
+                        AppError::Transaction(format!(
+                            "operation has no final checksum: {}",
+                            operation.destination
+                        ))
+                    })?;
+                if current.as_deref() != Some(expected)
+                    || journal_operation.after_sha256.as_deref() != Some(expected)
+                    || journal_operation.after_exists != Some(true)
+                {
+                    return Err(AppError::Transaction(format!(
+                        "destination changed before lock finalization: {}",
+                        operation.destination
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn build_transaction_readiness(
     project_root: &Path,
     plan: &InstallationPlan,
     journal: &TransactionJournal,
 ) -> Result<crate::models::ReadinessReport, AppError> {
-    let removing = plan
-        .operations
-        .iter()
-        .any(|operation| operation.action == OperationAction::DeleteManaged)
+    let removing = plan.maintenance_mode.as_deref() == Some("remove")
+        && !plan.operations.is_empty()
         && plan.operations.iter().all(|operation| {
             matches!(
                 operation.action,
@@ -1440,6 +1875,8 @@ fn build_transaction_readiness(
             project_id: plan.project_id.clone(),
             generated_at: Utc::now().to_rfc3339(),
             codex: ReadinessCodexSummary {
+                provider: plan.ai_provider.clone(),
+                model: plan.ai_model.clone(),
                 integration: "codex_app_server".into(),
                 auth_mode: "chatgpt".into(),
                 authenticated_during_setup: plan.codex_analysis.is_some(),
@@ -1478,6 +1915,7 @@ fn build_transaction_readiness(
                 pass: 1,
                 ..Default::default()
             },
+            core_ready: false,
             open_in_codex: OpenInCodex {
                 enabled: false,
                 blocking_check_ids: vec![],
@@ -1546,8 +1984,8 @@ fn build_transaction_readiness(
     } else {
         vec!["paradox_wiki/".into()]
     };
-    let wiki_metadata_valid =
-        !has_component("wiki.snapshot") || !plan.wiki_required_pages.is_empty();
+    let wiki_metadata_valid = !has_component("wiki.snapshot")
+        || (!plan.wiki_required_pages.is_empty() && plan.wiki_metadata.is_some());
     let wiki_status = if !has_component("wiki.snapshot") {
         "not_selected".to_string()
     } else if project_root.join("paradox_wiki").is_dir()
@@ -1572,6 +2010,7 @@ fn build_transaction_readiness(
             .and_then(|target| crate::mcp::initialize_health(project_root, &target))
         {
             Ok(_) => "pass".into(),
+            Err(AppError::UnsupportedPlatform(_)) => "planned_unavailable".into(),
             Err(_) => "block".into(),
         }
     };
@@ -1611,6 +2050,32 @@ fn build_transaction_readiness(
         .get("workflow.3d")
         .cloned()
         .unwrap_or_else(|| "not_selected".into());
+    let ai_provider = if plan.ai_provider.trim().is_empty() {
+        "codex".to_string()
+    } else {
+        plan.ai_provider.clone()
+    };
+    let ai_authenticated = plan
+        .codex_analysis
+        .as_ref()
+        .is_some_and(|record| crate::codex::validate_confirmed_record(record).is_ok());
+    let ai_analysis_status = if plan
+        .codex_analysis
+        .as_ref()
+        .is_some_and(|record| !record.confirmed_fields.is_empty())
+    {
+        "confirmed"
+    } else {
+        "blocked"
+    };
+    let ai_confirmed_field_count = plan
+        .codex_analysis
+        .as_ref()
+        .map(|record| record.confirmed_fields.len() as u32)
+        .unwrap_or(0);
+    let mcp_blocking = has_component("mcp.hoi4_agent_tools")
+        && cfg!(target_os = "windows")
+        && mcp_status == "block";
     let report = crate::readiness::evaluate(&crate::readiness::ReadinessInput {
         project_id: plan.project_id.clone(),
         project_root: project_root.display().to_string(),
@@ -1674,8 +2139,18 @@ fn build_transaction_readiness(
             .as_ref()
             .map(|record| record.confirmed_fields.len() as u32)
             .unwrap_or(0),
+        ai_provider: ai_provider.clone(),
+        ai_model: plan.ai_model.clone(),
+        ai_authenticated,
+        ai_analysis_status: ai_analysis_status.into(),
+        ai_confirmed_field_count,
+        flatten_status: if plan.flatten_chat_sources {
+            crate::readiness::flattened_artifact_status(project_root, &plan.generated_artifacts)
+        } else {
+            "not_selected".into()
+        },
         mcp_status,
-        mcp_blocking: has_component("mcp.hoi4_agent_tools") && cfg!(target_os = "windows"),
+        mcp_blocking,
         wiki_status,
         wiki_required_pages: wiki_pages,
         wiki_broken_links,
@@ -1711,10 +2186,8 @@ fn build_lock(
     previous_lock: Option<&InstallationLock>,
     project_root: &Path,
 ) -> Result<InstallationLock, AppError> {
-    let removing = plan
-        .operations
-        .iter()
-        .any(|operation| operation.action == OperationAction::DeleteManaged)
+    let removing = plan.maintenance_mode.as_deref() == Some("remove")
+        && !plan.operations.is_empty()
         && plan.operations.iter().all(|operation| {
             matches!(
                 operation.action,
@@ -1748,13 +2221,27 @@ fn build_lock(
         })?;
         match operation.action {
             OperationAction::Skip | OperationAction::External => {
-                if let Some(existing) = files.get(&key) {
+                if let Some(existing_hash) = files
+                    .get(&key)
+                    .map(|existing| existing.installed_sha256.clone())
+                {
                     if operation.local_state == LocalState::Modified {
-                        record_local_modification(
-                            &mut local_modifications,
-                            operation,
-                            &existing.installed_sha256,
-                        );
+                        if removing && operation.local_sha256.is_none() {
+                            // A managed-removal target that is already absent
+                            // is not a user modification. Drop its stale lock
+                            // baseline instead of fabricating a current hash.
+                            files.remove(&key);
+                            remove_local_modification(
+                                &mut local_modifications,
+                                &operation.destination,
+                            );
+                        } else {
+                            record_local_modification(
+                                &mut local_modifications,
+                                operation,
+                                &existing_hash,
+                            );
+                        }
                     }
                 } else if operation.local_state != LocalState::Absent {
                     // A first install can intentionally keep a user-owned
@@ -1905,6 +2392,14 @@ fn build_lock(
             }
         }
     }
+    let mcp_route_planned_unavailable = plan
+        .selected_components
+        .iter()
+        .any(|id| id == "mcp.hoi4_agent_tools")
+        && matches!(
+            crate::mcp::reviewed_plan_target(&plan.external_actions),
+            Err(AppError::UnsupportedPlatform(_))
+        );
     let components = component_ids
         .iter()
         .map(|id| LockComponent {
@@ -1934,12 +2429,24 @@ fn build_lock(
                 )
             },
             source_revision: Some(plan.source.resolved_revision.clone()),
-            validation: Some("pass".into()),
+            validation: Some(
+                if id == "mcp.hoi4_agent_tools" && mcp_route_planned_unavailable {
+                    "planned_unavailable"
+                } else {
+                    "pass"
+                }
+                .into(),
+            ),
         })
         .collect();
     let mut optional_workflows = previous_lock
         .map(|lock| lock.optional_workflows.clone())
         .unwrap_or_default();
+    if removing {
+        for workflow in optional_workflows.values_mut() {
+            workflow.credential_reference = None;
+        }
+    }
     for (id, state) in &plan.optional_workflows {
         optional_workflows.insert(
             id.clone(),
@@ -1950,18 +2457,23 @@ fn build_lock(
                 } else {
                     None
                 },
-                credential_reference: plan
-                    .credential_references
-                    .iter()
-                    .find(|reference| reference.name == crate::credentials::MESHY_ENVIRONMENT_NAME)
-                    .map(|reference| reference.reference.clone())
-                    .or_else(|| {
-                        previous_lock.and_then(|lock| {
-                            lock.optional_workflows
-                                .get(id)
-                                .and_then(|workflow| workflow.credential_reference.clone())
+                credential_reference: if removing || id != "workflow.3d" {
+                    None
+                } else {
+                    plan.credential_references
+                        .iter()
+                        .find(|reference| {
+                            reference.name == crate::credentials::MESHY_ENVIRONMENT_NAME
                         })
-                    }),
+                        .map(|reference| reference.reference.clone())
+                        .or_else(|| {
+                            previous_lock.and_then(|lock| {
+                                lock.optional_workflows
+                                    .get(id)
+                                    .and_then(|workflow| workflow.credential_reference.clone())
+                            })
+                        })
+                },
             },
         );
     }
@@ -2022,8 +2534,22 @@ fn build_lock(
             manifest_sha256: plan.source.manifest_sha256.clone(),
             manifest_origin: plan.source.manifest_origin.clone(),
         },
-        codex_analysis: plan.codex_analysis.clone(),
+        ai_provider: plan.ai_provider.clone(),
+        ai_model: plan.ai_model.clone(),
+        ai_endpoint: plan.ai_endpoint.clone(),
+        ai_optimization_profile: plan.ai_optimization_profile.clone(),
+        flatten_chat_sources: plan.flatten_chat_sources,
+        flatten_additional_files: plan.flatten_additional_files.clone(),
+        // Managed removal is deliberately available without provider
+        // authentication. Preserve a prior non-secret analysis record when
+        // one exists so a removal lock remains useful for audit, while the
+        // schemas also allow the explicit null state for legacy/partial locks.
+        codex_analysis: plan
+            .codex_analysis
+            .clone()
+            .or_else(|| previous_lock.and_then(|lock| lock.codex_analysis.clone())),
         wiki_required_pages: plan.wiki_required_pages.clone(),
+        wiki_metadata: plan.wiki_metadata.clone(),
         components,
         files,
         merge_choices,
@@ -2097,7 +2623,10 @@ fn rollback_destination_is_restored(
         Some(RollbackAction::RemoveCreated) => Ok(current.is_none()),
         Some(RollbackAction::RestoreBackup | RollbackAction::ReverseMerge) => {
             let Some(backup_path) = operation.backup_path.as_ref() else {
-                return Ok(current.is_none());
+                return Err(AppError::Transaction(format!(
+                    "rollback backup metadata is missing for {}",
+                    operation.destination
+                )));
             };
             let expected_backup = expected_operation_backup(journal, journal_path, &operation.id)?;
             let supplied_backup = PathBuf::from(backup_path);
@@ -2162,6 +2691,7 @@ fn new_rollback_journal(
         rollback_transaction_id: None,
         result_lock_sha256: None,
         result_lock_exists: None,
+        rollback_record_sha256: None,
         project_id: parent.project_id.clone(),
         project_root: project_root.display().to_string(),
         state: "preflight".into(),
@@ -2202,6 +2732,8 @@ fn new_rollback_journal(
                     destination: operation.destination.clone(),
                     ownership: operation.ownership,
                     component_id: operation.component_id.clone(),
+                    source_path: operation.source_path.clone(),
+                    source_size: operation.source_size,
                     action: if actionable {
                         Some(if desired_sha256.is_some() {
                             OperationAction::Replace
@@ -2224,7 +2756,9 @@ fn new_rollback_journal(
                         Some(RollbackAction::None)
                     },
                     rollback_source_path: operation.backup_path.clone(),
+                    resolution: operation.resolution.clone(),
                     backup_sha256: None,
+                    staged_sha256: None,
                     after_sha256: None,
                     after_exists: None,
                 }
@@ -2257,34 +2791,70 @@ fn rollback_operation_destination(
     }
 }
 
-fn recorded_result_lock_matches(
-    project_root: &Path,
-    journal: &TransactionJournal,
-) -> Result<Option<bool>, AppError> {
-    let Some(expected_exists) = journal.result_lock_exists else {
-        return Ok(None);
-    };
+fn rollback_lock_hash(project_root: &Path) -> Result<Option<String>, AppError> {
     let lock_path = safe_join(project_root, ".hoi4-mod-setup/install.lock.json")?;
-    match fs::symlink_metadata(&lock_path) {
-        Ok(metadata) if is_link_metadata(&metadata) || !metadata.is_file() => Err(
-            AppError::PathSecurity("installation lock is not a regular file".into()),
-        ),
-        Ok(_) if !expected_exists => Ok(Some(false)),
-        Ok(_) => {
-            let expected_hash = journal.result_lock_sha256.as_deref().ok_or_else(|| {
-                AppError::Transaction("rollback result lock has no recorded checksum".into())
-            })?;
-            Ok(Some(sha256_file(&lock_path)? == expected_hash))
+    regular_file_hash(&lock_path)
+}
+
+/// Validate the lock before any rollback file is touched. A rollback may only
+/// start when the live lock is either the transaction's recorded result or the
+/// predecessor state already restored by an interrupted retry. This prevents
+/// a later user/tool edit from being overwritten after the first file restore.
+fn validate_rollback_lock_precondition(
+    project_root: &Path,
+    parent: &TransactionJournal,
+) -> Result<(), AppError> {
+    let current = rollback_lock_hash(project_root)?;
+    if parent.transaction_kind == "rollback" {
+        let expected =
+            match (
+                parent.result_lock_exists,
+                parent.result_lock_sha256.as_deref(),
+            ) {
+                (Some(true), Some(hash)) => Some(hash),
+                (Some(false), None) => None,
+                _ => return Err(AppError::Transaction(
+                    "rollback journal has no exact result-lock evidence; manual review is required"
+                        .into(),
+                )),
+            };
+        if current.as_deref() != expected {
+            return Err(AppError::Transaction(
+                "installation lock changed after rollback; refusing inverse rollback".into(),
+            ));
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Some(!expected_exists)),
-        Err(error) => Err(error.into()),
+        return Ok(());
     }
+
+    let result = parent.result_lock_sha256.as_deref();
+    if result.is_some_and(|expected| current.as_deref() == Some(expected)) {
+        return Ok(());
+    }
+    let predecessor = parent.previous_lock_sha256.as_deref();
+    let stage_incomplete = parent
+        .stages
+        .get(11)
+        .is_none_or(|stage| stage.status != "complete");
+    let rollback_retry = parent.state == "rolling_back";
+    if (stage_incomplete || rollback_retry) && current.as_deref() == predecessor {
+        return Ok(());
+    }
+    if (stage_incomplete || rollback_retry) && predecessor.is_none() && current.is_none() {
+        return Ok(());
+    }
+    if result.is_none() && predecessor.is_none() && current.is_none() {
+        return Ok(());
+    }
+    Err(AppError::Transaction(
+        "installation lock changed outside the transaction; refusing rollback".into(),
+    ))
 }
 
 fn capture_rollback_lock_backup(
     project_root: &Path,
     backup_root: &Path,
     rollback: &mut TransactionJournal,
+    parent: &TransactionJournal,
 ) -> Result<(), AppError> {
     let lock_path = safe_join(project_root, ".hoi4-mod-setup/install.lock.json")?;
     let backup_path = backup_root.join("install.lock.json.bak");
@@ -2300,9 +2870,16 @@ fn capture_rollback_lock_backup(
         Ok(_) => {
             let current_hash = sha256_file(&lock_path)?;
             if backup_path.is_file() {
-                if sha256_file(&backup_path)? != current_hash {
+                let backup_hash = sha256_file(&backup_path)?;
+                if rollback.previous_lock_sha256.as_deref() != Some(backup_hash.as_str()) {
                     return Err(AppError::Transaction(
-                        "rollback lock backup changed before apply".into(),
+                        "rollback lock backup checksum changed before apply".into(),
+                    ));
+                }
+                let restored_hash = parent.previous_lock_sha256.as_deref();
+                if current_hash != backup_hash && restored_hash != Some(current_hash.as_str()) {
+                    return Err(AppError::Transaction(
+                        "rollback lock changed after the rollback checkpoint".into(),
                     ));
                 }
             } else {
@@ -2359,17 +2936,61 @@ fn prepare_rollback_transaction(
         journal
     };
 
-    if recorded_result_lock_matches(project_root, parent)? == Some(false) {
-        return Err(AppError::Transaction(
-            "installation lock changed after rollback; refusing inverse rollback".into(),
-        ));
-    }
-    capture_rollback_lock_backup(project_root, &roots.backup, &mut rollback)?;
+    validate_rollback_lock_precondition(project_root, parent)?;
+    capture_rollback_lock_backup(project_root, &roots.backup, &mut rollback, parent)?;
     persist_journal(&journal_path, &mut rollback)?;
 
     for index in 0..rollback.operations.len() {
         let operation = rollback.operations[index].clone();
         if operation.status == "rolled_back" || operation.action == Some(OperationAction::Skip) {
+            continue;
+        }
+        if operation.status == "rollback_applying" {
+            if let Some(backup_path) = operation.backup_path.as_ref() {
+                let expected_backup =
+                    expected_operation_backup(&rollback, &journal_path, &operation.id)?;
+                let supplied_backup = PathBuf::from(backup_path);
+                let matches = if cfg!(target_os = "windows") {
+                    supplied_backup
+                        .to_string_lossy()
+                        .eq_ignore_ascii_case(&expected_backup.to_string_lossy())
+                } else {
+                    supplied_backup == expected_backup
+                };
+                if !matches {
+                    return Err(AppError::PathSecurity(
+                        "rollback backup path is outside the rollback transaction root".into(),
+                    ));
+                }
+                let metadata = fs::symlink_metadata(&expected_backup).map_err(|error| {
+                    AppError::Transaction(format!(
+                        "rollback retry backup is unavailable for {}: {error}",
+                        operation.destination
+                    ))
+                })?;
+                if is_link_metadata(&metadata) || !metadata.is_file() {
+                    return Err(AppError::PathSecurity(
+                        "rollback retry backup is not a regular file".into(),
+                    ));
+                }
+                let expected_hash = operation.backup_sha256.as_deref().ok_or_else(|| {
+                    AppError::Transaction(format!(
+                        "rollback retry backup has no checksum: {}",
+                        operation.destination
+                    ))
+                })?;
+                if sha256_file(&expected_backup)? != expected_hash {
+                    return Err(AppError::Transaction(format!(
+                        "rollback retry backup checksum mismatch: {}",
+                        operation.destination
+                    )));
+                }
+            } else if operation.before_sha256.is_some() || operation.backup_sha256.is_some() {
+                return Err(AppError::Transaction(format!(
+                    "rollback retry is missing its inverse backup: {}",
+                    operation.destination
+                )));
+            }
             continue;
         }
         let destination = rollback_operation_destination(project_root, &operation)?;
@@ -2519,6 +3140,35 @@ pub fn rollback_transaction(
         }
         for index in (0..journal.operations.len()).rev() {
             let operation = journal.operations[index].clone();
+            if journal.transaction_kind != "rollback" && operation.status == "rolled_back" {
+                if let Some(child_operation) = rollback_journal
+                    .operations
+                    .iter()
+                    .find(|entry| entry.id == format!("rollback-{}", operation.id))
+                {
+                    if child_operation.status != "rolled_back"
+                        && !rollback_destination_is_restored(
+                            &operation,
+                            &rollback_operation_destination(&project_root, &operation)?,
+                            journal,
+                            journal_path,
+                        )?
+                    {
+                        return Err(AppError::Transaction(format!(
+                            "rollback checkpoint is not reflected on disk: {}",
+                            operation.destination
+                        )));
+                    }
+                }
+                persist_rollback_checkpoint(
+                    &mut rollback_journal,
+                    &rollback_path,
+                    &operation.id,
+                    "rolled_back",
+                    &format!("rollback-{}", operation.id),
+                )?;
+                continue;
+            }
             if !(matches!(
                 operation.status.as_str(),
                 "rollback_applying" | "applying" | "applied" | "verified"
@@ -2584,23 +3234,37 @@ pub fn rollback_transaction(
                 "rollback_applying",
                 &format!("rollback-intent-{}", operation.id),
             )?;
-            let _ = regular_file_hash(&destination)?;
+            let current = regular_file_hash(&destination)?;
             if let Some(after) = &operation.after_sha256 {
-                if destination.is_file() && sha256_file(&destination)? != *after {
+                if current.as_deref() != Some(after.as_str())
+                    || operation.after_exists != Some(true)
+                {
                     return Err(AppError::Transaction(format!(
                         "user changes detected after apply; refusing rollback of {}",
                         operation.destination
                     )));
                 }
-            } else if operation.after_exists == Some(false) && destination.is_file() {
+            } else if operation.after_exists == Some(false) && current.is_some() {
                 return Err(AppError::Transaction(format!(
                     "user created a file after managed deletion; refusing rollback of {}",
                     operation.destination
                 )));
-            } else if operation.status == "applying" && destination.is_file() {
-                let current = sha256_file(&destination)?;
-                if operation.before_sha256.as_deref() != Some(current.as_str())
-                    && operation.expected_sha256.as_deref() != Some(current.as_str())
+            } else if operation.after_exists == Some(true) && current.is_none() {
+                return Err(AppError::Transaction(format!(
+                    "managed destination was deleted after apply; refusing rollback of {}",
+                    operation.destination
+                )));
+            } else if operation.status == "applying" {
+                if let Some(current) = current.as_deref() {
+                    if operation.before_sha256.as_deref() != Some(current)
+                        && operation.expected_sha256.as_deref() != Some(current)
+                    {
+                        return Err(AppError::Transaction(format!(
+                            "uncertain live state after interruption; refusing rollback of {}",
+                            operation.destination
+                        )));
+                    }
+                } else if operation.before_sha256.is_some() || operation.after_exists == Some(true)
                 {
                     return Err(AppError::Transaction(format!(
                         "uncertain live state after interruption; refusing rollback of {}",
@@ -2608,6 +3272,10 @@ pub fn rollback_transaction(
                     )));
                 }
             }
+            let expected_restored = operation
+                .backup_sha256
+                .clone()
+                .or_else(|| operation.before_sha256.clone());
             if let Some(backup) = &operation.backup_path {
                 let expected_backup =
                     expected_operation_backup(journal, journal_path, &operation.id)?;
@@ -2656,6 +3324,20 @@ pub fn rollback_transaction(
             } else if destination.is_file() {
                 fs::remove_file(&destination)?;
             }
+            let restored = regular_file_hash(&destination)?;
+            if let Some(expected) = expected_restored {
+                if restored.as_deref() != Some(expected.as_str()) {
+                    return Err(AppError::Transaction(format!(
+                        "rollback destination checksum mismatch after restore: {}",
+                        operation.destination
+                    )));
+                }
+            } else if restored.is_some() {
+                return Err(AppError::Transaction(format!(
+                    "rollback destination still exists after removal: {}",
+                    operation.destination
+                )));
+            }
             journal.operations[index].status = "rolled_back".into();
             journal.last_checkpoint = format!("rollback-{}", operation.id);
             persist_journal(journal_path, journal)?;
@@ -2670,24 +3352,6 @@ pub fn rollback_transaction(
         restore_previous_lock(&project_root, journal, journal_path)?;
         rollback_journal.last_checkpoint = "rollback-lock-restored".into();
         persist_journal(&rollback_path, &mut rollback_journal)?;
-        journal.state = "rolled_back".into();
-        journal.recovery = RecoveryState {
-            resume_allowed: false,
-            rollback_allowed: false,
-            discard_staging_allowed: true,
-            project_apply_started: false,
-            recommended_action: "none".into(),
-        };
-        persist_journal(journal_path, journal)?;
-        atomic_write_json(
-            &journal_path
-                .parent()
-                .ok_or_else(|| {
-                    AppError::Transaction("journal has no transaction directory".into())
-                })?
-                .join("rollback-record.json"),
-            journal,
-        )?;
         let result_lock_path = safe_join(&project_root, ".hoi4-mod-setup/install.lock.json")?;
         match fs::symlink_metadata(&result_lock_path) {
             Ok(metadata) if is_link_metadata(&metadata) || !metadata.is_file() => {
@@ -2722,6 +3386,25 @@ pub fn rollback_transaction(
                 .join("rollback-record.json"),
             &rollback_journal,
         )?;
+        maybe_abort_for_test("after_rollback_child_complete");
+        journal.state = "rolled_back".into();
+        journal.recovery = RecoveryState {
+            resume_allowed: false,
+            rollback_allowed: false,
+            discard_staging_allowed: true,
+            project_apply_started: false,
+            recommended_action: "none".into(),
+        };
+        persist_journal(journal_path, journal)?;
+        atomic_write_json(
+            &journal_path
+                .parent()
+                .ok_or_else(|| {
+                    AppError::Transaction("journal has no transaction directory".into())
+                })?
+                .join("rollback-record.json"),
+            journal,
+        )?;
         Ok(())
     })();
     if let Err(error) = &result {
@@ -2743,25 +3426,30 @@ fn restore_previous_lock(
     journal_path: &Path,
 ) -> Result<(), AppError> {
     let lock_path = safe_join(project_root, ".hoi4-mod-setup/install.lock.json")?;
-    let record_transaction_id = journal
-        .parent_transaction_id
-        .unwrap_or(journal.transaction_id);
-    let record_suffix = format!("{record_transaction_id}/rollback-record.json");
-    let current_has_record = if lock_path.is_file() {
-        let bytes = fs::read(&lock_path)?;
-        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
-            AppError::Transaction(format!(
-                "refusing to change an unreadable installation lock during rollback: {error}"
+    let current = rollback_lock_hash(project_root)?;
+    let previous = journal.previous_lock_sha256.as_deref();
+    let current_is_previous = current.as_deref() == previous;
+    let current_is_result = match (
+        journal.result_lock_exists,
+        journal.result_lock_sha256.as_deref(),
+    ) {
+        (Some(true), Some(expected)) => current.as_deref() == Some(expected),
+        (Some(false), None) => current.is_none(),
+        (None, _) => false,
+        _ => {
+            return Err(AppError::Transaction(
+                "rollback journal has incomplete result-lock evidence".into(),
             ))
-        })?;
-        let lock = crate::migrations::migrate_lock(value)?;
-        lock.rollback_records
-            .iter()
-            .any(|record| record.ends_with(&record_suffix))
-    } else {
-        false
+        }
     };
-    let result_lock_matches = recorded_result_lock_matches(project_root, journal)? == Some(true);
+    if current_is_previous {
+        return Ok(());
+    }
+    if !current_is_result {
+        return Err(AppError::Transaction(
+            "installation lock changed outside the transaction; refusing rollback".into(),
+        ));
+    }
     let backup_path = if let Some(path) = &journal.previous_lock_backup_path {
         let expected = journal_app_root(journal_path)?
             .join("backups")
@@ -2804,28 +3492,29 @@ fn restore_previous_lock(
                 "previous installation lock backup checksum mismatch".into(),
             ));
         }
-        if current_has_record || result_lock_matches {
-            copy_atomic(&backup_path, &lock_path)?;
-            if sha256_file(&lock_path)? != expected_hash {
-                return Err(AppError::Transaction(
-                    "restored installation lock checksum mismatch".into(),
+        copy_atomic(&backup_path, &lock_path)?;
+        if sha256_file(&lock_path)? != expected_hash {
+            return Err(AppError::Transaction(
+                "restored installation lock checksum mismatch".into(),
+            ));
+        }
+    } else if previous.is_none() {
+        if let Ok(metadata) = fs::symlink_metadata(&lock_path) {
+            if is_link_metadata(&metadata) || !metadata.is_file() {
+                return Err(AppError::PathSecurity(
+                    "refusing to remove an installation lock link during rollback".into(),
                 ));
             }
-        } else if lock_path.is_file() && sha256_file(&lock_path)? != expected_hash {
+            fs::remove_file(&lock_path)?;
+        } else if lock_path.exists() {
             return Err(AppError::Transaction(
-                "installation lock changed outside the transaction; refusing rollback".into(),
-            ));
-        } else if !lock_path.is_file() {
-            copy_atomic(&backup_path, &lock_path)?;
-        }
-    } else if current_has_record {
-        let metadata = fs::symlink_metadata(&lock_path)?;
-        if is_link_metadata(&metadata) {
-            return Err(AppError::PathSecurity(
-                "refusing to remove an installation lock symlink during rollback".into(),
+                "installation lock could not be inspected during rollback".into(),
             ));
         }
-        fs::remove_file(lock_path)?;
+    } else {
+        return Err(AppError::Transaction(
+            "previous installation lock backup is missing".into(),
+        ));
     }
     Ok(())
 }
@@ -2861,17 +3550,136 @@ fn finish_finalization(
             "finalization lock is unavailable; rollback or manual review is required: {error}"
         ))
     })?;
+    if journal.result_lock_exists != Some(true) {
+        return Err(AppError::Transaction(
+            "finalization journal has no committed success-lock expectation; manual review is required"
+                .into(),
+        ));
+    }
+    let expected_lock_hash = journal.result_lock_sha256.as_deref().ok_or_else(|| {
+        AppError::Transaction(
+            "finalization journal has no success-lock checksum; manual review is required".into(),
+        )
+    })?;
+    if sha256_bytes(&lock_bytes) != expected_lock_hash {
+        return Err(AppError::Transaction(
+            "finalization success lock checksum mismatch; manual review is required".into(),
+        ));
+    }
     let lock_value: serde_json::Value = serde_json::from_slice(&lock_bytes)?;
     let lock = crate::migrations::migrate_lock(lock_value)?;
     let record_suffix = format!("{transaction_id}/rollback-record.json");
+    let record_reference = format!("transactions/{record_suffix}");
     if !lock
         .rollback_records
         .iter()
-        .any(|record| record.ends_with(&record_suffix))
+        .any(|record| record == &record_reference)
     {
         return Err(AppError::Transaction(
             "finalization lock has no verified rollback record; manual review is required".into(),
         ));
+    }
+    let record_path = app_root.join(&record_reference);
+    if path_has_link_component(&record_path) {
+        return Err(AppError::PathSecurity(
+            "finalization rollback record contains a symlink or junction".into(),
+        ));
+    }
+    let record_metadata = fs::symlink_metadata(&record_path).map_err(|error| {
+        AppError::Transaction(format!(
+            "finalization rollback record is unavailable; manual review is required: {error}"
+        ))
+    })?;
+    if is_link_metadata(&record_metadata) || !record_metadata.is_file() {
+        return Err(AppError::PathSecurity(
+            "finalization rollback record is not a regular file".into(),
+        ));
+    }
+    let expected_record_hash = journal.rollback_record_sha256.as_deref().ok_or_else(|| {
+        AppError::Transaction(
+            "finalization rollback record has no journaled checksum; manual review is required"
+                .into(),
+        )
+    })?;
+    if sha256_file(&record_path)? != expected_record_hash {
+        return Err(AppError::Transaction(
+            "finalization rollback record checksum mismatch; manual review is required".into(),
+        ));
+    }
+    let record = read_journal(&record_path)?;
+    if record.transaction_id != transaction_id
+        || record.transaction_kind != "installation"
+        || record.project_id != journal.project_id
+        || record.project_root != journal.project_root
+        || record.plan_sha256 != journal.plan_sha256
+        || record.state != "finalizing"
+        || !record.recovery.project_apply_started
+        || !record.recovery.rollback_allowed
+        || record.operations.len() != journal.operations.len()
+        || record
+            .operations
+            .iter()
+            .zip(&journal.operations)
+            .any(|(left, right)| {
+                left.id != right.id
+                    || left.status != right.status
+                    || left.after_sha256 != right.after_sha256
+                    || left.after_exists != right.after_exists
+            })
+    {
+        return Err(AppError::Transaction(
+            "finalization rollback record is not bound to the current journal; manual review is required"
+                .into(),
+        ));
+    }
+    if lock.project_id != journal.project_id {
+        return Err(AppError::Transaction(
+            "finalization lock is not bound to the transaction project".into(),
+        ));
+    }
+    for operation in &journal.operations {
+        let destination = rollback_operation_destination(&project_root, operation)?;
+        let current = regular_file_hash(&destination)?;
+        match operation.action {
+            Some(OperationAction::Skip | OperationAction::External) => {
+                if current != operation.before_sha256 {
+                    return Err(AppError::Transaction(format!(
+                        "finalization live result changed for skipped operation: {}",
+                        operation.destination
+                    )));
+                }
+            }
+            Some(OperationAction::DeleteManaged) => {
+                if current.is_some() || operation.after_exists != Some(false) {
+                    return Err(AppError::Transaction(format!(
+                        "finalization live delete result changed: {}",
+                        operation.destination
+                    )));
+                }
+            }
+            Some(_) => {
+                if operation.after_exists != Some(true)
+                    || operation.after_sha256.as_deref() != current.as_deref()
+                {
+                    return Err(AppError::Transaction(format!(
+                        "finalization live result changed: {}",
+                        operation.destination
+                    )));
+                }
+            }
+            None => {
+                return Err(AppError::Transaction(
+                    "finalization journal operation has no action; manual review is required"
+                        .into(),
+                ))
+            }
+        }
+    }
+    if let Some(stage) = journal.stages.get_mut(11) {
+        stage.status = "complete".into();
+        if stage.completed_at.is_none() {
+            stage.completed_at = Some(Utc::now().to_rfc3339());
+        }
     }
     journal.state = "completed".into();
     journal.recovery = RecoveryState {
@@ -2970,14 +3778,12 @@ pub fn resume_transaction(
         ));
     }
     let lock_path = safe_join(&project_root, ".hoi4-mod-setup/install.lock.json")?;
-    if lock_path.is_file() {
-        let lock_hash = sha256_file(&lock_path)?;
-        if journal.previous_lock_sha256.as_deref() != Some(lock_hash.as_str()) {
-            return Err(AppError::Transaction(
-                "installation lock changed after interruption; refusing to replay the transaction"
-                    .into(),
-            ));
-        }
+    let current_lock_hash = regular_file_hash(&lock_path)?;
+    if current_lock_hash.as_deref() != journal.previous_lock_sha256.as_deref() {
+        return Err(AppError::Transaction(
+            "predecessor installation lock changed or disappeared after interruption; refusing to replay the transaction"
+                .into(),
+        ));
     }
 
     let mut prepared = Vec::new();
@@ -3014,43 +3820,20 @@ pub fn resume_transaction(
             )));
         }
 
+        let destination = operation_destination(&project_root, operation)?;
+        let current_hash = regular_file_hash(&destination)?;
+        if current_hash.as_deref() != operation.local_sha256.as_deref() {
+            return Err(AppError::Transaction(format!(
+                "live precondition changed before resume: {}",
+                operation.destination
+            )));
+        }
+
         if matches!(
             operation.action,
             OperationAction::Skip | OperationAction::External
         ) {
             continue;
-        }
-
-        let destination = operation_destination(&project_root, operation)?;
-        let current_hash = match fs::symlink_metadata(&destination) {
-            Ok(metadata) if is_link_metadata(&metadata) => {
-                return Err(AppError::PathSecurity(format!(
-                    "refusing to resume through a destination link: {}",
-                    operation.destination
-                )))
-            }
-            Ok(metadata) if metadata.is_file() => Some(sha256_file(&destination)?),
-            Ok(_) => {
-                return Err(AppError::Transaction(format!(
-                    "destination is not a regular file: {}",
-                    operation.destination
-                )))
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error.into()),
-        };
-        if let Some(expected_local) = &operation.local_sha256 {
-            if current_hash.as_deref() != Some(expected_local.as_str()) {
-                return Err(AppError::Transaction(format!(
-                    "live precondition changed before resume: {}",
-                    operation.destination
-                )));
-            }
-        } else if current_hash.is_some() {
-            return Err(AppError::Transaction(format!(
-                "live destination changed before resume and has no hash precondition: {}",
-                operation.destination
-            )));
         }
 
         if operation.action == OperationAction::DeleteManaged {
@@ -3500,6 +4283,9 @@ mod tests {
         CodexAnalysisRecord {
             engine: "codex_app_server".into(),
             auth_mode: "chatgpt".into(),
+            provider: Some("codex".into()),
+            model: None,
+            optimization_profile: Some("Codex project and ChatGPT Chat".into()),
             analysis_id: uuid::Uuid::new_v4(),
             schema_version: "1.0.0".into(),
             input_sha256: "a".repeat(64),
@@ -3533,9 +4319,16 @@ mod tests {
                 manifest_sha256: "a".repeat(64),
                 manifest_origin: "remote".into(),
             },
+            ai_provider: "codex".into(),
+            ai_model: "default".into(),
+            ai_endpoint: None,
+            ai_optimization_profile: crate::models::default_ai_optimization_profile(),
+            flatten_chat_sources: false,
+            flatten_additional_files: vec![],
             codex_analysis: Some(test_codex_analysis()),
             selected_components: vec!["core.agents".into()],
             wiki_required_pages: manifest_wiki_pages(),
+            wiki_metadata: None,
             generated_artifacts: vec![],
             git_setup: None,
             credential_references: vec![],
@@ -3582,6 +4375,13 @@ mod tests {
     fn ready_plan(project_root: &Path) -> InstallationPlan {
         let mut plan = plan();
         plan.selected_components = vec!["core.agents".into(), "wiki.snapshot".into()];
+        plan.wiki_metadata = Some(WikiInstallMetadata {
+            snapshot_marker: None,
+            required_media_policy: "all_declared".into(),
+            source_status: "verified_snapshot".into(),
+            license_status: "not_verified".into(),
+            notes: vec![],
+        });
         fs::write(
             project_root.join("descriptor.mod"),
             "name=\"Example\"\nversion=\"0.1.0\"\nsupported_version=\"1.17.*\"\npicture=\"thumbnail.png\"\n",
@@ -3613,6 +4413,38 @@ mod tests {
             expected_sha256: sha256_bytes(b"safe"),
         }];
         (plan, prepared)
+    }
+
+    #[test]
+    fn transaction_revalidates_prepared_bytes_before_backup() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, mut prepared) = existing_file_fixture(project.path());
+        prepared[0].bytes = b"tampered after review".to_vec();
+
+        let error = run_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().to_path_buf()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("prepared checksum mismatch"));
+        assert!(!project
+            .path()
+            .join(".hoi4-mod-setup/install.lock.json")
+            .exists());
+        let journal_path = app
+            .path()
+            .join("transactions")
+            .join(plan.plan_id.to_string())
+            .join("journal.json");
+        let journal = read_journal(&journal_path).unwrap();
+        assert_eq!(journal.last_checkpoint, "selective download");
+        assert_eq!(journal.stages[2].status, "active");
     }
 
     #[test]
@@ -3848,6 +4680,75 @@ mod tests {
         assert!(!report.open_in_codex.enabled);
         assert!(report.checks.iter().all(|check| !check.blocking));
         assert_eq!(report.checks[0].id, "installation.removed");
+    }
+
+    #[test]
+    fn all_skip_removal_writes_an_empty_managed_lock_and_clears_workflow_refs() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let initial_plan = ready_plan(project.path());
+        let initial_prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        let (_, mut installed_lock) = run_transaction(
+            project.path(),
+            &initial_plan,
+            &initial_prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        installed_lock.optional_workflows.insert(
+            "workflow.3d".into(),
+            OptionalWorkflowLock {
+                state: "incomplete".into(),
+                reason: Some("missing key".into()),
+                credential_reference: Some(
+                    "credential://meshy_api_key/00000000-0000-0000-0000-000000000001".into(),
+                ),
+            },
+        );
+        atomic_write_json(
+            &project.path().join(".hoi4-mod-setup/install.lock.json"),
+            &installed_lock,
+        )
+        .unwrap();
+
+        let mut removal_plan = ready_plan(project.path());
+        removal_plan.maintenance_mode = Some("remove".into());
+        removal_plan.plan_id = Uuid::new_v4();
+        removal_plan.codex_analysis = None;
+        removal_plan.generated_artifacts.clear();
+        removal_plan.external_actions.clear();
+        removal_plan.git_setup = None;
+        removal_plan.optional_workflows.clear();
+        removal_plan.operations =
+            managed_removal_operations(&installed_lock, project.path()).unwrap();
+
+        let (_, removal_lock) = run_transaction(
+            project.path(),
+            &removal_plan,
+            &[],
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(removal_lock.files.is_empty());
+        assert_eq!(
+            removal_lock
+                .optional_workflows
+                .get("workflow.3d")
+                .and_then(|workflow| workflow.credential_reference.as_deref()),
+            None
+        );
+        assert!(!project.path().join("AGENTS.md").exists());
     }
 
     #[test]
@@ -4284,6 +5185,32 @@ mod tests {
     }
 
     #[test]
+    fn non_codex_plans_cannot_retain_codex_configuration_or_chat_flattening() {
+        let project = tempdir().unwrap();
+        let mut plan = ready_plan(project.path());
+        plan.ai_provider = "claude".into();
+        plan.ai_model = "claude-model".into();
+        plan.ai_optimization_profile = "Claude Code / Anthropic conventions".into();
+        plan.selected_components.push("codex.config".into());
+        let error = validate_plan(&plan).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("cannot install Codex configuration"));
+
+        plan.selected_components.retain(|id| id != "codex.config");
+        plan.flatten_chat_sources = true;
+        let error = validate_plan(&plan).unwrap_err();
+        assert!(error.to_string().contains("require the Codex provider"));
+
+        plan.flatten_chat_sources = false;
+        plan.flatten_additional_files = vec!["docs/overview.md".into()];
+        let error = validate_plan(&plan).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("flattened Chat source extras require flattening"));
+    }
+
+    #[test]
     fn rollback_rejects_a_different_project_root() {
         let project = tempdir().unwrap();
         let other_project = tempdir().unwrap();
@@ -4470,6 +5397,16 @@ mod tests {
         let (journal, lock) = resume_transaction(project.path(), app.path(), plan.plan_id).unwrap();
         assert_eq!(journal.state, "completed");
         assert_eq!(lock.files[0].installed_sha256, sha256_bytes(b"safe"));
+        assert_eq!(
+            journal.operations[0].source_path.as_deref(),
+            Some("AGENTS_template.md")
+        );
+        assert_eq!(journal.operations[0].source_size, Some(4));
+        assert_eq!(journal.operations[0].resolution, None);
+        assert_eq!(
+            journal.operations[0].staged_sha256,
+            Some(sha256_bytes(b"safe"))
+        );
         assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"safe");
     }
 
@@ -4538,6 +5475,124 @@ mod tests {
             recovered_lock.files[0].installed_sha256,
             lock.files[0].installed_sha256
         );
+    }
+
+    #[test]
+    fn finalization_rejects_a_substituted_success_lock() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let plan = ready_plan(project.path());
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        run_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let journal_path = app
+            .path()
+            .join("transactions")
+            .join(plan.plan_id.to_string())
+            .join("journal.json");
+        let lock_path = project.path().join(".hoi4-mod-setup/install.lock.json");
+        let mut lock: serde_json::Value =
+            serde_json::from_slice(&fs::read(&lock_path).unwrap()).unwrap();
+        lock["ai_model"] = serde_json::Value::String("substituted-model".into());
+        atomic_write_json(&lock_path, &lock).unwrap();
+        let mut journal = read_journal(&journal_path).unwrap();
+        journal.state = "finalizing".into();
+        journal.recovery.resume_allowed = true;
+        journal.recovery.recommended_action = "resume".into();
+        atomic_write_json(&journal_path, &journal).unwrap();
+
+        let error = resume_transaction(project.path(), app.path(), plan.plan_id).unwrap_err();
+        assert!(error.to_string().contains("success lock checksum mismatch"));
+        assert_eq!(read_journal(&journal_path).unwrap().state, "finalizing");
+    }
+
+    #[test]
+    fn ordinary_rollback_refuses_a_later_lock_edit_before_file_restore() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        let (mut journal, _) = run_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let journal_path = app
+            .path()
+            .join("transactions")
+            .join(plan.plan_id.to_string())
+            .join("journal.json");
+        let lock_path = project.path().join(".hoi4-mod-setup/install.lock.json");
+        let mut lock: serde_json::Value =
+            serde_json::from_slice(&fs::read(&lock_path).unwrap()).unwrap();
+        lock["ai_model"] = serde_json::Value::String("later-model".into());
+        atomic_write_json(&lock_path, &lock).unwrap();
+
+        let error = rollback_transaction(project.path(), &mut journal, &journal_path)
+            .expect_err("rollback must not overwrite a later lock edit");
+        assert!(error.to_string().contains("installation lock changed"));
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"safe");
+    }
+
+    #[test]
+    fn pre_apply_resume_refuses_a_missing_predecessor_lock() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (first_plan, first_prepared) = existing_file_fixture(project.path());
+        run_transaction(
+            project.path(),
+            &first_plan,
+            &first_prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let lock_path = project.path().join(".hoi4-mod-setup/install.lock.json");
+        let mut second_plan = ready_plan(project.path());
+        second_plan.operations[0].action = OperationAction::Replace;
+        second_plan.operations[0].local_state = LocalState::Unmodified;
+        second_plan.operations[0].local_sha256 = Some(sha256_bytes(b"safe"));
+        second_plan.operations[0].result_sha256 = Some(sha256_bytes(b"new"));
+        let second_prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"new".to_vec(),
+            expected_sha256: sha256_bytes(b"new"),
+        }];
+        assert!(run_transaction(
+            project.path(),
+            &second_plan,
+            &second_prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                fail_before_stage: Some(7),
+                ..Default::default()
+            },
+        )
+        .is_err());
+        fs::remove_file(&lock_path).unwrap();
+        let error = resume_transaction(project.path(), app.path(), second_plan.plan_id)
+            .expect_err("resume must not rebuild a maintenance transaction without its lock");
+        assert!(error.to_string().contains("predecessor installation lock"));
     }
 
     #[test]
@@ -4655,8 +5710,15 @@ mod tests {
                 manifest_sha256: "a".repeat(64),
                 manifest_origin: "remote".into(),
             },
+            ai_provider: "codex".into(),
+            ai_model: "default".into(),
+            ai_endpoint: None,
+            ai_optimization_profile: crate::models::default_ai_optimization_profile(),
+            flatten_chat_sources: false,
+            flatten_additional_files: vec![],
             codex_analysis: None,
             wiki_required_pages: manifest_wiki_pages(),
+            wiki_metadata: None,
             components: vec![],
             files: vec![LockedFile {
                 path: "managed.txt".into(),
@@ -4708,8 +5770,15 @@ mod tests {
                 manifest_sha256: "a".repeat(64),
                 manifest_origin: "remote".into(),
             },
+            ai_provider: "codex".into(),
+            ai_model: "default".into(),
+            ai_endpoint: None,
+            ai_optimization_profile: crate::models::default_ai_optimization_profile(),
+            flatten_chat_sources: false,
+            flatten_additional_files: vec![],
             codex_analysis: None,
             wiki_required_pages: manifest_wiki_pages(),
+            wiki_metadata: None,
             components: vec![],
             files: vec![LockedFile {
                 path: "config.toml".into(),

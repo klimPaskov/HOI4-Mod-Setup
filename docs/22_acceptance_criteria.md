@@ -13,7 +13,7 @@
 ## New project and launcher readiness
 
 - NEW-01: The user can enter a natural-language description.
-- NEW-02: ChatGPT-backed Codex proposals are reviewable and editable before rendering.
+- NEW-02: Selected-provider proposals are reviewable and editable before rendering.
 - NEW-03: Project ID is stable and valid.
 - NEW-04: No file is created before approval.
 - NEW-05: The initial folder profile is editable.
@@ -31,28 +31,40 @@
 - NEW-17: A valid existing thumbnail may replace the generated placeholder without blocking readiness.
 - NEW-18: Missing or invalid launcher artifacts block launcher-ready status and Open in Codex for a newly created project.
 
-## Deterministic scanning and required Codex analysis
+## Deterministic scanning and required provider analysis
 
 - ANA-01: Observable project facts come from the deterministic Rust scanner.
-- ANA-02: Create, Import, Update, and Repair planning require a compatible local Codex App Server.
-- ANA-03: The user signs in through the App Server managed ChatGPT flow.
+- ANA-02: Create, Import, Update, and Repair planning require the selected provider configuration, or a compatible local Codex App Server for Codex.
+- ANA-03: Codex users sign in through the App Server managed ChatGPT flow; other profiles use their explicit verified endpoint and OS-vault credential route.
 - ANA-04: Browser login is primary and device-code login is available as fallback.
-- ANA-05: Core setup has no OpenAI API key field and no API-key fallback.
-- ANA-06: Codex owns token persistence and refresh.
+- ANA-05: The Codex route has no OpenAI API key field or API-key fallback; non-Codex key fields are provider-scoped, vault-backed, and never serialized.
+- ANA-06: Codex owns ChatGPT token persistence and refresh; provider adapters never persist hosted tokens.
 - ANA-07: The application does not read, copy, serialize, or log ChatGPT tokens.
 - ANA-08: Full email, account ID, plan type, usage, and rate limits are absent from project state and installation locks.
-- ANA-09: All semantic identity and convention fields are proposed by Codex.
+- ANA-09: All semantic identity and convention fields are proposed by the selected provider profile.
 - ANA-10: Every Codex input manifest is visible and editable before transmission.
 - ANA-11: Secrets, binaries, credential stores, Git objects, and unapproved files are excluded.
 - ANA-12: Semantic turns use read-only sandboxing and expose no writable project root.
 - ANA-13: Every response validates against `codex-analysis.schema.json`.
-- ANA-14: Codex cannot write files, approve operations, resolve conflicts automatically, override deterministic facts, or pass readiness checks.
-- ANA-15: Values are labeled Detected, Suggested by Codex, or Confirmed.
+- ANA-14: No provider can write files, approve operations, resolve conflicts automatically, override deterministic facts, or pass readiness checks.
+- ANA-15: Values are labeled Detected, Suggested by the selected provider, or Confirmed.
 - ANA-16: Proposed IDs, namespaces, tags, profiles, and paths pass deterministic validation before confirmation.
 - ANA-17: Authentication, usage, process, and malformed-response failures preserve the draft and start no transaction.
-- ANA-18: Recovery, rollback, backup inspection, and managed removal remain available while signed out.
-- ANA-19: No model name is hardcoded for the normal path. The user's compatible Codex configuration controls the model.
-- ANA-20: Stored analysis metadata contains only schema version, analysis ID, input and output digests, confirmed fields, and timestamps.
+- ANA-18: Recovery, rollback, backup inspection, and managed removal remain available while signed out or disconnected.
+- ANA-19: Codex does not hardcode a model; non-Codex users select a model and the profile is persisted as non-secret configuration.
+- ANA-20: Stored analysis metadata contains only schema version, analysis ID, provider/model/profile, input and output digests, confirmed fields, and timestamps.
+- ANA-21: Provider references are keyed by provider, hosted endpoints are explicit HTTPS, local endpoints are loopback HTTP, redirects are disabled, and response bodies are bounded before parsing.
+
+## Provider profiles and flattened Chat sources
+
+- AI-01: Codex, Claude, Kimi, GLM, DeepSeek, local, and another configured provider are selectable at the start.
+- AI-02: The selected profile changes semantic guidance, adapted `AGENTS.md`, generated `README.md`, state, plan, lock, and maintenance review.
+- AI-03: Provider changes clear stale analysis and cannot reuse a record from another provider or model.
+- AI-04: A Codex-only final checkbox prepares `chatgpt_project_sources/`; non-Codex setup never renders or persists it as selected.
+- AI-05: Flattening renames `.agents/skills/<skill>/SKILL.md` to `<skill>.md`, includes selected subagents, adapted AGENTS, README, and only user-entered extras.
+- AI-06: Flattening rejects traversal, links, case-insensitive collisions, secret-shaped paths or content, and bounded file/aggregate-size violations.
+- AI-07: Flattening uses the normal dry-run, backup, staging, validation, apply, readiness, journal, and rollback path.
+- AI-08: The final recommendation says to start planning using ChatGPT “Chat” and performs no upload, conversation, or planning action.
 
 ## Existing project
 
@@ -160,7 +172,7 @@
 - MNT-07: Optional credentials can be configured later.
 - MNT-08: Repair can recreate a missing launcher descriptor after preview.
 - MNT-09: Repair never replaces a modified thumbnail automatically.
-- MNT-10: Update requires a fresh read-only evidence manifest and core-confirmed Codex reanalysis before its maintenance plan is accepted.
+- MNT-10: Update requires a fresh read-only evidence manifest and core-confirmed selected-provider reanalysis before its maintenance plan is accepted.
 
 ## Readiness
 
@@ -169,7 +181,7 @@
 - RDY-03: Internal descriptor, external launcher descriptor, launcher destination, descriptor agreement, and thumbnail integrity are blocking checks for a new project.
 - RDY-04: Core blocks disable Open in Codex.
 - RDY-05: Optional incomplete states do not disable it.
-- RDY-06: ChatGPT authentication and confirmed Codex analysis are blocking core readiness checks.
+- RDY-06: Codex authentication or selected-provider configuration and confirmed analysis are blocking core readiness checks.
 - RDY-07: LoRA interest is planned unavailable.
 - RDY-08: A final report is stored.
 
@@ -187,7 +199,8 @@
 - UI-10: Status does not rely on color.
 - UI-11: 200 percent scaling works.
 - UI-12: Project identity shows compact descriptor rows and thumbnail preview on demand.
-- UI-13: Codex analysis shows the approved request manifest and separates detected, suggested, and confirmed values without adding a permanent explanatory panel.
+- UI-13: Selected-provider analysis shows the approved request manifest and separates detected, suggested, and confirmed values without adding a permanent explanatory panel.
+- UI-14: The flatten checkbox is native, keyboard accessible, Codex-only, and followed by the ChatGPT “Chat” recommendation.
 
 ## Open-source repository
 
