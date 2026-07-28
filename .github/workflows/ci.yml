@@ -43,7 +43,6 @@ jobs:
         if: steps.detect.outputs.present == 'true'
         with:
           node-version: "22"
-          cache: pnpm
       - name: Enable package manager
         if: steps.detect.outputs.present == 'true'
         run: corepack enable
@@ -102,7 +101,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-            libappindicator3-dev \
             libayatana-appindicator3-dev \
             libatk1.0-dev \
             libcairo2-dev \
@@ -180,7 +178,6 @@ jobs:
         if: steps.detect.outputs.present == 'true'
         with:
           node-version: "22"
-          cache: pnpm
       - name: Configure Rust
         if: steps.detect.outputs.present == 'true'
         shell: bash
