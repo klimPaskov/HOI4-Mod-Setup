@@ -155,8 +155,8 @@ function verifyPlatformArchitecture(packageRoot, packageFiles, platform, archite
     const expectedMachine = architecture === "X64" ? 0x8664 : 0xaa64;
     const nativeExecutable = resolve(root, "target", "release", "hoi4-mod-setup.exe");
     const candidates = [
-      ...(existsSync(nativeExecutable) ? [{ label: "target/release/hoi4-mod-setup.exe", path: nativeExecutable }] : []),
-      ...packageFiles.filter((path) => /\.exe$/i.test(path)).map((path) => ({ label: path, path: resolve(packageRoot, path) })),
+      ...(existsSync(nativeExecutable) ? [{ label: "target/release/hoi4-mod-setup.exe", path: nativeExecutable, native: true }] : []),
+      ...packageFiles.filter((path) => /\.exe$/i.test(path)).map((path) => ({ label: path, path: resolve(packageRoot, path), native: false })),
     ];
     if (candidates.length === 0) throw new Error("Windows release contains no PE executable to inspect");
     for (const candidate of candidates) {
@@ -167,7 +167,8 @@ function verifyPlatformArchitecture(packageRoot, packageFiles, platform, archite
         throw new Error(`Windows package is not a PE image: ${candidate.label}`);
       }
       const machine = bytes.readUInt16LE(peOffset + 4);
-      if (machine !== expectedMachine) throw new Error(`Windows package architecture mismatch for ${candidate.label}`);
+      const acceptedMachine = candidate.native ? [expectedMachine] : [expectedMachine, 0x014c];
+      if (!acceptedMachine.includes(machine)) throw new Error(`Windows package architecture mismatch for ${candidate.label}`);
     }
     return;
   }
