@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { resolve, basename, sep } from "node:path";
+import { resolve, sep } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const inputRoot = resolve(root, process.argv[2] ?? "preview-artifacts");
@@ -32,6 +32,13 @@ async function walk(directory, prefix = "") {
 
 function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function publicPackageName(descriptor) {
+  const target = `${descriptor.platform}-${descriptor.architecture.toLowerCase()}`;
+  return descriptor.platform === "windows"
+    ? `HOI4-Mod-Setup-${target}-setup.exe`
+    : `HOI4-Mod-Setup-${target}.dmg`;
 }
 
 function assertSafeRelativePath(path, label) {
@@ -86,10 +93,12 @@ for (const artifactDirectory of expectedEntries) {
   }
   const packages = files.filter(({ relative: path }) => path.startsWith("packages/") && path.toLowerCase().endsWith(descriptor.extension));
   if (packages.length !== 1) throw new Error(`${artifactDirectory} must contain exactly one ${descriptor.extension} package`);
-  const packageName = `${artifactDirectory}-${basename(packages[0].absolute)}`;
+  const packageName = publicPackageName(descriptor);
+  const metadataName = `${artifactDirectory}-BUILD_METADATA.json`;
+  const manifestName = `${artifactDirectory}-ARTIFACTS.sha256`;
   await cp(packages[0].absolute, resolve(outputRoot, packageName));
-  await cp(metadataFiles[0].absolute, resolve(outputRoot, `${artifactDirectory}-BUILD_METADATA.json`));
-  await cp(manifestFiles[0].absolute, resolve(outputRoot, `${artifactDirectory}-ARTIFACTS.sha256`));
+  await cp(metadataFiles[0].absolute, resolve(outputRoot, metadataName));
+  await cp(manifestFiles[0].absolute, resolve(outputRoot, manifestName));
   const noticeDestination = resolve(outputRoot, "THIRD_PARTY_NOTICES.md");
   if (existsSync(noticeDestination) && digest(await readFile(noticeDestination)) !== digest(await readFile(noticeFiles[0].absolute))) {
     throw new Error("platform third-party notice inventories do not match");
@@ -103,6 +112,8 @@ for (const artifactDirectory of expectedEntries) {
     signing: metadata.signing,
     package: packageName,
     package_sha256: digest(await readFile(resolve(outputRoot, packageName))),
+    metadata: metadataName,
+    manifest: manifestName,
   });
 }
 
@@ -124,6 +135,38 @@ const provenance = {
   generated_by: "scripts/prepare_preview_assets.mjs",
 };
 await writeFile(resolve(outputRoot, "PREVIEW_PROVENANCE.json"), JSON.stringify(provenance, null, 2) + "\n", "utf8");
+
+const downloadBase = previewTag
+  ? `https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/${encodeURIComponent(previewTag)}`
+  : null;
+const downloadRows = summaries.map((summary) => {
+  const label = summary.platform === "windows"
+    ? "Windows x64"
+    : summary.architecture === "ARM64" ? "macOS Apple silicon" : "macOS Intel";
+  const packageLink = downloadBase ? `[${summary.package}](${downloadBase}/${encodeURIComponent(summary.package)})` : `\`${summary.package}\``;
+  const manifestLink = downloadBase ? `[manifest](${downloadBase}/${encodeURIComponent(summary.manifest)})` : `\`${summary.manifest}\``;
+  return `| ${label} | ${packageLink} | ${summary.package_sha256} | ${manifestLink} |`;
+});
+const verificationLinks = downloadBase
+  ? `[PREVIEW_PROVENANCE.json](${downloadBase}/PREVIEW_PROVENANCE.json), [PREVIEW_ARTIFACTS.sha256](${downloadBase}/PREVIEW_ARTIFACTS.sha256), and [THIRD_PARTY_NOTICES.md](${downloadBase}/THIRD_PARTY_NOTICES.md)`
+  : "`PREVIEW_PROVENANCE.json`, `PREVIEW_ARTIFACTS.sha256`, and `THIRD_PARTY_NOTICES.md`";
+await writeFile(resolve(outputRoot, "PREVIEW_RELEASE_NOTES.md"), [
+  "# HOI4 Mod Setup development preview",
+  "",
+  "This prerelease is built from one exact public Git commit and includes native installers for Windows and macOS.",
+  "",
+  "## Downloads",
+  "",
+  "| Platform | Installer | SHA-256 | Package manifest |",
+  "| --- | --- | --- | --- |",
+  ...downloadRows,
+  "",
+  "Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app to Applications.",
+  "",
+  `This is a development preview, not a stable release. Windows and macOS may show a platform security warning because stable publisher signing and notarization are separate release gates. Verify ${verificationLinks} and the source commit before installing.`,
+  "",
+  "The source is public under the Apache License 2.0: <https://github.com/klimPaskov/HOI4-Mod-Setup>.",
+].join("\n") + "\n", "utf8");
 
 const outputFiles = (await walk(outputRoot)).filter(({ relative: path }) => path !== "PREVIEW_ARTIFACTS.sha256").sort((left, right) => left.relative.localeCompare(right.relative));
 const outputManifest = [];

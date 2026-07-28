@@ -60,7 +60,10 @@ uniquely tagged GitHub prerelease. `scripts/prepare_preview_assets.mjs`
 rechecks the exact source commit, package hashes, platform set, and shared
 third-party notice inventory before publication. A preview is explicitly not
 a stable signed release; the stable `Release` workflow remains fail-closed
-until the protected Windows and Apple signing configuration is available.
+until the protected Windows and Apple signing configuration is available. The
+published assets use the deterministic names `HOI4-Mod-Setup-windows-x64-setup.exe`,
+`HOI4-Mod-Setup-macos-arm64.dmg`, and `HOI4-Mod-Setup-macos-x64.dmg`; generated
+release notes list those installers, their SHA-256 values, and their manifests.
 
 ## Publication gate
 
@@ -84,6 +87,18 @@ The release workflow fails closed until its protected environment is configured.
 - Windows variables: `HOI4_MOD_SETUP_WINDOWS_SIGNER` (the expected Authenticode subject) and `HOI4_MOD_SETUP_WINDOWS_TIMESTAMP_URL`.
 - macOS secrets: `HOI4_MOD_SETUP_APPLE_CERTIFICATE` (base64 `.p12`), `HOI4_MOD_SETUP_APPLE_CERTIFICATE_PASSWORD`, `HOI4_MOD_SETUP_APPLE_ID`, and `HOI4_MOD_SETUP_APPLE_PASSWORD` (an Apple app-specific password).
 - macOS variables: `HOI4_MOD_SETUP_MACOS_SIGNING_IDENTITY` and `HOI4_MOD_SETUP_MACOS_TEAM_ID`.
+
+Windows can use Azure Artifact Signing instead of a PFX. Set the protected
+environment variable `HOI4_MOD_SETUP_WINDOWS_SIGNING_MODE` to
+`artifact-signing`, add the OIDC secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+and `AZURE_SUBSCRIPTION_ID`, and add the protected variables
+`HOI4_MOD_SETUP_ARTIFACT_SIGNING_ENDPOINT`,
+`HOI4_MOD_SETUP_ARTIFACT_SIGNING_ACCOUNT`,
+`HOI4_MOD_SETUP_ARTIFACT_SIGNING_PROFILE`,
+`HOI4_MOD_SETUP_WINDOWS_SIGNER`, and
+`HOI4_MOD_SETUP_WINDOWS_TIMESTAMP_URL`. The workflow then uses the pinned
+official Azure actions to sign only the generated Windows package. It never
+stores a PFX, private key, or signing secret in the repository.
 
 The workflow never commits these values, copies them into `dist/release`, or prints them. The macOS runner unwraps the certificate passphrase through an environment-only OpenSSL input and uses a random disposable keychain password; no keychain password secret is required. The first public release still requires dependency and third-party notice review, upstream source-manifest publication, clean-machine evidence, and maintainer approval.
 

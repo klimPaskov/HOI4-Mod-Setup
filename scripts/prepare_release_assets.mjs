@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { resolve, relative, basename, sep } from "node:path";
+import { resolve, sep } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const inputRoot = resolve(root, process.argv[2] ?? "release-artifacts");
@@ -47,6 +47,13 @@ function assertSafeRelativePath(path, label) {
 
 function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function publicPackageName(descriptor) {
+  const target = `${descriptor.platform}-${descriptor.architecture.toLowerCase()}`;
+  return descriptor.platform === "windows"
+    ? `HOI4-Mod-Setup-${target}-setup.exe`
+    : `HOI4-Mod-Setup-${target}.dmg`;
 }
 
 const releaseRevision = process.env.GITHUB_SHA?.trim().toLowerCase();
@@ -97,7 +104,7 @@ for (const artifactDirectory of expectedNames) {
   if (evidence.source_revision?.toLowerCase() !== metadata.sourceRevision?.toLowerCase() || evidence.platform !== metadata.platform || evidence.architecture !== metadata.architecture || evidence.package_sha256?.[packageRelative] !== packageDigest) {
     throw new Error(`${artifactDirectory} signing evidence does not bind the verified package to its metadata`);
   }
-  const packageName = `${artifactDirectory}-${basename(packages[0].absolute)}`;
+  const packageName = publicPackageName(descriptor);
   const metadataName = `${artifactDirectory}-BUILD_METADATA.json`;
   const manifestName = `${artifactDirectory}-ARTIFACTS.sha256`;
   const evidenceName = `${artifactDirectory}-SIGNING_VERIFICATION.json`;
@@ -132,6 +139,38 @@ const provenance = {
   generated_by: "scripts/prepare_release_assets.mjs",
 };
 await writeFile(resolve(outputRoot, "RELEASE_PROVENANCE.json"), JSON.stringify(provenance, null, 2) + "\n", "utf8");
+
+const downloadBase = releaseTag
+  ? `https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/${encodeURIComponent(releaseTag)}`
+  : null;
+const downloadRows = platformSummaries.map((summary) => {
+  const label = summary.platform === "windows"
+    ? "Windows x64"
+    : summary.architecture === "ARM64" ? "macOS Apple silicon" : "macOS Intel";
+  const packageLink = downloadBase ? `[${summary.package}](${downloadBase}/${encodeURIComponent(summary.package)})` : `\`${summary.package}\``;
+  const manifestLink = downloadBase ? `[manifest](${downloadBase}/${encodeURIComponent(summary.manifest)})` : `\`${summary.manifest}\``;
+  return `| ${label} | ${packageLink} | ${summary.package_sha256} | ${manifestLink} |`;
+});
+const verificationLinks = downloadBase
+  ? `[RELEASE_PROVENANCE.json](${downloadBase}/RELEASE_PROVENANCE.json), [RELEASE_ARTIFACTS.sha256](${downloadBase}/RELEASE_ARTIFACTS.sha256), and [THIRD_PARTY_NOTICES.md](${downloadBase}/THIRD_PARTY_NOTICES.md)`
+  : "`RELEASE_PROVENANCE.json`, `RELEASE_ARTIFACTS.sha256`, and `THIRD_PARTY_NOTICES.md`";
+await writeFile(resolve(outputRoot, "RELEASE_NOTES.md"), [
+  "# HOI4 Mod Setup",
+  "",
+  "This release contains native installers built on the matching Windows and macOS runners from one exact Git commit.",
+  "",
+  "## Downloads",
+  "",
+  "| Platform | Installer | SHA-256 | Package manifest |",
+  "| --- | --- | --- | --- |",
+  ...downloadRows,
+  "",
+  "Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app to Applications.",
+  "",
+  `Verify ${verificationLinks} and the source tag before installing.`,
+  "",
+  "The source is public under the Apache License 2.0: <https://github.com/klimPaskov/HOI4-Mod-Setup>.",
+].join("\n") + "\n", "utf8");
 
 const outputFiles = (await walk(outputRoot)).filter(({ relative: path }) => path !== "RELEASE_ARTIFACTS.sha256").sort((left, right) => left.relative.localeCompare(right.relative));
 const outputManifest = [];

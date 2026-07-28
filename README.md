@@ -17,6 +17,11 @@ For the easiest installation, use its [GitHub Releases](https://github.com/klimP
 - Windows: download the `.exe` installer and run it.
 - macOS: download the `.dmg`, open it, and move the app to Applications.
 
+GitHub Releases use explicit platform names so the download is easy to spot:
+`HOI4-Mod-Setup-windows-x64-setup.exe`, `HOI4-Mod-Setup-macos-arm64.dmg`
+(Apple silicon), and `HOI4-Mod-Setup-macos-x64.dmg` (Intel). The release notes
+also show each package's SHA-256 and verification manifest.
+
 Development previews are source-built test packages. Windows or macOS may
 show a platform security warning because stable publisher signing and
 notarization are separate release gates. Before installing a preview, verify

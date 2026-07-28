@@ -109,4 +109,4 @@ jobs:
             --target "$SOURCE_SHA" \
             --prerelease \
             --title "HOI4 Mod Setup development preview ${preview_tag}" \
-            --notes-file docs/preview-release-notes.md
+            --notes-file publication-assets/PREVIEW_RELEASE_NOTES.md

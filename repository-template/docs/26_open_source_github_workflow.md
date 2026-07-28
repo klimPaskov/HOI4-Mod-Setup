@@ -262,7 +262,11 @@ release operation. The preview path is separate from the stable release path:
 it does not receive stable signing credentials and its assets must remain
 labelled as development previews. The stable `Release` workflow remains
 fail-closed until Windows signing and Apple Developer ID/notarization evidence
-are configured.
+are configured. Publication renames the installers to
+`HOI4-Mod-Setup-windows-x64-setup.exe`,
+`HOI4-Mod-Setup-macos-arm64.dmg`, and
+`HOI4-Mod-Setup-macos-x64.dmg`, then generates release notes with direct
+download links, package SHA-256 values, and platform manifests.
 
 The release workflow fails closed until the protected environment provides the
 signing material. It imports `HOI4_MOD_SETUP_WINDOWS_CERTIFICATE` and
@@ -278,6 +282,18 @@ removed after verification and never enter the repository or release assets.
 The macOS job unwraps the P12 passphrase through an environment-only OpenSSL
 input and creates a random disposable keychain password, so no keychain
 password secret is passed as a process argument.
+
+Windows may alternatively use Azure Artifact Signing without a PFX. Set the
+protected environment variable `HOI4_MOD_SETUP_WINDOWS_SIGNING_MODE` to
+`artifact-signing`, provide the OIDC secrets `AZURE_CLIENT_ID`,
+`AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`, and configure the protected
+variables `HOI4_MOD_SETUP_ARTIFACT_SIGNING_ENDPOINT`,
+`HOI4_MOD_SETUP_ARTIFACT_SIGNING_ACCOUNT`,
+`HOI4_MOD_SETUP_ARTIFACT_SIGNING_PROFILE`,
+`HOI4_MOD_SETUP_WINDOWS_SIGNER`, and
+`HOI4_MOD_SETUP_WINDOWS_TIMESTAMP_URL`. The workflow uses the pinned official
+Azure login and Artifact Signing actions, signs only the generated Windows
+package, and never stores a PFX or private key in the repository.
 
 `pnpm release:notices` derives a deterministic dependency inventory from the
 locked pnpm and Cargo metadata. The inventory is included in native release
