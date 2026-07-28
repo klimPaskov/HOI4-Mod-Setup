@@ -507,6 +507,14 @@ pub fn path_has_link_component(path: &Path) -> bool {
                     .map(|metadata| is_link_metadata(&metadata))
                     .unwrap_or(false)
                 {
+                    // macOS exposes /etc, /tmp, and /var as stable operating
+                    // system aliases into /private. They are outside any
+                    // selected project root; allow only these exact aliases
+                    // and continue rejecting links below them.
+                    #[cfg(target_os = "macos")]
+                    if matches!(current.to_str(), Some("/etc" | "/tmp" | "/var")) {
+                        continue;
+                    }
                     return true;
                 }
             }
