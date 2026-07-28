@@ -43,6 +43,7 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - Check names remain stable once rulesets depend on them.
 - Platform build jobs run on real Windows and macOS runners.
 - Native desktop jobs run the repository-owned UI gates, Tauri package verification, and bounded launch smoke after the package is built.
+- On macOS, Tauri's DMG bundling removes the temporary `.app` bundle after packaging; `scripts/run_desktop_e2e.mjs` therefore accepts the still-present `target/release/hoi4-mod-setup` binary as a packaging smoke fallback.
 - Pull-request package verification accepts GitHub merge refs; semantic tag and tag-target checks are enforced only when the release workflow enables `HOI4_MOD_SETUP_REQUIRE_RELEASE_IDENTITY=1`.
 - Fuzz targets compile in CI from the pinned Rust toolchain.
 - Generated artifacts are uploaded only after tests pass.
