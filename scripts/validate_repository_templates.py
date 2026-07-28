@@ -54,6 +54,7 @@ FULL_EXPECTED = [
     "scripts/release_verify.mjs",
     "scripts/generate_third_party_notices.mjs",
     "scripts/prepare_release_assets.mjs",
+    "scripts/prepare_preview_assets.mjs",
     "scripts/run_desktop_e2e.mjs",
     "THIRD_PARTY_NOTICES.md",
 ]
@@ -263,6 +264,8 @@ def validate_repository_template_mirrors() -> None:
         "docs/31_ai_provider_profiles_and_chat_sources.md",
         "scripts/check_committed_secrets.py",
         "scripts/validate_repository_templates.py",
+        "scripts/prepare_preview_assets.mjs",
+        "docs/preview-release-notes.md",
     ]:
         source = ROOT / rel
         target = template / rel

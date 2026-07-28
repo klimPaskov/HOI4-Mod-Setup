@@ -1,6 +1,8 @@
 use crate::credentials::ScopedSecretEnvironment;
 use crate::models::Platform;
-use crate::security::{is_link_metadata, redact_secrets, validate_env_name};
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use crate::security::is_link_metadata;
+use crate::security::{redact_secrets, validate_env_name};
 use crate::AppError;
 use serde::{Deserialize, Serialize};
 use std::fs;

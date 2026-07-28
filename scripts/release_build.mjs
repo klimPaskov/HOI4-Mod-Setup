@@ -22,7 +22,7 @@ const lockVersion = cargoPackage?.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
 if (cargoVersion !== configuredVersion || lockVersion !== configuredVersion) {
   throw new Error("package.json, src-tauri/Cargo.toml, and Cargo.lock versions must match");
 }
-const tagVersion = process.env.GITHUB_REF_NAME?.startsWith("v")
+const tagVersion = process.env.GITHUB_REF?.startsWith("refs/tags/") && process.env.GITHUB_REF_NAME?.startsWith("v")
   ? process.env.GITHUB_REF_NAME.slice(1)
   : undefined;
 if (tagVersion && tagVersion !== configuredVersion) {

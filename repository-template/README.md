@@ -5,18 +5,24 @@ existing Hearts of Iron IV mod for agentic development. It creates launcher
 files, project structure, verified workflow files, and a readiness report
 without silently replacing user work.
 
-> **Status:** in development. Public installers will be linked from GitHub
-> Releases only after the security, recovery, signing, and native platform
-> gates pass.
+> **Status:** the source repository is public. Development previews are
+> available from GitHub Releases; stable installers will be linked only after
+> the security, recovery, signing, and native platform gates pass.
 
 ## Install
 
 The public source repository is [klimPaskov/HOI4-Mod-Setup](https://github.com/klimPaskov/HOI4-Mod-Setup).
-Public binary releases will be linked from its GitHub Releases page: a signed
-Windows `.exe` installer and a signed/notarized macOS `.dmg`. Until the first
-release is published, contributors can use the setup in
-[DEVELOPMENT.md](DEVELOPMENT.md). Do not download installers from unverified
-mirrors.
+For the easiest installation, use its [GitHub Releases](https://github.com/klimPaskov/HOI4-Mod-Setup/releases) page:
+
+- Windows: download the `.exe` installer and run it.
+- macOS: download the `.dmg`, open it, and move the app to Applications.
+
+Development previews are source-built test packages. Windows or macOS may
+show a platform security warning because stable publisher signing and
+notarization are separate release gates. Before installing a preview, verify
+the included provenance and SHA-256 files against the public source commit.
+Stable releases will be clearly labelled when those gates are complete. Do
+not download installers from unverified mirrors.
 
 ## Choose a planning provider
 

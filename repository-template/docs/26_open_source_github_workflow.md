@@ -251,6 +251,19 @@ platform verification. Windows signing and macOS Developer ID signing plus
 notarization are release gates; do not publish unsigned placeholders as a
 finished release. The root README links only to verified GitHub Releases.
 
+### Development previews
+
+The manually dispatched `.github/workflows/development-preview.yml` builds the
+same three native targets, runs the UI and native launch gates, and publishes
+a uniquely tagged GitHub prerelease. `scripts/prepare_preview_assets.mjs`
+rechecks the exact source commit, platform/architecture metadata, package
+hashes, and shared third-party notice inventory before the write-capable
+release operation. The preview path is separate from the stable release path:
+it does not receive stable signing credentials and its assets must remain
+labelled as development previews. The stable `Release` workflow remains
+fail-closed until Windows signing and Apple Developer ID/notarization evidence
+are configured.
+
 The release workflow fails closed until the protected environment provides the
 signing material. It imports `HOI4_MOD_SETUP_WINDOWS_CERTIFICATE` and
 `HOI4_MOD_SETUP_WINDOWS_CERTIFICATE_PASSWORD` into the Windows runner, using

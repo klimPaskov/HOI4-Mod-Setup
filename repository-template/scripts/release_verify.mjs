@@ -24,7 +24,7 @@ const metadata = JSON.parse(readFileSync(required[1], "utf8"));
 if (metadata.product !== "HOI4 Mod Setup" || metadata.version !== packageMetadata.version || tauriMetadata.version !== packageMetadata.version) {
   throw new Error("release metadata and configured application versions do not match");
 }
-const tagVersion = process.env.GITHUB_REF_NAME?.startsWith("v")
+const tagVersion = process.env.GITHUB_REF?.startsWith("refs/tags/") && process.env.GITHUB_REF_NAME?.startsWith("v")
   ? process.env.GITHUB_REF_NAME.slice(1)
   : undefined;
 if (tagVersion && metadata.version !== tagVersion) {
@@ -75,7 +75,8 @@ if (process.env.HOI4_MOD_SETUP_REQUIRE_TAURI === "1") {
   if (requireReleaseIdentity && (!process.env.GITHUB_REF?.startsWith("refs/tags/") || !process.env.GITHUB_REF_NAME)) {
     throw new Error("release verification requires a tag ref");
   }
-  if (process.env.GITHUB_REF_NAME) {
+  const isTagRef = process.env.GITHUB_REF?.startsWith("refs/tags/") ?? false;
+  if (isTagRef) {
     const tag = process.env.GITHUB_REF_NAME;
     if (!/^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(tag)) {
       throw new Error(`release tag ${tag} is not a supported semantic version tag`);

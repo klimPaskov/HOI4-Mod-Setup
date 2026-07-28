@@ -43,6 +43,7 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - Check names remain stable once rulesets depend on them.
 - Platform build jobs run on real Windows and macOS runners.
 - Native desktop jobs run the repository-owned UI gates, Tauri package verification, and bounded launch smoke after the package is built.
+- Pull-request package verification accepts GitHub merge refs; semantic tag and tag-target checks are enforced only when the release workflow enables `HOI4_MOD_SETUP_REQUIRE_RELEASE_IDENTITY=1`.
 - Fuzz targets compile in CI from the pinned Rust toolchain.
 - Generated artifacts are uploaded only after tests pass.
 - Linux CI runners install the Tauri/WebKit/GTK build dependencies before all-feature Rust checks; native Windows and macOS release jobs remain the packaging evidence path.
@@ -50,6 +51,7 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - Tauri native bundles are copied from the workspace-root `target/release/bundle` or the alternate `src-tauri/target/release/bundle` layout; when `HOI4_MOD_SETUP_BUNDLE` is set, only that requested `nsis` or `dmg` subdirectory is copied so stale cross-target packages cannot enter a release. `src-tauri/icons/icon.svg` is the text source for generated Windows and macOS icon assets.
 - Release build jobs are tag-only and attach the protected `release` environment to the platform build job that consumes signing material. Windows and macOS signing inputs are kept in separate platform build steps, and cleanup removes temporary roots plus imported Windows certificates or macOS keychains even after an import/build failure.
 - The draft job runs `scripts/prepare_release_assets.mjs`, which rechecks every downloaded platform manifest, source/tag/architecture binding, package hash, and exact platform set before creating uniquely named GitHub assets. It refuses to reuse an existing tag release and verifies that the created release remains a draft.
+- The manually dispatched `development-preview.yml` uses `scripts/prepare_preview_assets.mjs` to recheck exact source, platform, architecture, package hashes, and notices before publishing a uniquely tagged prerelease; it receives no stable signing credentials and must remain labelled as a development preview.
 - `scripts/generate_third_party_notices.mjs` derives the JavaScript and Rust dependency inventory from the locked pnpm and Cargo metadata and places it in native release output. The inventory is evidence for maintainer review, not a substitute for reviewing bundled assets or complete dependency license text.
 
 ## Release rules
