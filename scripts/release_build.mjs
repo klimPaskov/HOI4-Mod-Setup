@@ -132,6 +132,12 @@ const noticeResult = spawnSync(process.execPath, [resolve(root, "scripts", "gene
 });
 if (noticeResult.error) throw noticeResult.error;
 if (noticeResult.status !== 0) process.exit(noticeResult.status ?? 1);
+const sbomResult = spawnSync(process.execPath, [resolve(root, "scripts", "generate_sbom.mjs"), resolve(root, "dist", "release", "SBOM.cdx.json")], {
+  cwd: root,
+  stdio: "inherit",
+});
+if (sbomResult.error) throw sbomResult.error;
+if (sbomResult.status !== 0) process.exit(sbomResult.status ?? 1);
 async function walk(directory, prefix = "") {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];

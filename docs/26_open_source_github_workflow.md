@@ -295,10 +295,18 @@ variables `HOI4_MOD_SETUP_ARTIFACT_SIGNING_ENDPOINT`,
 Azure login and Artifact Signing actions, signs only the generated Windows
 package, and never stores a PFX or private key in the repository.
 
-`pnpm release:notices` derives a deterministic dependency inventory from the
-locked pnpm and Cargo metadata. The inventory is included in native release
-outputs, but it does not waive maintainer review of bundled assets or complete
+`pnpm release:notices` derives the human-readable license inventory from the
+locked pnpm and Cargo metadata. `pnpm release:sbom` (also run by
+`pnpm release:build`) derives `SBOM.cdx.json` as a CycloneDX dependency
+inventory from the same locked metadata. Both are included in native release
+outputs, but neither waives maintainer review of bundled assets or complete
 license text before publication.
+
+When Azure Artifact Signing is enabled, the signer changes the Windows package
+after the initial build manifest is written. The workflow must run
+`pnpm release:rehash` immediately after signing and before `pnpm release:verify`.
+The rehash script refuses added or removed files and refuses changes outside
+existing `packages/*.exe` entries.
 
 After platform jobs finish, the draft job runs
 `scripts/prepare_release_assets.mjs` to revalidate downloaded manifests,

@@ -52,6 +52,10 @@ if (!/^[0-9a-f]{40}$/.test(sourceRevision ?? "")) {
   throw new Error("preview publication requires the exact source commit in GITHUB_SHA");
 }
 const previewTag = process.env.PREVIEW_TAG?.trim() || null;
+const expectedPreviewTag = `preview-${sourceRevision}`;
+if (previewTag !== expectedPreviewTag) {
+  throw new Error(`preview publication tag must be exactly ${expectedPreviewTag}`);
+}
 const inputEntries = (await readdir(inputRoot, { withFileTypes: true }))
   .filter((entry) => entry.isDirectory())
   .map((entry) => entry.name)
@@ -62,6 +66,7 @@ if (inputEntries.length !== expectedEntries.length || inputEntries.some((name, i
 }
 
 const summaries = [];
+let previewVersion = null;
 for (const artifactDirectory of expectedEntries) {
   const descriptor = expected.get(artifactDirectory);
   const sourceRoot = resolve(inputRoot, artifactDirectory);
@@ -69,13 +74,23 @@ for (const artifactDirectory of expectedEntries) {
   const metadataFiles = files.filter(({ relative: path }) => path === "BUILD_METADATA.json");
   const manifestFiles = files.filter(({ relative: path }) => path === "ARTIFACTS.sha256");
   const noticeFiles = files.filter(({ relative: path }) => path === "THIRD_PARTY_NOTICES.md");
-  if (metadataFiles.length !== 1 || manifestFiles.length !== 1 || noticeFiles.length !== 1) {
-    throw new Error(`${artifactDirectory} must contain BUILD_METADATA.json, ARTIFACTS.sha256, and THIRD_PARTY_NOTICES.md`);
+  const sbomFiles = files.filter(({ relative: path }) => path === "SBOM.cdx.json");
+  if (metadataFiles.length !== 1 || manifestFiles.length !== 1 || noticeFiles.length !== 1 || sbomFiles.length !== 1) {
+    throw new Error(`${artifactDirectory} must contain BUILD_METADATA.json, ARTIFACTS.sha256, THIRD_PARTY_NOTICES.md, and SBOM.cdx.json`);
+  }
+  const sbom = JSON.parse(await readFile(sbomFiles[0].absolute, "utf8"));
+  if (sbom.bomFormat !== "CycloneDX" || sbom.specVersion !== "1.5" || !Array.isArray(sbom.components) || sbom.components.length === 0) {
+    throw new Error(`${artifactDirectory} SBOM is not a populated CycloneDX 1.5 document`);
   }
   const metadata = JSON.parse(await readFile(metadataFiles[0].absolute, "utf8"));
   if (metadata.product !== "HOI4 Mod Setup" || metadata.frontendOnly || metadata.platform.toLowerCase() !== descriptor.platform || metadata.architecture.toUpperCase() !== descriptor.architecture) {
     throw new Error(`${artifactDirectory} metadata does not match its native preview target`);
   }
+  if (metadata.signing !== "not_configured") {
+    throw new Error(`${artifactDirectory} preview metadata must report signing=not_configured`);
+  }
+  if (previewVersion === null) previewVersion = metadata.version;
+  else if (metadata.version !== previewVersion) throw new Error("preview platform metadata versions do not match");
   if (metadata.sourceRevision?.toLowerCase() !== sourceRevision) {
     throw new Error(`${artifactDirectory} metadata source revision does not match GITHUB_SHA`);
   }
@@ -84,12 +99,16 @@ for (const artifactDirectory of expectedEntries) {
   const manifestPaths = new Set();
   for (const entry of manifest) {
     assertSafeRelativePath(entry?.path, `${artifactDirectory} artifact manifest`);
-    if (manifestPaths.has(entry.path) || !/^[0-9a-f]{64}$/i.test(entry.sha256)) throw new Error(`${artifactDirectory} artifact manifest is invalid`);
+    if (entry.path === "ARTIFACTS.sha256" || manifestPaths.has(entry.path) || !/^[0-9a-f]{64}$/i.test(entry.sha256)) throw new Error(`${artifactDirectory} artifact manifest is invalid`);
     manifestPaths.add(entry.path);
     const file = files.find(({ relative: path }) => path === entry.path);
     if (!file || digest(await readFile(file.absolute)) !== entry.sha256.toLowerCase()) {
       throw new Error(`${artifactDirectory} artifact hash mismatch: ${entry.path}`);
     }
+  }
+  const sourceFilePaths = files.filter(({ relative: path }) => path !== "ARTIFACTS.sha256").map(({ relative: path }) => path);
+  if (manifestPaths.size !== sourceFilePaths.length || sourceFilePaths.some((path) => !manifestPaths.has(path))) {
+    throw new Error(`${artifactDirectory} artifact manifest does not cover the complete artifact directory`);
   }
   const packages = files.filter(({ relative: path }) => path.startsWith("packages/") && path.toLowerCase().endsWith(descriptor.extension));
   if (packages.length !== 1) throw new Error(`${artifactDirectory} must contain exactly one ${descriptor.extension} package`);
@@ -99,6 +118,11 @@ for (const artifactDirectory of expectedEntries) {
   await cp(packages[0].absolute, resolve(outputRoot, packageName));
   await cp(metadataFiles[0].absolute, resolve(outputRoot, metadataName));
   await cp(manifestFiles[0].absolute, resolve(outputRoot, manifestName));
+  const sbomDestination = resolve(outputRoot, "SBOM.cdx.json");
+  if (existsSync(sbomDestination) && digest(await readFile(sbomDestination)) !== digest(await readFile(sbomFiles[0].absolute))) {
+    throw new Error("platform SBOM inventories do not match");
+  }
+  if (!existsSync(sbomDestination)) await cp(sbomFiles[0].absolute, sbomDestination);
   const noticeDestination = resolve(outputRoot, "THIRD_PARTY_NOTICES.md");
   if (existsSync(noticeDestination) && digest(await readFile(noticeDestination)) !== digest(await readFile(noticeFiles[0].absolute))) {
     throw new Error("platform third-party notice inventories do not match");
@@ -131,6 +155,7 @@ const provenance = {
   product: "HOI4 Mod Setup",
   source_revision: sourceRevision,
   preview_tag: previewTag,
+  sbom: "SBOM.cdx.json",
   artifacts: summaries,
   generated_by: "scripts/prepare_preview_assets.mjs",
 };
@@ -148,8 +173,8 @@ const downloadRows = summaries.map((summary) => {
   return `| ${label} | ${packageLink} | ${summary.package_sha256} | ${manifestLink} |`;
 });
 const verificationLinks = downloadBase
-  ? `[PREVIEW_PROVENANCE.json](${downloadBase}/PREVIEW_PROVENANCE.json), [PREVIEW_ARTIFACTS.sha256](${downloadBase}/PREVIEW_ARTIFACTS.sha256), and [THIRD_PARTY_NOTICES.md](${downloadBase}/THIRD_PARTY_NOTICES.md)`
-  : "`PREVIEW_PROVENANCE.json`, `PREVIEW_ARTIFACTS.sha256`, and `THIRD_PARTY_NOTICES.md`";
+  ? `[PREVIEW_PROVENANCE.json](${downloadBase}/PREVIEW_PROVENANCE.json), [PREVIEW_ARTIFACTS.sha256](${downloadBase}/PREVIEW_ARTIFACTS.sha256), [SBOM.cdx.json](${downloadBase}/SBOM.cdx.json), and [THIRD_PARTY_NOTICES.md](${downloadBase}/THIRD_PARTY_NOTICES.md)`
+  : "`PREVIEW_PROVENANCE.json`, `PREVIEW_ARTIFACTS.sha256`, `SBOM.cdx.json`, and `THIRD_PARTY_NOTICES.md`";
 await writeFile(resolve(outputRoot, "PREVIEW_RELEASE_NOTES.md"), [
   "# HOI4 Mod Setup development preview",
   "",

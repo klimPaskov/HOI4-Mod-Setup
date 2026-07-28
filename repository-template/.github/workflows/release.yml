@@ -206,6 +206,12 @@ jobs:
           timestamp-digest: SHA256
           description: HOI4 Mod Setup
           description-url: https://github.com/klimPaskov/HOI4-Mod-Setup
+      - name: Refresh manifest after Azure signing
+        if: matrix.platform == 'windows-x64' && vars.HOI4_MOD_SETUP_WINDOWS_SIGNING_MODE == 'artifact-signing'
+        shell: bash
+        env:
+          HOI4_MOD_SETUP_WINDOWS_SIGNING_MODE: artifact-signing
+        run: node scripts/refresh_release_manifest.mjs
       - name: Verify release artifacts
         shell: bash
         run: pnpm release:verify

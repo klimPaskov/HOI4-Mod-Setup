@@ -29,6 +29,39 @@ the included provenance and SHA-256 files against the public source commit.
 Stable releases will be clearly labelled when those gates are complete. Do
 not download installers from unverified mirrors.
 
+## Screenshots
+
+These screenshots are captured from the current wizard UI. They show the main
+setup path, the provider-neutral configuration surface, and the Codex-only
+flattened Chat sources option.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/01-welcome.png" alt="HOI4 Mod Setup welcome screen with new and existing mod choices" width="480"></td>
+    <td><img src="docs/screenshots/02-description.png" alt="Natural-language mod description screen" width="480"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/03-identity.png" alt="Project identity and Hearts of Iron IV descriptor screen" width="480"></td>
+    <td><img src="docs/screenshots/04-components.png" alt="Verified component selection screen" width="480"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/05-integrations.png" alt="Optional 3D models and LoRA workflow choices" width="480"></td>
+    <td><img src="docs/screenshots/06-mcp-credentials.png" alt="MCP and credential review screen" width="480"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/07-git-chat-sources.png" alt="Git setup with the optional flattened ChatGPT project sources checkbox" width="480"></td>
+    <td><img src="docs/screenshots/08-flattened-chat-sources.png" alt="Expanded flattened ChatGPT project sources option with additional files field" width="480"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/09-dry-run.png" alt="Dry-run review showing planned changes and preflight checks" width="480"></td>
+    <td><img src="docs/screenshots/10-provider-selection.png" alt="Claude provider selection with model, endpoint, and vault-key controls" width="480"></td>
+  </tr>
+</table>
+
+The browser preview intentionally shows safe unavailable states when a native
+Tauri process or remote manifest is not present. Native package verification
+and desktop launch smoke run on the Windows and macOS GitHub Actions runners.
+
 ## Choose a planning provider
 
 Codex is the default. The first screen lets you choose:

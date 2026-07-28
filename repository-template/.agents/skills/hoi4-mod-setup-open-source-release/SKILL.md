@@ -55,7 +55,8 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - The draft job runs `scripts/prepare_release_assets.mjs`, which rechecks every downloaded platform manifest, source/tag/architecture binding, package hash, and exact platform set before creating uniquely named GitHub assets. It refuses to reuse an existing tag release and verifies that the created release remains a draft.
 - The manually dispatched `development-preview.yml` uses `scripts/prepare_preview_assets.mjs` to recheck exact source, platform, architecture, package hashes, and notices before publishing a uniquely tagged prerelease; it receives no stable signing credentials and must remain labelled as a development preview.
 - Preview and stable publication scripts use deterministic installer names (`HOI4-Mod-Setup-windows-x64-setup.exe`, `HOI4-Mod-Setup-macos-arm64.dmg`, and `HOI4-Mod-Setup-macos-x64.dmg`) and generate release notes with direct download links, package SHA-256 values, and platform manifests.
-- `scripts/generate_third_party_notices.mjs` derives the JavaScript and Rust dependency inventory from the locked pnpm and Cargo metadata and places it in native release output. The inventory is evidence for maintainer review, not a substitute for reviewing bundled assets or complete dependency license text.
+- `scripts/generate_sbom.mjs` derives a CycloneDX dependency inventory from the locked pnpm and Cargo metadata and places `SBOM.cdx.json` in native release output. `scripts/generate_third_party_notices.mjs` separately derives the human-readable license inventory. Neither is a substitute for reviewing bundled assets or complete dependency license text.
+- Azure Artifact Signing changes Windows package bytes after the initial build manifest. The workflow runs `scripts/refresh_release_manifest.mjs` immediately after signing; that script permits only existing `packages/*.exe` hash changes and refuses file-set or unrelated changes before release verification.
 
 ## Release rules
 
@@ -72,6 +73,7 @@ Stable release evidence includes:
 - release notes
 - migrations and compatibility notes
 - third-party notices
+- CycloneDX SBOM
 - updater metadata
 - clean-machine install and launch results
 

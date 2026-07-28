@@ -18,7 +18,7 @@ Pre-releases use identifiers such as `v0.3.0-beta.1`.
 2. Confirm schema migrations and rollback behavior.
 3. Confirm the remote workflow manifest is compatible with the application release.
 4. Confirm user-facing README, release notes, support status, and known limitations.
-5. Run `pnpm release:notices` and review the generated `THIRD_PARTY_NOTICES.md` inventory together with bundled assets and dependency license text.
+5. Run `pnpm release:notices` and `pnpm release:sbom`; review the generated `THIRD_PARTY_NOTICES.md` and `SBOM.cdx.json` together with bundled assets and dependency license text.
 6. Confirm no credentials or private paths are present in artifacts, logs, source maps, or debug symbols.
 7. Update the changelog and version through the repository-owned release script.
 8. Update affected repo-local skills when release, signing, packaging, or validation steps changed.
@@ -101,6 +101,12 @@ official Azure actions to sign only the generated Windows package. It never
 stores a PFX, private key, or signing secret in the repository.
 
 The workflow never commits these values, copies them into `dist/release`, or prints them. The macOS runner unwraps the certificate passphrase through an environment-only OpenSSL input and uses a random disposable keychain password; no keychain password secret is required. The first public release still requires dependency and third-party notice review, upstream source-manifest publication, clean-machine evidence, and maintainer approval.
+
+When Azure Artifact Signing is enabled, the signer changes the Windows package
+after the initial build manifest is written. The workflow runs
+`pnpm release:rehash` immediately after signing and before
+`pnpm release:verify`. The rehash script refuses added or removed files and
+refuses changes outside existing `packages/*.exe` entries.
 
 ## Public source gate
 

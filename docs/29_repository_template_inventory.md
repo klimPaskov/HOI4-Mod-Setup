@@ -101,3 +101,4 @@ Before using the templates in the application source repository:
 - `docs/31_ai_provider_profiles_and_chat_sources.md`
 - Codex-only optional flattened ChatGPT project-sources output
 - checksum coverage for the new planning document and its repository-template mirror
+- the implementation screenshot gallery and its repository-template mirror

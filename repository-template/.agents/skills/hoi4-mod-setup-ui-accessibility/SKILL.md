@@ -15,6 +15,7 @@ Read:
 - `ui-references/README.md`
 - the relevant full-resolution screen references
 - `docs/22_acceptance_criteria.md`
+- `docs/screenshots/README.md` when adding or auditing implementation screenshots
 
 ## Design baseline
 
@@ -110,6 +111,12 @@ A visible change requires:
 - reduced motion review when animated
 - visual regression update with explanation
 - density review against the one-task rule
+
+Implementation screenshots live in `docs/screenshots/` and are linked from the
+user-facing README. Keep their alt text and capture notes accurate. The
+`ui-references/` directory contains design references and is not a substitute
+for screenshots of the current implementation. Never capture credentials,
+identity documents, private projects, or secret values.
 
 ## Update this skill when
 
