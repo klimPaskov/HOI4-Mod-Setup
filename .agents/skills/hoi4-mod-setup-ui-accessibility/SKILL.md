@@ -99,6 +99,10 @@ Require:
 - error recovery without focus loss
 - accessible diff and code preview semantics
 
+Programmatically focused screen headings use a visible underline treatment,
+not a rounded title box; preserve the focus cue without adding decorative
+containers around headings.
+
 Keyboard shortcuts should exist where useful, but do not display a permanent shortcut legend.
 
 ## UI change evidence
