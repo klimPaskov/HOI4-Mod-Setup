@@ -12,15 +12,11 @@ without silently replacing user work.
 ## Install
 
 The public source repository is [klimPaskov/HOI4-Mod-Setup](https://github.com/klimPaskov/HOI4-Mod-Setup).
-For the easiest installation, use its [GitHub Releases](https://github.com/klimPaskov/HOI4-Mod-Setup/releases) page:
 
-- Windows: download the `.exe` installer and run it.
-- macOS: download the `.dmg`, open it, and move the app to Applications.
-
-GitHub Releases use explicit platform names so the download is easy to spot:
-`HOI4-Mod-Setup-windows-x64-setup.exe`, `HOI4-Mod-Setup-macos-arm64.dmg`
-(Apple silicon), and `HOI4-Mod-Setup-macos-x64.dmg` (Intel). The release notes
-also show each package's SHA-256 and verification manifest.
+[Download Windows .exe](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/preview-d29955cb26832dfd7d43a837f783efd25086b00d/HOI4-Mod-Setup-windows-x64-setup.exe) ·
+[Download macOS Apple silicon .dmg](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/preview-d29955cb26832dfd7d43a837f783efd25086b00d/HOI4-Mod-Setup-macos-arm64.dmg) ·
+[Download macOS Intel .dmg](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/preview-d29955cb26832dfd7d43a837f783efd25086b00d/HOI4-Mod-Setup-macos-x64.dmg) ·
+[All releases](https://github.com/klimPaskov/HOI4-Mod-Setup/releases)
 
 Development previews are source-built test packages. Windows or macOS may
 show a platform security warning because stable publisher signing and
@@ -29,38 +25,106 @@ the included provenance and SHA-256 files against the public source commit.
 Stable releases will be clearly labelled when those gates are complete. Do
 not download installers from unverified mirrors.
 
-## Screenshots
+## Use the wizard, phase by phase
 
-These screenshots are captured from the current wizard UI. They show the main
-setup path, the provider-neutral configuration surface, and the Codex-only
-flattened Chat sources option.
+The wizard has seven phases. Work from top to bottom; each Next button moves
+reviewed state forward, and the Back button keeps earlier choices editable.
+Screenshots below are arranged in the same order as the workflow.
 
-<table>
-  <tr>
-    <td><img src="docs/screenshots/01-welcome.png" alt="HOI4 Mod Setup welcome screen with new and existing mod choices" width="480"></td>
-    <td><img src="docs/screenshots/02-description.png" alt="Natural-language mod description screen" width="480"></td>
-  </tr>
-  <tr>
-    <td><img src="docs/screenshots/03-identity.png" alt="Project identity and Hearts of Iron IV descriptor screen" width="480"></td>
-    <td><img src="docs/screenshots/04-components.png" alt="Verified component selection screen" width="480"></td>
-  </tr>
-  <tr>
-    <td><img src="docs/screenshots/05-integrations.png" alt="Optional 3D models and LoRA workflow choices" width="480"></td>
-    <td><img src="docs/screenshots/06-mcp-credentials.png" alt="MCP and credential review screen" width="480"></td>
-  </tr>
-  <tr>
-    <td><img src="docs/screenshots/07-git-chat-sources.png" alt="Git setup with the optional flattened ChatGPT project sources checkbox" width="480"></td>
-    <td><img src="docs/screenshots/08-flattened-chat-sources.png" alt="Expanded flattened ChatGPT project sources option with additional files field" width="480"></td>
-  </tr>
-  <tr>
-    <td><img src="docs/screenshots/09-dry-run.png" alt="Dry-run review showing planned changes and preflight checks" width="480"></td>
-    <td><img src="docs/screenshots/10-provider-selection.png" alt="Claude provider selection with model, endpoint, and vault-key controls" width="480"></td>
-  </tr>
-</table>
+### 1. Project — choose what you are preparing
 
-The browser preview intentionally shows safe unavailable states when a native
-Tauri process or remote manifest is not present. Native package verification
-and desktop launch smoke run on the Windows and macOS GitHub Actions runners.
+![Welcome screen with new and existing mod choices](docs/screenshots/01-welcome.png)
+
+Choose **Create new mod** for a fresh launcher-ready scaffold or **Existing
+mod** for a bounded, read-only scan. Codex is the default planning provider;
+the provider selection view lets you choose Claude, Kimi, GLM, DeepSeek, a
+local model, or another explicitly configured route before analysis begins.
+
+![Provider selection with model and vault-key controls](docs/screenshots/10-provider-selection.png)
+
+The selected profile shapes conventions and instructions, but it never writes
+files or approves the transaction.
+
+### 2. Review — describe the mod and confirm its identity
+
+For a new mod, enter only a name and a short natural-language brief. The app
+immediately fills the project ID, script prefix, primary namespace, descriptor
+tags, and starter folders. Review or edit them; manual edits stay preserved if
+the description or provider proposal changes.
+
+![Mod name and description with generated-value explanation](docs/screenshots/02-description.png)
+
+![Editable generated identity and descriptor preview](docs/screenshots/03-identity.png)
+
+For an existing mod, the same phase shows scan findings with evidence,
+confidence, proposed action, and an editable decision. The scan does not create
+temporary files or alter the project.
+
+### 3. Components — select verified workflow material
+
+![Verified component selection](docs/screenshots/04-components.png)
+
+Select the components you want. The app expands declared dependencies, resolves
+latest mode to one exact commit (or uses your pinned commit/release), downloads
+only manifest-declared files, and shows hashes before installation. Unselected
+components are not fetched.
+
+### 4. Integrations — handle optional workflows honestly
+
+![Optional 3D, portrait, and integration choices](docs/screenshots/05-integrations.png)
+
+The 3D question is exactly **Do you want to set up the 3D models workflow?**.
+Its Meshy key stays in the OS credential vault and is injected only when the
+allowlisted workflow needs `MESHY_API_KEY`. A missing key leaves 3D incomplete
+without blocking core setup. The LoRA question records interest only in
+version 1; it does not install ComfyUI, models, Python, GPU software, or
+drivers.
+
+![MCP and credential review](docs/screenshots/06-mcp-credentials.png)
+
+MCP and provider credentials are reviewed here. Secrets are never placed in
+the project, installation lock, logs, or screenshots.
+
+### 5. Git — preserve the project and optionally make Chat sources
+
+![Git choices with the optional flattened ChatGPT project sources checkbox](docs/screenshots/07-git-chat-sources.png)
+
+Choose whether to initialize, preserve, or skip Git; review `.gitignore`,
+branch, initial commit, and remote choices. The app never creates an online
+repository or pushes without separate approval.
+
+When Codex is selected, the optional final setup choice prepares
+`chatgpt_project_sources/` for ChatGPT **Chat**. It flattens skills to
+`<skill>.md`, includes the adapted `AGENTS.md`, created `README.md`, selected
+subagents, and only the extra project-relative files you name. It appears only
+for Codex and leaves the normal source tree intact.
+
+![Expanded flattened ChatGPT project sources options](docs/screenshots/08-flattened-chat-sources.png)
+
+### 6. Install — inspect the dry run before applying
+
+![Dry-run review with planned changes and preflight checks](docs/screenshots/09-dry-run.png)
+
+Read the planned files, source revision, hashes, conflicts, external commands,
+Git actions, and optional workflows. After approval the transaction runs
+preflight, selective download, checksum verification, backup, staging,
+validation, apply, post-install checks, readiness, and rollback-record steps.
+Modified files are compared as base/local/incoming content; only valid keep,
+replace, merge, rename, or skip actions are offered.
+
+### 7. Ready — use the verified result
+
+The final report checks descriptors, launcher destination, structure, installed
+agent files, provider configuration, MCP, wiki integrity, Git, hashes,
+dependencies, optional workflow state, and conflicts. **Open in Codex** is
+enabled only when blocking core checks pass. If you selected flattened Chat
+sources, the final message only recommends: **After setup, start planning using
+ChatGPT "Chat".**
+
+The browser screenshots are UI guidance, not native-package evidence. The
+preview intentionally shows honest unavailable states when a Tauri process or
+remote manifest is not present; native package verification and desktop launch
+smoke run on the Windows and macOS GitHub Actions runners.
 
 ## Choose a planning provider
 

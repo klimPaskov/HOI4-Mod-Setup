@@ -54,7 +54,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .content-scroll { min-height: 0; flex: 1; overflow: auto; padding: 38px 44px 50px; }
 .screen-heading { max-width: 980px; margin: 0 auto 28px; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .screen-heading h1 { margin: 9px 0 4px; font-size: clamp(28px, 3vw, 36px); line-height: 1.08; letter-spacing: -.04em; }
-.screen-heading h1:focus-visible { outline: 2px solid #9bb4ff; outline-offset: 5px; border-radius: 4px; }
+.screen-heading h1:focus-visible { outline: 0; text-decoration: underline; text-decoration-color: #9bb4ff; text-decoration-thickness: 3px; text-underline-offset: 8px; }
 .screen-heading p { margin: 0; color: var(--muted); font-size: 15px; }
 .eyebrow { color: #7399ff; }
 .footer-bar { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 0 34px; border-top: 1px solid var(--line); background: #0a1019; }

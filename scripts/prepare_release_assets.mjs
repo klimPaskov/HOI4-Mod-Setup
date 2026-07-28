@@ -49,6 +49,71 @@ function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function mergeSbomInventories(inventories) {
+  const canonical = inventories[0]?.sbom;
+  if (!canonical) throw new Error("release SBOM inventory set is empty");
+  const canonicalHeader = JSON.stringify({ ...canonical, components: [] });
+  const components = new Map();
+  for (const { artifactDirectory, sbom } of inventories) {
+    if (JSON.stringify({ ...sbom, components: [] }) !== canonicalHeader) {
+      throw new Error(`${artifactDirectory} SBOM metadata differs from the canonical inventory`);
+    }
+    for (const component of sbom.components) {
+      const reference = component?.["bom-ref"];
+      if (typeof reference !== "string" || !reference) throw new Error(`${artifactDirectory} SBOM contains a component without bom-ref`);
+      const serialized = JSON.stringify(component);
+      const existing = components.get(reference);
+      if (existing && existing.serialized !== serialized) throw new Error(`${artifactDirectory} SBOM has conflicting component ${reference}`);
+      components.set(reference, { component, serialized });
+    }
+  }
+  return {
+    ...canonical,
+    components: [...components.values()].map(({ component }) => component).sort((left, right) => left["bom-ref"].localeCompare(right["bom-ref"])),
+  };
+}
+
+function mergeThirdPartyNotices(inventories) {
+  const canonical = inventories[0]?.notice;
+  if (!canonical) throw new Error("release third-party notice inventory set is empty");
+  const javascriptRows = new Map();
+  const rustRows = new Map();
+  for (const { artifactDirectory, notice } of inventories) {
+    let section = null;
+    for (const line of notice.split(/\r?\n/)) {
+      if (line === "## JavaScript dependencies") section = javascriptRows;
+      else if (line === "## Rust dependencies") section = rustRows;
+      else if (section && line.startsWith("| ") && !line.startsWith("| ---") && !line.startsWith("| Package |")) {
+        const cells = line.slice(2, -2).split(" | ");
+        if (cells.length !== 4) throw new Error(`${artifactDirectory} third-party notice row is invalid`);
+        const key = `${cells[0]}@${cells[1]}`;
+        const existing = section.get(key);
+        if (existing && existing !== line) throw new Error(`${artifactDirectory} has conflicting third-party notice row ${key}`);
+        section.set(key, line);
+      }
+    }
+  }
+  const preamble = canonical.split(/\r?\n/).slice(0, 7);
+  return [
+    ...preamble,
+    "",
+    `Inventory counts: ${javascriptRows.size} JavaScript packages and ${rustRows.size} Rust packages.`,
+    "",
+    "## JavaScript dependencies",
+    "",
+    "| Package | Version | License | Homepage |",
+    "| --- | --- | --- | --- |",
+    ...[...javascriptRows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row),
+    "",
+    "## Rust dependencies",
+    "",
+    "| Package | Version | License | Source |",
+    "| --- | --- | --- | --- |",
+    ...[...rustRows.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([, row]) => row),
+    "",
+  ].join("\n");
+}
+
 function publicPackageName(descriptor) {
   const target = `${descriptor.platform}-${descriptor.architecture.toLowerCase()}`;
   return descriptor.platform === "windows"
@@ -59,6 +124,8 @@ function publicPackageName(descriptor) {
 const releaseRevision = process.env.GITHUB_SHA?.trim().toLowerCase();
 const releaseTag = process.env.GITHUB_REF_NAME?.trim();
 const platformSummaries = [];
+const sbomInventories = [];
+const noticeInventories = [];
 const outputEntries = [];
 
 for (const artifactDirectory of expectedNames) {
@@ -76,7 +143,9 @@ for (const artifactDirectory of expectedNames) {
   if (sbom.bomFormat !== "CycloneDX" || sbom.specVersion !== "1.5" || !Array.isArray(sbom.components) || sbom.components.length === 0) {
     throw new Error(`${artifactDirectory} SBOM is not a populated CycloneDX 1.5 document`);
   }
+  sbomInventories.push({ artifactDirectory, sbom });
   const metadata = JSON.parse(await readFile(metadataFiles[0].absolute, "utf8"));
+  noticeInventories.push({ artifactDirectory, notice: await readFile(noticeFiles[0].absolute, "utf8") });
   if (metadata.product !== "HOI4 Mod Setup" || metadata.platform.toLowerCase() !== descriptor.platform || metadata.architecture.toUpperCase() !== descriptor.architecture) {
     throw new Error(`${artifactDirectory} metadata does not match its expected platform and architecture`);
   }
@@ -121,16 +190,6 @@ for (const artifactDirectory of expectedNames) {
   await cp(metadataFiles[0].absolute, resolve(outputRoot, metadataName));
   await cp(manifestFiles[0].absolute, resolve(outputRoot, manifestName));
   await cp(evidenceFiles[0].absolute, resolve(outputRoot, evidenceName));
-  const sbomDestination = resolve(outputRoot, "SBOM.cdx.json");
-  if (existsSync(sbomDestination) && digest(await readFile(sbomDestination)) !== digest(await readFile(sbomFiles[0].absolute))) {
-    throw new Error("platform SBOM inventories do not match");
-  }
-  if (!existsSync(sbomDestination)) await cp(sbomFiles[0].absolute, sbomDestination);
-  const publicationNotice = resolve(outputRoot, "THIRD_PARTY_NOTICES.md");
-  if (existsSync(publicationNotice) && digest(await readFile(publicationNotice)) !== digest(await readFile(noticeFiles[0].absolute))) {
-    throw new Error("platform third-party notice inventories do not match");
-  }
-  if (!existsSync(publicationNotice)) await cp(noticeFiles[0].absolute, publicationNotice);
   platformSummaries.push({
     artifact_directory: artifactDirectory,
     platform: descriptor.platform,
@@ -143,6 +202,9 @@ for (const artifactDirectory of expectedNames) {
     signing_evidence: evidenceName,
   });
 }
+
+await writeFile(resolve(outputRoot, "SBOM.cdx.json"), JSON.stringify(mergeSbomInventories(sbomInventories), null, 2) + "\n", "utf8");
+await writeFile(resolve(outputRoot, "THIRD_PARTY_NOTICES.md"), mergeThirdPartyNotices(noticeInventories), "utf8");
 
 const provenance = {
   schema_version: "1.0.0",
