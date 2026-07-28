@@ -22,7 +22,7 @@ const lockVersion = cargoPackage?.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
 if (cargoVersion !== configuredVersion || lockVersion !== configuredVersion) {
   throw new Error("package.json, src-tauri/Cargo.toml, and Cargo.lock versions must match");
 }
-const tagVersion = process.env.GITHUB_REF_NAME?.startsWith("v")
+const tagVersion = process.env.GITHUB_REF?.startsWith("refs/tags/") && process.env.GITHUB_REF_NAME?.startsWith("v")
   ? process.env.GITHUB_REF_NAME.slice(1)
   : undefined;
 if (tagVersion && tagVersion !== configuredVersion) {
@@ -132,6 +132,12 @@ const noticeResult = spawnSync(process.execPath, [resolve(root, "scripts", "gene
 });
 if (noticeResult.error) throw noticeResult.error;
 if (noticeResult.status !== 0) process.exit(noticeResult.status ?? 1);
+const sbomResult = spawnSync(process.execPath, [resolve(root, "scripts", "generate_sbom.mjs"), resolve(root, "dist", "release", "SBOM.cdx.json")], {
+  cwd: root,
+  stdio: "inherit",
+});
+if (sbomResult.error) throw sbomResult.error;
+if (sbomResult.status !== 0) process.exit(sbomResult.status ?? 1);
 async function walk(directory, prefix = "") {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];

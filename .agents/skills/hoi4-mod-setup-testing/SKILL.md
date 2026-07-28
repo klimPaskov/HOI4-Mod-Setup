@@ -97,6 +97,11 @@ At minimum:
 - case-sensitive macOS volume fixture
 - local and cloud-synced path fixtures
 
+The CI dependency install uses pnpm 11's strict build policy. Keep
+`pnpm-workspace.yaml` explicit (`allowBuilds.esbuild=true`) and add a reviewed
+allow-list entry whenever a dependency's install script is intentionally
+required; never replace it with an allow-all setting.
+
 Unsupported external workflows must be tested as honest non-blocking states.
 
 ## Release gates

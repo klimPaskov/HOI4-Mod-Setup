@@ -15,6 +15,7 @@ Read:
 - `ui-references/README.md`
 - the relevant full-resolution screen references
 - `docs/22_acceptance_criteria.md`
+- `docs/screenshots/README.md` when adding or auditing implementation screenshots
 
 ## Design baseline
 
@@ -79,6 +80,7 @@ Conflict review is the exception. It may show a three-way comparison and more co
 - Keep a local recovery/removal entry reachable from Welcome when signed out; rollback, backup inspection, and managed removal do not depend on Codex.
 - Preserve account and analysis state when logout or usage-limit errors occur, and announce the actionable error without losing focus.
 - The final Git-phase option `Prepare a flattened ChatGPT project-sources folder` is a native keyboard-accessible checkbox shown only when Codex is selected. Its optional extras control is progressive, its mapping and no-upload Chat recommendation are stated concisely, and it never appears for another provider.
+- The new-project description screen asks for the mod name and brief. The identity screen opens with generated project ID, prefix, namespace, tags, and starter folders; advanced metadata and external paths remain the only secondary/manual controls.
 
 ## Accessibility
 
@@ -110,6 +112,12 @@ A visible change requires:
 - reduced motion review when animated
 - visual regression update with explanation
 - density review against the one-task rule
+
+Implementation screenshots live in `docs/screenshots/` and are linked from the
+user-facing README. Keep their alt text and capture notes accurate. The
+`ui-references/` directory contains design references and is not a substitute
+for screenshots of the current implementation. Never capture credentials,
+identity documents, private projects, or secret values.
 
 ## Update this skill when
 

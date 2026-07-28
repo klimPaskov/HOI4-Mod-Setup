@@ -75,6 +75,11 @@ bounded and schema-validated before any proposal is accepted.
   canonical root. Keep adversarial swap tests as release evidence before
   describing the boundary as race-proof.
 - Use the shared `is_link_metadata` boundary for filesystem metadata; on Windows it treats reparse points/junctions as links, not only `is_symlink()` results.
+- On macOS, treat the OS-owned `/etc`, `/tmp`, and `/var` aliases into
+  `/private` as path-prefix aliases, not project links; still reject every
+  link or reparse point below the selected root. Canonicalize the selected
+  root before containment checks so temporary and user paths work on both
+  supported platforms.
 - Use safe archive extraction with file count, size, ratio, depth, and path limits.
 - Do not follow project links outside approved roots.
 - Keep backup and staging permissions restrictive.

@@ -47,6 +47,7 @@ Read:
 - The optional flattened ChatGPT project-sources export is visible only for Codex, maps skill `SKILL.md` files to `<skill>.md`, includes the adapted AGENTS/README/subagents and approved extras, and recommends Chat without uploading or planning.
 - Unsupported platform routes remain honest and visible.
 - The UI stays focused and uses progressive disclosure.
+- New-project identity conventions are generated from the mod name and brief before review; project ID, script prefix, namespace, tags, and starter folders are never presented blank when a usable input exists. Every generated value remains editable, and explicit edits are preserved.
 
 ## Architecture rules
 

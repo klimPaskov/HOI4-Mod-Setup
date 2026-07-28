@@ -1,6 +1,8 @@
 use crate::credentials::ScopedSecretEnvironment;
 use crate::models::Platform;
-use crate::security::{is_link_metadata, redact_secrets, validate_env_name};
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use crate::security::is_link_metadata;
+use crate::security::{redact_secrets, validate_env_name};
 use crate::AppError;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -335,6 +337,7 @@ pub fn system_browser_executable() -> Option<PathBuf> {
     }
 }
 
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn reviewed_system_executable(path: PathBuf) -> Option<PathBuf> {
     let metadata = fs::symlink_metadata(&path).ok()?;
     if is_link_metadata(&metadata) || !metadata.is_file() {

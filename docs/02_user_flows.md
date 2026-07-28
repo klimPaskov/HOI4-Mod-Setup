@@ -35,16 +35,24 @@ loopback HTTP and are not described as hosted accounts.
 
 ### Natural-language description
 
-The user describes the mod. The app verifies the selected provider and sends
+The user enters a mod name and describes the mod. The app immediately fills a
+valid editable project ID, script prefix, primary namespace, descriptor tags,
+and starter folder profile from those inputs. The app verifies the selected provider and sends
 the approved brief and wizard constraints to a schema-constrained semantic
-turn. The selected provider proposes the normalized description, display name,
+turn. The selected provider may refine the normalized description, display name,
 project ID, script prefix, namespace, tags, folder profile, likely systems, 3D
 relevance, and component selection. Deterministic validators check every
-field. The user edits and confirms the proposals before rendering.
+field. The user edits only when desired or when the app identifies ambiguity,
+then confirms the proposals before rendering.
 
 ### Identity and paths
 
-Confirm display name, stable project ID, project folder, version, supported game version, tags, and launcher descriptor destination. The project ID uses a lowercase stable slug and remains independent of future display-name changes.
+The identity screen opens populated. Review or edit the generated display name,
+stable project ID, script prefix, namespace, tags, and folder profile, then
+choose the project folder and launcher descriptor destination. Version and
+supported game version retain verified defaults or appear as advanced fields
+when they need confirmation. The project ID uses a lowercase stable slug and
+remains independent of future display-name changes after confirmation.
 
 ### Descriptors
 

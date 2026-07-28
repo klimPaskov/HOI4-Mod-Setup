@@ -30,7 +30,7 @@ function findExecutable() {
   const candidates = process.platform === "win32"
     ? files.filter((file) => file.toLowerCase().endsWith("hoi4-mod-setup.exe"))
     : process.platform === "darwin"
-      ? files.filter((file) => file.includes(".app/Contents/MacOS/") && /hoi4[- ]mod[- ]setup$/i.test(file))
+      ? files.filter((file) => (file.includes(".app/Contents/MacOS/") && /hoi4[- ]mod[- ]setup$/i.test(file)) || /[\\/]hoi4-mod-setup$/i.test(file))
       : [];
   const executable = candidates.sort((left, right) => left.length - right.length)[0];
   if (!executable || !statSync(executable).isFile()) {

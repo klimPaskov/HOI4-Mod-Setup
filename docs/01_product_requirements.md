@@ -53,6 +53,7 @@ Needs pinned installs, optional 3D support, exact provenance, update and repair,
 10. Placeholder and unsupported states remain honest.
 11. Deterministic facts and Codex proposals are never presented as the same evidence class.
 12. A new project is not ready until both descriptors and the thumbnail pass validation.
+13. New-project identity conventions are generated from the mod name and brief; manual review is for edits, ambiguity, or external paths.
 
 ## Planning provider requirement
 
@@ -95,13 +96,13 @@ The welcome screen offers **Create a new mod** and **Import an existing project*
 
 ### New project creation
 
-Collect and review:
+Ask for and review:
 
 - selected provider configuration or ChatGPT sign-in through Codex App Server
   and required provider semantic analysis
-- natural-language mod description
-- display name
-- stable project ID
+- mod name and natural-language description
+- generated display name, stable project ID, script prefix, namespace, descriptor
+  tags, and initial folder profile
 - project folder
 - supported game version
 - initial version and tags
@@ -116,6 +117,13 @@ Collect and review:
 - Git choices
 
 No file is created before dry-run approval. After approval, the transaction creates the project root, internal descriptor, external launcher descriptor, thumbnail placeholder, selected folder profile, and selected workflow components. The new mod must appear in the HOI4 launcher and load as an empty or scaffolded local mod without manual file creation, assuming the selected HOI4 user directory is valid.
+
+The app fills generated identity fields from the mod name and description before
+the identity screen opens. The selected provider may replace those conventions
+with schema-validated suggestions. Every generated value remains editable, but
+the user is not asked to invent a project ID, prefix, namespace, tags, or folder
+list from scratch. Manual input is reserved for an intentional override,
+ambiguous or unverified game facts, and the two external descriptor paths.
 
 #### Launcher-ready artifact contract
 

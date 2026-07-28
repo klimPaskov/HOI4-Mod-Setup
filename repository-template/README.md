@@ -5,18 +5,62 @@ existing Hearts of Iron IV mod for agentic development. It creates launcher
 files, project structure, verified workflow files, and a readiness report
 without silently replacing user work.
 
-> **Status:** in development. Public installers will be linked from GitHub
-> Releases only after the security, recovery, signing, and native platform
-> gates pass.
+> **Status:** the source repository is public. Development previews are
+> available from GitHub Releases; stable installers will be linked only after
+> the security, recovery, signing, and native platform gates pass.
 
 ## Install
 
 The public source repository is [klimPaskov/HOI4-Mod-Setup](https://github.com/klimPaskov/HOI4-Mod-Setup).
-Public binary releases will be linked from its GitHub Releases page: a signed
-Windows `.exe` installer and a signed/notarized macOS `.dmg`. Until the first
-release is published, contributors can use the setup in
-[DEVELOPMENT.md](DEVELOPMENT.md). Do not download installers from unverified
-mirrors.
+For the easiest installation, use its [GitHub Releases](https://github.com/klimPaskov/HOI4-Mod-Setup/releases) page:
+
+- Windows: download the `.exe` installer and run it.
+- macOS: download the `.dmg`, open it, and move the app to Applications.
+
+GitHub Releases use explicit platform names so the download is easy to spot:
+`HOI4-Mod-Setup-windows-x64-setup.exe`, `HOI4-Mod-Setup-macos-arm64.dmg`
+(Apple silicon), and `HOI4-Mod-Setup-macos-x64.dmg` (Intel). The release notes
+also show each package's SHA-256 and verification manifest.
+
+Development previews are source-built test packages. Windows or macOS may
+show a platform security warning because stable publisher signing and
+notarization are separate release gates. Before installing a preview, verify
+the included provenance and SHA-256 files against the public source commit.
+Stable releases will be clearly labelled when those gates are complete. Do
+not download installers from unverified mirrors.
+
+## Screenshots
+
+These screenshots are captured from the current wizard UI. They show the main
+setup path, the provider-neutral configuration surface, and the Codex-only
+flattened Chat sources option.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/01-welcome.png" alt="HOI4 Mod Setup welcome screen with new and existing mod choices" width="480"></td>
+    <td><img src="docs/screenshots/02-description.png" alt="Natural-language mod description screen" width="480"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/03-identity.png" alt="Project identity and Hearts of Iron IV descriptor screen" width="480"></td>
+    <td><img src="docs/screenshots/04-components.png" alt="Verified component selection screen" width="480"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/05-integrations.png" alt="Optional 3D models and LoRA workflow choices" width="480"></td>
+    <td><img src="docs/screenshots/06-mcp-credentials.png" alt="MCP and credential review screen" width="480"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/07-git-chat-sources.png" alt="Git setup with the optional flattened ChatGPT project sources checkbox" width="480"></td>
+    <td><img src="docs/screenshots/08-flattened-chat-sources.png" alt="Expanded flattened ChatGPT project sources option with additional files field" width="480"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/09-dry-run.png" alt="Dry-run review showing planned changes and preflight checks" width="480"></td>
+    <td><img src="docs/screenshots/10-provider-selection.png" alt="Claude provider selection with model, endpoint, and vault-key controls" width="480"></td>
+  </tr>
+</table>
+
+The browser preview intentionally shows safe unavailable states when a native
+Tauri process or remote manifest is not present. Native package verification
+and desktop launch smoke run on the Windows and macOS GitHub Actions runners.
 
 ## Choose a planning provider
 
@@ -39,9 +83,11 @@ user can approve a plan.
 
 ## Create or import a mod
 
-For a new project, describe the mod in plain language. The selected provider
-proposes an editable identity, project ID, namespaces, tags, folder profile,
-instructions, skills, subagents, and components. For an existing project, a
+For a new project, enter a mod name and describe it in plain language. The app
+immediately fills an editable project ID, script prefix, namespace, descriptor
+tags, and starter folders; the selected provider can refine those suggestions
+before review. You do not need to invent naming conventions from scratch. For
+an existing project, a
 bounded read-only scan records evidence for descriptors, launcher state,
 structure, Git, identifiers, naming, localisation, docs, skills, subagents,
 Codex/MCP files, paths, and conflicts before semantic review.

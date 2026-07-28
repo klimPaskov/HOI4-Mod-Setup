@@ -18,13 +18,22 @@ if (cargoVersion !== packageMetadata.version || lockVersion !== packageMetadata.
 const required = [
   resolve(root, "dist", "index.html"),
   resolve(root, "dist", "release", "BUILD_METADATA.json"),
+  resolve(root, "dist", "release", "SBOM.cdx.json"),
 ];
 for (const path of required) if (!existsSync(path)) throw new Error(`missing release output: ${path}`);
 const metadata = JSON.parse(readFileSync(required[1], "utf8"));
+const sbom = JSON.parse(readFileSync(required[2], "utf8"));
+if (sbom.bomFormat !== "CycloneDX" || sbom.specVersion !== "1.5" || !Array.isArray(sbom.components) || sbom.components.length === 0) {
+  throw new Error("release SBOM is not a populated CycloneDX 1.5 document");
+}
+const sbomRevision = sbom.metadata?.properties?.find((property) => property.name === "hoi4.mod.setup.source_revision")?.value;
+if (metadata.sourceRevision !== "unresolved-local" && sbomRevision !== metadata.sourceRevision) {
+  throw new Error("release SBOM source revision does not match release metadata");
+}
 if (metadata.product !== "HOI4 Mod Setup" || metadata.version !== packageMetadata.version || tauriMetadata.version !== packageMetadata.version) {
   throw new Error("release metadata and configured application versions do not match");
 }
-const tagVersion = process.env.GITHUB_REF_NAME?.startsWith("v")
+const tagVersion = process.env.GITHUB_REF?.startsWith("refs/tags/") && process.env.GITHUB_REF_NAME?.startsWith("v")
   ? process.env.GITHUB_REF_NAME.slice(1)
   : undefined;
 if (tagVersion && metadata.version !== tagVersion) {
@@ -75,7 +84,8 @@ if (process.env.HOI4_MOD_SETUP_REQUIRE_TAURI === "1") {
   if (requireReleaseIdentity && (!process.env.GITHUB_REF?.startsWith("refs/tags/") || !process.env.GITHUB_REF_NAME)) {
     throw new Error("release verification requires a tag ref");
   }
-  if (process.env.GITHUB_REF_NAME) {
+  const isTagRef = process.env.GITHUB_REF?.startsWith("refs/tags/") ?? false;
+  if (isTagRef) {
     const tag = process.env.GITHUB_REF_NAME;
     if (!/^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(tag)) {
       throw new Error(`release tag ${tag} is not a supported semantic version tag`);
@@ -144,9 +154,11 @@ function verifyPlatformArchitecture(packageRoot, packageFiles, platform, archite
   if (platform.includes("windows")) {
     const expectedMachine = architecture === "X64" ? 0x8664 : 0xaa64;
     const nativeExecutable = resolve(root, "target", "release", "hoi4-mod-setup.exe");
-    const candidates = existsSync(nativeExecutable)
-      ? [{ label: "target/release/hoi4-mod-setup.exe", path: nativeExecutable }]
-      : packageFiles.filter((path) => /\.exe$/i.test(path)).map((path) => ({ label: path, path: resolve(packageRoot, path) }));
+    const candidates = [
+      ...(existsSync(nativeExecutable) ? [{ label: "target/release/hoi4-mod-setup.exe", path: nativeExecutable, native: true }] : []),
+      ...packageFiles.filter((path) => /\.exe$/i.test(path)).map((path) => ({ label: path, path: resolve(packageRoot, path), native: false })),
+    ];
+    if (candidates.length === 0) throw new Error("Windows release contains no PE executable to inspect");
     for (const candidate of candidates) {
       const bytes = readFileSync(candidate.path);
       if (bytes.length < 0x40) throw new Error(`Windows package is too small to inspect: ${candidate.label}`);
@@ -155,7 +167,8 @@ function verifyPlatformArchitecture(packageRoot, packageFiles, platform, archite
         throw new Error(`Windows package is not a PE image: ${candidate.label}`);
       }
       const machine = bytes.readUInt16LE(peOffset + 4);
-      if (machine !== expectedMachine) throw new Error(`Windows package architecture mismatch for ${candidate.label}`);
+      const acceptedMachine = candidate.native ? [expectedMachine] : [expectedMachine, 0x014c];
+      if (!acceptedMachine.includes(machine)) throw new Error(`Windows package architecture mismatch for ${candidate.label}`);
     }
     return;
   }
@@ -176,7 +189,8 @@ function verifyPlatformArchitecture(packageRoot, packageFiles, platform, archite
         if (executables.length !== 1) throw new Error(`expected one macOS executable in ${relative}`);
         const executable = resolve(executableRoot, executables[0].name);
         const lipo = spawnSync("lipo", ["-archs", executable], { encoding: "utf8" });
-        if (lipo.status !== 0 || !lipo.stdout.trim().split(/\s+/).includes(expectedArch)) {
+        const architectures = lipo.stdout.trim().split(/\s+/).filter(Boolean);
+        if (lipo.status !== 0 || architectures.length !== 1 || architectures[0] !== expectedArch) {
           throw new Error(`macOS package architecture mismatch for ${relative}`);
         }
       } finally {

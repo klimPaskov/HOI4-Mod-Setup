@@ -51,6 +51,8 @@ export interface ProjectIdentity {
   launcherDescriptorPath?: string;
 }
 
+export type IdentityGeneratedField = "projectId" | "scriptPrefix" | "primaryNamespace" | "descriptorTags" | "folderProfile";
+
 export interface CodexAccountStatus {
   available: boolean;
   authenticated: boolean;
@@ -398,6 +400,8 @@ export interface WizardState {
   mode: "new" | "existing";
   recoveryEntry?: boolean;
   identity: ProjectIdentity;
+  /** Fields the user explicitly changed; generated conventions stay live elsewhere. */
+  identityOverrides?: IdentityGeneratedField[];
   description: string;
   folderProfile?: string[];
   sourceMode: SourceMode;

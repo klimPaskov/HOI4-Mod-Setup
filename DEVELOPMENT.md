@@ -25,6 +25,11 @@ rustup default 1.88.0
 rustup component add rustfmt clippy --toolchain 1.88.0
 ```
 
+`pnpm-workspace.yaml` explicitly permits the reviewed `esbuild` install
+script, which is required for Vite builds under pnpm 11's strict dependency
+build policy. Review any future dependency that needs an install script and
+add it explicitly; never enable all dependency scripts in CI.
+
 Read `AGENTS.md` before coding. Then read the repo-local skill that owns the current work.
 
 ## Planned source responsibilities

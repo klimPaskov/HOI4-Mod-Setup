@@ -60,11 +60,11 @@
             "integration_id": 15368
           },
           {
-            "context": "Desktop E2E (macos-14)",
+            "context": "Desktop E2E (macos-15)",
             "integration_id": 15368
           },
           {
-            "context": "Desktop E2E (macos-13)",
+            "context": "Desktop E2E (macos-15-intel)",
             "integration_id": 15368
           }
         ],
@@ -73,5 +73,11 @@
       }
     }
   ],
-  "bypass_actors": []
+  "bypass_actors": [
+    {
+      "actor_id": 147595204,
+      "actor_type": "User",
+      "bypass_mode": "always"
+    }
+  ]
 }

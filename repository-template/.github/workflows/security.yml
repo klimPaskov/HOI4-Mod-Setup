@@ -39,7 +39,6 @@ jobs:
         if: steps.detect.outputs.present == 'true'
         with:
           node-version: "22"
-          cache: pnpm
       - if: steps.detect.outputs.present == 'true'
         run: corepack enable
       - if: steps.detect.outputs.present == 'true'

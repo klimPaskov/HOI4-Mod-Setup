@@ -30,6 +30,7 @@
 - NEW-16: A user-modified thumbnail is detected and never overwritten silently.
 - NEW-17: A valid existing thumbnail may replace the generated placeholder without blocking readiness.
 - NEW-18: Missing or invalid launcher artifacts block launcher-ready status and Open in Codex for a newly created project.
+- NEW-19: Entering a mod name and brief populates project ID, script prefix, primary namespace, descriptor tags, and starter folders before review; each remains editable and a manual edit is preserved.
 
 ## Deterministic scanning and required provider analysis
 
@@ -201,6 +202,7 @@
 - UI-12: Project identity shows compact descriptor rows and thumbnail preview on demand.
 - UI-13: Selected-provider analysis shows the approved request manifest and separates detected, suggested, and confirmed values without adding a permanent explanatory panel.
 - UI-14: The flatten checkbox is native, keyboard accessible, Codex-only, and followed by the ChatGPT “Chat” recommendation.
+- UI-15: New-project identity fields are populated from the name and brief; optional metadata stays secondary and generated values remain keyboard-editable.
 
 ## Open-source repository
 
