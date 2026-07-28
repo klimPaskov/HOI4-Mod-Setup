@@ -240,7 +240,7 @@ Rules:
 - validate artifact hashes before publication
 - keep release creation in a separate job after platform builds succeed
 
-The repository-owned workflows call `pnpm release:build`, `pnpm release:verify`, and `pnpm desktop:e2e`; the native desktop job builds and launches the application on Windows x64 and both currently supported macOS runner architectures. These checks must remain required only after the corresponding runners are active and their check names are stable.
+The repository-owned workflows call `pnpm release:build`, `pnpm release:verify`, and `pnpm desktop:e2e`; the native desktop job builds and launches the application on Windows x64, `macos-15` arm64, and `macos-15-intel` x64. These checks must remain required only after the corresponding runners are active and their check names are stable.
 
 ## Releases
 
