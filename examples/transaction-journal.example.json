@@ -4,6 +4,8 @@
   "transaction_kind": "installation",
   "parent_transaction_id": null,
   "rollback_transaction_id": null,
+  "result_lock_sha256": null,
+  "result_lock_exists": null,
   "project_id": "cold_war_curtain",
   "project_root": "C:\\Users\\example\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain",
   "state": "interrupted",

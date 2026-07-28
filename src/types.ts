@@ -332,6 +332,8 @@ export interface TransactionJournal {
   transaction_kind?: "installation" | "rollback";
   parent_transaction_id?: string | null;
   rollback_transaction_id?: string | null;
+  result_lock_sha256?: string | null;
+  result_lock_exists?: boolean | null;
   project_id: string;
   project_root?: string;
   state: string;

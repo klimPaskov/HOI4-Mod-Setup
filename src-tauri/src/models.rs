@@ -834,6 +834,10 @@ pub struct TransactionJournal {
     pub parent_transaction_id: Option<Uuid>,
     #[serde(default)]
     pub rollback_transaction_id: Option<Uuid>,
+    #[serde(default)]
+    pub result_lock_sha256: Option<String>,
+    #[serde(default)]
+    pub result_lock_exists: Option<bool>,
     pub project_id: String,
     /// Canonical project root bound to this journal. Older journals may omit
     /// it, but recovery must refuse to resume them without a root binding.

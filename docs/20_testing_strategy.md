@@ -53,7 +53,7 @@ addition to the manifest, path, and Codex targets.
 
 ## Transaction fault injection
 
-Fail at every stage and operation boundary through process kill, disk full, permission denied, file lock, network loss, checksum mismatch, command timeout, health failure, and cancellation. Verify recovery and final hashes. Rollback tests must also assert a separate child journal, parent linkage, inverse backup of live post-transaction bytes, durable parent/child rollback records, and safe reuse of the child identity on retry.
+Fail at every stage and operation boundary through process kill, disk full, permission denied, file lock, network loss, checksum mismatch, command timeout, health failure, and cancellation. Verify recovery and final hashes. Rollback tests must also assert a separate child journal, parent linkage, inverse backup of live post-transaction bytes, durable parent/child rollback records, safe reuse of the child identity on retry, and inverse rollback refusal after a later user file or lock edit.
 
 ## End-to-end cases
 

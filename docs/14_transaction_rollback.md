@@ -117,6 +117,13 @@ cleanup boundary and uses `rolling_back` plus `rollback_applying` checkpoints
 so a retry verifies an already-restored operation before continuing; a
 mismatched live state still requires manual review.
 
+A completed rollback child journal is also a guarded inverse point for the
+managed file and lock state that existed before rollback. The Ready screen
+offers this action only for that completed child; the same root and recorded
+live-state hashes are checked before any file apply, and later edits fail
+closed. Git initialization, remote changes, and other external side effects
+are not recreated by this inverse action.
+
 ## Interrupted states
 
 Before apply, resume, rollback, or discard staging after revalidation. During apply, compare each operation's expected before and after hashes. A prior maintenance lock may remain during resume only when its hash matches the journaled predecessor. Unknown state blocks resume or requires manual review. After apply but before readiness, run post-checks and finish or roll back. The final lock write uses a `finalizing` journal state: if the process stops after the lock and rollback record are durable, resume verifies those artifacts and completes only the journal. It never replays file operations. A crash during file rollback leaves `rolling_back` and a per-operation `rollback_applying` checkpoint for a safe retry; a mismatched live state still requires manual review.
@@ -135,4 +142,4 @@ Detect common OneDrive and iCloud paths. Warn about synchronization ordering. Pe
 
 ## Fault tests
 
-Crash and fail at every stage and operation, including disk full, permission loss, antivirus lock, network loss, checksum mismatch, user edits during dry run or staging, external health failure, and rollback after Git initialization. The checked-in fault suite covers stage and apply-operation injection, subprocess termination during finalization and rollback backup creation, plus targeted skipped-file, ownership, remote-approval, reanalysis binding, and separate rollback-transaction backup regressions. Per-operation rollback resume and power-loss behavior outside the tested finalization windows remain release work.
+Crash and fail at every stage and operation, including disk full, permission loss, antivirus lock, network loss, checksum mismatch, user edits during dry run or staging, external health failure, and rollback after Git initialization. The checked-in fault suite covers stage and apply-operation injection, subprocess termination during finalization and rollback backup creation, inverse rollback refusal after a user file or lock edit, plus targeted skipped-file, ownership, remote-approval, reanalysis binding, and separate rollback-transaction backup regressions. Per-operation rollback resume and power-loss behavior outside the tested finalization windows remain release work.

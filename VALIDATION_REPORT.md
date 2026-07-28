@@ -43,12 +43,12 @@ explicitly bounded below.
 | Markdown style | Pass, no em dash characters or semicolons |
 | Mermaid source inventory | Pass, 10 diagram files present |
 | UI references | Pass, 17 full-resolution PNG files retained |
-| Frontend typecheck, lint, unit (14 tests), accessibility, browser smoke | Pass |
+| Frontend typecheck, lint, unit (15 tests), accessibility, browser smoke | Pass |
 | Frontend production build | Pass, Vite build completed on the elevated host run |
 | JSON-schema examples (manifest, plan, lock, journal) | Pass |
 | Cargo formatting | Pass |
 | Rust toolchain | Pass, pinned to Rust 1.88.0 by `rust-toolchain.toml` |
-| Rust all-feature tests | Pass, 116 tests under pinned Rust 1.88.0 |
+| Rust all-feature tests | Pass, 118 tests under pinned Rust 1.88.0 |
 | Rust all-feature clippy | Pass with `-D warnings` under pinned Rust 1.88.0 |
 | Fuzz target compilation | Pass, manifest, relative-path, Codex-analysis, descriptor/thumbnail, and structured-TOML targets |
 | Committed-secret scan | Pass |
@@ -71,7 +71,6 @@ Runtime completion still requires:
 - native macOS compilation, packaging, and desktop E2E launch
 - native screen-reader, contrast, scaling, and clean-machine evidence on both supported platforms
 - a journaled rollback boundary for the high-impact 3D bootstrap's external environment changes; the source does not declare preflight-only behavior or rollback metadata
-- a user-facing inverse action for a completed rollback transaction; rollback now creates a separate child journal and inverse backup set before restoration, and subprocess fixtures cover finalization and rollback-backup interruption windows
 
 ## Source verification limits
 

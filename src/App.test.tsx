@@ -1,17 +1,18 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { Ready, Scan, Welcome } from "./App";
-import { cancelCodexLogin, logoutCodexResult, openCodexLoginUrlResult, openInCodex, readCodexAccount } from "./lib/tauri";
+import { cancelCodexLogin, logoutCodexResult, openCodexLoginUrlResult, openInCodex, readCodexAccount, rollbackInstallation } from "./lib/tauri";
 import type { ScanProgress, WizardState } from "./types";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, cancelCodexLogin: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openInCodex: vi.fn(), readCodexAccount: vi.fn() };
+  return { ...actual, cancelCodexLogin: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openInCodex: vi.fn(), readCodexAccount: vi.fn(), rollbackInstallation: vi.fn() };
 });
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
 });
 
 beforeEach(() => {
@@ -173,5 +174,23 @@ describe("HOI4 Mod Setup wizard", () => {
 
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/open this folder manually/i));
     expect(screen.getByRole("status")).toHaveTextContent(/cold-war-curtain/i);
+  });
+
+  it("exposes a confirmed inverse action only for a completed installation rollback", async () => {
+    const update = vi.fn();
+    const restored = { transaction_id: "inverse-1", transaction_kind: "rollback", state: "rolled_back" } as unknown as WizardState["transaction"];
+    vi.mocked(rollbackInstallation).mockResolvedValue(restored ?? null);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const state = {
+      ...readyState(),
+      readiness: { openInCodex: false, blockingCheckIds: ["installation.rollback"], checks: [] },
+      transaction: { transaction_kind: "installation", state: "rolled_back", rollback_transaction_id: "rollback-1" },
+    } as unknown as WizardState;
+
+    render(<Ready state={state} update={update} onMaintenance={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Restore rolled-back state" }));
+
+    await waitFor(() => expect(rollbackInstallation).toHaveBeenCalledWith("C:\\mods\\cold-war-curtain", "rollback-1"));
+    expect(update).toHaveBeenCalledWith({ transaction: restored, readiness: null, transactionError: undefined });
   });
 });

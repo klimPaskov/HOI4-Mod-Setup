@@ -262,6 +262,8 @@ pub fn new_journal(
         transaction_kind: "installation".into(),
         parent_transaction_id: None,
         rollback_transaction_id: None,
+        result_lock_sha256: None,
+        result_lock_exists: None,
         project_id: project_id.into(),
         project_root: project_root.display().to_string(),
         state: "preflight".into(),
@@ -2131,14 +2133,19 @@ fn rollback_destination_is_restored(
     }
 }
 
-fn rollback_operation_is_actionable(operation: &JournalOperation) -> bool {
-    matches!(
+fn rollback_operation_is_actionable(
+    parent: &TransactionJournal,
+    operation: &JournalOperation,
+) -> bool {
+    (matches!(
         operation.status.as_str(),
         "rollback_applying" | "applying" | "applied" | "verified"
-    ) && !matches!(
-        operation.action,
-        Some(OperationAction::Skip | OperationAction::External) | None
-    ) && !matches!(operation.rollback, Some(RollbackAction::None) | None)
+    ) || (parent.transaction_kind == "rollback" && operation.status == "rolled_back"))
+        && !matches!(
+            operation.action,
+            Some(OperationAction::Skip | OperationAction::External) | None
+        )
+        && !matches!(operation.rollback, Some(RollbackAction::None) | None)
 }
 
 fn new_rollback_journal(
@@ -2153,6 +2160,8 @@ fn new_rollback_journal(
         transaction_kind: "rollback".into(),
         parent_transaction_id: Some(parent.transaction_id),
         rollback_transaction_id: None,
+        result_lock_sha256: None,
+        result_lock_exists: None,
         project_id: parent.project_id.clone(),
         project_root: project_root.display().to_string(),
         state: "preflight".into(),
@@ -2175,7 +2184,7 @@ fn new_rollback_journal(
             .iter()
             .rev()
             .map(|operation| {
-                let actionable = rollback_operation_is_actionable(operation);
+                let actionable = rollback_operation_is_actionable(parent, operation);
                 let desired_sha256 = if actionable
                     && !matches!(operation.rollback, Some(RollbackAction::RemoveCreated))
                 {
@@ -2248,6 +2257,70 @@ fn rollback_operation_destination(
     }
 }
 
+fn recorded_result_lock_matches(
+    project_root: &Path,
+    journal: &TransactionJournal,
+) -> Result<Option<bool>, AppError> {
+    let Some(expected_exists) = journal.result_lock_exists else {
+        return Ok(None);
+    };
+    let lock_path = safe_join(project_root, ".hoi4-mod-setup/install.lock.json")?;
+    match fs::symlink_metadata(&lock_path) {
+        Ok(metadata) if is_link_metadata(&metadata) || !metadata.is_file() => Err(
+            AppError::PathSecurity("installation lock is not a regular file".into()),
+        ),
+        Ok(_) if !expected_exists => Ok(Some(false)),
+        Ok(_) => {
+            let expected_hash = journal.result_lock_sha256.as_deref().ok_or_else(|| {
+                AppError::Transaction("rollback result lock has no recorded checksum".into())
+            })?;
+            Ok(Some(sha256_file(&lock_path)? == expected_hash))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Some(!expected_exists)),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn capture_rollback_lock_backup(
+    project_root: &Path,
+    backup_root: &Path,
+    rollback: &mut TransactionJournal,
+) -> Result<(), AppError> {
+    let lock_path = safe_join(project_root, ".hoi4-mod-setup/install.lock.json")?;
+    let backup_path = backup_root.join("install.lock.json.bak");
+    if path_has_link_component(&backup_path) {
+        return Err(AppError::PathSecurity(
+            "rollback lock backup path contains a symlink or junction".into(),
+        ));
+    }
+    match fs::symlink_metadata(&lock_path) {
+        Ok(metadata) if is_link_metadata(&metadata) || !metadata.is_file() => Err(
+            AppError::PathSecurity("installation lock is not a regular file".into()),
+        ),
+        Ok(_) => {
+            let current_hash = sha256_file(&lock_path)?;
+            if backup_path.is_file() {
+                if sha256_file(&backup_path)? != current_hash {
+                    return Err(AppError::Transaction(
+                        "rollback lock backup changed before apply".into(),
+                    ));
+                }
+            } else {
+                copy_atomic(&lock_path, &backup_path)?;
+            }
+            rollback.previous_lock_backup_path = Some(backup_path.display().to_string());
+            rollback.previous_lock_sha256 = Some(sha256_file(&backup_path)?);
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            rollback.previous_lock_backup_path = None;
+            rollback.previous_lock_sha256 = None;
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn prepare_rollback_transaction(
     project_root: &Path,
     parent: &TransactionJournal,
@@ -2285,6 +2358,14 @@ fn prepare_rollback_transaction(
         atomic_write_json(&journal_path, &journal)?;
         journal
     };
+
+    if recorded_result_lock_matches(project_root, parent)? == Some(false) {
+        return Err(AppError::Transaction(
+            "installation lock changed after rollback; refusing inverse rollback".into(),
+        ));
+    }
+    capture_rollback_lock_backup(project_root, &roots.backup, &mut rollback)?;
+    persist_journal(&journal_path, &mut rollback)?;
 
     for index in 0..rollback.operations.len() {
         let operation = rollback.operations[index].clone();
@@ -2362,6 +2443,10 @@ fn persist_rollback_checkpoint(
         .find(|operation| operation.id == format!("rollback-{parent_operation_id}"))
     {
         operation.status = status.into();
+        if status == "rolled_back" {
+            operation.after_sha256 = operation.expected_sha256.clone();
+            operation.after_exists = Some(operation.expected_sha256.is_some());
+        }
     }
     rollback.last_checkpoint = checkpoint.into();
     persist_journal(rollback_path, rollback)
@@ -2406,7 +2491,11 @@ pub fn rollback_transaction(
     persist_journal(journal_path, journal)?;
     let (mut rollback_journal, rollback_path) =
         prepare_rollback_transaction(&project_root, journal, journal_path)?;
-    maybe_abort_for_test("rollback_after_backup");
+    maybe_abort_for_test(if journal.transaction_kind == "rollback" {
+        "inverse_rollback_after_backup"
+    } else {
+        "rollback_after_backup"
+    });
     let result = (|| -> Result<(), AppError> {
         // Remove transaction-created Git metadata before restoring files. The
         // newly initialized index would otherwise record the transaction's
@@ -2430,10 +2519,11 @@ pub fn rollback_transaction(
         }
         for index in (0..journal.operations.len()).rev() {
             let operation = journal.operations[index].clone();
-            if !matches!(
+            if !(matches!(
                 operation.status.as_str(),
                 "rollback_applying" | "applying" | "applied" | "verified"
-            ) {
+            ) || (journal.transaction_kind == "rollback" && operation.status == "rolled_back"))
+            {
                 continue;
             }
             // A skip is a durable no-op. In particular, it may represent a
@@ -2598,13 +2688,30 @@ pub fn rollback_transaction(
                 .join("rollback-record.json"),
             journal,
         )?;
+        let result_lock_path = safe_join(&project_root, ".hoi4-mod-setup/install.lock.json")?;
+        match fs::symlink_metadata(&result_lock_path) {
+            Ok(metadata) if is_link_metadata(&metadata) || !metadata.is_file() => {
+                return Err(AppError::PathSecurity(
+                    "rollback result lock is not a regular file".into(),
+                ));
+            }
+            Ok(_) => {
+                rollback_journal.result_lock_exists = Some(true);
+                rollback_journal.result_lock_sha256 = Some(sha256_file(&result_lock_path)?);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                rollback_journal.result_lock_exists = Some(false);
+                rollback_journal.result_lock_sha256 = None;
+            }
+            Err(error) => return Err(error.into()),
+        }
         rollback_journal.state = "completed".into();
         rollback_journal.recovery = RecoveryState {
             resume_allowed: false,
-            rollback_allowed: false,
+            rollback_allowed: true,
             discard_staging_allowed: false,
             project_apply_started: true,
-            recommended_action: "none".into(),
+            recommended_action: "rollback".into(),
         };
         rollback_journal.last_checkpoint = "rollback-complete".into();
         persist_journal(&rollback_path, &mut rollback_journal)?;
@@ -2636,7 +2743,10 @@ fn restore_previous_lock(
     journal_path: &Path,
 ) -> Result<(), AppError> {
     let lock_path = safe_join(project_root, ".hoi4-mod-setup/install.lock.json")?;
-    let record_suffix = format!("{}/rollback-record.json", journal.transaction_id);
+    let record_transaction_id = journal
+        .parent_transaction_id
+        .unwrap_or(journal.transaction_id);
+    let record_suffix = format!("{record_transaction_id}/rollback-record.json");
     let current_has_record = if lock_path.is_file() {
         let bytes = fs::read(&lock_path)?;
         let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
@@ -2651,6 +2761,7 @@ fn restore_previous_lock(
     } else {
         false
     };
+    let result_lock_matches = recorded_result_lock_matches(project_root, journal)? == Some(true);
     let backup_path = if let Some(path) = &journal.previous_lock_backup_path {
         let expected = journal_app_root(journal_path)?
             .join("backups")
@@ -2693,7 +2804,7 @@ fn restore_previous_lock(
                 "previous installation lock backup checksum mismatch".into(),
             ));
         }
-        if current_has_record {
+        if current_has_record || result_lock_matches {
             copy_atomic(&backup_path, &lock_path)?;
             if sha256_file(&lock_path)? != expected_hash {
                 return Err(AppError::Transaction(
@@ -3535,6 +3646,42 @@ mod tests {
     }
 
     #[test]
+    fn transaction_inverse_process_fault_worker() {
+        if std::env::var("HOI4_MOD_SETUP_TEST_WORKER").ok().as_deref()
+            != Some("inverse_rollback_after_backup")
+        {
+            return;
+        }
+        let project_root = PathBuf::from(std::env::var_os("HOI4_MOD_SETUP_TEST_PROJECT").unwrap());
+        let app_root = PathBuf::from(std::env::var_os("HOI4_MOD_SETUP_TEST_APP").unwrap());
+        fs::create_dir_all(&project_root).unwrap();
+        fs::create_dir_all(&app_root).unwrap();
+        let (plan, prepared) = existing_file_fixture(&project_root);
+        let (mut installation, _) = run_transaction(
+            &project_root,
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app_root.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let installation_path = app_root
+            .join("transactions")
+            .join(plan.plan_id.to_string())
+            .join("journal.json");
+        rollback_transaction(&project_root, &mut installation, &installation_path).unwrap();
+        let rollback_id = installation.rollback_transaction_id.unwrap();
+        let rollback_path = app_root
+            .join("transactions")
+            .join(rollback_id.to_string())
+            .join("journal.json");
+        let mut rollback = read_journal(&rollback_path).unwrap();
+        rollback_transaction(&project_root, &mut rollback, &rollback_path).unwrap();
+    }
+
+    #[test]
     fn cross_process_finalization_and_rollback_boundaries_are_recoverable() {
         for mode in [
             "after_rollback_record",
@@ -3621,6 +3768,69 @@ mod tests {
                 _ => unreachable!(),
             }
         }
+    }
+
+    #[test]
+    fn cross_process_inverse_rollback_boundary_is_recoverable() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let mode = "inverse_rollback_after_backup";
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "transaction::tests::transaction_inverse_process_fault_worker",
+                "--nocapture",
+            ])
+            .env("HOI4_MOD_SETUP_TEST_WORKER", mode)
+            .env("HOI4_MOD_SETUP_TEST_ABORT_AT", mode)
+            .env("HOI4_MOD_SETUP_TEST_PROJECT", project.path())
+            .env("HOI4_MOD_SETUP_TEST_APP", app.path())
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "inverse fault worker unexpectedly succeeded: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let mut journals = fs::read_dir(app.path().join("transactions"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let path = entry.path().join("journal.json");
+                read_journal(&path).ok().map(|journal| (journal, path))
+            })
+            .collect::<Vec<_>>();
+        journals.sort_by_key(|(journal, _)| journal.created_at.clone());
+        let (installation, _) = journals
+            .iter()
+            .find(|(journal, _)| journal.transaction_kind == "installation")
+            .expect("installation journal");
+        let (rollback, rollback_path) = journals
+            .iter()
+            .find(|(journal, _)| {
+                journal.transaction_kind == "rollback"
+                    && journal.parent_transaction_id == Some(installation.transaction_id)
+            })
+            .expect("rollback journal");
+        let (inverse, _) = journals
+            .iter()
+            .find(|(journal, _)| {
+                journal.transaction_kind == "rollback"
+                    && journal.parent_transaction_id == Some(rollback.transaction_id)
+            })
+            .expect("inverse rollback journal");
+        assert_eq!(rollback.state, "rolling_back");
+        assert_eq!(rollback.operations[0].status, "rolled_back");
+        assert_eq!(inverse.state, "applying");
+        let inverse_backup = inverse.operations[0]
+            .backup_path
+            .as_ref()
+            .expect("inverse rollback should back up the live pre-inverse bytes");
+        assert_eq!(fs::read(inverse_backup).unwrap(), b"old");
+
+        let mut rollback = read_journal(rollback_path).unwrap();
+        rollback_transaction(project.path(), &mut rollback, rollback_path).unwrap();
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"safe");
     }
 
     #[test]
@@ -3772,6 +3982,8 @@ mod tests {
             Some(journal.transaction_id)
         );
         assert_eq!(rollback_journal.state, "completed");
+        assert!(rollback_journal.recovery.rollback_allowed);
+        assert_eq!(rollback_journal.result_lock_exists, Some(false));
         let rollback_backup = rollback_journal.operations[0]
             .backup_path
             .as_ref()
@@ -3783,6 +3995,104 @@ mod tests {
             .unwrap()
             .join("rollback-record.json")
             .is_file());
+        let mut rollback_journal = rollback_journal;
+        rollback_transaction(
+            project.path(),
+            &mut rollback_journal,
+            &rollback_journal_path,
+        )
+        .unwrap();
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"safe");
+        assert!(project
+            .path()
+            .join(".hoi4-mod-setup/install.lock.json")
+            .is_file());
+        assert_eq!(rollback_journal.state, "rolled_back");
+        assert!(rollback_journal.rollback_transaction_id.is_some());
+    }
+
+    #[test]
+    fn inverse_rollback_refuses_a_user_modified_file() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        let (mut installation, _) = run_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let installation_path = app
+            .path()
+            .join("transactions")
+            .join(plan.plan_id.to_string())
+            .join("journal.json");
+        rollback_transaction(project.path(), &mut installation, &installation_path).unwrap();
+        let rollback_id = installation.rollback_transaction_id.unwrap();
+        let rollback_path = app
+            .path()
+            .join("transactions")
+            .join(rollback_id.to_string())
+            .join("journal.json");
+        let mut rollback = read_journal(&rollback_path).unwrap();
+        fs::write(project.path().join("AGENTS.md"), b"user edit").unwrap();
+
+        let error = rollback_transaction(project.path(), &mut rollback, &rollback_path)
+            .expect_err("inverse rollback must refuse a later user edit");
+        assert!(error.to_string().contains("user changes detected"));
+        assert_eq!(
+            fs::read(project.path().join("AGENTS.md")).unwrap(),
+            b"user edit"
+        );
+        assert_eq!(rollback.state, "rolling_back");
+    }
+
+    #[test]
+    fn inverse_rollback_checks_the_recorded_lock_before_file_apply() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        let (mut installation, _) = run_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let installation_path = app
+            .path()
+            .join("transactions")
+            .join(plan.plan_id.to_string())
+            .join("journal.json");
+        rollback_transaction(project.path(), &mut installation, &installation_path).unwrap();
+        let rollback_id = installation.rollback_transaction_id.unwrap();
+        let rollback_path = app
+            .path()
+            .join("transactions")
+            .join(rollback_id.to_string())
+            .join("journal.json");
+        let mut rollback = read_journal(&rollback_path).unwrap();
+        fs::write(
+            project.path().join(".hoi4-mod-setup/install.lock.json"),
+            b"user-created lock",
+        )
+        .unwrap();
+
+        let error = rollback_transaction(project.path(), &mut rollback, &rollback_path)
+            .expect_err("inverse rollback must refuse a changed lock");
+        assert!(error.to_string().contains("installation lock changed"));
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"old");
+        assert_eq!(
+            fs::read(project.path().join(".hoi4-mod-setup/install.lock.json")).unwrap(),
+            b"user-created lock"
+        );
     }
 
     #[test]
