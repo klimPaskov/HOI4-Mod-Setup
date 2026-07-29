@@ -95,6 +95,7 @@ describe("HOI4 Mod Setup wizard", () => {
   });
 
   it("offers the exact 3D question again for an existing managed setup", () => {
+    const onStartMaintenance = vi.fn();
     render(<Update
       state={{
         ...readyState(),
@@ -112,12 +113,38 @@ describe("HOI4 Mod Setup wizard", () => {
       findings={[]}
       setFindings={vi.fn()}
       onMaintenance={vi.fn()}
-      onStartMaintenance={vi.fn()}
+      onStartMaintenance={onStartMaintenance}
       onReanalyze={vi.fn().mockResolvedValue(true)}
     />);
 
     expect(screen.getByText("Do you want to set up the 3D models workflow?")).toBeInTheDocument();
     expect(screen.getByText("Add it during the next repair")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Repair installation/ }));
+    expect(onStartMaintenance).toHaveBeenCalledWith("repair");
+
+    cleanup();
+    render(<Update
+      state={{
+        ...readyState(),
+        aiProvider: "codex",
+        existingInstallationDetected: true,
+        installedWorkflow3dState: "not_selected",
+        meshSelected: true,
+        meshKeyDraft: "",
+        meshKeyStatus: "missing",
+        meshCredentialReference: undefined,
+        loraInterest: false,
+        maintenanceEvidenceReady: false,
+        findings: [],
+      } as unknown as WizardState}
+      update={vi.fn()}
+      findings={[]}
+      setFindings={vi.fn()}
+      onMaintenance={vi.fn()}
+      onStartMaintenance={vi.fn()}
+      onReanalyze={vi.fn().mockResolvedValue(true)}
+    />);
+    expect(screen.getByLabelText("Meshy API key")).toBeInTheDocument();
   });
 
   it("keeps the optional workflow questions exact and records portrait interest without actions", () => {
