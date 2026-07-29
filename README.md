@@ -5,9 +5,7 @@ existing Hearts of Iron IV mod for agentic development. It creates launcher
 files, project structure, verified workflow files, and a readiness report
 without silently replacing user work.
 
-> **Status:** the source repository is public. Development previews are
-> available from GitHub Releases; stable installers will be linked only after
-> the security, recovery, signing, and native platform gates pass.
+> **Current release:** [HOI4 Mod Setup 0.1.0](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/tag/0.1.0) is a public prerelease with Windows and macOS installers.
 
 ## Install
 
@@ -15,17 +13,16 @@ The public source repository is [klimPaskov/HOI4-Mod-Setup](https://github.com/k
 
 ### Downloads
 
-- Windows: [HOI4-Mod-Setup-windows-x64-setup.exe](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/preview-18e3dbd4767396c405668ce107ef0cdb24ffa67a/HOI4-Mod-Setup-windows-x64-setup.exe)
-- Mac (Apple silicon): [HOI4-Mod-Setup-macos-arm64.dmg](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/preview-18e3dbd4767396c405668ce107ef0cdb24ffa67a/HOI4-Mod-Setup-macos-arm64.dmg)
-- Mac (Intel): [HOI4-Mod-Setup-macos-x64.dmg](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/preview-18e3dbd4767396c405668ce107ef0cdb24ffa67a/HOI4-Mod-Setup-macos-x64.dmg)
-- [GitHub Releases](https://github.com/klimPaskov/HOI4-Mod-Setup/releases)
+- Windows: [HOI4-Mod-Setup-windows-x64-setup.exe](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/0.1.0/HOI4-Mod-Setup-windows-x64-setup.exe)
+- Mac (Apple silicon): [HOI4-Mod-Setup-macos-arm64.dmg](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/0.1.0/HOI4-Mod-Setup-macos-arm64.dmg)
+- Mac (Intel): [HOI4-Mod-Setup-macos-x64.dmg](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/0.1.0/HOI4-Mod-Setup-macos-x64.dmg)
+- [Release details and checksums](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/tag/0.1.0)
 
-Development previews are source-built test packages. Windows or macOS may
-show a platform security warning because stable publisher signing and
-notarization are separate release gates. Before installing a preview, verify
-the included provenance and SHA-256 files against the public source commit.
-Stable releases will be clearly labelled when those gates are complete. Do
-not download installers from unverified mirrors.
+This prerelease is source-built from one public commit. Windows or macOS may
+ask for a platform security confirmation because stable publisher signing and
+notarization are separate release gates. Before installing, verify the
+included provenance and SHA-256 files against the public source commit. Do not
+download installers from unverified mirrors.
 
 ## Use the wizard, phase by phase
 
@@ -43,6 +40,11 @@ the provider selection view lets you choose Claude, Kimi, GLM, DeepSeek, a
 local model, or another explicitly configured route before analysis begins.
 
 ![Provider selection with model and vault-key controls](docs/screenshots/10-provider-selection.png)
+
+For an existing mod, choose **Import existing mod** or use **Manage an existing
+project** to check a setup already created by the wizard.
+
+![Existing project entry for repair and workflow updates](docs/screenshots/11-existing-project.png)
 
 The selected profile shapes conventions and instructions, but it never writes
 files or approves the transaction.

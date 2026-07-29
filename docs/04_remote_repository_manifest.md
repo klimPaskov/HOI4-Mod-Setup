@@ -16,7 +16,8 @@ A release may later provide the same manifest and a compact file index as signed
 2. Read the current default branch.
 3. Resolve it to a commit SHA.
 4. Fetch the manifest at that exact commit.
-5. Validate schema, file evidence, and the declared generator revision.
+5. Validate the manifest schema and runtime trust-policy invariants, file
+   evidence, and the declared generator revision.
 6. Expand only selected component trees at the same commit.
 7. Fetch selected files.
 8. Verify SHA-256.
@@ -29,6 +30,14 @@ Latest mode becomes reproducible after installation because the lock records the
 ## Pinned modes
 
 Pinned commit accepts a full immutable commit and fetches everything from that revision. Pinned release resolves a release to immutable assets or a commit and records both when available. Mutable branch-only references are rejected as pinned installs.
+
+The runtime rejects schema-declared wiki provenance/license values outside the
+published enums, latest policies that do not require default-branch resolution
+and commit recording, pinned modes disabled by the manifest, and required
+signing policies because signature verification is not implemented in this
+build. It records repository license evidence with the exact wiki metadata used
+by the plan and lock; legacy locks without that field remain readable but are
+shown as `unknown` until repaired.
 
 ## No clone
 

@@ -386,6 +386,10 @@
           "type": "string",
           "minLength": 1
         },
+        "repository_license_status": {
+          "type": "string",
+          "minLength": 1
+        },
         "notes": {
           "type": "array",
           "items": {"type": "string"}

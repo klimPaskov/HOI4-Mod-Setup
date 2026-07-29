@@ -21,22 +21,6 @@ pub(crate) fn manifest_wiki_pages() -> Vec<String> {
     .unwrap_or_default()
 }
 
-fn manifest_provenance_statuses() -> (String, String) {
-    serde_json::from_slice::<RemoteManifest>(include_bytes!(
-        "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
-    ))
-    .map(|manifest| {
-        (
-            manifest
-                .repository
-                .license_evidence
-                .unwrap_or_else(|| "unknown".into()),
-            manifest.wiki.provenance.source_status,
-        )
-    })
-    .unwrap_or_else(|_| ("unknown".into(), "unknown".into()))
-}
-
 fn mcp_component_is_selected(state: &str) -> bool {
     !matches!(state, "not_selected" | "removed" | "unsupported_platform")
 }
@@ -265,6 +249,14 @@ pub struct ReadinessInput {
     pub workflow_3d_state: String,
     #[serde(default)]
     pub lora_interest: bool,
+    /// Provenance is copied from the exact locked manifest. Readiness does
+    /// not substitute a newer bundled manifest for an installed revision.
+    #[serde(default = "crate::models::default_unknown_status")]
+    pub source_license_status: String,
+    #[serde(default = "crate::models::default_unknown_status")]
+    pub wiki_source_status: String,
+    #[serde(default = "crate::models::default_unknown_status")]
+    pub wiki_license_status: String,
     #[serde(default)]
     pub notes: Vec<String>,
 }
@@ -305,6 +297,9 @@ impl Default for ReadinessInput {
             dependency_status: "pass".into(),
             workflow_3d_state: "not_selected".into(),
             lora_interest: false,
+            source_license_status: "unknown".into(),
+            wiki_source_status: "unknown".into(),
+            wiki_license_status: "unknown".into(),
             notes: vec![],
         }
     }
@@ -342,13 +337,27 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         "The manifest and selected files share one verified exact revision.",
         "source",
     );
-    let (license_status, wiki_source_status) = manifest_provenance_statuses();
+    let license_status = if input.source_license_status.trim().is_empty() {
+        "unknown"
+    } else {
+        input.source_license_status.trim()
+    };
+    let wiki_source_status = if input.wiki_source_status.trim().is_empty() {
+        "unknown"
+    } else {
+        input.wiki_source_status.trim()
+    };
+    let wiki_license_status = if input.wiki_license_status.trim().is_empty() {
+        "unknown"
+    } else {
+        input.wiki_license_status.trim()
+    };
     add_status_check(
         &mut checks,
         "source.license_metadata",
         "Source license metadata",
         "dependency",
-        &license_status,
+        license_status,
         false,
         "License evidence is shown from the manifest and is never inferred.",
         "manifest.repository.license_evidence",
@@ -358,10 +367,20 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         "wiki.provenance",
         "Wiki source provenance",
         "wiki",
-        &wiki_source_status,
+        wiki_source_status,
         false,
         "Wiki provenance is shown from the manifest and is never invented.",
         "manifest.wiki.provenance",
+    );
+    add_status_check(
+        &mut checks,
+        "wiki.license_metadata",
+        "Wiki license metadata",
+        "wiki",
+        wiki_license_status,
+        false,
+        "Wiki license evidence is shown from the exact locked manifest and is never inferred.",
+        "manifest.wiki.provenance.license_status",
     );
     add_bool_check(
         &mut checks,
@@ -1127,6 +1146,21 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         || lock.as_ref().is_some_and(|lock| {
             !lock.wiki_required_pages.is_empty() && lock.wiki_metadata.is_some()
         });
+    let source_license_status = lock
+        .as_ref()
+        .and_then(|lock| lock.wiki_metadata.as_ref())
+        .map(|metadata| metadata.repository_license_status.clone())
+        .unwrap_or_else(|| "unknown".into());
+    let wiki_source_status = lock
+        .as_ref()
+        .and_then(|lock| lock.wiki_metadata.as_ref())
+        .map(|metadata| metadata.source_status.clone())
+        .unwrap_or_else(|| "unknown".into());
+    let wiki_license_status = lock
+        .as_ref()
+        .and_then(|lock| lock.wiki_metadata.as_ref())
+        .map(|metadata| metadata.license_status.clone())
+        .unwrap_or_else(|| "unknown".into());
     let wiki_status = if !wiki_selected {
         "not_selected".into()
     } else if project_root.join("paradox_wiki").is_dir()
@@ -1248,6 +1282,9 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         dependency_status: dependency_status.into(),
         workflow_3d_state,
         lora_interest,
+        source_license_status,
+        wiki_source_status,
+        wiki_license_status,
         notes: vec![
             "Readiness uses the required wiki page list recorded with the installed manifest revision.".into(),
             "MCP structural preflight is not a health result; the Tauri readiness command performs a bounded initialize and read-only tools/list probe before reporting pass.".into(),

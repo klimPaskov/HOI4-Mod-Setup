@@ -113,7 +113,13 @@ Persist the journal before and after irreversible boundaries. Use atomic file re
 
 ## Recovery
 
-On startup, detect incomplete journals. Offer resume, rollback, or discard staging only when the recorded state makes the action safe.
+On startup, detect every non-terminal journal state, including ordinary active
+stage states left by process termination. The core transaction preflight must
+also scan the bound application-data transaction root and refuse overlapping
+mutations for the same canonical project. Corrupt journals whose bounded root
+matches the selected project are a recovery blocker, not something to skip.
+Offer resume, rollback, or discard staging only when the recorded state makes
+the action safe.
 
 Resume must compare the recorded plan hash, operation preconditions, journal expectations, staged-file hashes, the exact predecessor-lock existence/hash state, and observed filesystem state. `resume_transaction` replays the full runner only from a pre-apply interrupted checkpoint; once project apply has started it refuses resume and requires rollback or manual review. Never trust the last journal line alone.
 

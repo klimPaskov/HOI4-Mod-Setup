@@ -255,12 +255,13 @@ finished release. The root README links only to verified GitHub Releases.
 
 The manually dispatched `.github/workflows/development-preview.yml` builds the
 same three native targets, runs the UI and native launch gates, and publishes
-a uniquely tagged GitHub prerelease. `scripts/prepare_preview_assets.mjs`
+a user-facing semantic-version GitHub prerelease such as `0.1.0`. The
+workflow refuses to reuse a published version. `scripts/prepare_preview_assets.mjs`
 rechecks the exact source commit, platform/architecture metadata, package
 hashes, and shared third-party notice inventory before the write-capable
 release operation. The preview path is separate from the stable release path:
-it does not receive stable signing credentials and its assets must remain
-labelled as development previews. The stable `Release` workflow remains
+it does not receive stable signing credentials and its assets remain labelled
+as a GitHub prerelease. The stable `Release` workflow remains
 fail-closed until Windows signing and Apple Developer ID/notarization evidence
 are configured. Publication renames the installers to
 `HOI4-Mod-Setup-windows-x64-setup.exe`,

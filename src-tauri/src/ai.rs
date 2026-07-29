@@ -23,6 +23,7 @@ use std::time::Duration;
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ENDPOINT_LENGTH: usize = 2048;
 const ANTHROPIC_VERSION: &str = "2023-06-01";
+const ANALYSIS_SCHEMA: &str = include_str!("../../docs/schemas/codex-analysis.schema.json");
 
 #[derive(Debug, Clone)]
 pub struct AiProviderConfig {
@@ -327,6 +328,9 @@ fn request_provider(
     let mut headers = HeaderMap::new();
     headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    let system_prompt = format!(
+        "Return only one JSON object matching this exact schema. Do not disclose account data, hidden reasoning, credentials, or filesystem content.\n\noutput_schema={ANALYSIS_SCHEMA}"
+    );
     let body = if protocol == "anthropic_messages" {
         if let Some(secret) = secret {
             headers.insert(
@@ -343,7 +347,7 @@ fn request_provider(
         json!({
             "model": model,
             "max_tokens": 8192,
-            "system": "Return only the supplied schema-constrained object. Do not disclose account data, hidden reasoning, credentials, or filesystem content.",
+            "system": system_prompt,
             "messages": [{"role": "user", "content": prompt}]
         })
     } else {
@@ -360,7 +364,7 @@ fn request_provider(
             "model": model,
             "temperature": 0,
             "messages": [
-                {"role": "system", "content": "Return only the supplied schema-constrained object. Do not disclose account data, hidden reasoning, credentials, or filesystem content."},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ]
         })
@@ -446,6 +450,13 @@ mod tests {
         );
         assert!(profiles.iter().any(|profile| profile.id == "claude"));
         assert!(profiles.iter().any(|profile| profile.id == "custom"));
+    }
+
+    #[test]
+    fn provider_system_prompt_contains_the_authoritative_analysis_schema() {
+        assert!(ANALYSIS_SCHEMA.contains("\"$schema\""));
+        assert!(ANALYSIS_SCHEMA.contains("\"proposals\""));
+        assert!(ANALYSIS_SCHEMA.contains("\"component_recommendations\""));
     }
 
     #[test]

@@ -56,10 +56,11 @@ channel, rollback behavior, and clean-machine tests are implemented.
 The manually dispatched `Development preview` workflow builds Windows x64,
 macOS arm64, and macOS x64 packages, runs the repository-owned UI and native
 smoke gates, verifies each package manifest and architecture, and publishes a
-uniquely tagged GitHub prerelease. `scripts/prepare_preview_assets.mjs`
+user-facing semantic-version GitHub prerelease such as `0.1.0`. The workflow
+refuses to reuse a published version. `scripts/prepare_preview_assets.mjs`
 rechecks the exact source commit, package hashes, platform set, and shared
-third-party notice inventory before publication. A preview is explicitly not
-a stable signed release; the stable `Release` workflow remains fail-closed
+third-party notice inventory before publication. A prerelease is explicitly
+not a stable signed release; the stable `Release` workflow remains fail-closed
 until the protected Windows and Apple signing configuration is available. The
 published assets use the deterministic names `HOI4-Mod-Setup-windows-x64-setup.exe`,
 `HOI4-Mod-Setup-macos-arm64.dmg`, and `HOI4-Mod-Setup-macos-x64.dmg`; generated

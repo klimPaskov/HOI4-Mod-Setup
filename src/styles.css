@@ -185,6 +185,7 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .check-row { justify-content: space-between; }
 .radio-row { position: relative; }
 .radio-row input, .check-row input { width: 17px; height: 17px; accent-color: #7680ff; }
+.check-row > span:nth-child(2) { min-width: 0; display: grid; gap: 6px; }
 .radio-row > .status { margin-left: auto; }
 .center-column { width: 100%; }
 .lora-panel { padding: 29px; }

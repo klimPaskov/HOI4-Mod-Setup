@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { buildInstallationPlan, buildMaintenancePlan, cancelScan, previewDescriptors, scanProject } from "./tauri";
-import type { ScanProgress, WizardState } from "../types";
+import { buildInstallationPlan, buildMaintenancePlan, cancelScan, confirmCodexAnalysis, previewDescriptors, runAiAnalysis, runCodexAnalysis, scanProject } from "./tauri";
+import type { AiAnalysisRequest, CodexAnalysisRequest, ScanProgress, WizardState } from "../types";
 
 const { invoke, listen, unlisten } = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -61,6 +61,32 @@ describe("typed scanner bridge", () => {
       projectRoot: "C:/mods/example",
       codexAnalysis: null,
       addWorkflow3d: true,
+    });
+  });
+
+  it("wraps semantic analysis requests under the Rust command argument name", async () => {
+    invoke.mockResolvedValue(null);
+    const codexRequest = { mode: "new_project_identity" } as unknown as CodexAnalysisRequest;
+    const providerRequest = { mode: "new_project_identity", provider: "claude" } as unknown as AiAnalysisRequest;
+
+    await runCodexAnalysis(codexRequest);
+    await runAiAnalysis(providerRequest);
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "codex_analyze", { request: codexRequest });
+    expect(invoke).toHaveBeenNthCalledWith(2, "ai_analyze", { request: providerRequest });
+  });
+
+  it("sends the reviewed render values with semantic confirmation", async () => {
+    invoke.mockResolvedValue(null);
+    const record = { analysis_id: "analysis-1" } as never;
+    const values = { description: "description", folderProfile: ["common"], identity: {} };
+
+    await confirmCodexAnalysis(record, ["project_id"], values);
+
+    expect(invoke).toHaveBeenCalledWith("confirm_codex_analysis", {
+      record,
+      confirmedFields: ["project_id"],
+      confirmedValues: values,
     });
   });
 

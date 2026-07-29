@@ -49,14 +49,17 @@ Every analysis turn must:
 - expose no writable project root
 - contain only user-approved inputs
 - exclude secrets, binaries, Git objects, and credential stores
-  - set the current `codex-analysis` output schema for every adapter
+- require the current `codex-analysis` output schema for every adapter; Codex
+  sends it as `outputSchema`, while hosted/local adapters receive the exact
+  checked-in schema in their system request
 - reject additional or malformed fields
 - require the complete ten-key proposal set before confirmation or planning
 - return concise proposal reasons, not hidden reasoning
 
 For existing-project analysis, the core accepts only evidence references and
 excerpt hashes emitted by a completed deterministic read-only scan in the
-current app session. Reject `.git`, environment, credential, token, key, PEM,
+current app session and an explicit approval of that exact evidence vector.
+Completion of a scan alone is not an approval. Reject `.git`, environment, credential, token, key, PEM,
 and other secret-bearing paths, duplicate references, and credential-shaped
 briefs, constraints, or excerpts before prompt construction. New-project
 analysis may have no scan evidence but still receives only the bounded user
@@ -106,6 +109,10 @@ confirmation to its exact analysis ID and complete proposal set; the renderer
 cannot forge the immutable record fields. A plan or maintenance plan must carry
 a confirmed `CodexAnalysisRecord`; it stores only digests, proposal keys,
 confirmation time, and `account_identity_persisted: false`.
+
+Folder proposals and final folder state share a core validator that rejects
+application-managed roots such as `.git`, `.codex`, `.agents`,
+`.hoi4-mod-setup`, `paradox_wiki`, and `chatgpt_project_sources`.
 
 The UI shows a collapsed input preview before a turn, labels the result “Suggested
 by Codex,” and requires an explicit confirmation action. Drafts and scan findings

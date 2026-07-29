@@ -49,7 +49,7 @@ interface TauriCommandMap {
   ai_account_read: { args: { provider: string; model: string; endpoint: string }; result: AiAccountStatus };
   store_ai_provider_credential: { args: { provider: string; value: string }; result: boolean };
   remove_ai_provider_credential: { args: { provider: string }; result: boolean };
-  ai_analyze: { args: AiAnalysisRequest; result: CodexAnalysisResult };
+  ai_analyze: { args: { request: AiAnalysisRequest }; result: CodexAnalysisResult };
   approve_scan_evidence: { args: { projectRoot: string; scanId: string; evidence: Array<{ reference: string; path: string; excerpt: string; excerpt_sha256: string; confidence?: number | null }> }; result: void };
   codex_account_read: { args: Record<string, never>; result: CodexAccountStatus };
   codex_login_start: { args: { mode: "browser" | "device" }; result: CodexLoginStart };
@@ -57,8 +57,8 @@ interface TauriCommandMap {
   codex_login_cancel: { args: Record<string, never>; result: void };
   open_codex_login_url: { args: { url: string }; result: void };
   codex_logout: { args: Record<string, never>; result: void };
-  codex_analyze: { args: CodexAnalysisRequest; result: CodexAnalysisResult };
-  confirm_codex_analysis: { args: { record: CodexAnalysisRecord; confirmedFields: string[] }; result: CodexAnalysisRecord };
+  codex_analyze: { args: { request: CodexAnalysisRequest }; result: CodexAnalysisResult };
+  confirm_codex_analysis: { args: { record: CodexAnalysisRecord; confirmedFields: string[]; confirmedValues: unknown }; result: CodexAnalysisRecord };
   pick_project_folder: { args: Record<string, never>; result: FolderSelection };
   pick_launcher_folder: { args: Record<string, never>; result: FolderSelection };
   preview_source_manifest: { args: { sourceMode: WizardState["sourceMode"]; pinnedRef: string }; result: SourceManifestPreview };
@@ -196,11 +196,11 @@ export async function logoutCodexResult(): Promise<CommandResult<void>> {
 }
 
 export async function runCodexAnalysis(request: CodexAnalysisRequest): Promise<CodexAnalysisResult | null> {
-  return invokeCommand("codex_analyze", request);
+  return invokeCommand("codex_analyze", { request });
 }
 
 export async function runAiAnalysis(request: AiAnalysisRequest): Promise<CodexAnalysisResult | null> {
-  return invokeCommand("ai_analyze", request);
+  return invokeCommand("ai_analyze", { request });
 }
 
 export async function approveScanEvidence(
@@ -211,8 +211,8 @@ export async function approveScanEvidence(
   return (await invokeCommand("approve_scan_evidence", { projectRoot, scanId, evidence })) !== null;
 }
 
-export async function confirmCodexAnalysis(record: CodexAnalysisRecord, confirmedFields: string[]): Promise<CodexAnalysisRecord | null> {
-  return invokeCommand("confirm_codex_analysis", { record, confirmedFields });
+export async function confirmCodexAnalysis(record: CodexAnalysisRecord, confirmedFields: string[], confirmedValues: unknown): Promise<CodexAnalysisRecord | null> {
+  return invokeCommand("confirm_codex_analysis", { record, confirmedFields, confirmedValues });
 }
 
 export async function pickProjectFolder(): Promise<FolderSelection | null> {

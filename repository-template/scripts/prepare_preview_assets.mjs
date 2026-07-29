@@ -117,9 +117,8 @@ if (!/^[0-9a-f]{40}$/.test(sourceRevision ?? "")) {
   throw new Error("preview publication requires the exact source commit in GITHUB_SHA");
 }
 const previewTag = process.env.PREVIEW_TAG?.trim() || null;
-const expectedPreviewTag = `preview-${sourceRevision}`;
-if (previewTag !== expectedPreviewTag) {
-  throw new Error(`preview publication tag must be exactly ${expectedPreviewTag}`);
+if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(previewTag ?? "")) {
+  throw new Error("preview publication tag must be a user-facing semantic version without a leading v");
 }
 const inputEntries = (await readdir(inputRoot, { withFileTypes: true }))
   .filter((entry) => entry.isDirectory())
@@ -204,9 +203,9 @@ await writeFile(resolve(outputRoot, "SBOM.cdx.json"), JSON.stringify(mergeSbomIn
 await writeFile(resolve(outputRoot, "THIRD_PARTY_NOTICES.md"), mergeThirdPartyNotices(noticeInventories), "utf8");
 
 await writeFile(resolve(outputRoot, "PREVIEW_NOTICE.md"), [
-  "HOI4 Mod Setup development preview",
+  `HOI4 Mod Setup ${previewTag} public prerelease`,
   "",
-  "This is a source-built development preview, not a stable release. Windows and macOS may display a platform security warning because the preview is not published with the stable release signing identities. Verify the GitHub source commit and SHA-256 manifest before installing.",
+  "This public prerelease is built from one exact public Git commit. Windows and macOS may ask for a platform security confirmation because stable publisher signing and notarization are separate release gates. Verify the source commit and SHA-256 manifest before installing.",
   "",
   "The Apache 2.0 source is available at https://github.com/klimPaskov/HOI4-Mod-Setup.",
   "",
@@ -238,9 +237,9 @@ const verificationLinks = downloadBase
   ? `[PREVIEW_PROVENANCE.json](${downloadBase}/PREVIEW_PROVENANCE.json), [PREVIEW_ARTIFACTS.sha256](${downloadBase}/PREVIEW_ARTIFACTS.sha256), [SBOM.cdx.json](${downloadBase}/SBOM.cdx.json), and [THIRD_PARTY_NOTICES.md](${downloadBase}/THIRD_PARTY_NOTICES.md)`
   : "`PREVIEW_PROVENANCE.json`, `PREVIEW_ARTIFACTS.sha256`, `SBOM.cdx.json`, and `THIRD_PARTY_NOTICES.md`";
 await writeFile(resolve(outputRoot, "PREVIEW_RELEASE_NOTES.md"), [
-  "# HOI4 Mod Setup development preview",
+  `# HOI4 Mod Setup ${previewTag}`,
   "",
-  "This prerelease is built from one exact public Git commit and includes native installers for Windows and macOS.",
+  "This public prerelease is built from one exact public Git commit and includes native installers for Windows and macOS.",
   "",
   "## Downloads",
   "",
@@ -250,7 +249,7 @@ await writeFile(resolve(outputRoot, "PREVIEW_RELEASE_NOTES.md"), [
   "",
   "Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app to Applications.",
   "",
-  `This is a development preview, not a stable release. Windows and macOS may show a platform security warning because stable publisher signing and notarization are separate release gates. Verify ${verificationLinks} and the source commit before installing.`,
+  `This is a prerelease, not a stable release. Windows and macOS may ask for a platform security confirmation because stable publisher signing and notarization are separate release gates. Verify ${verificationLinks} and the source commit before installing.`,
   "",
   "The source is public under the Apache License 2.0: <https://github.com/klimPaskov/HOI4-Mod-Setup>.",
 ].join("\n") + "\n", "utf8");

@@ -678,6 +678,28 @@ pub fn resolve_source(
     let remote_manifest_bytes = client.fetch_manifest(&revision)?;
     let (manifest_bytes, manifest, manifest_origin) =
         select_manifest_for_revision(&remote_manifest_bytes, &revision)?;
+    match request.mode {
+        SourceMode::Latest
+            if !manifest.update_policy.latest.resolve_default_branch
+                || !manifest.update_policy.latest.record_commit =>
+        {
+            return Err(AppError::Source(
+                "latest source mode requires default-branch resolution and recorded commit evidence"
+                    .into(),
+            ));
+        }
+        SourceMode::PinnedCommit if !manifest.update_policy.pinned.allow_commit => {
+            return Err(AppError::Source(
+                "the remote manifest does not allow pinned commit installs".into(),
+            ));
+        }
+        SourceMode::PinnedRelease if !manifest.update_policy.pinned.allow_release => {
+            return Err(AppError::Source(
+                "the remote manifest does not allow pinned release installs".into(),
+            ));
+        }
+        _ => {}
+    }
     let manifest_sha256 = sha256_bytes(&manifest_bytes);
     let mode = request.mode;
     let identity = SourceIdentity {
@@ -723,6 +745,11 @@ pub fn wiki_install_metadata(manifest: &RemoteManifest) -> WikiInstallMetadata {
         required_media_policy: manifest.wiki.required_media_policy.clone(),
         source_status: manifest.wiki.provenance.source_status.clone(),
         license_status: manifest.wiki.provenance.license_status.clone(),
+        repository_license_status: manifest
+            .repository
+            .license_evidence
+            .clone()
+            .unwrap_or_else(|| "unknown".into()),
         notes: manifest.wiki.provenance.notes.clone(),
     }
 }
@@ -779,6 +806,22 @@ pub fn validate_manifest(
     {
         return Err(AppError::Source(
             "manifest repository does not match the approved source".into(),
+        ));
+    }
+    if !manifest.update_policy.latest.resolve_default_branch
+        || !manifest.update_policy.latest.record_commit
+    {
+        return Err(AppError::Source(
+            "manifest latest policy must resolve the default branch and record the exact commit"
+                .into(),
+        ));
+    }
+    if !matches!(
+        manifest.repository.license_evidence.as_deref(),
+        None | Some("verified" | "declared_unverified" | "not_found" | "unknown")
+    ) {
+        return Err(AppError::Source(
+            "manifest repository license evidence has an unsupported status".into(),
         ));
     }
     if let Some(revision) = revision {
@@ -1007,6 +1050,17 @@ pub fn validate_manifest(
     ) {
         return Err(AppError::Source("unsupported wiki media policy".into()));
     }
+    if !matches!(
+        manifest.wiki.provenance.source_status.as_str(),
+        "verified" | "repository_only" | "unknown"
+    ) || !matches!(
+        manifest.wiki.provenance.license_status.as_str(),
+        "verified" | "not_found" | "unknown"
+    ) {
+        return Err(AppError::Source(
+            "wiki provenance contains an unsupported status".into(),
+        ));
+    }
     let mut required_pages = HashSet::new();
     for page in &manifest.wiki.required_pages {
         let page = require_canonical_manifest_path(page, "required wiki page")
@@ -1038,6 +1092,16 @@ pub fn validate_manifest(
     if manifest.update_policy.rollback_retention == 0 {
         return Err(AppError::Source(
             "rollback retention must be positive".into(),
+        ));
+    }
+    if manifest
+        .signing
+        .as_ref()
+        .is_some_and(|policy| policy.required)
+    {
+        return Err(AppError::Source(
+            "signed manifests are declared but signature verification is not supported by this build"
+                .into(),
         ));
     }
     Ok(())
@@ -1651,6 +1715,28 @@ mod tests {
         let mut manifest: RemoteManifest = serde_json::from_slice(bytes).unwrap();
         manifest.generated_for_revision = Some("599497ea2f93612d9094461c6fde114fc87a5c0f".into());
         validate_manifest(&manifest, Some("27128a7b311d728a959afff7238a9aeeb9987f2b")).unwrap();
+    }
+
+    #[test]
+    fn manifest_rejects_unsupported_provenance_update_or_signing_policy() {
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
+        let revision = "27128a7b311d728a959afff7238a9aeeb9987f2b";
+
+        let mut provenance: RemoteManifest = serde_json::from_slice(bytes).unwrap();
+        provenance.wiki.provenance.source_status = "invented".into();
+        assert!(validate_manifest(&provenance, Some(revision)).is_err());
+
+        let mut update: RemoteManifest = serde_json::from_slice(bytes).unwrap();
+        update.update_policy.latest.record_commit = false;
+        assert!(validate_manifest(&update, Some(revision)).is_err());
+
+        let mut signing: RemoteManifest = serde_json::from_slice(bytes).unwrap();
+        signing.signing = Some(SigningPolicy {
+            required: true,
+            algorithm: Some("unknown".into()),
+            public_key_id: Some("unknown".into()),
+        });
+        assert!(validate_manifest(&signing, Some(revision)).is_err());
     }
 
     #[test]

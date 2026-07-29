@@ -2,6 +2,12 @@ name: Development preview
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: User-facing prerelease version, for example 0.1.0
+        required: true
+        default: 0.1.0
+        type: string
 
 permissions:
   contents: read
@@ -85,16 +91,17 @@ jobs:
       - name: Curate and reverify preview assets
         env:
           GITHUB_SHA: ${{ github.sha }}
-          PREVIEW_TAG: preview-${{ github.sha }}
+          PREVIEW_TAG: ${{ github.event.inputs.release_tag || '0.1.0' }}
         run: node scripts/prepare_preview_assets.mjs preview-artifacts publication-assets
       - name: Create prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ github.sha }}
+          PREVIEW_TAG: ${{ github.event.inputs.release_tag || '0.1.0' }}
         shell: bash
         run: |
           set -euo pipefail
-          preview_tag="preview-${SOURCE_SHA}"
+          preview_tag="${PREVIEW_TAG}"
           if gh release view "$preview_tag" >/dev/null 2>&1; then
             echo "A preview already exists for ${preview_tag}; refusing to replace it" >&2
             exit 1
@@ -108,5 +115,5 @@ jobs:
             "${assets[@]}" \
             --target "$SOURCE_SHA" \
             --prerelease \
-            --title "HOI4 Mod Setup development preview ${preview_tag}" \
+            --title "HOI4 Mod Setup ${preview_tag}" \
             --notes-file publication-assets/PREVIEW_RELEASE_NOTES.md

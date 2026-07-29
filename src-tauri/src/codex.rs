@@ -417,21 +417,19 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
                 "approvalPolicy": "never"
             }),
         )?;
-        let turn_id = protocol_event_id(&turn, &["turnId", "turn_id"]);
-        let mut messages = if event_matches_turn(&turn, &thread_id, turn_id.as_deref()) {
-            vec![turn.clone()]
-        } else {
-            Vec::new()
-        };
+        let turn_id = turn_id_from_start_response(&turn);
+        let mut messages = Vec::new();
         messages.extend(self.drain_notifications(
             Duration::from_secs(120),
             &thread_id,
             turn_id.as_deref(),
         )?);
-        let output = messages
+        let turn_completed = messages
             .iter()
-            .filter(|message| event_completes_turn(message, &thread_id, turn_id.as_deref()))
-            .find_map(structured_output)
+            .any(|message| event_completes_turn(message, &thread_id, turn_id.as_deref()));
+        let output = turn_completed
+            .then(|| messages.iter().rev().find_map(structured_output))
+            .flatten()
             .ok_or_else(|| {
                 AppError::Serialization(
                     "Codex returned no schema-constrained analysis output".into(),
@@ -481,12 +479,7 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
             match self.transport.receive(Duration::from_millis(200)) {
                 Ok(Some(message)) => {
                     let correlated = event_matches_turn(&message, thread_id, turn_id);
-                    let complete = event_completes_turn(&message, thread_id, turn_id)
-                        && (structured_output(&message).is_some()
-                            || message
-                                .get("method")
-                                .and_then(Value::as_str)
-                                .is_some_and(|method| method.ends_with("/completed")));
+                    let complete = event_completes_turn(&message, thread_id, turn_id);
                     if correlated {
                         messages.push(message);
                     }
@@ -503,55 +496,65 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
     }
 }
 
-fn protocol_event_id(value: &Value, keys: &[&str]) -> Option<String> {
-    match value {
-        Value::Object(object) => {
-            for key in keys {
-                if let Some(id) = object.get(*key).and_then(Value::as_str) {
-                    return Some(id.to_owned());
-                }
-            }
-            object
-                .values()
-                .find_map(|child| protocol_event_id(child, keys))
-        }
-        Value::Array(values) => values
-            .iter()
-            .find_map(|child| protocol_event_id(child, keys)),
-        _ => None,
-    }
+fn turn_id_from_start_response(value: &Value) -> Option<String> {
+    value
+        .get("turnId")
+        .or_else(|| value.get("turn_id"))
+        .or_else(|| value.get("turn").and_then(|turn| turn.get("id")))
+        .or_else(|| {
+            value
+                .get("result")
+                .and_then(|result| result.get("turn"))
+                .and_then(|turn| turn.get("id"))
+        })
+        .or_else(|| value.get("id"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
-fn protocol_event_ids(value: &Value, keys: &[&str], ids: &mut Vec<String>) {
-    match value {
-        Value::Object(object) => {
-            for key in keys {
-                if let Some(id) = object.get(*key).and_then(Value::as_str) {
-                    ids.push(id.to_owned());
-                }
-            }
-            for child in object.values() {
-                protocol_event_ids(child, keys, ids);
-            }
-        }
-        Value::Array(values) => {
-            for child in values {
-                protocol_event_ids(child, keys, ids);
+/// Extract only thread/turn identity fields from protocol envelopes. Do not
+/// recursively treat every nested `id` as a turn ID: item IDs are unrelated
+/// and would make a valid turn appear to belong to another turn.
+fn event_turn_references(value: &Value) -> (Vec<String>, Vec<String>) {
+    fn visit(value: &Value, threads: &mut Vec<String>, turns: &mut Vec<String>) {
+        let Value::Object(object) = value else {
+            return;
+        };
+        for key in ["threadId", "thread_id"] {
+            if let Some(id) = object.get(key).and_then(Value::as_str) {
+                threads.push(id.to_owned());
             }
         }
-        _ => {}
+        for key in ["turnId", "turn_id"] {
+            if let Some(id) = object.get(key).and_then(Value::as_str) {
+                turns.push(id.to_owned());
+            }
+        }
+        if let Some(turn) = object.get("turn") {
+            if let Some(id) = turn.get("id").and_then(Value::as_str) {
+                turns.push(id.to_owned());
+            }
+            visit(turn, threads, turns);
+        }
+        for key in ["params", "result", "event", "item"] {
+            if let Some(child) = object.get(key) {
+                visit(child, threads, turns);
+            }
+        }
     }
+
+    let mut threads = Vec::new();
+    let mut turns = Vec::new();
+    visit(value, &mut threads, &mut turns);
+    (threads, turns)
 }
 
 fn event_matches_turn(value: &Value, thread_id: &str, turn_id: Option<&str>) -> bool {
-    let mut thread_ids = Vec::new();
-    protocol_event_ids(value, &["threadId", "thread_id"], &mut thread_ids);
+    let (thread_ids, turn_ids) = event_turn_references(value);
     if thread_ids.is_empty() || thread_ids.iter().any(|id| id != thread_id) {
         return false;
     }
     if let Some(turn_id) = turn_id {
-        let mut turn_ids = Vec::new();
-        protocol_event_ids(value, &["turnId", "turn_id"], &mut turn_ids);
         if turn_ids.iter().any(|id| id != turn_id) {
             return false;
         }
@@ -563,12 +566,14 @@ fn event_completes_turn(value: &Value, thread_id: &str, turn_id: Option<&str>) -
     if !event_matches_turn(value, thread_id, turn_id) {
         return false;
     }
+    if value.get("method").and_then(Value::as_str) != Some("turn/completed") {
+        return false;
+    }
     let Some(turn_id) = turn_id else {
         return true;
     };
-    let mut turn_ids = Vec::new();
-    protocol_event_ids(value, &["turnId", "turn_id"], &mut turn_ids);
-    !turn_ids.is_empty() && turn_ids.iter().all(|id| id == turn_id)
+    let (_, turn_ids) = event_turn_references(value);
+    turn_ids.iter().any(|id| id == turn_id)
 }
 
 fn validate_analysis_request(request: &CodexAnalysisRequest) -> Result<(), AppError> {
@@ -645,6 +650,7 @@ fn validate_analysis_request(request: &CodexAnalysisRequest) -> Result<(), AppEr
             || evidence.path.len() > 512
             || crate::security::normalize_relative_path(&evidence.path).is_err()
             || forbidden_evidence_path(&evidence.path)
+            || forbidden_evidence_path(&evidence.reference)
             || !references.insert(evidence.reference.as_str())
         {
             return Err(AppError::PathSecurity(
@@ -678,22 +684,56 @@ fn forbidden_evidence_path(path: &str) -> bool {
     if segments.clone().any(|segment| {
         segment == ".git"
             || segment == "auth"
+            || segment == "authentication"
             || segment == "credential"
             || segment == "credentials"
             || segment == "secret"
             || segment == "secrets"
             || segment == "token"
             || segment == "tokens"
+            || segment == "password"
+            || segment == "passwords"
+            || segment == "private"
+            || segment == "private_keys"
     }) {
         return true;
     }
     let file_name = normalized.rsplit('/').next().unwrap_or_default();
+    let name_tokens = file_name
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty());
     file_name == ".env"
         || file_name.starts_with(".env.")
         || file_name.ends_with(".pem")
         || file_name.ends_with(".key")
         || file_name.ends_with(".p12")
         || file_name.ends_with(".pfx")
+        || name_tokens.clone().any(|token| {
+            matches!(
+                token,
+                "auth"
+                    | "authentication"
+                    | "credential"
+                    | "credentials"
+                    | "secret"
+                    | "secrets"
+                    | "token"
+                    | "tokens"
+                    | "password"
+                    | "passwords"
+                    | "passwd"
+                    | "apikey"
+                    | "key"
+                    | "access"
+                    | "rsa"
+                    | "certificate"
+                    | "cert"
+                    | "private"
+                    | "privatekey"
+                    | "private_key"
+                    | "id_rsa"
+            )
+        })
 }
 
 fn read_only_no_project_access() -> Value {
@@ -770,6 +810,47 @@ pub(crate) fn analysis_prompt_for_provider(
     Ok(format!(
         "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Propose values with concise reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs; never invent paths or references. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
     ))
+}
+
+const RESERVED_PROJECT_FOLDER_ROOTS: &[&str] = &[
+    ".agents",
+    ".codex",
+    ".git",
+    ".hoi4-mod-setup",
+    "chatgpt_project_sources",
+    "paradox_wiki",
+];
+
+/// Normalize selected starter folders and keep them outside application-
+/// managed roots. The same validator is used for provider proposals and the
+/// final renderer state so a later edit cannot bypass this boundary.
+pub fn validate_folder_profile_paths(folders: &[String]) -> Result<Vec<String>, AppError> {
+    let mut normalized = BTreeSet::new();
+    if folders.len() > 32 {
+        return Err(AppError::InvalidInput(
+            "folder profile contains too many paths".into(),
+        ));
+    }
+    for folder in folders {
+        let folder = crate::security::normalize_relative_path(folder).map_err(|error| {
+            AppError::InvalidInput(format!("folder profile contains an unsafe path: {error}"))
+        })?;
+        let root = folder.split('/').next().unwrap_or_default();
+        if RESERVED_PROJECT_FOLDER_ROOTS
+            .iter()
+            .any(|reserved| root.eq_ignore_ascii_case(reserved))
+        {
+            return Err(AppError::InvalidInput(format!(
+                "folder profile targets an application-managed root: {folder}"
+            )));
+        }
+        if !normalized.insert(folder) {
+            return Err(AppError::InvalidInput(
+                "folder profile contains duplicate paths".into(),
+            ));
+        }
+    }
+    Ok(normalized.into_iter().collect())
 }
 
 #[cfg(test)]
@@ -999,17 +1080,12 @@ fn validate_proposal_value(key: &ProposalKey, value: &Value) -> Result<(), AppEr
             let folders = value.as_array().ok_or_else(|| {
                 AppError::Serialization("Codex folder profile proposal must be an array".into())
             })?;
-            let mut normalized = BTreeSet::new();
-            if folders.len() > 32
-                || folders.iter().any(|folder| {
-                    let Some(folder) = folder.as_str() else {
-                        return true;
-                    };
-                    let Ok(folder) = crate::security::normalize_relative_path(folder) else {
-                        return true;
-                    };
-                    !normalized.insert(folder)
-                })
+            let folders = folders
+                .iter()
+                .map(|folder| folder.as_str().unwrap_or_default().to_string())
+                .collect::<Vec<_>>();
+            if folders.iter().any(|folder| folder.is_empty())
+                || validate_folder_profile_paths(&folders).is_err()
             {
                 return Err(AppError::Serialization(
                     "Codex folder profile proposal is invalid".into(),
@@ -1036,12 +1112,16 @@ fn parse_account_status(value: &Value) -> CodexAccountStatus {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_ascii_lowercase();
+    // Current App Server account/read responses identify a signed-in
+    // ChatGPT session with `account.type = "chatgpt"`; older builds also
+    // exposed an explicit boolean. Preserve the boolean when present, but do
+    // not require a field the current protocol no longer returns.
     let authenticated = account
         .get("authenticated")
         .or_else(|| account.get("isLoggedIn"))
         .or_else(|| account.get("loggedIn"))
         .and_then(Value::as_bool)
-        .unwrap_or(false);
+        .unwrap_or_else(|| auth_mode == "chatgpt");
     let usage_limited = value
         .get("usageLimited")
         .or_else(|| account.get("usageLimited"))
@@ -1708,7 +1788,10 @@ mod tests {
         assert!(status.authenticated);
         assert_ne!(status.auth_mode, "chatgpt");
 
-        let incomplete = parse_account_status(&json!({"account": {"type": "chatgpt"}}));
+        let current_chatgpt = parse_account_status(&json!({"account": {"type": "chatgpt"}}));
+        assert!(current_chatgpt.authenticated);
+
+        let incomplete = parse_account_status(&json!({"account": {}}));
         assert!(!incomplete.authenticated);
     }
 
@@ -1730,10 +1813,7 @@ mod tests {
         let transport = FakeTransport {
             sent: Vec::new(),
             incoming: VecDeque::from([
-                response(
-                    1,
-                    json!({"account": {"type": "chatgpt", "authenticated": true}}),
-                ),
+                response(1, json!({"account": {"type": "chatgpt"}})),
                 response(2, json!({"rateLimits": {"primary": {"usedPercent": 100}}})),
             ]),
             alive: true,
@@ -1918,6 +1998,52 @@ mod tests {
     }
 
     #[test]
+    fn secret_shaped_evidence_paths_and_references_are_rejected() {
+        for (reference, path) in [
+            ("f1", "config/api-key.json"),
+            ("client_secret", "descriptor.mod"),
+            ("f3", "private/id_rsa"),
+            ("f4", ".env.production"),
+        ] {
+            let request = CodexAnalysisRequest {
+                mode: "existing_project_semantics".into(),
+                brief: String::new(),
+                evidence: vec![ApprovedEvidence {
+                    reference: reference.into(),
+                    path: path.into(),
+                    excerpt: String::new(),
+                    excerpt_sha256: sha256_bytes(b""),
+                    confidence: None,
+                }],
+                constraints: json!({}),
+                analysis_purpose: None,
+                project_root: None,
+                scan_id: None,
+            };
+            assert!(
+                validate_analysis_request(&request).is_err(),
+                "{reference} {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn folder_profiles_cannot_target_application_managed_roots() {
+        assert!(validate_folder_profile_paths(&["common".into(), "events".into()]).is_ok());
+        for folder in [
+            ".git",
+            ".codex/prompts",
+            ".agents/skills",
+            ".hoi4-mod-setup",
+        ] {
+            assert!(
+                validate_folder_profile_paths(&[folder.into()]).is_err(),
+                "{folder}"
+            );
+        }
+    }
+
+    #[test]
     fn app_server_item_notifications_can_carry_schema_output() {
         let message = json!({
             "method": "item/completed",
@@ -1947,6 +2073,26 @@ mod tests {
     }
 
     #[test]
+    fn current_turn_wire_shape_uses_nested_turn_identity_and_waits_for_turn_completion() {
+        assert_eq!(
+            turn_id_from_start_response(&json!({"turn": {"id": "turn-1"}})),
+            Some("turn-1".into())
+        );
+        let item = json!({
+            "method": "item/completed",
+            "params": {"item": {"threadId": "thread-1", "turnId": "turn-1"}}
+        });
+        let completed = json!({
+            "method": "turn/completed",
+            "params": {"turn": {"id": "turn-1", "threadId": "thread-1"}}
+        });
+
+        assert!(event_matches_turn(&item, "thread-1", Some("turn-1")));
+        assert!(!event_completes_turn(&item, "thread-1", Some("turn-1")));
+        assert!(event_completes_turn(&completed, "thread-1", Some("turn-1")));
+    }
+
+    #[test]
     fn login_wait_requires_completion_and_account_update_before_reread() {
         let transport = FakeTransport {
             sent: Vec::new(),
@@ -1959,10 +2105,7 @@ mod tests {
                     "method": "account/updated",
                     "params": {"authMode": "chatgpt", "planType": "plus"}
                 }),
-                response(
-                    1,
-                    json!({"account": {"type": "chatgpt", "authenticated": true}}),
-                ),
+                response(1, json!({"account": {"type": "chatgpt"}})),
                 response(2, json!({"rateLimits": {"primary": {"usedPercent": 1}}})),
             ]),
             alive: true,

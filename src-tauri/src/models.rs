@@ -361,8 +361,16 @@ pub struct WikiInstallMetadata {
     pub required_media_policy: String,
     pub source_status: String,
     pub license_status: String,
+    /// Repository license evidence copied from the exact manifest revision.
+    /// `unknown` is used for legacy locks that predate this field.
+    #[serde(default = "default_unknown_status")]
+    pub repository_license_status: String,
     #[serde(default)]
     pub notes: Vec<String>,
+}
+
+pub(crate) fn default_unknown_status() -> String {
+    "unknown".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

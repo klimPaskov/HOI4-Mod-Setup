@@ -14,6 +14,9 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Default)]
 pub struct TransactionOptions {
     pub app_data_root: Option<PathBuf>,
+    /// Only the recovery path may set this. It lets a verified replay reuse
+    /// its own non-terminal journal without weakening the new-mutation gate.
+    pub resume_transaction_id: Option<Uuid>,
     pub fail_before_stage: Option<usize>,
     pub fail_after_stage: Option<usize>,
     pub fail_before_operation: Option<usize>,
@@ -443,6 +446,120 @@ fn journal_app_root(journal_path: &Path) -> Result<PathBuf, AppError> {
         .ok_or_else(|| AppError::PathSecurity("journal has no application root".into()))
 }
 
+/// Transaction states are terminal only after the journal no longer needs a
+/// recovery decision. Every other state is treated as an incomplete journal;
+/// this includes ordinary active checkpoints because a process can stop
+/// without running the error handler that normally changes the state to
+/// `interrupted`.
+pub fn transaction_state_is_terminal(state: &str) -> bool {
+    matches!(state, "completed" | "rolled_back" | "staging_discarded")
+}
+
+fn roots_match_for_transaction(bound: &str, requested: &Path) -> bool {
+    let Ok(bound_root) = validate_project_root(Path::new(bound)) else {
+        return false;
+    };
+    let Ok(requested_root) = validate_project_root(requested) else {
+        return false;
+    };
+    if cfg!(target_os = "windows") {
+        bound_root
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&requested_root.to_string_lossy())
+    } else {
+        bound_root == requested_root
+    }
+}
+
+/// Find a non-terminal journal bound to a project before starting a new
+/// mutation. Startup discovery is useful for the UI, but this core-owned
+/// check is the final exclusivity boundary and also protects callers that do
+/// not go through the wizard.
+pub fn find_incomplete_transaction(
+    app_root: &Path,
+    project_root: &Path,
+) -> Result<Option<TransactionJournal>, AppError> {
+    if path_has_link_component(app_root) {
+        return Err(AppError::PathSecurity(
+            "transaction application root contains a symlink or junction".into(),
+        ));
+    }
+    let transactions_root = app_root.join("transactions");
+    if path_has_link_component(&transactions_root) {
+        return Err(AppError::PathSecurity(
+            "transaction storage contains a symlink or junction".into(),
+        ));
+    }
+    let entries = match fs::read_dir(&transactions_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let mut candidates = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        if is_link_metadata(&metadata) {
+            return Err(AppError::PathSecurity(
+                "transaction storage contains a linked transaction directory".into(),
+            ));
+        }
+        if !metadata.is_dir() {
+            continue;
+        }
+        let journal_path = path.join("journal.json");
+        let journal_metadata = match fs::symlink_metadata(&journal_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if is_link_metadata(&journal_metadata) || !journal_metadata.is_file() {
+            return Err(AppError::PathSecurity(
+                "transaction journal is not a regular file".into(),
+            ));
+        }
+        match read_journal(&journal_path) {
+            Ok(journal) => {
+                if !transaction_state_is_terminal(&journal.state)
+                    && roots_match_for_transaction(&journal.project_root, project_root)
+                {
+                    candidates.push(journal);
+                }
+            }
+            Err(error) => {
+                // A corrupt journal cannot be safely recovered, but if its
+                // bounded root field identifies this project it must still
+                // block a second transaction instead of being ignored.
+                let bytes = fs::read(&journal_path)?;
+                if bytes.len() <= 1024 * 1024 {
+                    let root_matches = serde_json::from_slice::<serde_json::Value>(&bytes)
+                        .ok()
+                        .and_then(|value| {
+                            value
+                                .get("project_root")
+                                .and_then(serde_json::Value::as_str)
+                                .map(ToOwned::to_owned)
+                        })
+                        .is_some_and(|bound| roots_match_for_transaction(&bound, project_root));
+                    if root_matches {
+                        return Err(AppError::Transaction(format!(
+                            "an unreadable transaction journal requires recovery before a new transaction: {}",
+                            journal_path.display()
+                        )));
+                    }
+                }
+                // Journals for another project remain outside this request's
+                // scope. Preserve the original parse failure only when the
+                // file could plausibly belong to the selected project.
+                let _ = error;
+            }
+        }
+    }
+    candidates.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    Ok(candidates.into_iter().next())
+}
+
 fn expected_operation_backup(
     journal: &TransactionJournal,
     journal_path: &Path,
@@ -515,6 +632,14 @@ pub fn run_transaction(
         return Err(AppError::PathSecurity(
             "application data root contains a symlink or junction".into(),
         ));
+    }
+    if let Some(journal) = find_incomplete_transaction(&app_root, &project_root)? {
+        if options.resume_transaction_id != Some(journal.transaction_id) {
+            return Err(AppError::Transaction(format!(
+                "an incomplete transaction must be recovered before starting another: {}",
+                journal.transaction_id
+            )));
+        }
     }
     let previous_lock = read_existing_lock(&project_root)?;
     let roots = transaction_root(&app_root, plan.plan_id);
@@ -722,6 +847,15 @@ pub fn run_transaction(
         )?;
         if let Some(setup) = &plan.git_setup {
             journal.git_initialized = setup.mode == crate::git::GitMode::Initialize;
+            if setup.mode == crate::git::GitMode::Preserve && setup.remote_url.is_some() {
+                // Record the expected remote identity before invoking Git.
+                // If the process stops after Git changes the repository but
+                // before the result checkpoint, rollback can still compare
+                // the live remote with the approved value and remove it only
+                // when it is unchanged.
+                journal.git_remote_added_name = setup.remote_name.clone();
+                journal.git_remote_added_url = setup.remote_url.clone();
+            }
             persist_journal(&journal_path, &mut journal)?;
             let managed_paths = plan
                 .operations
@@ -844,13 +978,38 @@ pub fn run_transaction(
     match result {
         Ok(lock) => Ok((journal, lock)),
         Err(error) => {
-            journal.state = "interrupted".into();
+            // Once the success lock has been written, finalization must stay
+            // recoverable even if the best-effort closing journal write
+            // fails. Downgrading this state to generic `interrupted` would
+            // leave a durable success lock that the recovery path refuses to
+            // reconcile.
+            let lock_committed = journal.state == "finalizing"
+                && journal.result_lock_exists == Some(true)
+                && journal.result_lock_sha256.is_some()
+                && journal.rollback_record_sha256.is_some();
+            if !lock_committed {
+                journal.state = "interrupted".into();
+            }
             journal.updated_at = Utc::now().to_rfc3339();
-            journal.recovery.recommended_action = if journal.recovery.project_apply_started {
-                "rollback".into()
+            let staging_complete = journal
+                .stages
+                .get(6)
+                .is_some_and(|stage| stage.status == "complete");
+            if !lock_committed && !journal.recovery.project_apply_started && !staging_complete {
+                // Resume replays verified staged bytes. Before staging has
+                // completed there is nothing safe to replay, so expose only
+                // staging cleanup and require a fresh reviewed transaction.
+                journal.recovery.resume_allowed = false;
+                journal.recovery.recommended_action = "discard".into();
             } else {
-                "resume".into()
-            };
+                journal.recovery.recommended_action = if lock_committed {
+                    "resume".into()
+                } else if journal.recovery.project_apply_started {
+                    "rollback".into()
+                } else {
+                    "resume".into()
+                };
+            }
             journal.error = Some(JournalError {
                 code: "TRANSACTION_FAILED".into(),
                 message: error.to_string(),
@@ -1166,7 +1325,7 @@ fn flatten_input_uses_incoming(operation: &PlanOperation) -> bool {
 /// Rebuild the optional flat Chat view from the reviewed, non-flat inputs at
 /// the mutation boundary. This prevents a tampered plan or changed user extra
 /// from bypassing the flattener's link, secret, collision, and size checks.
-fn validate_flatten_transaction_inputs(
+pub(crate) fn validate_flatten_transaction_inputs(
     plan: &InstallationPlan,
     prepared_files: &[PreparedFile],
     project_root: &Path,
@@ -1226,8 +1385,19 @@ fn validate_flatten_transaction_inputs(
             )
         })
         .collect::<HashMap<_, _>>();
+    // A reviewed keep/skip decision for an already-existing flat output is a
+    // deliberate no-op. The flattener can still derive the incoming version
+    // of that same destination from the accepted source files, but that
+    // derived value is not going to be applied. Compare only outputs whose
+    // generated operation still consumes incoming bytes; otherwise a valid
+    // keep decision would look like a tampered plan at the mutation boundary.
+    let incoming_flat_destinations = expected
+        .keys()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
     let rebuilt_map = rebuilt
         .iter()
+        .filter(|artifact| incoming_flat_destinations.contains(&artifact.destination))
         .map(|artifact| {
             (
                 artifact.destination.clone(),
@@ -2172,6 +2342,21 @@ fn build_transaction_readiness(
             .optional_workflows
             .get("workflow.lora_comfyui_interest")
             .is_some_and(|state| state == "planned_unavailable"),
+        source_license_status: plan
+            .wiki_metadata
+            .as_ref()
+            .map(|metadata| metadata.repository_license_status.clone())
+            .unwrap_or_else(|| "unknown".into()),
+        wiki_source_status: plan
+            .wiki_metadata
+            .as_ref()
+            .map(|metadata| metadata.source_status.clone())
+            .unwrap_or_else(|| "unknown".into()),
+        wiki_license_status: plan
+            .wiki_metadata
+            .as_ref()
+            .map(|metadata| metadata.license_status.clone())
+            .unwrap_or_else(|| "unknown".into()),
         notes: vec![
             "Transaction readiness is evaluated before the success lock is written.".into(),
         ],
@@ -3255,7 +3440,20 @@ pub fn rollback_transaction(
                     operation.destination
                 )));
             } else if operation.status == "applying" {
-                if let Some(current) = current.as_deref() {
+                // Delete intent is durable before the live removal. If the
+                // process stops after removal but before the observed
+                // `after_exists=false` checkpoint, an absent destination plus
+                // a verified predecessor backup is the intended result, not
+                // an ambiguous missing file. The backup is still checked
+                // below before it can be restored.
+                let interrupted_delete_completed =
+                    matches!(operation.action, Some(OperationAction::DeleteManaged))
+                        && current.is_none()
+                        && operation.before_sha256.is_some()
+                        && operation.backup_path.is_some();
+                if interrupted_delete_completed {
+                    // Continue to verified-backup restoration below.
+                } else if let Some(current) = current.as_deref() {
                     if operation.before_sha256.as_deref() != Some(current)
                         && operation.expected_sha256.as_deref() != Some(current)
                     {
@@ -3887,6 +4085,7 @@ pub fn resume_transaction(
         &prepared,
         &TransactionOptions {
             app_data_root: Some(app_root.to_path_buf()),
+            resume_transaction_id: Some(transaction_id),
             ..Default::default()
         },
     )
@@ -4380,6 +4579,7 @@ mod tests {
             required_media_policy: "all_declared".into(),
             source_status: "verified_snapshot".into(),
             license_status: "not_verified".into(),
+            repository_license_status: "unknown".into(),
             notes: vec![],
         });
         fs::write(
@@ -4413,6 +4613,39 @@ mod tests {
             expected_sha256: sha256_bytes(b"safe"),
         }];
         (plan, prepared)
+    }
+
+    #[test]
+    fn incomplete_transaction_is_discovered_before_a_new_mutation() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let plan = plan();
+        let roots = transaction_root(app.path(), plan.plan_id);
+        fs::create_dir_all(&roots.transaction).unwrap();
+        let mut journal = new_journal(&plan, &plan.project_id, project.path());
+        let journal_path = roots.transaction.join("journal.json");
+        persist_journal(&journal_path, &mut journal).unwrap();
+        let loaded = read_journal(&journal_path).unwrap();
+        assert!(roots_match_for_transaction(
+            &loaded.project_root,
+            project.path()
+        ));
+
+        let found = find_incomplete_transaction(app.path(), project.path())
+            .unwrap_or_else(|error| panic!("discovery failed: {error}"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "active journal should be visible to the core: {}",
+                    journal_path.display()
+                )
+            });
+        assert_eq!(found.transaction_id, plan.plan_id);
+
+        journal.state = "completed".into();
+        persist_journal(&journal_path, &mut journal).unwrap();
+        assert!(find_incomplete_transaction(app.path(), project.path())
+            .unwrap()
+            .is_none());
     }
 
     #[test]

@@ -129,6 +129,7 @@ struct PendingCodexAnalysis {
     project_root: Option<PathBuf>,
     scan_id: Option<Uuid>,
     endpoint_fingerprint: Option<String>,
+    confirmed_values_sha256: Option<String>,
 }
 
 #[derive(Default)]
@@ -136,6 +137,9 @@ struct ApprovedScanEvidence {
     project_root: Option<PathBuf>,
     scan_id: Option<Uuid>,
     entries: HashMap<String, Vec<(String, String)>>,
+    /// Hash of the exact evidence vector the user approved for the next
+    /// semantic turn. A completed scan is not itself an approval.
+    evidence_sha256: Option<String>,
 }
 
 fn prepared_plans() -> &'static Mutex<std::collections::HashMap<Uuid, PreparedPlan>> {
@@ -687,6 +691,7 @@ fn codex_analyze(request: CodexAnalysisRequest) -> Result<CodexAnalysisResult, S
             project_root: request.project_root.clone().map(PathBuf::from),
             scan_id: request.scan_id,
             endpoint_fingerprint: None,
+            confirmed_values_sha256: None,
         },
     );
     Ok(result)
@@ -739,6 +744,7 @@ fn ai_analyze(mut request: AiAnalysisRequest) -> Result<CodexAnalysisResult, Str
             project_root: request.analysis.project_root.clone().map(PathBuf::from),
             scan_id: request.analysis.scan_id,
             endpoint_fingerprint: Some(sha256_bytes(request.endpoint.trim().as_bytes())),
+            confirmed_values_sha256: None,
         },
     );
     Ok(result)
@@ -764,7 +770,9 @@ fn approve_scan_evidence(
     {
         return Err("scan evidence is stale or belongs to a different project".into());
     }
-    for item in evidence {
+    let approved_sha256 =
+        crate::codex::evidence_manifest_sha256(&evidence).map_err(command_error)?;
+    for item in &evidence {
         let entries = approved.entries.get_mut(&item.reference).ok_or_else(|| {
             format!(
                 "scan evidence reference is not present in the completed scan: {}",
@@ -777,10 +785,10 @@ fn approve_scan_evidence(
                 item.path
             ));
         }
-        let hash = item.excerpt_sha256;
+        let hash = &item.excerpt_sha256;
         if !entries
             .iter()
-            .any(|(path, existing)| path == &item.path && existing == &hash)
+            .any(|(path, existing)| path == &item.path && existing == hash)
         {
             return Err(format!(
                 "scan evidence excerpt is not the exact core-scanned value: {}",
@@ -788,6 +796,7 @@ fn approve_scan_evidence(
             ));
         }
     }
+    approved.evidence_sha256 = Some(approved_sha256);
     Ok(())
 }
 
@@ -820,6 +829,12 @@ fn validate_codex_evidence_approval(request: &CodexAnalysisRequest) -> Result<()
                 "existing-project analysis is not bound to the latest read-only scan".into(),
             ));
         }
+    }
+    let requested_evidence_sha256 = crate::codex::evidence_manifest_sha256(&request.evidence)?;
+    if approved.evidence_sha256.as_deref() != Some(requested_evidence_sha256.as_str()) {
+        return Err(AppError::Credential(
+            "Codex evidence must be explicitly approved after the latest read-only scan".into(),
+        ));
     }
     let mut references = BTreeSet::new();
     for evidence in &request.evidence {
@@ -855,11 +870,117 @@ fn same_project_root(left: &Path, right: &Path) -> bool {
     }
 }
 
+fn canonical_confirmation_values(value: &Value) -> Result<Value, AppError> {
+    let object = value.as_object().ok_or_else(|| {
+        AppError::InvalidInput("confirmed render values must be an object".into())
+    })?;
+    if object
+        .keys()
+        .any(|key| !matches!(key.as_str(), "identity" | "description" | "folderProfile"))
+    {
+        return Err(AppError::InvalidInput(
+            "confirmed render values contain an unsupported field".into(),
+        ));
+    }
+    let description = object
+        .get("description")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::InvalidInput("confirmed description is missing".into()))?;
+    let folder_profile = object
+        .get("folderProfile")
+        .and_then(Value::as_array)
+        .ok_or_else(|| AppError::InvalidInput("confirmed folder profile is missing".into()))?;
+    let folders = folder_profile
+        .iter()
+        .map(|folder| {
+            folder
+                .as_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| AppError::InvalidInput("confirmed folder profile is invalid".into()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    crate::codex::validate_folder_profile_paths(&folders)?;
+
+    let identity = object
+        .get("identity")
+        .and_then(Value::as_object)
+        .ok_or_else(|| AppError::InvalidInput("confirmed project identity is missing".into()))?;
+    const IDENTITY_FIELDS: &[(&str, bool)] = &[
+        ("displayName", true),
+        ("projectId", true),
+        ("author", true),
+        ("version", true),
+        ("supportedGameVersion", true),
+        ("projectRoot", true),
+        ("defaultBranch", true),
+        ("scriptPrefix", false),
+        ("primaryNamespace", false),
+        ("descriptorTags", false),
+        ("launcherDescriptorPath", false),
+    ];
+    if identity
+        .keys()
+        .any(|key| !IDENTITY_FIELDS.iter().any(|(name, _)| name == key))
+    {
+        return Err(AppError::InvalidInput(
+            "confirmed project identity contains an unsupported field".into(),
+        ));
+    }
+    let mut canonical_identity = serde_json::Map::new();
+    for (field, required) in IDENTITY_FIELDS {
+        let current = identity.get(*field).cloned().unwrap_or(Value::Null);
+        if *required && !current.is_string() {
+            return Err(AppError::InvalidInput(format!(
+                "confirmed project identity field is missing: {field}"
+            )));
+        }
+        if *field == "descriptorTags" {
+            if !current.is_null()
+                && (!current.is_array()
+                    || current
+                        .as_array()
+                        .is_some_and(|values| values.iter().any(|value| !value.is_string())))
+            {
+                return Err(AppError::InvalidInput(
+                    "confirmed descriptor tags are invalid".into(),
+                ));
+            }
+        } else if !current.is_null() && !current.is_string() {
+            return Err(AppError::InvalidInput(format!(
+                "confirmed project identity field is invalid: {field}"
+            )));
+        }
+        canonical_identity.insert((*field).into(), current);
+    }
+    Ok(serde_json::json!({
+        "description": description,
+        "folderProfile": folders,
+        "identity": canonical_identity,
+    }))
+}
+
+fn confirmation_values_sha256(value: &Value) -> Result<String, AppError> {
+    Ok(sha256_bytes(&serde_json::to_vec(
+        &canonical_confirmation_values(value)?,
+    )?))
+}
+
+fn confirmation_values_from_state(state: &Value) -> Result<Value, AppError> {
+    Ok(serde_json::json!({
+        "description": state.get("description").cloned().unwrap_or(Value::String(String::new())),
+        "folderProfile": state.get("folderProfile").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "identity": state.get("identity").cloned().unwrap_or(Value::Null),
+    }))
+}
+
 #[tauri::command]
 fn confirm_codex_analysis(
     record: CodexAnalysisRecord,
     confirmed_fields: Vec<String>,
+    confirmed_values: Value,
 ) -> Result<CodexAnalysisRecord, String> {
+    let confirmed_values_sha256 =
+        confirmation_values_sha256(&confirmed_values).map_err(command_error)?;
     let mut analyses = codex_analyses()
         .lock()
         .map_err(|_| "Codex analysis store is unavailable".to_string())?;
@@ -868,6 +989,11 @@ fn confirm_codex_analysis(
         .ok_or_else(|| "Codex analysis is no longer available in the core session".to_string())?;
     if let Some(confirmed) = &pending.confirmed {
         if confirmed.confirmed_fields == confirmed_fields {
+            if pending.confirmed_values_sha256.as_deref() == Some(confirmed_values_sha256.as_str())
+            {
+                return Ok(confirmed.clone());
+            }
+            pending.confirmed_values_sha256 = Some(confirmed_values_sha256);
             return Ok(confirmed.clone());
         }
         return Err("Codex analysis has already been confirmed with different fields".into());
@@ -879,6 +1005,7 @@ fn confirm_codex_analysis(
     )
     .map_err(command_error)?;
     pending.confirmed = Some(confirmed.clone());
+    pending.confirmed_values_sha256 = Some(confirmed_values_sha256);
     Ok(confirmed)
 }
 
@@ -1022,6 +1149,7 @@ fn scan_project(
         approved.project_root = Some(root);
         approved.scan_id = Some(result.scan_id);
         approved.entries = entries;
+        approved.evidence_sha256 = None;
     }
     Ok(result)
 }
@@ -2140,23 +2268,7 @@ fn selected_folder_profile(state: &Value) -> Result<Vec<String>, AppError> {
         })
         .filter(|values| !values.is_empty())
         .unwrap_or_else(|| defaults.iter().map(|value| (*value).into()).collect());
-    let mut values = values;
-    let mut normalized = Vec::with_capacity(values.len());
-    for value in values.drain(..) {
-        normalized.push(
-            crate::security::normalize_relative_path(&value).map_err(|error| {
-                AppError::InvalidInput(format!("folder profile contains an unsafe path: {error}"))
-            })?,
-        );
-    }
-    normalized.sort();
-    normalized.dedup();
-    if normalized.len() > 32 {
-        return Err(AppError::InvalidInput(
-            "folder profile contains too many paths".into(),
-        ));
-    }
-    Ok(normalized)
+    crate::codex::validate_folder_profile_paths(&values)
 }
 
 fn ai_provider_from_state(state: &Value) -> Result<String, AppError> {
@@ -2307,11 +2419,14 @@ fn codex_analysis_from_state(
         .and_then(|value| Uuid::parse_str(value).ok());
     let endpoint_fingerprint = (provider != "codex")
         .then(|| sha256_bytes(ai_endpoint_from_state(state).unwrap_or_default().as_bytes()));
+    let expected_confirmation_values_sha256 =
+        confirmation_values_sha256(&confirmation_values_from_state(state)?)?;
     if !codex_record_confirmed_in_session_with_endpoint(
         &record,
         Some(project_root),
         expected_scan_id,
         endpoint_fingerprint.as_deref(),
+        Some(&expected_confirmation_values_sha256),
     )? {
         return Err(AppError::Credential(
             "selected-provider confirmation is no longer present in the core session; rerun semantic analysis"
@@ -2336,6 +2451,7 @@ fn codex_record_confirmed_in_session_with_endpoint(
     expected_project_root: Option<&Path>,
     expected_scan_id: Option<Uuid>,
     expected_endpoint_fingerprint: Option<&str>,
+    expected_confirmation_values_sha256: Option<&str>,
 ) -> Result<bool, AppError> {
     let analyses = codex_analyses()
         .lock()
@@ -2347,6 +2463,8 @@ fn codex_record_confirmed_in_session_with_endpoint(
             .is_some_and(|confirmed| same_persisted_codex_record(confirmed, record))
             && expected_endpoint_fingerprint
                 .is_none_or(|expected| pending.endpoint_fingerprint.as_deref() == Some(expected))
+            && expected_confirmation_values_sha256
+                .is_none_or(|expected| pending.confirmed_values_sha256.as_deref() == Some(expected))
             && if record.analysis_purpose.as_deref().is_some_and(|purpose| {
                 matches!(
                     purpose,
@@ -3489,6 +3607,7 @@ fn build_maintenance_plan(
                         sha256_bytes(lock.ai_endpoint.as_deref().unwrap_or_default().as_bytes())
                     })
                     .as_deref(),
+                None,
             )
             .map_err(command_error)?
         {
@@ -3842,8 +3961,17 @@ fn build_maintenance_plan(
             if let Some(current_file) = lock.files.iter().find(|file| {
                 file.path == operation.destination && file.external == operation.external
             }) {
+                // A merged file's installed bytes include the prior user's
+                // accepted contribution. The lock carries its hash, not a
+                // reconstructible byte-for-byte ancestor, so a raw source
+                // blob is not a valid three-way merge base. Keep the
+                // conflict review conservative until a verified installed
+                // result is available.
+                let merge_base_available = current_file.ownership != Ownership::Merged;
                 let kind = path_file_kind(&operation.destination);
-                if matches!(kind, FileKind::Text | FileKind::Toml | FileKind::Json) {
+                if merge_base_available
+                    && matches!(kind, FileKind::Text | FileKind::Toml | FileKind::Json)
+                {
                     let base_source = client
                         .fetch_verified_file(
                             &current_file.source_revision,
@@ -4374,42 +4502,8 @@ fn find_interrupted_transaction(
     project_root: String,
 ) -> Result<Option<TransactionJournal>, String> {
     let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
-    let transactions_root = application_data_root().join("transactions");
-    if crate::security::path_has_link_component(&transactions_root) {
-        return Err("transaction storage contains a symlink or junction".into());
-    }
-    let mut candidates = Vec::new();
-    let entries = match std::fs::read_dir(&transactions_root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.to_string()),
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let metadata = match std::fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(_) => continue,
-        };
-        if crate::security::is_link_metadata(&metadata) || !metadata.is_dir() {
-            continue;
-        }
-        let journal = match crate::transaction::read_journal(&path.join("journal.json")) {
-            Ok(journal) => journal,
-            Err(_) => continue,
-        };
-        if matches!(
-            journal.state.as_str(),
-            "interrupted" | "rolling_back" | "finalizing"
-        ) && (journal.recovery.resume_allowed
-            || journal.recovery.rollback_allowed
-            || journal.recovery.discard_staging_allowed)
-            && journal_bound_to_root(&journal, &root).unwrap_or(false)
-        {
-            candidates.push(journal);
-        }
-    }
-    candidates.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
-    Ok(candidates.into_iter().next())
+    crate::transaction::find_incomplete_transaction(&application_data_root(), &root)
+        .map_err(command_error)
 }
 
 #[tauri::command]
@@ -4681,6 +4775,7 @@ mod tests {
             project_root: Some(PathBuf::from("C:/mods/example")),
             scan_id: Some(Uuid::new_v4()),
             entries: HashMap::from([("finding".into(), Vec::new())]),
+            evidence_sha256: None,
         };
 
         clear_approved_scan_evidence().unwrap();
@@ -4704,6 +4799,7 @@ mod tests {
                 "finding".into(),
                 vec![("descriptor.mod".into(), sha256_bytes(b"core excerpt"))],
             )]),
+            evidence_sha256: None,
         };
 
         let error = approve_scan_evidence(
@@ -4720,6 +4816,74 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("exact core-scanned value"));
         clear_approved_scan_evidence().unwrap();
+    }
+
+    #[test]
+    fn semantic_analysis_requires_the_exact_explicitly_approved_evidence_set() {
+        let _state_guard = test_state_guard();
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        let scan_id = Uuid::new_v4();
+        let evidence = vec![ApprovedEvidence {
+            reference: "finding".into(),
+            path: "descriptor.mod".into(),
+            excerpt: "core excerpt".into(),
+            excerpt_sha256: sha256_bytes(b"core excerpt"),
+            confidence: Some(1.0),
+        }];
+        *codex_approved_evidence().lock().unwrap() = ApprovedScanEvidence {
+            project_root: Some(root.clone()),
+            scan_id: Some(scan_id),
+            entries: HashMap::from([(
+                "finding".into(),
+                vec![("descriptor.mod".into(), sha256_bytes(b"core excerpt"))],
+            )]),
+            evidence_sha256: None,
+        };
+        let request = CodexAnalysisRequest {
+            mode: "existing_project_semantics".into(),
+            brief: String::new(),
+            evidence: evidence.clone(),
+            constraints: serde_json::json!({}),
+            analysis_purpose: Some("existing_project_import".into()),
+            project_root: Some(root.display().to_string()),
+            scan_id: Some(scan_id),
+        };
+        assert!(validate_codex_evidence_approval(&request).is_err());
+
+        approve_scan_evidence(root.display().to_string(), scan_id.to_string(), evidence).unwrap();
+        assert!(validate_codex_evidence_approval(&request).is_ok());
+        clear_approved_scan_evidence().unwrap();
+    }
+
+    #[test]
+    fn confirmation_digest_covers_rendered_identity_description_and_folders() {
+        let base = serde_json::json!({
+            "description": "A focused HOI4 overhaul",
+            "folderProfile": ["common", "events"],
+            "identity": {
+                "displayName": "Example Mod",
+                "projectId": "example_mod",
+                "author": "Author",
+                "version": "0.1.0",
+                "supportedGameVersion": "1.17.*",
+                "projectRoot": "C:/mods/example_mod",
+                "defaultBranch": "main",
+                "scriptPrefix": "example",
+                "primaryNamespace": "example",
+                "descriptorTags": ["example"],
+                "launcherDescriptorPath": "C:/mods/example.mod"
+            }
+        });
+        let mut changed = base.clone();
+        changed["description"] = serde_json::json!("A different description");
+        assert_ne!(
+            confirmation_values_sha256(&base).unwrap(),
+            confirmation_values_sha256(&changed).unwrap()
+        );
+        let mut unsafe_folder = base;
+        unsafe_folder["folderProfile"] = serde_json::json!([".codex"]);
+        assert!(confirmation_values_sha256(&unsafe_folder).is_err());
     }
 
     #[test]
@@ -4890,6 +5054,7 @@ mod tests {
                 "git.repository".into(),
                 vec![(".git/HEAD".into(), "a".repeat(64))],
             )]),
+            evidence_sha256: None,
         };
         let analysis_id = Uuid::new_v4();
         let record = CodexAnalysisRecord {
@@ -4931,6 +5096,7 @@ mod tests {
                 project_root: Some(root.clone()),
                 scan_id: Some(scan_id),
                 endpoint_fingerprint: None,
+                confirmed_values_sha256: None,
             },
         );
         assert!(require_maintenance_reanalysis("update", Some(&record), &root, None).is_ok());
@@ -4986,20 +5152,23 @@ mod tests {
                 project_root: None,
                 scan_id: None,
                 endpoint_fingerprint: Some(sha256_bytes(endpoint_a.as_bytes())),
+                confirmed_values_sha256: None,
             },
         );
         assert!(codex_record_confirmed_in_session_with_endpoint(
             &record,
             None,
             None,
-            Some(&sha256_bytes(endpoint_a.as_bytes()))
+            Some(&sha256_bytes(endpoint_a.as_bytes())),
+            None,
         )
         .unwrap());
         assert!(!codex_record_confirmed_in_session_with_endpoint(
             &record,
             None,
             None,
-            Some(&sha256_bytes(endpoint_b.as_bytes()))
+            Some(&sha256_bytes(endpoint_b.as_bytes())),
+            None,
         )
         .unwrap());
         codex_analyses().lock().unwrap().remove(&analysis_id);
@@ -5285,6 +5454,12 @@ mod tests {
                 .map(|artifact| artifact.content.as_str()),
             Some(new_skill)
         );
+        assert!(crate::transaction::validate_flatten_transaction_inputs(
+            &prepared_plan.plan,
+            &prepared_plan.prepared_files,
+            &root,
+        )
+        .is_ok());
     }
 
     #[test]
@@ -5393,12 +5568,14 @@ mod tests {
                 project_root: None,
                 scan_id: None,
                 endpoint_fingerprint: None,
+                confirmed_values_sha256: None,
             },
         );
         *codex_approved_evidence().lock().unwrap() = ApprovedScanEvidence {
             project_root: Some(PathBuf::from("C:/mods/example")),
             scan_id: Some(Uuid::new_v4()),
             entries: HashMap::from([("finding".into(), Vec::new())]),
+            evidence_sha256: None,
         };
 
         codex_logout().unwrap();

@@ -32,10 +32,11 @@ models are explicitly configuration-based and are not described as hosted
 accounts.
 
 All providers use the same `codex-analysis` response schema and approved-input
-boundary. The provider adapter may use its native message envelope, but Rust
-performs the authoritative schema, evidence, identifier, hash, and confirmation
-checks. A provider response cannot write files, approve a transaction, resolve
-a conflict, or pass readiness by itself.
+boundary. Codex receives the schema through App Server `outputSchema`; the
+other adapters receive the exact checked-in schema in their system request.
+The core requires an explicit approval hash for the exact evidence vector after
+each completed scan. A provider response cannot write files, approve a
+transaction, resolve a conflict, or pass readiness by itself.
 
 Credential references are deterministic, opaque, and scoped to the selected
 provider in the operating-system vault, so a restart can reconnect without

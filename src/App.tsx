@@ -688,7 +688,11 @@ export default function App() {
   const confirmAnalysis = async () => {
     if (!state.codexAnalysis || !state.codexAnalysisRecord) return;
     const confirmedFields = state.codexAnalysis.proposals.map((proposal) => proposal.key);
-    const record = await confirmCodexAnalysis(state.codexAnalysisRecord, confirmedFields);
+    const record = await confirmCodexAnalysis(state.codexAnalysisRecord, confirmedFields, {
+      description: state.description,
+      folderProfile: state.folderProfile ?? [],
+      identity: state.identity,
+    });
     if (!record) {
       update({ transactionError: `${aiProviderLabel(state.aiProvider, state.aiProfiles)} proposals could not be confirmed by the core.` });
       return;
@@ -1163,7 +1167,7 @@ function RecoveryProjectPicker({ state, updateIdentity, onPickProjectFolder }: {
     else if (selected?.error) setMessage(`The selected folder could not be used: ${selected.error}`);
     else setMessage("No folder selected.");
   };
-  return <div className="stack narrow"><section className="panel form-panel"><PanelTitle title="Choose an installed project" /><p className="muted">This local route can inspect interrupted transactions, restore backups, discard staging, or remove managed files without connecting an AI provider.</p><Field label="Project folder" value={state.identity.projectRoot} placeholder="Choose an installed project folder" onChange={(value) => updateIdentity({ projectRoot: value })} action="Browse" onAction={() => void choose()} />{message && <p className="muted" role="status">{message}</p>}</section></div>;
+  return <div className="stack narrow"><section className="panel form-panel"><PanelTitle title="Choose an installed project" /><p className="muted">Check an existing setup, repair missing files, add workflows, or remove managed files without connecting an AI provider.</p><Field label="Project folder" value={state.identity.projectRoot} placeholder="Choose an installed project folder" onChange={(value) => updateIdentity({ projectRoot: value })} action="Browse" onAction={() => void choose()} />{message && <p className="muted" role="status">{message}</p>}</section></div>;
 }
 
 function Identity({ state, update, updateIdentity, onPickProjectFolder, onPickLauncherFolder, onConfirmAnalysis }: { state: WizardState; update: (patch: Partial<WizardState>) => void; updateIdentity: (patch: Partial<ProjectIdentity>) => void; onPickProjectFolder: () => Promise<FolderSelection | null>; onPickLauncherFolder: () => Promise<FolderSelection | null>; onConfirmAnalysis: () => Promise<void> }) {

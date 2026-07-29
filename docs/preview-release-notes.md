@@ -1,7 +1,7 @@
-# HOI4 Mod Setup development preview
+# HOI4 Mod Setup 0.1.0
 
-This prerelease is built from one exact public Git commit and includes native
-Windows `.exe` and macOS `.dmg` packages for testing.
+This public prerelease is built from one exact public Git commit and includes
+native Windows `.exe` and macOS `.dmg` packages.
 
 The GitHub release assets are named clearly:
 
@@ -11,9 +11,9 @@ The GitHub release assets are named clearly:
 
 The release page also includes the generated provenance and SHA-256 files.
 
-It is a development preview, not a stable release. Windows and macOS may show
-a platform security warning because stable publisher signing and notarization
-are separate release gates. Verify `PREVIEW_PROVENANCE.json`,
+It is a prerelease, not a stable release. Windows and macOS may ask for a
+platform security confirmation because stable publisher signing and
+notarization are separate release gates. Verify `PREVIEW_PROVENANCE.json`,
 `PREVIEW_ARTIFACTS.sha256`, and the source commit before installing.
 
 The source is public under the Apache License 2.0:

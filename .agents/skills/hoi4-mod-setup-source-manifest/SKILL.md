@@ -73,6 +73,7 @@ MCP servers and external dependencies are components. Their command, arguments, 
 - Verified blobs are cached under the application data cache by `<revision>/<sha256>` and are accepted only after size (when declared) and SHA-256 revalidation. A corrupt cache entry is discarded and fetched again.
 - Verified blob downloads retain only a bounded `.part` cache entry after an interrupted read; a retry may use a validated HTTP range, and the hash-addressed cache is promoted only after the complete size and SHA-256 checks pass. Partial bytes are never staged.
 - Manifest paths must use canonical slash-separated spelling (with an optional directory trailing slash); collision keys use Unicode NFC plus case folding so composed and decomposed macOS names cannot map to two managed destinations.
+- The runtime rejects manifests whose wiki provenance/license status is outside the schema enums, whose latest policy does not require default-branch resolution plus recorded commit evidence, or whose signing policy requires verification that the build does not implement. Pinned commit/release modes are checked against the manifest's explicit allow flags.
 - Release tags are resolved through typed GitHub objects, including annotated-tag dereferencing, and pinned revisions are verified as commit objects before manifest or file access.
 - The MCP component is optional and Windows-only; selecting it changes the structurally generated Codex TOML, while macOS retains an explicit unsupported state and never receives a substitute command. A wrapper action requires immutable executable, command-interpreter, and runtime hash/size evidence; if any is absent, the MCP action is visible but `planned_unavailable` and no same-named `PATH` command is run. The offline wiki is always rooted at `paradox_wiki/`; the plan and lock copy the exact manifest `wiki.required_pages` list plus snapshot/media/provenance/license metadata for the resolved revision, and readiness blocks legacy locks that lack that evidence instead of using a newer bundle.
 - `generated_for_revision` is required immutable provenance but may precede the publication commit because a manifest cannot contain the final hash of the commit that contains it. The resolver consumes the remote manifest at the resolved commit, and selective download fails closed when its per-file size or SHA-256 evidence does not match that same commit. A bundled bootstrap is never substituted for a newly resolved remote commit.
@@ -95,6 +96,7 @@ MCP servers and external dependencies are components. Their command, arguments, 
 - wiki page coverage
 - unsupported platform state
 - external-action declaration and approval binding
+- manifest provenance/update/signing policy rejection
 
 ## Update this skill when
 

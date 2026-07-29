@@ -26,7 +26,7 @@ macOS:   ~/Library/Application Support/HOI4 Mod Setup/
 
 ### 1. Preflight
 
-Validate root, disk, permissions, process locks, incomplete journal, platform, confirmed selected-provider analysis metadata, selections, provider connectivity/configuration, and flatten preferences. Bind the canonical project root and transaction UUID before any mutation.
+Validate root, permissions, process locks, incomplete journals, platform, confirmed selected-provider analysis metadata, selections, provider connectivity/configuration, and flatten preferences. Bind the canonical project root and transaction UUID before any mutation. The setup does not block on a disk-space estimate; filesystem errors remain explicit transaction failures with recovery evidence.
 
 ### 2. Source resolution
 
