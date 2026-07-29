@@ -910,8 +910,8 @@ pub fn validate_remote_url(value: &str) -> Result<(), AppError> {
             .any(|segment| segment == "." || segment == "..")
     {
         false
-    } else if value.starts_with("git@") {
-        let Some((host, path)) = value[4..].split_once(':') else {
+    } else if let Some(stripped) = value.strip_prefix("git@") {
+        let Some((host, path)) = stripped.split_once(':') else {
             return Err(AppError::InvalidInput(
                 "remote URL must be an explicit HTTPS or SSH URL".into(),
             ));
