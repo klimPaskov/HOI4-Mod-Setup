@@ -60,7 +60,9 @@ the description or provider proposal changes.
 
 For an existing mod, the same phase shows scan findings with evidence,
 confidence, proposed action, and an editable decision. The scan does not create
-temporary files or alter the project.
+temporary files or alter the project. If the project already has a valid HOI4
+Mod Setup lock, the review shows **Repair or add workflows**. Use it later to
+restore managed files or add the 3D workflow without starting over.
 
 ### 3. Components — select verified workflow material
 
@@ -165,7 +167,7 @@ After review and dry-run approval, the app can create and validate:
 - adapted `AGENTS.md`, `README.md`, skills, subagents, Codex/MCP files;
 - selected scripts, validators, templates, docs, and
   `<mod_project>/paradox_wiki/`; and
-- `.hoi4-mod-setup/installation-lock.json` after final verification.
+- `.hoi4-mod-setup/install.lock.json` after final verification.
 
 ## Optional ChatGPT sources folder
 
