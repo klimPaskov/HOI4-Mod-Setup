@@ -93,7 +93,7 @@ exited App Server. Logout always tears down the local process and clears
 pending analyses and approved evidence even when the remote logout request
 returns an error.
 
-Codex `turn/start` receives the checked-in `schemas/codex-analysis.schema.json` as its
+Codex `turn/start` receives the checked-in `docs/schemas/codex-analysis.schema.json` as its
 `outputSchema`, uses `approvalPolicy: never` and a restricted read-only sandbox
 with no project-readable roots, and the core rejects extra fields, duplicate
 proposal keys, incomplete proposal sets, invalid evidence references, incorrect

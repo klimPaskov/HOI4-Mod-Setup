@@ -14,8 +14,8 @@ Read:
 - `docs/05_wiki_installation.md`
 - `docs/09_component_dependency_model.md`
 - `docs/11_mcp_setup.md`
-- `schemas/remote-manifest.schema.json`
-- `examples/repository-manifest.example.json`
+- `docs/schemas/remote-manifest.schema.json`
+- `docs/examples/repository-manifest.example.json`
 
 Inspect the live Agentic HOI4 Modding repository when a path, package, command, platform declaration, or dependency may have changed. Do not rely on memory.
 

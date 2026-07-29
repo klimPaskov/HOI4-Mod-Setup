@@ -1,4 +1,4 @@
-import type { AiAccountStatus, AiAnalysisRequest, AiProviderProfile, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, InstallationPlan, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
+import type { AiAccountStatus, AiAnalysisRequest, AiProviderProfile, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
   id: string;
@@ -72,7 +72,7 @@ interface TauriCommandMap {
   preview_descriptors: { args: { state: WizardState }; result: GeneratedArtifactPreview[] };
   preview_installation_conflict: { args: { planId: string; path: string }; result: ConflictPreview };
   build_installation_plan: { args: { state: WizardState }; result: InstallationPlan };
-  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; codexAnalysis?: CodexAnalysisRecord | null }; result: InstallationPlan };
+  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; codexAnalysis?: CodexAnalysisRecord | null; addWorkflow3d?: boolean }; result: InstallationPlan };
   approve_installation: { args: { planId: string }; result: void };
   resolve_installation_conflict: { args: { planId: string; path: string; choice: string }; result: InstallationPlan };
   apply_installation: { args: { plan: InstallationPlan; projectRoot: string }; result: TransactionJournal };
@@ -82,6 +82,8 @@ interface TauriCommandMap {
   resume_installation: { args: { projectRoot: string; transactionId: string }; result: TransactionJournal };
   discard_installation_staging: { args: { projectRoot: string; transactionId: string }; result: TransactionJournal };
   open_in_codex: { args: { projectRoot: string }; result: OpenInCodexResult };
+  git_online_prepare: { args: { projectRoot: string; action: Exclude<GitOnlineAction, "none">; remoteName: string; repository: string; branch: string }; result: GitOnlinePlan };
+  git_online_action: { args: { projectRoot: string; planId: string; confirmed: boolean; transactionId?: string | null }; result: GitOnlineResult };
 }
 
 type Invoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -288,34 +290,6 @@ export async function cancelScan(requestId: string): Promise<CommandResult<void>
   return invokeCommandResult("cancel_scan", { requestId });
 }
 
-/*
-export async function scanProjectLegacy(root: string): Promise<ScanSnapshot | null> {
-  const result = await invokeCommand("scan_project", { root, requestId: newScanRequestId() });
-  if (!result) return null;
-  return {
-    findings: (result?.findings ?? []).map((finding) => ({
-    id: finding.id,
-    label: finding.key,
-    value: typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? "",
-    evidenceExcerpt: typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? "",
-    confidence: Math.max(0, ...(finding.evidence ?? []).map((evidence) => evidence.confidence)),
-    evidencePath: finding.evidence?.[0]?.path,
-    status: finding.status === "blocking" ? "blocking" : finding.status === "needs_review" ? "needs_review" : "accepted",
-    evidence: (finding.evidence ?? []).map((evidence) => `${evidence.path}${evidence.note ? ` · ${evidence.note}` : ""}`).join("; "),
-    })),
-    scanId: result.scan_id,
-    projectRoot: result.project_root,
-    completedAt: result.completed_at,
-    partial: result.partial ?? false,
-    cancelled: result.cancelled ?? false,
-    limitsHit: result.limits_hit ?? [],
-    filesScanned: result.files_scanned ?? 0,
-    directoriesScanned: result.directories_scanned ?? 0,
-    bytesRead: result.bytes_read ?? 0,
-  };
-}
-*/
-
 export async function evaluateReadiness(projectRoot: string, projectId: string, optional3d: string, loraInterest: boolean): Promise<ReadinessReport | null> {
   const raw = await invokeCommand("evaluate_readiness", {
     input: {
@@ -375,8 +349,8 @@ export async function resolveInstallationConflict(planId: string, path: string, 
   return invokeCommand("resolve_installation_conflict", { planId, path, choice });
 }
 
-export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord): Promise<InstallationPlan | null> {
-  return invokeCommand("build_maintenance_plan", { mode, projectRoot, codexAnalysis: codexAnalysis ?? null });
+export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord, addWorkflow3d = false): Promise<InstallationPlan | null> {
+  return invokeCommand("build_maintenance_plan", { mode, projectRoot, codexAnalysis: codexAnalysis ?? null, addWorkflow3d });
 }
 
 export async function rollbackInstallation(projectRoot: string, transactionId: string): Promise<TransactionJournal | null> {
@@ -405,4 +379,12 @@ export async function applyInstallation(plan: InstallationPlan, projectRoot: str
 
 export async function openInCodex(projectRoot: string): Promise<OpenInCodexResult | null> {
   return invokeCommand("open_in_codex", { projectRoot });
+}
+
+export async function prepareGitOnlineAction(args: TauriCommandMap["git_online_prepare"]["args"]): Promise<CommandResult<GitOnlinePlan>> {
+  return invokeCommandResult("git_online_prepare", args);
+}
+
+export async function runGitOnlineAction(args: TauriCommandMap["git_online_action"]["args"]): Promise<CommandResult<GitOnlineResult>> {
+  return invokeCommandResult("git_online_action", args);
 }

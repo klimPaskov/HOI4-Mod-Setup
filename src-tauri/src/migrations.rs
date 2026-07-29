@@ -472,7 +472,7 @@ mod tests {
     #[test]
     fn legacy_lock_gets_an_incomplete_wiki_evidence_marker() {
         let mut value: Value = serde_json::from_str(include_str!(
-            "../../examples/installation-lock.example.json"
+            "../../docs/examples/installation-lock.example.json"
         ))
         .unwrap();
         value.as_object_mut().unwrap().remove("wiki_required_pages");
@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn legacy_lock_without_wiki_provenance_remains_readable_but_incomplete() {
         let mut value: Value = serde_json::from_str(include_str!(
-            "../../examples/installation-lock.example.json"
+            "../../docs/examples/installation-lock.example.json"
         ))
         .unwrap();
         value.as_object_mut().unwrap().remove("wiki_metadata");
@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn legacy_lock_gets_the_provider_optimization_profile() {
         let mut value: Value = serde_json::from_str(include_str!(
-            "../../examples/installation-lock.example.json"
+            "../../docs/examples/installation-lock.example.json"
         ))
         .unwrap();
         value["ai_provider"] = json!("claude");
@@ -512,7 +512,7 @@ mod tests {
     #[test]
     fn legacy_codex_bindings_are_removed_before_strict_lock_deserialization() {
         let mut value: Value = serde_json::from_str(include_str!(
-            "../../examples/installation-lock.example.json"
+            "../../docs/examples/installation-lock.example.json"
         ))
         .unwrap();
         value["codex_analysis"]["project_root"] = json!("C:/Users/private/mod");
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn legacy_journal_defaults_to_an_installation_transaction() {
         let value: Value = serde_json::from_str(include_str!(
-            "../../examples/transaction-journal.example.json"
+            "../../docs/examples/transaction-journal.example.json"
         ))
         .unwrap();
         let mut legacy = value;

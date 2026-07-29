@@ -40,7 +40,19 @@ Allow optional remote name and URL. Validate and preview the exact action. Do no
 
 ## Push policy
 
-Never push automatically. A future publish action must show remote, branch, commits, force state, and credentials method. Force push is outside the version 1 setup flow.
+Never push automatically. After core readiness, the Git phase may offer a
+separate online action to push an existing remote or create a public GitHub
+repository. The core first reviews the exact project root, named branch, clean
+tree, HEAD commit, destination, Git executable, and (for public creation) the
+GitHub CLI identity. Only a second explicit approval executes the action. Public
+creation and the first push are separate approvals. Force push is outside the
+version 1 setup flow.
+
+The public route uses the GitHub CLI already installed and signed in on the
+computer; the app does not invent a login route, create credentials, or store a
+token. Git URL rewrites, custom SSH commands, custom proxies, and configured
+hooks paths block the reviewed online action. Each completed action writes a
+secret-free `.hoi4-mod-setup/online-git.json` recovery record.
 
 ## Rollback
 

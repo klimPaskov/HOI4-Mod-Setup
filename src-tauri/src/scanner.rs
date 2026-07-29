@@ -236,6 +236,7 @@ where
             total_bytes,
         );
         detect_existing_components(&observations, &mut conflicts);
+        detect_managed_installation(&root, &mut findings, &mut conflicts);
 
         if let Some(external) = options.approved_external_descriptor.as_deref() {
             let exists = fs::symlink_metadata(external)
@@ -1391,6 +1392,214 @@ fn detect_existing_components(observations: &[FileObservation], conflicts: &mut 
     }
 }
 
+/// The managed lock is intentionally outside the bounded file walk because
+/// the scanner skips the app metadata directory. Reading this one fixed,
+/// regular file lets an existing-project scan recognize a prior setup without
+/// exposing the rest of the metadata directory to semantic analysis.
+fn detect_managed_installation(
+    root: &Path,
+    findings: &mut Vec<ScanFinding>,
+    conflicts: &mut Vec<ScanConflict>,
+) {
+    const LOCK_RELATIVE: &str = ".hoi4-mod-setup/install.lock.json";
+    let lock_path = root.join(LOCK_RELATIVE);
+    if path_has_link_component(&lock_path) {
+        findings.push(finding(
+            "installation.managed",
+            "installation",
+            "managed_setup",
+            json!({"present": true, "valid": false, "state": "unsafe_path"}),
+            "blocking",
+            evidence(
+                "managed_installation_detector",
+                LOCK_RELATIVE,
+                1.0,
+                Some("The managed lock path contains a symlink or junction and was not read."),
+            ),
+            Some("Choose a project whose setup metadata is a regular, contained path."),
+        ));
+        conflicts.push(ScanConflict {
+            id: "conflict.installation.lock_path".into(),
+            path: LOCK_RELATIVE.into(),
+            kind: "other".into(),
+            severity: "block".into(),
+            details: Some("The existing setup lock path contains a symlink or junction.".into()),
+        });
+        return;
+    }
+    let metadata = match fs::symlink_metadata(&lock_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            findings.push(finding(
+                "installation.managed",
+                "installation",
+                "managed_setup",
+                json!({"present": false}),
+                "accepted",
+                evidence(
+                    "managed_installation_detector",
+                    LOCK_RELATIVE,
+                    1.0,
+                    Some("No HOI4 Mod Setup installation lock was found."),
+                ),
+                None,
+            ));
+            return;
+        }
+        Err(_) => {
+            findings.push(finding(
+                "installation.managed",
+                "installation",
+                "managed_setup",
+                json!({"present": true, "valid": false, "state": "unreadable"}),
+                "blocking",
+                evidence(
+                    "managed_installation_detector",
+                    LOCK_RELATIVE,
+                    0.9,
+                    Some("The existing setup lock could not be inspected."),
+                ),
+                Some("Review the setup metadata before attempting repair."),
+            ));
+            return;
+        }
+    };
+    if is_link_metadata(&metadata) || !metadata.is_file() {
+        findings.push(finding(
+            "installation.managed",
+            "installation",
+            "managed_setup",
+            json!({"present": true, "valid": false, "state": "not_a_regular_file"}),
+            "blocking",
+            evidence(
+                "managed_installation_detector",
+                LOCK_RELATIVE,
+                1.0,
+                Some("The existing setup lock is not a regular file."),
+            ),
+            Some("Review the setup metadata before attempting repair."),
+        ));
+        conflicts.push(ScanConflict {
+            id: "conflict.installation.lock_file".into(),
+            path: LOCK_RELATIVE.into(),
+            kind: "other".into(),
+            severity: "block".into(),
+            details: Some("The existing setup lock is not a regular file.".into()),
+        });
+        return;
+    }
+    if metadata.len() > MAX_TEXT_BYTES {
+        findings.push(finding(
+            "installation.managed",
+            "installation",
+            "managed_setup",
+            json!({"present": true, "valid": false, "state": "too_large"}),
+            "blocking",
+            evidence(
+                "managed_installation_detector",
+                LOCK_RELATIVE,
+                1.0,
+                Some("The existing setup lock exceeds the bounded scan size."),
+            ),
+            Some("Review the setup metadata before attempting repair."),
+        ));
+        return;
+    }
+    let bytes = match fs::read(&lock_path) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            findings.push(finding(
+                "installation.managed",
+                "installation",
+                "managed_setup",
+                json!({"present": true, "valid": false, "state": "unreadable"}),
+                "blocking",
+                evidence(
+                    "managed_installation_detector",
+                    LOCK_RELATIVE,
+                    0.9,
+                    Some("The existing setup lock could not be read."),
+                ),
+                Some("Review the setup metadata before attempting repair."),
+            ));
+            return;
+        }
+    };
+    let lock = serde_json::from_slice::<Value>(&bytes)
+        .ok()
+        .and_then(|value| crate::migrations::migrate_lock(value).ok());
+    let Some(lock) = lock else {
+        findings.push(finding(
+            "installation.managed",
+            "installation",
+            "managed_setup",
+            json!({"present": true, "valid": false, "state": "invalid"}),
+            "blocking",
+            evidence(
+                "managed_installation_detector",
+                LOCK_RELATIVE,
+                1.0,
+                Some("The existing setup lock is not a valid installation record."),
+            ),
+            Some("Review or remove the invalid setup metadata before continuing."),
+        ));
+        conflicts.push(ScanConflict {
+            id: "conflict.installation.lock_invalid".into(),
+            path: LOCK_RELATIVE.into(),
+            kind: "other".into(),
+            severity: "block".into(),
+            details: Some("The existing setup lock could not be validated.".into()),
+        });
+        return;
+    };
+    let mut component_ids = lock
+        .components
+        .iter()
+        .map(|component| component.id.clone())
+        .collect::<Vec<_>>();
+    component_ids.sort();
+    let workflow_3d_state = lock
+        .optional_workflows
+        .get("workflow.3d")
+        .map(|workflow| workflow.state.as_str())
+        .unwrap_or("not_selected");
+    let workflow_3d_key_configured = lock
+        .optional_workflows
+        .get("workflow.3d")
+        .is_some_and(|workflow| workflow.credential_reference.is_some());
+    let lora_interest = lock
+        .optional_workflows
+        .get("workflow.lora_comfyui_interest")
+        .is_some_and(|workflow| {
+            matches!(
+                workflow.state.as_str(),
+                "planned_unavailable" | "interest_recorded"
+            )
+        });
+    findings.push(finding(
+        "installation.managed",
+        "installation",
+        "managed_setup",
+        json!({
+            "present": true,
+            "valid": true,
+            "project_id": lock.project_id,
+            "component_ids": component_ids,
+            "workflow_3d_state": workflow_3d_state,
+            "workflow_3d_key_configured": workflow_3d_key_configured,
+            "lora_interest": lora_interest,
+        }),
+        "accepted",
+        evidence(
+            "managed_installation_detector",
+            LOCK_RELATIVE,
+            1.0,
+            Some("A valid managed setup was found; repair and optional workflow changes are available."),
+        ),
+        Some("Use the installed setup actions to repair files or add an optional workflow."),
+    ));
+}
+
 fn relative_path(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
@@ -1650,5 +1859,51 @@ mod tests {
             .limits_hit
             .iter()
             .any(|limit| limit == "scan.file_limit"));
+    }
+
+    #[test]
+    fn scan_recognizes_a_valid_managed_setup_without_walking_metadata() {
+        let directory = tempdir().unwrap();
+        let metadata = directory.path().join(".hoi4-mod-setup");
+        fs::create_dir_all(&metadata).unwrap();
+        fs::write(
+            metadata.join("install.lock.json"),
+            include_str!("../../docs/examples/installation-lock.example.json"),
+        )
+        .unwrap();
+
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+        let managed = result
+            .findings
+            .iter()
+            .find(|finding| finding.id == "installation.managed")
+            .expect("managed setup finding");
+        assert_eq!(managed.status, "accepted");
+        assert_eq!(managed.value["present"], true);
+        assert_eq!(managed.value["valid"], true);
+        assert!(result
+            .findings
+            .iter()
+            .flat_map(|finding| &finding.evidence)
+            .any(|evidence| evidence.path == ".hoi4-mod-setup/install.lock.json"));
+        assert_eq!(result.files_scanned, 0);
+    }
+
+    #[test]
+    fn scan_reports_an_invalid_managed_setup_as_blocking() {
+        let directory = tempdir().unwrap();
+        let metadata = directory.path().join(".hoi4-mod-setup");
+        fs::create_dir_all(&metadata).unwrap();
+        fs::write(metadata.join("install.lock.json"), "{\"broken\":true}").unwrap();
+
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+        assert!(result
+            .findings
+            .iter()
+            .any(|finding| finding.id == "installation.managed" && finding.status == "blocking"));
+        assert!(result
+            .conflicts
+            .iter()
+            .any(|conflict| conflict.id == "conflict.installation.lock_invalid"));
     }
 }

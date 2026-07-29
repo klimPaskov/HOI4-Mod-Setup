@@ -486,6 +486,8 @@ pub fn run() {
             preview_installation_conflict,
             build_installation_plan,
             build_maintenance_plan,
+            git_online_prepare,
+            git_online_action,
             approve_installation,
             resolve_installation_conflict,
             apply_installation,
@@ -1076,7 +1078,8 @@ fn remove_meshy_credential(reference: CredentialReference) -> Result<(), String>
 
 fn resolve_installed_manifest(lock: &InstallationLock) -> Result<RemoteManifest, AppError> {
     if lock.source.manifest_origin == "bundled_revision_bootstrap" {
-        let bundled_bytes = include_bytes!("../../source-manifest/hoi4-mod-setup.manifest.json");
+        let bundled_bytes =
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         if sha256_bytes(bundled_bytes) != lock.source.manifest_sha256 {
             return Err(AppError::Source(
                 "the bundled manifest no longer matches its lock evidence".into(),
@@ -3329,11 +3332,95 @@ fn require_maintenance_reanalysis(
     Ok(())
 }
 
+/// Add files for a newly selected optional component to a repair plan. The
+/// predecessor lock remains the source of truth for every already-managed
+/// file; only missing component ownership is introduced here. Existing bytes
+/// are compared before the operation is selected so a collision becomes an
+/// explicit review instead of a silent replacement.
+fn append_additional_component_operations(
+    operations: &mut Vec<PlanOperation>,
+    selections: &[crate::source::SelectedSourceFile],
+    lock: &InstallationLock,
+    root: &Path,
+) -> Result<(), AppError> {
+    let managed_components = lock
+        .components
+        .iter()
+        .filter(|component| component.state != "removed")
+        .map(|component| component.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let managed_paths = lock
+        .files
+        .iter()
+        .map(|file| (file.path.as_str(), file.external))
+        .collect::<std::collections::HashSet<_>>();
+    for (index, selection) in selections.iter().enumerate() {
+        if selection.component_id != "workflow.3d"
+            && managed_components.contains(selection.component_id.as_str())
+        {
+            continue;
+        }
+        if managed_paths.contains(&(selection.destination.as_str(), false)) {
+            continue;
+        }
+        let expected_sha256 = selection.expected_sha256.as_deref().ok_or_else(|| {
+            AppError::Source(format!(
+                "selected source file lacks SHA-256 evidence: {}",
+                selection.source_path
+            ))
+        })?;
+        let destination = safe_join(root, &selection.destination)?;
+        let local_sha256 = if destination.is_file() {
+            Some(sha256_file(&destination)?)
+        } else {
+            None
+        };
+        let (action, local_state, resolution) = match local_sha256.as_deref() {
+            None => (OperationAction::Create, LocalState::Absent, None),
+            Some(hash) if hash == expected_sha256 => (
+                OperationAction::Replace,
+                LocalState::Unmodified,
+                Some("new_component_file".into()),
+            ),
+            Some(_) => (
+                OperationAction::Skip,
+                LocalState::Modified,
+                Some("review_required".into()),
+            ),
+        };
+        operations.push(PlanOperation {
+            id: format!("repair-add-{}-{index:05}", selection.component_id),
+            component_id: selection.component_id.clone(),
+            ownership: Some(selection.ownership),
+            location_scope: Some("project".into()),
+            action,
+            source_path: Some(selection.source_path.clone()),
+            destination: selection.destination.clone(),
+            source_sha256: Some(expected_sha256.into()),
+            source_size: selection.expected_size,
+            platform: Some(selection.platform),
+            result_sha256: None,
+            base_sha256: None,
+            local_sha256,
+            local_state,
+            resolution,
+            external: false,
+            rollback: if action == OperationAction::Create {
+                RollbackAction::RemoveCreated
+            } else {
+                RollbackAction::RestoreBackup
+            },
+        });
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn build_maintenance_plan(
     mode: String,
     project_root: String,
     analysis_override: Option<CodexAnalysisRecord>,
+    add_workflow_3d: bool,
 ) -> Result<InstallationPlan, String> {
     let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
     let lock = read_project_lock(&root).map_err(command_error)?;
@@ -3421,7 +3508,7 @@ fn build_maintenance_plan(
     let mut wiki_required_pages = lock.wiki_required_pages.clone();
     let mut wiki_metadata = lock.wiki_metadata.clone();
     let mut maintenance_mcp_manifest: Option<RemoteManifest> = None;
-    let (mut operations, plan_source, source_revision) = if mode == "update" {
+    let (mut operations, mut plan_source, mut source_revision) = if mode == "update" {
         let resolution = resolve_source(
             &client,
             &SourceRequest {
@@ -3576,6 +3663,70 @@ fn build_maintenance_plan(
         };
         (operations, source, lock.source.revision.clone())
     };
+    if mode == "repair"
+        && add_workflow_3d
+        && !lock.components.iter().any(|component| {
+            component.id == "workflow.3d"
+                && !matches!(component.state.as_str(), "removed" | "not_selected")
+        })
+    {
+        let resolution = resolve_source(
+            &client,
+            &SourceRequest {
+                // A later optional workflow must use the same immutable
+                // source revision that produced the installed lock.
+                mode: SourceMode::PinnedCommit,
+                requested_ref: Some(lock.source.revision.clone()),
+                release: None,
+            },
+        )
+        .map_err(command_error)?;
+        if resolution.identity.manifest_sha256 != lock.source.manifest_sha256 {
+            return Err(
+                "the installed source manifest does not match its immutable revision evidence"
+                    .into(),
+            );
+        }
+        let requested = vec!["workflow.3d".to_string()];
+        let expanded =
+            expand_components(&resolution.manifest, &requested).map_err(command_error)?;
+        reject_codex_only_dependencies(&lock.ai_provider, &expanded).map_err(command_error)?;
+        let support = crate::source::resolve_platform_support(
+            &resolution.manifest,
+            &expanded,
+            Platform::current(),
+        )
+        .map_err(command_error)?;
+        if support.iter().any(|item| item.state == "blocked") {
+            return Err("the 3D workflow has no verified route on this computer".into());
+        }
+        let supported = expanded
+            .iter()
+            .filter(|id| {
+                support
+                    .iter()
+                    .find(|item| item.component_id == **id)
+                    .is_some_and(|item| item.state == "supported")
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let tree = client
+            .fetch_tree(&resolution.identity.resolved_revision)
+            .map_err(command_error)?;
+        let selections = select_component_files(&resolution.manifest, &supported, &tree)
+            .map_err(command_error)?;
+        append_additional_component_operations(&mut operations, &selections, &lock, &root)
+            .map_err(command_error)?;
+        for component_id in expanded {
+            if !maintenance_components.iter().any(|id| id == &component_id) {
+                maintenance_components.push(component_id);
+            }
+        }
+        plan_source.mode = lock.source.mode;
+        plan_source.requested_ref = lock.source.requested_ref.clone();
+        plan_source.release = lock.source.release.clone();
+        source_revision = lock.source.revision.clone();
+    }
     let mut prepared = Vec::new();
     let mut merge_contexts = HashMap::new();
     for operation in &mut operations {
@@ -3855,11 +4006,45 @@ fn build_maintenance_plan(
             }
         })
         .collect::<Vec<_>>();
-    let optional_workflows = lock
+    let mut optional_workflows: BTreeMap<String, String> = lock
         .optional_workflows
         .iter()
         .map(|(id, workflow)| (id.clone(), workflow.state.clone()))
         .collect();
+    let mut credential_references = Vec::new();
+    if add_workflow_3d {
+        let mesh_reference = meshy_credential_reference()
+            .lock()
+            .map_err(|_| "Meshy credential reference store is unavailable".to_string())?
+            .clone()
+            .or_else(|| {
+                lock.optional_workflows
+                    .get("workflow.3d")
+                    .and_then(|workflow| workflow.credential_reference.clone())
+                    .map(|reference| CredentialReference {
+                        name: MESHY_ENVIRONMENT_NAME.into(),
+                        provider: crate::credentials::provider_name(Platform::current()).into(),
+                        reference,
+                        provider_id: None,
+                    })
+            });
+        if let Some(reference) = mesh_reference {
+            validate_credential_reference(&reference).map_err(command_error)?;
+            credential_references.push(reference);
+        }
+        let previous_state = lock
+            .optional_workflows
+            .get("workflow.3d")
+            .map(|workflow| workflow.state.as_str());
+        let next_state = if credential_references.is_empty() {
+            "incomplete"
+        } else if previous_state == Some("ready") {
+            "ready"
+        } else {
+            "selected_pending"
+        };
+        optional_workflows.insert("workflow.3d".into(), next_state.into());
+    }
     let external_actions = if mode != "remove" && lock_mcp_selected(&lock) {
         let manifest = maintenance_mcp_manifest.as_ref().ok_or_else(|| {
             "the maintenance plan could not retain the locked MCP manifest evidence".to_string()
@@ -3894,7 +4079,7 @@ fn build_maintenance_plan(
         wiki_metadata,
         generated_artifacts,
         git_setup: None,
-        credential_references: vec![],
+        credential_references,
         optional_workflows,
         operations,
         conflicts,
@@ -3922,6 +4107,41 @@ fn build_maintenance_plan(
         },
     };
     store_prepared_plan(plan, prepared, merge_contexts, root).map_err(command_error)
+}
+
+#[tauri::command]
+fn git_online_prepare(
+    project_root: String,
+    action: crate::git::OnlineGitAction,
+    remote_name: String,
+    repository: String,
+    branch: String,
+) -> Result<crate::git::GitOnlinePlan, String> {
+    let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
+    crate::git::prepare_online_action(&root, action, &remote_name, &repository, &branch)
+        .map_err(command_error)
+}
+
+#[tauri::command]
+fn git_online_action(
+    project_root: String,
+    plan_id: String,
+    confirmed: bool,
+    transaction_id: Option<String>,
+) -> Result<crate::git::GitOnlineResult, String> {
+    let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
+    let plan_id =
+        Uuid::parse_str(&plan_id).map_err(|_| "invalid online Git review ID".to_string())?;
+    let result =
+        crate::git::execute_online_action(&root, plan_id, confirmed).map_err(command_error)?;
+    crate::git::write_online_action_record(&root, transaction_id.as_deref(), &result).map_err(
+        |error| {
+            format!(
+                "online Git completed, but its local recovery record could not be saved: {error}"
+            )
+        },
+    )?;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -4616,6 +4836,45 @@ mod tests {
             None,
         )
         .is_err());
+    }
+
+    #[test]
+    fn adding_a_later_three_d_workflow_preserves_a_collision_for_review() {
+        let project = tempfile::tempdir().unwrap();
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        lock.components
+            .iter_mut()
+            .find(|component| component.id == "workflow.3d")
+            .unwrap()
+            .state = "not_selected".into();
+        lock.optional_workflows
+            .get_mut("workflow.3d")
+            .unwrap()
+            .state = "not_selected".into();
+        std::fs::create_dir_all(project.path().join("tools")).unwrap();
+        std::fs::write(project.path().join("tools").join("mesh.py"), "local").unwrap();
+
+        let mut operations = Vec::new();
+        let selected = crate::source::SelectedSourceFile {
+            component_id: "workflow.3d".into(),
+            source_path: "workflow/mesh.py".into(),
+            destination: "tools/mesh.py".into(),
+            ownership: Ownership::Managed,
+            expected_sha256: Some(sha256_bytes(b"incoming")),
+            expected_size: Some(8),
+            executable: false,
+            platform: ManifestPlatform::All,
+        };
+
+        append_additional_component_operations(&mut operations, &[selected], &lock, project.path())
+            .unwrap();
+        assert_eq!(operations.len(), 1);
+        assert_eq!(operations[0].action, OperationAction::Skip);
+        assert_eq!(operations[0].resolution.as_deref(), Some("review_required"));
+        assert_eq!(operations[0].local_state, LocalState::Modified);
     }
 
     #[test]

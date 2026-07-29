@@ -404,8 +404,9 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
         let input_sha256 = analysis_input_sha256(request)?;
         let prompt =
             analysis_prompt_for_provider(request, &input_sha256, "Codex project and ChatGPT Chat")?;
-        let schema: Value =
-            serde_json::from_slice(include_bytes!("../../schemas/codex-analysis.schema.json"))?;
+        let schema: Value = serde_json::from_slice(include_bytes!(
+            "../../docs/schemas/codex-analysis.schema.json"
+        ))?;
         let turn = self.request(
             "turn/start",
             json!({

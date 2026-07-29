@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { buildInstallationPlan, cancelScan, previewDescriptors, scanProject } from "./tauri";
+import { buildInstallationPlan, buildMaintenancePlan, cancelScan, previewDescriptors, scanProject } from "./tauri";
 import type { ScanProgress, WizardState } from "../types";
 
 const { invoke, listen, unlisten } = vi.hoisted(() => ({
@@ -49,6 +49,19 @@ describe("typed scanner bridge", () => {
     expect(result.value).toBeUndefined();
     expect(result.error).toBeUndefined();
     expect(invoke).toHaveBeenCalledWith("cancel_scan", { requestId: "scan-request" });
+  });
+
+  it("passes the existing-project optional workflow choice to the core", async () => {
+    invoke.mockResolvedValue(undefined);
+
+    await buildMaintenancePlan("repair", "C:/mods/example", undefined, true);
+
+    expect(invoke).toHaveBeenCalledWith("build_maintenance_plan", {
+      mode: "repair",
+      projectRoot: "C:/mods/example",
+      codexAnalysis: null,
+      addWorkflow3d: true,
+    });
   });
 
   it("never serializes the Meshy password draft in state-bearing core commands", async () => {

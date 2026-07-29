@@ -21,7 +21,7 @@ Use the narrower owning skill for scanner, source, transaction, security, UI, te
 Read:
 
 - `AGENTS.md`
-- `GOAL_PROMPT.md`
+- `docs/GOAL_PROMPT.md`
 - `docs/01_product_requirements.md`
 - `docs/02_user_flows.md`
 - `docs/09_component_dependency_model.md`

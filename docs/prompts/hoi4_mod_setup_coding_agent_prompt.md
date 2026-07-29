@@ -116,7 +116,7 @@ Implement and validate all supplied schemas. Use atomic JSON writes and explicit
 
 ## Open-source repository bootstrap
 
-Develop the application in a public GitHub-ready repository using the supplied `README.md`, `CONTRIBUTING.md`, `DEVELOPMENT.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `RELEASING.md`, `CHANGELOG.md`, `LICENSE_SELECTION.md`, `.github/`, `.gitignore`, `.gitattributes`, and `.editorconfig`. Keep the root README user-facing. Select and add a real `LICENSE` before public release.
+Develop the application in a public GitHub-ready repository using the supplied `README.md`, `CONTRIBUTING.md`, `DEVELOPMENT.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `RELEASING.md`, `CHANGELOG.md`, `docs/LICENSE_SELECTION.md`, `.github/`, `.gitignore`, `.gitattributes`, and `.editorconfig`. Keep the root README user-facing. Select and add a real `LICENSE` before public release.
 
 Configure protected `main`, pull requests, stable required checks, CODEOWNERS, issue forms, private vulnerability reporting, Dependabot for npm, Cargo, and GitHub Actions, and tag-based draft releases. Use read-only default workflow permissions. Release credentials belong in protected environments and are never exposed to fork pull requests. Implement repository-owned scripts used by CI and release workflows before making those jobs required.
 

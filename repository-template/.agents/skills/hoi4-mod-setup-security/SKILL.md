@@ -104,6 +104,12 @@ bounded and schema-validated before any proposal is accepted.
 - Git executable discovery rejects linked PATH entries, and Git initialization or
   rollback rejects linked or junctioned `.git` metadata before invoking Git or
   removing metadata.
+- Reviewed online Git actions bind the canonical root, named branch, clean
+  worktree, exact HEAD, actual push URL, and GitHub CLI hash. Recheck all of
+  them immediately before execution. Reject configured URL rewrites,
+  `core.sshCommand`, `core.gitProxy`, `core.hooksPath`, submodules, active
+  hooks, detached branches, and dirty trees. Public repository creation and
+  the first push are separate approvals, and the result record is secret-free.
 - Readiness must parse installed skill frontmatter and subagent TOML, require
   explicit `fork_context=false`, reject link-containing agent trees, and avoid
   claiming the manifest-declared MCP wrapper is healthy when its PATH entry is
@@ -149,6 +155,8 @@ Use read-only default permissions. Grant write permission only to a release job 
 - compromised cache
 - rollback data loss
 - Git hook and config edge cases
+- online Git approval expiry, changed HEAD/remote, GitHub CLI replacement, and
+  no-action-before-approval
 - updater metadata tampering
 - support bundle redaction
 - scoped Meshy injection into an approved child with secret-free stdout/stderr

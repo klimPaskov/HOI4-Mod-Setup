@@ -14,10 +14,10 @@ This planning package includes a repository-ready development layer for HOI4 Mod
 | `CODE_OF_CONDUCT.md` | community | Contributor conduct |
 | `CHANGELOG.md` | users and maintainers | Release-visible change history |
 | `LICENSE` | users and contributors | Apache License 2.0 terms |
-| `LICENSE_SELECTION.md` | maintainers | Open-source license decision and release gate |
+| `docs/LICENSE_SELECTION.md` | maintainers | Open-source license decision and release gate |
 | `THIRD_PARTY_NOTICES.md` | maintainers and binary users | Generated dependency-license inventory; complete license text review remains required |
 | `AGENTS.md` | Codex and maintainers | Repository-wide implementation rules |
-| `GOAL_PROMPT.md` | Codex | Compact implementation goal |
+| `docs/GOAL_PROMPT.md` | Codex | Compact implementation goal |
 
 ## Git configuration
 
@@ -80,10 +80,10 @@ Before using the templates in the application source repository:
 - `.agents/skills/hoi4-mod-setup-codex-integration/SKILL.md`
 - `.codex/agents/hoi4setup_codex_integration_auditor.toml`
 - `docs/30_codex_chatgpt_authentication.md`
-- `diagrams/codex_auth_analysis_flow.mmd`
-- `schemas/codex-analysis.schema.json`
-- `examples/codex-analysis.example.json`
-- `source-audit/openai_codex_app_server.json`
+- `docs/diagrams/codex_auth_analysis_flow.mmd`
+- `docs/schemas/codex-analysis.schema.json`
+- `docs/examples/codex-analysis.example.json`
+- `docs/source-audit/openai_codex_app_server.json`
 
 ## Revision 4 additions
 

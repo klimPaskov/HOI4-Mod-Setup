@@ -30,6 +30,27 @@ export type StatusTone = "pass" | "review" | "block" | "info" | "muted";
 export type ConflictChoice = "keep" | "replace" | "merge" | "rename" | "skip";
 
 export type RecoveryChoice = "resume" | "rollback" | "discard";
+export type GitOnlineAction = "none" | "push_remote" | "create_public_github";
+
+export interface GitOnlinePlan {
+  plan_id: string;
+  action: Exclude<GitOnlineAction, "none">;
+  branch: string;
+  remote_name: string;
+  repository: string;
+  head_sha: string;
+  remote_url?: string | null;
+  gh_executable_sha256?: string | null;
+}
+
+export interface GitOnlineResult {
+  action: Exclude<GitOnlineAction, "none">;
+  branch: string;
+  remote_name: string;
+  repository: string;
+  repository_url?: string | null;
+  message: string;
+}
 
 export type InstallationAction = "create" | "replace" | "merge" | "rename" | "skip" | "delete_managed" | "generate" | "chmod" | "external";
 
@@ -425,6 +446,8 @@ export interface WizardState {
   initialCommit: boolean;
   gitRemoteName: string;
   gitRemoteUrl: string;
+  gitOnlineAction?: GitOnlineAction;
+  gitHubRepository?: string;
   installProgress: number;
   installStage: string;
   transaction?: TransactionJournal;
@@ -432,6 +455,9 @@ export interface WizardState {
   maintenanceMode?: "update" | "repair" | "reinstall" | "remove";
   maintenanceCodexAnalysisRecord?: CodexAnalysisRecord;
   maintenanceEvidenceReady?: boolean;
+  existingInstallationDetected?: boolean;
+  installedWorkflow3dState?: WorkflowState;
+  installedLoraInterest?: boolean;
   scanContext?: { scanId: string; projectRoot: string; completedAt?: string | null; partial?: boolean; limitsHit?: string[] };
   conflictChoice?: ConflictChoice;
   recoveryChoice: RecoveryChoice;

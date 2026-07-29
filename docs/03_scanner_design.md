@@ -63,6 +63,13 @@ provider has write access.
 10. **Conflict synthesis:** path, namespace, platform, dependency, ownership,
     generated-destination, launcher, thumbnail, and Git risks against the
     selected remote manifest.
+11. **Managed setup state:** inspect only the fixed
+    `.hoi4-mod-setup/install.lock.json` path. A valid lock is reported as
+    `installation.managed` with a safe component and optional-workflow summary;
+    the lock contents and any credential references are never exposed as scan
+    evidence. A missing lock is a non-blocking absent state. A linked,
+    unreadable, oversized, malformed, or schema-invalid lock is a blocking
+    finding rather than a reason to guess that the project is unconfigured.
 
 ## Required provider semantic review
 
@@ -139,6 +146,8 @@ analysis until an untruncated scan completes; limits remain visible.
 - Codex sign-out, login cancellation, device-code fallback, usage limits, App
   Server interruption, and schema-valid and invalid suggestions; and
 - proof that provider suggestions cannot replace deterministic findings.
+- valid managed-lock recognition without walking `.hoi4-mod-setup/`
+- malformed, linked, oversized, and unreadable managed-lock states.
 
 The scan result may store analysis ID, input/output digests, proposal keys,
 provider/model/profile, and confirmation state. It must not store account

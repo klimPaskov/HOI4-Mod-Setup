@@ -39,8 +39,8 @@ public-release gates remain explicitly bounded below.
 | Full package validator | Pass, Validated 12 integrity groups for full planning package. |
 | Repository-template validator | Pass, Validated 12 integrity groups for repository template. |
 | Secret-pattern scan | Pass, No committed secret patterns found. |
-| Planning-package checksum inventory | Pass, 197 entries recomputed and matched. |
-| JSON Schemas | Pass, 9 schemas parsed and 10 examples validated by the package validator |
+| Planning-package checksum inventory | Pass, 203 entries recomputed and matched. |
+| JSON Schemas | Pass, 10 schemas parsed and 11 examples validated by the package validator |
 | Subagent TOML | Pass, 9 files parsed |
 | Living skill frontmatter and update triggers | Pass, 10 skills checked |
 | Goal prompt | Pass, 3920 characters and all mirrors match |
@@ -49,12 +49,12 @@ public-release gates remain explicitly bounded below.
 | Markdown style | Pass, no em dash characters or semicolons |
 | Mermaid source inventory | Pass, 10 diagram files present |
 | UI references | Pass, 17 full-resolution PNG files retained |
-| Frontend typecheck, lint, unit (23 tests), accessibility, browser smoke | Pass |
+| Frontend typecheck, lint, unit (25 tests), accessibility, browser smoke | Pass |
 | Frontend production build | Pass, Vite build completed on the elevated host run |
 | JSON-schema examples (manifest, plan, lock, journal) | Pass |
 | Cargo formatting | Pass |
 | Rust toolchain | Pass, pinned to Rust 1.88.0 by `rust-toolchain.toml` |
-| Rust all-feature tests | Pass, 142 tests under pinned Rust 1.88.0 |
+| Rust all-feature tests | Pass, 169 tests under pinned Rust 1.88.0 |
 | Rust all-feature clippy | Pass with `-D warnings` under pinned Rust 1.88.0 |
 | Fuzz target compilation | Pass, manifest, relative-path, Codex-analysis, descriptor/thumbnail, structured-TOML, and flattened-source targets |
 | Committed-secret scan | Pass |

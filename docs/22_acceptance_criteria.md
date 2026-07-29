@@ -77,6 +77,13 @@
 - EXT-06: The user can accept, edit, reject, or defer values.
 - EXT-07: Existing instructions and config are not silently replaced.
 - EXT-08: Duplicate launcher registrations and mismatched paths are reported.
+- EXT-09: A valid managed installation lock is detected without scanning or
+  writing the `.hoi4-mod-setup/` metadata tree.
+- EXT-10: Existing-project review offers repair or add-workflow maintenance
+  when a managed setup is found.
+- EXT-11: Repair can add a previously unselected 3D workflow from the exact
+  locked source revision, preserving modified files and leaving core readiness
+  usable when the optional key or platform route is unavailable.
 
 ## Components
 
@@ -137,6 +144,15 @@
 - GIT-06: Remote is optional.
 - GIT-07: No online repository is created automatically.
 - GIT-08: No push occurs automatically.
+- GIT-09: The user can separately review and approve a push to an existing
+  remote after the core readiness gate passes.
+- GIT-10: The user can separately review and approve public GitHub repository
+  creation, followed by a separate push approval.
+- GIT-11: Online actions bind the root, named branch, clean tree, exact HEAD,
+  destination, executable identity, and supported Git configuration; changed
+  state invalidates the review.
+- GIT-12: Completed online actions write a secret-free, schema-backed recovery
+  record without storing credentials.
 
 ## Conflicts
 

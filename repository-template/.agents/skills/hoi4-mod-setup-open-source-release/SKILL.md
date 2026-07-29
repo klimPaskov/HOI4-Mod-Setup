@@ -94,7 +94,7 @@ inspection artifact, but it is not release evidence.
 ## License and updater gates
 
 The repository is licensed under Apache 2.0 in `LICENSE`, and the decision is
-recorded in `LICENSE_SELECTION.md`. Run `pnpm release:notices`, keep the
+recorded in `docs/LICENSE_SELECTION.md`. Run `pnpm release:notices`, keep the
 license and generated notices in source and binary distributions, and review
 third-party notices before publication. Automatic
 application updates are explicitly deferred for the 0.1.0 release; do not
@@ -104,6 +104,11 @@ signature policy, rollback behavior, and clean-machine tests are implemented.
 ## Skill and docs alignment
 
 Update this skill and release docs when branch policy, workflow commands, check names, packaging, signing, notarization, artifact paths, release environments, dependency automation, or publication steps change.
+
+Planning-only prompts, schemas, examples, diagrams, source audits, and UI
+references live under `docs/`; application code and user-facing community
+files remain at the repository root. Keep checksums and repository validators
+bound to the moved paths.
 
 ## Update this skill when
 

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 pub(crate) fn manifest_wiki_pages() -> Vec<String> {
     serde_json::from_slice::<RemoteManifest>(include_bytes!(
-        "../../source-manifest/hoi4-mod-setup.manifest.json"
+        "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
     ))
     .map(|manifest| manifest.wiki.required_pages)
     .unwrap_or_default()
@@ -23,7 +23,7 @@ pub(crate) fn manifest_wiki_pages() -> Vec<String> {
 
 fn manifest_provenance_statuses() -> (String, String) {
     serde_json::from_slice::<RemoteManifest>(include_bytes!(
-        "../../source-manifest/hoi4-mod-setup.manifest.json"
+        "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
     ))
     .map(|manifest| {
         (

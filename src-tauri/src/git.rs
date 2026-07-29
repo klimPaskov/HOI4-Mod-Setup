@@ -1,10 +1,17 @@
 use crate::models::Platform;
-use crate::process::{ProcessResult, ProcessSpec};
-use crate::security::{is_link_metadata, normalize_relative_path, path_has_link_component};
+use crate::process::{find_path_executable, ProcessResult, ProcessSpec};
+use crate::security::{
+    atomic_write_json, is_link_metadata, normalize_relative_path, path_has_link_component,
+    safe_join,
+};
 use crate::AppError;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -70,6 +77,60 @@ pub struct GitApplyResult {
     pub remote_configured: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnlineGitAction {
+    PushRemote,
+    CreatePublicGithub,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitOnlineResult {
+    pub action: OnlineGitAction,
+    pub branch: String,
+    pub remote_name: String,
+    pub repository: String,
+    #[serde(default)]
+    pub repository_url: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitOnlinePlan {
+    pub plan_id: Uuid,
+    pub action: OnlineGitAction,
+    pub branch: String,
+    pub remote_name: String,
+    pub repository: String,
+    pub head_sha: String,
+    #[serde(default)]
+    pub remote_url: Option<String>,
+    #[serde(default)]
+    pub gh_executable_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingGitOnlinePlan {
+    plan: GitOnlinePlan,
+    root: PathBuf,
+}
+
+static PENDING_GIT_ONLINE_PLANS: OnceLock<Mutex<HashMap<Uuid, PendingGitOnlinePlan>>> =
+    OnceLock::new();
+
+#[derive(Debug, Clone, Serialize)]
+struct GitOnlineRecord {
+    schema_version: &'static str,
+    action: OnlineGitAction,
+    recorded_at: String,
+    branch: String,
+    remote_name: String,
+    repository: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repository_url: Option<String>,
+    message: String,
+}
+
 pub const MANAGED_GITIGNORE_BLOCK: &str = "# BEGIN HOI4 Mod Setup managed rules\n.hoi4-mod-setup/backups/\n.hoi4-mod-setup/cache/\n.tools/3d_pipeline/vendor/\n# END HOI4 Mod Setup managed rules";
 
 pub fn validate_git_setup(setup: &GitSetup) -> Result<(), AppError> {
@@ -84,13 +145,7 @@ pub fn validate_git_setup(setup: &GitSetup) -> Result<(), AppError> {
         ));
     }
     if let Some(remote) = &setup.remote_name {
-        if remote.is_empty()
-            || remote.len() > 64
-            || remote.starts_with('-')
-            || remote.chars().any(|character| character.is_whitespace())
-        {
-            return Err(AppError::InvalidInput("invalid Git remote name".into()));
-        }
+        validate_remote_name(remote)?;
     }
     if let Some(url) = &setup.remote_url {
         validate_remote_url(url)?;
@@ -101,6 +156,495 @@ pub fn validate_git_setup(setup: &GitSetup) -> Result<(), AppError> {
         }
     }
     Ok(())
+}
+
+fn validate_remote_name(value: &str) -> Result<(), AppError> {
+    if value.is_empty()
+        || value.len() > 64
+        || value.starts_with('-')
+        || value.chars().any(|character| character.is_whitespace())
+    {
+        return Err(AppError::InvalidInput("invalid Git remote name".into()));
+    }
+    Ok(())
+}
+
+pub fn validate_github_repository(value: &str) -> Result<(), AppError> {
+    if value.is_empty() || value.len() > 200 || value.contains('\n') || value.contains('\r') {
+        return Err(AppError::InvalidInput(
+            "GitHub repository name is invalid".into(),
+        ));
+    }
+    let parts: Vec<&str> = value.split('/').collect();
+    if parts.len() > 2 || parts.iter().any(|part| part.is_empty()) {
+        return Err(AppError::InvalidInput(
+            "GitHub repository name is invalid".into(),
+        ));
+    }
+    if parts.iter().any(|part| {
+        part.starts_with('-')
+            || part.starts_with('.')
+            || part.ends_with('-')
+            || part.ends_with('.')
+            || *part == "."
+            || *part == ".."
+            || part.chars().any(|character| {
+                !(character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+            })
+    }) {
+        return Err(AppError::InvalidInput(
+            "GitHub repository name is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn pending_online_plans() -> &'static Mutex<HashMap<Uuid, PendingGitOnlinePlan>> {
+    PENDING_GIT_ONLINE_PLANS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn prepare_online_action(
+    root: &Path,
+    action: OnlineGitAction,
+    remote_name: &str,
+    repository: &str,
+    branch: &str,
+) -> Result<GitOnlinePlan, AppError> {
+    let status = read_git_head(root);
+    if !status.repository_present {
+        return Err(AppError::Transaction(
+            "a Git repository is required before an online action".into(),
+        ));
+    }
+    let inspection = inspect_read_only(root);
+    if inspection.status_probe != "complete" {
+        return Err(AppError::Transaction(
+            "Git could not be inspected completely; online actions are unavailable".into(),
+        ));
+    }
+    if inspection.status.detached || inspection.status.branch.as_deref() != Some(branch.trim()) {
+        return Err(AppError::Transaction(
+            "online actions require the selected named branch".into(),
+        ));
+    }
+    if inspection.status.dirty != Some(false) {
+        return Err(AppError::Transaction(
+            "commit or save the project changes before an online action".into(),
+        ));
+    }
+    if !inspection.submodules.is_empty() {
+        return Err(AppError::Transaction(
+            "online actions are unavailable while submodules are present".into(),
+        ));
+    }
+    if !inspection.hooks.is_empty() {
+        return Err(AppError::Transaction(
+            "online actions are unavailable while Git hooks are present".into(),
+        ));
+    }
+    let branch = branch.trim();
+    if !valid_branch_name(branch) {
+        return Err(AppError::InvalidInput("invalid Git branch name".into()));
+    }
+    let remote_name = remote_name.trim();
+    validate_remote_name(remote_name)?;
+    let head_output = run_git_read_only(root, &["rev-parse", "--verify", "HEAD"])?;
+    require_success(head_output.clone(), "Git commit check")?;
+    let head_sha = head_output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .find(|value| valid_commit_id(value))
+        .ok_or_else(|| AppError::Transaction("Git did not return an exact HEAD commit".into()))?
+        .to_ascii_lowercase();
+    validate_online_git_configuration(root)?;
+    let (remote_url, gh_executable_sha256) = match action {
+        OnlineGitAction::PushRemote => (Some(configured_push_url(root, remote_name)?), None),
+        OnlineGitAction::CreatePublicGithub => {
+            validate_github_repository(repository.trim())?;
+            if remote_exists(root, remote_name)? {
+                return Err(AppError::Transaction(format!(
+                    "Git remote {remote_name} already exists; choose another remote name before creating a public repository"
+                )));
+            }
+            let gh = find_github_cli()?;
+            (None, Some(crate::security::sha256_file(&gh)?))
+        }
+    };
+    let plan = GitOnlinePlan {
+        plan_id: Uuid::new_v4(),
+        action,
+        branch: branch.into(),
+        remote_name: remote_name.into(),
+        repository: repository.trim().into(),
+        head_sha,
+        remote_url,
+        gh_executable_sha256,
+    };
+    let mut pending = pending_online_plans()
+        .lock()
+        .map_err(|_| AppError::Process("online Git review store is unavailable".into()))?;
+    if pending.len() >= 32 {
+        if let Some(oldest) = pending.keys().next().copied() {
+            pending.remove(&oldest);
+        }
+    }
+    pending.insert(
+        plan.plan_id,
+        PendingGitOnlinePlan {
+            plan: plan.clone(),
+            root: root.to_path_buf(),
+        },
+    );
+    Ok(plan)
+}
+
+pub fn execute_online_action(
+    root: &Path,
+    plan_id: Uuid,
+    confirmed: bool,
+) -> Result<GitOnlineResult, AppError> {
+    if !confirmed {
+        return Err(AppError::InvalidInput(
+            "online Git action requires separate approval".into(),
+        ));
+    }
+    let pending = pending_online_plans()
+        .lock()
+        .map_err(|_| AppError::Process("online Git review store is unavailable".into()))?
+        .get(&plan_id)
+        .cloned()
+        .ok_or_else(|| {
+            AppError::Transaction("the online Git review has expired; review it again".into())
+        })?;
+    if pending.root != root {
+        return Err(AppError::PathSecurity(
+            "online Git review belongs to a different project root".into(),
+        ));
+    }
+    let current = inspect_read_only(root);
+    if current.status_probe != "complete"
+        || current.status.dirty != Some(false)
+        || current.status.detached
+        || current.status.branch.as_deref() != Some(pending.plan.branch.as_str())
+    {
+        return Err(AppError::Transaction(
+            "the project changed after review; prepare the online action again".into(),
+        ));
+    }
+    let head_output = run_git_read_only(root, &["rev-parse", "--verify", "HEAD"])?;
+    require_success(head_output.clone(), "Git commit check")?;
+    let current_head = head_output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .find(|value| valid_commit_id(value))
+        .ok_or_else(|| AppError::Transaction("Git did not return an exact HEAD commit".into()))?;
+    if !current_head.eq_ignore_ascii_case(&pending.plan.head_sha) {
+        return Err(AppError::Transaction(
+            "the project HEAD changed after review; prepare the online action again".into(),
+        ));
+    }
+    match pending.plan.action {
+        OnlineGitAction::PushRemote => {
+            validate_online_git_configuration(root)?;
+            if configured_push_url(root, &pending.plan.remote_name)?
+                != pending.plan.remote_url.clone().unwrap_or_default()
+            {
+                return Err(AppError::Transaction(
+                    "the configured Git remote changed after review; prepare the online action again".into(),
+                ));
+            }
+        }
+        OnlineGitAction::CreatePublicGithub => {
+            let gh = find_github_cli()?;
+            let hash = crate::security::sha256_file(&gh)?;
+            if pending.plan.gh_executable_sha256.as_deref() != Some(hash.as_str()) {
+                return Err(AppError::Process(
+                    "the GitHub CLI changed after review; prepare the online action again".into(),
+                ));
+            }
+        }
+    }
+    let result = run_online_action(
+        root,
+        pending.plan.action,
+        &pending.plan.remote_name,
+        &pending.plan.repository,
+        &pending.plan.branch,
+        true,
+    )?;
+    pending_online_plans()
+        .lock()
+        .map_err(|_| AppError::Process("online Git review store is unavailable".into()))?
+        .remove(&plan_id);
+    Ok(result)
+}
+
+fn run_online_action(
+    root: &Path,
+    action: OnlineGitAction,
+    remote_name: &str,
+    repository: &str,
+    branch: &str,
+    confirmed: bool,
+) -> Result<GitOnlineResult, AppError> {
+    if !confirmed {
+        return Err(AppError::InvalidInput(
+            "online Git action requires separate approval".into(),
+        ));
+    }
+    if !read_git_head(root).repository_present {
+        return Err(AppError::Transaction(
+            "a Git repository is required before an online action".into(),
+        ));
+    }
+    let branch = branch.trim();
+    if !valid_branch_name(branch) {
+        return Err(AppError::InvalidInput("invalid Git branch name".into()));
+    }
+    let remote_name = remote_name.trim();
+    validate_remote_name(remote_name)?;
+
+    match action {
+        OnlineGitAction::PushRemote => {
+            validate_online_git_configuration(root)?;
+            let remote_url = configured_push_url(root, remote_name)?;
+            let output = run_git_capture(root, &["push", "--set-upstream", remote_name, branch])?;
+            require_success(output, "Git push")?;
+            Ok(GitOnlineResult {
+                action,
+                branch: branch.into(),
+                remote_name: remote_name.into(),
+                repository: remote_url.clone(),
+                repository_url: github_repository_url(&remote_url),
+                message: "Changes pushed to the configured remote.".into(),
+            })
+        }
+        OnlineGitAction::CreatePublicGithub => {
+            validate_github_repository(repository.trim())?;
+            if remote_exists(root, remote_name)? {
+                return Err(AppError::Transaction(format!(
+                    "Git remote {remote_name} already exists; choose another remote name before creating a public repository"
+                )));
+            }
+            let head = run_git_read_only(root, &["rev-parse", "--verify", "HEAD"])?;
+            require_success(head, "Git commit check")?;
+            let gh = find_github_cli()?;
+            let auth = run_reviewed_tool(
+                gh.clone(),
+                vec![
+                    "auth".into(),
+                    "status".into(),
+                    "--hostname".into(),
+                    "github.com".into(),
+                ],
+                root,
+                30,
+                1024 * 1024,
+            )?;
+            if auth.status_code != Some(0) || auth.timed_out {
+                return Err(AppError::Process(
+                    "GitHub sign-in is unavailable. Sign in with GitHub CLI and try again.".into(),
+                ));
+            }
+            let args = vec![
+                "repo".into(),
+                "create".into(),
+                repository.trim().into(),
+                "--public".into(),
+                "--source".into(),
+                ".".into(),
+                "--remote".into(),
+                remote_name.into(),
+            ];
+            let output = run_reviewed_tool(gh, args, root, 300, 2 * 1024 * 1024)?;
+            require_success(output.clone(), "GitHub publication")?;
+            let repository_url = github_url_from_output(&output.stdout).or_else(|| {
+                repository
+                    .trim()
+                    .contains('/')
+                    .then(|| format!("https://github.com/{}", repository.trim()))
+            });
+            Ok(GitOnlineResult {
+                action,
+                branch: branch.into(),
+                remote_name: remote_name.into(),
+                repository: repository.trim().into(),
+                repository_url,
+                message: "Public GitHub repository created. Review it, then approve the separate push action.".into(),
+            })
+        }
+    }
+}
+
+fn find_github_cli() -> Result<PathBuf, AppError> {
+    if cfg!(target_os = "windows") {
+        find_path_executable(&["gh.exe", "gh"])
+    } else {
+        find_path_executable(&["gh", "gh.exe"])
+    }
+}
+
+fn run_reviewed_tool(
+    executable: PathBuf,
+    args: Vec<String>,
+    root: &Path,
+    timeout_seconds: u64,
+    max_output_bytes: usize,
+) -> Result<ProcessResult, AppError> {
+    let spec = ProcessSpec {
+        executable: executable.clone(),
+        executable_sha256: Some(crate::security::sha256_file(&executable)?),
+        args,
+        cwd: Some(root.to_path_buf()),
+        platform: Platform::current(),
+        environment_names: vec![],
+        timeout_seconds,
+        max_output_bytes,
+    };
+    spec.run(&[executable], None)
+}
+
+fn require_success(output: ProcessResult, operation: &str) -> Result<ProcessResult, AppError> {
+    if output.status_code == Some(0) && !output.timed_out {
+        Ok(output)
+    } else {
+        Err(AppError::Process(format!(
+            "{operation} did not complete; check the configured Git credentials and try again"
+        )))
+    }
+}
+
+fn configured_push_url(root: &Path, remote_name: &str) -> Result<String, AppError> {
+    let output = run_git_read_only(root, &["remote", "get-url", "--push", remote_name])?;
+    if output.status_code != Some(0) || output.timed_out {
+        return Err(AppError::Transaction(format!(
+            "Git push remote {remote_name} is not configured"
+        )));
+    }
+    let value = output.stdout.trim().to_string();
+    validate_remote_url(&value)?;
+    Ok(value)
+}
+
+fn validate_online_git_configuration(root: &Path) -> Result<(), AppError> {
+    for (key, label) in [
+        ("core.sshCommand", "core.sshCommand"),
+        ("core.gitProxy", "core.gitProxy"),
+        ("core.hooksPath", "core.hooksPath"),
+    ] {
+        let output = run_git_read_only(root, &["config", "--get-all", key])?;
+        if output.timed_out {
+            return Err(AppError::Process(format!(
+                "Git configuration check for {label} timed out"
+            )));
+        }
+        if output.status_code == Some(0) && !output.stdout.trim().is_empty() {
+            return Err(AppError::Transaction(format!(
+                "online actions are unavailable while Git {label} is configured"
+            )));
+        }
+        if output.status_code != Some(0) && output.status_code != Some(1) {
+            return Err(AppError::Process(format!(
+                "Git configuration check for {label} failed"
+            )));
+        }
+    }
+    let rewrites = run_git_read_only(root, &["config", "--get-regexp", r"^url\..*\.insteadof$"])?;
+    if rewrites.timed_out {
+        return Err(AppError::Process(
+            "Git URL rewrite configuration check timed out".into(),
+        ));
+    }
+    if rewrites.status_code == Some(0) && !rewrites.stdout.trim().is_empty() {
+        return Err(AppError::Transaction(
+            "online actions are unavailable while Git URL rewriting is configured".into(),
+        ));
+    }
+    if rewrites.status_code != Some(0) && rewrites.status_code != Some(1) {
+        return Err(AppError::Process(
+            "Git URL rewrite configuration check failed".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn remote_exists(root: &Path, remote_name: &str) -> Result<bool, AppError> {
+    let output = run_git_read_only(root, &["remote", "get-url", remote_name])?;
+    if output.timed_out {
+        return Err(AppError::Process("Git remote check timed out".into()));
+    }
+    Ok(output.status_code == Some(0))
+}
+
+fn github_repository_url(remote: &str) -> Option<String> {
+    let trimmed = remote.strip_suffix(".git").unwrap_or(remote);
+    if let Some(rest) = trimmed.strip_prefix("https://github.com/") {
+        return valid_github_url(rest).map(|_| trimmed.to_string());
+    }
+    if let Some(rest) = trimmed.strip_prefix("git@github.com:") {
+        return valid_github_url(rest).map(|_| format!("https://github.com/{rest}"));
+    }
+    None
+}
+
+fn github_url_from_output(output: &str) -> Option<String> {
+    output
+        .split_whitespace()
+        .map(|value| {
+            value.trim_matches(|character: char| matches!(character, '(' | ')' | '[' | ']' | ','))
+        })
+        .find_map(|value| {
+            value
+                .strip_prefix("https://github.com/")
+                .and_then(valid_github_url)
+                .map(|_| value.to_string())
+        })
+}
+
+fn valid_github_url(value: &str) -> Option<&str> {
+    let parts: Vec<&str> = value.split('/').collect();
+    (parts.len() == 2
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && part.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+                })
+        }))
+    .then_some(value)
+}
+
+pub fn write_online_action_record(
+    root: &Path,
+    transaction_id: Option<&str>,
+    result: &GitOnlineResult,
+) -> Result<(), AppError> {
+    let metadata_root = safe_join(root, ".hoi4-mod-setup")?;
+    fs::create_dir_all(&metadata_root)?;
+    let relative = if let Some(transaction_id) = transaction_id {
+        let id = Uuid::parse_str(transaction_id)
+            .map_err(|_| AppError::InvalidInput("invalid transaction ID".into()))?;
+        let transactions = metadata_root.join("transactions");
+        fs::create_dir_all(&transactions)?;
+        let directory = transactions.join(id.to_string());
+        fs::create_dir_all(&directory)?;
+        format!(".hoi4-mod-setup/transactions/{id}/online-git.json")
+    } else {
+        ".hoi4-mod-setup/online-git.json".into()
+    };
+    let path = safe_join(root, &relative)?;
+    let record = GitOnlineRecord {
+        schema_version: "1.0.0",
+        action: result.action,
+        recorded_at: Utc::now().to_rfc3339(),
+        branch: result.branch.clone(),
+        remote_name: result.remote_name.clone(),
+        repository: result.repository.clone(),
+        repository_url: result.repository_url.clone(),
+        message: result.message.clone(),
+    };
+    atomic_write_json(&path, &record)
 }
 
 pub fn plan_git(
@@ -354,15 +898,50 @@ pub fn rollback_added_remote(root: &Path, name: &str, expected_url: &str) -> Res
 }
 
 pub fn validate_remote_url(value: &str) -> Result<(), AppError> {
-    let valid =
-        (value.starts_with("https://") || value.starts_with("ssh://") || value.starts_with("git@"))
-            && !value.contains('\n')
-            && !value.contains('\r')
-            && !value.contains(' ')
-            && !(value.starts_with("https://") && value.contains('@'))
-            && !(value.starts_with("ssh://") && value.contains('@'))
-            && !value.contains("..\\")
-            && !value.contains("../");
+    let valid = if value.trim() != value
+        || value.is_empty()
+        || value.chars().any(|character| {
+            character.is_control()
+                || character.is_whitespace()
+                || matches!(character, '\\' | '"' | '\'')
+        })
+        || value
+            .split('/')
+            .any(|segment| segment == "." || segment == "..")
+    {
+        false
+    } else if value.starts_with("git@") {
+        let Some((host, path)) = value[4..].split_once(':') else {
+            return Err(AppError::InvalidInput(
+                "remote URL must be an explicit HTTPS or SSH URL".into(),
+            ));
+        };
+        !host.is_empty()
+            && host.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_')
+            })
+            && valid_remote_path(path)
+    } else if value.starts_with("https://") || value.starts_with("ssh://") {
+        let Ok(parsed) = reqwest::Url::parse(value) else {
+            return Err(AppError::InvalidInput(
+                "remote URL must be an explicit HTTPS or SSH URL".into(),
+            ));
+        };
+        let expected_scheme = if value.starts_with("https://") {
+            "https"
+        } else {
+            "ssh"
+        };
+        parsed.scheme() == expected_scheme
+            && parsed.host_str().is_some_and(|host| !host.is_empty())
+            && parsed.password().is_none()
+            && (parsed.username().is_empty() || parsed.username() == "git")
+            && parsed.query().is_none()
+            && parsed.fragment().is_none()
+            && valid_remote_path(parsed.path())
+    } else {
+        false
+    };
     if valid {
         Ok(())
     } else {
@@ -370,6 +949,16 @@ pub fn validate_remote_url(value: &str) -> Result<(), AppError> {
             "remote URL must be an explicit HTTPS or SSH URL".into(),
         ))
     }
+}
+
+fn valid_remote_path(path: &str) -> bool {
+    let path = path.trim_start_matches('/');
+    !path.is_empty()
+        && !path
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+        && !path.contains('?')
+        && !path.contains('#')
 }
 
 pub fn read_git_head(root: &Path) -> GitStatus {
@@ -443,11 +1032,11 @@ pub fn inspect_read_only(root: &Path) -> GitInspection {
     match run_git_read_only(
         root,
         &[
+            "--no-optional-locks",
             "status",
             "--porcelain=v1",
             "--branch",
             "--untracked-files=normal",
-            "--no-optional-locks",
         ],
     ) {
         Ok(result) if result.status_code == Some(0) && !result.timed_out => {
@@ -603,7 +1192,12 @@ fn safe_hook_names(hooks: &Path) -> Vec<String> {
             (metadata.is_file() && !is_link_metadata(&metadata))
                 .then(|| entry.file_name().to_string_lossy().to_string())
         })
-        .filter(|name| !name.is_empty() && name.len() <= 255)
+        .filter(|name| {
+            !name.is_empty()
+                && name.len() <= 255
+                && !name.ends_with(".sample")
+                && !name.ends_with(".disabled")
+        })
         .collect::<Vec<_>>();
     names.sort();
     names.dedup();
@@ -712,5 +1306,71 @@ mod tests {
         assert!(inspection.status.detached);
         assert!(inspection.status.branch.is_none());
         assert_eq!(inspection.status.dirty, Some(false));
+    }
+
+    #[test]
+    fn remote_urls_are_explicit_and_do_not_allow_rewrites_or_credentials() {
+        assert!(validate_remote_url("https://github.com/example/mod.git").is_ok());
+        assert!(validate_remote_url("ssh://git@github.com/example/mod.git").is_ok());
+        assert!(validate_remote_url("git@github.com:example/mod.git").is_ok());
+        for value in [
+            "https://user:password@github.com/example/mod.git",
+            "https://github.com/example/mod.git?redirect=other",
+            "https://github.com/example/../mod.git",
+            "file:///tmp/mod.git",
+            "https://github.com/example/mod.git\n--upload-pack=bad",
+        ] {
+            assert!(validate_remote_url(value).is_err(), "accepted {value}");
+        }
+    }
+
+    #[test]
+    fn online_review_requires_separate_approval_and_rechecks_head() {
+        let project = tempdir().unwrap();
+        run_git(project.path(), &["init"]).unwrap();
+        run_git(
+            project.path(),
+            &["config", "user.email", "test@example.com"],
+        )
+        .unwrap();
+        run_git(
+            project.path(),
+            &["config", "user.name", "HOI4 Mod Setup Test"],
+        )
+        .unwrap();
+        run_git(project.path(), &["branch", "-M", "main"]).unwrap();
+        fs::write(project.path().join("README.md"), "one\n").unwrap();
+        run_git(project.path(), &["add", "README.md"]).unwrap();
+        run_git(project.path(), &["commit", "-m", "initial"]).unwrap();
+        run_git(
+            project.path(),
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/example/mod.git",
+            ],
+        )
+        .unwrap();
+
+        let plan = prepare_online_action(
+            project.path(),
+            OnlineGitAction::PushRemote,
+            "origin",
+            "example/mod",
+            "main",
+        )
+        .unwrap();
+        assert_eq!(
+            plan.remote_url.as_deref(),
+            Some("https://github.com/example/mod.git")
+        );
+        assert!(execute_online_action(project.path(), plan.plan_id, false).is_err());
+
+        fs::write(project.path().join("README.md"), "two\n").unwrap();
+        run_git(project.path(), &["add", "README.md"]).unwrap();
+        run_git(project.path(), &["commit", "-m", "second"]).unwrap();
+        let error = execute_online_action(project.path(), plan.plan_id, true).unwrap_err();
+        assert!(error.to_string().contains("HEAD changed after review"));
     }
 }

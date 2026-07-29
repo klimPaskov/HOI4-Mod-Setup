@@ -16,11 +16,11 @@ Read:
 - `AGENTS.md`
 - `docs/02_user_flows.md`
 - `docs/03_scanner_design.md`
-- `schemas/scan-result.schema.json`
-- `examples/scan-result.existing.example.json`
+- `docs/schemas/scan-result.schema.json`
+- `docs/examples/scan-result.existing.example.json`
 - `docs/20_testing_strategy.md`
 - `docs/30_codex_chatgpt_authentication.md`
-- `schemas/codex-analysis.schema.json`
+- `docs/schemas/codex-analysis.schema.json`
 
 ## Read-only boundary
 
@@ -54,6 +54,7 @@ Detect only with evidence:
 - `.codex/agents`
 - Codex config
 - MCP config
+- the fixed `.hoi4-mod-setup/install.lock.json` managed-installation marker
 - absolute paths and machine-local assumptions
 - possible install conflicts
 
@@ -85,6 +86,12 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
 - Do not infer a project-wide namespace from generated, vendored, or test files.
 - Separate existing project conventions from proposed installation values.
 - Keep secret-like content redacted while preserving evidence location.
+- Inspect a prior managed setup only through the fixed lock path. Skip the
+  metadata tree during the normal walk, and emit a bounded summary containing
+  project ID, component IDs, 3D state, non-secret 3D key-configured bit, and
+  portrait-interest state. A missing
+  lock is absent/non-blocking; link, size, read, parse, or schema failures are
+  blocking and must not be guessed into an installed state.
 - Bound file size, depth, count, and parse work.
 - Support cancellation and partial result reporting.
 - Stream progress through an opaque request ID with stage, relative path, file count, directory count, and bytes read. Do not emit or render a percentage when a total is unknown.
@@ -122,6 +129,8 @@ Use `codex app-server` over stdio JSONL after deterministic scan completion. Req
 - Git status probe failure, linked worktree metadata, remotes, submodules,
   hooks, ignore files, and tracked secret-like paths
 - pre-existing managed files
+- valid managed-lock recognition without walking metadata
+- malformed, linked, oversized, and unreadable managed-lock states
 - cancellation and timeout
 - progress event correlation, indeterminate progress, and cancelled-evidence invalidation
 - confidence downgrade when evidence conflicts

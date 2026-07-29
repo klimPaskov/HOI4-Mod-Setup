@@ -12,7 +12,7 @@ Read:
 - `AGENTS.md`
 - `docs/02_user_flows.md`
 - `docs/17_ui_accessibility.md`
-- `ui-references/README.md`
+- `docs/ui-references/README.md`
 - the relevant full-resolution screen references
 - `docs/22_acceptance_criteria.md`
 - `docs/screenshots/README.md` when adding or auditing implementation screenshots
@@ -73,6 +73,13 @@ Conflict review is the exception. It may show a three-way comparison and more co
 - Disabled actions explain the blocking reason in a tooltip or adjacent concise status.
 - Progress shows current stage and durable checkpoint, not the full log.
 - Existing-project scans show the current stage, bounded relative path, file/directory/byte counters, and an accessible Cancel scan action. Use an indeterminate progress bar until a total is known; partial and cancelled results must remain visibly incomplete and announce that no provider evidence was approved.
+- When scan evidence identifies a valid managed installation, show a concise
+  existing-setup callout with a keyboard-accessible **Repair or add workflows**
+  action. The maintenance screen must show the exact 3D question again only
+  for a previously unselected workflow; an already installed workflow is a
+  non-duplicating state. If the lock reports a selected workflow without a
+  stored key, keep the exact question visible as a disabled installed state
+  and expose the vault-only key field for repair.
 - Readiness leads with core status. Open in Codex is shown only for Codex; other providers receive an honest provider-specific handoff or no opener.
 - Optional source-declared health actions are rendered only when readiness identifies a runnable verified route. `planned_unavailable` and `unsupported_platform` remain visible as status text without an actionable button.
 - When no verified Codex opener is available, keep a passed readiness result visible and expose the validated project path as an announced manual-opening result.
@@ -119,7 +126,7 @@ A visible change requires:
 
 Implementation screenshots live in `docs/screenshots/` and are linked from the
 user-facing README. Keep their alt text and capture notes accurate. The
-`ui-references/` directory contains design references and is not a substitute
+`docs/ui-references/` directory contains design references and is not a substitute
 for screenshots of the current implementation. Never capture credentials,
 identity documents, private projects, or secret values.
 

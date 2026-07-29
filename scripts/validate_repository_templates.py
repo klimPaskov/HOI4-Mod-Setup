@@ -16,19 +16,20 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 and older
     import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
-FULL_PACKAGE = (ROOT / "schemas").is_dir() and (ROOT / "examples").is_dir()
+PLANNING = ROOT / "docs"
+FULL_PACKAGE = (PLANNING / "schemas").is_dir() and (PLANNING / "examples").is_dir()
 
 COMMON_EXPECTED = [
     "README.md",
     "AGENTS.md",
-    "GOAL_PROMPT.md",
+    "docs/GOAL_PROMPT.md",
     "CONTRIBUTING.md",
     "DEVELOPMENT.md",
     "RELEASING.md",
     "SECURITY.md",
     "CODE_OF_CONDUCT.md",
     "CHANGELOG.md",
-    "LICENSE_SELECTION.md",
+    "docs/LICENSE_SELECTION.md",
     "docs/26_open_source_github_workflow.md",
     "docs/27_repo_local_skill_strategy.md",
     "docs/28_agents_subagent_architecture.md",
@@ -43,13 +44,16 @@ COMMON_EXPECTED = [
 ]
 
 FULL_EXPECTED = [
-    "PACKAGE_README.md",
+    "docs/README.md",
+    "docs/PACKAGE_README.md",
     "docs/25_compact_goal_prompt.md",
-    "prompts/hoi4_mod_setup_goal_prompt.md",
-    "diagrams/codex_auth_analysis_flow.mmd",
-    "schemas/codex-analysis.schema.json",
-    "examples/codex-analysis.example.json",
-    "source-audit/openai_codex_app_server.json",
+    "docs/prompts/hoi4_mod_setup_goal_prompt.md",
+    "docs/diagrams/codex_auth_analysis_flow.mmd",
+    "docs/schemas/codex-analysis.schema.json",
+    "docs/examples/codex-analysis.example.json",
+    "docs/schemas/git-online-record.schema.json",
+    "docs/examples/git-online-record.example.json",
+    "docs/source-audit/openai_codex_app_server.json",
     "scripts/release_build.mjs",
     "scripts/release_verify.mjs",
     "scripts/generate_third_party_notices.mjs",
@@ -64,6 +68,7 @@ FULL_EXPECTED = [
 EXAMPLE_SCHEMA_MAP = {
     "codex-analysis.example.json": "codex-analysis.schema.json",
     "conflict-record.example.json": "conflict-record.schema.json",
+    "git-online-record.example.json": "git-online-record.schema.json",
     "installation-lock.example.json": "installation-lock.schema.json",
     "installation-plan.example.json": "installation-plan.schema.json",
     "project-state.example.json": "project-state.schema.json",
@@ -90,8 +95,8 @@ def validate_json_examples() -> None:
     if not FULL_PACKAGE:
         return
     for example_name, schema_name in EXAMPLE_SCHEMA_MAP.items():
-        example = json.loads((ROOT / "examples" / example_name).read_text(encoding="utf-8"))
-        schema = json.loads((ROOT / "schemas" / schema_name).read_text(encoding="utf-8"))
+        example = json.loads((PLANNING / "examples" / example_name).read_text(encoding="utf-8"))
+        schema = json.loads((PLANNING / "schemas" / schema_name).read_text(encoding="utf-8"))
         errors = sorted(Draft202012Validator(schema).iter_errors(example), key=lambda e: list(e.path))
         if errors:
             formatted = "; ".join(error.message for error in errors[:5])
@@ -109,14 +114,14 @@ def validate_schema_contracts() -> None:
         "readiness-report.schema.json": "codex",
     }
     for schema_name, key in required_contracts.items():
-        schema = json.loads((ROOT / "schemas" / schema_name).read_text(encoding="utf-8"))
+        schema = json.loads((PLANNING / "schemas" / schema_name).read_text(encoding="utf-8"))
         if key not in schema.get("required", []):
             fail(f"{schema_name} does not require {key}")
-    lock_schema = json.loads((ROOT / "schemas" / "installation-lock.schema.json").read_text(encoding="utf-8"))
+    lock_schema = json.loads((PLANNING / "schemas" / "installation-lock.schema.json").read_text(encoding="utf-8"))
     if "credential_values" not in lock_schema.get("properties", {}):
         fail("installation-lock.schema.json must explicitly reject credential_values")
     for schema_name in ("installation-plan.schema.json", "installation-lock.schema.json"):
-        schema = json.loads((ROOT / "schemas" / schema_name).read_text(encoding="utf-8"))
+        schema = json.loads((PLANNING / "schemas" / schema_name).read_text(encoding="utf-8"))
         for key in ("ai_provider", "ai_model", "ai_optimization_profile", "flatten_chat_sources"):
             if key not in schema.get("properties", {}):
                 fail(f"{schema_name} is missing persisted AI/flatten property: {key}")
@@ -191,13 +196,13 @@ def validate_skills() -> None:
 
 
 def validate_goal_prompt() -> None:
-    text = (ROOT / "GOAL_PROMPT.md").read_text(encoding="utf-8")
+    text = (PLANNING / "GOAL_PROMPT.md").read_text(encoding="utf-8")
     if not 3000 <= len(text) <= 4000:
-        fail(f"GOAL_PROMPT.md is {len(text)} characters, expected 3000 to 4000")
+        fail(f"docs/GOAL_PROMPT.md is {len(text)} characters, expected 3000 to 4000")
     for required in ["chatgpt", "codex app-server", "descriptor.mod", "thumbnail.png"]:
         if required not in text.lower():
-            fail(f"GOAL_PROMPT.md is missing required term: {required}")
-    mirrors = [ROOT / "docs/25_compact_goal_prompt.md", ROOT / "prompts/hoi4_mod_setup_goal_prompt.md"]
+            fail(f"docs/GOAL_PROMPT.md is missing required term: {required}")
+    mirrors = [PLANNING / "25_compact_goal_prompt.md", PLANNING / "prompts/hoi4_mod_setup_goal_prompt.md"]
     for mirror in mirrors:
         if mirror.is_file() and text != mirror.read_text(encoding="utf-8"):
             fail(f"Goal prompt mirror differs: {mirror.relative_to(ROOT)}")
@@ -218,7 +223,7 @@ def validate_no_prohibited_codex_modes() -> None:
     candidates = [
         ROOT / "README.md",
         ROOT / "AGENTS.md",
-        ROOT / "GOAL_PROMPT.md",
+        PLANNING / "GOAL_PROMPT.md",
         ROOT / "docs/01_product_requirements.md",
         ROOT / "docs/02_user_flows.md",
         ROOT / "docs/03_scanner_design.md",
@@ -239,8 +244,9 @@ def validate_repository_template_mirrors() -> None:
     if not template.is_dir():
         return
     mirrored_roots = [
-        "README.md", "AGENTS.md", "GOAL_PROMPT.md", "CONTRIBUTING.md", "DEVELOPMENT.md",
-        "RELEASING.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "CHANGELOG.md", "LICENSE", "LICENSE_SELECTION.md",
+        "README.md", "AGENTS.md", "CONTRIBUTING.md", "DEVELOPMENT.md",
+        "RELEASING.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "CHANGELOG.md", "LICENSE",
+        "docs/GOAL_PROMPT.md", "docs/LICENSE_SELECTION.md",
         ".editorconfig", ".gitattributes", ".gitignore",
     ]
     for rel in mirrored_roots:

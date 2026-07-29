@@ -1509,7 +1509,7 @@ mod tests {
 
     #[test]
     fn checked_in_manifest_matches_the_supported_source_contract() {
-        let bytes = include_bytes!("../../source-manifest/hoi4-mod-setup.manifest.json");
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let manifest =
             parse_manifest(bytes, Some("27128a7b311d728a959afff7238a9aeeb9987f2b")).unwrap();
         assert_eq!(manifest.repository.owner, SOURCE_OWNER);
@@ -1523,7 +1523,8 @@ mod tests {
 
     #[test]
     fn published_manifest_is_consumed_at_the_resolved_revision() {
-        let bundled_bytes = include_bytes!("../../source-manifest/hoi4-mod-setup.manifest.json");
+        let bundled_bytes =
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let remote_bytes = bundled_bytes.to_vec();
         let resolved_revision = "54da3e7b311d728a959afff7238a9aeeb9987f2b";
 
@@ -1541,7 +1542,7 @@ mod tests {
     #[test]
     fn repository_manifest_example_is_runtime_valid_for_its_declared_revision() {
         let manifest = parse_manifest(
-            include_bytes!("../../examples/repository-manifest.example.json"),
+            include_bytes!("../../docs/examples/repository-manifest.example.json"),
             Some("27128a7b311d728a959afff7238a9aeeb9987f2b"),
         )
         .unwrap();
@@ -1554,7 +1555,7 @@ mod tests {
 
     #[test]
     fn core_profile_keeps_windows_only_mcp_nonblocking_on_macos() {
-        let bytes = include_bytes!("../../source-manifest/hoi4-mod-setup.manifest.json");
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let manifest =
             parse_manifest(bytes, Some("27128a7b311d728a959afff7238a9aeeb9987f2b")).unwrap();
         let profile = manifest
@@ -1646,7 +1647,7 @@ mod tests {
 
     #[test]
     fn manifest_generation_revision_may_precede_publication_revision() {
-        let bytes = include_bytes!("../../source-manifest/hoi4-mod-setup.manifest.json");
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let mut manifest: RemoteManifest = serde_json::from_slice(bytes).unwrap();
         manifest.generated_for_revision = Some("599497ea2f93612d9094461c6fde114fc87a5c0f".into());
         validate_manifest(&manifest, Some("27128a7b311d728a959afff7238a9aeeb9987f2b")).unwrap();

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://klimpaskov.github.io/hoi4-mod-setup/schemas/git-online-record.schema.json",
+  "title": "Reviewed online Git action record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "action",
+    "recorded_at",
+    "branch",
+    "remote_name",
+    "repository",
+    "message"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "action": {
+      "enum": [
+        "push_remote",
+        "create_public_github"
+      ]
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "remote_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "repository_url": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uri",
+      "maxLength": 2048
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    }
+  }
+}

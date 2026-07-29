@@ -1,13 +1,13 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { Components, Git, Ready, Scan, Welcome } from "./App";
-import { cancelCodexLogin, logoutCodexResult, openCodexLoginUrlResult, openInCodex, previewSourceManifest, readCodexAccount, rollbackInstallation } from "./lib/tauri";
+import App, { Components, Git, Ready, Scan, Update, Welcome } from "./App";
+import { cancelCodexLogin, logoutCodexResult, openCodexLoginUrlResult, openInCodex, previewSourceManifest, readCodexAccount } from "./lib/tauri";
 import type { ScanProgress, SourceManifestPreview, WizardState } from "./types";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, cancelCodexLogin: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openInCodex: vi.fn(), previewSourceManifest: vi.fn(), readCodexAccount: vi.fn(), rollbackInstallation: vi.fn() };
+  return { ...actual, cancelCodexLogin: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openInCodex: vi.fn(), previewSourceManifest: vi.fn(), readCodexAccount: vi.fn() };
 });
 
 afterEach(() => {
@@ -92,6 +92,32 @@ describe("HOI4 Mod Setup wizard", () => {
 
     render(<ControlledGit provider="claude" />);
     expect(screen.queryByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i })).not.toBeInTheDocument();
+  });
+
+  it("offers the exact 3D question again for an existing managed setup", () => {
+    render(<Update
+      state={{
+        ...readyState(),
+        aiProvider: "codex",
+        existingInstallationDetected: true,
+        installedWorkflow3dState: "not_selected",
+        meshSelected: false,
+        meshKeyDraft: "",
+        meshKeyStatus: "missing",
+        loraInterest: false,
+        maintenanceEvidenceReady: false,
+        findings: [],
+      } as unknown as WizardState}
+      update={vi.fn()}
+      findings={[]}
+      setFindings={vi.fn()}
+      onMaintenance={vi.fn()}
+      onStartMaintenance={vi.fn()}
+      onReanalyze={vi.fn().mockResolvedValue(true)}
+    />);
+
+    expect(screen.getByText("Do you want to set up the 3D models workflow?")).toBeInTheDocument();
+    expect(screen.getByText("Add it during the next repair")).toBeInTheDocument();
   });
 
   it("keeps the optional workflow questions exact and records portrait interest without actions", () => {
@@ -182,7 +208,7 @@ describe("HOI4 Mod Setup wizard", () => {
 
   it("keeps signed-out local recovery reachable from the welcome screen", () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /recover or remove an installed project/i }));
+    fireEvent.click(screen.getByRole("button", { name: /manage an existing project/i }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     expect(screen.getByText("Choose an installed project")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\installed" } });
@@ -259,25 +285,18 @@ describe("HOI4 Mod Setup wizard", () => {
     } as unknown as WizardState} update={vi.fn()} onMaintenance={vi.fn()} />);
 
     expect(screen.queryByRole("button", { name: /run source-declared MCP check/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(/planned but unavailable/i);
+    expect(screen.getByRole("status")).toHaveTextContent(/optional integration is unavailable/i);
   });
 
-  it("exposes a confirmed inverse action only for a completed installation rollback", async () => {
-    const update = vi.fn();
-    const restored = { transaction_id: "inverse-1", transaction_kind: "rollback", state: "rolled_back" } as unknown as WizardState["transaction"];
-    vi.mocked(rollbackInstallation).mockResolvedValue(restored ?? null);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  it("keeps recovery actions out of the completed readiness screen", () => {
     const state = {
       ...readyState(),
       readiness: { openInCodex: false, blockingCheckIds: ["installation.rollback"], checks: [] },
       transaction: { transaction_kind: "installation", state: "rolled_back", rollback_transaction_id: "rollback-1" },
     } as unknown as WizardState;
 
-    render(<Ready state={state} update={update} onMaintenance={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Restore rolled-back state" }));
-
-    await waitFor(() => expect(rollbackInstallation).toHaveBeenCalledWith("C:\\mods\\cold-war-curtain", "rollback-1"));
-    expect(update).toHaveBeenCalledWith({ transaction: restored, readiness: null, transactionError: undefined });
+    render(<Ready state={state} update={vi.fn()} onMaintenance={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /restore rolled-back state/i })).not.toBeInTheDocument();
   });
 
   it("keeps manifest dependencies and file evidence behind the component disclosure", async () => {

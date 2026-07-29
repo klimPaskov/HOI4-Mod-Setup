@@ -13,9 +13,9 @@ Read:
 - `docs/10_merge_conflict_rules.md`
 - `docs/14_transaction_rollback.md`
 - `docs/15_update_repair.md`
-- `schemas/installation-plan.schema.json`
-- `schemas/transaction-journal.schema.json`
-- `schemas/installation-lock.schema.json`
+- `docs/schemas/installation-plan.schema.json`
+- `docs/schemas/transaction-journal.schema.json`
+- `docs/schemas/installation-lock.schema.json`
 - corresponding examples
 
 ## Stage order
@@ -154,10 +154,16 @@ Opaque OS-vault credential references are carried separately from secret values.
 
 - Update compares base, local, and incoming.
 - Repair defaults to the locked revision.
+- If a valid lock reports `workflow.3d` as `not_selected`, repair may expand
+  that component and its manifest-declared dependencies at the exact locked
+  revision. Add only missing component ownership; equal local bytes become a
+  tracked no-op/replacement baseline and different bytes become a
+  `review_required` keep/replace/merge/rename/skip conflict.
 - Reinstall preserves local modifications through the same conflict engine.
 - Managed removal deletes only owned, unmodified content by default.
 - A credential removal is a separate explicit choice.
 - Optional workflow health is separate from the core lock gate. A stored Meshy reference may be carried forward only for `workflow.3d`, but a workflow is `incomplete` or `selected_pending` until its approved, manifest-derived health route reports success; missing optional credentials never block the core readiness gate.
+- Repair may add the 3D files at the lock's exact revision and may refresh only the opaque Meshy reference for an already-selected incomplete workflow; a previously `ready` workflow remains ready when its existing reference is carried forward.
 - Reinstall and repair must re-read the locked revision and preserve modified files for review. Managed removal must not delete merged ownership wholesale. The current planners are `repair_operations`, `reinstall_operations`, `update_operations`, and `managed_removal_operations` in `src-tauri/src/transaction.rs`.
 - Update preserves the lock's latest/pinned source mode and filters generated artifact IDs out of manifest component expansion. Descriptor, external launcher, and thumbnail artifacts are planned independently for both new and existing projects.
 - Repair and reinstall do not reconstruct a merged file from a raw source blob without a verified merge base; missing or changed merged files become reverse-merge review entries.

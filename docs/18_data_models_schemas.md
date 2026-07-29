@@ -23,6 +23,7 @@ Persist only the integration type, auth state needed by the current application 
 | `remote-manifest.schema.json` | Source components, files, dependencies, tools, environments, validation, and update rules |
 | `conflict-record.schema.json` | Base, local, incoming, resolution, and evidence for one conflict |
 | `transaction-journal.schema.json` | Durable stage and operation checkpoints for recovery and rollback |
+| `git-online-record.schema.json` | Secret-free record of a separately approved online Git action |
 
 `scan-result.schema.json` requires bounded-scan completion metadata (`partial`, `cancelled`, `limits_hit`, and file/directory/byte counters). Live stage/path progress is delivered only through correlated Tauri events and is not persisted as project content.
 

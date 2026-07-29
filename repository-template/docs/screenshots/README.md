@@ -19,6 +19,6 @@ Capture details:
 - local preview served with `pnpm exec vite --host 127.0.0.1 --port 4173`
 - viewport override: 1600 x 1200; browser scrollbar retained in the captures
 - no credentials, identity documents, private mod projects, or secret values
-- screenshots are implementation captures, not the design references in
-  [`ui-references/`](../../ui-references/)
+- screenshots are implementation captures; the source planning package keeps
+  the separate design references outside this generated repository template.
 - image filenames and alt text are stable so README links remain reviewable

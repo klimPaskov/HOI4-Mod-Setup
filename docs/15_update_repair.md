@@ -4,6 +4,13 @@
 
 Show installed source mode and revision, last check, component states, local modification count, rollback points, optional workflow state, credential availability without values, and unresolved warnings.
 
+When an existing-project scan finds a valid `.hoi4-mod-setup/install.lock.json`,
+show that a managed setup is already present and offer **Repair or add
+workflows**. The detection is read-only and uses only a bounded safe summary of
+the lock: project ID, component IDs, 3D state, a non-secret 3D key-configured
+bit, and portrait-interest state. It does not treat a guessed file list as an
+installation record.
+
 ## Update
 
 Latest mode resolves the current default branch. Pinned mode stays fixed until the user selects another commit or release.
@@ -17,6 +24,17 @@ Before an update plan is created, run a new bounded read-only scan. Show the res
 ## Repair
 
 Repair defaults to the locked revision. Check missing, corrupted, modified, parse-invalid, incomplete generated, MCP health, wiki coverage, and external dependency evidence. Healthy files are explicit no-op operations; missing files can be recreated, and a changed file becomes a reviewable replace/keep decision rather than an inferred repair. Modified files require review.
+
+If the lock shows that `workflow.3d` was previously `not_selected`, the repair
+screen offers the exact question **Do you want to set up the 3D models
+workflow?** again. Selecting it expands the locked manifest's declared
+dependencies, fetches the same exact locked revision, and plans only the new
+component files through the normal transaction. A stored Meshy reference may be
+carried forward only for that workflow; a missing key leaves 3D incomplete and
+does not block the core setup. If 3D is already selected, the option is shown as
+already part of the project rather than duplicating files. If its key is
+missing, repair exposes the vault-only key field without writing the value to
+the project. The LoRA/ComfyUI choice remains interest-only.
 
 ## Reinstall
 

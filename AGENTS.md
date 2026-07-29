@@ -31,7 +31,7 @@ The source planning package, accepted architecture decisions, schemas, and tests
 For a first implementation pass or a broad architectural change, read:
 
 1. `README.md`
-2. `GOAL_PROMPT.md`
+2. `docs/GOAL_PROMPT.md`
 3. `docs/01_product_requirements.md`
 4. `docs/02_user_flows.md`
 5. `docs/03_scanner_design.md`

@@ -20,5 +20,5 @@ Capture details:
 - viewport override: 1600 x 1200; browser scrollbar retained in the captures
 - no credentials, identity documents, private mod projects, or secret values
 - screenshots are implementation captures, not the design references in
-  [`ui-references/`](../../ui-references/)
+  [`ui-references/`](../ui-references/)
 - image filenames and alt text are stable so README links remain reviewable
