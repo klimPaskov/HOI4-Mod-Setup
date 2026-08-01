@@ -69,6 +69,9 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - Stable publication first creates a draft from the exact curated three-file
   installer set, verifies the draft state and assets, and only then changes it
   to a normal public release.
+- A publication job that intentionally omits source checkout must pass
+  `--repo "$GITHUB_REPOSITORY"` to every `gh release` command; it must not rely
+  on Git metadata being available in the runner workspace.
 
 Use the package scripts as the stable local release surface: run
 `pnpm release:build`, `pnpm release:verify`, `pnpm desktop:e2e`, and
