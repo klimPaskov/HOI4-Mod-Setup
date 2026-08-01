@@ -252,11 +252,11 @@ The 3D setup question must be exactly:
 
 A missing or invalid `MESHY_API_KEY` leaves the optional workflow incomplete and keeps core setup usable. Derive packages, commands, versions, adapters, Blender integration, and health checks from verified repository files. Do not invent a macOS route for a Windows-only repository workflow.
 
-The portrait workflow question must be exactly:
-
-**Do you want to set up LoRAs and ComfyUI for portrait generation?**
-
-Version 1 records interest only. It must not download, install, configure, or modify ComfyUI, models, LoRAs, Python environments, GPU software, or drivers. It never reports installed or ready.
+LoRA and ComfyUI are not setup options, components, project preferences, or
+readiness states. After successful setup, the Ready screen may show one concise
+external link to
+`https://github.com/klimPaskov/comfyui-hoi4-portraits`. The app does not
+install, configure, inspect, or report that separate portrait workflow.
 
 ## 11. UI rules
 

@@ -181,11 +181,7 @@ for (const artifactDirectory of expectedEntries) {
   const packages = files.filter(({ relative: path }) => path.startsWith("packages/") && path.toLowerCase().endsWith(descriptor.extension));
   if (packages.length !== 1) throw new Error(`${artifactDirectory} must contain exactly one ${descriptor.extension} package`);
   const packageName = publicPackageName(descriptor);
-  const metadataName = `${artifactDirectory}-BUILD_METADATA.json`;
-  const manifestName = `${artifactDirectory}-ARTIFACTS.sha256`;
   await cp(packages[0].absolute, resolve(outputRoot, packageName));
-  await cp(metadataFiles[0].absolute, resolve(outputRoot, metadataName));
-  await cp(manifestFiles[0].absolute, resolve(outputRoot, manifestName));
   summaries.push({
     artifact_directory: artifactDirectory,
     platform: descriptor.platform,
@@ -194,68 +190,34 @@ for (const artifactDirectory of expectedEntries) {
     signing: metadata.signing,
     package: packageName,
     package_sha256: digest(await readFile(resolve(outputRoot, packageName))),
-    metadata: metadataName,
-    manifest: manifestName,
   });
 }
 
-await writeFile(resolve(outputRoot, "SBOM.cdx.json"), JSON.stringify(mergeSbomInventories(sbomInventories), null, 2) + "\n", "utf8");
-await writeFile(resolve(outputRoot, "THIRD_PARTY_NOTICES.md"), mergeThirdPartyNotices(noticeInventories), "utf8");
-
-await writeFile(resolve(outputRoot, "PREVIEW_NOTICE.md"), [
-  `HOI4 Mod Setup ${previewTag} public prerelease`,
-  "",
-  "This public prerelease is built from one exact public Git commit. Windows and macOS may ask for a platform security confirmation because stable publisher signing and notarization are separate release gates. Verify the source commit and SHA-256 manifest before installing.",
-  "",
-  "The Apache 2.0 source is available at https://github.com/klimPaskov/HOI4-Mod-Setup.",
-  "",
-].join("\n"), "utf8");
-
-const provenance = {
-  schema_version: "1.0.0",
-  product: "HOI4 Mod Setup",
-  source_revision: sourceRevision,
-  preview_tag: previewTag,
-  sbom: "SBOM.cdx.json",
-  artifacts: summaries,
-  generated_by: "scripts/prepare_preview_assets.mjs",
-};
-await writeFile(resolve(outputRoot, "PREVIEW_PROVENANCE.json"), JSON.stringify(provenance, null, 2) + "\n", "utf8");
+mergeSbomInventories(sbomInventories);
+mergeThirdPartyNotices(noticeInventories);
 
 const downloadBase = previewTag
   ? `https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/${encodeURIComponent(previewTag)}`
   : null;
-const downloadRows = summaries.map((summary) => {
+const downloadBullets = summaries.map((summary) => {
   const label = summary.platform === "windows"
-    ? "Windows x64"
-    : summary.architecture === "ARM64" ? "macOS Apple silicon" : "macOS Intel";
+    ? "Windows"
+    : summary.architecture === "ARM64" ? "Mac (Apple silicon)" : "Mac (Intel)";
   const packageLink = downloadBase ? `[${summary.package}](${downloadBase}/${encodeURIComponent(summary.package)})` : `\`${summary.package}\``;
-  const manifestLink = downloadBase ? `[manifest](${downloadBase}/${encodeURIComponent(summary.manifest)})` : `\`${summary.manifest}\``;
-  return `| ${label} | ${packageLink} | ${summary.package_sha256} | ${manifestLink} |`;
+  return `- ${label}: ${packageLink}`;
 });
-const verificationLinks = downloadBase
-  ? `[PREVIEW_PROVENANCE.json](${downloadBase}/PREVIEW_PROVENANCE.json), [PREVIEW_ARTIFACTS.sha256](${downloadBase}/PREVIEW_ARTIFACTS.sha256), [SBOM.cdx.json](${downloadBase}/SBOM.cdx.json), and [THIRD_PARTY_NOTICES.md](${downloadBase}/THIRD_PARTY_NOTICES.md)`
-  : "`PREVIEW_PROVENANCE.json`, `PREVIEW_ARTIFACTS.sha256`, `SBOM.cdx.json`, and `THIRD_PARTY_NOTICES.md`";
 await writeFile(resolve(outputRoot, "PREVIEW_RELEASE_NOTES.md"), [
   `# HOI4 Mod Setup ${previewTag}`,
   "",
-  "This public prerelease is built from one exact public Git commit and includes native installers for Windows and macOS.",
+  "Download the installer for your computer:",
   "",
-  "## Downloads",
-  "",
-  "| Platform | Installer | SHA-256 | Package manifest |",
-  "| --- | --- | --- | --- |",
-  ...downloadRows,
+  ...downloadBullets,
   "",
   "Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app to Applications.",
   "",
-  `This is a prerelease, not a stable release. Windows and macOS may ask for a platform security confirmation because stable publisher signing and notarization are separate release gates. Verify ${verificationLinks} and the source commit before installing.`,
+  "Your computer may occasionally flag a new community build as harmful. This can be a false positive; the app is open source and this is its official GitHub release page.",
   "",
   "The source is public under the Apache License 2.0: <https://github.com/klimPaskov/HOI4-Mod-Setup>.",
 ].join("\n") + "\n", "utf8");
 
-const outputFiles = (await walk(outputRoot)).filter(({ relative: path }) => path !== "PREVIEW_ARTIFACTS.sha256").sort((left, right) => left.relative.localeCompare(right.relative));
-const outputManifest = [];
-for (const file of outputFiles) outputManifest.push({ path: file.relative, sha256: digest(await readFile(file.absolute)) });
-await writeFile(resolve(outputRoot, "PREVIEW_ARTIFACTS.sha256"), JSON.stringify(outputManifest, null, 2) + "\n", "utf8");
-console.log(`Prepared ${outputManifest.length} development-preview assets for ${summaries.length} platforms.`);
+console.log(`Prepared ${summaries.length} user-facing installers for ${summaries.length} platforms.`);

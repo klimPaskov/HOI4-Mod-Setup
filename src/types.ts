@@ -7,7 +7,6 @@ export type ScreenId =
   | "components"
   | "workflows"
   | "mesh"
-  | "lora"
   | "mcp"
   | "git"
   | "dry-run"
@@ -23,7 +22,7 @@ export type SourceMode = "latest" | "pinned_commit" | "pinned_release";
 
 export type AiProviderId = "codex" | "claude" | "kimi" | "glm" | "deepseek" | "local" | "custom";
 
-export type WorkflowState = "not_selected" | "selected_pending" | "ready" | "incomplete" | "interest_recorded" | "planned_unavailable" | "unsupported_platform";
+export type WorkflowState = "not_selected" | "selected_pending" | "ready" | "incomplete" | "planned_unavailable" | "unsupported_platform";
 
 export type StatusTone = "pass" | "review" | "block" | "info" | "muted";
 
@@ -39,6 +38,9 @@ export interface GitOnlinePlan {
   remote_name: string;
   repository: string;
   head_sha: string;
+  reviewed_at: string;
+  expires_at: string;
+  git_executable_sha256: string;
   remote_url?: string | null;
   gh_executable_sha256?: string | null;
 }
@@ -285,8 +287,17 @@ export interface SourceManifestPreview {
 
 export interface FolderSelection {
   path?: string | null;
+  launcher_descriptor_path?: string | null;
   error?: string | null;
   cancelled: boolean;
+}
+
+export interface SuggestedProjectPaths {
+  mod_directory: string;
+  project_root: string;
+  launcher_descriptor_path: string;
+  project_exists: boolean;
+  launcher_descriptor_exists: boolean;
 }
 
 export interface InstallationPlanOperation {
@@ -356,7 +367,6 @@ export interface InstallationPlan {
   ai_endpoint?: string | null;
   ai_optimization_profile?: string;
   flatten_chat_sources?: boolean;
-  flatten_additional_files?: string[];
   codex_analysis?: CodexAnalysisRecord | null;
   selected_components: string[];
   wiki_required_pages: string[];
@@ -379,6 +389,9 @@ export interface InstallationPlan {
     backup_root: string;
     staging_root: string;
     atomic_apply_expected?: boolean;
+    project_root_mode: "existing" | "create_leaf";
+    project_root_parent?: string | null;
+    project_root_leaf?: string | null;
   };
   approvals: {
     dry_run_reviewed: boolean;
@@ -405,6 +418,15 @@ export interface TransactionJournal {
   result_lock_exists?: boolean | null;
   project_id: string;
   project_root?: string;
+  project_root_lifecycle?: {
+    mode: "existing" | "create_leaf";
+    canonical_parent?: string | null;
+    leaf?: string | null;
+    checkpoint: string;
+    created_by_transaction: boolean;
+    observed_exists: boolean;
+    cleanup_result?: string | null;
+  };
   state: string;
   created_at: string;
   updated_at: string;
@@ -423,6 +445,9 @@ export interface WizardState {
   identity: ProjectIdentity;
   /** Fields the user explicitly changed; generated conventions stay live elsewhere. */
   identityOverrides?: IdentityGeneratedField[];
+  projectPathsOverridden?: boolean;
+  projectPathStatus?: "resolving" | "ready" | "collision" | "unavailable" | "manual";
+  projectPathMessage?: string;
   description: string;
   folderProfile?: string[];
   sourceMode: SourceMode;
@@ -435,12 +460,11 @@ export interface WizardState {
   selectedComponents: string[];
   components: ComponentRow[];
   meshSelected: boolean;
+  superEventsSelected: boolean;
   meshKeyDraft: string;
   meshKeyStatus: "missing" | "present" | "verified" | "unsupported";
   meshCredentialReference?: CredentialReference;
-  loraInterest: boolean;
   flattenForChat: boolean;
-  flattenAdditionalFiles: string[];
   gitMode: "initialize" | "preserve" | "skip";
   gitBranch: string;
   initialCommit: boolean;
@@ -457,7 +481,7 @@ export interface WizardState {
   maintenanceEvidenceReady?: boolean;
   existingInstallationDetected?: boolean;
   installedWorkflow3dState?: WorkflowState;
-  installedLoraInterest?: boolean;
+  installedSuperEventsState?: WorkflowState;
   scanContext?: { scanId: string; projectRoot: string; completedAt?: string | null; partial?: boolean; limitsHit?: string[] };
   conflictChoice?: ConflictChoice;
   recoveryChoice: RecoveryChoice;
@@ -469,6 +493,5 @@ export interface WizardState {
   codexAnalysis?: CodexAnalysis;
   codexAnalysisRecord?: CodexAnalysisRecord;
   manifestPreview?: SourceManifestPreview;
-  sourceStatus: string;
   draftSaved: boolean;
 }

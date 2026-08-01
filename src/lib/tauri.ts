@@ -1,4 +1,4 @@
-import type { AiAccountStatus, AiAnalysisRequest, AiProviderProfile, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
+import type { AiAccountStatus, AiAnalysisRequest, AiProviderProfile, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
   id: string;
@@ -41,7 +41,6 @@ interface ReadinessInput {
   project_id: string;
   project_root: string;
   workflow_3d_state: string;
-  lora_interest: boolean;
 }
 
 interface TauriCommandMap {
@@ -54,17 +53,19 @@ interface TauriCommandMap {
   codex_account_read: { args: Record<string, never>; result: CodexAccountStatus };
   codex_login_start: { args: { mode: "browser" | "device" }; result: CodexLoginStart };
   codex_login_wait: { args: { loginId: string }; result: CodexAccountStatus };
-  codex_login_cancel: { args: Record<string, never>; result: void };
+  codex_login_cancel: { args: { loginId: string }; result: void };
   open_codex_login_url: { args: { url: string }; result: void };
+  open_external_url: { args: { url: string }; result: void };
   codex_logout: { args: Record<string, never>; result: void };
   codex_analyze: { args: { request: CodexAnalysisRequest }; result: CodexAnalysisResult };
   confirm_codex_analysis: { args: { record: CodexAnalysisRecord; confirmedFields: string[]; confirmedValues: unknown }; result: CodexAnalysisRecord };
   pick_project_folder: { args: Record<string, never>; result: FolderSelection };
   pick_launcher_folder: { args: Record<string, never>; result: FolderSelection };
+  suggest_project_paths: { args: { projectId: string }; result: SuggestedProjectPaths };
   preview_source_manifest: { args: { sourceMode: WizardState["sourceMode"]; pinnedRef: string }; result: SourceManifestPreview };
   store_meshy_credential: { args: { value: string }; result: CredentialReference };
   remove_meshy_credential: { args: { reference: CredentialReference }; result: void };
-  scan_project: { args: { root: string; requestId: string }; result: RawScanResult };
+  scan_project: { args: { root: string; requestId: string; launcherDescriptorPath?: string | null }; result: RawScanResult };
   cancel_scan: { args: { requestId: string }; result: void };
   evaluate_readiness: { args: { input: ReadinessInput }; result: RawReadinessReport };
   run_3d_health_check: { args: { projectRoot: string }; result: WorkflowHealthResult };
@@ -72,7 +73,7 @@ interface TauriCommandMap {
   preview_descriptors: { args: { state: WizardState }; result: GeneratedArtifactPreview[] };
   preview_installation_conflict: { args: { planId: string; path: string }; result: ConflictPreview };
   build_installation_plan: { args: { state: WizardState }; result: InstallationPlan };
-  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; codexAnalysis?: CodexAnalysisRecord | null; addWorkflow3d?: boolean }; result: InstallationPlan };
+  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; codexAnalysis?: CodexAnalysisRecord | null; addOptionalComponents?: string[] }; result: InstallationPlan };
   approve_installation: { args: { planId: string }; result: void };
   resolve_installation_conflict: { args: { planId: string; path: string; choice: string }; result: InstallationPlan };
   apply_installation: { args: { plan: InstallationPlan; projectRoot: string }; result: TransactionJournal };
@@ -135,7 +136,7 @@ export async function storeMeshyCredential(value: string): Promise<CredentialRef
 }
 
 export async function removeMeshyCredential(reference: CredentialReference): Promise<boolean> {
-  return (await invokeCommand("remove_meshy_credential", { reference })) !== null;
+  return (await invokeCommandResult("remove_meshy_credential", { reference })).error === undefined;
 }
 
 export async function readCodexAccount(): Promise<CodexAccountStatus | null> {
@@ -179,16 +180,21 @@ export async function waitForCodexLoginResult(loginId: string): Promise<CommandR
   return invokeCommandResult("codex_login_wait", { loginId });
 }
 
-export async function cancelCodexLogin(): Promise<boolean> {
-  return (await invokeCommandResult("codex_login_cancel", {})).value !== null;
+export async function cancelCodexLogin(loginId: string): Promise<boolean> {
+  if (!loginId.trim()) return false;
+  return (await invokeCommandResult("codex_login_cancel", { loginId })).error === undefined;
 }
 
 export async function openCodexLoginUrlResult(url: string): Promise<CommandResult<void>> {
   return invokeCommandResult("open_codex_login_url", { url });
 }
 
+export async function openExternalUrlResult(url: string): Promise<CommandResult<void>> {
+  return invokeCommandResult("open_external_url", { url });
+}
+
 export async function logoutCodex(): Promise<boolean> {
-  return (await invokeCommand("codex_logout", {})) !== null;
+  return (await logoutCodexResult()).error === undefined;
 }
 
 export async function logoutCodexResult(): Promise<CommandResult<void>> {
@@ -199,8 +205,20 @@ export async function runCodexAnalysis(request: CodexAnalysisRequest): Promise<C
   return invokeCommand("codex_analyze", { request });
 }
 
+export async function runCodexAnalysisResult(
+  request: CodexAnalysisRequest,
+): Promise<CommandResult<CodexAnalysisResult>> {
+  return invokeCommandResult("codex_analyze", { request });
+}
+
 export async function runAiAnalysis(request: AiAnalysisRequest): Promise<CodexAnalysisResult | null> {
   return invokeCommand("ai_analyze", { request });
+}
+
+export async function runAiAnalysisResult(
+  request: AiAnalysisRequest,
+): Promise<CommandResult<CodexAnalysisResult>> {
+  return invokeCommandResult("ai_analyze", { request });
 }
 
 export async function approveScanEvidence(
@@ -208,7 +226,7 @@ export async function approveScanEvidence(
   scanId: string,
   evidence: Array<{ reference: string; path: string; excerpt: string; excerpt_sha256: string; confidence?: number | null }>,
 ): Promise<boolean> {
-  return (await invokeCommand("approve_scan_evidence", { projectRoot, scanId, evidence })) !== null;
+  return (await invokeCommandResult("approve_scan_evidence", { projectRoot, scanId, evidence })).error === undefined;
 }
 
 export async function confirmCodexAnalysis(record: CodexAnalysisRecord, confirmedFields: string[], confirmedValues: unknown): Promise<CodexAnalysisRecord | null> {
@@ -223,8 +241,16 @@ export async function pickLauncherFolder(): Promise<FolderSelection | null> {
   return invokeCommand("pick_launcher_folder", {});
 }
 
+export async function suggestProjectPaths(projectId: string): Promise<SuggestedProjectPaths | null> {
+  return invokeCommand("suggest_project_paths", { projectId });
+}
+
 export async function previewSourceManifest(sourceMode: WizardState["sourceMode"], pinnedRef: string): Promise<SourceManifestPreview | null> {
-  return invokeCommand("preview_source_manifest", { sourceMode, pinnedRef });
+  return (await previewSourceManifestResult(sourceMode, pinnedRef)).value;
+}
+
+export async function previewSourceManifestResult(sourceMode: WizardState["sourceMode"], pinnedRef: string): Promise<CommandResult<SourceManifestPreview>> {
+  return invokeCommandResult("preview_source_manifest", { sourceMode, pinnedRef });
 }
 
 function newScanRequestId(): string {
@@ -236,6 +262,7 @@ export async function scanProject(
   root: string,
   onProgress?: (progress: ScanProgress) => void,
   onRequestId?: (requestId: string) => void,
+  launcherDescriptorPath?: string,
 ): Promise<ScanSnapshot | null> {
   const requestId = newScanRequestId();
   onRequestId?.(requestId);
@@ -258,7 +285,11 @@ export async function scanProject(
         // The browser preview has no Tauri event bus; the final command result remains authoritative.
       }
     }
-    const result = await invokeCommand("scan_project", { root, requestId });
+    const result = await invokeCommand("scan_project", {
+      root,
+      requestId,
+      launcherDescriptorPath: launcherDescriptorPath || null,
+    });
     if (!result) return null;
     return {
       findings: (result.findings ?? []).map((finding) => ({
@@ -290,13 +321,12 @@ export async function cancelScan(requestId: string): Promise<CommandResult<void>
   return invokeCommandResult("cancel_scan", { requestId });
 }
 
-export async function evaluateReadiness(projectRoot: string, projectId: string, optional3d: string, loraInterest: boolean): Promise<ReadinessReport | null> {
+export async function evaluateReadiness(projectRoot: string, projectId: string, optional3d: string): Promise<ReadinessReport | null> {
   const raw = await invokeCommand("evaluate_readiness", {
     input: {
       project_id: projectId,
       project_root: projectRoot,
       workflow_3d_state: optional3d,
-      lora_interest: loraInterest,
     },
   });
   if (!raw) return null;
@@ -349,8 +379,8 @@ export async function resolveInstallationConflict(planId: string, path: string, 
   return invokeCommand("resolve_installation_conflict", { planId, path, choice });
 }
 
-export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord, addWorkflow3d = false): Promise<InstallationPlan | null> {
-  return invokeCommand("build_maintenance_plan", { mode, projectRoot, codexAnalysis: codexAnalysis ?? null, addWorkflow3d });
+export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord, addOptionalComponents: string[] = []): Promise<InstallationPlan | null> {
+  return invokeCommand("build_maintenance_plan", { mode, projectRoot, codexAnalysis: codexAnalysis ?? null, addOptionalComponents });
 }
 
 export async function rollbackInstallation(projectRoot: string, transactionId: string): Promise<TransactionJournal | null> {

@@ -183,6 +183,21 @@ fn locked_file_destination(
     }
 }
 
+#[cfg(unix)]
+fn locked_executable_state_matches(path: &Path, expected: bool) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::symlink_metadata(path)
+        .ok()
+        .filter(|metadata| metadata.is_file() && !is_link_metadata(metadata))
+        .is_some_and(|metadata| (metadata.permissions().mode() & 0o111 != 0) == expected)
+}
+
+#[cfg(not(unix))]
+fn locked_executable_state_matches(_path: &Path, _expected: bool) -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReadinessInput {
     pub project_id: String,
@@ -248,7 +263,7 @@ pub struct ReadinessInput {
     #[serde(default)]
     pub workflow_3d_state: String,
     #[serde(default)]
-    pub lora_interest: bool,
+    pub workflow_super_events_state: String,
     /// Provenance is copied from the exact locked manifest. Readiness does
     /// not substitute a newer bundled manifest for an installed revision.
     #[serde(default = "crate::models::default_unknown_status")]
@@ -296,7 +311,7 @@ impl Default for ReadinessInput {
             conflict_status: "pass".into(),
             dependency_status: "pass".into(),
             workflow_3d_state: "not_selected".into(),
-            lora_interest: false,
+            workflow_super_events_state: "not_selected".into(),
             source_license_status: "unknown".into(),
             wiki_source_status: "unknown".into(),
             wiki_license_status: "unknown".into(),
@@ -618,23 +633,7 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         "manifest",
     );
     add_workflow_3d_check(&mut checks, &input.workflow_3d_state);
-    checks.push(ReadinessCheck {
-        id: "workflow.lora_comfyui_interest".into(),
-        category: "workflow".into(),
-        label: "LoRA and ComfyUI portrait workflow".into(),
-        status: if input.lora_interest { "planned_unavailable" } else { "not_selected" }.into(),
-        blocking: false,
-        message: Some(if input.lora_interest {
-            "Interest is recorded. Automated setup is not available in version 1; no files or software were changed.".into()
-        } else {
-            "The portrait workflow was not selected.".into()
-        }),
-        evidence: vec![ReadinessEvidence {
-            kind: "preference".into(),
-            value: json!(input.lora_interest),
-            path: Some(".hoi4-mod-setup/state.json".into()),
-        }],
-    });
+    add_super_events_check(&mut checks, &input.workflow_super_events_state);
 
     let mut summary = ReadinessSummary::default();
     let mut blocking_ids = Vec::new();
@@ -784,6 +783,13 @@ pub(crate) fn wiki_link_integrity(project_root: &Path) -> Vec<String> {
     collect_wiki_files(&wiki_root, &mut files, &mut broken, &mut bytes_read, 0);
     let mut targets = Vec::new();
     for file in files {
+        if file
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_none_or(|extension| !extension.eq_ignore_ascii_case("md"))
+        {
+            continue;
+        }
         let bytes = match fs::read(&file) {
             Ok(bytes) => bytes,
             Err(_) => {
@@ -889,15 +895,6 @@ fn markdown_targets(text: &str) -> Vec<String> {
         }
         rest = &after[end + 1..];
     }
-    let mut rest = text;
-    while let Some(start) = rest.find("[[") {
-        let after = &rest[start + 2..];
-        let Some(end) = after.find("]]") else { break };
-        if !after[..end].trim().is_empty() {
-            targets.push(after[..end].trim().to_string());
-        }
-        rest = &after[end + 2..];
-    }
     targets
 }
 
@@ -917,7 +914,39 @@ fn normalize_wiki_target(raw: &str) -> Option<String> {
     if target.is_empty() {
         return None;
     }
-    Some(target.trim_start_matches('/').replace('\\', "/"))
+    let mut normalized = String::with_capacity(target.len());
+    let mut characters = target.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '\\' {
+            if let Some(next) = characters.peek().copied() {
+                if matches!(
+                    next,
+                    '\\' | '`'
+                        | '*'
+                        | '_'
+                        | '{'
+                        | '}'
+                        | '['
+                        | ']'
+                        | '('
+                        | ')'
+                        | '#'
+                        | '+'
+                        | '-'
+                        | '.'
+                        | '!'
+                ) {
+                    normalized.push(next);
+                    characters.next();
+                    continue;
+                }
+            }
+            normalized.push('/');
+        } else {
+            normalized.push(character);
+        }
+    }
+    Some(normalized.trim_start_matches('/').to_string())
 }
 
 fn add_wiki_check(checks: &mut Vec<ReadinessCheck>, input: &ReadinessInput) {
@@ -1007,6 +1036,37 @@ fn add_workflow_3d_check(checks: &mut Vec<ReadinessCheck>, status: &str) {
     });
 }
 
+fn add_super_events_check(checks: &mut Vec<ReadinessCheck>, status: &str) {
+    let normalized = match status {
+        "ready" | "healthy" | "installed" => "pass",
+        "not_selected" | "" => "not_selected",
+        "unsupported_platform" => "unsupported_platform",
+        _ => "warn",
+    };
+    checks.push(ReadinessCheck {
+        id: "workflow.super_events".into(),
+        category: "workflow".into(),
+        label: "Super Events workflow".into(),
+        status: normalized.into(),
+        blocking: false,
+        message: Some(match normalized {
+            "pass" => {
+                "The selected Super Events skill is installed and covered by managed hash checks."
+                    .into()
+            }
+            "not_selected" => "The Super Events workflow was not selected.".into(),
+            _ => {
+                "The optional Super Events workflow needs review; core setup remains usable.".into()
+            }
+        }),
+        evidence: vec![ReadinessEvidence {
+            kind: "workflow_state".into(),
+            value: json!(status),
+            path: Some(".agents/skills/hoi4-super-events/".into()),
+        }],
+    });
+}
+
 pub fn core_ready(report: &ReadinessReport) -> bool {
     report.core_ready
 }
@@ -1041,6 +1101,7 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
                     .unwrap_or(true);
                 hash_valid
                     && size_valid
+                    && locked_executable_state_matches(&path, file.executable)
                     && file.source_revision == lock.source.revision
                     && crate::source::validate_sha256(&file.source_sha256).is_ok()
                     && crate::source::validate_sha256(&file.installed_sha256).is_ok()
@@ -1181,26 +1242,16 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
     } else {
         "not_selected".into()
     };
-    let (workflow_3d_state, lora_interest) = lock
+    let workflow_3d_state = lock
         .as_ref()
-        .map(|lock| {
-            let mesh = lock
-                .optional_workflows
-                .get("workflow.3d")
-                .map(|workflow| workflow.state.clone())
-                .unwrap_or_else(|| "not_selected".into());
-            let lora = lock
-                .optional_workflows
-                .get("workflow.lora_comfyui_interest")
-                .is_some_and(|workflow| {
-                    matches!(
-                        workflow.state.as_str(),
-                        "planned_unavailable" | "interest_recorded"
-                    )
-                });
-            (mesh, lora)
-        })
-        .unwrap_or_else(|| ("not_selected".into(), false));
+        .and_then(|lock| lock.optional_workflows.get("workflow.3d"))
+        .map(|workflow| workflow.state.clone())
+        .unwrap_or_else(|| "not_selected".into());
+    let workflow_super_events_state = lock
+        .as_ref()
+        .and_then(|lock| lock.optional_workflows.get("workflow.super_events"))
+        .map(|workflow| workflow.state.clone())
+        .unwrap_or_else(|| "not_selected".into());
     let codex_analysis = lock.as_ref().and_then(|lock| lock.codex_analysis.as_ref());
     let ai_provider = lock
         .as_ref()
@@ -1281,7 +1332,7 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         },
         dependency_status: dependency_status.into(),
         workflow_3d_state,
-        lora_interest,
+        workflow_super_events_state,
         source_license_status,
         wiki_source_status,
         wiki_license_status,
@@ -1360,7 +1411,7 @@ mod tests {
             conflict_status: "pass".into(),
             dependency_status: "pass".into(),
             workflow_3d_state: "incomplete".into(),
-            lora_interest: true,
+            workflow_super_events_state: "ready".into(),
             wiki_required_pages: vec![],
             ..Default::default()
         };
@@ -1369,7 +1420,15 @@ mod tests {
         assert!(report
             .checks
             .iter()
-            .any(|check| check.status == "planned_unavailable"));
+            .any(|check| check.id == "workflow.3d" && check.status == "warn"));
+        assert!(report
+            .checks
+            .iter()
+            .any(|check| check.id == "workflow.super_events" && check.status == "pass"));
+        assert!(!report
+            .checks
+            .iter()
+            .any(|check| check.id.contains("lora") || check.label.contains("ComfyUI")));
     }
 
     #[test]
@@ -1483,5 +1542,25 @@ mod tests {
         fs::write(wiki.join("Page Two.md"), "# page").unwrap();
         let broken = wiki_link_integrity(project.path());
         assert_eq!(broken, vec!["index.md -> missing.md"]);
+    }
+
+    #[test]
+    fn wiki_link_integrity_handles_markdown_escapes_citations_and_binary_media() {
+        let project = tempfile::tempdir().unwrap();
+        let wiki = project.path().join("paradox_wiki");
+        fs::create_dir_all(wiki.join("media")).unwrap();
+        fs::write(
+            wiki.join("index.md"),
+            "[objects](loc\\_objects.md) [[1]](#cite-note-1) [[a]](#cnote-a)",
+        )
+        .unwrap();
+        fs::write(wiki.join("loc_objects.md"), "# objects").unwrap();
+        fs::write(
+            wiki.join("media").join("image.png"),
+            b"\x89PNG\r\n\x1a\n](missing.md)",
+        )
+        .unwrap();
+
+        assert!(wiki_link_integrity(project.path()).is_empty());
     }
 }

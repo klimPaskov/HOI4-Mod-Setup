@@ -8,7 +8,6 @@
   "ai_endpoint": null,
   "ai_optimization_profile": "Codex project and ChatGPT Chat",
   "flatten_chat_sources": false,
-  "flatten_additional_files": [],
   "source": {
     "repository": "klimPaskov/Agentic-HOI4-Modding",
     "mode": "pinned_commit",
@@ -59,11 +58,11 @@
       "validation": "pass"
     },
     {
-      "id": "workflow.lora_comfyui_interest",
-      "version": null,
-      "state": "planned_unavailable",
+      "id": "workflow.super_events",
+      "version": "repository-resolved",
+      "state": "installed",
       "source_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
-      "validation": "warn"
+      "validation": "pass"
     }
   ],
   "files": [
@@ -77,11 +76,12 @@
       "base_sha256": null,
       "installed_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
       "ownership": "generated",
+      "preserved_local": false,
       "executable": false,
       "platform": "all"
     },
     {
-      "path": "C:\\Users\\example\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain.mod",
+      "path": "C:\\Users\\example\\OneDrive\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain.mod",
       "location_scope": "external_launcher",
       "component_id": "project.launcher_scaffold",
       "source_path": "generator://descriptor/launcher",
@@ -90,6 +90,7 @@
       "base_sha256": null,
       "installed_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
       "ownership": "generated",
+      "preserved_local": false,
       "external": true,
       "executable": false,
       "platform": "windows"
@@ -104,6 +105,7 @@
       "base_sha256": null,
       "installed_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
       "ownership": "generated",
+      "preserved_local": false,
       "executable": false,
       "platform": "all"
     },
@@ -116,6 +118,7 @@
       "base_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
       "installed_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
       "ownership": "merged",
+      "preserved_local": false,
       "executable": false,
       "platform": "all",
       "location_scope": "project"
@@ -129,6 +132,35 @@
       "base_sha256": null,
       "installed_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
       "ownership": "managed",
+      "preserved_local": false,
+      "executable": false,
+      "platform": "all",
+      "location_scope": "project"
+    },
+    {
+      "path": ".agents/skills/hoi4-super-events/SKILL.md",
+      "component_id": "workflow.super_events",
+      "source_path": ".agents/skills/hoi4-super-events/SKILL.md",
+      "source_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+      "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "base_sha256": null,
+      "installed_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "ownership": "managed",
+      "preserved_local": false,
+      "executable": false,
+      "platform": "all",
+      "location_scope": "project"
+    },
+    {
+      "path": ".agents/skills/hoi4-super-events/agents/openai.yaml",
+      "component_id": "workflow.super_events",
+      "source_path": ".agents/skills/hoi4-super-events/agents/openai.yaml",
+      "source_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+      "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "base_sha256": null,
+      "installed_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "ownership": "managed",
+      "preserved_local": false,
       "executable": false,
       "platform": "all",
       "location_scope": "project"
@@ -147,10 +179,9 @@
       "reason": null,
       "credential_reference": "credential://meshy_api_key/00000000-0000-0000-0000-000000000000"
     },
-    "workflow.lora_comfyui_interest": {
-      "state": "planned_unavailable",
-      "reason": "Automated setup is not implemented in version 1.",
-      "credential_reference": null
+    "workflow.super_events": {
+      "state": "ready",
+      "reason": null
     }
   },
   "local_modifications": [],

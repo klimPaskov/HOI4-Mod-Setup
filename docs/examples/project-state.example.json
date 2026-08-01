@@ -15,7 +15,6 @@
       "components",
       "workflows",
       "3d",
-      "lora",
       "mcp",
       "git",
       "dry_run",
@@ -26,7 +25,6 @@
   },
   "preferences": {
     "source_mode": "pinned_commit",
-    "lora_comfyui_interest": true,
     "telemetry": false
   },
   "codex": {

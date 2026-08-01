@@ -1,27 +1,37 @@
 # Changelog
 
-All notable changes to HOI4 Mod Setup should be recorded here. The project follows semantic versioning once public releases begin.
+HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+## 0.1.1 - 2026-07-29
+
 ### Added
 
-- Initial product and architecture planning package
-- User-facing README and contributor documentation
-- Open-source GitHub workflow templates
-- Repo-local AGENTS, ten living skills, and nine bounded subagent templates
-- ChatGPT-managed Codex App Server authentication and analysis contract
-- Launcher-ready generation for both descriptors and `thumbnail.png`
+- Windows and macOS Tauri desktop wizard for new and existing HOI4 mods
+- Codex App Server sign-in plus explicit Claude, Kimi, GLM, DeepSeek, local,
+  and custom provider profiles
+- Automatic editable identity, descriptor, namespace, tag, and folder values
+  from a mod name and natural-language description
+- Selective source-manifest installation, offline wiki, repair, reinstall,
+  rollback, managed removal, and interrupted-transaction recovery
+- Git initialize/preserve/skip, separately approved online push and public
+  GitHub creation, and optional Codex-only flattened ChatGPT sources
+- Windows Credential Manager and macOS Keychain integration
+- Windows and macOS native build, package, launch-smoke, and release workflows
 
 ### Changed
 
-- All semantic project identity and convention proposals use the user’s ChatGPT Codex access
-- Desktop UI references use a restrained seven-phase wizard with progressive disclosure
-- Scan, plan, lock, project-state, and readiness schemas record the Codex and launcher boundaries
+- The interface now uses one clean app surface, larger controls, plain titles,
+  and simpler user-facing language
+- The portrait setup placeholder was removed; successful setup links to the
+  separate ComfyUI HOI4 Portraits project
+- GitHub Releases publish three clearly named installer files
 
 ### Security
 
-- Codex owns ChatGPT tokens and refresh
-- No OpenAI API key or external-token fallback exists in the core product
-- Account identity and usage data stay out of projects and locks
-- Downloads resolve to exact source revisions and require SHA-256 verification
+- Existing projects are scanned read-only before planning
+- Downloads and transactions are bound to reviewed source and operation
+  evidence before backup or apply
+- Codex, Git, source-cache, process, credential, and rollback boundaries fail
+  closed on unreviewed or changed state

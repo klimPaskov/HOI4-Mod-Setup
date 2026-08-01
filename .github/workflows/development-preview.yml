@@ -4,17 +4,33 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: User-facing prerelease version, for example 0.1.0
+        description: User-facing prerelease version, for example 0.1.1
         required: true
-        default: 0.1.0
+        default: 0.1.1
         type: string
 
 permissions:
   contents: read
 
 jobs:
+  preflight:
+    name: Validate preview request
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require main and a semantic version
+        env:
+          PREVIEW_TAG: ${{ github.event.inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          [[ "$PREVIEW_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+
   build:
     name: Build preview ${{ matrix.platform }}
+    needs: preflight
     strategy:
       fail-fast: false
       matrix:
@@ -74,12 +90,12 @@ jobs:
           path: dist/release/**
           if-no-files-found: error
 
-  publish:
-    name: Publish GitHub development preview
+  curate:
+    name: Verify and curate preview installers
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -91,13 +107,42 @@ jobs:
       - name: Curate and reverify preview assets
         env:
           GITHUB_SHA: ${{ github.sha }}
-          PREVIEW_TAG: ${{ github.event.inputs.release_tag || '0.1.0' }}
+          PREVIEW_TAG: ${{ github.event.inputs.release_tag || '0.1.1' }}
         run: node scripts/prepare_preview_assets.mjs preview-artifacts publication-assets
+      - name: Require exactly three public installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=(
+            "HOI4-Mod-Setup-macos-arm64.dmg"
+            "HOI4-Mod-Setup-macos-x64.dmg"
+            "HOI4-Mod-Setup-windows-x64-setup.exe"
+            "PREVIEW_RELEASE_NOTES.md"
+          )
+          mapfile -t actual < <(find publication-assets -maxdepth 1 -type f -printf '%f\n' | sort)
+          [[ "${actual[*]}" == "${expected[*]}" ]]
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hoi4-mod-setup-publication
+          path: publication-assets/**
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub development preview
+    needs: curate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: hoi4-mod-setup-publication
+          path: publication-assets
       - name: Create prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ github.sha }}
-          PREVIEW_TAG: ${{ github.event.inputs.release_tag || '0.1.0' }}
+          PREVIEW_TAG: ${{ github.event.inputs.release_tag || '0.1.1' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -106,11 +151,15 @@ jobs:
             echo "A preview already exists for ${preview_tag}; refusing to replace it" >&2
             exit 1
           fi
-          mapfile -d '' assets < <(find publication-assets -maxdepth 1 -type f -print0 | sort -z)
-          if (( ${#assets[@]} == 0 )); then
-            echo "No preview assets were prepared" >&2
-            exit 1
-          fi
+          assets=(
+            publication-assets/HOI4-Mod-Setup-macos-arm64.dmg
+            publication-assets/HOI4-Mod-Setup-macos-x64.dmg
+            publication-assets/HOI4-Mod-Setup-windows-x64-setup.exe
+          )
+          for asset in "${assets[@]}" publication-assets/PREVIEW_RELEASE_NOTES.md; do
+            [[ -f "$asset" && ! -L "$asset" ]]
+          done
+          [[ "$(find publication-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" == "4" ]]
           gh release create "$preview_tag" \
             "${assets[@]}" \
             --target "$SOURCE_SHA" \

@@ -62,9 +62,6 @@
             "pinned_release"
           ]
         },
-        "lora_comfyui_interest": {
-          "type": "boolean"
-        },
         "telemetry": {
           "const": false
         }

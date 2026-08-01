@@ -244,57 +244,61 @@ The repository-owned workflows call `pnpm release:build`, `pnpm release:verify`,
 
 ## Releases
 
-The public release path must publish clean, signed, user-facing artifacts: a
-Windows `.exe` installer and a macOS `.dmg` built on native runners. Each
-artifact needs a SHA-256 manifest, source/tag identity, SBOM/provenance, and
-platform verification. Windows signing and macOS Developer ID signing plus
-notarization are release gates; do not publish unsigned placeholders as a
-finished release. The root README links only to verified GitHub Releases.
+The public release path publishes clean, user-facing artifacts built on native
+runners: one Windows `.exe` installer and one macOS `.dmg` for each supported
+architecture. Each artifact needs internal SHA-256, source/tag identity, SBOM,
+signature, and platform evidence. Community releases use a ChaosX
+Authenticode signature on Windows and an ad-hoc code signature on the macOS
+application; protected credentials upgrade those routes to Azure Artifact
+Signing and Apple Developer ID signing plus notarization. The public GitHub
+Release contains only the three installers and concise notes.
 
 ### Development previews
 
 The manually dispatched `.github/workflows/development-preview.yml` builds the
 same three native targets, runs the UI and native launch gates, and publishes
-a user-facing semantic-version GitHub prerelease such as `0.1.0`. The
+a user-facing semantic-version GitHub prerelease such as `0.1.1`. The
 workflow refuses to reuse a published version. `scripts/prepare_preview_assets.mjs`
 rechecks the exact source commit, platform/architecture metadata, package
 hashes, and shared third-party notice inventory before the write-capable
 release operation. The preview path is separate from the stable release path:
 it does not receive stable signing credentials and its assets remain labelled
-as a GitHub prerelease. The stable `Release` workflow remains
-fail-closed until Windows signing and Apple Developer ID/notarization evidence
-are configured. Publication renames the installers to
+as a GitHub prerelease. The stable `Release` workflow uses verified community
+signing when protected official credentials are unavailable and upgrades the
+same gates when official signing is configured. Publication renames the installers to
 `HOI4-Mod-Setup-windows-x64-setup.exe`,
 `HOI4-Mod-Setup-macos-arm64.dmg`, and
-`HOI4-Mod-Setup-macos-x64.dmg`, then generates release notes with direct
-download links, package SHA-256 values, and platform manifests.
+`HOI4-Mod-Setup-macos-x64.dmg`, then generates release notes with three direct
+download bullets. Package hashes, source provenance, SBOM, third-party notices,
+metadata, and platform manifests remain verified CI evidence; the public
+GitHub Release uploads only the three installers.
 
-The release workflow fails closed until the protected environment provides the
-signing material. It imports `HOI4_MOD_SETUP_WINDOWS_CERTIFICATE` and
-`HOI4_MOD_SETUP_WINDOWS_CERTIFICATE_PASSWORD` into the Windows runner, using
-the variables `HOI4_MOD_SETUP_WINDOWS_SIGNER` and
-`HOI4_MOD_SETUP_WINDOWS_TIMESTAMP_URL` for verification and a temporary Tauri
-config. macOS uses the secrets `HOI4_MOD_SETUP_APPLE_CERTIFICATE`,
+The protected environment sets
+`HOI4_MOD_SETUP_RELEASE_PUBLISH=true`. When
+`HOI4_MOD_SETUP_RELEASE_SIGNING_CONFIGURED=false`, Windows creates an
+ephemeral ChaosX code-signing certificate, signs with SHA-256 and the reviewed
+DigiCert RFC 3161 timestamp endpoint, verifies Authenticode, and deletes the
+private material. macOS ad-hoc signs the application before rebuilding the
+DMG and verifies the resulting signature.
+
+When `HOI4_MOD_SETUP_RELEASE_SIGNING_CONFIGURED=true`, Windows uses Azure
+Artifact Signing through the OIDC secrets `AZURE_CLIENT_ID`,
+`AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`, plus the protected variables
+`HOI4_MOD_SETUP_ARTIFACT_SIGNING_ENDPOINT`,
+`HOI4_MOD_SETUP_ARTIFACT_SIGNING_ACCOUNT`,
+`HOI4_MOD_SETUP_ARTIFACT_SIGNING_PROFILE`,
+`HOI4_MOD_SETUP_WINDOWS_SIGNER`, and
+`HOI4_MOD_SETUP_WINDOWS_TIMESTAMP_URL`. macOS uses the secrets
+`HOI4_MOD_SETUP_APPLE_CERTIFICATE`,
 `HOI4_MOD_SETUP_APPLE_CERTIFICATE_PASSWORD`, `HOI4_MOD_SETUP_APPLE_ID`, and
 `HOI4_MOD_SETUP_APPLE_PASSWORD`, plus the variables
 `HOI4_MOD_SETUP_MACOS_SIGNING_IDENTITY` and
 `HOI4_MOD_SETUP_MACOS_TEAM_ID`. Temporary certificates and keychains are
 removed after verification and never enter the repository or release assets.
-The macOS job unwraps the P12 passphrase through an environment-only OpenSSL
-input and creates a random disposable keychain password, so no keychain
-password secret is passed as a process argument.
-
-Windows may alternatively use Azure Artifact Signing without a PFX. Set the
-protected environment variable `HOI4_MOD_SETUP_WINDOWS_SIGNING_MODE` to
-`artifact-signing`, provide the OIDC secrets `AZURE_CLIENT_ID`,
-`AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`, and configure the protected
-variables `HOI4_MOD_SETUP_ARTIFACT_SIGNING_ENDPOINT`,
-`HOI4_MOD_SETUP_ARTIFACT_SIGNING_ACCOUNT`,
-`HOI4_MOD_SETUP_ARTIFACT_SIGNING_PROFILE`,
-`HOI4_MOD_SETUP_WINDOWS_SIGNER`, and
-`HOI4_MOD_SETUP_WINDOWS_TIMESTAMP_URL`. The workflow uses the pinned official
-Azure login and Artifact Signing actions, signs only the generated Windows
-package, and never stores a PFX or private key in the repository.
+The macOS job creates a random disposable keychain password. The Windows
+official route uses the pinned Azure login and Artifact Signing actions, signs
+only the generated package, and never stores a PFX or private key in the
+repository.
 
 `pnpm release:notices` derives the human-readable license inventory from the
 locked pnpm and Cargo metadata. `pnpm release:sbom` (also run by
@@ -303,18 +307,17 @@ inventory from the same locked metadata. Both are included in native release
 outputs, but neither waives maintainer review of bundled assets or complete
 license text before publication.
 
-When Azure Artifact Signing is enabled, the signer changes the Windows package
-after the initial build manifest is written. The workflow must run
-`pnpm release:rehash` immediately after signing and before `pnpm release:verify`.
-The rehash script refuses added or removed files and refuses changes outside
-existing `packages/*.exe` entries.
+Both community and official signing change package bytes after the unsigned
+build manifest is written. Each platform job verifies the signature and then
+regenerates the complete internal artifact manifest before curation.
 
-After platform jobs finish, the draft job runs
+After platform jobs finish, the curation job runs
 `scripts/prepare_release_assets.mjs` to revalidate downloaded manifests,
 source/tag/architecture identity, signed-evidence markers, package hashes, and
 the exact Windows/macOS asset set before the write-capable GitHub release
-operation. It uses unique platform-prefixed filenames and refuses to reuse an
-existing release tag.
+operation. It uses deterministic platform filenames, refuses to reuse an
+existing release tag, and publishes a normal release only after every gate
+passes.
 
 Use semantic version tags:
 
@@ -340,10 +343,13 @@ git tag -a vX.Y.Z -m "HOI4 Mod Setup vX.Y.Z"
 git push origin vX.Y.Z
 ```
 
-The tag workflow builds from the exact tag commit. It should publish a draft release first. Verify Windows and macOS installation, signatures, notarization, checksums, updater metadata, and clean-machine behavior before publication.
+The tag workflow builds from the exact annotated tag commit. It publishes only
+after Windows and macOS package verification, signature checks, native launch
+smoke tests, internal hash validation, curation, and the protected release
+environment gate pass.
 
 Updater metadata and automatic application updates are intentionally deferred
-for version 0.1.0. A future update channel must define signed metadata,
+for version 0.1.x. A future update channel must define signed metadata,
 rollback behavior, and clean-machine tests before it is enabled.
 
 Never move or reuse a published tag. Fix problems in a new version.

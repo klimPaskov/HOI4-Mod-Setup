@@ -16,26 +16,24 @@
   ],
   "properties": {
     "schema_version": {
+      "type": "string",
       "const": "1.0.0"
     },
     "analysis_id": {
-      "type": "string",
-      "format": "uuid"
+      "type": "string"
     },
     "mode": {
+      "type": "string",
       "enum": [
         "new_project_identity",
         "existing_project_semantics"
       ]
     },
     "input_sha256": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
+      "type": "string"
     },
     "project_summary": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 1200
+      "type": "string"
     },
     "proposals": {
       "type": "array",
@@ -56,9 +54,22 @@
         ],
         "properties": {
           "component_id": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "core.agents",
+              "core.skills",
+              "core.subagents",
+              "codex.config",
+              "mcp.hoi4_agent_tools",
+              "docs.source",
+              "template.chaos_redux_agents",
+              "wiki.snapshot",
+              "workflow.3d",
+              "workflow.super_events"
+            ]
           },
           "recommendation": {
+            "type": "string",
             "enum": [
               "required",
               "recommended",
@@ -66,8 +77,7 @@
             ]
           },
           "reason": {
-            "type": "string",
-            "maxLength": 500
+            "type": "string"
           }
         }
       }
@@ -75,8 +85,7 @@
     "warnings": {
       "type": "array",
       "items": {
-        "type": "string",
-        "maxLength": 500
+        "type": "string"
       }
     }
   },
@@ -93,6 +102,7 @@
       ],
       "properties": {
         "key": {
+          "type": "string",
           "enum": [
             "display_name",
             "project_id",
@@ -106,15 +116,24 @@
             "documentation_convention"
           ]
         },
-        "value": {},
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
         "confidence": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
+          "type": "number"
         },
         "reason": {
-          "type": "string",
-          "maxLength": 500
+          "type": "string"
         },
         "evidence_refs": {
           "type": "array",

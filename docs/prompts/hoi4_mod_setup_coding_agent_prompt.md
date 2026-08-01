@@ -1,6 +1,6 @@
 # Detailed coding-agent implementation prompt
 
-Implement **HOI4 Mod Setup**, a production Windows and macOS desktop application that prepares Hearts of Iron IV mod projects for agentic development in Codex.
+Implement **HOI4 Mod Setup**, a production Windows and macOS desktop application that prepares Hearts of Iron IV mod projects for agentic development with a selected AI provider. Codex is the default.
 
 Read every document, schema, example, Mermaid diagram, UI reference, source audit, and acceptance criterion in this package before coding. Maintain a requirement-to-code matrix.
 
@@ -16,19 +16,27 @@ Use a Tauri shell with Rust core and TypeScript React UI unless a documented spi
 
 Create modules for project identity, scanner, source resolver, manifest, components, cache, hashes, merge, transactions, validators, credentials, MCP, Git, readiness, recovery, and platform adapters.
 
-## ChatGPT and Codex integration
+Every Tauri desktop command must use async/thread-pool dispatch so filesystem,
+network, Git, provider, and child-process waits never block the desktop event
+loop. Add a regression test with blocking fakes that proves the event loop and
+cancellation remain responsive while representative commands are pending.
+
+## AI provider and Codex integration
 
 Implement the semantic layer through the official local `codex app-server` process over stdio JSONL. Complete initialize, account state, browser ChatGPT login, device-code fallback, cancellation, logout, account updates, rate-limit checks, thread lifecycle, turn lifecycle, streamed events, and clean shutdown.
 
-Do not add an OpenAI API key field, API-key fallback, provider selector, or externally managed ChatGPT token path. Do not read Codex token files. Keep full email, account ID, plan, usage, rate limits, tokens, thread history, and hidden reasoning out of project files and locks.
+Do not add an OpenAI API key field or API-key fallback to the Codex route. Add bounded provider profiles for Claude, Kimi, GLM, DeepSeek, local, and a custom explicitly configured OpenAI-compatible route. Non-Codex hosted routes use a user endpoint and OS-vault key; local uses loopback HTTP. Do not invent provider URLs, OAuth routes, packages, commands, model names, or platform support. Do not read Codex token files. Keep full email, account ID, plan, usage, rate limits, tokens, keys, thread history, and hidden reasoning out of project files and locks.
 
-Use the user's compatible Codex configuration without hardcoding a model. Every semantic turn is read-only and uses the current `codex-analysis` output schema. Codex proposes the description, display name, project ID, prefix, namespace, tags, folder profile, project instructions, components, and existing-project conventions. Deterministic Rust validates and renders after confirmation.
+Use the selected model and optimization profile without hardcoding a non-Codex model. Every semantic turn is read-only and uses the current `codex-analysis` output schema. The selected provider proposes the description, display name, project ID, prefix, namespace, tags, folder profile, project instructions, components, and existing-project conventions. Deterministic Rust validates and renders after confirmation.
 
-Missing authentication, usage availability, or valid analysis blocks Create, Import, Update, and Repair planning. Preserve drafts and scans. Keep recovery, rollback, backup inspection, and managed removal available offline.
+Missing provider configuration, usage availability, or valid analysis blocks Create, Import, Update, and Repair planning. Preserve drafts and scans. Keep recovery, rollback, backup inspection, and managed removal available offline.
 
 ## Repository contract
 
-Implement `hoi4-mod-setup.manifest.json` using the supplied schema. The live repository currently has no manifest. Add it to the repository first, or isolate a temporary built-in bootstrap manifest behind a removable compatibility layer. Production should depend on the remote contract.
+Use the published `hoi4-mod-setup.manifest.json` contract and its checked-in
+schema for offline bootstrap evidence. Runtime still resolves the remote
+manifest at one exact revision and must not substitute the bundled copy for a
+new remote resolution.
 
 The resolver must:
 
@@ -44,17 +52,51 @@ Never clone Agentic-HOI4-Modding. Repository-declared external dependency script
 
 ## New project
 
-Implement the 17 required screen states inside a seven-phase wizard: Project, Review, Components, Integrations, Git, Install, and Ready. Collect a normal-language brief, review suggestions, confirm identity and paths, preview both descriptors on demand, propose editable folders, select source and components, ask both exact optional questions, configure MCP and Git, show dry run, transact, and show readiness.
+Implement the bounded screen states inside a seven-phase wizard: Project,
+Review, Components, Integrations, Git, Install, and Ready. Collect a
+normal-language brief, review suggestions, confirm identity and paths, preview
+both descriptors on demand, propose editable folders, select source and
+components, ask the exact 3D question followed immediately by the exact Super
+Events question, configure MCP and Git, show dry run, transact, and show
+readiness.
 
 Create no project file before approval. After approval, generate and validate the internal `descriptor.mod`, the external launcher `<project_id>.mod`, a deterministic replaceable `thumbnail.png`, and the selected folder profile. Preview external destinations. Track every generated artifact and external path in the plan, lock, backup, and rollback record. Never fabricate a Workshop ID or overwrite a user-replaced thumbnail silently.
 
+Resolve the HOI4 user `mod` directory from the native redirected Documents
+location on Windows or macOS. After validating the project ID, auto-fill the
+project root and launcher descriptor path, preserve explicit overrides, and
+create an absent root as exactly one reviewed leaf only at apply. Rollback may
+remove that leaf only when empty and must preserve unknown content.
+
+When Codex is selected, show the optional checkbox in the Install review: prepare
+`chatgpt_project_sources/` by flattening each skill to `<skill>.md` and adding
+selected subagents, adapted AGENTS, and the created or existing README. Use the
+full transaction and recommend
+starting planning with ChatGPT “Chat”; do not upload or start planning.
+
 ## Existing project
 
-The scanner is bounded and read-only. Detect structure, descriptors, Git, IDs, namespaces, naming, localisation, docs, skills, subagents, Codex, MCP, absolute paths, and conflicts. Every finding includes evidence and confidence. Group findings into small editable steps.
+The scanner is bounded and read-only. Before scanning, inspect only direct
+launcher descriptor candidates in the selected root's immediate parent. Show
+the candidate and matching evidence and require visible confirmation before
+reading it. Detect structure, descriptors, Git, IDs, namespaces, naming,
+localisation, docs, skills, subagents, Codex, MCP, absolute paths, and
+conflicts. Every finding includes evidence and confidence. Group findings into
+small editable steps.
 
 ## Components
 
 Implement dependency resolution, platform support, tools, environment, validation, reverse dependencies, and ownership types `managed`, `merged`, `generated`, and `external`.
+
+Implement `workflow.super_events` as a provider-neutral optional component from
+the verified manifest. It selectively installs the managed
+`.agents/skills/hoi4-super-events/` tree, depends only on `core.skills`, has no
+credential, environment variable, external command, or provider-specific health
+route, and remains non-blocking. Exclude its tree from unselected core-skills
+installs and do not add Super Events-specific `AGENTS.md` guidance unless the
+component is selected. Preserve its state through the managed lock and scan;
+Update may add it from the target manifest, while Repair may do so only from the
+same immutable locked source revision.
 
 ## Wiki
 
@@ -74,13 +116,13 @@ The current repository route is Windows-oriented. Mark it unsupported on macOS u
 
 Missing key leaves 3D incomplete without blocking core readiness. Add Configure key to Update and Repair.
 
-## LoRA and ComfyUI
+## Portrait workflow handoff
 
-Ask exactly:
-
-**Do you want to set up LoRAs and ComfyUI for portrait generation?**
-
-Version 1 records interest only. Create no ComfyUI, model, LoRA, Python, GPU, or driver action. Report planned or unavailable, never installed. Keep the component interface ready for a future real implementation.
+Do not create a LoRA or ComfyUI setup option, component, preference,
+transaction action, maintenance state, or readiness check. After successful
+setup, show one concise fixed HTTPS Ready-screen link to
+`https://github.com/klimPaskov/comfyui-hoi4-portraits`; open it only through
+the typed browser action and never claim the external workflow is installed.
 
 ## Conflicts
 
@@ -100,7 +142,7 @@ Support initialize, preserve, or skip. Merge `.gitignore`, select branch, option
 
 ## Readiness
 
-Verify both descriptors, launcher path and discoverability, descriptor consistency, thumbnail decode and hash, structure, AGENTS, skills, subagents, Codex, MCP, wiki, Git, environment, hashes, conflicts, dependencies, 3D, and LoRA placeholder. Verify ChatGPT authentication and confirmed Codex analysis as blocking core checks. Enable Open in Codex only when core blocking checks pass.
+Verify both descriptors, launcher path and discoverability, descriptor consistency, thumbnail decode and hash, structure, AGENTS, skills, subagents, selected provider, MCP, wiki, Git, environment, hashes, conflicts, dependencies, `workflow.3d`, and `workflow.super_events`. Verify provider configuration or Codex ChatGPT authentication and confirmed provider analysis as blocking core checks; optional workflow states remain non-blocking. Enable Open in Codex only for Codex when core blocking checks pass.
 
 ## Security
 
@@ -108,7 +150,7 @@ Use exact commit, SHA-256, root containment, link defense, argument arrays rathe
 
 ## UI
 
-Follow all 17 full-resolution references and `docs/17_ui_accessibility.md`. Use a clean dark desktop UI with a seven-phase setup rail. Each screen should have one focal task, one title, no more than one supporting sentence, and no more than two visible content regions by default. Hide evidence, hashes, file lists, logs, dependency graphs, and advanced settings until requested. Do not repeat obvious information or explain controls that are already clear from their labels. Keep Back and the primary action persistent. Preserve conflict comparison detail only on the conflict screen. Support keyboard use, WCAG 2.2 AA, reduced motion, and 200 percent scaling.
+Follow all 14 full-resolution references and `docs/17_ui_accessibility.md`. Use a clean dark desktop UI with a seven-phase setup rail. Each screen should have one focal task, one title, no more than one supporting sentence, and no more than two visible content regions by default. Hide evidence, hashes, file lists, logs, dependency graphs, and advanced settings until requested. Do not repeat obvious information or explain controls that are already clear from their labels. Keep Back and the primary action persistent. Preserve conflict comparison detail only on the conflict screen. Support keyboard use, WCAG 2.2 AA, reduced motion, and 200 percent scaling.
 
 ## Schemas and tests
 
@@ -118,7 +160,7 @@ Implement and validate all supplied schemas. Use atomic JSON writes and explicit
 
 Develop the application in a public GitHub-ready repository using the supplied `README.md`, `CONTRIBUTING.md`, `DEVELOPMENT.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `RELEASING.md`, `CHANGELOG.md`, `docs/LICENSE_SELECTION.md`, `.github/`, `.gitignore`, `.gitattributes`, and `.editorconfig`. Keep the root README user-facing. Select and add a real `LICENSE` before public release.
 
-Configure protected `main`, pull requests, stable required checks, CODEOWNERS, issue forms, private vulnerability reporting, Dependabot for npm, Cargo, and GitHub Actions, and tag-based draft releases. Use read-only default workflow permissions. Release credentials belong in protected environments and are never exposed to fork pull requests. Implement repository-owned scripts used by CI and release workflows before making those jobs required.
+Configure protected `main`, pull requests, stable required checks, CODEOWNERS, issue forms, private vulnerability reporting, Dependabot for npm, Cargo, and GitHub Actions, and exact-tag release publication after platform verification. Use read-only default workflow permissions. Release credentials belong in protected environments and are never exposed to fork pull requests. Implement repository-owned scripts used by CI and release workflows before making those jobs required.
 
 ## AGENTS, living skills, and subagents
 
@@ -130,6 +172,6 @@ Use the supplied `.codex/agents/` only for bounded audits, including the Codex i
 
 ## Completion
 
-Before completion, satisfy every criterion, provide a requirement-to-code matrix, validate every example and repository template, prove new and existing flows on both platforms, prove missing 3D key is non-blocking, prove LoRA creates zero forbidden actions, prove recovery, prove secret absence, review living-skill alignment, and report every unsupported source route or unresolved metadata issue.
+Before completion, satisfy every criterion, provide a requirement-to-code matrix, validate every example and repository template, prove new and existing flows on both platforms, prove missing 3D key is non-blocking, prove the portrait workflow is only the fixed Ready-screen link, prove recovery, prove secret absence, review living-skill alignment, and report every unsupported source route or unresolved metadata issue.
 
 Do not reduce the product to a file copier. The scanner, reviewed plan, conflict engine, transaction, lock, optional states, maintenance, and readiness gate are core product features.

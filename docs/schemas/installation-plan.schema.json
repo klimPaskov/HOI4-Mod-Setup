@@ -13,10 +13,10 @@
     "ai_model",
     "ai_optimization_profile",
     "flatten_chat_sources",
-    "flatten_additional_files",
     "codex_analysis",
     "selected_components",
     "wiki_required_pages",
+    "download_ledger",
     "credential_references",
     "operations",
     "conflicts",
@@ -27,10 +27,6 @@
     {
       "if": { "properties": { "ai_provider": { "const": "codex" } } },
       "then": { "properties": { "ai_endpoint": { "type": ["null", "string"], "maxLength": 0 } } }
-    },
-    {
-      "if": { "properties": { "flatten_chat_sources": { "const": false } } },
-      "then": { "properties": { "flatten_additional_files": { "maxItems": 0 } } }
     },
     {
       "if": { "properties": { "ai_provider": { "enum": ["claude", "kimi", "glm", "deepseek", "local", "custom"] } } },
@@ -64,11 +60,6 @@
     },
     "flatten_chat_sources": {
       "type": "boolean"
-    },
-    "flatten_additional_files": {
-      "type": "array",
-      "items": { "type": "string" },
-      "maxItems": 64
     },
     "created_at": {
       "type": "string",
@@ -182,6 +173,13 @@
         }
       }
     },
+    "download_ledger": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "$ref": "#/$defs/download_ledger_entry"
+      }
+    },
     "optional_workflows": {
       "type": "object",
       "additionalProperties": {
@@ -190,7 +188,6 @@
           "selected_pending",
           "ready",
           "incomplete",
-          "interest_recorded",
           "planned_unavailable",
           "unsupported_platform"
         ]
@@ -261,15 +258,31 @@
       "required": [
         "stages",
         "backup_root",
-        "staging_root"
+        "staging_root",
+        "project_root_mode",
+        "project_root_parent",
+        "project_root_leaf"
       ],
       "properties": {
         "stages": {
           "type": "array",
           "minItems": 12,
-          "items": {
-            "type": "string"
-          }
+          "maxItems": 12,
+          "prefixItems": [
+            { "const": "preflight" },
+            { "const": "repository source resolution" },
+            { "const": "selective download" },
+            { "const": "checksum verification" },
+            { "const": "dry-run review" },
+            { "const": "backup" },
+            { "const": "staging" },
+            { "const": "validation" },
+            { "const": "apply" },
+            { "const": "post-install checks" },
+            { "const": "readiness report" },
+            { "const": "rollback record" }
+          ],
+          "items": false
         },
         "backup_root": {
           "type": "string"
@@ -279,6 +292,24 @@
         },
         "atomic_apply_expected": {
           "type": "boolean"
+        },
+        "project_root_mode": {
+          "enum": [
+            "existing",
+            "create_leaf"
+          ]
+        },
+        "project_root_parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_root_leaf": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
@@ -385,6 +416,36 @@
     }
   },
   "$defs": {
+    "download_ledger_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_id",
+        "source_path",
+        "destination",
+        "source_revision",
+        "manifest_sha256",
+        "sha256",
+        "size",
+        "component_id",
+        "ownership",
+        "platform",
+        "executable"
+      ],
+      "properties": {
+        "operation_id": { "type": "string", "minLength": 1 },
+        "source_path": { "type": "string", "minLength": 1 },
+        "destination": { "type": "string", "minLength": 1 },
+        "source_revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size": { "type": "integer", "minimum": 0 },
+        "component_id": { "type": "string", "minLength": 1 },
+        "ownership": { "enum": ["managed", "merged", "generated", "external"] },
+        "platform": { "enum": ["windows", "macos", "all"] },
+        "executable": { "type": "boolean" }
+      }
+    },
     "wiki_metadata": {
       "type": "object",
       "additionalProperties": false,
@@ -429,7 +490,16 @@
         "location_scope",
         "destination",
         "source_sha256",
+        "source_path",
+        "source_size",
+        "platform",
+        "executable",
+        "result_sha256",
+        "base_sha256",
+        "local_sha256",
         "local_state",
+        "resolution",
+        "external",
         "rollback"
       ],
       "properties": {
@@ -493,6 +563,9 @@
             "all",
             null
           ]
+        },
+        "executable": {
+          "type": "boolean"
         },
         "result_sha256": {
           "type": [

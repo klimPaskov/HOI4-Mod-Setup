@@ -11,12 +11,25 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
+use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
+
+#[cfg(target_os = "windows")]
+use std::ffi::OsString;
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStringExt;
+#[cfg(target_os = "windows")]
+use std::os::windows::io::AsRawHandle;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Storage::FileSystem::{GetFinalPathNameByHandleW, FILE_NAME_NORMALIZED};
 
 pub const CODEX_SCHEMA_VERSION: &str = "1.0.0";
 pub const REQUIRED_ANALYSIS_PROPOSAL_KEYS: &[&str] = &[
@@ -31,7 +44,25 @@ pub const REQUIRED_ANALYSIS_PROPOSAL_KEYS: &[&str] = &[
     "localisation_convention",
     "documentation_convention",
 ];
+pub const ALLOWED_COMPONENT_RECOMMENDATION_IDS: &[&str] = &[
+    "core.agents",
+    "core.skills",
+    "core.subagents",
+    "codex.config",
+    "mcp.hoi4_agent_tools",
+    "docs.source",
+    "template.chaos_redux_agents",
+    "wiki.snapshot",
+    "workflow.3d",
+    "workflow.super_events",
+];
 const MAX_JSONL_LINE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_BUFFERED_NOTIFICATIONS: usize = 128;
+const MAX_BUFFERED_NOTIFICATION_BYTES: usize = 2 * 1024 * 1024;
+const MAX_CORRELATED_NOTIFICATIONS: usize = 256;
+const MAX_CORRELATED_NOTIFICATION_BYTES: usize = 4 * 1024 * 1024;
+const MAX_PROTOCOL_ERROR_CODE_CHARS: usize = 64;
+const MAX_PROTOCOL_ERROR_DETAIL_CHARS: usize = 512;
 const MAX_BRIEF_BYTES: usize = 32 * 1024;
 const MAX_EVIDENCE_ITEMS: usize = 256;
 const MAX_EVIDENCE_BYTES: usize = 512 * 1024;
@@ -204,6 +235,7 @@ pub struct AppServerProtocol<T: JsonlTransport> {
     next_id: u64,
     notifications: Vec<Value>,
     request_timeout: Duration,
+    initialized: bool,
 }
 
 impl<T: JsonlTransport> AppServerProtocol<T> {
@@ -217,6 +249,7 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
             next_id: 1,
             notifications: Vec::new(),
             request_timeout: request_timeout.max(Duration::from_millis(100)),
+            initialized: false,
         }
     }
 
@@ -225,7 +258,12 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
     }
 
     pub fn initialize(&mut self) -> Result<Value, AppError> {
-        let result = self.request(
+        if self.initialized {
+            return Err(AppError::Process(
+                "Codex App Server protocol is already initialized".into(),
+            ));
+        }
+        let result = self.request_unchecked(
             "initialize",
             json!({
                 "clientInfo": {
@@ -236,6 +274,7 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
             }),
         )?;
         self.transport.send(&json!({"method": "initialized"}))?;
+        self.initialized = true;
         Ok(result)
     }
 
@@ -271,6 +310,17 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
         Ok(parse_login_start(&result, device_code))
     }
 
+    pub fn cancel_login(&mut self, login_id: &str) -> Result<(), AppError> {
+        self.ensure_initialized()?;
+        validate_login_id(login_id)?;
+        self.request_with_timeout(
+            "account/login/cancel",
+            json!({"loginId": login_id}),
+            Duration::from_secs(5),
+        )?;
+        Ok(())
+    }
+
     /// Wait for the bounded login-completion and account-update notification
     /// pair described by the App Server protocol, then re-read the transient
     /// account status. Tokens and account identifiers never leave Codex.
@@ -288,15 +338,19 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
         timeout: Duration,
         is_cancelled: impl Fn() -> bool,
     ) -> Result<CodexAccountStatus, AppError> {
-        if login_id.trim().is_empty() || login_id.len() > 128 {
-            return Err(AppError::InvalidInput("Codex login ID is invalid".into()));
-        }
+        validate_login_id(login_id)?;
         let started = std::time::Instant::now();
         let mut login_completed = false;
         let mut account_updated = false;
         let mut pending = std::mem::take(&mut self.notifications);
         loop {
             if is_cancelled() {
+                self.cancel_login(login_id).map_err(|error| {
+                    AppError::Credential(format!(
+                        "Codex login was cancelled locally, but App Server cancellation failed: {}",
+                        redact_secrets(&error.to_string(), &[])
+                    ))
+                })?;
                 return Err(AppError::Credential("Codex login was cancelled".into()));
             }
             for message in pending.drain(..) {
@@ -314,8 +368,14 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
             }
             let remaining = timeout.saturating_sub(started.elapsed());
             if remaining.is_zero() {
+                self.cancel_login(login_id).map_err(|error| {
+                    AppError::Credential(format!(
+                        "Codex login timed out, but App Server cancellation failed: {}",
+                        redact_secrets(&error.to_string(), &[])
+                    ))
+                })?;
                 return Err(AppError::Credential(
-                    "Codex login did not complete during the bounded wait".into(),
+                    "Codex login did not complete during the bounded wait and was cancelled".into(),
                 ));
             }
             match self
@@ -340,33 +400,72 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
     }
 
     pub(crate) fn request(&mut self, method: &str, params: Value) -> Result<Value, AppError> {
+        self.ensure_initialized()?;
+        self.request_unchecked(method, params)
+    }
+
+    fn ensure_initialized(&self) -> Result<(), AppError> {
+        if self.initialized {
+            Ok(())
+        } else {
+            Err(AppError::Process(
+                "Codex App Server must be initialized before use".into(),
+            ))
+        }
+    }
+
+    fn request_unchecked(&mut self, method: &str, params: Value) -> Result<Value, AppError> {
+        self.request_with_timeout(method, params, self.request_timeout)
+    }
+
+    fn request_with_timeout(
+        &mut self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, AppError> {
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
         self.transport
             .send(&json!({"id": id, "method": method, "params": params}))?;
+        let started = std::time::Instant::now();
         loop {
-            let message = self
-                .transport
-                .receive(self.request_timeout)?
-                .ok_or_else(|| {
-                    AppError::Process(format!("Codex App Server closed during {method}"))
-                })?;
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(AppError::Process(format!(
+                    "Codex App Server {method} timed out"
+                )));
+            }
+            let message = self.transport.receive(remaining)?.ok_or_else(|| {
+                AppError::Process(format!("Codex App Server closed during {method}"))
+            })?;
             if message.get("method").is_some() && message.get("id").is_none() {
-                if self.notifications.len() < 128 {
-                    self.notifications.push(message);
-                }
+                push_bounded_notification(
+                    &mut self.notifications,
+                    message,
+                    MAX_BUFFERED_NOTIFICATIONS,
+                    MAX_BUFFERED_NOTIFICATION_BYTES,
+                    "buffered",
+                )?;
                 continue;
             }
             if message.get("id") != Some(&json!(id)) {
                 continue;
             }
             if let Some(error) = message.get("error") {
-                let code = error
-                    .get("code")
+                let code = safe_protocol_error_code(error.get("code"));
+                let detail = error
+                    .get("message")
                     .and_then(Value::as_str)
-                    .unwrap_or("request_failed");
+                    .map(|message| {
+                        bounded_redacted_protocol_text(message, MAX_PROTOCOL_ERROR_DETAIL_CHARS)
+                    })
+                    .filter(|message| !message.trim().is_empty());
                 return Err(AppError::Process(format!(
-                    "Codex App Server {method} failed: {code}"
+                    "Codex App Server {method} failed ({code}){}",
+                    detail
+                        .map(|message| format!(": {message}"))
+                        .unwrap_or_default()
                 )));
             }
             return Ok(message.get("result").cloned().unwrap_or(Value::Null));
@@ -393,10 +492,13 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
                     .into(),
             ));
         }
+        let analysis_directory = AnalysisWorkingDirectory::create()?;
         let thread = self.request(
             "thread/start",
             json!({
                 "approvalPolicy": "never",
+                "sandbox": "read-only",
+                "cwd": analysis_directory.path_string()?,
                 "sandboxPolicy": read_only_no_project_access()
             }),
         )?;
@@ -427,6 +529,14 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
         let turn_completed = messages
             .iter()
             .any(|message| event_completes_turn(message, &thread_id, turn_id.as_deref()));
+        if let Some(error) = messages
+            .iter()
+            .find_map(|message| completed_turn_error(message, &thread_id, turn_id.as_deref()))
+        {
+            return Err(AppError::Process(format!(
+                "Codex planning turn failed: {error}"
+            )));
+        }
         let output = turn_completed
             .then(|| messages.iter().rev().find_map(structured_output))
             .flatten()
@@ -471,7 +581,13 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
         let mut messages = Vec::new();
         for message in pending {
             if event_matches_turn(&message, thread_id, turn_id) {
-                messages.push(message);
+                push_bounded_notification(
+                    &mut messages,
+                    message,
+                    MAX_CORRELATED_NOTIFICATIONS,
+                    MAX_CORRELATED_NOTIFICATION_BYTES,
+                    "correlated",
+                )?;
             }
         }
         let started = std::time::Instant::now();
@@ -481,7 +597,13 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
                     let correlated = event_matches_turn(&message, thread_id, turn_id);
                     let complete = event_completes_turn(&message, thread_id, turn_id);
                     if correlated {
-                        messages.push(message);
+                        push_bounded_notification(
+                            &mut messages,
+                            message,
+                            MAX_CORRELATED_NOTIFICATIONS,
+                            MAX_CORRELATED_NOTIFICATION_BYTES,
+                            "correlated",
+                        )?;
                     }
                     if complete {
                         break;
@@ -494,6 +616,55 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
         }
         Ok(messages)
     }
+}
+
+fn bounded_redacted_protocol_text(value: &str, max_chars: usize) -> String {
+    redact_secrets(value, &[])
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(max_chars)
+        .collect()
+}
+
+fn safe_protocol_error_code(value: Option<&Value>) -> String {
+    let raw = match value {
+        Some(Value::String(value)) => value.clone(),
+        Some(Value::Number(value)) => value.to_string(),
+        _ => "request_failed".into(),
+    };
+    let bounded = bounded_redacted_protocol_text(&raw, MAX_PROTOCOL_ERROR_CODE_CHARS);
+    if bounded.trim().is_empty() {
+        "request_failed".into()
+    } else {
+        bounded
+    }
+}
+
+fn push_bounded_notification(
+    notifications: &mut Vec<Value>,
+    message: Value,
+    max_count: usize,
+    max_bytes: usize,
+    kind: &str,
+) -> Result<(), AppError> {
+    if notifications.len() >= max_count {
+        return Err(AppError::Process(format!(
+            "Codex App Server exceeded the {kind} notification count limit"
+        )));
+    }
+    let current_bytes = notifications.iter().try_fold(0_usize, |total, value| {
+        serde_json::to_vec(value)
+            .map(|bytes| total.saturating_add(bytes.len()))
+            .map_err(AppError::from)
+    })?;
+    let message_bytes = serde_json::to_vec(&message)?.len();
+    if current_bytes.saturating_add(message_bytes) > max_bytes {
+        return Err(AppError::Process(format!(
+            "Codex App Server exceeded the {kind} notification size limit"
+        )));
+    }
+    notifications.push(message);
+    Ok(())
 }
 
 fn turn_id_from_start_response(value: &Value) -> Option<String> {
@@ -574,6 +745,48 @@ fn event_completes_turn(value: &Value, thread_id: &str, turn_id: Option<&str>) -
     };
     let (_, turn_ids) = event_turn_references(value);
     turn_ids.iter().any(|id| id == turn_id)
+}
+
+fn completed_turn_error(value: &Value, thread_id: &str, turn_id: Option<&str>) -> Option<String> {
+    if !event_completes_turn(value, thread_id, turn_id) {
+        return None;
+    }
+    let turn = value
+        .get("params")
+        .and_then(|params| params.get("turn"))
+        .or_else(|| value.get("turn"))?;
+    if turn.get("status").and_then(Value::as_str) != Some("failed") {
+        return None;
+    }
+    let raw = turn
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or("Codex did not return a completed analysis");
+    let nested = serde_json::from_str::<Value>(raw)
+        .ok()
+        .and_then(|value| deepest_error_message(&value));
+    let message = nested.unwrap_or_else(|| raw.to_owned());
+    Some(redact_secrets(
+        &message
+            .chars()
+            .filter(|character| !character.is_control())
+            .take(512)
+            .collect::<String>(),
+        &[],
+    ))
+}
+
+fn deepest_error_message(value: &Value) -> Option<String> {
+    if let Some(error) = value.get("error") {
+        if let Some(message) = deepest_error_message(error) {
+            return Some(message);
+        }
+    }
+    value
+        .get("message")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
 fn validate_analysis_request(request: &CodexAnalysisRequest) -> Result<(), AppError> {
@@ -747,6 +960,60 @@ fn read_only_no_project_access() -> Value {
     })
 }
 
+struct AnalysisWorkingDirectory {
+    path: PathBuf,
+}
+
+impl AnalysisWorkingDirectory {
+    fn create() -> Result<Self, AppError> {
+        let base = fs::canonicalize(std::env::temp_dir()).map_err(|error| {
+            AppError::PathSecurity(format!(
+                "Codex analysis temporary directory is unavailable: {error}"
+            ))
+        })?;
+        if crate::security::path_has_link_component(&base) {
+            return Err(AppError::PathSecurity(
+                "Codex analysis temporary directory contains a symlink or junction".into(),
+            ));
+        }
+        let path = base.join(format!("hoi4-mod-setup-analysis-{}", Uuid::new_v4()));
+        fs::create_dir(&path).map_err(|error| {
+            AppError::Process(format!(
+                "could not create the Codex analysis directory: {error}"
+            ))
+        })?;
+        let canonical = fs::canonicalize(&path).map_err(|error| {
+            AppError::PathSecurity(format!(
+                "Codex analysis directory could not be resolved: {error}"
+            ))
+        })?;
+        if !canonical.starts_with(&base) || crate::security::path_has_link_component(&canonical) {
+            let _ = fs::remove_dir(&path);
+            return Err(AppError::PathSecurity(
+                "Codex analysis directory escaped the operating-system temporary directory".into(),
+            ));
+        }
+        Ok(Self { path: canonical })
+    }
+
+    fn path_string(&self) -> Result<String, AppError> {
+        self.path.to_str().map(ToOwned::to_owned).ok_or_else(|| {
+            AppError::PathSecurity(
+                "Codex analysis directory is not representable as Unicode".into(),
+            )
+        })
+    }
+}
+
+impl Drop for AnalysisWorkingDirectory {
+    fn drop(&mut self) {
+        // The directory is unique, app-created, and expected to remain empty
+        // because the turn is read-only. Refuse recursive deletion if that
+        // invariant is ever violated.
+        let _ = fs::remove_dir(&self.path);
+    }
+}
+
 fn model_visible_analysis_input(request: &CodexAnalysisRequest) -> Value {
     json!({
         "mode": &request.mode,
@@ -808,7 +1075,7 @@ pub(crate) fn analysis_prompt_for_provider(
 ) -> Result<String, AppError> {
     let input = serde_json::to_string(&model_visible_analysis_input(request))?;
     Ok(format!(
-        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Propose values with concise reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs; never invent paths or references. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
+        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Set analysis_id to a fresh RFC 4122 UUID. Return every required proposal key exactly once. descriptor_tags and folder_profile proposal values must be JSON arrays of strings; every other proposal value must be a string. Propose concise reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs; never invent paths or references. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
     ))
 }
 
@@ -944,7 +1211,7 @@ pub(crate) fn validate_analysis_output(
         .component_recommendations
         .iter()
         .any(|recommendation| {
-            recommendation.component_id.trim().is_empty()
+            !ALLOWED_COMPONENT_RECOMMENDATION_IDS.contains(&recommendation.component_id.as_str())
                 || recommendation.reason.chars().count() > 500
         })
         || analysis
@@ -967,45 +1234,67 @@ pub(crate) fn validate_analysis_output(
 }
 
 fn validate_output_text(value: &str, label: &str) -> Result<(), AppError> {
-    if redact_secrets(value, &[]) != value {
+    let normalized = value.to_ascii_lowercase();
+    let account_shaped = regex::Regex::new(
+        r"(?i)(?:\baccount[\s_-]*id\b|\bacct_[a-z0-9_-]+\b|\bplan(?:[\s_-]*type)?\s*[:=]|\brate[\s_-]*limits?\b|\busage(?:[\s_-]*(?:limited|remaining|used))?\s*[:=]|\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b)",
+    )
+    .is_ok_and(|pattern| pattern.is_match(value));
+    if redact_secrets(value, &[]) != value
+        || account_shaped
+        || normalized.contains("\"email\"")
+        || normalized.contains("'email'")
+    {
         return Err(AppError::Serialization(format!(
-            "{label} contains credential-shaped content"
+            "{label} contains account or credential-shaped content"
         )));
     }
     Ok(())
 }
 
 fn reject_sensitive_output_value(value: &Value) -> Result<(), AppError> {
-    fn contains_sensitive_key(value: &Value) -> bool {
+    fn validate_recursive(value: &Value) -> Result<(), AppError> {
         match value {
-            Value::Object(object) => object.iter().any(|(key, child)| {
-                matches!(
-                    key.to_ascii_lowercase().as_str(),
-                    "email"
-                        | "account_id"
-                        | "accountid"
-                        | "plan"
-                        | "plan_type"
-                        | "usage_limited"
-                        | "ratelimits"
-                        | "rate_limits"
-                        | "access_token"
-                        | "refresh_token"
-                        | "token"
-                ) || contains_sensitive_key(child)
-            }),
-            Value::Array(values) => values.iter().any(contains_sensitive_key),
-            _ => false,
+            Value::Object(object) => {
+                for (key, child) in object {
+                    if matches!(
+                        key.to_ascii_lowercase().as_str(),
+                        "email"
+                            | "account_id"
+                            | "accountid"
+                            | "plan"
+                            | "plan_type"
+                            | "usage_limited"
+                            | "ratelimits"
+                            | "rate_limits"
+                            | "access_token"
+                            | "refresh_token"
+                            | "token"
+                    ) {
+                        return Err(AppError::Serialization(
+                            "Codex proposal contains account or credential-shaped content".into(),
+                        ));
+                    }
+                    validate_recursive(child)?;
+                }
+            }
+            Value::Array(values) => {
+                for child in values {
+                    validate_recursive(child)?;
+                }
+            }
+            Value::String(value) => validate_output_text(value, "Codex proposal value")?,
+            Value::Null | Value::Bool(_) | Value::Number(_) => {}
         }
+        Ok(())
     }
 
     let serialized = serde_json::to_string(value)?;
-    if contains_sensitive_key(value) || redact_secrets(&serialized, &[]) != serialized {
+    if redact_secrets(&serialized, &[]) != serialized {
         return Err(AppError::Serialization(
             "Codex proposal contains account or credential-shaped content".into(),
         ));
     }
-    Ok(())
+    validate_recursive(value)
 }
 
 fn validate_proposal_value(key: &ProposalKey, value: &Value) -> Result<(), AppError> {
@@ -1168,8 +1457,22 @@ fn rate_limits_limited(value: &Value) -> bool {
     }
 }
 
+fn validate_login_id(login_id: &str) -> Result<(), AppError> {
+    if login_id.trim().is_empty()
+        || login_id.len() > 128
+        || login_id.chars().any(|character| character.is_control())
+    {
+        return Err(AppError::InvalidInput("Codex login ID is invalid".into()));
+    }
+    Ok(())
+}
+
 fn parse_login_start(value: &Value, device_code: bool) -> CodexLoginStart {
     let value = value.get("login").unwrap_or(value);
+    let raw_login_id = value
+        .get("loginId")
+        .or_else(|| value.get("login_id"))
+        .and_then(Value::as_str);
     let raw_auth_url = value
         .get("authUrl")
         .or_else(|| value.get("authorizationUrl"))
@@ -1180,12 +1483,27 @@ fn parse_login_start(value: &Value, device_code: bool) -> CodexLoginStart {
         .and_then(Value::as_str);
     let invalid_url = raw_auth_url.is_some_and(|url| !is_safe_login_url(url))
         || raw_verification_url.is_some_and(|url| !is_safe_login_url(url));
+    let invalid_login_id = raw_login_id.is_none_or(|login_id| validate_login_id(login_id).is_err());
+    let raw_user_code = value
+        .get("userCode")
+        .or_else(|| value.get("user_code"))
+        .and_then(Value::as_str);
+    let invalid_mode_fields = if device_code {
+        raw_verification_url.is_none_or(|url| !is_safe_login_url(url))
+            || raw_user_code.is_none_or(|code| {
+                code.is_empty()
+                    || code.len() > 64
+                    || code
+                        .chars()
+                        .any(|character| !(character.is_ascii_alphanumeric() || character == '-'))
+            })
+    } else {
+        raw_auth_url.is_none_or(|url| !is_safe_login_url(url))
+    };
     CodexLoginStart {
         available: true,
-        login_id: value
-            .get("loginId")
-            .or_else(|| value.get("login_id"))
-            .and_then(Value::as_str)
+        login_id: raw_login_id
+            .filter(|login_id| validate_login_id(login_id).is_ok())
             .map(ToOwned::to_owned),
         auth_url: raw_auth_url
             .filter(|url| is_safe_login_url(url))
@@ -1193,13 +1511,25 @@ fn parse_login_start(value: &Value, device_code: bool) -> CodexLoginStart {
         verification_url: raw_verification_url
             .filter(|url| is_safe_login_url(url))
             .map(ToOwned::to_owned),
-        user_code: value
-            .get("userCode")
-            .or_else(|| value.get("user_code"))
-            .and_then(Value::as_str)
+        user_code: raw_user_code
+            .filter(|code| {
+                !code.is_empty()
+                    && code.len() <= 64
+                    && code
+                        .chars()
+                        .all(|character| character.is_ascii_alphanumeric() || character == '-')
+            })
             .map(ToOwned::to_owned),
         device_code,
-        error: invalid_url.then(|| "Codex returned an invalid HTTPS authentication URL".into()),
+        error: if invalid_login_id {
+            Some("Codex returned an invalid login identifier".into())
+        } else if invalid_url {
+            Some("Codex returned an invalid HTTPS authentication URL".into())
+        } else if invalid_mode_fields {
+            Some("Codex returned incomplete browser or device-code login instructions".into())
+        } else {
+            None
+        },
     }
 }
 
@@ -1283,38 +1613,34 @@ fn thread_id(value: &Value) -> Result<String, AppError> {
 }
 
 fn structured_output(value: &Value) -> Option<Value> {
-    let bases = [
-        Some(value),
-        value.get("params"),
-        value.get("params").and_then(|params| params.get("item")),
-        value.get("result"),
-        value.get("item"),
-        value.get("turn"),
-        value.get("event"),
-    ];
-    for base in bases.into_iter().flatten() {
-        for candidate in [
-            base.get("structuredOutput"),
-            base.get("structured_output"),
-            base.get("output"),
-            base.get("text"),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if candidate.is_object() {
-                return Some(candidate.clone());
-            }
-            if let Some(text) = candidate.as_str() {
-                if let Ok(parsed) = serde_json::from_str::<Value>(text) {
-                    if parsed.is_object() {
-                        return Some(parsed);
-                    }
+    for candidate in [
+        value.get("structuredOutput"),
+        value.get("structured_output"),
+        value.get("output"),
+        value.get("text"),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if candidate.is_object() {
+            return Some(candidate.clone());
+        }
+        if let Some(text) = candidate.as_str() {
+            if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+                if parsed.is_object() {
+                    return Some(parsed);
                 }
             }
         }
-        if let Some(content) = base.get("content").and_then(Value::as_array) {
-            for item in content {
+    }
+    for key in ["params", "result", "item", "turn", "event"] {
+        if let Some(output) = value.get(key).and_then(structured_output) {
+            return Some(output);
+        }
+    }
+    for key in ["content", "items"] {
+        if let Some(values) = value.get(key).and_then(Value::as_array) {
+            for item in values {
                 if let Some(output) = structured_output(item) {
                     return Some(output);
                 }
@@ -1336,10 +1662,12 @@ pub struct ProcessJsonlTransport {
     child: Option<Child>,
     stdin: ChildStdin,
     lines: Receiver<Result<String, String>>,
+    stdout_open: Arc<AtomicBool>,
 }
 
 impl ProcessJsonlTransport {
     pub fn start(executable: PathBuf) -> Result<Self, AppError> {
+        crate::process::validate_executable_publisher(&executable, "OpenAI")?;
         Self::start_command(
             executable,
             vec!["app-server".into(), "--stdio".into()],
@@ -1447,6 +1775,7 @@ impl ProcessJsonlTransport {
             }
             command.env("PATH", safe_path);
         }
+        crate::process::configure_child_process_group(&mut command);
         let mut child = command.spawn().map_err(|error| {
             AppError::Process(format!("could not start JSONL process: {error}"))
         })?;
@@ -1459,32 +1788,39 @@ impl ProcessJsonlTransport {
             .take()
             .ok_or_else(|| AppError::Process("Codex App Server stdout was not created".into()))?;
         let (sender, receiver) = mpsc::channel();
-        spawn_line_reader(stdout, sender);
+        let stdout_open = Arc::new(AtomicBool::new(true));
+        spawn_line_reader(stdout, sender, Arc::clone(&stdout_open));
         Ok(Self {
             child: Some(child),
             stdin,
             lines: receiver,
+            stdout_open,
         })
     }
 }
 
-fn spawn_line_reader(stdout: ChildStdout, sender: Sender<Result<String, String>>) {
+fn spawn_line_reader(
+    stdout: ChildStdout,
+    sender: Sender<Result<String, String>>,
+    stdout_open: Arc<AtomicBool>,
+) {
     std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
         loop {
             match read_bounded_line(&mut reader) {
                 Ok(Some(line)) => {
                     if sender.send(Ok(line)).is_err() {
-                        return;
+                        break;
                     }
                 }
-                Ok(None) => return,
+                Ok(None) => break,
                 Err(error) => {
                     let _ = sender.send(Err(error));
-                    return;
+                    break;
                 }
             }
         }
+        stdout_open.store(false, Ordering::Release);
     });
 }
 
@@ -1552,15 +1888,20 @@ impl JsonlTransport for ProcessJsonlTransport {
 
     fn close(&mut self) {
         if let Some(mut child) = self.child.take() {
-            crate::process::terminate_process_tree(&mut child);
+            if matches!(child.try_wait(), Ok(None)) {
+                crate::process::terminate_process_tree(&mut child);
+            }
             let _ = child.wait();
         }
+        self.stdout_open.store(false, Ordering::Release);
     }
 
     fn is_alive(&mut self) -> bool {
-        self.child
-            .as_mut()
-            .is_some_and(|child| matches!(child.try_wait(), Ok(None)))
+        self.stdout_open.load(Ordering::Acquire)
+            && self
+                .child
+                .as_mut()
+                .is_some_and(|child| matches!(child.try_wait(), Ok(None)))
     }
 }
 
@@ -1571,25 +1912,157 @@ impl Drop for ProcessJsonlTransport {
 }
 
 pub fn find_codex_executable() -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
     let names: &[&str] = if cfg!(target_os = "windows") {
         &["codex.exe"]
     } else {
         &["codex"]
     };
-    std::env::split_paths(&path)
-        .flat_map(|entry| names.iter().map(move |name| entry.join(name)))
-        .find_map(|candidate| {
-            let metadata = std::fs::symlink_metadata(&candidate).ok()?;
-            if is_link_metadata(&metadata) || !metadata.is_file() {
+    let path = std::env::var_os("PATH");
+    let local_app_data = std::env::var_os("LOCALAPPDATA");
+    let mut candidates = managed_codex_executable_candidates(local_app_data.as_deref());
+    candidates.extend(codex_executable_candidates(
+        path.as_deref(),
+        local_app_data.as_deref(),
+        names,
+    ));
+    candidates.into_iter().find_map(|candidate| {
+        let metadata = std::fs::symlink_metadata(&candidate).ok()?;
+        if is_link_metadata(&metadata) || !metadata.is_file() {
+            return None;
+        }
+        let canonical = resolve_codex_executable_path(&candidate)?;
+        if crate::security::path_has_link_component(&canonical) {
+            return None;
+        }
+        crate::process::validate_executable_publisher(&canonical, "OpenAI")
+            .ok()
+            .map(|_| canonical)
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn managed_codex_executable_candidates(local_app_data: Option<&OsStr>) -> Vec<PathBuf> {
+    let Some(local_app_data) = local_app_data else {
+        return Vec::new();
+    };
+    let root = PathBuf::from(local_app_data)
+        .join("OpenAI")
+        .join("Codex")
+        .join("bin");
+    let Ok(entries) = fs::read_dir(&root) else {
+        return Vec::new();
+    };
+    let mut candidates = entries
+        .take(64)
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let directory_type = entry.file_type().ok()?;
+            if !directory_type.is_dir() || directory_type.is_symlink() {
                 return None;
             }
-            let canonical = std::fs::canonicalize(candidate).ok()?;
-            if crate::security::path_has_link_component(&canonical) {
+            let candidate = entry.path().join("codex.exe");
+            let metadata = fs::symlink_metadata(&candidate).ok()?;
+            if !metadata.is_file() || is_link_metadata(&metadata) {
                 return None;
             }
-            Some(canonical)
+            Some((metadata.modified().ok(), candidate))
         })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+    candidates
+        .into_iter()
+        .map(|(_, candidate)| candidate)
+        .collect()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn managed_codex_executable_candidates(_local_app_data: Option<&OsStr>) -> Vec<PathBuf> {
+    Vec::new()
+}
+
+fn codex_executable_candidates(
+    path: Option<&OsStr>,
+    _local_app_data: Option<&OsStr>,
+    names: &[&str],
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = path {
+        candidates.extend(
+            std::env::split_paths(path)
+                .flat_map(|entry| names.iter().map(move |name| entry.join(name))),
+        );
+    }
+    #[cfg(target_os = "windows")]
+    if let Some(local_app_data) = _local_app_data {
+        candidates.push(
+            PathBuf::from(local_app_data)
+                .join("Programs")
+                .join("OpenAI")
+                .join("Codex")
+                .join("bin")
+                .join("codex.exe"),
+        );
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = _local_app_data;
+        candidates.extend([
+            PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex"),
+            PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"),
+        ]);
+    }
+    candidates.dedup();
+    candidates
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resolve_codex_executable_path(candidate: &std::path::Path) -> Option<PathBuf> {
+    std::fs::canonicalize(candidate).ok()
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_codex_executable_path(candidate: &std::path::Path) -> Option<PathBuf> {
+    let file = std::fs::File::open(candidate).ok()?;
+    let handle = file.as_raw_handle();
+    let mut buffer = vec![0_u16; 512];
+    loop {
+        let length = unsafe {
+            GetFinalPathNameByHandleW(
+                handle,
+                buffer.as_mut_ptr(),
+                buffer.len() as u32,
+                FILE_NAME_NORMALIZED,
+            )
+        };
+        if length == 0 {
+            return None;
+        }
+        if (length as usize) < buffer.len() {
+            let mut path = buffer[..length as usize].to_vec();
+            const VERBATIM_PREFIX: &[u16] =
+                &[b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+            const VERBATIM_UNC_PREFIX: &[u16] = &[
+                b'\\' as u16,
+                b'\\' as u16,
+                b'?' as u16,
+                b'\\' as u16,
+                b'U' as u16,
+                b'N' as u16,
+                b'C' as u16,
+                b'\\' as u16,
+            ];
+            if path.starts_with(VERBATIM_UNC_PREFIX) {
+                path.splice(..VERBATIM_UNC_PREFIX.len(), [b'\\' as u16, b'\\' as u16]);
+            } else if path.starts_with(VERBATIM_PREFIX) {
+                path.drain(..VERBATIM_PREFIX.len());
+            }
+            return Some(PathBuf::from(OsString::from_wide(&path)));
+        }
+        if buffer.len() >= 32 * 1024 {
+            return None;
+        }
+        buffer.resize(buffer.len() * 2, 0);
+    }
 }
 
 pub fn validate_confirmed_record(record: &CodexAnalysisRecord) -> Result<(), AppError> {
@@ -1729,6 +2202,105 @@ mod tests {
     use std::collections::VecDeque;
     use std::io::Cursor;
 
+    #[test]
+    fn executable_candidates_keep_path_entries_first() {
+        let joined = std::env::join_paths([
+            PathBuf::from("reviewed/first"),
+            PathBuf::from("reviewed/second"),
+        ])
+        .unwrap();
+        let candidates = codex_executable_candidates(
+            Some(joined.as_os_str()),
+            Some(OsStr::new("C:/Users/example/AppData/Local")),
+            &["codex.exe"],
+        );
+
+        assert_eq!(
+            candidates[0],
+            PathBuf::from("reviewed/first").join("codex.exe")
+        );
+        assert_eq!(
+            candidates[1],
+            PathBuf::from("reviewed/second").join("codex.exe")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn managed_desktop_candidates_include_only_direct_regular_binaries() {
+        let local = tempfile::tempdir().unwrap();
+        let root = local.path().join("OpenAI").join("Codex").join("bin");
+        let current = root.join("current");
+        let empty = root.join("empty");
+        fs::create_dir_all(&current).unwrap();
+        fs::create_dir_all(&empty).unwrap();
+        fs::write(current.join("codex.exe"), b"test").unwrap();
+        fs::write(root.join("codex.exe"), b"not a direct candidate").unwrap();
+
+        let candidates = managed_codex_executable_candidates(Some(local.path().as_os_str()));
+
+        assert_eq!(candidates, vec![current.join("codex.exe")]);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn executable_candidates_include_the_verified_desktop_install_location() {
+        let candidates = codex_executable_candidates(
+            None,
+            Some(OsStr::new("C:/Users/example/AppData/Local")),
+            &["codex.exe"],
+        );
+
+        assert_eq!(
+            candidates,
+            vec![PathBuf::from(
+                "C:/Users/example/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe"
+            )]
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn installed_desktop_codex_junction_resolves_to_a_reviewable_binary() {
+        let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") else {
+            return;
+        };
+        let candidate = PathBuf::from(local_app_data)
+            .join("Programs")
+            .join("OpenAI")
+            .join("Codex")
+            .join("bin")
+            .join("codex.exe");
+        if !candidate.is_file() {
+            return;
+        }
+
+        let resolved = resolve_codex_executable_path(&candidate)
+            .expect("installed Codex executable should resolve through its desktop junction");
+        assert!(!crate::security::path_has_link_component(&resolved));
+        crate::process::validate_executable_publisher(&resolved, "OpenAI").unwrap_or_else(
+            |error| {
+                panic!(
+                    "resolved Codex executable should retain its reviewed publisher ({}): {error}",
+                    resolved.display()
+                )
+            },
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn executable_candidates_include_current_and_legacy_desktop_apps() {
+        let candidates = codex_executable_candidates(None, None, &["codex"]);
+
+        assert!(candidates.contains(&PathBuf::from(
+            "/Applications/ChatGPT.app/Contents/Resources/codex"
+        )));
+        assert!(candidates.contains(&PathBuf::from(
+            "/Applications/Codex.app/Contents/Resources/codex"
+        )));
+    }
+
     struct FakeTransport {
         sent: Vec<Value>,
         incoming: VecDeque<Value>,
@@ -1750,15 +2322,25 @@ mod tests {
         }
     }
 
-    struct TimeoutTransport;
+    struct TimeoutTransport {
+        sent: Vec<Value>,
+        cancellation_response_pending: bool,
+    }
 
     impl JsonlTransport for TimeoutTransport {
-        fn send(&mut self, _value: &Value) -> Result<(), AppError> {
+        fn send(&mut self, value: &Value) -> Result<(), AppError> {
+            self.cancellation_response_pending = value["method"] == "account/login/cancel";
+            self.sent.push(value.clone());
             Ok(())
         }
 
         fn receive(&mut self, _timeout: Duration) -> Result<Option<Value>, AppError> {
-            Err(AppError::Process("receive timed out".into()))
+            if self.cancellation_response_pending {
+                self.cancellation_response_pending = false;
+                Ok(Some(response(1, json!({}))))
+            } else {
+                Err(AppError::Process("receive timed out".into()))
+            }
         }
 
         fn close(&mut self) {}
@@ -1766,6 +2348,73 @@ mod tests {
 
     fn response(id: u64, result: Value) -> Value {
         json!({"id": id, "result": result})
+    }
+
+    #[cfg(target_os = "windows")]
+    fn fake_jsonl_process_command(interrupt_after_request: bool) -> (PathBuf, Vec<String>) {
+        let executable = PathBuf::from(std::env::var_os("SystemRoot").expect("SystemRoot"))
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        let script = if interrupt_after_request {
+            "$null = [Console]::In.ReadLine(); exit 0"
+        } else {
+            "$line = [Console]::In.ReadLine(); if ($null -eq $line) { exit 2 }; \
+             [Console]::Out.WriteLine('{\"id\":1,\"result\":{\"version\":\"fake\"}}'); \
+             [Console]::Out.Flush(); $null = [Console]::In.ReadLine(); \
+             while ($true) { Start-Sleep -Milliseconds 50 }"
+        };
+        (
+            executable,
+            vec![
+                "-NoLogo".into(),
+                "-NoProfile".into(),
+                "-NonInteractive".into(),
+                "-Command".into(),
+                script.into(),
+            ],
+        )
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn fake_jsonl_process_command(interrupt_after_request: bool) -> (PathBuf, Vec<String>) {
+        let executable = fs::canonicalize("/bin/sh").expect("system shell");
+        let script = if interrupt_after_request {
+            "IFS= read -r line; exit 0"
+        } else {
+            "IFS= read -r line || exit 2; \
+             printf '%s\n' '{\"id\":1,\"result\":{\"version\":\"fake\"}}'; \
+             IFS= read -r initialized || exit 3; \
+             while :; do sleep 1; done"
+        };
+        (executable, vec!["-c".into(), script.into()])
+    }
+
+    fn valid_analysis_value(input_sha256: &str) -> Value {
+        json!({
+            "schema_version": CODEX_SCHEMA_VERSION,
+            "analysis_id": Uuid::new_v4(),
+            "mode": "new_project_identity",
+            "input_sha256": input_sha256,
+            "project_summary": "A focused HOI4 mod project.",
+            "proposals": [
+                {"key":"display_name","value":"Demo Project","confidence":1.0,"reason":"Matches the brief.","evidence_refs":[]},
+                {"key":"project_id","value":"demo_project","confidence":1.0,"reason":"Valid project identifier.","evidence_refs":[]},
+                {"key":"script_prefix","value":"demo","confidence":1.0,"reason":"Short script prefix.","evidence_refs":[]},
+                {"key":"primary_namespace","value":"demo","confidence":1.0,"reason":"Matches the project identity.","evidence_refs":[]},
+                {"key":"project_description","value":"A demo HOI4 project.","confidence":1.0,"reason":"Summarizes the brief.","evidence_refs":[]},
+                {"key":"descriptor_tags","value":["Gameplay"],"confidence":1.0,"reason":"Matches the intended content.","evidence_refs":[]},
+                {"key":"folder_profile","value":["common"],"confidence":1.0,"reason":"Provides the selected structure.","evidence_refs":[]},
+                {"key":"agents_profile","value":"default","confidence":1.0,"reason":"Uses the standard project guidance.","evidence_refs":[]},
+                {"key":"localisation_convention","value":"english","confidence":1.0,"reason":"Uses the selected language.","evidence_refs":[]},
+                {"key":"documentation_convention","value":"markdown","confidence":1.0,"reason":"Uses the project documentation format.","evidence_refs":[]}
+            ],
+            "component_recommendations": [
+                {"component_id":"core.skills","recommendation":"recommended","reason":"Adds the verified workflow skills."}
+            ],
+            "warnings": []
+        })
     }
 
     #[test]
@@ -1779,6 +2428,113 @@ mod tests {
         protocol.initialize().unwrap();
         assert_eq!(protocol.transport.sent[0]["method"], "initialize");
         assert_eq!(protocol.transport.sent[1]["method"], "initialized");
+    }
+
+    #[test]
+    fn account_and_login_requests_are_rejected_before_initialize() {
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming: VecDeque::new(),
+            alive: true,
+        };
+        let mut protocol = AppServerProtocol::new(transport);
+
+        assert!(protocol.account_read(false).is_err());
+        assert!(protocol.login_start(false).is_err());
+        assert!(protocol.cancel_login("login-1").is_err());
+        assert!(protocol.logout().is_err());
+        assert!(protocol.transport.sent.is_empty());
+    }
+
+    #[test]
+    fn app_server_request_errors_keep_safe_protocol_details() {
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming: VecDeque::from([json!({
+                "id": 1,
+                "error": {
+                    "code": -32602,
+                    "message": "Invalid params; Authorization: Bearer private-value"
+                }
+            })]),
+            alive: true,
+        };
+        let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
+
+        let error = protocol
+            .request("thread/start", json!({}))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("-32602"));
+        assert!(error.contains("Invalid params"));
+        assert!(!error.contains("private-value"));
+        assert!(error.contains("REDACTED"));
+    }
+
+    #[test]
+    fn app_server_error_codes_are_redacted_and_bounded() {
+        let private_code = format!("Bearer {}{}", "private-value", "x".repeat(256));
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming: VecDeque::from([json!({
+                "id": 1,
+                "error": {"code": private_code, "message": "request failed"}
+            })]),
+            alive: true,
+        };
+        let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
+
+        let error = protocol
+            .request("thread/start", json!({}))
+            .unwrap_err()
+            .to_string();
+        let code = error
+            .split_once('(')
+            .and_then(|(_, suffix)| suffix.split_once(')'))
+            .map(|(code, _)| code)
+            .expect("bounded protocol code");
+
+        assert!(!error.contains("private-value"));
+        assert!(code.contains("REDACTED"));
+        assert!(code.chars().count() <= MAX_PROTOCOL_ERROR_CODE_CHARS);
+
+        assert_eq!(
+            safe_protocol_error_code(Some(&json!({"nested": "private-value"}))),
+            "request_failed"
+        );
+    }
+
+    #[test]
+    fn production_jsonl_transport_initializes_frames_and_shuts_down() {
+        let (executable, args) = fake_jsonl_process_command(false);
+        let transport = ProcessJsonlTransport::start_command(executable, args, None).unwrap();
+        let mut protocol = AppServerProtocol::with_timeout(transport, Duration::from_secs(5));
+
+        let initialized = protocol.initialize().unwrap();
+
+        assert_eq!(initialized["version"], "fake");
+        assert!(protocol.is_alive());
+        protocol.transport.close();
+        assert!(!protocol.is_alive());
+    }
+
+    #[test]
+    fn production_jsonl_transport_reports_interrupted_child_as_dead() {
+        let (executable, args) = fake_jsonl_process_command(true);
+        let transport = ProcessJsonlTransport::start_command(executable, args, None).unwrap();
+        let mut protocol = AppServerProtocol::with_timeout(transport, Duration::from_secs(5));
+        protocol.initialized = true;
+
+        let error = protocol
+            .request("account/read", json!({"refreshToken": false}))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("closed during account/read"), "{error}");
+        assert!(!protocol.is_alive());
     }
 
     #[test]
@@ -1819,6 +2575,7 @@ mod tests {
             alive: true,
         };
         let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
 
         let status = protocol.account_read(false).unwrap();
 
@@ -1842,6 +2599,7 @@ mod tests {
             alive: true,
         };
         let mut browser = AppServerProtocol::new(browser_transport);
+        browser.initialized = true;
         let browser_start = browser.login_start(false).unwrap();
         assert_eq!(browser_start.login_id.as_deref(), Some("browser-1"));
         assert_eq!(browser.transport.sent[0]["params"]["type"], "chatgpt");
@@ -1860,6 +2618,7 @@ mod tests {
             alive: true,
         };
         let mut device = AppServerProtocol::new(device_transport);
+        device.initialized = true;
         let device_start = device.login_start(true).unwrap();
         assert!(device_start.device_code);
         assert_eq!(
@@ -1913,12 +2672,58 @@ mod tests {
             alive: true,
         };
         let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
 
         protocol.logout().unwrap();
 
         assert_eq!(protocol.transport.sent[0]["method"], "account/logout");
         assert_eq!(protocol.transport.sent[0]["params"], json!({}));
         assert!(protocol.transport.sent[0].get("token").is_none());
+    }
+
+    #[test]
+    fn login_cancel_uses_the_managed_app_server_method_and_login_id() {
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming: VecDeque::from([response(1, json!({}))]),
+            alive: true,
+        };
+        let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
+
+        protocol.cancel_login("login-1").unwrap();
+
+        assert_eq!(
+            protocol.transport.sent[0],
+            json!({
+                "id": 1,
+                "method": "account/login/cancel",
+                "params": {"loginId": "login-1"}
+            })
+        );
+    }
+
+    #[test]
+    fn cancelled_login_wait_notifies_app_server_before_returning() {
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming: VecDeque::from([response(1, json!({}))]),
+            alive: true,
+        };
+        let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
+
+        let error = protocol
+            .wait_for_login_with_cancel("login-1", Duration::from_secs(1), || true)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("cancelled"));
+        assert_eq!(protocol.transport.sent[0]["method"], "account/login/cancel");
+        assert_eq!(
+            protocol.transport.sent[0]["params"],
+            json!({"loginId": "login-1"})
+        );
     }
 
     #[test]
@@ -1975,6 +2780,61 @@ mod tests {
             .to_string();
 
         assert!(error.contains("required semantic proposals"));
+    }
+
+    #[test]
+    fn analysis_output_rejects_unknown_components_and_account_shaped_text() {
+        let input = "a".repeat(64);
+        assert!(validate_analysis_output(
+            valid_analysis_value(&input),
+            "new_project_identity",
+            &input,
+            &[],
+        )
+        .is_ok());
+
+        let mut unknown_component = valid_analysis_value(&input);
+        unknown_component["component_recommendations"][0]["component_id"] =
+            json!("invented.component");
+        assert!(
+            validate_analysis_output(unknown_component, "new_project_identity", &input, &[],)
+                .is_err()
+        );
+
+        for (pointer, value) in [
+            ("/project_summary", "Contact user@example.com"),
+            ("/proposals/0/reason", "plan_type: plus"),
+            ("/component_recommendations/0/reason", "account_id: private"),
+        ] {
+            let mut account_shaped = valid_analysis_value(&input);
+            *account_shaped.pointer_mut(pointer).unwrap() = json!(value);
+            assert!(
+                validate_analysis_output(account_shaped, "new_project_identity", &input, &[],)
+                    .is_err(),
+                "{pointer}"
+            );
+        }
+
+        for value in [
+            "owner@example.com",
+            "account_id: acct_private",
+            "plan_type: plus",
+            "usage: 98%",
+            "rate-limit: primary",
+        ] {
+            let mut account_shaped = valid_analysis_value(&input);
+            account_shaped["proposals"][4]["value"] = json!(value);
+            assert!(
+                validate_analysis_output(account_shaped, "new_project_identity", &input, &[],)
+                    .is_err(),
+                "{value}"
+            );
+        }
+
+        assert!(reject_sensitive_output_value(&json!({
+            "nested": ["safe", {"deeper": "account_id: acct_private"}]
+        }))
+        .is_err());
     }
 
     #[test]
@@ -2058,6 +2918,50 @@ mod tests {
     }
 
     #[test]
+    fn current_turn_completion_items_can_carry_schema_output() {
+        let message = json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turn": {
+                    "id": "turn-1",
+                    "status": "completed",
+                    "items": [{
+                        "id": "message-1",
+                        "type": "agentMessage",
+                        "text": "{\"answer\":\"ok\"}"
+                    }]
+                }
+            }
+        });
+        assert_eq!(structured_output(&message).unwrap()["answer"], "ok");
+    }
+
+    #[test]
+    fn failed_turn_reports_the_safe_nested_provider_message() {
+        let message = json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-1",
+                "turn": {
+                    "id": "turn-1",
+                    "status": "failed",
+                    "items": [],
+                    "error": {
+                        "message": "{\"error\":{\"message\":\"Invalid output schema; Authorization: Bearer private-value\"}}"
+                    }
+                }
+            }
+        });
+
+        let error = completed_turn_error(&message, "thread-1", Some("turn-1")).unwrap();
+
+        assert!(error.contains("Invalid output schema"));
+        assert!(error.contains("REDACTED"));
+        assert!(!error.contains("private-value"));
+    }
+
+    #[test]
     fn unrelated_turn_notifications_do_not_match_the_active_turn() {
         let unrelated = json!({
             "method": "turn/completed",
@@ -2070,6 +2974,46 @@ mod tests {
 
         assert!(!event_matches_turn(&unrelated, "thread-1", Some("turn-1")));
         assert!(event_matches_turn(&related, "thread-1", Some("turn-1")));
+    }
+
+    #[test]
+    fn correlated_turn_notifications_have_aggregate_count_and_size_limits() {
+        let incoming = (0..=MAX_CORRELATED_NOTIFICATIONS)
+            .map(|index| {
+                json!({
+                    "method": "item/started",
+                    "params": {
+                        "threadId": "thread-1",
+                        "turnId": "turn-1",
+                        "item": {"id": format!("item-{index}")}
+                    }
+                })
+            })
+            .collect::<VecDeque<_>>();
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming,
+            alive: true,
+        };
+        let mut protocol = AppServerProtocol::new(transport);
+
+        let error = protocol
+            .drain_notifications(Duration::from_secs(1), "thread-1", Some("turn-1"))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("correlated notification count limit"));
+
+        let mut notifications = Vec::new();
+        push_bounded_notification(
+            &mut notifications,
+            json!({"method": "item/started", "payload": "x".repeat(80)}),
+            10,
+            100,
+            "correlated",
+        )
+        .unwrap_err();
+        assert!(notifications.is_empty());
     }
 
     #[test]
@@ -2111,6 +3055,7 @@ mod tests {
             alive: true,
         };
         let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
         let status = protocol
             .wait_for_login("login-1", Duration::from_secs(1))
             .unwrap();
@@ -2138,6 +3083,7 @@ mod tests {
             alive: true,
         };
         let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
 
         let error = protocol
             .wait_for_login("login-cancelled", Duration::from_secs(1))
@@ -2151,7 +3097,11 @@ mod tests {
 
     #[test]
     fn login_wait_has_a_bounded_timeout_when_the_server_stays_alive() {
-        let mut protocol = AppServerProtocol::new(TimeoutTransport);
+        let mut protocol = AppServerProtocol::new(TimeoutTransport {
+            sent: Vec::new(),
+            cancellation_response_pending: false,
+        });
+        protocol.initialized = true;
 
         let error = protocol
             .wait_for_login("login-timeout", Duration::from_millis(5))
@@ -2159,6 +3109,10 @@ mod tests {
             .to_string();
 
         assert!(error.contains("did not complete"));
+        assert_eq!(
+            protocol.transport.sent[0]["params"]["loginId"],
+            "login-timeout"
+        );
     }
 
     #[test]
@@ -2169,6 +3123,7 @@ mod tests {
             alive: false,
         };
         let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
 
         let error = protocol.account_read(false).unwrap_err().to_string();
 
@@ -2201,15 +3156,53 @@ mod tests {
             alive: true,
         };
         let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
 
         let error = protocol.analyze(&request).unwrap_err().to_string();
 
         assert!(error.contains("no schema-constrained analysis output"));
         assert_eq!(protocol.transport.sent[2]["method"], "thread/start");
+        assert_eq!(
+            protocol.transport.sent[2]["params"]["sandbox"],
+            json!("read-only")
+        );
+        assert!(protocol.transport.sent[2]["params"]["cwd"]
+            .as_str()
+            .is_some_and(|path| path.contains("hoi4-mod-setup-analysis-")));
+        assert!(protocol.transport.sent[2]["params"]
+            .get("runtimeWorkspaceRoots")
+            .is_none());
+        assert_eq!(
+            protocol.transport.sent[2]["params"]["sandboxPolicy"],
+            json!({
+                "type": "readOnly",
+                "access": {
+                    "type": "restricted",
+                    "includePlatformDefaults": false,
+                    "readableRoots": []
+                }
+            })
+        );
+        let analysis_directory = protocol.transport.sent[2]["params"]["cwd"]
+            .as_str()
+            .expect("analysis directory")
+            .to_owned();
         assert_eq!(protocol.transport.sent[3]["method"], "turn/start");
+        assert_eq!(
+            protocol.transport.sent[3]["params"]["sandboxPolicy"],
+            json!({
+                "type": "readOnly",
+                "access": {
+                    "type": "restricted",
+                    "includePlatformDefaults": false,
+                    "readableRoots": []
+                }
+            })
+        );
         assert!(protocol.transport.sent[3]["params"]
             .get("outputSchema")
             .is_some());
+        assert!(!std::path::Path::new(&analysis_directory).exists());
     }
 
     #[test]
@@ -2275,6 +3268,8 @@ mod tests {
         let prompt = analysis_prompt(&request, &input_sha256).unwrap();
 
         assert!(prompt.contains("finding-1"));
+        assert!(prompt.contains("fresh RFC 4122 UUID"));
+        assert!(prompt.contains("descriptor_tags and folder_profile"));
         assert!(!prompt.contains("C:/Users/private/mod"));
         assert!(!prompt.contains("scan_id"));
     }

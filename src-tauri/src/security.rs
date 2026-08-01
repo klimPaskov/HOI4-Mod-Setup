@@ -100,9 +100,10 @@ pub fn is_reserved_windows_name(value: &str) -> bool {
 
 pub fn canonical_relative_key(path: &str) -> Result<String, AppError> {
     Ok(normalize_relative_path(path)?
-        .nfc()
-        .collect::<String>()
-        .to_lowercase())
+        .nfkd()
+        .flat_map(|character| character.to_uppercase())
+        .nfkc()
+        .collect())
 }
 
 pub fn safe_join(root: &Path, relative: &str) -> Result<PathBuf, AppError> {
@@ -116,9 +117,7 @@ pub fn safe_join(root: &Path, relative: &str) -> Result<PathBuf, AppError> {
     // For a missing destination, canonicalize the nearest existing parent and
     // compare that parent. This blocks a pre-existing link from routing writes
     // outside the project while still allowing creation of new files.
-    let root_canonical = fs::canonicalize(root).map_err(|error| {
-        AppError::PathSecurity(format!("project root is not accessible: {error}"))
-    })?;
+    let (root_canonical, _) = crate::paths::validate_project_root_or_destination(root)?;
     let mut existing = candidate.clone();
     while !existing.exists() {
         if !existing.pop() {
@@ -129,7 +128,15 @@ pub fn safe_join(root: &Path, relative: &str) -> Result<PathBuf, AppError> {
     }
     let existing_canonical = fs::canonicalize(&existing)
         .map_err(|error| AppError::PathSecurity(format!("cannot resolve destination: {error}")))?;
-    if !existing_canonical.starts_with(&root_canonical) {
+    let root_exists = root_canonical.exists();
+    let contained = if root_exists {
+        existing_canonical.starts_with(&root_canonical)
+    } else {
+        root_canonical
+            .parent()
+            .is_some_and(|parent| existing_canonical == parent)
+    };
+    if !contained {
         return Err(AppError::PathSecurity(format!(
             "destination escapes project root: {}",
             candidate.display()
@@ -406,6 +413,9 @@ pub fn redact_secrets(value: &str, known_secrets: &[String]) -> String {
             r"(?i)((?:authorization|access[_-]?token|refresh[_-]?token|device[_-]?code|user[_-]?code|login[_-]?token)\s*[:=]\s*)[^\s,;&]+",
         ),
         Regex::new(
+            r#"(?i)(["']?(?:authorization|api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|device[_-]?code|user[_-]?code)["']?\s*:\s*["'])[^"']+(["'])"#,
+        ),
+        Regex::new(
             r"(?i)([?&](?:code|token|access_token|refresh_token|device_code|user_code)=)[^&#\s]+",
         ),
         Regex::new(r"(?i)(api[_-]?key\s*[=:]\s*)[^\s,;&]+"),
@@ -423,7 +433,11 @@ pub fn redact_secrets(value: &str, known_secrets: &[String]) -> String {
         redacted = pattern
             .replace_all(&redacted, |captures: &regex::Captures<'_>| {
                 if captures.len() > 1 {
-                    format!("{}[REDACTED]", &captures[1])
+                    format!(
+                        "{}[REDACTED]{}",
+                        &captures[1],
+                        captures.get(2).map_or("", |capture| capture.as_str())
+                    )
                 } else {
                     "[REDACTED]".to_string()
                 }
@@ -438,18 +452,26 @@ pub fn reject_secret_like_keys(value: &serde_json::Value) -> Result<(), AppError
         match value {
             serde_json::Value::Object(map) => {
                 for (key, child) in map {
-                    let lower = key.to_ascii_lowercase();
+                    let canonical = key
+                        .chars()
+                        .filter(|character| character.is_ascii_alphanumeric())
+                        .map(|character| character.to_ascii_lowercase())
+                        .collect::<String>();
                     if matches!(
-                        lower.as_str(),
-                        "secret_value"
+                        canonical.as_str(),
+                        "secretvalue"
                             | "password"
+                            | "passphrase"
                             | "token"
-                            | "api_key"
-                            | "access_token"
-                            | "refresh_token"
-                            | "device_code"
-                            | "user_code"
-                            | "credential_value"
+                            | "apikey"
+                            | "clientsecret"
+                            | "authorization"
+                            | "accesstoken"
+                            | "refreshtoken"
+                            | "devicecode"
+                            | "usercode"
+                            | "credentialvalue"
+                            | "privatekey"
                     ) {
                         return Err(AppError::Credential(format!(
                             "secret-like field is not serializable: {path}.{key}"
@@ -580,6 +602,33 @@ mod tests {
     }
 
     #[test]
+    fn rejects_secret_keys_across_common_serialized_spellings() {
+        for key in [
+            "apiKey",
+            "api_key",
+            "api-key",
+            "clientSecret",
+            "authorization",
+            "accessToken",
+            "refresh-token",
+            "device.code",
+            "private_key",
+        ] {
+            let value = serde_json::json!({"nested": {key: "must-not-persist"}});
+            assert!(reject_secret_like_keys(&value).is_err(), "{key}");
+        }
+    }
+
+    #[test]
+    fn redacts_quoted_json_secret_values() {
+        let input = r#"{"apiKey":"example-secret","clientSecret":"another-secret"}"#;
+        let output = redact_secrets(input, &[]);
+        assert!(!output.contains("example-secret"));
+        assert!(!output.contains("another-secret"));
+        assert_eq!(output.matches("[REDACTED]").count(), 2);
+    }
+
+    #[test]
     fn canonical_keys_normalize_unicode_before_case_collision_checks() {
         let composed = "localé.txt";
         let decomposed = "locale\u{301}.txt";
@@ -587,6 +636,18 @@ mod tests {
         assert_eq!(
             canonical_relative_key(composed).unwrap(),
             canonical_relative_key(decomposed).unwrap()
+        );
+    }
+
+    #[test]
+    fn canonical_keys_reject_multi_character_case_aliases() {
+        assert_eq!(
+            canonical_relative_key("straße.txt").unwrap(),
+            canonical_relative_key("STRASSE.TXT").unwrap()
+        );
+        assert_eq!(
+            canonical_relative_key("σ.txt").unwrap(),
+            canonical_relative_key("ς.TXT").unwrap()
         );
     }
 

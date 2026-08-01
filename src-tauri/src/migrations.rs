@@ -318,6 +318,17 @@ pub fn migrate_journal(value: Value) -> Result<TransactionJournal, AppError> {
         object
             .entry("transaction_kind")
             .or_insert_with(|| Value::String("installation".into()));
+        object.entry("project_root_lifecycle").or_insert_with(|| {
+            serde_json::json!({
+                "mode": "existing",
+                "canonical_parent": null,
+                "leaf": null,
+                "checkpoint": "not_required",
+                "created_by_transaction": false,
+                "observed_exists": true,
+                "cleanup_result": null
+            })
+        });
     }
     serde_json::from_value(value).map_err(AppError::from)
 }

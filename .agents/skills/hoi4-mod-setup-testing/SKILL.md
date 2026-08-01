@@ -62,13 +62,38 @@ session, cancellation, credential-health, or analysis assertions.
 - managed removal never deletes unowned content
 - secret-like values never survive serialization
 - one plan revision produces one file set
+- selected manifest components and dependencies are the only downloaded files;
+  an unselected `workflow.super_events` tree cannot enter the ledger or stage
 - scan produces no project mutation
 - no launcher artifact is generated before confirmed Codex proposals
+- standard Documents/mod resolution and launcher discovery reject links,
+  malformed candidates, collisions, and ambiguous sibling registrations
+- the UI and Rust plan builder both block missing, unauthenticated, or
+  usage-limited provider capability while signed-out recovery remains usable
+- reviewed external-link commands accept only the fixed URLs and use the
+  platform system-browser bridge
 - provider/model/profile stays bound from the start gate through analysis, plan,
   lock, readiness, and any Codex-only flatten export
+- provider-neutral `workflow.super_events` selection is represented by its
+  parent manifest/component ID, expands to the complete hidden runtime
+  dependency closure, namespace-adapts only verified text files, leaves
+  binary DDS/PSD bytes unchanged, is isolated from unselected downloads, adds
+  no unselected AGENTS guidance, and remains non-blocking in readiness
 - flattening rejects output collisions, traversal, links, secret-shaped paths,
   and secret-shaped content while preserving the source transaction boundary
 - App Server account data and tokens never survive serialization
+- login cancellation targets one validated App Server `loginId`, calls the
+  managed cancel method, and cannot clear or cancel another active attempt
+- remote manifest parsing applies the authoritative Draft 2020-12 schema before
+  typed deserialization and rejects unknown nested policy fields
+- component recommendation payloads accept only the checked-in
+  `codex-analysis.schema.json` shape and deterministic registry IDs, including
+  `workflow.super_events`
+- read-only Git inspection rejects hostile local configuration before spawn,
+  suppresses ambient Git behavior, and never recurses into submodules
+- LoRA/ComfyUI has no setup screen, state, component, operation, lock entry,
+  maintenance option, or readiness check; Ready exposes only the fixed external
+  portrait-workflow link
 - an approved process receives only `MESHY_API_KEY`, while known secret values are absent from both output streams and serialized artifacts
 - an MCP health probe accepts only the manifest-declared Windows wrapper,
   completes initialize and read-only `tools/list` validation within its bound,
@@ -77,6 +102,11 @@ session, cancellation, credential-health, or analysis assertions.
   remains able to use the validated locked analysis; the reanalysis evidence
   scan remains read-only and its approved references are bound to the core
   session before transmission
+- Repair uses only the immutable locked source and rejects a component absent
+  from it; Update resolves the newer source required to add that component
+- the managed lock, completed scan context, and readiness result remain the
+  remembered state across review/maintenance until an explicit refresh or
+  transaction changes them
 
 ## Fault injection
 
@@ -84,7 +114,12 @@ For every transaction operation, support controlled failure before and after the
 
 ## UI tests
 
-Test all 17 required screen states and seven phases. Include density assertions, keyboard traversal, scaling, reduced motion, long values, errors, conflict comparison, staged scanner progress, correlated event filtering, indeterminate progress semantics, and cancellation evidence messaging.
+Test all 16 required screen states and seven phases. Include density assertions, keyboard traversal, scaling, reduced motion, long values, errors, conflict comparison, staged scanner progress, correlated event filtering, indeterminate progress semantics, and cancellation evidence messaging. Assert the exact 3D question and the immediately following Super Events checkbox order.
+
+Keep a desktop responsiveness regression test that verifies every Tauri command
+uses `#[tauri::command(async)]` so blocking Rust core work cannot run on the UI
+event loop; the current source-level test is
+`every_desktop_command_uses_the_async_dispatcher`.
 
 ## Platform matrix
 
@@ -123,11 +158,20 @@ A release is blocked by:
 On Windows, activate the MSVC environment with `vcvars64.bat` before
 all-feature Rust gates when using PowerShell. Compile fuzz targets with
 `cargo check --manifest-path fuzz/Cargo.toml --bins`; run the bounded targets
-from `fuzz/README.md` when parser behavior changes; package and smoke-test
-through `pnpm release:build`, `pnpm release:verify`, and `pnpm desktop:e2e`.
+from `fuzz/README.md` when parser behavior changes. Use the repository-owned
+scripts for validation and release gates: `pnpm validate`,
+`pnpm test:workflows`, `pnpm test:a11y`, `pnpm test:e2e`,
+`pnpm release:build`, `pnpm release:verify`, `pnpm desktop:e2e`, and
+`pnpm installer:e2e`.
+The platform signing jobs verify changed package bytes and regenerate their
+complete internal artifact manifest before curation. Use
+`pnpm release:prepare` only for final publication-asset curation.
 The native smoke harness uses `taskkill.exe` with an argument array on Windows
 so the Tauri process tree cannot survive the test timeout; keep cleanup bounded
 and verify that no test process remains after a failed run.
+The installer harness operates only inside a fresh runner-temporary directory:
+it silently installs and uninstalls the NSIS package on Windows, and mounts,
+copies, launches, removes, and detaches the DMG application on macOS.
 
 ## Update this skill when
 

@@ -9,14 +9,12 @@ manifest is regenerated for a new immutable revision.
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import hashlib
-import io
 import json
 import re
 import subprocess
-import tarfile
 from pathlib import Path, PurePosixPath
+from urllib.parse import unquote
 
 
 def glob_matches(pattern: str, value: str) -> bool:
@@ -38,62 +36,71 @@ def glob_matches(pattern: str, value: str) -> bool:
     return re.fullmatch(expression[1:], value) is not None
 
 
-def declared_paths(component: dict, source_root: Path) -> list[Path]:
-    source = component["source"]
-    kind = source["kind"]
-    if kind == "generated":
-        return []
-    source_path = PurePosixPath(source["path"])
-    root = source_root.joinpath(*source_path.parts)
-    if kind == "file":
-        if not root.is_file() or root.is_symlink():
-            raise SystemExit(f"declared source file is missing or linked: {root}")
-        return [root]
-    if kind != "tree" or not root.is_dir() or root.is_symlink():
-        raise SystemExit(f"declared source tree is missing or linked: {root}")
-    include = source.get("include", [])
-    exclude = source.get("exclude", [])
-    paths: list[Path] = []
-    for candidate in sorted(root.rglob("*")):
-        if not candidate.is_file() or candidate.is_symlink():
-            continue
-        relative = candidate.relative_to(root).as_posix()
-        included = not include or any(glob_matches(pattern, relative) for pattern in include)
-        excluded = any(glob_matches(pattern, relative) for pattern in exclude)
-        if included and not excluded:
-            paths.append(candidate)
-    return paths
-
-
-def evidence_for(component: dict, source_root: Path) -> list[dict]:
-    entries = []
-    source_root = source_root.resolve()
-    for path in declared_paths(component, source_root):
-        relative = path.relative_to(source_root).as_posix()
-        data = path.read_bytes()
-        entries.append(
-            {
-                "path": relative,
-                "sha256": hashlib.sha256(data).hexdigest(),
-                "size": len(data),
-            }
-        )
-    return entries
-
-
 def git_snapshot(source_root: Path, revision: str) -> dict[str, bytes]:
-    """Read only tracked bytes from one explicit immutable Git revision."""
-    archive = subprocess.check_output(
-        ["git", "-C", str(source_root), "archive", "--format=tar", revision]
+    """Read exact tracked Git blob bytes from one immutable commit."""
+    if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise SystemExit("--revision must be one exact lowercase 40-character commit")
+    try:
+        subprocess.run(
+            ["git", "-C", str(source_root), "cat-file", "-e", f"{revision}^{{commit}}"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        tree = subprocess.check_output(
+            [
+                "git",
+                "-C",
+                str(source_root),
+                "ls-tree",
+                "-r",
+                "-z",
+                "--full-tree",
+                revision,
+            ]
+        )
+    except subprocess.CalledProcessError as error:
+        raise SystemExit("--revision must resolve to an available commit") from error
+
+    blob_paths: list[tuple[str, str]] = []
+    for record in tree.split(b"\0"):
+        if not record:
+            continue
+        metadata, raw_path = record.split(b"\t", 1)
+        _mode, object_type, object_id = metadata.decode("ascii").split(" ", 2)
+        if object_type == "blob":
+            blob_paths.append((raw_path.decode("utf-8"), object_id))
+
+    process = subprocess.Popen(
+        ["git", "-C", str(source_root), "cat-file", "--batch"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
+    assert process.stdin is not None
+    assert process.stdout is not None
+    assert process.stderr is not None
     snapshot: dict[str, bytes] = {}
-    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as tar:
-        for member in tar:
-            if not member.isfile():
-                continue
-            handle = tar.extractfile(member)
-            if handle is not None:
-                snapshot[member.name] = handle.read()
+    try:
+        for path, object_id in blob_paths:
+            process.stdin.write(f"{object_id}\n".encode("ascii"))
+            process.stdin.flush()
+            header = process.stdout.readline().decode("ascii").strip().split(" ")
+            if len(header) != 3 or header[1] != "blob":
+                raise SystemExit(f"unable to read Git blob for {path}")
+            size = int(header[2])
+            data = process.stdout.read(size)
+            if len(data) != size or process.stdout.read(1) != b"\n":
+                raise SystemExit(f"truncated Git blob for {path}")
+            snapshot[path] = data
+    finally:
+        process.stdin.close()
+    return_code = process.wait()
+    detail = process.stderr.read().decode("utf-8", errors="replace").strip()
+    process.stdout.close()
+    process.stderr.close()
+    if return_code != 0:
+        raise SystemExit(f"git cat-file failed: {detail}")
     return snapshot
 
 
@@ -125,6 +132,49 @@ def git_evidence_for(component: dict, snapshot: dict[str, bytes]) -> list[dict]:
         for name in names
     ]
 
+def markdown_targets(text: str) -> list[str]:
+    targets: list[str] = []
+    for match in re.finditer(r"\]\((?:<([^>]+)>|([^\s)]+))", text):
+        targets.append(match.group(1) or match.group(2))
+    return targets
+
+
+def normalize_wiki_target(page: str, raw_target: str) -> str | None:
+    target = raw_target.strip()
+    if (
+        not target
+        or target.startswith("#")
+        or re.match(r"^(?:https?|mailto|tel|data):", target, flags=re.IGNORECASE)
+    ):
+        return None
+    target = target.split("#", 1)[0].split("?", 1)[0]
+    target = re.sub(r"\\([\\`*_{}\[\]()#+\-.!])", r"\1", target).replace("\\", "/")
+    target = unquote(target).lstrip("/")
+    parts: list[str] = []
+    for part in (PurePosixPath(page).parent / target).parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not parts:
+                raise SystemExit(f"offline wiki link escapes its root: {page} -> {raw_target}")
+            parts.pop()
+        else:
+            parts.append(part)
+    return PurePosixPath(*parts).as_posix()
+
+
+def validate_offline_wiki_links(snapshot: dict[str, bytes]) -> None:
+    wiki_files = {name for name in snapshot if name.startswith("paradox_wiki/")}
+    for page in sorted(name for name in wiki_files if name.lower().endswith(".md")):
+        try:
+            text = snapshot[page].decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise SystemExit(f"offline wiki Markdown is not UTF-8: {page}") from error
+        for raw_target in markdown_targets(text):
+            target = normalize_wiki_target(page, raw_target)
+            if target is not None and target not in wiki_files:
+                raise SystemExit(f"offline wiki link is missing: {page} -> {target}")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -132,6 +182,7 @@ def main() -> None:
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument(
         "--revision",
+        required=True,
         help="Populate evidence from tracked Git bytes at this immutable revision.",
     )
     args = parser.parse_args()
@@ -139,15 +190,11 @@ def main() -> None:
     source_root = args.source_root.resolve()
     if not source_root.is_dir():
         raise SystemExit(f"source root is not a directory: {source_root}")
-    snapshot = git_snapshot(source_root, args.revision) if args.revision else None
-    if args.revision:
-        manifest["generated_for_revision"] = args.revision
+    snapshot = git_snapshot(source_root, args.revision)
+    validate_offline_wiki_links(snapshot)
+    manifest["generated_for_revision"] = args.revision
     for component in manifest["components"]:
-        component["expected_files"] = (
-            git_evidence_for(component, snapshot)
-            if snapshot is not None
-            else evidence_for(component, source_root)
-        )
+        component["expected_files"] = git_evidence_for(component, snapshot)
     args.manifest.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )

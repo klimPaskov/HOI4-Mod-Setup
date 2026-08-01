@@ -85,15 +85,39 @@ pub fn build_conflict(
     incoming: Option<&[u8]>,
 ) -> ConflictDecision {
     let classification = classify(base, local, incoming);
+    let mut options = allowed_choices(kind, classification);
+    if kind == FileKind::Json && !json_conflict_supports_structured_merge(base, local, incoming) {
+        options.retain(|choice| choice != "merge");
+    }
     ConflictDecision {
         path: path.into(),
         kind,
         classification,
-        options: allowed_choices(kind, classification),
+        options,
         selected: None,
         base_sha256: base.map(sha256_bytes),
         local_sha256: local.map(sha256_bytes),
         incoming_sha256: incoming.map(sha256_bytes),
+    }
+}
+
+fn json_conflict_supports_structured_merge(
+    base: Option<&[u8]>,
+    local: Option<&[u8]>,
+    incoming: Option<&[u8]>,
+) -> bool {
+    [base, local, incoming]
+        .into_iter()
+        .flatten()
+        .map(serde_json::from_slice::<Value>)
+        .all(|value| value.is_ok_and(|value| !json_contains_array(&value)))
+}
+
+fn json_contains_array(value: &Value) -> bool {
+    match value {
+        Value::Array(_) => true,
+        Value::Object(object) => object.values().any(json_contains_array),
+        _ => false,
     }
 }
 
@@ -260,19 +284,9 @@ fn merge_json_value(
             }
             Ok(())
         }
-        (Value::Array(base), Value::Array(local), Value::Array(incoming))
-            if base.len() == local.len() && local.len() == incoming.len() =>
-        {
-            for index in 0..base.len() {
-                merge_json_value(
-                    &base[index],
-                    &mut local[index],
-                    &incoming[index],
-                    &format!("{path}[{index}]"),
-                )?;
-            }
-            Ok(())
-        }
+        (Value::Array(_), Value::Array(_), Value::Array(_)) => Err(AppError::Merge(format!(
+            "conflicting JSON array at {path} requires a declared identity key"
+        ))),
         _ => Err(AppError::Merge(format!("conflicting JSON value at {path}"))),
     }
 }
@@ -365,5 +379,40 @@ mod tests {
         .unwrap();
         assert!(result.contains("b = 2"));
         assert!(result.contains("c = 3"));
+    }
+
+    #[test]
+    fn json_array_conflicts_do_not_offer_or_apply_positional_merge() {
+        let base = br#"{"items":[{"id":"a","value":1},{"id":"b","value":1}]}"#;
+        let local = br#"{"items":[{"id":"b","value":2},{"id":"a","value":1}]}"#;
+        let incoming = br#"{"items":[{"id":"a","value":3},{"id":"b","value":1}]}"#;
+        let decision = build_conflict(
+            "settings.json",
+            FileKind::Json,
+            Some(base),
+            Some(local),
+            Some(incoming),
+        );
+        assert!(!decision.options.contains(&"merge".into()));
+        assert!(structured_json_merge(
+            std::str::from_utf8(base).unwrap(),
+            std::str::from_utf8(local).unwrap(),
+            std::str::from_utf8(incoming).unwrap(),
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("requires a declared identity key"));
+    }
+
+    #[test]
+    fn json_objects_without_arrays_still_offer_structured_merge() {
+        let decision = build_conflict(
+            "settings.json",
+            FileKind::Json,
+            Some(br#"{"base":true,"local":false,"incoming":false}"#),
+            Some(br#"{"base":true,"local":true,"incoming":false}"#),
+            Some(br#"{"base":true,"local":false,"incoming":true}"#),
+        );
+        assert!(decision.options.contains(&"merge".into()));
     }
 }

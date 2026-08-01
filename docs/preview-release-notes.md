@@ -1,20 +1,17 @@
-# HOI4 Mod Setup 0.1.0
+# HOI4 Mod Setup 0.1.1
 
-This public prerelease is built from one exact public Git commit and includes
-native Windows `.exe` and macOS `.dmg` packages.
+Download the installer for your computer:
 
-The GitHub release assets are named clearly:
+- Windows: `HOI4-Mod-Setup-windows-x64-setup.exe`
+- Mac (Apple silicon): `HOI4-Mod-Setup-macos-arm64.dmg`
+- Mac (Intel): `HOI4-Mod-Setup-macos-x64.dmg`
 
-- `HOI4-Mod-Setup-windows-x64-setup.exe` — Windows x64 installer
-- `HOI4-Mod-Setup-macos-arm64.dmg` — macOS Apple silicon installer
-- `HOI4-Mod-Setup-macos-x64.dmg` — macOS Intel installer
+Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app
+to Applications.
 
-The release page also includes the generated provenance and SHA-256 files.
-
-It is a prerelease, not a stable release. Windows and macOS may ask for a
-platform security confirmation because stable publisher signing and
-notarization are separate release gates. Verify `PREVIEW_PROVENANCE.json`,
-`PREVIEW_ARTIFACTS.sha256`, and the source commit before installing.
+Your computer may occasionally flag a new community build as harmful. This
+can be a false positive; the app is open source and this is its official
+GitHub release page.
 
 The source is public under the Apache License 2.0:
 <https://github.com/klimPaskov/HOI4-Mod-Setup>.

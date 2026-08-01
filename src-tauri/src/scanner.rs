@@ -19,6 +19,8 @@ const MAX_DEPTH: usize = 16;
 const MAX_DIRECTORIES: usize = 10_000;
 const MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_TEXT_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_LAUNCHER_CANDIDATES: usize = 512;
+const MAX_LAUNCHER_DESCRIPTOR_BYTES: u64 = 256 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct ScanOptions {
@@ -39,6 +41,82 @@ impl Default for ScanOptions {
             cancel_flag: None,
         }
     }
+}
+
+pub fn discover_launcher_descriptor(root: &Path) -> Result<Option<PathBuf>, AppError> {
+    let root = fs::canonicalize(root)
+        .map_err(|error| AppError::Scan(format!("cannot resolve project root: {error}")))?;
+    let parent = root
+        .parent()
+        .ok_or_else(|| AppError::Scan("project root has no parent directory".into()))?;
+    if path_has_link_component(parent) {
+        return Err(AppError::Scan(
+            "project parent contains a symlink or junction".into(),
+        ));
+    }
+    let expected_name = root
+        .file_name()
+        .map(|name| format!("{}.mod", name.to_string_lossy()).to_ascii_lowercase());
+    let mut matches = Vec::new();
+    let mut inspected = 0usize;
+    for entry in fs::read_dir(parent)
+        .map_err(|error| AppError::Scan(format!("cannot inspect project parent: {error}")))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        let is_mod = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("mod"));
+        if !is_mod {
+            continue;
+        }
+        inspected += 1;
+        if inspected > MAX_LAUNCHER_CANDIDATES {
+            break;
+        }
+        let metadata = fs::symlink_metadata(&path)?;
+        if is_link_metadata(&metadata)
+            || !metadata.is_file()
+            || metadata.len() > MAX_LAUNCHER_DESCRIPTOR_BYTES
+        {
+            continue;
+        }
+        let bytes = fs::read(&path)?;
+        let Ok(descriptor) = crate::descriptors::parse_descriptor(&bytes) else {
+            continue;
+        };
+        let Some(declared) = descriptor.fields.get("path") else {
+            continue;
+        };
+        let declared_path = PathBuf::from(declared);
+        if !declared_path.is_absolute() || path_has_link_component(&declared_path) {
+            continue;
+        }
+        let Ok(declared_root) = fs::canonicalize(&declared_path) else {
+            continue;
+        };
+        let same_root = if cfg!(target_os = "windows") {
+            declared_root
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&root.to_string_lossy())
+        } else {
+            declared_root == root
+        };
+        if same_root {
+            let exact_name = expected_name.as_deref().is_some_and(|expected| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().to_ascii_lowercase() == expected)
+                    .unwrap_or(false)
+            });
+            matches.push((exact_name, path));
+        }
+    }
+    matches.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    if matches.len() > 1 && !matches[0].0 {
+        return Ok(None);
+    }
+    Ok(matches.into_iter().next().map(|(_, path)| path))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1567,15 +1645,11 @@ fn detect_managed_installation(
         .optional_workflows
         .get("workflow.3d")
         .is_some_and(|workflow| workflow.credential_reference.is_some());
-    let lora_interest = lock
+    let workflow_super_events_state = lock
         .optional_workflows
-        .get("workflow.lora_comfyui_interest")
-        .is_some_and(|workflow| {
-            matches!(
-                workflow.state.as_str(),
-                "planned_unavailable" | "interest_recorded"
-            )
-        });
+        .get("workflow.super_events")
+        .map(|workflow| workflow.state.as_str())
+        .unwrap_or("not_selected");
     findings.push(finding(
         "installation.managed",
         "installation",
@@ -1587,7 +1661,7 @@ fn detect_managed_installation(
             "component_ids": component_ids,
             "workflow_3d_state": workflow_3d_state,
             "workflow_3d_key_configured": workflow_3d_key_configured,
-            "lora_interest": lora_interest,
+            "workflow_super_events_state": workflow_super_events_state,
         }),
         "accepted",
         evidence(
@@ -1672,6 +1746,37 @@ mod tests {
     use std::fs;
     use std::sync::{atomic::AtomicBool, Arc};
     use tempfile::tempdir;
+
+    #[test]
+    fn launcher_discovery_prefers_the_descriptor_named_for_the_project_folder() {
+        let parent = tempdir().unwrap();
+        let project = parent.path().join("example");
+        fs::create_dir(&project).unwrap();
+        let project_path = project.display().to_string().replace('\\', "\\\\");
+        let descriptor = format!("name=\"Example\"\npath=\"{project_path}\"\n");
+        fs::write(parent.path().join("other.mod"), &descriptor).unwrap();
+        fs::write(parent.path().join("example.mod"), &descriptor).unwrap();
+
+        let discovered = discover_launcher_descriptor(&project).unwrap().unwrap();
+
+        assert_eq!(
+            discovered.canonicalize().unwrap(),
+            parent.path().join("example.mod").canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn launcher_discovery_returns_none_for_ambiguous_noncanonical_names() {
+        let parent = tempdir().unwrap();
+        let project = parent.path().join("example");
+        fs::create_dir(&project).unwrap();
+        let project_path = project.display().to_string().replace('\\', "\\\\");
+        let descriptor = format!("name=\"Example\"\npath=\"{project_path}\"\n");
+        fs::write(parent.path().join("first.mod"), &descriptor).unwrap();
+        fs::write(parent.path().join("second.mod"), &descriptor).unwrap();
+
+        assert!(discover_launcher_descriptor(&project).unwrap().is_none());
+    }
 
     #[test]
     fn scan_is_read_only_and_detects_core_surfaces() {
@@ -1866,9 +1971,21 @@ mod tests {
         let directory = tempdir().unwrap();
         let metadata = directory.path().join(".hoi4-mod-setup");
         fs::create_dir_all(&metadata).unwrap();
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        lock.optional_workflows.insert(
+            "workflow.super_events".into(),
+            OptionalWorkflowLock {
+                state: "not_selected".into(),
+                reason: None,
+                credential_reference: None,
+            },
+        );
         fs::write(
             metadata.join("install.lock.json"),
-            include_str!("../../docs/examples/installation-lock.example.json"),
+            serde_json::to_vec(&lock).unwrap(),
         )
         .unwrap();
 
@@ -1881,12 +1998,45 @@ mod tests {
         assert_eq!(managed.status, "accepted");
         assert_eq!(managed.value["present"], true);
         assert_eq!(managed.value["valid"], true);
+        assert_eq!(managed.value["workflow_super_events_state"], "not_selected");
         assert!(result
             .findings
             .iter()
             .flat_map(|finding| &finding.evidence)
             .any(|evidence| evidence.path == ".hoi4-mod-setup/install.lock.json"));
         assert_eq!(result.files_scanned, 0);
+    }
+
+    #[test]
+    fn scan_remembers_an_installed_super_events_workflow() {
+        let directory = tempdir().unwrap();
+        let metadata = directory.path().join(".hoi4-mod-setup");
+        fs::create_dir_all(&metadata).unwrap();
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        lock.optional_workflows.insert(
+            "workflow.super_events".into(),
+            OptionalWorkflowLock {
+                state: "ready".into(),
+                reason: None,
+                credential_reference: None,
+            },
+        );
+        fs::write(
+            metadata.join("install.lock.json"),
+            serde_json::to_vec_pretty(&lock).unwrap(),
+        )
+        .unwrap();
+
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+        let managed = result
+            .findings
+            .iter()
+            .find(|finding| finding.id == "installation.managed")
+            .expect("managed setup finding");
+        assert_eq!(managed.value["workflow_super_events_state"], "ready");
     }
 
     #[test]

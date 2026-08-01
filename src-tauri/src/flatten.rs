@@ -9,7 +9,7 @@ use crate::security::{
     canonical_relative_key, is_link_metadata, normalize_relative_path, redact_secrets, safe_join,
 };
 use crate::AppError;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Read;
 use std::path::Path;
@@ -41,7 +41,6 @@ pub fn build_artifacts(
     prepared: &[PreparedFile],
     generated: &[GeneratedArtifact],
     project_root: &Path,
-    additional_files: &[String],
 ) -> Result<Vec<GeneratedArtifact>, AppError> {
     let mut sources = BTreeMap::<String, Vec<u8>>::new();
     for file in prepared {
@@ -72,8 +71,6 @@ pub fn build_artifacts(
             }
         }
     }
-    collect_existing_agent_sources(&mut sources, project_root)?;
-
     let mut outputs = BTreeMap::<String, (String, Vec<u8>)>::new();
     let mut skill_count = 0usize;
     let mut subagent_count = 0usize;
@@ -112,7 +109,9 @@ pub fn build_artifacts(
             subagent_count += 1;
         }
     }
-    if !outputs.contains_key("agents.md") || !outputs.contains_key("readme.md") {
+    if !outputs.contains_key(&canonical_relative_key("AGENTS.md")?)
+        || !outputs.contains_key(&canonical_relative_key("README.md")?)
+    {
         return Err(AppError::InvalidInput(
             "flattened Chat sources require AGENTS.md and README.md".into(),
         ));
@@ -121,61 +120,6 @@ pub fn build_artifacts(
         return Err(AppError::InvalidInput(
             "flattened Chat sources require at least one skill and one subagent".into(),
         ));
-    }
-
-    let mut extra_seen = BTreeSet::new();
-    for raw in additional_files {
-        let relative = normalize_relative_path(raw)?;
-        if !extra_seen.insert(relative.clone()) {
-            continue;
-        }
-        if relative.starts_with("chatgpt_project_sources/") {
-            return Err(AppError::PathSecurity(
-                "flattened additional files cannot read from their own output folder".into(),
-            ));
-        }
-        if is_secret_like_path(&relative) {
-            return Err(AppError::Credential(format!(
-                "flattened additional file has a secret-shaped path: {relative}"
-            )));
-        }
-        let path = safe_join(project_root, &relative)?;
-        let metadata_before = fs::symlink_metadata(&path)?;
-        if is_link_metadata(&metadata_before) {
-            return Err(AppError::PathSecurity(format!(
-                "flattened additional file is a link: {relative}"
-            )));
-        }
-        if metadata_before.len() > MAX_FLAT_FILE_BYTES {
-            return Err(AppError::InvalidInput(format!(
-                "flattened additional file exceeds the {} MiB limit: {relative}",
-                MAX_FLAT_FILE_BYTES / 1024 / 1024
-            )));
-        }
-        let bytes = read_regular_file_no_follow_under_root(project_root, &relative)?;
-        let metadata_after = fs::symlink_metadata(&path)?;
-        if is_link_metadata(&metadata_after) {
-            return Err(AppError::PathSecurity(format!(
-                "flattened additional file is a link: {relative}"
-            )));
-        }
-        if bytes.len() as u64 > MAX_FLAT_FILE_BYTES {
-            return Err(AppError::InvalidInput(format!(
-                "flattened additional file exceeds the {} MiB limit: {relative}",
-                MAX_FLAT_FILE_BYTES / 1024 / 1024
-            )));
-        }
-        let text = std::str::from_utf8(&bytes).map_err(|_| {
-            AppError::Serialization(format!(
-                "flattened additional file is not valid UTF-8: {relative}"
-            ))
-        })?;
-        if redact_secrets(text, &[]) != text {
-            return Err(AppError::Credential(format!(
-                "flattened additional file contains secret-shaped content: {relative}"
-            )));
-        }
-        insert_output(&mut outputs, &format!("extras/{relative}"), bytes)?;
     }
 
     if outputs.len() > MAX_FLAT_FILES {
@@ -207,85 +151,6 @@ pub fn build_artifacts(
                 .then_some(bytes),
         })
         .collect())
-}
-
-fn collect_existing_agent_sources(
-    sources: &mut BTreeMap<String, Vec<u8>>,
-    project_root: &Path,
-) -> Result<(), AppError> {
-    let skills_root = safe_join(project_root, ".agents/skills")?;
-    if skills_root.exists() {
-        let metadata = fs::symlink_metadata(&skills_root)?;
-        if is_link_metadata(&metadata) || !metadata.is_dir() {
-            return Err(AppError::PathSecurity(
-                "flattened skill root is not a normal directory".into(),
-            ));
-        }
-        for entry in fs::read_dir(&skills_root)? {
-            let entry = entry?;
-            let skill_dir = entry.path();
-            let skill_metadata = fs::symlink_metadata(&skill_dir)?;
-            if is_link_metadata(&skill_metadata) {
-                return Err(AppError::PathSecurity(format!(
-                    "flattened skill directory is a link: {}",
-                    skill_dir.display()
-                )));
-            }
-            if !skill_metadata.is_dir() {
-                continue;
-            }
-            let skill_path = skill_dir.join("SKILL.md");
-            if !skill_path.exists() {
-                continue;
-            }
-            let relative = format!(
-                ".agents/skills/{}/SKILL.md",
-                entry.file_name().to_string_lossy()
-            );
-            if !sources.contains_key(&relative) {
-                insert_source(
-                    sources,
-                    &relative,
-                    read_regular_file_no_follow_under_root(project_root, &relative)?,
-                )?;
-            }
-        }
-    }
-
-    let agents_root = safe_join(project_root, ".codex/agents")?;
-    if agents_root.exists() {
-        let metadata = fs::symlink_metadata(&agents_root)?;
-        if is_link_metadata(&metadata) || !metadata.is_dir() {
-            return Err(AppError::PathSecurity(
-                "flattened subagent root is not a normal directory".into(),
-            ));
-        }
-        for entry in fs::read_dir(&agents_root)? {
-            let entry = entry?;
-            let path = entry.path();
-            let metadata = fs::symlink_metadata(&path)?;
-            if is_link_metadata(&metadata) {
-                return Err(AppError::PathSecurity(format!(
-                    "flattened subagent file is a link: {}",
-                    path.display()
-                )));
-            }
-            if !metadata.is_file()
-                || path.extension().and_then(|value| value.to_str()) != Some("toml")
-            {
-                continue;
-            }
-            let relative = format!(".codex/agents/{}", entry.file_name().to_string_lossy());
-            if !sources.contains_key(&relative) {
-                insert_source(
-                    sources,
-                    &relative,
-                    read_regular_file_no_follow_under_root(project_root, &relative)?,
-                )?;
-            }
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn read_regular_file_no_follow_under_root(
@@ -520,28 +385,10 @@ fn insert_source(
     Ok(())
 }
 
-fn is_secret_like_path(path: &str) -> bool {
-    path.split('/')
-        .map(|segment| segment.to_ascii_lowercase())
-        .any(|segment| {
-            segment == ".env"
-                || segment.starts_with(".env.")
-                || segment.ends_with(".pem")
-                || segment.ends_with(".key")
-                || matches!(
-                    segment.as_str(),
-                    "id_rsa" | "id_ed25519" | "authorized_keys"
-                )
-                || segment.contains("credential")
-                || segment.contains("secret")
-                || segment.contains("token")
-                || segment.contains("password")
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     fn prepared(destination: &str, content: &str) -> PreparedFile {
         PreparedFile {
@@ -579,7 +426,6 @@ mod tests {
                 },
             ],
             project.path(),
-            &[],
         )
         .unwrap();
         let destinations = output
@@ -593,21 +439,18 @@ mod tests {
     }
 
     #[test]
-    fn missing_required_flatten_inputs_and_collisions_fail_closed() {
+    fn missing_required_flatten_inputs_fail_closed() {
         let project = tempfile::tempdir().unwrap();
         assert!(build_artifacts(
             &[prepared(".agents/skills/one/SKILL.md", "one")],
             &[],
             project.path(),
-            &[],
         )
         .is_err());
         assert!(build_artifacts(
             &[
                 prepared(".agents/skills/one/SKILL.md", "one"),
                 prepared(".agents/skills/two/SKILL.md", "two"),
-                prepared(".codex/agents/one.toml", "a"),
-                prepared(".codex/agents/two.toml", "b"),
             ],
             &[
                 GeneratedArtifact {
@@ -628,13 +471,12 @@ mod tests {
                 },
             ],
             project.path(),
-            &["../secret.txt".into()],
         )
         .is_err());
     }
 
     #[test]
-    fn case_collisions_and_secret_extras_fail_closed() {
+    fn case_collisions_fail_closed() {
         let project = tempfile::tempdir().unwrap();
         let generated = vec![
             GeneratedArtifact {
@@ -660,90 +502,28 @@ mod tests {
             prepared(".agents/skills/ONE/SKILL.md", "one"),
             prepared(".codex/agents/one.toml", "agent"),
         ];
-        assert!(build_artifacts(&inputs, &generated, project.path(), &[]).is_err());
+        assert!(build_artifacts(&inputs, &generated, project.path()).is_err());
+    }
 
-        fs::write(project.path().join("notes.txt"), "api_key=secret-value").unwrap();
-        assert!(build_artifacts(
-            &inputs[..2]
-                .iter()
-                .chain(std::iter::once(&inputs[3]))
-                .cloned()
-                .collect::<Vec<_>>(),
-            &generated,
-            project.path(),
-            &["notes.txt".into()],
-        )
-        .is_err());
-        fs::write(project.path().join("binary.bin"), [0_u8, 0xff, 0x00]).unwrap();
-        assert!(build_artifacts(
-            &inputs[..2]
-                .iter()
-                .chain(std::iter::once(&inputs[3]))
-                .cloned()
-                .collect::<Vec<_>>(),
-            &generated,
-            project.path(),
-            &["binary.bin".into()],
-        )
-        .is_err());
-        fs::write(project.path().join(".env"), "MESHY_API_KEY=secret-value").unwrap();
-        assert!(build_artifacts(
-            &inputs[..2]
-                .iter()
-                .chain(std::iter::once(&inputs[3]))
-                .cloned()
-                .collect::<Vec<_>>(),
-            &generated,
-            project.path(),
-            &[".env".into()],
-        )
-        .is_err());
+    #[test]
+    fn unselected_existing_skills_and_subagents_are_not_flattened() {
+        let project = tempfile::tempdir().unwrap();
+        fs::create_dir_all(project.path().join(".agents/skills/unselected")).unwrap();
+        fs::create_dir_all(project.path().join(".codex/agents")).unwrap();
         fs::write(
-            project.path().join(".env.local"),
-            "MESHY_API_KEY=secret-value",
+            project.path().join(".agents/skills/unselected/SKILL.md"),
+            "unselected",
         )
         .unwrap();
-        assert!(build_artifacts(
-            &inputs[..2]
-                .iter()
-                .chain(std::iter::once(&inputs[3]))
-                .cloned()
-                .collect::<Vec<_>>(),
-            &generated,
-            project.path(),
-            &[".env.local".into()],
+        fs::write(
+            project.path().join(".codex/agents/unselected.toml"),
+            "unselected",
         )
-        .is_err());
-    }
-
-    #[test]
-    fn regular_reader_binds_file_access_to_the_project_root() {
-        let project = tempfile::tempdir().unwrap();
-        fs::create_dir_all(project.path().join("nested")).unwrap();
-        fs::write(project.path().join("nested/file.txt"), "inside").unwrap();
-
-        let bytes =
-            read_regular_file_no_follow_under_root(project.path(), "nested/file.txt").unwrap();
-
-        assert_eq!(bytes, b"inside");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn linked_skill_ancestors_are_rejected_before_flattening() {
-        use std::os::unix::fs::symlink;
-
-        let project = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
-        fs::create_dir_all(outside.path().join("one")).unwrap();
-        fs::write(outside.path().join("one/SKILL.md"), "outside").unwrap();
-        fs::create_dir_all(project.path().join(".agents")).unwrap();
-        symlink(outside.path(), project.path().join(".agents/skills")).unwrap();
-
-        let error = build_artifacts(
+        .unwrap();
+        let output = build_artifacts(
             &[
-                prepared(".agents/skills/one/SKILL.md", "one"),
-                prepared(".codex/agents/worker.toml", "fork_context=false"),
+                prepared(".agents/skills/selected/SKILL.md", "selected"),
+                prepared(".codex/agents/selected.toml", "selected"),
             ],
             &[
                 GeneratedArtifact {
@@ -764,7 +544,58 @@ mod tests {
                 },
             ],
             project.path(),
-            &[],
+        )
+        .unwrap();
+        let destinations = output
+            .iter()
+            .map(|artifact| artifact.destination.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(destinations.contains("chatgpt_project_sources/selected.md"));
+        assert!(destinations.contains("chatgpt_project_sources/selected.toml"));
+        assert!(!destinations.contains("chatgpt_project_sources/unselected.md"));
+        assert!(!destinations.contains("chatgpt_project_sources/unselected.toml"));
+    }
+
+    #[test]
+    fn regular_reader_binds_file_access_to_the_project_root() {
+        let project = tempfile::tempdir().unwrap();
+        fs::create_dir_all(project.path().join("nested")).unwrap();
+        fs::write(project.path().join("nested/file.txt"), "inside").unwrap();
+
+        let bytes =
+            read_regular_file_no_follow_under_root(project.path(), "nested/file.txt").unwrap();
+
+        assert_eq!(bytes, b"inside");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_required_sources_are_rejected_before_flattening() {
+        use std::os::unix::fs::symlink;
+
+        let project = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("AGENTS.md"), "outside").unwrap();
+        symlink(
+            outside.path().join("AGENTS.md"),
+            project.path().join("AGENTS.md"),
+        )
+        .unwrap();
+
+        let error = build_artifacts(
+            &[
+                prepared(".agents/skills/one/SKILL.md", "one"),
+                prepared(".codex/agents/worker.toml", "fork_context=false"),
+            ],
+            &[GeneratedArtifact {
+                component_id: "project.readme".into(),
+                destination: "README.md".into(),
+                content: "readme".into(),
+                expected_sha256: crate::security::sha256_bytes(b"readme"),
+                external: false,
+                bytes: None,
+            }],
+            project.path(),
         )
         .unwrap_err();
         assert!(error.to_string().contains("link"));

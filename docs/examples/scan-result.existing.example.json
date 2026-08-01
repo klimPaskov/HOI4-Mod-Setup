@@ -31,7 +31,28 @@
           "line_end": 1,
           "excerpt_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
           "confidence": 1.0,
-          "note": "Matched launcher descriptor"
+          "note": "Matched internal project descriptor"
+        }
+      ],
+      "recommendation": null
+    },
+    {
+      "id": "descriptor.launcher",
+      "category": "descriptor",
+      "key": "launcher_descriptor",
+      "value": "D:\\HOI4 Mods\\cold_war_curtain.mod",
+      "status": "accepted",
+      "user_value": "D:\\HOI4 Mods\\cold_war_curtain.mod",
+      "origin": "user_confirmed",
+      "evidence": [
+        {
+          "detector": "bounded_parent_launcher_discovery",
+          "path": "D:\\HOI4 Mods\\cold_war_curtain.mod",
+          "line_start": null,
+          "line_end": null,
+          "excerpt_sha256": null,
+          "confidence": 1.0,
+          "note": "User explicitly confirmed this immediate-parent candidate before scan; its path= value matches the selected root."
         }
       ],
       "recommendation": null
@@ -77,6 +98,27 @@
         }
       ],
       "recommendation": "Preserve files during setup and report them for later repair."
+    },
+    {
+      "id": "managed.workflow.super_events",
+      "category": "skill",
+      "key": "workflow.super_events",
+      "value": "ready",
+      "status": "accepted",
+      "user_value": null,
+      "origin": "deterministic",
+      "evidence": [
+        {
+          "detector": "managed_lock_summary",
+          "path": ".hoi4-mod-setup/install.lock.json",
+          "line_start": null,
+          "line_end": null,
+          "excerpt_sha256": null,
+          "confidence": 1.0,
+          "note": "The valid managed lock records the selected Super Events workflow; no credential reference is present."
+        }
+      ],
+      "recommendation": null
     }
   ],
   "conflicts": [
@@ -147,7 +189,7 @@
     ]
   },
   "summary": {
-    "accepted": 2,
+    "accepted": 4,
     "needs_review": 1,
     "blocking": 0,
     "warnings": 2

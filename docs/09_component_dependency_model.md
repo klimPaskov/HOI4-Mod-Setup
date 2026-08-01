@@ -54,7 +54,7 @@ The UI shows why every automatic dependency is selected.
 | `wiki.snapshot` | managed tree | yes | all |
 | `docs.repository_reference` | docs | optional | all |
 | `workflow.3d` | optional workflow | no | current repository Windows route |
-| `workflow.lora_comfyui_interest` | preference | no | all |
+| `workflow.super_events` | optional workflow | no | manifest-declared all-platform managed skill tree |
 
 ## File ownership
 
@@ -84,6 +84,14 @@ TOML uses semantic tables and keys. JSON uses schema-aware paths and identity ke
 
 A component is supported only when its platform declaration and every command-bearing dependency have a verified route. Unsupported optional components remain visible. A macOS core profile can omit or warn on a current Windows-only MCP component while still installing platform-neutral instructions, skills, subagents, Codex base config, and wiki.
 
+`workflow.super_events` depends only on `core.skills`, has no tool or
+environment requirement, and contributes only its manifest-declared managed
+skill tree. It is not selected by the core skills component: the core tree must
+exclude `hoi4-super-events/**`. Selecting it adds the tree and the corresponding
+Super Events guidance to the adapted `AGENTS.md`; declining it adds neither.
+The component is provider-neutral and remains optional on both supported
+platforms when the verified manifest declares its `all` route.
+
 ## Readiness aggregation
 
 State derives from file integrity, dependencies, tools, environment, platform, conflicts, and validation. Selected-provider configuration, confirmed provider analysis, and required launcher artifacts flow into core readiness. ChatGPT authentication and confirmed Codex analysis flow into the Open in Codex gate only for the Codex profile. Unselected or incomplete optional workflows do not.
@@ -95,3 +103,9 @@ A component cannot be removed while another selected component depends on it. Sh
 ## Update dependency changes
 
 New dependencies are shown and approved. Removed component files are deleted only when unmodified and solely managed. A changed command, package source, or credential requirement always receives review.
+
+When a lock records `workflow.super_events` as `not_selected`, Update may add it
+from the target manifest. Repair may add it only from the exact locked revision
+when that revision declares the component; otherwise the dependency change is an
+Update action. The selected state and managed file ownership are retained in
+the lock and surfaced by scan.

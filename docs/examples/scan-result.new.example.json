@@ -88,13 +88,34 @@
       "origin": "user_confirmed",
       "evidence": [
         {
-          "detector": "user_folder_picker",
+          "detector": "project_id_path_default",
           "path": "wizard://identity",
           "line_start": null,
           "line_end": null,
           "excerpt_sha256": null,
           "confidence": 1.0,
-          "note": "Explicitly selected and deterministically validated"
+          "note": "Auto-filled from the confirmed project_id and explicitly reviewed"
+        }
+      ],
+      "recommendation": null
+    },
+    {
+      "id": "descriptor.launcher_path",
+      "category": "descriptor",
+      "key": "launcher_descriptor_path",
+      "value": "C:\\Users\\example\\OneDrive\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain.mod",
+      "status": "accepted",
+      "user_value": null,
+      "origin": "user_confirmed",
+      "evidence": [
+        {
+          "detector": "project_id_launcher_default",
+          "path": "wizard://identity",
+          "line_start": null,
+          "line_end": null,
+          "excerpt_sha256": null,
+          "confidence": 1.0,
+          "note": "Auto-filled from the confirmed project_id and the native redirected Documents location"
         }
       ],
       "recommendation": null
@@ -195,7 +216,7 @@
     ]
   },
   "summary": {
-    "accepted": 4,
+    "accepted": 5,
     "needs_review": 0,
     "blocking": 0,
     "warnings": 0

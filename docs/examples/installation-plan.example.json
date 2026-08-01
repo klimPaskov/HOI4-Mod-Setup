@@ -8,7 +8,6 @@
   "ai_endpoint": null,
   "ai_optimization_profile": "Codex project and ChatGPT Chat",
   "flatten_chat_sources": false,
-  "flatten_additional_files": [],
   "source": {
     "mode": "pinned_commit",
     "repository": "klimPaskov/Agentic-HOI4-Modding",
@@ -26,7 +25,7 @@
     "mcp.hoi4_agent_tools",
     "wiki.snapshot",
     "workflow.3d",
-    "workflow.lora_comfyui_interest"
+    "workflow.super_events"
   ],
   "wiki_required_pages": [
     "Data structures - Hearts of Iron 4 Wiki.md"
@@ -40,6 +39,34 @@
       "Provenance and license remain visibly unverified because the inspected repository did not declare them."
     ]
   },
+  "download_ledger": [
+    {
+      "operation_id": "op-001",
+      "source_path": "AGENTS_template.md",
+      "destination": "AGENTS.md",
+      "source_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+      "manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "size": 12,
+      "component_id": "core.agents",
+      "ownership": "merged",
+      "platform": "all",
+      "executable": false
+    },
+    {
+      "operation_id": "op-002",
+      "source_path": ".agents/skills/hoi4-events/SKILL.md",
+      "destination": ".agents/skills/hoi4-events/SKILL.md",
+      "source_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+      "manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "size": 12,
+      "component_id": "core.skills",
+      "ownership": "managed",
+      "platform": "all",
+      "executable": false
+    }
+  ],
   "credential_references": [
     {
       "name": "MESHY_API_KEY",
@@ -49,7 +76,7 @@
   ],
   "optional_workflows": {
     "workflow.3d": "ready",
-    "workflow.lora_comfyui_interest": "interest_recorded"
+    "workflow.super_events": "ready"
   },
   "operations": [
     {
@@ -62,6 +89,10 @@
       "location_scope": "project",
       "destination": "descriptor.mod",
       "source_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "source_size": 1,
+      "platform": null,
+      "executable": false,
+      "result_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
       "base_sha256": null,
       "local_sha256": null,
       "local_state": "absent",
@@ -75,9 +106,13 @@
       "action": "generate",
       "source_path": null,
       "location_scope": "external_launcher",
-      "destination": "C:\\Users\\example\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain.mod",
+      "destination": "C:\\Users\\example\\OneDrive\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain.mod",
       "external": true,
       "source_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "source_size": 1,
+      "platform": null,
+      "executable": false,
+      "result_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
       "base_sha256": null,
       "local_sha256": null,
       "local_state": "absent",
@@ -94,6 +129,10 @@
       "location_scope": "project",
       "destination": "thumbnail.png",
       "source_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+      "source_size": 1,
+      "platform": null,
+      "executable": false,
+      "result_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
       "base_sha256": null,
       "local_sha256": null,
       "local_state": "absent",
@@ -110,6 +149,8 @@
       "destination": "AGENTS.md",
       "source_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
       "source_size": 12,
+      "platform": "all",
+      "executable": false,
       "base_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
       "local_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
       "result_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
@@ -126,6 +167,10 @@
       "source_path": ".agents/skills/hoi4-events/SKILL.md",
       "destination": ".agents/skills/hoi4-events/SKILL.md",
       "source_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "source_size": 12,
+      "platform": "all",
+      "executable": false,
+      "result_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
       "base_sha256": null,
       "local_sha256": null,
       "local_state": "absent",
@@ -205,7 +250,10 @@
     ],
     "backup_root": "%LOCALAPPDATA%\\HOI4 Mod Setup\\backups\\960ccbb7",
     "staging_root": "D:\\HOI4 Mods\\.hoi4-mod-setup-staging\\960ccbb7",
-    "atomic_apply_expected": true
+    "atomic_apply_expected": true,
+    "project_root_mode": "create_leaf",
+    "project_root_parent": "C:\\Users\\example\\OneDrive\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod",
+    "project_root_leaf": "cold_war_curtain"
   },
   "approvals": {
     "dry_run_reviewed": true,

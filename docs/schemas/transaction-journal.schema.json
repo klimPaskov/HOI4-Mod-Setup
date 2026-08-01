@@ -7,13 +7,29 @@
   "required": [
     "schema_version",
     "transaction_id",
+    "transaction_kind",
+    "parent_transaction_id",
+    "rollback_transaction_id",
+    "result_lock_sha256",
+    "result_lock_exists",
+    "rollback_record_sha256",
     "project_id",
+    "project_root",
+    "project_root_lifecycle",
     "state",
     "created_at",
+    "updated_at",
     "last_checkpoint",
+    "plan_sha256",
     "stages",
     "operations",
-    "recovery"
+    "recovery",
+    "git_initialized",
+    "git_remote_added_name",
+    "git_remote_added_url",
+    "previous_lock_backup_path",
+    "previous_lock_sha256",
+    "error"
   ],
   "properties": {
     "schema_version": {
@@ -48,6 +64,62 @@
     },
     "project_root": {
       "type": "string"
+    },
+    "project_root_lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "canonical_parent",
+        "leaf",
+        "checkpoint",
+        "created_by_transaction",
+        "observed_exists",
+        "cleanup_result"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "existing",
+            "create_leaf"
+          ]
+        },
+        "canonical_parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "leaf": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checkpoint": {
+          "enum": [
+            "not_required",
+            "pending",
+            "applying",
+            "created",
+            "removing",
+            "removed",
+            "retained_user_content"
+          ]
+        },
+        "created_by_transaction": {
+          "type": "boolean"
+        },
+        "observed_exists": {
+          "type": "boolean"
+        },
+        "cleanup_result": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
     },
     "state": {
       "enum": [
@@ -100,45 +172,23 @@
     },
     "stages": {
       "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "id",
-          "status"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "status": {
-            "enum": [
-              "pending",
-              "active",
-              "complete",
-              "failed",
-              "skipped"
-            ]
-          },
-          "started_at": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "completed_at": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "evidence": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      }
+      "minItems": 12,
+      "maxItems": 12,
+      "prefixItems": [
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "preflight" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "repository source resolution" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "selective download" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "checksum verification" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "dry-run review" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "backup" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "staging" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "validation" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "apply" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "post-install checks" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "readiness report" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "rollback record" } } }] }
+      ],
+      "items": false
     },
     "operations": {
       "type": "array",
@@ -148,7 +198,28 @@
           "id",
           "status",
           "destination",
-          "ownership"
+          "ownership",
+          "component_id",
+          "source_path",
+          "source_size",
+          "action",
+          "location_scope",
+          "external",
+          "backup_path",
+          "before_sha256",
+          "before_executable",
+          "expected_sha256",
+          "expected_executable",
+          "source_sha256",
+          "result_sha256",
+          "rollback",
+          "rollback_source_path",
+          "resolution",
+          "backup_sha256",
+          "staged_sha256",
+          "after_sha256",
+          "after_exists",
+          "after_executable"
         ],
         "properties": {
           "id": {
@@ -174,8 +245,7 @@
               "managed",
               "merged",
               "generated",
-              "external",
-              null
+              "external"
             ]
           },
           "component_id": {
@@ -234,9 +304,21 @@
               "null"
             ]
           },
+          "before_executable": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "expected_sha256": {
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "expected_executable": {
+            "type": [
+              "boolean",
               "null"
             ]
           },
@@ -301,6 +383,12 @@
               "boolean",
               "null"
             ]
+          },
+          "after_executable": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         }
       }
@@ -311,7 +399,8 @@
         "resume_allowed",
         "rollback_allowed",
         "discard_staging_allowed",
-        "project_apply_started"
+        "project_apply_started",
+        "recommended_action"
       ],
       "properties": {
         "resume_allowed": {
@@ -387,6 +476,38 @@
         },
         "stage": {
           "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "started_at",
+        "completed_at",
+        "evidence"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "status": {
+          "enum": ["pending", "active", "complete", "failed", "skipped"]
+        },
+        "started_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": { "type": "string", "maxLength": 1024 }
         }
       }
     }

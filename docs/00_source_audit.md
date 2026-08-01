@@ -5,7 +5,7 @@
 This planning package uses two evidence sets:
 
 1. The project files supplied with the request, including all Markdown skills, all supplied subagent TOML files, the project instruction file, the mechanics guide, and the current event, cluster, and scenario catalog CSV snapshots.
-2. The initial audit resolved the live `klimPaskov/Agentic-HOI4-Modding` repository to commit `27128a7b311d728a959afff7238a9aeeb9987f2b` on `main` on 26 July 2026. A later revalidation resolved the public default branch to commit `54da3e7a43cce43f15edc54ef80fb0099822b3e2` and verified the versioned manifest at that exact revision. The application uses the resolved remote manifest at runtime and retains the bundled manifest only as offline bootstrap evidence.
+2. The initial audit resolved the live `klimPaskov/Agentic-HOI4-Modding` repository to commit `27128a7b311d728a959afff7238a9aeeb9987f2b` on `main` on 26 July 2026. The current public default branch and generic Super Events skill were verified at commit `7590f7f1b09bffaa0ea7a5009df807727a21fa87`. Its published manifest was generated from commit `ba2551a2caba6c35c5439c5802a44f30d59f1a3d` and declares ten components, including provider-neutral `workflow.super_events` and no portrait-interest component. The application resolves the remote manifest at runtime and retains the bundled copy only as offline bootstrap evidence.
 
 Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`.
 
@@ -35,13 +35,12 @@ The body of every offline wiki article was not fully read. The installer design 
 No formal root `LICENSE` file or `paradox_wiki/LICENSE` file was found at the tested paths. The repository README contains permissive wording, but this package does not treat that wording as a verified formal license. The proposed manifest records repository license evidence as `declared_unverified` and wiki license status as `not_found`.
 
 The public root manifest at commit
-`54da3e7a43cce43f15edc54ef80fb0099822b3e2` has SHA-256
-`0e8db882f4ae61f7b030b415d4a575f643fd1a5c5dc475f7a0dcccc6933bd3ba` and
-declares `generated_for_revision` `27128a7b311d728a959afff7238a9aeeb9987f2b`.
-The bundled `source-manifest/hoi4-mod-setup.manifest.json` has SHA-256
-`cddb7ece7235d033888d85508455c255ffe320f0f28bc924999e8f4ddd1c19b5`; its
-parsed manifest content is equivalent to the published manifest, while its
-serialization is intentionally kept as the application-owned offline bundle.
+`7590f7f1b09bffaa0ea7a5009df807727a21fa87` has raw SHA-256
+`b739c20a9cf9bc2123398d9a7fcdcfb71590e3c17f449628e5475a77fc3720be`
+and declares `generated_for_revision`
+`ba2551a2caba6c35c5439c5802a44f30d59f1a3d`. All 919 declared file records
+were regenerated from immutable Git blob bytes and verified before
+publication.
 
 The manifest is now published upstream infrastructure. Runtime resolution
 still verifies the manifest and every selected blob against one exact source

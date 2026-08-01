@@ -56,6 +56,5 @@ fuzz_target!(|bytes: &[u8]| {
         &prepared,
         &[],
         Path::new("__hoi4_mod_setup_fuzz_project_does_not_exist__"),
-        &[],
     );
 });

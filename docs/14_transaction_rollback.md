@@ -34,11 +34,40 @@ Resolve exact commit and validate manifest compatibility.
 
 ### 3. Selective download
 
-Fetch only selected files and metadata into immutable cache.
+Fetch only selected files and metadata into immutable cache. Record one
+operation-bound ledger entry for each remote file with its component, source
+path, destination, exact revision, manifest hash, file hash, size, ownership,
+and platform.
 
 ### 4. Checksum verification
 
 Verify every file before staging.
+
+The backup and staging directories do not exist before their corresponding
+stages. Source or checksum failure therefore occurs before any predecessor-lock
+or project-file backup is written.
+
+## New-project root lifecycle
+
+When a new project root is absent, the plan records
+`project_root_mode: create_leaf`, the canonical existing parent, and exactly
+one reviewed leaf name. Preflight verifies that the parent is contained and
+stable and that the leaf is absent. Planning, download, backup, and staging
+create no project-root directory. Apply creates that one leaf exactly once,
+after dry-run approval and staging validation; it does not recursively create
+unreviewed ancestors.
+
+If the reviewed parent or leaf changes before apply, or the leaf already
+exists, the transaction stops for revalidation rather than adopting or
+overwriting it. The journal records whether the leaf was created by this
+transaction and checkpoints its create/cleanup state.
+
+Rollback removes the created leaf only when it is still the transaction's
+reviewed leaf, all removable managed content has been verified, and the leaf is
+empty. Unknown, newly added, modified, or otherwise unmanaged content keeps
+the leaf and its content in place; rollback records `retained_user_content`
+instead of recursively deleting it or its parent. The external launcher
+descriptor remains an independently reviewed, backed-up operation.
 
 ### 5. Dry-run review
 
@@ -50,7 +79,7 @@ Copy every path that may be replaced, merged, removed, or have metadata changed.
 
 ### 7. Staging
 
-Build the complete target outside live paths. Generate both descriptors, the thumbnail, profile folders, provider-adapted AGENTS/README files, optional flattened Chat sources, and merge results from confirmed values here.
+Build the complete target outside live paths. Generate both descriptors, the thumbnail, profile folders, provider-adapted AGENTS/README files, selected optional workflow trees such as `workflow.super_events`, optional flattened Chat sources, and merge results from confirmed values here.
 
 ### 8. Validation
 

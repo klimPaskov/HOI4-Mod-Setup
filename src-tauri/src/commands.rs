@@ -17,9 +17,15 @@ use crate::merge::{
     validate_merged_result, FileKind,
 };
 use crate::models::{CredentialReference, *};
-use crate::paths::{application_data_root, validate_project_root};
+use crate::paths::{
+    application_data_root, hoi4_user_mod_directory, validate_project_root,
+    validate_project_root_or_destination,
+};
 use crate::readiness::ReadinessInput;
-use crate::scanner::{scan_project_with_progress as scan_project_files, ScanOptions, ScanProgress};
+use crate::scanner::{
+    discover_launcher_descriptor, scan_project_with_progress as scan_project_files, ScanOptions,
+    ScanProgress,
+};
 use crate::security::{
     path_has_link_component, redact_secrets, safe_join, sha256_bytes, sha256_file,
     validate_external_destination,
@@ -32,6 +38,7 @@ use crate::transaction::{
     discard_staging, resume_transaction, run_transaction, TransactionOptions,
 };
 use crate::AppError;
+use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -76,8 +83,18 @@ struct ConflictPreview {
 #[derive(Debug, serde::Serialize)]
 struct FolderSelection {
     path: Option<String>,
+    launcher_descriptor_path: Option<String>,
     error: Option<String>,
     cancelled: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct SuggestedProjectPaths {
+    mod_directory: String,
+    project_root: String,
+    launcher_descriptor_path: String,
+    project_exists: bool,
+    launcher_descriptor_exists: bool,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -117,7 +134,8 @@ static CODEX_SESSION: OnceLock<Mutex<Option<AppServerProtocol<ProcessJsonlTransp
     OnceLock::new();
 static CODEX_ANALYSES: OnceLock<Mutex<HashMap<Uuid, PendingCodexAnalysis>>> = OnceLock::new();
 static CODEX_APPROVED_EVIDENCE: OnceLock<Mutex<ApprovedScanEvidence>> = OnceLock::new();
-static CODEX_LOGIN_CANCEL: AtomicBool = AtomicBool::new(false);
+static CODEX_LOGIN_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> =
+    OnceLock::new();
 static SCAN_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
 static MESHY_CREDENTIAL_REFERENCE: OnceLock<Mutex<Option<CredentialReference>>> = OnceLock::new();
 static THREE_D_HEALTH: OnceLock<Mutex<HashMap<String, CachedThreeDHealth>>> = OnceLock::new();
@@ -152,6 +170,36 @@ fn codex_session() -> &'static Mutex<Option<AppServerProtocol<ProcessJsonlTransp
 
 fn scan_cancellations() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
     SCAN_CANCELLATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn codex_login_cancellations() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+    CODEX_LOGIN_CANCELLATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_codex_login(login_id: &str) -> Result<Arc<AtomicBool>, String> {
+    let mut cancellations = codex_login_cancellations()
+        .lock()
+        .map_err(|_| "Codex login cancellation store is unavailable".to_string())?;
+    cancellations.retain(|_, cancellation| !cancellation.load(Ordering::SeqCst));
+    if cancellations.len() >= 8 {
+        return Err(
+            "too many Codex sign-in attempts are pending; cancel an earlier attempt first".into(),
+        );
+    }
+    if cancellations.contains_key(login_id) {
+        return Err("Codex returned a duplicate active login identifier".into());
+    }
+    let cancellation = Arc::new(AtomicBool::new(false));
+    cancellations.insert(login_id.to_string(), cancellation.clone());
+    Ok(cancellation)
+}
+
+fn cancel_all_codex_logins() {
+    if let Ok(cancellations) = codex_login_cancellations().lock() {
+        for cancellation in cancellations.values() {
+            cancellation.store(true, Ordering::SeqCst);
+        }
+    }
 }
 
 fn codex_analyses() -> &'static Mutex<HashMap<Uuid, PendingCodexAnalysis>> {
@@ -310,6 +358,7 @@ fn with_codex_session<R>(
         // transport's Drop implementation supervises and terminates any
         // remaining child tree, while Codex retains authentication state.
         *session = None;
+        clear_codex_local_state().map_err(AppError::Process)?;
     }
     if session.is_none() {
         let executable = find_codex_executable().ok_or_else(|| {
@@ -324,11 +373,9 @@ fn with_codex_session<R>(
             .as_mut()
             .expect("Codex session was just initialized"),
     );
-    if result.is_err() {
+    if matches!(&result, Err(AppError::Process(_))) {
         *session = None;
-        if let Ok(mut analyses) = codex_analyses().lock() {
-            analyses.clear();
-        }
+        clear_codex_local_state().map_err(AppError::Process)?;
     }
     result
 }
@@ -432,6 +479,44 @@ fn command_error(error: AppError) -> String {
     error.to_string()
 }
 
+fn run_blocking_command<T, F>(name: &'static str, work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    std::thread::Builder::new()
+        .name(format!("hoi4-setup-{name}"))
+        .spawn(work)
+        .map_err(|_| format!("{name} could not be started"))?
+        .join()
+        .map_err(|_| format!("{name} stopped unexpectedly"))?
+}
+
+fn codex_user_error(error: AppError) -> String {
+    match error {
+        AppError::Process(message)
+            if message.contains("official Codex executable was not found") =>
+        {
+            "Codex is not installed or could not be found. Install or update Codex, then choose Check again."
+                .into()
+        }
+        AppError::Process(_) => {
+            "Codex is temporarily unavailable. Close and reopen Codex, then try again.".into()
+        }
+        AppError::Credential(message) if message.contains("cancel") => {
+            "ChatGPT sign-in was cancelled.".into()
+        }
+        AppError::Credential(_) => "ChatGPT sign-in needs attention. Try again.".into(),
+        AppError::Serialization(_) => {
+            "Codex returned an unexpected response. Update Codex and try again.".into()
+        }
+        AppError::UnsupportedPlatform(_) => {
+            "Codex sign-in is not available on this computer.".into()
+        }
+        _ => "Codex could not complete this request. Try again.".into(),
+    }
+}
+
 fn journal_bound_to_root(
     journal: &TransactionJournal,
     project_root: &Path,
@@ -439,7 +524,7 @@ fn journal_bound_to_root(
     if journal.project_root.is_empty() {
         return Ok(false);
     }
-    let bound_root = validate_project_root(Path::new(&journal.project_root))?;
+    let bound_root = validate_project_root_or_destination(Path::new(&journal.project_root))?.0;
     Ok(if cfg!(target_os = "windows") {
         bound_root
             .to_string_lossy()
@@ -454,7 +539,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|_window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-                CODEX_LOGIN_CANCEL.store(true, Ordering::SeqCst);
+                cancel_all_codex_logins();
                 if let Ok(mut session) = codex_session().lock() {
                     *session = None;
                 }
@@ -471,6 +556,7 @@ pub fn run() {
             codex_login_wait,
             codex_login_cancel,
             open_codex_login_url,
+            open_external_url,
             codex_logout,
             codex_analyze,
             ai_analyze,
@@ -478,6 +564,7 @@ pub fn run() {
             confirm_codex_analysis,
             pick_project_folder,
             pick_launcher_folder,
+            suggest_project_paths,
             scan_project,
             cancel_scan,
             store_meshy_credential,
@@ -506,7 +593,7 @@ pub fn run() {
         .expect("error while running HOI4 Mod Setup");
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn app_info() -> Value {
     serde_json::json!({
         "product": "HOI4 Mod Setup",
@@ -516,12 +603,12 @@ fn app_info() -> Value {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn ai_provider_profiles() -> Vec<AiProviderProfile> {
     ai::provider_profiles()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn ai_account_read(provider: String, model: String, endpoint: String) -> AiAccountStatus {
     let credential_reference = ai_credential_reference(&provider);
     ai::account_status(
@@ -535,7 +622,7 @@ fn ai_account_read(provider: String, model: String, endpoint: String) -> AiAccou
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn store_ai_provider_credential(provider: String, value: String) -> Result<bool, String> {
     if ai::profile(provider.trim())
         .is_none_or(|profile| provider.trim() == "codex" || !profile.requires_credential)
@@ -550,7 +637,7 @@ fn store_ai_provider_credential(provider: String, value: String) -> Result<bool,
     Ok(true)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn remove_ai_provider_credential(provider: String) -> Result<bool, String> {
     if ai::profile(provider.trim())
         .is_none_or(|profile| provider.trim() == "codex" || !profile.requires_credential)
@@ -568,17 +655,16 @@ fn remove_ai_provider_credential(provider: String) -> Result<bool, String> {
     Ok(true)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn codex_account_read() -> CodexAccountStatus {
     match with_codex_session(|session| session.account_read(false)) {
         Ok(status) => status,
-        Err(error) => missing_status(error.to_string()),
+        Err(error) => missing_status(codex_user_error(error)),
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn codex_login_start(mode: String) -> CodexLoginStart {
-    CODEX_LOGIN_CANCEL.store(false, Ordering::SeqCst);
     let device_code = match mode.as_str() {
         "browser" => false,
         "device" => true,
@@ -591,38 +677,105 @@ fn codex_login_start(mode: String) -> CodexLoginStart {
         }
     };
     match with_codex_session(|session| session.login_start(device_code)) {
-        Ok(start) => start,
+        Ok(mut start) => {
+            if start.error.is_some() {
+                if let Some(login_id) = start.login_id.as_deref() {
+                    let _ = with_codex_session(|session| session.cancel_login(login_id));
+                }
+                start.login_id = None;
+                return start;
+            }
+            if let Some(login_id) = start.login_id.as_deref() {
+                if let Err(error) = register_codex_login(login_id) {
+                    let _ = with_codex_session(|session| session.cancel_login(login_id));
+                    start.login_id = None;
+                    start.error = Some(error);
+                }
+            }
+            start
+        }
         Err(error) => CodexLoginStart {
             available: false,
-            error: Some(error.to_string()),
+            error: Some(codex_user_error(error)),
             device_code,
             ..Default::default()
         },
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn codex_login_wait(login_id: String) -> Result<CodexAccountStatus, String> {
+    let cancellation = codex_login_cancellations()
+        .lock()
+        .map_err(|_| "Codex login cancellation store is unavailable".to_string())?
+        .get(&login_id)
+        .cloned()
+        .ok_or_else(|| "Codex login is not active or was already cancelled".to_string())?;
     let result = with_codex_session(|session| {
         session.wait_for_login_with_cancel(&login_id, Duration::from_secs(120), || {
-            CODEX_LOGIN_CANCEL.load(Ordering::SeqCst)
+            cancellation.load(Ordering::SeqCst)
         })
     });
-    CODEX_LOGIN_CANCEL.store(false, Ordering::SeqCst);
-    result.map_err(command_error)
+    if let Ok(mut cancellations) = codex_login_cancellations().lock() {
+        cancellations.remove(&login_id);
+    }
+    result.map_err(codex_user_error)
 }
 
-#[tauri::command]
-fn codex_login_cancel() -> Result<(), String> {
-    CODEX_LOGIN_CANCEL.store(true, Ordering::SeqCst);
+#[tauri::command(async)]
+fn codex_login_cancel(login_id: String) -> Result<(), String> {
+    let cancellation = codex_login_cancellations()
+        .lock()
+        .map_err(|_| "Codex login cancellation store is unavailable".to_string())?
+        .get(&login_id)
+        .cloned()
+        .ok_or_else(|| "Codex login is not active or was already cancelled".to_string())?;
+    cancellation.store(true, Ordering::SeqCst);
+
+    if let Ok(mut session) = codex_session().try_lock() {
+        if let Some(protocol) = session.as_mut() {
+            if let Err(error) = protocol.cancel_login(&login_id) {
+                *session = None;
+                codex_login_cancellations()
+                    .lock()
+                    .map_err(|_| "Codex login cancellation store is unavailable".to_string())?
+                    .remove(&login_id);
+                return Err(codex_user_error(error));
+            }
+        }
+        codex_login_cancellations()
+            .lock()
+            .map_err(|_| "Codex login cancellation store is unavailable".to_string())?
+            .remove(&login_id);
+    }
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn open_codex_login_url(url: String) -> Result<(), String> {
     if !crate::codex::is_safe_login_url(&url) {
         return Err("Codex returned an invalid HTTPS authentication URL".into());
     }
+    open_url_in_system_browser(url)
+}
+
+#[tauri::command(async)]
+fn open_external_url(url: String) -> Result<(), String> {
+    if !is_allowed_external_url(&url) {
+        return Err("This external link is not allowed".into());
+    }
+    open_url_in_system_browser(url)
+}
+
+fn is_allowed_external_url(url: &str) -> bool {
+    const ALLOWED_URLS: [&str; 2] = [
+        "https://github.com/klimPaskov/Agentic-HOI4-Modding",
+        "https://github.com/klimPaskov/comfyui-hoi4-portraits",
+    ];
+    ALLOWED_URLS.contains(&url)
+}
+
+fn open_url_in_system_browser(url: String) -> Result<(), String> {
     let executable = crate::process::system_browser_executable()
         .ok_or_else(|| "No supported system-browser opener is available".to_string())?;
     let spec = crate::process::ProcessSpec {
@@ -638,30 +791,28 @@ fn open_codex_login_url(url: String) -> Result<(), String> {
     spec.spawn_detached(&[executable]).map_err(command_error)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn codex_logout() -> Result<(), String> {
-    CODEX_LOGIN_CANCEL.store(true, Ordering::SeqCst);
-    let logout_result = {
-        let mut session = codex_session()
-            .lock()
-            .map_err(|_| "Codex session lock is unavailable".to_string())?;
-        let result = session
-            .as_mut()
-            .map(|protocol| protocol.logout().map_err(command_error))
-            .unwrap_or(Ok(()));
-        // Clear the local process even if the remote request failed. This
-        // prevents stale analysis state from remaining usable after an
-        // attempted sign-out; the returned error still tells the UI that
-        // Codex may need a retry.
+    cancel_all_codex_logins();
+    // A prior App Server interruption may have cleared the supervised
+    // process while Codex-owned authentication remains persisted. Start and
+    // initialize a fresh App Server when needed so sign-out always attempts
+    // the official account/logout method.
+    let logout_result = with_codex_session(|protocol| protocol.logout()).map_err(codex_user_error);
+    if let Ok(mut session) = codex_session().lock() {
         *session = None;
-        result
-    };
-    let result = logout_result.and(clear_codex_local_state());
-    CODEX_LOGIN_CANCEL.store(false, Ordering::SeqCst);
-    result
+    }
+    // Local proposals and evidence are session-scoped and must be discarded
+    // even when the supervised App Server cannot complete account/logout.
+    let clear_result = clear_codex_local_state();
+    if let Ok(mut cancellations) = codex_login_cancellations().lock() {
+        cancellations.clear();
+    }
+    clear_result?;
+    logout_result
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn codex_analyze(request: CodexAnalysisRequest) -> Result<CodexAnalysisResult, String> {
     let mut request = request;
     if let Some(project_root) = request.project_root.as_deref() {
@@ -697,8 +848,12 @@ fn codex_analyze(request: CodexAnalysisRequest) -> Result<CodexAnalysisResult, S
     Ok(result)
 }
 
-#[tauri::command]
-fn ai_analyze(mut request: AiAnalysisRequest) -> Result<CodexAnalysisResult, String> {
+#[tauri::command(async)]
+fn ai_analyze(request: AiAnalysisRequest) -> Result<CodexAnalysisResult, String> {
+    run_blocking_command("provider-analysis", move || ai_analyze_blocking(request))
+}
+
+fn ai_analyze_blocking(mut request: AiAnalysisRequest) -> Result<CodexAnalysisResult, String> {
     if request.provider == "codex" {
         return Err("Codex analysis must use the official Codex App Server command".into());
     }
@@ -750,7 +905,7 @@ fn ai_analyze(mut request: AiAnalysisRequest) -> Result<CodexAnalysisResult, Str
     Ok(result)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn approve_scan_evidence(
     project_root: String,
     scan_id: String,
@@ -973,7 +1128,7 @@ fn confirmation_values_from_state(state: &Value) -> Result<Value, AppError> {
     }))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn confirm_codex_analysis(
     record: CodexAnalysisRecord,
     confirmed_fields: Vec<String>,
@@ -1009,7 +1164,7 @@ fn confirm_codex_analysis(
     Ok(confirmed)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 async fn pick_project_folder(app: tauri::AppHandle) -> Result<FolderSelection, String> {
     use tauri_plugin_dialog::DialogExt;
 
@@ -1021,6 +1176,7 @@ async fn pick_project_folder(app: tauri::AppHandle) -> Result<FolderSelection, S
     else {
         return Ok(FolderSelection {
             path: None,
+            launcher_descriptor_path: None,
             error: None,
             cancelled: true,
         });
@@ -1030,26 +1186,34 @@ async fn pick_project_folder(app: tauri::AppHandle) -> Result<FolderSelection, S
         Err(error) => {
             return Ok(FolderSelection {
                 path: None,
+                launcher_descriptor_path: None,
                 error: Some(format!("selected folder is not a local path: {error}")),
                 cancelled: false,
             });
         }
     };
     match validate_project_root(&path) {
-        Ok(canonical) => Ok(FolderSelection {
-            path: Some(canonical.to_string_lossy().into_owned()),
-            error: None,
-            cancelled: false,
-        }),
+        Ok(canonical) => {
+            let launcher_descriptor_path = discover_launcher_descriptor(&canonical)
+                .map_err(command_error)?
+                .map(|path| crate::paths::user_facing_path(&path));
+            Ok(FolderSelection {
+                path: Some(crate::paths::user_facing_path(&canonical)),
+                launcher_descriptor_path,
+                error: None,
+                cancelled: false,
+            })
+        }
         Err(error) => Ok(FolderSelection {
             path: None,
+            launcher_descriptor_path: None,
             error: Some(error.to_string()),
             cancelled: false,
         }),
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 async fn pick_launcher_folder(app: tauri::AppHandle) -> Result<FolderSelection, String> {
     use tauri_plugin_dialog::DialogExt;
 
@@ -1061,6 +1225,7 @@ async fn pick_launcher_folder(app: tauri::AppHandle) -> Result<FolderSelection, 
     else {
         return Ok(FolderSelection {
             path: None,
+            launcher_descriptor_path: None,
             error: None,
             cancelled: true,
         });
@@ -1070,17 +1235,38 @@ async fn pick_launcher_folder(app: tauri::AppHandle) -> Result<FolderSelection, 
         .map_err(|error| format!("selected folder is not a local path: {error}"))?;
     let canonical = validate_project_root(&path).map_err(command_error)?;
     Ok(FolderSelection {
-        path: Some(canonical.to_string_lossy().into_owned()),
+        path: Some(crate::paths::user_facing_path(&canonical)),
+        launcher_descriptor_path: None,
         error: None,
         cancelled: false,
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+fn suggest_project_paths(project_id: String) -> Result<SuggestedProjectPaths, String> {
+    crate::descriptors::validate_project_id(&project_id).map_err(command_error)?;
+    let mod_directory = hoi4_user_mod_directory().map_err(command_error)?;
+    let project_root = mod_directory.join(&project_id);
+    let launcher_descriptor_path = mod_directory.join(format!("{project_id}.mod"));
+    if path_has_link_component(&project_root) || path_has_link_component(&launcher_descriptor_path)
+    {
+        return Err("The standard HOI4 destination contains a symlink or junction".into());
+    }
+    Ok(SuggestedProjectPaths {
+        mod_directory: crate::paths::user_facing_path(&mod_directory),
+        project_exists: project_root.exists(),
+        launcher_descriptor_exists: launcher_descriptor_path.exists(),
+        project_root: crate::paths::user_facing_path(&project_root),
+        launcher_descriptor_path: crate::paths::user_facing_path(&launcher_descriptor_path),
+    })
+}
+
+#[tauri::command(async)]
 fn scan_project(
     app: tauri::AppHandle,
     root: String,
     request_id: String,
+    launcher_descriptor_path: Option<String>,
 ) -> Result<ScanResult, String> {
     validate_scan_request_id(&request_id)?;
     let root = validate_project_root(Path::new(&root)).map_err(command_error)?;
@@ -1098,9 +1284,16 @@ fn scan_project(
     }
     let event_request_id = request_id.clone();
     let event_app = app.clone();
+    let launcher_descriptor = launcher_descriptor_path
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(validate_external_destination)
+        .transpose()
+        .map_err(command_error)?;
     let result = scan_project_files(
         &root,
         &ScanOptions {
+            approved_external_descriptor: launcher_descriptor,
             cancel_flag: Some(cancellation),
             ..ScanOptions::default()
         },
@@ -1154,7 +1347,7 @@ fn scan_project(
     Ok(result)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cancel_scan(request_id: String) -> Result<(), String> {
     validate_scan_request_id(&request_id)?;
     let active = scan_cancellations()
@@ -1174,7 +1367,7 @@ fn validate_scan_request_id(request_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn store_meshy_credential(value: String) -> Result<CredentialReference, String> {
     let reference = save_meshy_key(&OsCredentialStore, &value).map_err(command_error)?;
     invalidate_three_d_health();
@@ -1185,7 +1378,7 @@ fn store_meshy_credential(value: String) -> Result<CredentialReference, String> 
     Ok(reference)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn remove_meshy_credential(reference: CredentialReference) -> Result<(), String> {
     validate_credential_reference(&reference).map_err(command_error)?;
     OsCredentialStore
@@ -1245,8 +1438,14 @@ fn bound_process_output(value: String) -> String {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn run_3d_health_check(project_root: String) -> Result<WorkflowHealthResult, String> {
+    run_blocking_command("3d-health-check", move || {
+        run_3d_health_check_blocking(project_root)
+    })
+}
+
+fn run_3d_health_check_blocking(project_root: String) -> Result<WorkflowHealthResult, String> {
     if Platform::current() != Platform::Windows {
         return Ok(WorkflowHealthResult {
             status: "unsupported_platform".into(),
@@ -1256,7 +1455,9 @@ fn run_3d_health_check(project_root: String) -> Result<WorkflowHealthResult, Str
             stderr: "the verified 3D workflow is currently supported only on Windows".into(),
         });
     }
-    let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
+    let root = validate_project_root_or_destination(Path::new(&project_root))
+        .map(|(root, _)| root)
+        .map_err(command_error)?;
     let lock = read_project_lock(&root).map_err(command_error)?;
     let workflow = lock
         .optional_workflows
@@ -1340,6 +1541,8 @@ fn run_3d_health_check(project_root: String) -> Result<WorkflowHealthResult, Str
     .map_err(command_error)?;
     let python =
         crate::process::find_path_executable(&["python.exe", "python"]).map_err(command_error)?;
+    crate::process::validate_executable_publisher(&python, "Python Software Foundation")
+        .map_err(command_error)?;
     let private_script = create_private_verified_script(&script_bytes).map_err(command_error)?;
     let spec = crate::process::ProcessSpec {
         executable: python.clone(),
@@ -1372,7 +1575,7 @@ fn run_3d_health_check(project_root: String) -> Result<WorkflowHealthResult, Str
 }
 
 fn create_private_verified_script(bytes: &[u8]) -> Result<PathBuf, AppError> {
-    let root = application_data_root();
+    let root = application_data_root()?;
     if path_has_link_component(&root) {
         return Err(AppError::PathSecurity(
             "application data root contains a symlink or junction".into(),
@@ -1486,8 +1689,14 @@ fn installed_mcp_target(
     Ok(target)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn run_mcp_health_check(project_root: String) -> Result<WorkflowHealthResult, String> {
+    run_blocking_command("mcp-health-check", move || {
+        run_mcp_health_check_blocking(project_root)
+    })
+}
+
+fn run_mcp_health_check_blocking(project_root: String) -> Result<WorkflowHealthResult, String> {
     if Platform::current() != Platform::Windows {
         return Ok(WorkflowHealthResult {
             status: "unsupported_platform".into(),
@@ -1497,7 +1706,9 @@ fn run_mcp_health_check(project_root: String) -> Result<WorkflowHealthResult, St
             stderr: "the verified MCP workflow is currently supported only on Windows".into(),
         });
     }
-    let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
+    let root = validate_project_root_or_destination(Path::new(&project_root))
+        .map(|(root, _)| root)
+        .map_err(command_error)?;
     let lock = read_project_lock(&root).map_err(command_error)?;
     let component = lock
         .components
@@ -1585,7 +1796,6 @@ fn evaluate_installed_readiness(
     project_root: &Path,
     project_id: &str,
     workflow_3d_state: String,
-    lora_interest: bool,
     notes: Vec<String>,
 ) -> Result<ReadinessReport, AppError> {
     let mut detected = crate::readiness::project_input(project_root, project_id)?;
@@ -1628,12 +1838,11 @@ fn evaluate_installed_readiness(
     detected.workflow_3d_state = read_project_lock(project_root)
         .map(|lock| cached_three_d_state(project_root, &lock))
         .unwrap_or(workflow_3d_state);
-    detected.lora_interest = lora_interest;
     detected.notes.extend(notes);
     Ok(crate::readiness::evaluate(&detected))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn evaluate_readiness(input: ReadinessInput) -> Result<ReadinessReport, String> {
     let root = PathBuf::from(&input.project_root);
     if root.is_dir() {
@@ -1642,7 +1851,6 @@ fn evaluate_readiness(input: ReadinessInput) -> Result<ReadinessReport, String> 
             &root,
             &input.project_id,
             input.workflow_3d_state,
-            input.lora_interest,
             input.notes,
         )
         .map_err(command_error)
@@ -1651,7 +1859,7 @@ fn evaluate_readiness(input: ReadinessInput) -> Result<ReadinessReport, String> 
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn preview_descriptors(state: Value) -> Result<Vec<GeneratedArtifact>, String> {
     require_ai_session(&state).map_err(command_error)?;
     let root = project_root_from_state(&state).map_err(command_error)?;
@@ -1701,7 +1909,7 @@ fn preview_text(kind: FileKind, bytes: Option<&[u8]>) -> (Option<String>, bool, 
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn preview_installation_conflict(plan_id: String, path: String) -> Result<ConflictPreview, String> {
     let id = Uuid::parse_str(&plan_id).map_err(|_| "invalid installation plan ID".to_string())?;
     let plans = prepared_plans()
@@ -1799,8 +2007,17 @@ fn source_request_from_state(state: &Value) -> Result<SourceRequest, AppError> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn preview_source_manifest(
+    source_mode: String,
+    pinned_ref: String,
+) -> Result<SourceManifestPreview, String> {
+    run_blocking_command("source-preview", move || {
+        preview_source_manifest_blocking(source_mode, pinned_ref)
+    })
+}
+
+fn preview_source_manifest_blocking(
     source_mode: String,
     pinned_ref: String,
 ) -> Result<SourceManifestPreview, String> {
@@ -1839,6 +2056,14 @@ fn selected_ids(state: &Value, provider: &str) -> Vec<String> {
         && !selected.iter().any(|id| id == "workflow.3d")
     {
         selected.push("workflow.3d".into());
+    }
+    if state
+        .get("superEventsSelected")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && !selected.iter().any(|id| id == "workflow.super_events")
+    {
+        selected.push("workflow.super_events".into());
     }
     if provider != "codex" {
         selected.retain(|id| id != "codex.config");
@@ -1974,7 +2199,7 @@ fn project_root_from_state(state: &Value) -> Result<PathBuf, AppError> {
             )
         })?;
     let root = PathBuf::from(root);
-    validate_project_root(&root)
+    validate_project_root_or_destination(&root).map(|(root, _)| root)
 }
 
 fn component_kind(component: &ComponentDefinition, path: &str) -> FileKind {
@@ -2038,6 +2263,7 @@ fn adapt_agents_for_selection(
     identity: &ProjectIdentity,
     provider: &str,
     model: &str,
+    super_events_selected: bool,
 ) -> Result<Vec<u8>, AppError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|error| AppError::Source(format!("AGENTS template is not UTF-8: {error}")))?;
@@ -2061,14 +2287,118 @@ fn adapt_agents_for_selection(
     adapted.push_str(&format!(
         "\n\n## Selected AI planning profile\n\n- Provider: `{provider}`\n- Model: `{model}`\n- Optimization profile: {profile}\n- Semantic analysis is advisory; confirm deterministic identifiers, paths, hashes, and file changes before apply.\n"
     ));
+    const SUPER_EVENTS_START: &str = "<!-- HOI4_MOD_SETUP:SUPER_EVENTS:START -->";
+    const SUPER_EVENTS_END: &str = "<!-- HOI4_MOD_SETUP:SUPER_EVENTS:END -->";
+    match (
+        adapted.find(SUPER_EVENTS_START),
+        adapted.find(SUPER_EVENTS_END),
+    ) {
+        (Some(start), Some(end)) if start < end => {
+            let block_end = end + SUPER_EVENTS_END.len();
+            if super_events_selected {
+                adapted.replace_range(end..block_end, "");
+                adapted.replace_range(start..start + SUPER_EVENTS_START.len(), "");
+            } else {
+                adapted.replace_range(start..block_end, "");
+            }
+        }
+        (None, None) if super_events_selected => {
+            adapted.push_str(
+                "\n## Optional Super Events workflow\n\n- Use `hoi4-super-events` when a major reveal, escalation, world-order change, victory, defeat, collapse, or campaign-ending moment needs a complete presentation package with aligned triggers, text, quote, image, audio, playback, provenance, and validation.\n",
+            );
+        }
+        (None, None) => {}
+        _ => {
+            return Err(AppError::Source(
+                "AGENTS template has an incomplete Super Events section marker".into(),
+            ));
+        }
+    }
     Ok(adapted.into_bytes())
 }
 
+fn adapt_super_events_source(
+    bytes: &[u8],
+    identity: &ProjectIdentity,
+) -> Result<Vec<u8>, AppError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| AppError::Source(format!("Super Events source is not UTF-8: {error}")))?;
+    let prefix = identity
+        .primary_namespace
+        .as_deref()
+        .or(identity.script_prefix.as_deref())
+        .ok_or_else(|| {
+            AppError::InvalidInput(
+                "a confirmed script prefix or primary namespace is required for Super Events"
+                    .into(),
+            )
+        })?;
+    let valid_prefix =
+        Regex::new(r"^[a-z_][a-z0-9_]{0,63}$").expect("static HOI4 identifier regex");
+    if !valid_prefix.is_match(prefix) {
+        return Err(AppError::InvalidInput(
+            "the Super Events namespace contains unsupported characters".into(),
+        ));
+    }
+    let escaped_name = identity
+        .display_name
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    let adapted = text
+        .replace("[MOD_PREFIX]", prefix)
+        .replace("[MOD_NAME]", &escaped_name);
+    if adapted.contains("[MOD_") {
+        return Err(AppError::Source(
+            "Super Events source contains unresolved project placeholders".into(),
+        ));
+    }
+    Ok(adapted.into_bytes())
+}
+
+fn is_super_events_runtime_component(component_id: &str) -> bool {
+    matches!(
+        component_id,
+        "workflow.super_events.runtime.interface"
+            | "workflow.super_events.runtime.common"
+            | "workflow.super_events.runtime.events"
+            | "workflow.super_events.runtime.localisation"
+    )
+}
+
+fn adapt_selected_source(
+    component_id: &str,
+    bytes: &[u8],
+    identity: &ProjectIdentity,
+    ai_provider: &str,
+    ai_model: &str,
+    super_events_selected: bool,
+    mcp_selected: bool,
+) -> Result<Vec<u8>, AppError> {
+    if component_id == "core.agents" {
+        adapt_agents_for_selection(
+            bytes,
+            identity,
+            ai_provider,
+            ai_model,
+            super_events_selected,
+        )
+    } else if component_id == "codex.config" {
+        adapt_codex_config_for_selection(bytes, mcp_selected)
+    } else if is_super_events_runtime_component(component_id) {
+        adapt_super_events_source(bytes, identity)
+    } else {
+        Ok(bytes.to_vec())
+    }
+}
+
 fn maintenance_identity(lock: &InstallationLock, root: &Path) -> ProjectIdentity {
-    let display_name = std::fs::read(root.join("descriptor.mod"))
+    let descriptor = std::fs::read(root.join("descriptor.mod"))
         .ok()
         .and_then(|bytes| crate::descriptors::parse_descriptor(&bytes).ok())
-        .and_then(|descriptor| descriptor.fields.get("name").cloned())
+        .map(|descriptor| descriptor.fields);
+    let display_name = descriptor
+        .as_ref()
+        .and_then(|fields| fields.get("name").cloned())
         .unwrap_or_else(|| lock.project_id.clone());
     ProjectIdentity {
         display_name,
@@ -2078,8 +2408,12 @@ fn maintenance_identity(lock: &InstallationLock, root: &Path) -> ProjectIdentity
         supported_game_version: "*".into(),
         project_root: root.to_path_buf(),
         default_branch: "main".into(),
-        script_prefix: None,
-        primary_namespace: None,
+        script_prefix: descriptor
+            .as_ref()
+            .and_then(|fields| fields.get("script_prefix").cloned()),
+        primary_namespace: descriptor
+            .as_ref()
+            .and_then(|fields| fields.get("namespace").cloned()),
         descriptor_tags: Vec::new(),
         launcher_descriptor_path: None,
     }
@@ -2165,6 +2499,24 @@ fn project_identity_from_state(state: &Value, root: &Path) -> Result<ProjectIden
         launcher_descriptor_path: (!launcher.is_empty()).then(|| PathBuf::from(launcher)),
     };
     crate::descriptors::validate_launcher_destination(&identity)?;
+    if state.get("mode").and_then(Value::as_str) == Some("new") {
+        let launcher_parent = identity
+            .launcher_descriptor_path
+            .as_deref()
+            .and_then(Path::parent)
+            .ok_or_else(|| AppError::InvalidInput("launcher descriptor has no parent".into()))?;
+        let launcher_parent = validate_project_root(launcher_parent)?;
+        let project_parent = root
+            .parent()
+            .ok_or_else(|| AppError::InvalidInput("project root has no parent".into()))?;
+        let project_parent = validate_project_root(project_parent)?;
+        if !same_project_root(&launcher_parent, &project_parent) {
+            return Err(AppError::InvalidInput(
+                "project folder and launcher descriptor must use the same HOI4 mod directory"
+                    .into(),
+            ));
+        }
+    }
     Ok(identity)
 }
 
@@ -2230,14 +2582,14 @@ fn generated_state(state: &Value) -> BTreeMap<String, String> {
             "incomplete".into()
         },
     );
-    let lora_interest = state
-        .get("loraInterest")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     result.insert(
-        "workflow.lora_comfyui_interest".into(),
-        if lora_interest {
-            "planned_unavailable".into()
+        "workflow.super_events".into(),
+        if state
+            .get("superEventsSelected")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            "ready".into()
         } else {
             "not_selected".into()
         },
@@ -2321,30 +2673,6 @@ fn flatten_for_chat_from_state(state: &Value) -> bool {
         .get("flattenForChat")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-}
-
-fn flatten_additional_files_from_state(state: &Value) -> Result<Vec<String>, AppError> {
-    let Some(values) = state
-        .get("flattenAdditionalFiles")
-        .and_then(Value::as_array)
-    else {
-        return Ok(Vec::new());
-    };
-    if values.len() > 64 {
-        return Err(AppError::InvalidInput(
-            "flattened Chat sources allow at most 64 additional files".into(),
-        ));
-    }
-    let mut paths = values
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(crate::security::normalize_relative_path)
-        .collect::<Result<Vec<_>, _>>()?;
-    paths.sort();
-    paths.dedup();
-    Ok(paths)
 }
 
 fn project_readme(
@@ -2532,7 +2860,6 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         },
     })?;
     let flatten_chat_sources = flatten_for_chat_from_state(state);
-    let flatten_additional_files = flatten_additional_files_from_state(state)?;
     if flatten_chat_sources && ai_provider != "codex" {
         return Err(AppError::InvalidInput(
             "flattened ChatGPT Chat sources are available only when Codex is selected".into(),
@@ -2563,6 +2890,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     let mcp_selected = support
         .iter()
         .any(|item| item.component_id == "mcp.hoi4_agent_tools" && item.state == "supported");
+    let super_events_selected = selected.iter().any(|id| id == "workflow.super_events");
     let download_selected = selected
         .iter()
         .filter(|id| {
@@ -2585,6 +2913,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     let mut operations = Vec::new();
     let mut conflicts = Vec::new();
     let mut prepared = Vec::new();
+    let mut download_ledger = Vec::new();
     for (index, selection) in selections.iter().enumerate() {
         let expected_sha256 = selection.expected_sha256.as_deref().ok_or_else(|| {
             AppError::Source(format!(
@@ -2598,18 +2927,20 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             expected_sha256,
             selection.expected_size,
         )?;
-        let verified = verify_download(
+        let mut verified = verify_download(
             selection,
             &source_bytes,
             &resolution.identity.resolved_revision,
         )?;
-        let bytes = if selection.component_id == "core.agents" {
-            adapt_agents_for_selection(&source_bytes, &identity, &ai_provider, &ai_model)?
-        } else if selection.component_id == "codex.config" {
-            adapt_codex_config_for_selection(&source_bytes, mcp_selected)?
-        } else {
-            source_bytes
-        };
+        let bytes = adapt_selected_source(
+            &selection.component_id,
+            &source_bytes,
+            &identity,
+            &ai_provider,
+            &ai_model,
+            super_events_selected,
+            mcp_selected,
+        )?;
         let incoming_sha256 = sha256_bytes(&bytes);
         let source_destination = safe_join(&root, &selection.destination)?;
         let mut local_sha = if source_destination.is_file() {
@@ -2669,8 +3000,9 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                 apply_to_identical: false,
             });
         }
+        let operation_id = format!("op-{index:05}");
         operations.push(PlanOperation {
-            id: format!("op-{index:05}"),
+            id: operation_id.clone(),
             component_id: selection.component_id.clone(),
             ownership: Some(selection.ownership),
             location_scope: Some("project".into()),
@@ -2680,6 +3012,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             source_sha256: Some(verified.sha256.clone()),
             source_size: selection.expected_size,
             platform: Some(selection.platform),
+            executable: selection.executable,
             result_sha256: (action != OperationAction::Skip).then_some(incoming_sha256),
             base_sha256: None,
             local_sha256: local_sha,
@@ -2692,13 +3025,17 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                 RollbackAction::RestoreBackup
             },
         });
+        verified.operation_id = operation_id.clone();
+        verified.destination = destination.clone();
+        verified.manifest_sha256 = resolution.identity.manifest_sha256.clone();
+        download_ledger.push(verified);
         // Keep a verified incoming copy even for an unresolved conflict. It
         // remains in the core-owned plan session and is discarded when the
         // user chooses keep/skip; this makes replace/rename decisions possible
         // without re-fetching or trusting renderer-supplied bytes.
         let prepared_sha256 = sha256_bytes(&bytes);
         prepared.push(PreparedFile {
-            operation_id: format!("op-{index:05}"),
+            operation_id,
             destination,
             bytes,
             expected_sha256: prepared_sha256,
@@ -2760,10 +3097,6 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             bytes: None,
         });
     }
-    let lora_interest = state
-        .get("loraInterest")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     let mut credential_references = if mesh_selected {
         meshy_credential_reference()
             .lock()
@@ -2781,7 +3114,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     for reference in &credential_references {
         validate_credential_reference(reference)?;
     }
-    if mode == "new" || lora_interest {
+    if mode == "new" {
         let provider_profile = ai::profile(&ai_provider).ok_or_else(|| {
             AppError::InvalidInput(format!("unsupported AI provider: {ai_provider}"))
         })?;
@@ -2796,7 +3129,6 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                 "completed_steps": ["welcome", "description", "identity", "components", "workflows"]
             },
             "preferences": {
-                "lora_comfyui_interest": lora_interest,
                 "telemetry": false
             },
             "ai": {
@@ -2838,12 +3170,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         });
     }
     if flatten_chat_sources {
-        let flatten_artifacts = crate::flatten::build_artifacts(
-            &prepared,
-            &generated,
-            &root,
-            &flatten_additional_files,
-        )?;
+        let flatten_artifacts = crate::flatten::build_artifacts(&prepared, &generated, &root)?;
         generated.extend(flatten_artifacts);
     }
     for (generated_index, artifact) in generated.iter().enumerate() {
@@ -2935,6 +3262,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                     .map_or(artifact.content.len(), Vec::len) as u64,
             ),
             platform: Some(ManifestPlatform::All),
+            executable: false,
             result_sha256: (action != OperationAction::Skip)
                 .then_some(artifact.expected_sha256.clone()),
             base_sha256: None,
@@ -2992,12 +3320,12 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         ai_model: ai_model_from_state(state),
         ai_endpoint: ai_endpoint_from_state(state),
         flatten_chat_sources,
-        flatten_additional_files,
         codex_analysis: Some(codex_analysis),
         selected_components: selected,
         wiki_required_pages: resolution.manifest.wiki.required_pages.clone(),
         wiki_metadata: Some(crate::source::wiki_install_metadata(&resolution.manifest)),
         generated_artifacts: generated,
+        download_ledger,
         git_setup,
         credential_references,
         optional_workflows,
@@ -3009,15 +3337,29 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                 .iter()
                 .map(|stage| (*stage).into())
                 .collect(),
-            backup_root: application_data_root()
+            backup_root: application_data_root()?
                 .join("backups")
                 .display()
                 .to_string(),
-            staging_root: application_data_root()
+            staging_root: application_data_root()?
                 .join("staging")
                 .display()
                 .to_string(),
             atomic_apply_expected: true,
+            project_root_mode: if root.exists() {
+                ProjectRootMode::Existing
+            } else {
+                ProjectRootMode::CreateLeaf
+            },
+            project_root_parent: (!root.exists())
+                .then(|| root.parent().map(|path| path.display().to_string()))
+                .flatten(),
+            project_root_leaf: (!root.exists())
+                .then(|| {
+                    root.file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                })
+                .flatten(),
         },
         approvals: PlanApprovals {
             dry_run_reviewed: false,
@@ -3076,17 +3418,46 @@ fn flatten_operation_uses_incoming(operation: &PlanOperation) -> bool {
 fn accepted_flatten_prepared_files(
     prepared_files: &[PreparedFile],
     operations: &[PlanOperation],
-) -> Vec<PreparedFile> {
-    prepared_files
-        .iter()
-        .filter(|file| {
-            operations
-                .iter()
-                .find(|operation| operation.id == file.operation_id)
-                .is_none_or(flatten_operation_uses_incoming)
-        })
-        .cloned()
-        .collect()
+    project_root: &Path,
+) -> Result<Vec<PreparedFile>, AppError> {
+    let mut accepted = Vec::new();
+    for file in prepared_files {
+        let operation = operations
+            .iter()
+            .find(|operation| operation.id == file.operation_id);
+        if operation.is_none_or(flatten_operation_uses_incoming) {
+            accepted.push(file.clone());
+            continue;
+        }
+        let Some(operation) = operation else {
+            continue;
+        };
+        let kept_local = matches!(
+            operation.resolution.as_deref(),
+            Some("keep" | "keep_user_modification")
+        );
+        let eligible = file
+            .destination
+            .replace('\\', "/")
+            .starts_with(".agents/skills/")
+            || file
+                .destination
+                .replace('\\', "/")
+                .starts_with(".codex/agents/");
+        if kept_local && eligible {
+            let bytes = crate::flatten::read_regular_file_no_follow_under_root(
+                project_root,
+                &file.destination,
+            )?;
+            accepted.push(PreparedFile {
+                operation_id: file.operation_id.clone(),
+                destination: file.destination.clone(),
+                expected_sha256: sha256_bytes(&bytes),
+                bytes,
+            });
+        }
+    }
+    Ok(accepted)
 }
 
 #[derive(Clone)]
@@ -3148,7 +3519,8 @@ fn refresh_flattened_outputs(prepared_plan: &mut PreparedPlan) -> Result<(), App
     let flatten_prepared = accepted_flatten_prepared_files(
         &prepared_plan.prepared_files,
         &prepared_plan.plan.operations,
-    );
+        &prepared_plan.canonical_root,
+    )?;
     let accepted_generated = prepared_plan
         .plan
         .generated_artifacts
@@ -3171,7 +3543,6 @@ fn refresh_flattened_outputs(prepared_plan: &mut PreparedPlan) -> Result<(), App
         &flatten_prepared,
         &accepted_generated,
         &prepared_plan.canonical_root,
-        &prepared_plan.plan.flatten_additional_files,
     )?;
     let operation_offset = prepared_plan.plan.operations.len();
     for (index, artifact) in flattened.iter().enumerate() {
@@ -3226,6 +3597,7 @@ fn refresh_flattened_outputs(prepared_plan: &mut PreparedPlan) -> Result<(), App
                     .map_or(artifact.content.len(), Vec::len) as u64,
             ),
             platform: Some(ManifestPlatform::All),
+            executable: false,
             result_sha256: (action != OperationAction::Skip)
                 .then_some(artifact.expected_sha256.clone()),
             base_sha256: None,
@@ -3325,8 +3697,14 @@ fn refresh_flattened_outputs(prepared_plan: &mut PreparedPlan) -> Result<(), App
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn build_installation_plan(state: Value) -> Result<InstallationPlan, String> {
+    run_blocking_command("installation-plan", move || {
+        build_installation_plan_blocking(state)
+    })
+}
+
+fn build_installation_plan_blocking(state: Value) -> Result<InstallationPlan, String> {
     build_plan(&state)
         .and_then(|(plan, prepared_files)| {
             store_prepared_plan(
@@ -3356,6 +3734,24 @@ fn lock_mcp_selected(lock: &InstallationLock) -> bool {
             )
             && Platform::current() == Platform::Windows
     })
+}
+
+fn lock_workflow_selected(lock: &InstallationLock, workflow_id: &str) -> bool {
+    lock.optional_workflows
+        .get(workflow_id)
+        .is_some_and(|workflow| {
+            !matches!(
+                workflow.state.as_str(),
+                "unsupported_platform" | "not_selected" | "removed"
+            )
+        })
+        || lock.components.iter().any(|component| {
+            component.id == workflow_id
+                && !matches!(
+                    component.state.as_str(),
+                    "unsupported_platform" | "not_selected" | "removed"
+                )
+        })
 }
 
 fn require_maintenance_reanalysis(
@@ -3460,11 +3856,17 @@ fn append_additional_component_operations(
     selections: &[crate::source::SelectedSourceFile],
     lock: &InstallationLock,
     root: &Path,
+    refresh_agents: bool,
 ) -> Result<(), AppError> {
     let managed_components = lock
         .components
         .iter()
-        .filter(|component| component.state != "removed")
+        .filter(|component| {
+            !matches!(
+                component.state.as_str(),
+                "removed" | "not_selected" | "unsupported_platform"
+            )
+        })
         .map(|component| component.id.as_str())
         .collect::<std::collections::HashSet<_>>();
     let managed_paths = lock
@@ -3473,12 +3875,13 @@ fn append_additional_component_operations(
         .map(|file| (file.path.as_str(), file.external))
         .collect::<std::collections::HashSet<_>>();
     for (index, selection) in selections.iter().enumerate() {
-        if selection.component_id != "workflow.3d"
-            && managed_components.contains(selection.component_id.as_str())
-        {
+        let refresh_managed_agents = refresh_agents && selection.component_id == "core.agents";
+        if managed_components.contains(selection.component_id.as_str()) && !refresh_managed_agents {
             continue;
         }
-        if managed_paths.contains(&(selection.destination.as_str(), false)) {
+        if managed_paths.contains(&(selection.destination.as_str(), false))
+            && !refresh_managed_agents
+        {
             continue;
         }
         let expected_sha256 = selection.expected_sha256.as_deref().ok_or_else(|| {
@@ -3493,12 +3896,28 @@ fn append_additional_component_operations(
         } else {
             None
         };
+        let current_locked_file = refresh_managed_agents
+            .then(|| {
+                lock.files.iter().find(|file| {
+                    file.component_id == "core.agents"
+                        && file.path == selection.destination
+                        && !file.external
+                })
+            })
+            .flatten();
+        let unmodified_sha256 = current_locked_file
+            .map(|file| file.installed_sha256.as_str())
+            .unwrap_or(expected_sha256);
         let (action, local_state, resolution) = match local_sha256.as_deref() {
             None => (OperationAction::Create, LocalState::Absent, None),
-            Some(hash) if hash == expected_sha256 => (
+            Some(hash) if hash == unmodified_sha256 => (
                 OperationAction::Replace,
                 LocalState::Unmodified,
-                Some("new_component_file".into()),
+                Some(if refresh_managed_agents {
+                    "optional_guidance_refresh".into()
+                } else {
+                    "new_component_file".into()
+                }),
             ),
             Some(_) => (
                 OperationAction::Skip,
@@ -3517,8 +3936,9 @@ fn append_additional_component_operations(
             source_sha256: Some(expected_sha256.into()),
             source_size: selection.expected_size,
             platform: Some(selection.platform),
+            executable: selection.executable,
             result_sha256: None,
-            base_sha256: None,
+            base_sha256: current_locked_file.map(|file| file.source_sha256.clone()),
             local_sha256,
             local_state,
             resolution,
@@ -3533,15 +3953,44 @@ fn append_additional_component_operations(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn build_maintenance_plan(
     mode: String,
     project_root: String,
     analysis_override: Option<CodexAnalysisRecord>,
-    add_workflow_3d: bool,
+    add_optional_components: Option<Vec<String>>,
 ) -> Result<InstallationPlan, String> {
-    let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
+    run_blocking_command("maintenance-plan", move || {
+        build_maintenance_plan_blocking(
+            mode,
+            project_root,
+            analysis_override,
+            add_optional_components,
+        )
+    })
+}
+
+fn build_maintenance_plan_blocking(
+    mode: String,
+    project_root: String,
+    analysis_override: Option<CodexAnalysisRecord>,
+    add_optional_components: Option<Vec<String>>,
+) -> Result<InstallationPlan, String> {
+    let root = validate_project_root_or_destination(Path::new(&project_root))
+        .map(|(root, _)| root)
+        .map_err(command_error)?;
     let lock = read_project_lock(&root).map_err(command_error)?;
+    let add_optional_components = add_optional_components.unwrap_or_default();
+    let mut seen_optional_components = std::collections::HashSet::new();
+    if !add_optional_components.iter().all(|id| {
+        matches!(id.as_str(), "workflow.3d" | "workflow.super_events")
+            && seen_optional_components.insert(id.as_str())
+    }) {
+        return Err("an optional workflow selection is invalid or duplicated".into());
+    }
+    if !add_optional_components.is_empty() && !matches!(mode.as_str(), "update" | "repair") {
+        return Err("optional workflows can be added only during update or repair".into());
+    }
     if mode != "remove" {
         if lock.ai_provider == "codex" {
             require_codex_chatgpt_session().map_err(command_error)?;
@@ -3651,7 +4100,7 @@ fn build_maintenance_plan(
             .iter()
             .map(|component| component.id.as_str())
             .collect::<Vec<_>>();
-        let requested = lock
+        let mut requested = lock
             .components
             .iter()
             .filter(|component| {
@@ -3660,6 +4109,11 @@ fn build_maintenance_plan(
             })
             .map(|component| component.id.clone())
             .collect::<Vec<_>>();
+        for component_id in &add_optional_components {
+            if !requested.iter().any(|id| id == component_id) {
+                requested.push(component_id.clone());
+            }
+        }
         let expanded =
             expand_components(&resolution.manifest, &requested).map_err(command_error)?;
         reject_codex_only_dependencies(&lock.ai_provider, &expanded).map_err(command_error)?;
@@ -3711,11 +4165,17 @@ fn build_maintenance_plan(
                     &source_bytes,
                     &resolution.identity.resolved_revision,
                 )?;
-                let desired_bytes = if selection.component_id == "codex.config" {
-                    adapt_codex_config_for_selection(&source_bytes, mcp_selected)?
-                } else {
-                    source_bytes
-                };
+                let desired_bytes = adapt_selected_source(
+                    &selection.component_id,
+                    &source_bytes,
+                    &maintenance_identity(&lock, &root),
+                    &lock.ai_provider,
+                    &lock.ai_model,
+                    maintenance_components
+                        .iter()
+                        .any(|id| id == "workflow.super_events"),
+                    mcp_selected,
+                )?;
                 Ok(LockedFile {
                     path: selection.destination.clone(),
                     location_scope: Some("project".into()),
@@ -3728,6 +4188,7 @@ fn build_maintenance_plan(
                     installed_sha256: sha256_bytes(&desired_bytes),
                     installed_size: Some(desired_bytes.len() as u64),
                     ownership: selection.ownership,
+                    preserved_local: false,
                     external: false,
                     generated_content: None,
                     generated_bytes: None,
@@ -3782,18 +4243,14 @@ fn build_maintenance_plan(
         };
         (operations, source, lock.source.revision.clone())
     };
-    if mode == "repair"
-        && add_workflow_3d
-        && !lock.components.iter().any(|component| {
-            component.id == "workflow.3d"
-                && !matches!(component.state.as_str(), "removed" | "not_selected")
-        })
-    {
+    if mode == "repair" && !add_optional_components.is_empty() {
         let resolution = resolve_source(
             &client,
             &SourceRequest {
-                // A later optional workflow must use the same immutable
-                // source revision that produced the installed lock.
+                // A repair can add only workflows declared by the same
+                // immutable source revision that produced the installed lock.
+                // Newly published workflows are added through Update so all
+                // managed files still share one exact source revision.
                 mode: SourceMode::PinnedCommit,
                 requested_ref: Some(lock.source.revision.clone()),
                 release: None,
@@ -3806,7 +4263,19 @@ fn build_maintenance_plan(
                     .into(),
             );
         }
-        let requested = vec!["workflow.3d".to_string()];
+        let requested = add_optional_components
+            .iter()
+            .filter(|id| {
+                !lock.components.iter().any(|component| {
+                    component.id.as_str() == id.as_str()
+                        && !matches!(component.state.as_str(), "removed" | "not_selected")
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if requested.is_empty() {
+            return Err("the selected optional workflows are already installed".into());
+        }
         let expanded =
             expand_components(&resolution.manifest, &requested).map_err(command_error)?;
         reject_codex_only_dependencies(&lock.ai_provider, &expanded).map_err(command_error)?;
@@ -3817,7 +4286,7 @@ fn build_maintenance_plan(
         )
         .map_err(command_error)?;
         if support.iter().any(|item| item.state == "blocked") {
-            return Err("the 3D workflow has no verified route on this computer".into());
+            return Err("an optional workflow has no verified route on this computer".into());
         }
         let supported = expanded
             .iter()
@@ -3834,8 +4303,14 @@ fn build_maintenance_plan(
             .map_err(command_error)?;
         let selections = select_component_files(&resolution.manifest, &supported, &tree)
             .map_err(command_error)?;
-        append_additional_component_operations(&mut operations, &selections, &lock, &root)
-            .map_err(command_error)?;
+        append_additional_component_operations(
+            &mut operations,
+            &selections,
+            &lock,
+            &root,
+            requested.iter().any(|id| id == "workflow.super_events"),
+        )
+        .map_err(command_error)?;
         for component_id in expanded {
             if !maintenance_components.iter().any(|id| id == &component_id) {
                 maintenance_components.push(component_id);
@@ -3847,6 +4322,7 @@ fn build_maintenance_plan(
         source_revision = lock.source.revision.clone();
     }
     let mut prepared = Vec::new();
+    let mut download_ledger = Vec::new();
     let mut merge_contexts = HashMap::new();
     for operation in &mut operations {
         if operation.action == OperationAction::DeleteManaged
@@ -3859,11 +4335,11 @@ fn build_maintenance_plan(
             .source_sha256
             .as_deref()
             .ok_or_else(|| "maintenance operation has no expected source hash".to_string())?;
-        let source_bytes = if operation
+        let source_is_generated = operation
             .source_path
             .as_deref()
-            .is_some_and(|path| path.starts_with("generated:"))
-        {
+            .is_some_and(|path| path.starts_with("generated:"));
+        let source_bytes = if source_is_generated {
             lock.files
                 .iter()
                 .find(|file| {
@@ -3896,24 +4372,65 @@ fn build_maintenance_plan(
                 )
                 .map_err(command_error)?
         };
+        let source_ledger_entry = if source_is_generated {
+            None
+        } else {
+            let source_path = operation
+                .source_path
+                .clone()
+                .ok_or_else(|| "remote maintenance operation has no source path".to_string())?;
+            let ownership = operation.ownership.ok_or_else(|| {
+                "remote maintenance operation has no ownership evidence".to_string()
+            })?;
+            let platform = operation.platform.ok_or_else(|| {
+                "remote maintenance operation has no platform evidence".to_string()
+            })?;
+            if operation.source_size != Some(source_bytes.len() as u64) {
+                return Err(format!(
+                    "remote maintenance source size mismatch: {}",
+                    operation.destination
+                ));
+            }
+            Some(crate::models::DownloadedFile {
+                operation_id: operation.id.clone(),
+                source_path,
+                destination: operation.destination.clone(),
+                source_revision: source_revision.clone(),
+                manifest_sha256: plan_source.manifest_sha256.clone(),
+                sha256: expected.to_string(),
+                size: source_bytes.len() as u64,
+                component_id: operation.component_id.clone(),
+                ownership,
+                platform,
+                executable: lock
+                    .files
+                    .iter()
+                    .find(|file| {
+                        file.path == operation.destination && file.external == operation.external
+                    })
+                    .is_some_and(|file| file.executable),
+            })
+        };
         let mcp_selected = lock_mcp_selected(&lock);
-        let bytes = if operation.component_id == "core.agents" {
-            adapt_agents_for_selection(
+        let generated_source = operation
+            .source_path
+            .as_deref()
+            .is_some_and(|path| path.starts_with("generated:"));
+        let bytes = if generated_source && operation.component_id != "core.agents" {
+            source_bytes
+        } else {
+            adapt_selected_source(
+                &operation.component_id,
                 &source_bytes,
                 &maintenance_identity(&lock, &root),
                 &lock.ai_provider,
                 &lock.ai_model,
+                maintenance_components
+                    .iter()
+                    .any(|id| id == "workflow.super_events"),
+                mcp_selected,
             )
             .map_err(command_error)?
-        } else if operation.component_id == "codex.config"
-            && !operation
-                .source_path
-                .as_deref()
-                .is_some_and(|path| path.starts_with("generated:"))
-        {
-            adapt_codex_config_for_selection(&source_bytes, mcp_selected).map_err(command_error)?
-        } else {
-            source_bytes
         };
         let actual = sha256_bytes(&bytes);
         if operation
@@ -3952,6 +4469,9 @@ fn build_maintenance_plan(
             bytes: bytes.clone(),
             expected_sha256: actual,
         });
+        if let Some(entry) = source_ledger_entry {
+            download_ledger.push(entry);
+        }
         if operation.local_state == LocalState::Modified
             && !operation
                 .source_path
@@ -3989,6 +4509,7 @@ fn build_maintenance_plan(
                             &maintenance_identity(&lock, &root),
                             &lock.ai_provider,
                             &lock.ai_model,
+                            lock_workflow_selected(&lock, "workflow.super_events"),
                         )
                         .map_err(command_error)?
                     } else {
@@ -4033,14 +4554,10 @@ fn build_maintenance_plan(
                 .replace('\\', "/")
                 .starts_with("chatgpt_project_sources/")
         });
-        let flatten_prepared = accepted_flatten_prepared_files(&prepared, &operations);
-        let flat = crate::flatten::build_artifacts(
-            &flatten_prepared,
-            &[],
-            &root,
-            &lock.flatten_additional_files,
-        )
-        .map_err(command_error)?;
+        let flatten_prepared = accepted_flatten_prepared_files(&prepared, &operations, &root)
+            .map_err(command_error)?;
+        let flat = crate::flatten::build_artifacts(&flatten_prepared, &[], &root)
+            .map_err(command_error)?;
         generated_artifacts = flat.clone();
         for (index, artifact) in flat.iter().enumerate() {
             let destination_path =
@@ -4077,6 +4594,7 @@ fn build_maintenance_plan(
                         .map_or(artifact.content.len(), Vec::len) as u64,
                 ),
                 platform: Some(ManifestPlatform::All),
+                executable: false,
                 result_sha256: (action != OperationAction::Skip)
                     .then_some(artifact.expected_sha256.clone()),
                 base_sha256: None,
@@ -4105,7 +4623,15 @@ fn build_maintenance_plan(
         .iter()
         .filter(|operation| {
             operation.local_state == LocalState::Modified
-                || operation.resolution.as_deref() == Some("reverse_merge_required")
+                || matches!(
+                    operation.resolution.as_deref(),
+                    Some(
+                        "review_required"
+                            | "merged_base_required"
+                            | "reverse_merge_required"
+                            | "obsolete_review"
+                    )
+                )
         })
         .map(|operation| {
             let removal_review = matches!(
@@ -4137,10 +4663,11 @@ fn build_maintenance_plan(
     let mut optional_workflows: BTreeMap<String, String> = lock
         .optional_workflows
         .iter()
+        .filter(|(id, _)| id.as_str() != "workflow.lora_comfyui_interest")
         .map(|(id, workflow)| (id.clone(), workflow.state.clone()))
         .collect();
     let mut credential_references = Vec::new();
-    if add_workflow_3d {
+    if add_optional_components.iter().any(|id| id == "workflow.3d") {
         let mesh_reference = meshy_credential_reference()
             .lock()
             .map_err(|_| "Meshy credential reference store is unavailable".to_string())?
@@ -4173,6 +4700,12 @@ fn build_maintenance_plan(
         };
         optional_workflows.insert("workflow.3d".into(), next_state.into());
     }
+    if add_optional_components
+        .iter()
+        .any(|id| id == "workflow.super_events")
+    {
+        optional_workflows.insert("workflow.super_events".into(), "ready".into());
+    }
     let external_actions = if mode != "remove" && lock_mcp_selected(&lock) {
         let manifest = maintenance_mcp_manifest.as_ref().ok_or_else(|| {
             "the maintenance plan could not retain the locked MCP manifest evidence".to_string()
@@ -4200,12 +4733,12 @@ fn build_maintenance_plan(
         ai_endpoint: lock.ai_endpoint.clone(),
         ai_optimization_profile: lock.ai_optimization_profile.clone(),
         flatten_chat_sources: lock.flatten_chat_sources,
-        flatten_additional_files: lock.flatten_additional_files.clone(),
         codex_analysis,
         selected_components: maintenance_components,
         wiki_required_pages,
         wiki_metadata,
         generated_artifacts,
+        download_ledger,
         git_setup: None,
         credential_references,
         optional_workflows,
@@ -4218,14 +4751,19 @@ fn build_maintenance_plan(
                 .map(|stage| (*stage).into())
                 .collect(),
             backup_root: application_data_root()
+                .map_err(command_error)?
                 .join("backups")
                 .display()
                 .to_string(),
             staging_root: application_data_root()
+                .map_err(command_error)?
                 .join("staging")
                 .display()
                 .to_string(),
             atomic_apply_expected: true,
+            project_root_mode: ProjectRootMode::Existing,
+            project_root_parent: None,
+            project_root_leaf: None,
         },
         approvals: PlanApprovals {
             dry_run_reviewed: false,
@@ -4237,7 +4775,7 @@ fn build_maintenance_plan(
     store_prepared_plan(plan, prepared, merge_contexts, root).map_err(command_error)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn git_online_prepare(
     project_root: String,
     action: crate::git::OnlineGitAction,
@@ -4245,19 +4783,23 @@ fn git_online_prepare(
     repository: String,
     branch: String,
 ) -> Result<crate::git::GitOnlinePlan, String> {
-    let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
+    let root = validate_project_root_or_destination(Path::new(&project_root))
+        .map(|(root, _)| root)
+        .map_err(command_error)?;
     crate::git::prepare_online_action(&root, action, &remote_name, &repository, &branch)
         .map_err(command_error)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn git_online_action(
     project_root: String,
     plan_id: String,
     confirmed: bool,
     transaction_id: Option<String>,
 ) -> Result<crate::git::GitOnlineResult, String> {
-    let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
+    let root = validate_project_root_or_destination(Path::new(&project_root))
+        .map(|(root, _)| root)
+        .map_err(command_error)?;
     let plan_id =
         Uuid::parse_str(&plan_id).map_err(|_| "invalid online Git review ID".to_string())?;
     let result =
@@ -4272,7 +4814,7 @@ fn git_online_action(
     Ok(result)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn approve_installation(plan_id: String) -> Result<(), String> {
     let id = Uuid::parse_str(&plan_id).map_err(|_| "invalid installation plan ID".to_string())?;
     let mut plans = prepared_plans()
@@ -4292,7 +4834,7 @@ fn approve_installation(plan_id: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn resolve_installation_conflict(
     plan_id: String,
     path: String,
@@ -4383,9 +4925,17 @@ fn resolve_installation_conflict(
                 .iter_mut()
                 .find(|file| file.operation_id == operation_id)
             {
-                file.destination = destination;
+                file.destination = destination.clone();
             } else {
                 return Err("rename operation has no prepared incoming bytes".into());
+            }
+            if let Some(entry) = prepared
+                .plan
+                .download_ledger
+                .iter_mut()
+                .find(|entry| entry.operation_id == operation_id)
+            {
+                entry.destination = destination;
             }
             if let Some(file) = prepared
                 .prepared_files
@@ -4420,13 +4970,15 @@ fn resolve_installation_conflict(
     Ok(prepared.plan.clone())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn apply_installation(
     plan: InstallationPlan,
     project_root: String,
 ) -> Result<TransactionJournal, String> {
     let id = plan.plan_id;
-    let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
+    let root = validate_project_root_or_destination(Path::new(&project_root))
+        .map(|(root, _)| root)
+        .map_err(command_error)?;
     let (approved_plan, prepared) = {
         let plans = prepared_plans()
             .lock()
@@ -4461,14 +5013,17 @@ fn apply_installation(
     Ok(journal)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn rollback_installation(
     project_root: String,
     transaction_id: String,
 ) -> Result<TransactionJournal, String> {
-    let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
+    let root = validate_project_root_or_destination(Path::new(&project_root))
+        .map(|(root, _)| root)
+        .map_err(command_error)?;
     let id = Uuid::parse_str(&transaction_id).map_err(|_| "invalid transaction ID".to_string())?;
-    let journal_path = crate::paths::transaction_root(&application_data_root(), id)
+    let app_root = application_data_root().map_err(command_error)?;
+    let journal_path = crate::paths::transaction_root(&app_root, id)
         .transaction
         .join("journal.json");
     let mut journal = crate::transaction::read_journal(&journal_path).map_err(command_error)?;
@@ -4477,14 +5032,17 @@ fn rollback_installation(
     Ok(journal)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn read_transaction_journal(
     project_root: String,
     transaction_id: String,
 ) -> Result<TransactionJournal, String> {
-    let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
+    let root = validate_project_root_or_destination(Path::new(&project_root))
+        .map(|(root, _)| root)
+        .map_err(command_error)?;
     let id = Uuid::parse_str(&transaction_id).map_err(|_| "invalid transaction ID".to_string())?;
-    let journal_path = crate::paths::transaction_root(&application_data_root(), id)
+    let app_root = application_data_root().map_err(command_error)?;
+    let journal_path = crate::paths::transaction_root(&app_root, id)
         .transaction
         .join("journal.json");
     let journal = crate::transaction::read_journal(&journal_path).map_err(command_error)?;
@@ -4497,38 +5055,45 @@ fn read_transaction_journal(
     Ok(journal)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn find_interrupted_transaction(
     project_root: String,
 ) -> Result<Option<TransactionJournal>, String> {
-    let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
-    crate::transaction::find_incomplete_transaction(&application_data_root(), &root)
-        .map_err(command_error)
+    let root = validate_project_root_or_destination(Path::new(&project_root))
+        .map(|(root, _)| root)
+        .map_err(command_error)?;
+    let app_root = application_data_root().map_err(command_error)?;
+    crate::transaction::find_incomplete_transaction(&app_root, &root).map_err(command_error)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn resume_installation(
     project_root: String,
     transaction_id: String,
 ) -> Result<TransactionJournal, String> {
-    let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
+    let root = validate_project_root_or_destination(Path::new(&project_root))
+        .map(|(root, _)| root)
+        .map_err(command_error)?;
     let id = Uuid::parse_str(&transaction_id).map_err(|_| "invalid transaction ID".to_string())?;
-    let (journal, _) =
-        resume_transaction(&root, &application_data_root(), id).map_err(command_error)?;
+    let app_root = application_data_root().map_err(command_error)?;
+    let (journal, _) = resume_transaction(&root, &app_root, id).map_err(command_error)?;
     Ok(journal)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn discard_installation_staging(
     project_root: String,
     transaction_id: String,
 ) -> Result<TransactionJournal, String> {
-    let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
+    let root = validate_project_root_or_destination(Path::new(&project_root))
+        .map(|(root, _)| root)
+        .map_err(command_error)?;
     let id = Uuid::parse_str(&transaction_id).map_err(|_| "invalid transaction ID".to_string())?;
-    discard_staging(&root, &application_data_root(), id).map_err(command_error)
+    let app_root = application_data_root().map_err(command_error)?;
+    discard_staging(&root, &app_root, id).map_err(command_error)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn open_in_codex(project_root: String) -> Result<OpenInCodexResult, String> {
     let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
     let live_codex =
@@ -4546,23 +5111,9 @@ fn open_in_codex(project_root: String) -> Result<OpenInCodexResult, String> {
         .get("workflow.3d")
         .map(|workflow| workflow.state.clone())
         .unwrap_or_else(|| "not_selected".into());
-    let lora_interest = lock
-        .optional_workflows
-        .get("workflow.lora_comfyui_interest")
-        .is_some_and(|workflow| {
-            matches!(
-                workflow.state.as_str(),
-                "planned_unavailable" | "interest_recorded"
-            )
-        });
-    let readiness = evaluate_installed_readiness(
-        &root,
-        &lock.project_id,
-        workflow_3d_state,
-        lora_interest,
-        Vec::new(),
-    )
-    .map_err(command_error)?;
+    let readiness =
+        evaluate_installed_readiness(&root, &lock.project_id, workflow_3d_state, Vec::new())
+            .map_err(command_error)?;
     if !crate::readiness::core_ready(&readiness) {
         return Err(format!(
             "Codex remains disabled until core readiness passes: {}",
@@ -4611,7 +5162,18 @@ mod tests {
         COMMAND_TEST_STATE_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
-            .unwrap()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[test]
+    fn every_desktop_command_uses_the_async_dispatcher() {
+        let source = include_str!("commands.rs");
+        let synchronous_attribute = ["#[tauri::", "command]"].concat();
+        assert!(
+            !source.contains(&synchronous_attribute),
+            "a synchronous Tauri command can freeze the desktop event loop"
+        );
+        assert!(source.contains("#[tauri::command(async)]"));
     }
 
     #[test]
@@ -4697,6 +5259,82 @@ mod tests {
     }
 
     #[test]
+    fn super_events_selection_is_recorded_and_only_adds_guidance_when_selected() {
+        let selected_state = generated_state(&serde_json::json!({
+            "superEventsSelected": true
+        }));
+        let unselected_state = generated_state(&serde_json::json!({
+            "superEventsSelected": false
+        }));
+        assert_eq!(
+            selected_state
+                .get("workflow.super_events")
+                .map(String::as_str),
+            Some("ready")
+        );
+        assert_eq!(
+            unselected_state
+                .get("workflow.super_events")
+                .map(String::as_str),
+            Some("not_selected")
+        );
+
+        let identity = ProjectIdentity {
+            display_name: "Example Mod".into(),
+            project_id: "example_mod".into(),
+            author: String::new(),
+            version: "0.1.0".into(),
+            supported_game_version: "1.17.*".into(),
+            project_root: PathBuf::from("C:/mods/example_mod"),
+            default_branch: "main".into(),
+            script_prefix: Some("example".into()),
+            primary_namespace: Some("example".into()),
+            descriptor_tags: Vec::new(),
+            launcher_descriptor_path: None,
+        };
+        let template = b"# [MOD_NAME]\n\nUse `[MOD_PREFIX]` for identifiers.\n\
+<!-- HOI4_MOD_SETUP:SUPER_EVENTS:START -->\n\
+- Optional Super Events workflow\n\
+<!-- HOI4_MOD_SETUP:SUPER_EVENTS:END -->\n";
+        let selected =
+            adapt_agents_for_selection(template, &identity, "codex", "default", true).unwrap();
+        let unselected =
+            adapt_agents_for_selection(template, &identity, "codex", "default", false).unwrap();
+        assert!(String::from_utf8(selected)
+            .unwrap()
+            .contains("Optional Super Events workflow"));
+        assert!(!String::from_utf8(unselected)
+            .unwrap()
+            .contains("Optional Super Events workflow"));
+    }
+
+    #[test]
+    fn super_events_runtime_is_namespace_adapted_without_unresolved_tokens() {
+        let identity = ProjectIdentity {
+            display_name: "Example \"Mod\"".into(),
+            project_id: "example_mod".into(),
+            author: String::new(),
+            version: "0.1.0".into(),
+            supported_game_version: "1.17.*".into(),
+            project_root: PathBuf::from("C:/mods/example_mod"),
+            default_branch: "main".into(),
+            script_prefix: Some("example".into()),
+            primary_namespace: Some("example".into()),
+            descriptor_tags: Vec::new(),
+            launcher_descriptor_path: None,
+        };
+        let adapted = adapt_super_events_source(
+            b"name = [MOD_PREFIX]_super_events\ntext = \"[MOD_NAME]\"\n",
+            &identity,
+        )
+        .unwrap();
+        let text = String::from_utf8(adapted).unwrap();
+        assert!(text.contains("name = example_super_events"));
+        assert!(text.contains("text = \"Example \\\"Mod\\\"\""));
+        assert!(!text.contains("[MOD_"));
+    }
+
+    #[test]
     fn non_codex_provider_rejects_a_dependency_that_expands_to_codex_config() {
         let error = reject_codex_only_dependencies(
             "claude",
@@ -4724,6 +5362,42 @@ mod tests {
     }
 
     #[test]
+    fn external_link_opener_accepts_only_product_reviewed_urls() {
+        assert!(is_allowed_external_url(
+            "https://github.com/klimPaskov/Agentic-HOI4-Modding"
+        ));
+        assert!(is_allowed_external_url(
+            "https://github.com/klimPaskov/comfyui-hoi4-portraits"
+        ));
+        assert!(!is_allowed_external_url(
+            "https://github.com/klimPaskov/Agentic-HOI4-Modding/issues"
+        ));
+        assert!(!is_allowed_external_url("javascript:alert(1)"));
+    }
+
+    #[test]
+    fn codex_process_details_are_not_exposed_to_the_renderer() {
+        assert_eq!(
+            codex_user_error(AppError::Process(
+                "official Codex executable was not found on the reviewed PATH".into()
+            )),
+            "Codex is not installed or could not be found. Install or update Codex, then choose Check again."
+        );
+        assert_eq!(
+            codex_user_error(AppError::Process(
+                "Codex App Server closed during account/read".into()
+            )),
+            "Codex is temporarily unavailable. Close and reopen Codex, then try again."
+        );
+    }
+
+    #[test]
+    fn automatic_project_paths_reject_an_invalid_project_id_before_platform_lookup() {
+        let error = suggest_project_paths("../outside".into()).unwrap_err();
+        assert!(error.contains("project ID"));
+    }
+
+    #[test]
     fn usage_limited_chatgpt_accounts_are_blocked_before_authenticated_planning() {
         let status = CodexAccountStatus {
             available: true,
@@ -4739,14 +5413,29 @@ mod tests {
     }
 
     #[test]
-    fn login_cancel_command_sets_only_the_in_memory_cancellation_flag() {
+    fn login_cancel_command_targets_only_the_requested_attempt() {
         let _state_guard = test_state_guard();
-        CODEX_LOGIN_CANCEL.store(false, Ordering::SeqCst);
+        if let Ok(mut session) = codex_session().lock() {
+            *session = None;
+        }
+        let first = Arc::new(AtomicBool::new(false));
+        let second = Arc::new(AtomicBool::new(false));
+        {
+            let mut cancellations = codex_login_cancellations().lock().unwrap();
+            cancellations.clear();
+            cancellations.insert("login-1".into(), first.clone());
+            cancellations.insert("login-2".into(), second.clone());
+        }
 
-        codex_login_cancel().unwrap();
+        codex_login_cancel("login-1".into()).unwrap();
 
-        assert!(CODEX_LOGIN_CANCEL.load(Ordering::SeqCst));
-        CODEX_LOGIN_CANCEL.store(false, Ordering::SeqCst);
+        assert!(first.load(Ordering::SeqCst));
+        assert!(!second.load(Ordering::SeqCst));
+        let cancellations = codex_login_cancellations().lock().unwrap();
+        assert!(!cancellations.contains_key("login-1"));
+        assert!(cancellations.contains_key("login-2"));
+        drop(cancellations);
+        codex_login_cancellations().lock().unwrap().clear();
     }
 
     #[test]
@@ -4928,12 +5617,12 @@ mod tests {
             ai_endpoint: None,
             ai_optimization_profile: ai_optimization_profile("codex"),
             flatten_chat_sources: false,
-            flatten_additional_files: vec![],
             codex_analysis: None,
             selected_components: vec![],
             wiki_required_pages: vec![],
             wiki_metadata: None,
             generated_artifacts: vec![],
+            download_ledger: vec![],
             git_setup: None,
             credential_references: vec![],
             optional_workflows: Default::default(),
@@ -4948,6 +5637,9 @@ mod tests {
                 backup_root: "backup".into(),
                 staging_root: "staging".into(),
                 atomic_apply_expected: true,
+                project_root_mode: ProjectRootMode::Existing,
+                project_root_parent: None,
+                project_root_leaf: None,
             },
             approvals: PlanApprovals {
                 dry_run_reviewed: false,
@@ -5033,12 +5725,92 @@ mod tests {
             platform: ManifestPlatform::All,
         };
 
-        append_additional_component_operations(&mut operations, &[selected], &lock, project.path())
-            .unwrap();
+        append_additional_component_operations(
+            &mut operations,
+            &[selected],
+            &lock,
+            project.path(),
+            false,
+        )
+        .unwrap();
         assert_eq!(operations.len(), 1);
         assert_eq!(operations[0].action, OperationAction::Skip);
         assert_eq!(operations[0].resolution.as_deref(), Some("review_required"));
         assert_eq!(operations[0].local_state, LocalState::Modified);
+    }
+
+    #[test]
+    fn adding_super_events_later_creates_the_skill_and_refreshes_unmodified_agents() {
+        let project = tempfile::tempdir().unwrap();
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        lock.components
+            .retain(|component| component.id != "workflow.super_events");
+        lock.files
+            .retain(|file| file.component_id != "workflow.super_events");
+        lock.optional_workflows.remove("workflow.super_events");
+        let installed_agents = b"# Existing project guidance\n";
+        std::fs::write(project.path().join("AGENTS.md"), installed_agents).unwrap();
+        let agents_lock = lock
+            .files
+            .iter_mut()
+            .find(|file| file.path == "AGENTS.md")
+            .unwrap();
+        agents_lock.installed_sha256 = sha256_bytes(installed_agents);
+        agents_lock.source_sha256 = sha256_bytes(b"# Old source template\n");
+
+        let selections = vec![
+            crate::source::SelectedSourceFile {
+                component_id: "core.agents".into(),
+                source_path: "AGENTS_template.md".into(),
+                destination: "AGENTS.md".into(),
+                ownership: Ownership::Merged,
+                expected_sha256: Some(sha256_bytes(b"# Incoming adapted guidance\n")),
+                expected_size: Some(28),
+                executable: false,
+                platform: ManifestPlatform::All,
+            },
+            crate::source::SelectedSourceFile {
+                component_id: "workflow.super_events".into(),
+                source_path: ".agents/skills/hoi4-super-events/SKILL.md".into(),
+                destination: ".agents/skills/hoi4-super-events/SKILL.md".into(),
+                ownership: Ownership::Managed,
+                expected_sha256: Some(sha256_bytes(b"super event skill")),
+                expected_size: Some(17),
+                executable: false,
+                platform: ManifestPlatform::All,
+            },
+        ];
+
+        let mut operations = Vec::new();
+        append_additional_component_operations(
+            &mut operations,
+            &selections,
+            &lock,
+            project.path(),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(operations.len(), 2);
+        let agents = operations
+            .iter()
+            .find(|operation| operation.destination == "AGENTS.md")
+            .unwrap();
+        assert_eq!(agents.action, OperationAction::Replace);
+        assert_eq!(agents.local_state, LocalState::Unmodified);
+        assert_eq!(
+            agents.resolution.as_deref(),
+            Some("optional_guidance_refresh")
+        );
+        let skill = operations
+            .iter()
+            .find(|operation| operation.component_id == "workflow.super_events")
+            .unwrap();
+        assert_eq!(skill.action, OperationAction::Create);
+        assert_eq!(skill.local_state, LocalState::Absent);
     }
 
     #[test]
@@ -5208,6 +5980,7 @@ mod tests {
             source_sha256: Some(digest(source)),
             source_size: Some(source.len() as u64),
             platform: Some(ManifestPlatform::All),
+            executable: false,
             result_sha256: None,
             base_sha256: None,
             local_sha256: Some(digest(local)),
@@ -5276,7 +6049,6 @@ mod tests {
                 ai_endpoint: None,
                 ai_optimization_profile: "Codex project and ChatGPT Chat".into(),
                 flatten_chat_sources: true,
-                flatten_additional_files: Vec::new(),
                 codex_analysis: None,
                 selected_components: vec![
                     "core.agents".into(),
@@ -5303,6 +6075,7 @@ mod tests {
                         bytes: None,
                     },
                 ],
+                download_ledger: Vec::new(),
                 git_setup: None,
                 credential_references: Vec::new(),
                 optional_workflows: BTreeMap::new(),
@@ -5343,6 +6116,9 @@ mod tests {
                     backup_root: String::new(),
                     staging_root: String::new(),
                     atomic_apply_expected: true,
+                    project_root_mode: ProjectRootMode::Existing,
+                    project_root_parent: None,
+                    project_root_leaf: None,
                 },
                 approvals: PlanApprovals {
                     dry_run_reviewed: false,
@@ -5476,6 +6252,7 @@ mod tests {
             source_sha256: Some(source_hash.clone()),
             source_size: Some(1),
             platform: Some(ManifestPlatform::All),
+            executable: false,
             result_sha256: None,
             base_sha256: None,
             local_sha256: Some("b".repeat(64)),
@@ -5491,7 +6268,12 @@ mod tests {
             expected_sha256: sha256_bytes(b"incoming"),
         };
 
-        assert!(accepted_flatten_prepared_files(&[prepared], &[operation]).is_empty());
+        let project = tempfile::tempdir().unwrap();
+        assert!(
+            accepted_flatten_prepared_files(&[prepared], &[operation], project.path())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -5529,10 +6311,9 @@ mod tests {
     }
 
     #[test]
-    fn logout_clears_local_analysis_and_scan_evidence_without_a_remote_session() {
+    fn local_codex_state_can_be_cleared_without_starting_an_external_session() {
         let _state_guard = test_state_guard();
         let analysis_id = Uuid::new_v4();
-        *codex_session().lock().unwrap() = None;
         codex_analyses().lock().unwrap().insert(
             analysis_id,
             PendingCodexAnalysis {
@@ -5578,7 +6359,7 @@ mod tests {
             evidence_sha256: None,
         };
 
-        codex_logout().unwrap();
+        clear_codex_local_state().unwrap();
 
         assert!(codex_analyses().lock().unwrap().is_empty());
         let evidence = codex_approved_evidence().lock().unwrap();

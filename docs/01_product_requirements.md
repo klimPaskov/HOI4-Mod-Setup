@@ -58,7 +58,7 @@ Needs pinned installs, optional 3D support, exact provenance, update and repair,
 ## Planning provider requirement
 
 The first setup screen selects Codex, Claude, Kimi, GLM, DeepSeek, a local
-model, or another bounded provider profile. Codex uses the official local Codex
+model, or a bounded custom provider profile. Codex uses the official local Codex
 App Server and ChatGPT-managed browser or device-code authentication. Hosted
 non-Codex profiles use a user-supplied endpoint and an API key stored in the OS
 credential vault. Local models use an explicit loopback HTTP endpoint. The
@@ -104,10 +104,12 @@ Ask for and review:
 - generated display name, stable project ID, script prefix, namespace, descriptor
   tags, and initial folder profile
 - project folder
+- auto-filled project root derived from the validated project ID and selected parent
 - supported game version
 - initial version and tags
 - internal `descriptor.mod` preview
-- external launcher `<project_id>.mod` preview and destination
+- auto-filled external launcher `<project_id>.mod` preview and destination
+- editable overrides for the project root and launcher descriptor destination
 - generated `thumbnail.png` preview and placeholder style
 - initial folder profile
 - source mode
@@ -116,19 +118,26 @@ Ask for and review:
 - MCP and credential choices
 - Git choices
 
-No file is created before dry-run approval. After approval, the transaction creates the project root, internal descriptor, external launcher descriptor, thumbnail placeholder, selected folder profile, and selected workflow components. The new mod must appear in the HOI4 launcher and load as an empty or scaffolded local mod without manual file creation, assuming the selected HOI4 user directory is valid.
+No file is created before dry-run approval. At apply, the transaction creates the selected project root—or exactly one reviewed leaf when the root was absent—then creates the internal descriptor, external launcher descriptor, thumbnail placeholder, selected folder profile, and selected workflow components. The new mod must appear in the HOI4 launcher and load as an empty or scaffolded local mod without manual file creation, assuming the selected HOI4 user directory is valid.
 
 The app fills generated identity fields from the mod name and description before
-the identity screen opens. The selected provider may replace those conventions
-with schema-validated suggestions. Every generated value remains editable, but
-the user is not asked to invent a project ID, prefix, namespace, tags, or folder
-list from scratch. Manual input is reserved for an intentional override,
-ambiguous or unverified game facts, and the two external descriptor paths.
+the identity screen opens. After the project ID passes deterministic validation,
+it fills the project root and external launcher descriptor path from that ID and
+the resolved HOI4 user mod directory. The selected provider may suggest reviewed
+alternatives, but the deterministic defaults remain until the user edits or
+confirms them. Every generated value remains
+editable, but the user is not asked to invent a project ID, prefix, namespace,
+tags, folder list, or launcher filename from scratch. Changing the ID updates
+only paths that remain auto-filled; an explicit override is preserved and
+revalidated.
 
 #### Launcher-ready artifact contract
 
 - `descriptor.mod` lives inside the project root.
 - `<project_id>.mod` lives in the user-confirmed Hearts of Iron IV `mod` directory.
+- The default `mod` directory comes from the native platform `Documents`
+  location, so Windows Documents redirection and supported macOS Documents
+  redirection are honored; the user may explicitly override it.
 - The launcher descriptor contains the canonical absolute project path using platform-correct escaping.
 - The descriptors share the reviewed name, version, supported game version, tags, and picture reference where applicable.
 - The app does not fabricate `remote_file_id` or another Workshop identity.
@@ -156,6 +165,13 @@ The user selects one root. The scanner detects:
 - absolute paths and project-specific examples
 - conflicts with incoming components
 - launcher descriptor registrations and thumbnail state
+
+Before the scan starts, the app performs a bounded, read-only discovery of
+direct `*.mod` candidates in the selected root's immediate parent. It shows the
+candidate path and the path-match evidence, then requires a visible choice to
+confirm that descriptor, scan without an external descriptor, or cancel. It
+does not search sibling trees or the whole computer. Only a confirmed external
+descriptor path may be read by the scan.
 
 Findings are grouped into reviewable steps and can be accepted, edited, rejected, or deferred when the value is not needed for generation. Deterministic findings remain authoritative for observable facts.
 
@@ -229,13 +245,36 @@ When yes:
 
 A missing key leaves the optional workflow incomplete and does not block core setup.
 
-### LoRA and ComfyUI placeholder
+### Optional Super Events workflow
 
-Ask exactly:
+On the same Optional workflows screen, ask immediately after the exact 3D
+question:
 
-**Do you want to set up LoRAs and ComfyUI for portrait generation?**
+**Do you want to set up the Super Events workflow?**
 
-Version 1 records interest only. It creates no download, install, model, Python, ComfyUI, LoRA, GPU, or driver operation. Readiness reports `planned_unavailable` and never claims success.
+Super Events is a provider-neutral optional component with no credential,
+environment variable, external command, or provider-specific readiness gate.
+When selected, `workflow.super_events` is resolved from the verified manifest at
+the one installation revision and selectively installs the generic managed tree
+at `.agents/skills/hoi4-super-events/`. Its only declared dependency is
+`core.skills`. When declined, the tree is not downloaded or installed and the
+adapted `AGENTS.md` receives no Super Events-specific guidance. The optional
+state is visible in readiness and is carried through the managed lock and the
+read-only existing-project scan.
+
+Update may add the component from the selected target manifest. Repair may add
+it only when the same immutable locked source revision declares it; otherwise
+the maintenance action is Update. Missing or incomplete Super Events content
+never blocks core readiness.
+
+### Portrait workflow handoff
+
+LoRA and ComfyUI are not setup options. Do not create a component, preference,
+operation, lock state, or readiness check for them. After successful setup, the
+Ready screen shows one concise fixed HTTPS link to
+`https://github.com/klimPaskov/comfyui-hoi4-portraits`, opened through the typed
+system-browser action. It is informational and never claims external workflow
+installation or readiness.
 
 ### MCP setup
 
@@ -264,11 +303,11 @@ All installs and updates use:
 
 ### Maintenance
 
-Support update, repair, reinstall, rollback, managed removal, optional-workflow changes, and later Meshy credential configuration.
+Support update, repair, reinstall, rollback, managed removal, optional-workflow changes, later Meshy credential configuration, and later Super Events addition.
 
 ### Readiness
 
-Check the internal descriptor, external launcher descriptor, external destination, descriptor agreement, thumbnail existence and decoding, selected structure, AGENTS, skills, subagents, selected provider instructions, MCP, wiki integrity and page coverage, Git, environment variables, hashes, conflicts, external dependencies, 3D state, and LoRA placeholder state. Codex authentication or selected-provider configuration and confirmed analysis are blocking core checks.
+Check the internal descriptor, external launcher descriptor, external destination, descriptor agreement, thumbnail existence and decoding, selected structure, AGENTS, skills, subagents, selected provider instructions, MCP, wiki integrity and page coverage, Git, environment variables, hashes, conflicts, external dependencies, and optional `workflow.3d` and `workflow.super_events` states. Codex authentication or selected-provider configuration and confirmed analysis are blocking core checks; optional workflow states are not.
 
 Open in Codex is enabled only when blocking core checks pass.
 
@@ -288,6 +327,11 @@ Open in Codex is enabled only when blocking core checks pass.
 - bounded hashing and parser concurrency
 - cancellable work
 - immutable download cache
+
+Every Tauri desktop command uses async/thread-pool dispatch for filesystem,
+network, Git, and provider waits. No such wait may block the desktop event
+loop. A regression test must hold each representative wait open and verify that
+the event loop remains responsive while the command is pending.
 
 ### Security
 
@@ -314,7 +358,7 @@ Full keyboard operation, visible focus, WCAG 2.2 AA contrast, screen-reader sema
 - whole-computer mod discovery
 - Steam Workshop publishing
 - automatic online Git repository creation or push
-- automated LoRA or ComfyUI installation
+- LoRA or ComfyUI setup, detection, or installation
 - invented macOS MCP or 3D commands
 
 ## Open-source application repository
@@ -331,7 +375,7 @@ The source repository must include:
 - protected `main` through a GitHub ruleset
 - CI for planning integrity, frontend, Rust, security, and supported platforms
 - Dependabot configuration for npm, Cargo, and GitHub Actions
-- tag-based draft release automation
+- tag-based release automation that publishes only after platform verification
 - root `AGENTS.md`
 - maintained repo-local skills under `.agents/skills/`
 - bounded subagents under `.codex/agents/`
@@ -342,4 +386,4 @@ Repo-local skills are living implementation memory. A pull request that changes 
 
 ## Core authentication readiness
 
-A setup session is core-ready only when the selected provider is configured (or a compatible Codex App Server is initialized with active ChatGPT-managed authentication), required semantic analysis validates against the current schema, and every required proposal is confirmed. Optional 3D, LoRA, and Codex-only flattened Chat-source states remain independent.
+A setup session is core-ready only when the selected provider is configured (or a compatible Codex App Server is initialized with active ChatGPT-managed authentication), required semantic analysis validates against the current schema, and every required proposal is confirmed. Optional 3D and Codex-only flattened Chat-source states remain independent.

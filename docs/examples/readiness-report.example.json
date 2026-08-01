@@ -30,7 +30,7 @@
         {
           "kind": "path",
           "value": "cold_war_curtain.mod",
-          "path": "%USERPROFILE%\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain.mod"
+          "path": "C:\\Users\\example\\OneDrive\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain.mod"
         }
       ]
     },
@@ -110,27 +110,27 @@
       ]
     },
     {
-      "id": "workflow.lora",
+      "id": "workflow.super_events",
       "category": "workflow",
-      "label": "LoRA and ComfyUI portrait workflow",
-      "status": "planned_unavailable",
+      "label": "Super Events workflow",
+      "status": "pass",
       "blocking": false,
-      "message": "Interest is recorded. Automated setup is not available in version 1.",
+      "message": "The manifest-bound generic skill tree is installed; no credential or external health action is required.",
       "evidence": [
         {
-          "kind": "preference",
-          "value": true,
-          "path": ".hoi4-mod-setup/state.json"
+          "kind": "path",
+          "value": ".agents/skills/hoi4-super-events/SKILL.md",
+          "path": ".agents/skills/hoi4-super-events/SKILL.md"
         }
       ]
     }
   ],
   "summary": {
-    "pass": 7,
+    "pass": 8,
     "warn": 0,
     "block": 0,
     "not_selected": 0,
-    "planned_unavailable": 1
+    "planned_unavailable": 0
   },
   "core_ready": true,
   "open_in_codex": {

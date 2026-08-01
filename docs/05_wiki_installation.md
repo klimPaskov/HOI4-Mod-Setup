@@ -2,7 +2,10 @@
 
 ## Verified distribution
 
-The live repository stores the offline Hearts of Iron IV Paradox wiki as a `paradox_wiki/` tree containing Markdown pages, a `media/` directory, and an observed marker named `_last_updated_on_27_Nov_2025.txt`.
+The live repository stores the offline Hearts of Iron IV Paradox wiki as a
+`paradox_wiki/` tree containing Markdown pages and a `media/` directory. The
+current published manifest declares `snapshot_marker: null`; do not require or
+invent a marker file.
 
 No formal wiki source manifest or license file was verified at the inspected revision. The application must display that limitation and must not invent a source, official status, or license.
 
@@ -74,10 +77,12 @@ Check that relative links remain within `paradox_wiki/`, referenced media exists
 
 ## Provenance display
 
-Show repository, commit, marker filename, source metadata state, and license metadata state. At the inspected revision:
+Show repository, commit, optional marker state, source metadata state, and
+license metadata state. At the inspected revision:
 
 - source status: repository-only
 - license status: not found
+- snapshot marker: not declared
 
 These are evidence states, not legal conclusions.
 

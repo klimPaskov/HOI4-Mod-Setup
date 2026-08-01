@@ -13,7 +13,6 @@
     "ai_model",
     "ai_optimization_profile",
     "flatten_chat_sources",
-    "flatten_additional_files",
     "codex_analysis",
     "wiki_required_pages",
     "components",
@@ -26,10 +25,6 @@
     {
       "if": { "properties": { "ai_provider": { "const": "codex" } } },
       "then": { "properties": { "ai_endpoint": { "type": ["null", "string"], "maxLength": 0 } } }
-    },
-    {
-      "if": { "properties": { "flatten_chat_sources": { "const": false } } },
-      "then": { "properties": { "flatten_additional_files": { "maxItems": 0 } } }
     },
     {
       "if": { "properties": { "ai_provider": { "enum": ["claude", "kimi", "glm", "deepseek", "local", "custom"] } } },
@@ -59,11 +54,6 @@
     },
     "flatten_chat_sources": {
       "type": "boolean"
-    },
-    "flatten_additional_files": {
-      "type": "array",
-      "items": { "type": "string" },
-      "maxItems": 64
     },
     "installed_at": {
       "type": "string",
@@ -227,7 +217,6 @@
               "selected_pending",
               "ready",
               "incomplete",
-              "interest_recorded",
               "planned_unavailable",
               "unsupported_platform"
             ]
@@ -407,7 +396,8 @@
         "source_revision",
         "source_sha256",
         "installed_sha256",
-        "ownership"
+        "ownership",
+        "preserved_local"
       ],
       "properties": {
         "path": {
@@ -458,6 +448,9 @@
             "generated",
             "external"
           ]
+        },
+        "preserved_local": {
+          "type": "boolean"
         },
         "external": {
           "type": "boolean"

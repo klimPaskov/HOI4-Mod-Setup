@@ -6,8 +6,18 @@
   "rollback_transaction_id": null,
   "result_lock_sha256": null,
   "result_lock_exists": null,
+  "rollback_record_sha256": null,
   "project_id": "cold_war_curtain",
-  "project_root": "C:\\Users\\example\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain",
+  "project_root": "C:\\Users\\example\\OneDrive\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain",
+  "project_root_lifecycle": {
+    "mode": "create_leaf",
+    "canonical_parent": "C:\\Users\\example\\OneDrive\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod",
+    "leaf": "cold_war_curtain",
+    "checkpoint": "pending",
+    "created_by_transaction": false,
+    "observed_exists": false,
+    "cleanup_result": null
+  },
   "state": "interrupted",
   "created_at": "2026-07-25T17:40:00+03:00",
   "updated_at": "2026-07-25T17:41:42+03:00",
@@ -124,17 +134,22 @@
       "source_size": 12,
       "action": "replace",
       "location_scope": "project",
+      "external": false,
       "backup_path": "C:\\Users\\example\\AppData\\Local\\HOI4 Mod Setup\\backups\\960ccbb7-c36a-41b0-9d76-0105bcd83b05\\op-001.bak",
       "rollback_source_path": null,
       "resolution": "replace",
       "source_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
       "result_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "expected_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
       "rollback": "restore_backup",
       "backup_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
       "staged_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
       "before_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
-      "staged_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
-      "after_sha256": null
+      "before_executable": false,
+      "expected_executable": false,
+      "after_sha256": null,
+      "after_exists": null,
+      "after_executable": null
     },
     {
       "id": "op-002",
@@ -146,17 +161,22 @@
       "source_size": 14,
       "action": "create",
       "location_scope": "project",
+      "external": false,
       "backup_path": null,
       "rollback_source_path": null,
       "resolution": null,
       "source_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
       "result_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "expected_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
       "rollback": "remove_created",
       "backup_sha256": null,
       "staged_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
       "before_sha256": null,
-      "staged_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
-      "after_sha256": null
+      "before_executable": null,
+      "expected_executable": false,
+      "after_sha256": null,
+      "after_exists": null,
+      "after_executable": null
     }
   ],
   "recovery": {
@@ -167,6 +187,8 @@
     "recommended_action": "resume"
   },
   "git_initialized": false,
+  "git_remote_added_name": null,
+  "git_remote_added_url": null,
   "previous_lock_backup_path": "C:\\Users\\example\\AppData\\Local\\HOI4 Mod Setup\\backups\\960ccbb7-c36a-41b0-9d76-0105bcd83b05\\install.lock.json.bak",
   "previous_lock_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
   "error": {

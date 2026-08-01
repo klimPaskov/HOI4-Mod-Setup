@@ -1,12 +1,18 @@
 flowchart TD
-    Start[Import existing project] --> Auth{Signed in to ChatGPT?}
-    Auth -- no --> Login[ChatGPT login]
-    Login --> Scan[Bounded read-only scan]
-    Auth -- yes --> Scan
+    Start[Import existing project] --> Auth{Selected provider configured?}
+    Auth -- no --> Login[Provider setup or ChatGPT login]
+    Login --> Candidate[Inspect only direct parent-level .mod candidates]
+    Auth -- yes --> Candidate
+    Candidate --> Confirm{Visible confirmation before scan?}
+    Confirm -- confirm descriptor --> Scan[Bounded read-only scan]
+    Confirm -- scan without descriptor --> Scan
+    Confirm -- cancel --> Stop[No scan or project mutation]
     Scan --> Manifest[Approved evidence manifest]
-    Manifest --> Codex[Read-only Codex semantic analysis]
-    Codex --> Findings[Detected, Suggested, Confirmed review]
+    Manifest --> Provider[Read-only selected-provider semantic analysis]
+    Provider --> Findings[Detected, Suggested, Confirmed review]
     Findings --> Components[Component selection]
-    Components --> DryRun[Dry-run and conflict review]
+    Components --> Optional3D[Ask exact 3D workflow question]
+    Optional3D --> OptionalSE[Ask exact Super Events workflow question]
+    OptionalSE --> DryRun[Dry-run and conflict review]
     DryRun --> Apply[Reversible transaction]
     Apply --> Ready[Readiness report]

@@ -58,6 +58,25 @@ Detect only with evidence:
 - absolute paths and machine-local assumptions
 - possible install conflicts
 
+## Launcher and standard-path boundary
+
+- `src-tauri/src/paths.rs::hoi4_user_mod_directory` resolves the Windows known
+  Documents folder or macOS Foundation user Documents search path, then requires the existing
+  `Paradox Interactive/Hearts of Iron IV/mod` directory without symlink or
+  junction components. It does not search for alternate mod folders.
+- `src-tauri/src/commands.rs::suggest_project_paths` derives the new-project
+  leaf and external `<project_id>.mod` path from that directory, reports both
+  collision bits, and refuses link-containing destinations. The UI may fall
+  back to one explicit folder choice when the standard directory is missing.
+- `discover_launcher_descriptor` canonicalizes the selected project, inspects
+  only its immediate parent, ignores links, malformed or oversized `.mod`
+  files, and accepts only descriptors whose absolute `path` resolves to the
+  selected root. Prefer the exact `<project-leaf>.mod` filename; multiple
+  non-exact matches remain ambiguous rather than being guessed.
+- Existing-project folder selection returns the canonical project path plus
+  any discovered launcher path. A scan never searches sibling drives or
+  unrelated folders.
+
 ## Finding model
 
 Every finding needs:
@@ -88,10 +107,14 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
 - Keep secret-like content redacted while preserving evidence location.
 - Inspect a prior managed setup only through the fixed lock path. Skip the
   metadata tree during the normal walk, and emit a bounded summary containing
-  project ID, component IDs, 3D state, non-secret 3D key-configured bit, and
-  portrait-interest state. A missing
-  lock is absent/non-blocking; link, size, read, parse, or schema failures are
-  blocking and must not be guessed into an installed state.
+  project ID, component IDs, `workflow.3d` state, `workflow.super_events`
+  state, and the non-secret 3D key-configured bit. This lock summary is the
+  remembered installed state used to repopulate scan/maintenance choices;
+  readiness later re-reads the lock rather than trusting transient UI state.
+  Ignore the retired portrait-interest field in a legacy lock; it is not an
+  installed feature or current scan finding. A missing lock is
+  absent/non-blocking; link, size, read, parse, or schema failures are blocking
+  and must not be guessed into an installed state.
 - Bound file size, depth, count, and parse work.
 - Support cancellation and partial result reporting.
 - Stream progress through an opaque request ID with stage, relative path, file count, directory count, and bytes read. Do not emit or render a percentage when a total is unknown.
@@ -130,10 +153,14 @@ Use `codex app-server` over stdio JSONL after deterministic scan completion. Req
   hooks, ignore files, and tracked secret-like paths
 - pre-existing managed files
 - valid managed-lock recognition without walking metadata
+- remembered optional-workflow state from a valid lock, including selected and
+  unselected `workflow.super_events`
 - malformed, linked, oversized, and unreadable managed-lock states
 - cancellation and timeout
 - progress event correlation, indeterminate progress, and cancelled-evidence invalidation
 - confidence downgrade when evidence conflicts
+- standard HOI4 mod-directory resolution, collision reporting, malformed/link
+  launcher candidates, and ambiguous sibling registrations
 - browser and device-code sign-in
 - usage limit, process interruption, and malformed schema
 - no account data or raw project text in persisted scan metadata

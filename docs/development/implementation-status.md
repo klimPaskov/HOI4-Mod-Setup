@@ -1,41 +1,60 @@
 # Implementation status
 
-This document records the current evidence boundary for the in-development desktop application. It is intentionally separate from the user-facing `README.md`.
+This document is the concise developer status. User guidance stays in the root
+`README.md`.
 
-## Implemented surfaces
+## Implemented
 
-- Rust domain modules cover scanning, descriptors, source resolution, manifest evidence, merge classification, credentials, process policy, Git planning, readiness evaluation, migrations, and staged transactions.
-- React contains the seven setup phases, four maintenance phases, 17 required screens, typed Tauri wrappers, progressive disclosure, focus handling, reduced-motion styling, readiness-gated Codex opening, and a signed-out local recovery/removal entry. If no verified opener is installed, the Ready screen preserves the passed readiness state and announces the validated project path for manual opening.
-- Both new and existing-project routes now pass through an identity screen with a native Windows/macOS folder picker backed by Rust/Tauri. The selected path is canonicalized and rejected when it is inaccessible, not a directory, or contains a symlink/junction before it enters editable wizard state; an existing-project scan cannot proceed with an empty or rejected root.
-- Component source pinning, descriptor previews, plan-derived dry-run counts, journal-derived installation progress, and readiness-derived status rows are now visible through typed Rust-backed UI state; undeclared MCP and 3D routes are not presented as available.
-- The local source manifest and the explicitly supplied live source tree have complete SHA-256/size evidence for the declared non-generated file sets, including the wiki destination `paradox_wiki/`.
-- The transaction journal records the twelve stages, exact resolved-source evidence, selected payload hashes, per-operation source path/size, reviewed resolution, staged hash, intent, expected/observed hashes, interruption state, rollback progress, and final readiness evidence before the success lock; `finalizing` and `rollback_applying` checkpoints make lock publication and rollback retryable without replaying already-restored work. Prepared bytes are revalidated inside the journaled transaction before backup.
-- Readiness now checks the exact `wiki.required_pages` list and manifest-declared snapshot/media/provenance/license metadata copied into the plan and lock for the resolved source revision, plus bounded local Markdown/wiki-link integrity; broken or unsafe offline links are a core block with evidence. It also validates AGENTS placeholders, installed skill frontmatter, subagent TOML and `fork_context=false`, and binds MCP readiness to the locked manifest/config before a bounded Windows initialize and read-only `tools/list` probe. Legacy locks without the wiki list or metadata remain readable but incomplete until update or repair refreshes source evidence.
-- Interrupted recovery now binds each journal to its canonical project root, discovers matching incomplete journals, revalidates the saved plan hash, operation preconditions, staged bytes, and apply-start boundary before replaying a pre-apply transaction; post-apply interruptions refuse resume, while discard removes only the exact staging directory and preserves the journal/backups. Rollback creates a separate child transaction journal and inverse backup set before restoring the parent transaction, and retries reuse the child identity.
-- New mutations refuse any matching non-terminal journal before touching the project; a verified pre-apply resume is explicitly bound to that journal's identity, while corrupt or overlapping journals fail closed. Reviewed flattened destinations are also rebuilt only from approved incoming bytes, so a later repair cannot silently reintroduce a skipped conflict.
-- Conflict resolution is core-bound: unresolved operations are safe no-ops, bounded base/local/incoming previews for text/TOML/JSON come from the core session, secret-shaped values are redacted while original hashes remain available, binary content remains hash-only, structured merges are validated, and maintenance update/repair/reinstall/removal plans preserve merged-file review boundaries. Source and deterministic installed hashes are recorded separately.
-- The scanner reports bounded partial/cancelled results with counters and deterministic evidence hashes, parses available skill/subagent/Codex/MCP metadata, and keeps the selected project read-only.
-- Codex and Git process launches use canonical PATH allowlists, argument arrays, bounded/scoped environments, link/reparse checks, and readiness revalidation. The Codex App Server child is polled before reuse and replaced after exit; login URLs go through HTTPS validation and fixed OS-owned system-browser openers; logout clears local session analyses/evidence even when remote logout fails; shared external-process timeouts terminate Windows descendants through the canonical `taskkill.exe` route. Reviewed plans and canonical roots remain core-owned until apply. The declarative `.github/rulesets/main-protected.json` records the intended protected-main policy but cannot activate it without repository administration.
-- Manifest-declared command validations are visible as approval-bound external actions. MCP health resolves the locked wrapper through canonical `cmd.exe`, clears credential-shaped environment state, validates initialize and read-only tool metadata, and never calls an MCP tool. The installed 3D bootstrap check is re-resolved at the locked revision, requires a hash- and size-verified target, uses an allowlisted Python executable, and injects only the opaque Meshy credential as `MESHY_API_KEY`; sanitized output controls keep failed optional checks non-blocking. A successful or failed 3D result is cached only against the current lock fingerprint in the core session, never in project or lock state.
-- Managed removal has a dedicated non-blocking completion report and preserves the lock for audit/rollback without presenting the unconfigured project as Codex-ready.
-- Update maintenance now requires a fresh bounded scan, visible approved evidence, and a core-session-confirmed existing-project selected-provider reanalysis record; provider, model, optimization profile, and evidence are bound into the typed maintenance plan while repair, reinstall, and removal retain their validated locked-analysis/recovery paths.
-- Semantic analysis now requires a digest of the exact explicitly approved scan evidence set, and confirmation binds the reviewed identity, description, and folder values to the current core-session proposal. Every provider adapter receives the authoritative analysis schema, and provider proposals cannot target application-managed roots or secret-shaped evidence paths.
-- Provider-neutral semantic planning is available with Codex as the default plus Claude, Kimi, GLM, DeepSeek, local, and another configured OpenAI-compatible route. The selected profile is carried into adapted AGENTS/README/project state/plan/lock/readiness, and the Codex-only flatten option produces the local ChatGPT project-sources view with safe `<skill>.md` mappings.
-- Release CI now performs native Tauri build and bounded launch-smoke commands on Windows x64 and macOS architecture-specific runners, compiles the fuzz targets with the pinned Rust toolchain, verifies an artifact hash manifest, generates dependency notices, and protects publication behind signing/publication variables and a release environment. Tagged release jobs import runner-only Windows `.pfx` or macOS `.p12` material, pass a temporary Tauri signing configuration, verify native architecture and signed-evidence markers, curate uniquely named assets, and remove temporary certificates/keychains and roots after verification; `release_build.mjs` accepts only an absolute runner-local config path.
-- The current host has verified the pinned Rust 1.88.0 MSVC all-feature build and 177-test Rust suite, 27 frontend tests, typecheck, formatting, repository validation, fuzz-target compilation (including flattened-source inputs), and provider/flatten/secret-boundary unit coverage. Maintenance flatten rebuilding also preserves reviewed flat conflicts when later source content changes. A fresh unsigned local Windows NSIS `.exe` package was built, hash-verified, and launch-smoke tested; signed release evidence remains blocked. Release metadata verification now binds native artifacts to checked-out `HEAD`, `GITHUB_SHA`, and the tag target.
-- Ubuntu Rust CI now installs the Linux Tauri/WebKit/GTK prerequisites before its all-feature checks; this does not replace native Windows/macOS packaging evidence.
+- Tauri desktop shell with a Rust core and React TypeScript seven-phase wizard.
+- New-mod generation and existing-mod read-only scanning with editable,
+  evidence-backed findings.
+- Codex App Server login/logout and schema-constrained analysis, plus explicit
+  hosted and local provider profiles.
+- Versioned remote manifest resolution, selective downloads, immutable source
+  revision binding, verified cache reads, and offline wiki installation.
+- Twelve-stage transactions with dry run, delayed backup/staging creation,
+  operation-bound download evidence, interruption recovery, rollback, repair,
+  reinstall, and managed removal.
+- Windows Credential Manager and macOS Keychain boundaries for provider and
+  Meshy credentials.
+- Git initialize/preserve/skip, guarded online push, and separately approved
+  public GitHub-repository creation.
+- Optional Codex-only flattened ChatGPT project sources.
+- Rust unit/property tests, fuzz targets, transaction fault injection,
+  frontend/accessibility tests, workflow authority checks, and Windows/macOS
+  native build and launch-smoke workflows.
+- User-facing release curation that publishes only the Windows installer and
+  two macOS disk images.
 
-## Blocked or not yet evidenced
+## Current optional workflow and responsiveness behavior
 
-- The public Agentic HOI4 Modding default branch resolves to `54da3e7a43cce43f15edc54ef80fb0099822b3e2` and publishes a validated, revision-bound root manifest at that same commit. Its raw SHA-256 is `0e8db882f4ae61f7b030b415d4a575f643fd1a5c5dc475f7a0dcccc6933bd3ba`; the manifest's `generated_for_revision` remains `27128a7b311d728a959afff7238a9aeeb9987f2b` as immutable generation provenance and may precede the publication commit because Git commit hashes are self-referential. The app consumes that remote manifest and binds it and all selected blobs to the one resolved commit; existing bundled bootstrap locks remain readable for compatibility.
-- Windows signing, macOS Developer ID signing/notarization, SBOM, and clean-machine install/update/repair/removal evidence are not configured or exercised on this host. The release workflow now fails closed with explicit protected secret/variable names, native architecture checks, signing evidence markers, and a reverified uniquely named publication asset set instead of treating an unsigned package as releasable. Automatic updater metadata is explicitly deferred for 0.1.0.
-- The current source-declared MCP wrapper remains `planned_unavailable`: the verified manifest has no immutable wrapper, interpreter, or runtime identity evidence, so the application does not execute a same-named PATH command. Flattened-source reads now open every Unix ancestor with `openat(..., O_NOFOLLOW)` and verify the final Windows file handle remains under the canonical root; coordinated Windows junction/macOS symlink swap evidence is still a release gate, so the implementation does not claim race-proof behavior without those tests.
-- The public source manifest is established on the upstream GitHub repository. The application repository also has a revision-bound development preview with Windows x64 and macOS architecture-specific installer assets; public stable binary release still requires signed release-host evidence.
-- Apache License 2.0 is selected and recorded in `LICENSE_SELECTION.md`, with the official text in `LICENSE`. The generated dependency inventory and bundled-asset review are recorded in `THIRD_PARTY_NOTICES.md` and the release handoff; full license-text/legal sign-off remains a maintainer responsibility before binary publication.
-- Native Windows launch smoke is verified locally through `pnpm desktop:e2e`; macOS launch smoke, screen-reader, contrast, and clean-machine install evidence remain CI/release gates. The Rust source contains the stage/operation fault matrix and all-feature Windows tests pass, but native disk-full, file-lock, permission-loss, journal-write, cancellation, and network-failure adapters remain release-gate work.
-- The high-impact Windows 3D bootstrap is hash- and size-verified and requires explicit review, but the source declares neither a preflight-only mode nor a rollback boundary for external environment changes. The core transaction therefore does not claim that this optional action is reversible.
-- The Ready screen exposes a confirmed inverse action for a completed rollback child journal. It restores only the recorded managed files and lock state, verifies the post-rollback live hashes before applying, refuses later user file or lock edits, and leaves Git or other external side effects as an explicit unsupported inverse boundary.
-- The native picker and three-pane conflict comparison have frontend unit/accessibility coverage, but target-size desktop screenshots, keyboard-path capture, 200% scaling, and screen-reader review still require a runnable Windows/macOS desktop build.
-- Existing-project scanning now streams correlated phase/path progress with file, directory, and byte counters through the typed Tauri boundary, uses an indeterminate bar until a total is known, and exposes cooperative cancellation. Cancelled and safety-limited scans return visible partial metadata, clear approved Codex evidence, and block semantic analysis until an untruncated scan completes; the conflict preview is capped for display and reports complete-file hashes when truncation occurs.
+- `workflow.super_events` is a provider-neutral optional workflow resolved from
+  the verified manifest and selectively installed at
+  `.agents/skills/hoi4-super-events/`. Its no-credential, non-blocking state,
+  lock/scan memory, ordered Optional workflows question, unselected AGENTS
+  guidance rule, and Update/Repair source boundary are documented across the
+  product surfaces.
+- Every Tauri desktop command is required to dispatch filesystem, network, Git,
+  and provider waits asynchronously through a thread pool, with a regression
+  test for event-loop responsiveness.
 
-The application reports unsupported Windows-oriented MCP and 3D routes on macOS and treats missing Meshy credentials as optional 3D incompleteness. LoRA/ComfyUI remains interest-only and never reports installed software.
+The Rust and React regression suites cover fresh selection, later maintenance,
+remembered state, selected and unselected AGENTS adaptation, readiness, and
+desktop command dispatch away from the UI event loop.
+
+## Current source and release boundary
+
+The Agentic HOI4 Modding default branch and generic Super Events skill are
+published at commit `7590f7f1b09bffaa0ea7a5009df807727a21fa87`. The selected-file
+manifest evidence was generated from immutable Git blobs at revision
+`ba2551a2caba6c35c5439c5802a44f30d59f1a3d`.
+
+The release route produces a ChaosX Authenticode-signed Windows installer and
+ad-hoc signed macOS disk images when official credentials are absent. The same
+workflow uses Azure Artifact Signing and Apple Developer ID/notarization when
+those credentials are configured. The app does not invent a macOS route for
+the source repository's Windows-oriented 3D or MCP steps. A missing Meshy key
+remains optional and non-blocking.
+
+LoRA and ComfyUI are not setup state. A successful Ready screen links to the
+separate portrait workflow repository.

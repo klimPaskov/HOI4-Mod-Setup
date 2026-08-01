@@ -7,8 +7,9 @@ Show installed source mode and revision, last check, component states, local mod
 When an existing-project scan finds a valid `.hoi4-mod-setup/install.lock.json`,
 show that a managed setup is already present and offer **Repair or add
 workflows**. The detection is read-only and uses only a bounded safe summary of
-the lock: project ID, component IDs, 3D state, a non-secret 3D key-configured
-bit, and portrait-interest state. It does not treat a guessed file list as an
+the lock: project ID, component IDs, `workflow.3d` state, the non-secret 3D
+key-configured bit, and `workflow.super_events` state. It does not treat a
+guessed file list as an
 installation record.
 
 ## Update
@@ -20,6 +21,12 @@ The preview shows revision, manifest version, component additions and removals, 
 For each file, compare installed result to current local and old source to new source. Reuse a prior merge choice only when the conflict signature is unchanged. Generated descriptor, external launcher, and thumbnail artifacts are reviewed independently, including when an existing project already has `descriptor.mod`.
 
 Before an update plan is created, run a new bounded read-only scan. Show the resulting evidence manifest to the user, send only those approved text excerpts to the selected provider (the ChatGPT-authenticated Codex App Server for Codex), and require confirmation of the schema-constrained semantic proposals. The fresh core-session confirmation is passed into the update plan; an old lock record or renderer-supplied record cannot satisfy this update gate. If the scan, provider configuration, analysis, or confirmation fails, no update plan or transaction starts.
+
+Update may add `workflow.super_events` when the target manifest declares the
+component, even if the lock records it as `not_selected`. The preview shows the
+component, its `core.skills` dependency, the exact managed destination, and the
+file/conflict impact. The addition remains provider-neutral and has no
+credential or external-action step.
 
 ## Repair
 
@@ -34,7 +41,17 @@ carried forward only for that workflow; a missing key leaves 3D incomplete and
 does not block the core setup. If 3D is already selected, the option is shown as
 already part of the project rather than duplicating files. If its key is
 missing, repair exposes the vault-only key field without writing the value to
-the project. The LoRA/ComfyUI choice remains interest-only.
+the project.
+
+If the lock shows `workflow.super_events` as `not_selected`, Repair shows the
+exact question **Do you want to set up the Super Events workflow?** only after
+resolving the manifest at the locked immutable revision. Repair may add the
+component and its `core.skills` dependency when that revision declares it. If
+the locked source does not declare it, Repair remains unchanged and directs the
+user to Update; it must not read a newer manifest as a repair source. An already
+selected Super Events workflow is checked for missing, modified, or corrupted
+managed files without duplicating its tree, and its missing or incomplete state
+never blocks core readiness.
 
 ## Reinstall
 
@@ -54,9 +71,13 @@ Use reverse dependencies. Default to deleting unmodified managed files, removing
 
 Configure key, rerun preflight, rerun MCP health, reinstall repository files, rerun bootstrap, inspect dependency evidence, or remove the workflow.
 
-### LoRA and ComfyUI
+### Super Events
 
-Version 1 allows changing or clearing the interest preference only.
+Inspect the manifest-bound skill tree, restore missing or corrupted unmodified
+files, and review local changes through the normal conflict engine. There is no
+credential or external health action. A later addition follows the Update or
+same-locked-revision Repair rule above. Lock refresh preserves the workflow
+state and its managed file ownership; it does not add a credential reference.
 
 ## Lock refresh
 

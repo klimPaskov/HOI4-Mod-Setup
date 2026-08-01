@@ -7,6 +7,8 @@ const app = read("src/App.tsx");
 const css = read("src/styles.css");
 const types = read("src/types.ts");
 const tauri = read("src/lib/tauri.ts");
+const sourceManifest = read("docs/source-manifest/hoi4-mod-setup.manifest.json");
+const portraitRepositoryUrl = "https://github.com/klimPaskov/comfyui-hoi4-portraits";
 
 const requiredAppTokens = [
   'aria-live="polite"',
@@ -23,19 +25,20 @@ const requiredAppTokens = [
   'tabIndex={-1}',
   'onKeyDown={closeDisclosureOnEscape}',
   'openInCodex',
+  'openExternalUrlResult',
 ];
 
 const requiredPhaseLabels = ["Project", "Review", "Components", "Integrations", "Git", "Install", "Ready", "Overview", "Update", "Conflicts", "Recovery"];
-const requiredScreens = ["welcome", "description", "identity", "scan", "findings", "components", "workflows", "mesh", "lora", "mcp", "git", "dry-run", "install", "ready", "update", "conflict", "recovery"];
+const requiredScreens = ["welcome", "description", "identity", "scan", "findings", "components", "workflows", "mesh", "mcp", "git", "dry-run", "install", "ready", "update", "conflict", "recovery"];
 const optionalQuestions = [
   "Do you want to set up the 3D models workflow?",
-  "Do you want to set up LoRAs and ComfyUI for portrait generation?",
+  "Do you want to set up the Super Events workflow?",
 ];
-const requiredCssTokens = [":focus-visible", "prefers-reduced-motion", "@media (min-width: 1920px)", "@media (max-width: 560px)", "overflow: auto", ".visually-hidden"];
+const requiredCssTokens = [":focus-visible", "prefers-reduced-motion", "@media (min-width: 1920px)", "@media (max-width: 560px)", "overflow: auto", ".visually-hidden", ".button.primary:disabled", ".toggle-row > span:last-child", ".path-preview", "overflow-wrap: anywhere", "min-width: 0", ".provider-panel", ".provider-help"];
 const requiredTypeTokens = ["conflictChoice?: ConflictChoice", "recoveryChoice: RecoveryChoice", "interface InstallationPlan", "interface TransactionJournal"];
 const requiredTauriTokens = ["interface TauriCommandMap", "isTauriRuntime", '"codex_account_read"', '"codex_login_start"', '"codex_login_cancel"', '"open_codex_login_url"', '"codex_analyze"', '"confirm_codex_analysis"', '"pick_project_folder"', '"pick_launcher_folder"', '"scan_project"', '"cancel_scan"', '"scan-progress"', '"preview_source_manifest"', '"preview_installation_conflict"', '"build_installation_plan"', '"build_maintenance_plan"', '"approve_installation"', '"resolve_installation_conflict"', '"apply_installation"', '"rollback_installation"', '"open_in_codex"', "Promise<InstallationPlan | null>", "Promise<TransactionJournal | null>"];
 
-if (requiredScreens.length !== 17) throw new Error(`expected 17 screens, found ${requiredScreens.length}`);
+if (requiredScreens.length !== 16) throw new Error(`expected 16 screens, found ${requiredScreens.length}`);
 for (const token of requiredAppTokens) if (!app.includes(token)) throw new Error(`missing UI accessibility hook: ${token}`);
 for (const label of requiredPhaseLabels) if (!app.includes(`label: "${label}"`)) throw new Error(`missing phase label: ${label}`);
 for (const screen of requiredScreens) {
@@ -43,9 +46,23 @@ for (const screen of requiredScreens) {
   if (!app.includes(screenToken)) throw new Error(`missing screen definition: ${screen}`);
 }
 for (const question of optionalQuestions) if (!app.includes(question)) throw new Error(`optional question is not exact: ${question}`);
+if (app.includes("Do you want to set up LoRAs and ComfyUI for portrait generation?")) throw new Error("removed portrait setup question is still present");
+const portraitLinkCount = app.split(portraitRepositoryUrl).length - 1;
+if (portraitLinkCount !== 1) throw new Error(`expected one Ready-screen portrait link, found ${portraitLinkCount}`);
+const appWithoutPortraitUrl = app.replace(portraitRepositoryUrl, "");
+for (const token of ["scan-dots", "fake-window", "window-chrome", "app-window", "Disk space", "Backup location"]) {
+  if (appWithoutPortraitUrl.includes(token)) throw new Error(`retired UI pattern remains in App.tsx: ${token}`);
+}
+if (/\.panel-title\s*\{[^}]*border-bottom/i.test(css)) throw new Error("panel titles must not use underline borders");
+if (/\.screen-heading h1\s*\{[^}]*text-decoration\s*:\s*underline/i.test(css)) throw new Error("screen headings must not be underlined");
+for (const [surface, contents] of Object.entries({ app, types, tauri, sourceManifest })) {
+  for (const token of ["loraInterest", "installedLoraInterest", '\"lora\":', "lora_interest", "workflow.lora_comfyui_interest"]) {
+    if (contents.includes(token)) throw new Error(`removed portrait setup state ${token} remains in ${surface}`);
+  }
+}
 for (const token of requiredCssTokens) if (!css.includes(token)) throw new Error(`missing accessibility styling hook: ${token}`);
 for (const token of requiredTypeTokens) if (!types.includes(token)) throw new Error(`missing typed UI state contract: ${token}`);
 for (const token of requiredTauriTokens) if (!tauri.includes(token)) throw new Error(`missing typed Tauri boundary hook: ${token}`);
 if (app.includes("import(\"./lib/tauri\")") || app.includes("invokeCommand")) throw new Error("App.tsx must use named typed Tauri wrappers, not the low-level invoker");
 
-console.log("Accessibility contract covers seven setup phases, four maintenance phases, 17 screens, keyboard/focus hooks, disclosure escape handling, reduced motion, scaling, exact optional questions, and the typed Tauri boundary.");
+console.log("Accessibility contract covers seven setup phases, four maintenance phases, 16 screens, keyboard/focus hooks, disclosure escape handling, reduced motion, scaling, both ordered workflow questions, one completed-Ready portrait link, and the typed Tauri boundary.");

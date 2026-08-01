@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { buildInstallationPlan, buildMaintenancePlan, cancelScan, confirmCodexAnalysis, previewDescriptors, runAiAnalysis, runCodexAnalysis, scanProject } from "./tauri";
+import { approveScanEvidence, buildInstallationPlan, buildMaintenancePlan, cancelCodexLogin, cancelScan, confirmCodexAnalysis, evaluateReadiness, openExternalUrlResult, previewDescriptors, runAiAnalysis, runCodexAnalysis, scanProject } from "./tauri";
 import type { AiAnalysisRequest, CodexAnalysisRequest, ScanProgress, WizardState } from "../types";
 
 const { invoke, listen, unlisten } = vi.hoisted(() => ({
@@ -51,17 +51,79 @@ describe("typed scanner bridge", () => {
     expect(invoke).toHaveBeenCalledWith("cancel_scan", { requestId: "scan-request" });
   });
 
-  it("passes the existing-project optional workflow choice to the core", async () => {
+  it("uses the typed external-link command for reviewed URLs", async () => {
     invoke.mockResolvedValue(undefined);
 
-    await buildMaintenancePlan("repair", "C:/mods/example", undefined, true);
+    const result = await openExternalUrlResult("https://github.com/klimPaskov/Agentic-HOI4-Modding");
+
+    expect(result.error).toBeUndefined();
+    expect(invoke).toHaveBeenCalledWith("open_external_url", {
+      url: "https://github.com/klimPaskov/Agentic-HOI4-Modding",
+    });
+  });
+
+  it("binds Codex cancellation to the active App Server login ID", async () => {
+    invoke.mockResolvedValue(null);
+
+    const cancelled = await cancelCodexLogin("login-1");
+
+    expect(cancelled).toBe(true);
+    expect(invoke).toHaveBeenCalledWith("codex_login_cancel", { loginId: "login-1" });
+  });
+
+  it("treats a null unit-command payload as successful evidence approval", async () => {
+    invoke.mockResolvedValue(null);
+    const evidence = [{
+      reference: "finding-1",
+      path: "descriptor.mod",
+      excerpt: "name=\"Example\"",
+      excerpt_sha256: "a".repeat(64),
+      confidence: 1,
+    }];
+
+    const approved = await approveScanEvidence("C:/mods/example", "scan-1", evidence);
+
+    expect(approved).toBe(true);
+    expect(invoke).toHaveBeenCalledWith("approve_scan_evidence", {
+      projectRoot: "C:/mods/example",
+      scanId: "scan-1",
+      evidence,
+    });
+  });
+
+  it("passes existing-project optional workflow choices to the core", async () => {
+    invoke.mockResolvedValue(undefined);
+
+    await buildMaintenancePlan("repair", "C:/mods/example", undefined, [
+      "workflow.3d",
+      "workflow.super_events",
+    ]);
 
     expect(invoke).toHaveBeenCalledWith("build_maintenance_plan", {
       mode: "repair",
       projectRoot: "C:/mods/example",
       codexAnalysis: null,
-      addWorkflow3d: true,
+      addOptionalComponents: ["workflow.3d", "workflow.super_events"],
     });
+  });
+
+  it("sends readiness without portrait-workflow setup state", async () => {
+    invoke.mockResolvedValue({
+      checks: [],
+      open_in_codex: { enabled: true, blocking_check_ids: [] },
+      core_ready: true,
+    });
+
+    await evaluateReadiness("C:/mods/example", "example", "not_selected");
+
+    expect(invoke).toHaveBeenCalledWith("evaluate_readiness", {
+      input: {
+        project_id: "example",
+        project_root: "C:/mods/example",
+        workflow_3d_state: "not_selected",
+      },
+    });
+    expect(JSON.stringify(invoke.mock.calls)).not.toMatch(/lora|comfyui|portrait/i);
   });
 
   it("wraps semantic analysis requests under the Rust command argument name", async () => {
