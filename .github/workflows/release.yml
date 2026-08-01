@@ -27,16 +27,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REF" == "refs/tags/$GITHUB_REF_NAME" ]]
-          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
-          [[ "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" == "tag" ]]
+          fail() { echo "::error title=Invalid release source::$1"; exit 1; }
+          [[ "$GITHUB_REF" == "refs/tags/$GITHUB_REF_NAME" ]] || fail "Release must run from the pushed tag ref."
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || fail "Tag must use vMAJOR.MINOR.PATCH format."
+          [[ "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" == "tag" ]] || fail "Release tag must be annotated."
           tag_commit="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
-          event_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          checkout_commit="$(git rev-parse "HEAD^{commit}")"
           git fetch --no-tags origin main
           main_commit="$(git rev-parse FETCH_HEAD^{commit})"
-          [[ "$tag_commit" == "$event_commit" ]]
-          [[ "$tag_commit" == "$main_commit" ]]
-          [[ "$(node -p "require('./package.json').version")" == "${GITHUB_REF_NAME#v}" ]]
+          [[ "$tag_commit" == "$checkout_commit" ]] || fail "Checked-out source differs from the annotated tag target."
+          [[ "$tag_commit" == "$main_commit" ]] || fail "Release tag must target current main."
+          [[ "$(node -p "require('./package.json').version")" == "${GITHUB_REF_NAME#v}" ]] || fail "Tag version differs from package.json."
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
