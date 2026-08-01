@@ -62,9 +62,10 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - Platform-native lockfiles can contain legitimate optional packages for only one runner (for example, a Windows or macOS bundler). Preview and stable curation therefore require identical source, package, and platform evidence but merge the verified platform SBOM and third-party notice inventories into one deterministic union; they must not reject a release merely because those inventories differ by platform.
 - `scripts/generate_sbom.mjs` derives a CycloneDX dependency inventory from the locked pnpm and Cargo metadata and places `SBOM.cdx.json` in native release output. `scripts/generate_third_party_notices.mjs` separately derives the human-readable license inventory. Neither is a substitute for reviewing bundled assets or complete dependency license text.
 - Every signing route changes package bytes after the unsigned build manifest. The platform signing job verifies the resulting signature, records package-bound evidence, and regenerates the complete internal artifact manifest before curation.
-- Ephemeral Windows community certificates, PFX/CER files, and imported trust
-  entries are removed by an `always()` cleanup step even when signing or
-  verification fails.
+- The reusable ChaosX community PFX and encoded password live only in encrypted
+  GitHub Secrets. The workflow decodes the PFX into the runner temporary directory,
+  loads its public identity ephemerally, signs without network access, and removes
+  the temporary PFX in an `always()` cleanup step.
 - Stable publication first creates a draft from the exact curated three-file
   installer set, verifies the draft state and assets, and only then changes it
   to a normal public release.
@@ -100,10 +101,10 @@ Never move a published tag. Withdraw a bad release and publish a new version.
 The current release workflow builds Tauri packages on explicit Windows x64,
 macOS arm64, and macOS x64 runners, verifies exact PE or Mach-O architecture
 and package extension, then signs and rehashes each package before curation.
-When `HOI4_MOD_SETUP_RELEASE_SIGNING_CONFIGURED=false`, Windows generates an
-ephemeral `ChaosX` code-signing certificate, applies an RFC 3161 timestamp, and
-deletes the private material; macOS ad-hoc signs the app before rebuilding each
-DMG. When the variable is `true`, Windows uses Azure Artifact Signing through
+When `HOI4_MOD_SETUP_RELEASE_SIGNING_CONFIGURED=false`, Windows uses the protected
+`WINDOWS_COMMUNITY_PFX_BASE64` and `WINDOWS_COMMUNITY_PFX_PASSWORD_BASE64`
+secrets to apply an untimestamped `ChaosX` Authenticode signature; macOS ad-hoc
+signs the app before rebuilding each DMG. When the variable is `true`, Windows uses Azure Artifact Signing through
 OIDC and macOS uses the protected Developer ID P12 plus notarization. Signature
 verification is performed by the platform job before publication; metadata
 alone cannot pass. Active main and `v*` tag rulesets protect reviewed
@@ -129,13 +130,11 @@ The Ubuntu release-validation job installs the same Tauri system libraries as th
 Linux CI compile job before running all-feature Clippy and tests. These packages
 support validation only and do not declare Linux as a distributed app platform.
 
-Community Windows signing uses the generated ChaosX certificate directly through
-`Set-AuthenticodeSignature`; it does not export a PFX, scan the Windows SDK, or wait
-on a timestamp service. The certificate is trusted only in current-user stores for
-verification, the untimestamped method is recorded in internal signing evidence,
-and the certificate is always removed afterward. Official Azure signing retains
-the configured RFC 3161 timestamp route. The signing job has a hard twenty-minute
-limit.
+Community Windows signing decodes the protected reusable ChaosX PFX only into the
+runner temporary directory, signs without a timestamp or network request, verifies
+the embedded signer thumbprint and non-hash-error status, and removes the temporary
+PFX afterward. Official Azure signing retains the configured RFC 3161 timestamp
+route. The signing job has a hard twenty-minute limit.
 
 ## License and updater gates
 

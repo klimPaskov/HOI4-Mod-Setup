@@ -180,7 +180,7 @@ jobs:
           } else {
             "SIGNING_LEVEL=community" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
             "EXPECTED_SIGNER=ChaosX" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            "SIGNATURE_METHOD=authenticode-community" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "SIGNATURE_METHOD=authenticode-community-untimestamped" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
           "WINDOWS_PACKAGE=$($packages[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Azure login
@@ -208,36 +208,46 @@ jobs:
       - name: Sign community build as ChaosX
         if: ${{ vars.HOI4_MOD_SETUP_RELEASE_SIGNING_CONFIGURED != 'true' }}
         shell: pwsh
+        env:
+          COMMUNITY_PFX_BASE64: ${{ secrets.WINDOWS_COMMUNITY_PFX_BASE64 }}
+          COMMUNITY_PFX_PASSWORD_BASE64: ${{ secrets.WINDOWS_COMMUNITY_PFX_PASSWORD_BASE64 }}
         run: |
-          $certificate = New-SelfSignedCertificate `
-            -Type CodeSigningCert `
-            -Subject "CN=ChaosX" `
-            -FriendlyName "ChaosX HOI4 Mod Setup community signer" `
-            -CertStoreLocation "Cert:\CurrentUser\My" `
-            -NotAfter (Get-Date).AddYears(3) `
-            -HashAlgorithm SHA256
-          "COMMUNITY_CERT_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          foreach ($storeName in @("Root", "TrustedPublisher")) {
-            $store = [Security.Cryptography.X509Certificates.X509Store]::new(
-              $storeName,
-              [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
-            )
-            try {
-              $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-              $store.Add($certificate)
-            } finally {
-              $store.Close()
-            }
+          if ([string]::IsNullOrWhiteSpace($env:COMMUNITY_PFX_BASE64) -or [string]::IsNullOrWhiteSpace($env:COMMUNITY_PFX_PASSWORD_BASE64)) {
+            throw "ChaosX community signing secrets are unavailable"
           }
-          $signature = Set-AuthenticodeSignature -FilePath $env:WINDOWS_PACKAGE -Certificate $certificate -HashAlgorithm SHA256
-          if ($signature.Status -ne "Valid") { throw "ChaosX Authenticode signing failed: $($signature.Status)" }
-          "SIGNATURE_METHOD=authenticode-community-untimestamped" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $pfxPath = Join-Path $env:RUNNER_TEMP "hoi4-mod-setup-community-signing.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:COMMUNITY_PFX_BASE64))
+          $pfxPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:COMMUNITY_PFX_PASSWORD_BASE64))
+          $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new(
+            $pfxPath,
+            $pfxPassword,
+            [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
+          )
+          if ($certificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -ne "ChaosX") {
+            throw "Community signing certificate publisher must be ChaosX"
+          }
+          "COMMUNITY_PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "COMMUNITY_CERT_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $signTool = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -File |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signTool) { throw "signtool.exe is unavailable on the Windows runner" }
+          & $signTool.FullName sign /fd SHA256 /f $pfxPath /p $pfxPassword /d "HOI4 Mod Setup" /du "https://github.com/klimPaskov/HOI4-Mod-Setup" $env:WINDOWS_PACKAGE
+          if ($LASTEXITCODE -ne 0) { throw "ChaosX Authenticode signing failed" }
+          $certificate.Dispose()
+          Remove-Variable pfxPassword -ErrorAction SilentlyContinue
       - name: Verify and record Windows signature
         shell: pwsh
         run: |
           $signature = Get-AuthenticodeSignature -LiteralPath $env:WINDOWS_PACKAGE
+          if (-not $signature.SignerCertificate) { throw "Authenticode signer certificate is missing" }
           $publisher = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
-          if ($signature.Status -ne "Valid" -or $publisher -ne $env:EXPECTED_SIGNER) { throw "Authenticode verification failed" }
+          $communityStatus = @("Valid", "NotTrusted", "UnknownError") -contains [string]$signature.Status
+          $statusAccepted = if ($env:SIGNING_LEVEL -eq "community") { $communityStatus } else { $signature.Status -eq "Valid" }
+          if (-not $statusAccepted -or $publisher -ne $env:EXPECTED_SIGNER) { throw "Authenticode verification failed" }
+          if ($env:SIGNING_LEVEL -eq "community" -and $signature.SignerCertificate.Thumbprint -ne $env:COMMUNITY_CERT_THUMBPRINT) {
+            throw "Authenticode signer differs from the configured ChaosX certificate"
+          }
           $metadataPath = Join-Path $env:GITHUB_WORKSPACE "release-artifact\BUILD_METADATA.json"
           $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
           $metadata.signing = $env:SIGNING_LEVEL
@@ -263,15 +273,9 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          foreach ($path in @($env:COMMUNITY_PFX_PATH, $env:COMMUNITY_CER_PATH)) {
+          foreach ($path in @($env:COMMUNITY_PFX_PATH)) {
             if (-not [string]::IsNullOrWhiteSpace($path) -and (Test-Path -LiteralPath $path)) {
               Remove-Item -LiteralPath $path -Force
-            }
-          }
-          if (-not [string]::IsNullOrWhiteSpace($env:COMMUNITY_CERT_THUMBPRINT)) {
-            foreach ($store in @("Cert:\CurrentUser\My", "Cert:\CurrentUser\Root", "Cert:\CurrentUser\TrustedPublisher")) {
-              $certificate = Get-ChildItem -LiteralPath $store | Where-Object Thumbprint -eq $env:COMMUNITY_CERT_THUMBPRINT
-              if ($certificate) { $certificate | Remove-Item -Force }
             }
           }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
