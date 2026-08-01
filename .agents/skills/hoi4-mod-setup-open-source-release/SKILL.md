@@ -117,8 +117,8 @@ PFX or private key in the repository.
 
 The required platform-verification mode rejects local uncommitted builds whose
 source revision is `unresolved-local`; release builds bind metadata to the
-checked-out `HEAD`, the peeled `GITHUB_SHA` commit, and the annotated tag target
-before a package is treated as release evidence. A local build may still produce an unsigned
+checked-out `HEAD`, current protected `main`, and the annotated tag target before
+a package is treated as release evidence. A local build may still produce an unsigned
 inspection artifact, but it is not release evidence.
 
 ## License and updater gates
