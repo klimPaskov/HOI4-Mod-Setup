@@ -40,7 +40,7 @@
     "@types/react-dom": "^19.1.6",
     "@tauri-apps/cli": "^2.5.0",
     "@vitejs/plugin-react": "^4.7.0",
-    "jsdom": "^26.1.0",
+    "jsdom": "^30.0.1",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
     "vitest": "^3.2.4"
