@@ -1,0 +1,16 @@
+flowchart TD
+    Auth[ChatGPT authentication] --> Analysis[Schema-valid Codex analysis]
+    Scan[Deterministic scan] --> Analysis
+    Analysis --> Confirm[User confirmation]
+    Confirm --> Scaffold[Launcher-ready scaffold]
+    Scaffold --> Internal[descriptor.mod]
+    Scaffold --> External[project_id.mod]
+    Scaffold --> Thumbnail[thumbnail.png]
+    Scaffold --> Folders[Selected folder profile]
+    Manifest[Remote component manifest] --> Plan[Installation plan]
+    Scaffold --> Plan
+    Plan --> Optional{Super Events selected?}
+    Optional -- yes --> SuperEvents[workflow.super_events: optional managed skill tree]
+    SuperEvents --> SkillPath[.agents/skills/hoi4-super-events/]
+    Plan --> Transaction[Journaled transaction]
+    Transaction --> Ready[Readiness report]

@@ -26,14 +26,17 @@ pub const TRANSACTION_STAGES: [&str; 12] = [
 pub enum Platform {
     Windows,
     Macos,
+    Unsupported,
 }
 
 impl Platform {
     pub fn current() -> Self {
         if cfg!(target_os = "windows") {
             Self::Windows
-        } else {
+        } else if cfg!(target_os = "macos") {
             Self::Macos
+        } else {
+            Self::Unsupported
         }
     }
 
@@ -41,6 +44,7 @@ impl Platform {
         match self {
             Self::Windows => "windows",
             Self::Macos => "macos",
+            Self::Unsupported => "unsupported",
         }
     }
 }
@@ -57,7 +61,9 @@ impl ManifestPlatform {
     pub fn supports(self, platform: Platform) -> bool {
         matches!(
             (self, platform),
-            (Self::All, _) | (Self::Windows, Platform::Windows) | (Self::Macos, Platform::Macos)
+            (Self::All, Platform::Windows | Platform::Macos)
+                | (Self::Windows, Platform::Windows)
+                | (Self::Macos, Platform::Macos)
         )
     }
 }
@@ -361,8 +367,16 @@ pub struct WikiInstallMetadata {
     pub required_media_policy: String,
     pub source_status: String,
     pub license_status: String,
+    /// Repository license evidence copied from the exact manifest revision.
+    /// `unknown` is used for legacy locks that predate this field.
+    #[serde(default = "default_unknown_status")]
+    pub repository_license_status: String,
     #[serde(default)]
     pub notes: Vec<String>,
+}
+
+pub(crate) fn default_unknown_status() -> String {
+    "unknown".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -405,9 +419,16 @@ pub struct TreeEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadedFile {
+    /// Core-owned operation binding added after manifest selection. The source
+    /// adapter leaves it empty until a reviewed plan operation is created.
+    #[serde(default)]
+    pub operation_id: String,
     pub source_path: String,
     pub destination: String,
     pub source_revision: String,
+    /// SHA-256 of the exact remote manifest that authorized this file.
+    #[serde(default)]
+    pub manifest_sha256: String,
     pub sha256: String,
     pub size: u64,
     pub component_id: String,
@@ -579,6 +600,11 @@ pub struct PlanOperation {
     /// Platform evidence carried from the remote manifest into the plan.
     #[serde(default)]
     pub platform: Option<ManifestPlatform>,
+    /// Expected executable state declared by the verified source or inherited
+    /// from the predecessor lock. On Unix this is applied and verified as
+    /// filesystem mode evidence; Windows records the declaration only.
+    #[serde(default)]
+    pub executable: bool,
     #[serde(default)]
     pub result_sha256: Option<String>,
     #[serde(default)]
@@ -661,6 +687,20 @@ pub struct TransactionPlanInfo {
     pub staging_root: String,
     #[serde(default)]
     pub atomic_apply_expected: bool,
+    #[serde(default)]
+    pub project_root_mode: ProjectRootMode,
+    #[serde(default)]
+    pub project_root_parent: Option<String>,
+    #[serde(default)]
+    pub project_root_leaf: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectRootMode {
+    #[default]
+    Existing,
+    CreateLeaf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -692,8 +732,6 @@ pub struct InstallationPlan {
     #[serde(default)]
     pub flatten_chat_sources: bool,
     #[serde(default)]
-    pub flatten_additional_files: Vec<String>,
-    #[serde(default)]
     pub codex_analysis: Option<CodexAnalysisRecord>,
     pub selected_components: Vec<String>,
     /// Required wiki pages copied from the exact manifest used for this plan.
@@ -708,6 +746,11 @@ pub struct InstallationPlan {
     pub wiki_metadata: Option<WikiInstallMetadata>,
     #[serde(default)]
     pub generated_artifacts: Vec<GeneratedArtifact>,
+    /// Revision-bound source verification records created by the source
+    /// adapter. Transactions require one exact record for every remote
+    /// operation whose incoming bytes are staged.
+    #[serde(default)]
+    pub download_ledger: Vec<DownloadedFile>,
     #[serde(default)]
     pub git_setup: Option<crate::git::GitSetup>,
     #[serde(default)]
@@ -739,6 +782,11 @@ pub struct LockedFile {
     #[serde(default)]
     pub installed_size: Option<u64>,
     pub ownership: Ownership,
+    /// True when a reviewed first install kept pre-existing local bytes as
+    /// the accepted baseline. Readiness hashes those bytes normally, while
+    /// maintenance never treats them as removable managed output.
+    #[serde(default)]
+    pub preserved_local: bool,
     #[serde(default)]
     pub external: bool,
     #[serde(default)]
@@ -806,8 +854,6 @@ pub struct InstallationLock {
     #[serde(default)]
     pub flatten_chat_sources: bool,
     #[serde(default)]
-    pub flatten_additional_files: Vec<String>,
-    #[serde(default)]
     pub codex_analysis: Option<CodexAnalysisRecord>,
     /// Required wiki pages copied from the exact manifest used for this lock.
     /// An empty value on a legacy lock is treated as incomplete by readiness.
@@ -870,11 +916,15 @@ pub struct JournalOperation {
     #[serde(default)]
     pub before_sha256: Option<String>,
     #[serde(default)]
+    pub before_executable: Option<bool>,
+    #[serde(default)]
     pub expected_sha256: Option<String>,
     #[serde(default)]
     pub source_sha256: Option<String>,
     #[serde(default)]
     pub result_sha256: Option<String>,
+    #[serde(default)]
+    pub expected_executable: Option<bool>,
     #[serde(default)]
     pub rollback: Option<RollbackAction>,
     /// For a rollback transaction, the verified backup from the parent
@@ -899,6 +949,8 @@ pub struct JournalOperation {
     pub after_sha256: Option<String>,
     #[serde(default)]
     pub after_exists: Option<bool>,
+    #[serde(default)]
+    pub after_executable: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -908,6 +960,42 @@ pub struct RecoveryState {
     pub discard_staging_allowed: bool,
     pub project_apply_started: bool,
     pub recommended_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectRootLifecycle {
+    #[serde(default)]
+    pub mode: ProjectRootMode,
+    #[serde(default)]
+    pub canonical_parent: Option<String>,
+    #[serde(default)]
+    pub leaf: Option<String>,
+    #[serde(default = "default_root_checkpoint")]
+    pub checkpoint: String,
+    #[serde(default)]
+    pub created_by_transaction: bool,
+    #[serde(default)]
+    pub observed_exists: bool,
+    #[serde(default)]
+    pub cleanup_result: Option<String>,
+}
+
+impl Default for ProjectRootLifecycle {
+    fn default() -> Self {
+        Self {
+            mode: ProjectRootMode::Existing,
+            canonical_parent: None,
+            leaf: None,
+            checkpoint: default_root_checkpoint(),
+            created_by_transaction: false,
+            observed_exists: true,
+            cleanup_result: None,
+        }
+    }
+}
+
+fn default_root_checkpoint() -> String {
+    "not_required".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -938,6 +1026,8 @@ pub struct TransactionJournal {
     /// it, but recovery must refuse to resume them without a root binding.
     #[serde(default)]
     pub project_root: String,
+    #[serde(default)]
+    pub project_root_lifecycle: ProjectRootLifecycle,
     pub state: String,
     pub created_at: String,
     pub updated_at: String,

@@ -22,6 +22,7 @@ Add and validate the remote manifest, generate a resolved file index, declare pl
 ## Phase 1: application skeleton
 
 - Tauri shell
+- async/thread-pool Tauri command dispatch and event-loop responsiveness regression
 - Rust service boundary
 - React wizard shell
 - local settings and recent projects
@@ -35,6 +36,8 @@ Add and validate the remote manifest, generate a resolved file index, declare pl
 - identity fields
 - descriptor parser and renderer
 - launcher descriptor adapter and duplicate-registration detection
+- native redirected-Documents resolution and project-ID path defaults with
+  editable overrides
 - deterministic placeholder thumbnail renderer
 - thumbnail preview, decode, hash, and replacement policy
 - folder profile
@@ -55,6 +58,10 @@ Add and validate the remote manifest, generate a resolved file index, declare pl
 - request manifest and schema-constrained suggestions
 - Detected, Suggested by Codex, and Confirmed states
 - finding review
+
+The existing-project scanner phase also includes bounded immediate-parent
+launcher descriptor discovery and visible confirmation before any external
+descriptor read.
 
 ## Phase 4: source and manifest engine
 
@@ -103,14 +110,19 @@ Add and validate the remote manifest, generate a resolved file index, declare pl
 - branch
 - optional initial commit
 - remote review without push
+- separately approved public GitHub repository creation and push
 
 ## Phase 9: optional workflows
 
 - Meshy credential vault
 - 3D component and bootstrap adapter
+- provider-neutral `workflow.super_events` component and generic
+  `.agents/skills/hoi4-super-events/` tree from the verified manifest
+- exact Optional workflows question order: 3D, then Super Events
+- Super Events lock/scan state and no-guidance behavior when unselected
 - optional readiness
-- Update and Repair key action
-- LoRA interest placeholder
+- Update and Repair optional-workflow actions, including same-locked-revision
+  Repair for Super Events
 
 ## Phase 10: maintenance
 
@@ -151,7 +163,7 @@ Add and validate the remote manifest, generate a resolved file index, declare pl
 - lock
 - readiness and Open in Codex
 - optional 3D incomplete state
-- LoRA placeholder
+- optional Super Events selection, non-blocking readiness, and later maintenance
 
 ## Should-have backlog
 
@@ -175,10 +187,8 @@ Add and validate the remote manifest, generate a resolved file index, declare pl
 
 ## Deferred
 
-- automatic ComfyUI and LoRA setup
 - Steam Workshop publishing
 - cloud project sync
-- online Git repository creation
 - whole-drive mod discovery
 - automatic HOI4 launch validation
 

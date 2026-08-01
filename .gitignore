@@ -10,6 +10,9 @@ dist/
 # Rust and Tauri
 target/
 src-tauri/target/
+src-tauri/gen/schemas/windows-schema.json
+src-tauri/icons/android/
+src-tauri/icons/ios/
 *.pdb
 
 # Release outputs

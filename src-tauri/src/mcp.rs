@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn manifest_target_requires_the_source_declared_rule() {
         let manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
-            "../../source-manifest/hoi4-mod-setup.manifest.json"
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
         ))
         .unwrap();
         assert!(manifest_target(&manifest).is_err());

@@ -22,7 +22,7 @@ The bounded registry currently contains:
 | GLM | OpenAI-compatible | user-supplied API key in the OS vault | user-supplied HTTPS endpoint |
 | DeepSeek | OpenAI-compatible | user-supplied API key in the OS vault | user-supplied HTTPS endpoint |
 | Local model | OpenAI-compatible | no hosted credential | user-supplied loopback HTTP endpoint |
-| Other provider | OpenAI-compatible | user-supplied API key in the OS vault | user-supplied HTTPS endpoint |
+| Custom provider (`custom`) | OpenAI-compatible | user-supplied API key in the OS vault | user-supplied HTTPS endpoint |
 
 The application does not invent provider URLs, OAuth routes, package names,
 commands, model names, MCP servers, or platform support. A hosted provider is
@@ -32,10 +32,11 @@ models are explicitly configuration-based and are not described as hosted
 accounts.
 
 All providers use the same `codex-analysis` response schema and approved-input
-boundary. The provider adapter may use its native message envelope, but Rust
-performs the authoritative schema, evidence, identifier, hash, and confirmation
-checks. A provider response cannot write files, approve a transaction, resolve
-a conflict, or pass readiness by itself.
+boundary. Codex receives the schema through App Server `outputSchema`; the
+other adapters receive the exact checked-in schema in their system request.
+The core requires an explicit approval hash for the exact evidence vector after
+each completed scan. A provider response cannot write files, approve a
+transaction, resolve a conflict, or pass readiness by itself.
 
 Credential references are deterministic, opaque, and scoped to the selected
 provider in the operating-system vault, so a restart can reconnect without
@@ -47,8 +48,8 @@ limited to loopback HTTP.
 
 ## Codex-only flattened Chat export
 
-The Git phase shows the optional checkbox only when the selected provider is
-Codex:
+The Install review shows the optional checkbox only when the selected provider
+is Codex:
 
 > Prepare a flattened ChatGPT project-sources folder
 
@@ -57,17 +58,18 @@ It is the last optional setup operation. When selected, the core stages a
 
 - the adapted project `AGENTS.md`;
 - the created or existing project `README.md`;
-- every selected `.agents/skills/<skill>/SKILL.md` as `<skill>.md`;
-- every selected `.codex/agents/*.toml` subagent file; and
-- only the additional project-relative files explicitly entered by the user,
-  under `extras/`.
+- every selected `.agents/skills/<skill>/SKILL.md` as `<skill>.md`; and
+- every selected `.codex/agents/*.toml` subagent file.
 
 The normal `.agents/skills/` and `.codex/agents/` trees remain intact. The
 flattened folder is generated through the same plan, conflict, backup,
 staging, validation, apply, readiness, journal, and rollback contract. Rust
-rejects traversal, links, secret-shaped paths or content, case-insensitive
+rejects links, secret-shaped content, case-insensitive
 destination collisions, and bounded file or aggregate-size violations. A
 modified existing flattened file is never replaced silently.
+If conflict review keeps a selected local skill or subagent, the flattened view
+uses those reviewed local bytes. Unrelated project skills and subagents are not
+enumerated or copied.
 
 The final screen recommends:
 

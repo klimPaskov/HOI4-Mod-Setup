@@ -13,6 +13,22 @@ hashes, encodings, Git state, identifiers, namespaces, and conflicts. A
 read-only scan creates no project cache, Git lock, transaction folder, package
 installation, launcher change, or other project write.
 
+## Bounded launcher descriptor discovery
+
+For an existing selected root, discovery is a separate pre-scan gate. It may
+enumerate only direct `*.mod` files in the root's immediate parent, with the
+same bounded, link-safe reads used by the scanner. It parses candidates only to
+compare their normalized `path=` value with the selected root and to expose
+the evidence needed for review. It never recurses into siblings, searches
+Documents or other drives, or chooses a descriptor implicitly.
+
+The UI visibly presents the candidate path and match before the scan starts.
+The user must choose **Confirm descriptor**, **Scan without external
+descriptor**, or **Cancel**. Only a confirmed path is added to the approved
+companion paths and scanner input. A declined or absent candidate produces an
+internal-only scan and an explicit launcher-registration finding; it does not
+grant the scanner permission to read another path.
+
 ## Two-layer analysis contract
 
 The Rust scanner produces observable facts. The selected provider adapter
@@ -36,8 +52,8 @@ provider has write access.
 ## Deterministic scan phases
 
 1. **Filesystem boundary:** canonical root, case behavior, links, large
-   directories, descriptors, and approved external destinations. Never follow
-   a link outside the root.
+   directories, descriptors, and the approved external destination. Never
+   follow a link outside the root or read an unconfirmed companion path.
 2. **Descriptors and thumbnail:** internal and launcher descriptor fields,
    duplicate keys, quoting, supported versions, path agreement, thumbnail
    existence, decoding, dimensions, color mode, hash, and replacement state.
@@ -63,6 +79,15 @@ provider has write access.
 10. **Conflict synthesis:** path, namespace, platform, dependency, ownership,
     generated-destination, launcher, thumbnail, and Git risks against the
     selected remote manifest.
+11. **Managed setup state:** inspect only the fixed
+    `.hoi4-mod-setup/install.lock.json` path. A valid lock is reported as
+    `installation.managed` with a safe component and optional-workflow summary,
+    including the remembered `workflow.super_events` state. The summary does
+    not expose lock contents or credential references as scan evidence; the
+    credential-free Super Events entry has no credential value to expose. A
+    missing lock is a non-blocking absent state. A linked, unreadable,
+    oversized, malformed, or schema-invalid lock is a blocking finding rather
+    than a reason to guess that the project is unconfigured.
 
 ## Required provider semantic review
 
@@ -134,11 +159,19 @@ analysis until an untruncated scan completes; limits remain visible.
   incoming component on macOS;
 - valid descriptors with missing or modified thumbnails and duplicate launcher
   registrations;
+- parent-level launcher candidates that match, disagree, multiply, disappear,
+  or are declined before scan; and proof that an unconfirmed candidate is not
+  read;
 - each provider adapter's configured, missing-key, malformed-response,
   endpoint, bounded-response, and secret-redaction cases;
 - Codex sign-out, login cancellation, device-code fallback, usage limits, App
   Server interruption, and schema-valid and invalid suggestions; and
 - proof that provider suggestions cannot replace deterministic findings.
+- valid managed-lock recognition without walking `.hoi4-mod-setup/`
+- malformed, linked, oversized, and unreadable managed-lock states.
+- selected, unselected, and incomplete `workflow.super_events` lock summaries;
+  the unselected case must not synthesize the skill tree or Super Events
+  guidance in `AGENTS.md`.
 
 The scan result may store analysis ID, input/output digests, proposal keys,
 provider/model/profile, and confirmation state. It must not store account

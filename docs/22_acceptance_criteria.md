@@ -31,6 +31,10 @@
 - NEW-17: A valid existing thumbnail may replace the generated placeholder without blocking readiness.
 - NEW-18: Missing or invalid launcher artifacts block launcher-ready status and Open in Codex for a newly created project.
 - NEW-19: Entering a mod name and brief populates project ID, script prefix, primary namespace, descriptor tags, and starter folders before review; each remains editable and a manual edit is preserved.
+- NEW-20: Windows and macOS resolve the HOI4 user `mod` directory from the native user `Documents` location, including redirected Documents, without whole-computer search or a fixed guessed path.
+- NEW-21: A validated project ID auto-fills the new project root and external launcher descriptor filename before review.
+- NEW-22: The user can explicitly override either auto-filled path; changing the ID updates only untouched auto-filled fields and preserves explicit overrides.
+- NEW-23: No project root or launcher descriptor is created during resolution, scan, planning, or staging.
 
 ## Deterministic scanning and required provider analysis
 
@@ -58,12 +62,12 @@
 
 ## Provider profiles and flattened Chat sources
 
-- AI-01: Codex, Claude, Kimi, GLM, DeepSeek, local, and another configured provider are selectable at the start.
+- AI-01: Codex, Claude, Kimi, GLM, DeepSeek, local, and custom provider profiles are selectable at the start.
 - AI-02: The selected profile changes semantic guidance, adapted `AGENTS.md`, generated `README.md`, state, plan, lock, and maintenance review.
 - AI-03: Provider changes clear stale analysis and cannot reuse a record from another provider or model.
 - AI-04: A Codex-only final checkbox prepares `chatgpt_project_sources/`; non-Codex setup never renders or persists it as selected.
-- AI-05: Flattening renames `.agents/skills/<skill>/SKILL.md` to `<skill>.md`, includes selected subagents, adapted AGENTS, README, and only user-entered extras.
-- AI-06: Flattening rejects traversal, links, case-insensitive collisions, secret-shaped paths or content, and bounded file/aggregate-size violations.
+- AI-05: Flattening renames `.agents/skills/<skill>/SKILL.md` to `<skill>.md` and includes selected subagents, adapted AGENTS, and README.
+- AI-06: Flattening rejects links, case-insensitive collisions, secret-shaped content, and bounded file/aggregate-size violations.
 - AI-07: Flattening uses the normal dry-run, backup, staging, validation, apply, readiness, journal, and rollback path.
 - AI-08: The final recommendation says to start planning using ChatGPT “Chat” and performs no upload, conversation, or planning action.
 
@@ -77,6 +81,20 @@
 - EXT-06: The user can accept, edit, reject, or defer values.
 - EXT-07: Existing instructions and config are not silently replaced.
 - EXT-08: Duplicate launcher registrations and mismatched paths are reported.
+- EXT-09: A valid managed installation lock is detected without scanning or
+  writing the `.hoi4-mod-setup/` metadata tree.
+- EXT-10: Existing-project review offers repair or add-workflow maintenance
+  when a managed setup is found.
+- EXT-11: Repair can add a previously unselected 3D workflow from the exact
+  locked source revision, preserving modified files and leaving core readiness
+  usable when the optional key or platform route is unavailable.
+- EXT-12: Before an existing-project scan, discovery inspects only direct
+  launcher descriptor candidates in the selected root's immediate parent.
+- EXT-13: The candidate path and matching evidence are visibly shown and the
+  user explicitly confirms, declines, or cancels before any external
+  descriptor is read.
+- EXT-14: Discovery never searches sibling trees, other drives, or the whole
+  computer.
 
 ## Components
 
@@ -109,15 +127,28 @@
 - 3D-11: Dependency and MCP health checks are visible.
 - 3D-12: Current unsupported macOS route is reported.
 
-## LoRA and ComfyUI
+## Super Events
 
-- LORA-01: The exact placeholder question appears.
-- LORA-02: Automated setup is stated unavailable.
-- LORA-03: Interest can be recorded.
-- LORA-04: State is non-blocking.
-- LORA-05: Readiness says planned or unavailable.
-- LORA-06: No ComfyUI, model, LoRA, Python, GPU, or driver action exists.
-- LORA-07: No fake installed state exists.
+- SE-01: The Optional workflows screen asks **Do you want to set up the Super Events workflow?** immediately after the exact 3D question.
+- SE-02: Selecting it adds `workflow.super_events` and selectively downloads only the verified manifest-declared `.agents/skills/hoi4-super-events/` tree at the one bound source revision.
+- SE-03: The component is provider-neutral, depends only on `core.skills`, and requires no credential, environment variable, external command, or provider-specific health route.
+- SE-04: A declined install downloads neither the Super Events tree nor Super Events-specific `AGENTS.md` guidance.
+- SE-05: Super Events is visible in readiness as optional/non-blocking and its state is remembered in the managed lock and bounded scan summary.
+- SE-06: Update can add it from a target manifest; Repair can add it only when the same immutable locked source declares it, otherwise Repair directs the user to Update.
+- SE-07: Existing or modified Super Events files use normal ownership and conflict rules and are never silently overwritten.
+
+## Portrait workflow handoff
+
+- POR-01: No LoRA or ComfyUI setup choice or dedicated screen appears.
+- POR-02: No portrait preference, component, transaction action, lock state,
+  maintenance option, or readiness check exists.
+- POR-03: Successful readiness shows one concise external link to
+  `https://github.com/klimPaskov/comfyui-hoi4-portraits`.
+- POR-04: The link is a fixed HTTPS destination opened through the typed
+  browser action and is not built from provider, manifest, project, or scan
+  content.
+- POR-05: The app does not install, configure, inspect, or report the external
+  portrait workflow.
 
 ## MCP
 
@@ -137,6 +168,15 @@
 - GIT-06: Remote is optional.
 - GIT-07: No online repository is created automatically.
 - GIT-08: No push occurs automatically.
+- GIT-09: The user can separately review and approve a push to an existing
+  remote after the core readiness gate passes.
+- GIT-10: The user can separately review and approve public GitHub repository
+  creation, followed by a separate push approval.
+- GIT-11: Online actions bind the root, named branch, clean tree, exact HEAD,
+  destination, executable identity, and supported Git configuration; changed
+  state invalidates the review.
+- GIT-12: Completed online actions write a secret-free, schema-backed recovery
+  record without storing credentials.
 
 ## Conflicts
 
@@ -161,6 +201,8 @@
 - TX-08: Completion creates a rollback record.
 - TX-09: External launcher descriptor writes are transactional.
 - TX-10: Descriptor and thumbnail checks run against staged and applied outputs.
+- TX-11: An absent new-project root is represented as one reviewed `create_leaf`; the leaf is created exactly once and only at apply.
+- TX-12: Rollback removes that leaf only after it is empty; unknown or later user content is preserved and the parent is never recursively removed.
 
 ## Maintenance
 
@@ -174,6 +216,7 @@
 - MNT-08: Repair can recreate a missing launcher descriptor after preview.
 - MNT-09: Repair never replaces a modified thumbnail automatically.
 - MNT-10: Update requires a fresh read-only evidence manifest and core-confirmed selected-provider reanalysis before its maintenance plan is accepted.
+- MNT-11: Update and Repair preserve `workflow.super_events` state and managed ownership; Repair uses only the locked revision for a later addition.
 
 ## Readiness
 
@@ -183,8 +226,13 @@
 - RDY-04: Core blocks disable Open in Codex.
 - RDY-05: Optional incomplete states do not disable it.
 - RDY-06: Codex authentication or selected-provider configuration and confirmed analysis are blocking core readiness checks.
-- RDY-07: LoRA interest is planned unavailable.
-- RDY-08: A final report is stored.
+- RDY-07: A final report is stored.
+- RDY-08: `workflow.super_events` has an evidence-backed optional state and never blocks core readiness; its no-credential state is not rendered as a missing credential.
+
+## Desktop responsiveness
+
+- CMD-01: Every Tauri desktop command dispatches filesystem, network, Git, provider, and other blocking waits through async/thread-pool work rather than the desktop event loop.
+- CMD-02: A regression test holds representative waits open and verifies that the event loop remains responsive and cancellation remains observable while each command is pending.
 
 ## UI and accessibility
 
@@ -201,8 +249,15 @@
 - UI-11: 200 percent scaling works.
 - UI-12: Project identity shows compact descriptor rows and thumbnail preview on demand.
 - UI-13: Selected-provider analysis shows the approved request manifest and separates detected, suggested, and confirmed values without adding a permanent explanatory panel.
-- UI-14: The flatten checkbox is native, keyboard accessible, Codex-only, and followed by the ChatGPT “Chat” recommendation.
-- UI-15: New-project identity fields are populated from the name and brief; optional metadata stays secondary and generated values remain keyboard-editable.
+- UI-14: The flatten checkbox is native, keyboard accessible, Codex-only, appears in the Install review, and is followed on Ready by the ChatGPT “Chat” recommendation.
+- UI-15: The Ready-screen portrait workflow link is keyboard accessible, has a
+  clear name, and is not presented as setup or readiness state.
+- UI-16: New-project identity fields are populated from the name and brief; optional metadata stays secondary and generated values remain keyboard-editable.
+- UI-17: New-project root and launcher paths are visibly marked as auto-filled or overridden and remain editable.
+- UI-18: Existing-project launcher descriptor candidates are visibly confirmed before scan and unconfirmed paths are not read.
+- UI-19: The Ready-screen external link has a clear name and fixed safe destination.
+- UI-20: The Optional workflows screen places the exact Super Events question directly after the exact 3D question and shows no Super Events credential control.
+- UI-21: Ready and maintenance screens expose Super Events state and add/repair actions without adding a separate workflow phase or a LoRA/ComfyUI setup surface.
 
 ## Open-source repository
 
@@ -217,8 +272,8 @@
 - OSS-09: Issue forms, pull request template, CODEOWNERS, and Dependabot configuration exist.
 - OSS-10: GitHub workflow YAML parses and uses read-only default permissions.
 - OSS-11: Main is protected through a pull-request ruleset with required checks.
-- OSS-12: Release automation builds from an exact tag and creates a draft before publication.
-- OSS-13: Stable release artifacts include checksums and platform verification.
+- OSS-12: Release automation builds from an exact annotated tag and publishes a normal release only after all platform, signature, and curation gates pass.
+- OSS-13: The public stable release contains exactly the Windows x64 installer and macOS arm64 and x64 disk images; checksums and platform verification remain in internal workflow evidence.
 - OSS-14: Pull requests require documentation and living-skill review.
 - OSS-15: Planning validation checks schemas, examples, YAML, TOML, skills, subagents, README boundary, and goal prompt length.
-- OSS-16: The standalone goal prompt is included at the package root and remains no more than 4000 characters.
+- OSS-16: The canonical goal prompt is included at `docs/GOAL_PROMPT.md` and remains no more than 4000 characters.

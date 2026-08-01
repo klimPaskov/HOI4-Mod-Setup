@@ -188,6 +188,7 @@ pub fn provider_name(platform: Platform) -> &'static str {
     match platform {
         Platform::Windows => "windows_credential_manager",
         Platform::Macos => "macos_keychain",
+        Platform::Unsupported => "unsupported",
     }
 }
 

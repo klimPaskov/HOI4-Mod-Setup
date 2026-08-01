@@ -31,6 +31,8 @@ README pinned wording differs from latest-at-bootstrap resolution. Choose and en
 - deleted lock files remove three-way merge evidence
 - nested Git repositories and worktrees can change ownership boundary
 - launcher descriptor is outside the project
+- redirected Documents and cloud synchronization can make the resolved launcher
+  directory unavailable or change during a transaction
 - large wiki and 3D dependencies can create substantial backups
 
 ## Open decisions
@@ -52,7 +54,8 @@ README pinned wording differs from latest-at-bootstrap resolution. Choose and en
 - exact commit recorded in every mode
 - no project secret
 - missing 3D key is optional and non-blocking
-- LoRA and ComfyUI is preference-only in version 1
+- LoRA and ComfyUI are outside the setup flow; Ready links to the separate
+  portrait workflow repository
 - no silent overwrite
 - transaction and rollback are mandatory
 - Git push and online creation require separate approval
@@ -60,6 +63,18 @@ README pinned wording differs from latest-at-bootstrap resolution. Choose and en
 - all semantic setup fields use ChatGPT-authenticated Codex
 - App Server managed browser login is primary with device-code fallback
 - the external launcher descriptor and generated thumbnail are lock-managed
+- Windows and macOS resolve the HOI4 user `mod` directory from native redirected
+  Documents locations, with an explicit user override when needed
+- new-project root and launcher paths are auto-filled from the validated project
+  ID and remain editable
+- existing-project launcher discovery is limited to the selected root's
+  immediate parent and requires visible confirmation before scanning
+- an absent new-project root creates one reviewed leaf only at apply; rollback
+  removes it only when empty and preserves unknown content
+- the Ready-screen portrait link is a fixed HTTPS GitHub destination opened by
+  the typed browser action
+- the bounded provider registry uses Codex by default plus Claude, Kimi, GLM,
+  DeepSeek, local, and custom profiles
 
 ## Open-source governance decisions
 

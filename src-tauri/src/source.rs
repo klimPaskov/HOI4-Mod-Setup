@@ -2,7 +2,7 @@ use crate::models::*;
 use crate::paths::cache_root;
 use crate::security::{
     atomic_write, canonical_relative_key, normalize_relative_path, path_has_link_component,
-    sha256_bytes, sha256_file, validate_manifest_destinations,
+    sha256_bytes, validate_manifest_destinations,
 };
 use crate::AppError;
 use regex::Regex;
@@ -13,6 +13,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -85,6 +86,10 @@ pub struct HttpSourceClient {
 
 impl HttpSourceClient {
     pub fn new() -> Result<Self, AppError> {
+        Self::with_cache_root(cache_root()?)
+    }
+
+    fn with_cache_root(cache_root: PathBuf) -> Result<Self, AppError> {
         let client = Client::builder()
             .user_agent("HOI4-Mod-Setup/0.1")
             .connect_timeout(Duration::from_secs(15))
@@ -105,7 +110,7 @@ impl HttpSourceClient {
             api_base: "https://api.github.com".to_string(),
             owner: SOURCE_OWNER.to_string(),
             name: SOURCE_NAME.to_string(),
-            cache_root: cache_root(),
+            cache_root,
         })
     }
 
@@ -165,10 +170,13 @@ impl HttpSourceClient {
     }
 
     fn repo_url(&self, suffix: &str) -> String {
-        format!(
-            "{}/repos/{}/{}/{}",
-            self.api_base, self.owner, self.name, suffix
-        )
+        let repository = format!("{}/repos/{}/{}", self.api_base, self.owner, self.name);
+        let suffix = suffix.trim_start_matches('/');
+        if suffix.is_empty() {
+            repository
+        } else {
+            format!("{repository}/{suffix}")
+        }
     }
 
     fn encode_path_segment(value: &str) -> String {
@@ -387,6 +395,35 @@ impl HttpSourceClient {
         expected_sha256: &str,
         expected_size: Option<u64>,
     ) -> Result<Vec<u8>, AppError> {
+        self.fetch_verified_file_with_download(
+            revision,
+            path,
+            expected_sha256,
+            expected_size,
+            |normalized, partial_path, fetch_limit| {
+                self.download_verified_blob(
+                    revision,
+                    normalized,
+                    partial_path,
+                    fetch_limit,
+                    expected_size,
+                    expected_sha256,
+                )
+            },
+        )
+    }
+
+    fn fetch_verified_file_with_download<F>(
+        &self,
+        revision: &str,
+        path: &str,
+        expected_sha256: &str,
+        expected_size: Option<u64>,
+        download: F,
+    ) -> Result<Vec<u8>, AppError>
+    where
+        F: FnOnce(&str, &Path, usize) -> Result<Vec<u8>, AppError>,
+    {
         validate_commit(revision)?;
         crate::source::validate_sha256(expected_sha256)?;
         let normalized =
@@ -396,20 +433,6 @@ impl HttpSourceClient {
             .join("blobs")
             .join(revision)
             .join(expected_sha256);
-        if path_has_link_component(&cache_path) {
-            return Err(AppError::PathSecurity(
-                "source cache path contains a symlink or junction".into(),
-            ));
-        }
-        if cache_path.is_file()
-            && fs::metadata(&cache_path)
-                .ok()
-                .is_some_and(|metadata| expected_size.is_none_or(|size| metadata.len() == size))
-            && sha256_file(&cache_path).ok().as_deref() == Some(expected_sha256)
-        {
-            return fs::read(&cache_path)
-                .map_err(|error| AppError::Source(format!("read verified cache: {error}")));
-        }
         let fetch_limit = match expected_size {
             Some(size) if size > MAX_SOURCE_FILE_BYTES => {
                 return Err(AppError::Source(format!(
@@ -423,15 +446,13 @@ impl HttpSourceClient {
             None => usize::try_from(MAX_SOURCE_FILE_BYTES)
                 .expect("source file limit fits on supported desktop targets"),
         };
+        if let Some(bytes) =
+            read_verified_cache(&cache_path, expected_sha256, expected_size, fetch_limit)?
+        {
+            return Ok(bytes);
+        }
         let partial_path = cache_path.with_extension("part");
-        let bytes = self.download_verified_blob(
-            revision,
-            &normalized,
-            &partial_path,
-            fetch_limit,
-            expected_size,
-            expected_sha256,
-        )?;
+        let bytes = download(&normalized, &partial_path, fetch_limit)?;
         if expected_size.is_some_and(|size| bytes.len() as u64 != size)
             || sha256_bytes(&bytes) != expected_sha256
         {
@@ -624,6 +645,76 @@ fn content_range_starts_at(value: &str, offset: usize) -> bool {
     value.starts_with(&prefix)
 }
 
+fn read_verified_cache(
+    path: &Path,
+    expected_sha256: &str,
+    expected_size: Option<u64>,
+    limit: usize,
+) -> Result<Option<Vec<u8>>, AppError> {
+    read_verified_cache_with_hook(path, expected_sha256, expected_size, limit, || Ok(()))
+}
+
+fn read_verified_cache_with_hook<F>(
+    path: &Path,
+    expected_sha256: &str,
+    expected_size: Option<u64>,
+    limit: usize,
+    after_open: F,
+) -> Result<Option<Vec<u8>>, AppError>
+where
+    F: FnOnce() -> Result<(), AppError>,
+{
+    if path_has_link_component(path) {
+        return Err(AppError::PathSecurity(
+            "source cache path contains a symlink or junction".into(),
+        ));
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(source_open_no_follow_flag());
+    #[cfg(windows)]
+    options.custom_flags(0x0020_0000);
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(AppError::Source(format!(
+                "open verified source cache: {error}"
+            )))
+        }
+    };
+    let metadata = file
+        .metadata()
+        .map_err(|error| AppError::Source(format!("inspect verified source cache: {error}")))?;
+    if !metadata.is_file() || crate::security::is_link_metadata(&metadata) {
+        return Err(AppError::PathSecurity(
+            "source cache entry is not a regular file".into(),
+        ));
+    }
+    if metadata.len() > limit as u64 || expected_size.is_some_and(|size| metadata.len() != size) {
+        return Ok(None);
+    }
+
+    after_open()?;
+
+    let read_limit = limit
+        .checked_add(1)
+        .ok_or_else(|| AppError::Source("verified source cache size overflows".into()))?;
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut file)
+        .take(read_limit as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| AppError::Source(format!("read verified source cache: {error}")))?;
+    if bytes.len() > limit
+        || expected_size.is_some_and(|size| bytes.len() as u64 != size)
+        || sha256_bytes(&bytes) != expected_sha256
+    {
+        return Ok(None);
+    }
+    Ok(Some(bytes))
+}
+
 fn open_partial_cache(path: &Path, truncate: bool) -> Result<File, AppError> {
     let parent = path
         .parent()
@@ -678,6 +769,28 @@ pub fn resolve_source(
     let remote_manifest_bytes = client.fetch_manifest(&revision)?;
     let (manifest_bytes, manifest, manifest_origin) =
         select_manifest_for_revision(&remote_manifest_bytes, &revision)?;
+    match request.mode {
+        SourceMode::Latest
+            if !manifest.update_policy.latest.resolve_default_branch
+                || !manifest.update_policy.latest.record_commit =>
+        {
+            return Err(AppError::Source(
+                "latest source mode requires default-branch resolution and recorded commit evidence"
+                    .into(),
+            ));
+        }
+        SourceMode::PinnedCommit if !manifest.update_policy.pinned.allow_commit => {
+            return Err(AppError::Source(
+                "the remote manifest does not allow pinned commit installs".into(),
+            ));
+        }
+        SourceMode::PinnedRelease if !manifest.update_policy.pinned.allow_release => {
+            return Err(AppError::Source(
+                "the remote manifest does not allow pinned release installs".into(),
+            ));
+        }
+        _ => {}
+    }
     let manifest_sha256 = sha256_bytes(&manifest_bytes);
     let mode = request.mode;
     let identity = SourceIdentity {
@@ -711,10 +824,35 @@ fn select_manifest_for_revision(
 }
 
 pub fn parse_manifest(bytes: &[u8], revision: Option<&str>) -> Result<RemoteManifest, AppError> {
-    let manifest: RemoteManifest = serde_json::from_slice(bytes)
+    let value: Value = serde_json::from_slice(bytes)
         .map_err(|error| AppError::Source(format!("manifest JSON is invalid: {error}")))?;
+    validate_manifest_schema(&value)?;
+    let manifest: RemoteManifest = serde_json::from_value(value)
+        .map_err(|error| AppError::Source(format!("manifest model is invalid: {error}")))?;
     validate_manifest(&manifest, revision)?;
     Ok(manifest)
+}
+
+fn validate_manifest_schema(value: &Value) -> Result<(), AppError> {
+    static SCHEMA: OnceLock<Value> = OnceLock::new();
+    let schema = SCHEMA.get_or_init(|| {
+        serde_json::from_str(include_str!(
+            "../../docs/schemas/remote-manifest.schema.json"
+        ))
+        .expect("checked-in remote manifest schema must be valid JSON")
+    });
+    let validator = jsonschema::draft202012::new(schema).map_err(|error| {
+        AppError::Source(format!(
+            "checked-in remote manifest schema cannot be compiled: {error}"
+        ))
+    })?;
+    validator.validate(value).map_err(|error| {
+        AppError::Source(format!(
+            "manifest does not satisfy the authoritative JSON Schema at {}: {}",
+            error.instance_path(),
+            error
+        ))
+    })
 }
 
 pub fn wiki_install_metadata(manifest: &RemoteManifest) -> WikiInstallMetadata {
@@ -723,6 +861,11 @@ pub fn wiki_install_metadata(manifest: &RemoteManifest) -> WikiInstallMetadata {
         required_media_policy: manifest.wiki.required_media_policy.clone(),
         source_status: manifest.wiki.provenance.source_status.clone(),
         license_status: manifest.wiki.provenance.license_status.clone(),
+        repository_license_status: manifest
+            .repository
+            .license_evidence
+            .clone()
+            .unwrap_or_else(|| "unknown".into()),
         notes: manifest.wiki.provenance.notes.clone(),
     }
 }
@@ -779,6 +922,22 @@ pub fn validate_manifest(
     {
         return Err(AppError::Source(
             "manifest repository does not match the approved source".into(),
+        ));
+    }
+    if !manifest.update_policy.latest.resolve_default_branch
+        || !manifest.update_policy.latest.record_commit
+    {
+        return Err(AppError::Source(
+            "manifest latest policy must resolve the default branch and record the exact commit"
+                .into(),
+        ));
+    }
+    if !matches!(
+        manifest.repository.license_evidence.as_deref(),
+        None | Some("verified" | "declared_unverified" | "not_found" | "unknown")
+    ) {
+        return Err(AppError::Source(
+            "manifest repository license evidence has an unsupported status".into(),
         ));
     }
     if let Some(revision) = revision {
@@ -1007,6 +1166,17 @@ pub fn validate_manifest(
     ) {
         return Err(AppError::Source("unsupported wiki media policy".into()));
     }
+    if !matches!(
+        manifest.wiki.provenance.source_status.as_str(),
+        "verified" | "repository_only" | "unknown"
+    ) || !matches!(
+        manifest.wiki.provenance.license_status.as_str(),
+        "verified" | "not_found" | "unknown"
+    ) {
+        return Err(AppError::Source(
+            "wiki provenance contains an unsupported status".into(),
+        ));
+    }
     let mut required_pages = HashSet::new();
     for page in &manifest.wiki.required_pages {
         let page = require_canonical_manifest_path(page, "required wiki page")
@@ -1038,6 +1208,16 @@ pub fn validate_manifest(
     if manifest.update_policy.rollback_retention == 0 {
         return Err(AppError::Source(
             "rollback retention must be positive".into(),
+        ));
+    }
+    if manifest
+        .signing
+        .as_ref()
+        .is_some_and(|policy| policy.required)
+    {
+        return Err(AppError::Source(
+            "signed manifests are declared but signature verification is not supported by this build"
+                .into(),
         ));
     }
     Ok(())
@@ -1415,9 +1595,11 @@ pub fn verify_download(
         }
     }
     Ok(DownloadedFile {
+        operation_id: String::new(),
         source_path: selection.source_path.clone(),
         destination: selection.destination.clone(),
         source_revision: revision.to_string(),
+        manifest_sha256: String::new(),
         sha256: hash,
         size: bytes.len() as u64,
         component_id: selection.component_id.clone(),
@@ -1469,6 +1651,7 @@ pub fn cache_key(source: &SourceIdentity, source_path: &str, sha256: &str) -> St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     fn component(id: &str, dependencies: &[&str]) -> ComponentDefinition {
         ComponentDefinition {
@@ -1509,23 +1692,108 @@ mod tests {
 
     #[test]
     fn checked_in_manifest_matches_the_supported_source_contract() {
-        let bytes = include_bytes!("../../source-manifest/hoi4-mod-setup.manifest.json");
-        let manifest =
-            parse_manifest(bytes, Some("27128a7b311d728a959afff7238a9aeeb9987f2b")).unwrap();
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
+        let source_snapshot = "1592a763dad14027653dc0846328b70c4f3af73e";
+        let manifest = parse_manifest(bytes, Some(source_snapshot)).unwrap();
         assert_eq!(manifest.repository.owner, SOURCE_OWNER);
         assert_eq!(
             manifest.generated_for_revision.as_deref(),
-            Some("27128a7b311d728a959afff7238a9aeeb9987f2b")
+            Some(source_snapshot)
         );
         assert!(manifest.profiles.iter().any(|profile| profile.default));
         assert_eq!(manifest.wiki.destination, "paradox_wiki/");
+        assert_eq!(manifest.components.len(), 16);
+        assert!(manifest
+            .components
+            .iter()
+            .any(|component| component.id == "workflow.super_events"));
+        assert!(manifest
+            .components
+            .iter()
+            .any(|component| { component.id == "workflow.super_events.runtime.interface" }));
+        assert!(manifest
+            .components
+            .iter()
+            .any(|component| { component.id == "workflow.super_events.runtime.gfx" }));
+        assert!(manifest
+            .components
+            .iter()
+            .all(|component| component.id != "workflow.lora_comfyui_interest"));
+    }
+
+    #[test]
+    fn super_events_package_is_complete_and_opt_in() {
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
+        let source_snapshot = "1592a763dad14027653dc0846328b70c4f3af73e";
+        let manifest = parse_manifest(bytes, Some(source_snapshot)).unwrap();
+        let core_profile = manifest
+            .profiles
+            .iter()
+            .find(|profile| profile.default)
+            .expect("checked-in manifest must have a default profile");
+        let core = expand_components(&manifest, &core_profile.components).unwrap();
+        assert!(!core
+            .iter()
+            .any(|id| id.starts_with("workflow.super_events")));
+
+        let selected = expand_components(&manifest, &["workflow.super_events".into()]).unwrap();
+        for expected in [
+            "workflow.super_events.runtime.interface",
+            "workflow.super_events.runtime.common",
+            "workflow.super_events.runtime.events",
+            "workflow.super_events.runtime.localisation",
+            "workflow.super_events.runtime.gfx",
+            "workflow.super_events.runtime.docs",
+            "workflow.super_events",
+        ] {
+            assert!(selected.iter().any(|id| id == expected), "{expected}");
+        }
+
+        let paths = manifest
+            .components
+            .iter()
+            .filter(|component| selected.contains(&component.id))
+            .flat_map(|component| component.expected_files.iter())
+            .map(|file| file.path.as_str())
+            .collect::<HashSet<_>>();
+        for expected in [
+            ".agents/skills/hoi4-super-events/SKILL.md",
+            ".agents/skills/hoi4-super-events/assets/examples/contact_sheet.png",
+            ".agents/skills/hoi4-super-events/assets/examples/super_event_world_in_fury.png",
+            "interface/hoi4ms_super_events.gui",
+            "interface/hoi4ms_super_events.gfx",
+            "common/scripted_guis/hoi4ms_super_events.txt",
+            "common/scripted_effects/hoi4ms_super_events.txt",
+            "common/scripted_localisation/hoi4ms_super_events.txt",
+            "events/hoi4ms_super_event_examples.txt",
+            "localisation/english/hoi4ms_super_events_l_english.yml",
+            "gfx/super_events/super_event_template.psd",
+            "gfx/super_events/super_event_image_template_457x328.psd",
+            "docs/super_events/README.md",
+        ] {
+            assert!(paths.contains(expected), "{expected}");
+        }
+    }
+
+    #[test]
+    fn repository_metadata_url_has_no_trailing_slash() {
+        let client = HttpSourceClient::with_cache_root(PathBuf::from("unused-test-cache")).unwrap();
+        assert_eq!(
+            client.repo_url(""),
+            "https://api.github.com/repos/klimPaskov/Agentic-HOI4-Modding"
+        );
+        assert_eq!(
+            client.repo_url("/branches/main"),
+            "https://api.github.com/repos/klimPaskov/Agentic-HOI4-Modding/branches/main"
+        );
     }
 
     #[test]
     fn published_manifest_is_consumed_at_the_resolved_revision() {
-        let bundled_bytes = include_bytes!("../../source-manifest/hoi4-mod-setup.manifest.json");
+        let bundled_bytes =
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let remote_bytes = bundled_bytes.to_vec();
-        let resolved_revision = "54da3e7b311d728a959afff7238a9aeeb9987f2b";
+        let resolved_revision = "8791946cffeb98e113ebf0686c3d46f735fa3eeb";
 
         let (selected_bytes, manifest, origin) =
             select_manifest_for_revision(&remote_bytes, resolved_revision).unwrap();
@@ -1534,27 +1802,54 @@ mod tests {
         assert_eq!(selected_bytes, remote_bytes);
         assert_eq!(
             manifest.generated_for_revision.as_deref(),
-            Some("27128a7b311d728a959afff7238a9aeeb9987f2b")
+            Some("1592a763dad14027653dc0846328b70c4f3af73e")
         );
     }
 
     #[test]
-    fn repository_manifest_example_is_runtime_valid_for_its_declared_revision() {
-        let manifest = parse_manifest(
-            include_bytes!("../../examples/repository-manifest.example.json"),
+    fn authoritative_manifest_schema_rejects_unknown_top_level_fields() {
+        let mut value: Value = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+        ))
+        .unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("unreviewed_extension".into(), Value::Bool(true));
+
+        let error = parse_manifest(
+            &serde_json::to_vec(&value).unwrap(),
             Some("27128a7b311d728a959afff7238a9aeeb9987f2b"),
         )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("authoritative JSON Schema"));
+        assert!(error.contains("unreviewed_extension"));
+    }
+
+    #[test]
+    fn authoritative_manifest_schema_rejects_unknown_nested_policy_fields() {
+        let mut value: Value = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+        ))
         .unwrap();
-        assert_eq!(manifest.components.len(), 10);
-        assert_eq!(
-            manifest.generated_for_revision.as_deref(),
-            Some("27128a7b311d728a959afff7238a9aeeb9987f2b")
-        );
+        value["update_policy"]["latest"]["allow_branch_lock"] = Value::Bool(true);
+
+        let error = parse_manifest(
+            &serde_json::to_vec(&value).unwrap(),
+            Some("27128a7b311d728a959afff7238a9aeeb9987f2b"),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("authoritative JSON Schema"));
+        assert!(error.contains("allow_branch_lock"));
     }
 
     #[test]
     fn core_profile_keeps_windows_only_mcp_nonblocking_on_macos() {
-        let bytes = include_bytes!("../../source-manifest/hoi4-mod-setup.manifest.json");
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let manifest =
             parse_manifest(bytes, Some("27128a7b311d728a959afff7238a9aeeb9987f2b")).unwrap();
         let profile = manifest
@@ -1637,6 +1932,123 @@ mod tests {
     }
 
     #[test]
+    fn verified_download_rejects_wrong_sha256() {
+        let bytes = b"incoming";
+        let selection = SelectedSourceFile {
+            component_id: "core".into(),
+            source_path: "file.txt".into(),
+            destination: "file.txt".into(),
+            ownership: Ownership::Managed,
+            expected_sha256: Some(sha256_bytes(b"different bytes")),
+            expected_size: Some(bytes.len() as u64),
+            executable: false,
+            platform: ManifestPlatform::All,
+        };
+
+        let error = verify_download(
+            &selection,
+            bytes,
+            "599497ea2f93612d9094461c6fde114fc87a5c0f",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("checksum mismatch"));
+    }
+
+    #[test]
+    fn verified_download_rejects_wrong_size() {
+        let bytes = b"incoming";
+        let selection = SelectedSourceFile {
+            component_id: "core".into(),
+            source_path: "file.txt".into(),
+            destination: "file.txt".into(),
+            ownership: Ownership::Managed,
+            expected_sha256: Some(sha256_bytes(bytes)),
+            expected_size: Some(bytes.len() as u64 + 1),
+            executable: false,
+            platform: ManifestPlatform::All,
+        };
+
+        let error = verify_download(
+            &selection,
+            bytes,
+            "599497ea2f93612d9094461c6fde114fc87a5c0f",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("size mismatch"));
+    }
+
+    #[test]
+    fn verified_cache_returns_bytes_from_the_same_open_when_path_is_replaced() {
+        let root = tempfile::tempdir().unwrap();
+        let cache_path = root.path().join("immutable-cache-entry");
+        let trusted = b"trusted immutable bytes";
+        let replacement = vec![b'x'; trusted.len()];
+        fs::write(&cache_path, trusted).unwrap();
+
+        let returned = read_verified_cache_with_hook(
+            &cache_path,
+            &sha256_bytes(trusted),
+            Some(trusted.len() as u64),
+            trusted.len() + 1,
+            || atomic_write(&cache_path, &replacement),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(returned, trusted);
+        assert_eq!(fs::read(&cache_path).unwrap(), replacement);
+    }
+
+    #[test]
+    fn corrupt_immutable_cache_is_replaced_by_verified_download() {
+        let root = tempfile::tempdir().unwrap();
+        let client = HttpSourceClient::with_cache_root(root.path().to_path_buf()).unwrap();
+        let revision = "599497ea2f93612d9094461c6fde114fc87a5c0f";
+        let trusted = b"trusted immutable bytes";
+        let expected_sha256 = sha256_bytes(trusted);
+        let cache_path = client
+            .cache_root
+            .join("blobs")
+            .join(revision)
+            .join(&expected_sha256);
+        fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
+        fs::write(&cache_path, vec![b'x'; trusted.len()]).unwrap();
+        let download_count = Cell::new(0);
+
+        let returned = client
+            .fetch_verified_file_with_download(
+                revision,
+                "core/file.txt",
+                &expected_sha256,
+                Some(trusted.len() as u64),
+                |_, _, _| {
+                    download_count.set(download_count.get() + 1);
+                    Ok(trusted.to_vec())
+                },
+            )
+            .unwrap();
+
+        assert_eq!(returned, trusted);
+        assert_eq!(download_count.get(), 1);
+        assert_eq!(fs::read(&cache_path).unwrap(), trusted);
+
+        let cached = client
+            .fetch_verified_file_with_download(
+                revision,
+                "core/file.txt",
+                &expected_sha256,
+                Some(trusted.len() as u64),
+                |_, _, _| panic!("verified replacement must be served from cache"),
+            )
+            .unwrap();
+        assert_eq!(cached, trusted);
+    }
+
+    #[test]
     fn immutable_resolution_requires_manifest_revision_evidence() {
         let manifest = minimal_manifest(vec![component("a", &[])]);
         assert!(
@@ -1646,10 +2058,32 @@ mod tests {
 
     #[test]
     fn manifest_generation_revision_may_precede_publication_revision() {
-        let bytes = include_bytes!("../../source-manifest/hoi4-mod-setup.manifest.json");
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let mut manifest: RemoteManifest = serde_json::from_slice(bytes).unwrap();
         manifest.generated_for_revision = Some("599497ea2f93612d9094461c6fde114fc87a5c0f".into());
         validate_manifest(&manifest, Some("27128a7b311d728a959afff7238a9aeeb9987f2b")).unwrap();
+    }
+
+    #[test]
+    fn manifest_rejects_unsupported_provenance_update_or_signing_policy() {
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
+        let revision = "27128a7b311d728a959afff7238a9aeeb9987f2b";
+
+        let mut provenance: RemoteManifest = serde_json::from_slice(bytes).unwrap();
+        provenance.wiki.provenance.source_status = "invented".into();
+        assert!(validate_manifest(&provenance, Some(revision)).is_err());
+
+        let mut update: RemoteManifest = serde_json::from_slice(bytes).unwrap();
+        update.update_policy.latest.record_commit = false;
+        assert!(validate_manifest(&update, Some(revision)).is_err());
+
+        let mut signing: RemoteManifest = serde_json::from_slice(bytes).unwrap();
+        signing.signing = Some(SigningPolicy {
+            required: true,
+            algorithm: Some("unknown".into()),
+            public_key_id: Some("unknown".into()),
+        });
+        assert!(validate_manifest(&signing, Some(revision)).is_err());
     }
 
     #[test]

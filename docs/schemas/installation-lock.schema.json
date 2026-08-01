@@ -1,0 +1,495 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://klimpaskov.github.io/hoi4-mod-setup/schemas/installation-lock.schema.json",
+  "title": "Installation Lock",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project_id",
+    "installed_at",
+    "source",
+    "ai_provider",
+    "ai_model",
+    "ai_optimization_profile",
+    "flatten_chat_sources",
+    "codex_analysis",
+    "wiki_required_pages",
+    "components",
+    "files",
+    "merge_choices",
+    "optional_workflows",
+    "local_modifications"
+  ],
+  "allOf": [
+    {
+      "if": { "properties": { "ai_provider": { "const": "codex" } } },
+      "then": { "properties": { "ai_endpoint": { "type": ["null", "string"], "maxLength": 0 } } }
+    },
+    {
+      "if": { "properties": { "ai_provider": { "enum": ["claude", "kimi", "glm", "deepseek", "local", "custom"] } } },
+      "then": { "required": ["ai_endpoint"], "properties": { "ai_endpoint": { "type": "string", "minLength": 1 } } }
+    }
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "ai_provider": {
+      "enum": ["codex", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+    },
+    "ai_model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ai_endpoint": {
+      "type": ["string", "null"]
+    },
+    "ai_optimization_profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "flatten_chat_sources": {
+      "type": "boolean"
+    },
+    "installed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "repository",
+        "mode",
+        "revision",
+        "manifest_sha256",
+        "manifest_origin"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "latest",
+            "pinned_commit",
+            "pinned_release"
+          ]
+        },
+        "requested_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "release": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "manifest_origin": {
+          "enum": [
+            "remote",
+            "bundled_revision_bootstrap"
+          ]
+        }
+      }
+    },
+    "wiki_required_pages": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "wiki_metadata": {
+      "$ref": "#/$defs/wiki_metadata"
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "version",
+          "state"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "enum": [
+              "installed",
+              "incomplete",
+              "not_selected",
+              "planned_unavailable",
+              "unsupported_platform",
+              "removed"
+            ]
+          },
+          "source_revision": {
+            "type": "string"
+          },
+          "validation": {
+            "enum": [
+              "pass",
+              "warn",
+              "block",
+              "not_run"
+            ]
+          }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/file"
+      }
+    },
+    "merge_choices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "choice"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "choice": {
+            "enum": [
+              "keep",
+              "replace",
+              "merge",
+              "rename",
+              "skip"
+            ]
+          },
+          "result_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "optional_workflows": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "enum": [
+              "not_selected",
+              "selected_pending",
+              "ready",
+              "incomplete",
+              "planned_unavailable",
+              "unsupported_platform"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "credential_reference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^credential://meshy_api_key/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        }
+      }
+    },
+    "local_modifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "installed_sha256",
+          "current_sha256",
+          "detected_at"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "installed_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "current_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "detected_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "rollback_records": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "credential_values": {
+      "not": {}
+    },
+    "codex_analysis": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "engine",
+        "analysis_id",
+        "schema_version",
+        "input_sha256",
+        "output_sha256",
+        "confirmed_fields",
+        "confirmed_at",
+        "account_identity_persisted"
+      ],
+      "properties": {
+        "engine": {
+          "enum": ["codex_app_server", "provider_api"]
+        },
+        "analysis_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "input_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "output_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "confirmed_fields": {
+          "type": "array",
+          "minItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "confirmed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "auth_mode": {
+          "enum": ["chatgpt", "api_key", "local_endpoint"]
+        },
+        "provider": {
+          "enum": ["codex", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+        },
+        "model": {
+          "type": ["string", "null"]
+        },
+        "optimization_profile": {
+          "type": ["string", "null"]
+        },
+        "account_identity_persisted": {
+          "const": false
+        },
+        "analysis_purpose": {
+          "enum": [
+            "existing_project_import",
+            "maintenance_reanalysis",
+            null
+          ]
+        },
+        "evidence_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "wiki_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_media_policy",
+        "source_status",
+        "license_status"
+      ],
+      "properties": {
+        "snapshot_marker": {
+          "type": ["string", "null"]
+        },
+        "required_media_policy": {
+          "enum": ["all_declared", "referenced_only", "none"]
+        },
+        "source_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repository_license_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "location_scope",
+        "component_id",
+        "source_path",
+        "source_revision",
+        "source_sha256",
+        "installed_sha256",
+        "ownership",
+        "preserved_local"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "component_id": {
+          "type": "string"
+        },
+        "source_path": {
+          "type": "string"
+        },
+        "source_revision": {
+          "type": "string"
+        },
+        "source_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source_size": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "base_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "installed_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "installed_size": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "ownership": {
+          "enum": [
+            "managed",
+            "merged",
+            "generated",
+            "external"
+          ]
+        },
+        "preserved_local": {
+          "type": "boolean"
+        },
+        "external": {
+          "type": "boolean"
+        },
+        "generated_content": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "generated_bytes": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          }
+        },
+        "executable": {
+          "type": "boolean"
+        },
+        "platform": {
+          "enum": [
+            "windows",
+            "macos",
+            "all"
+          ]
+        },
+        "location_scope": {
+          "enum": [
+            "project",
+            "external_launcher",
+            "application_data"
+          ]
+        }
+      }
+    }
+  }
+}

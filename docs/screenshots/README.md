@@ -1,24 +1,14 @@
-# Implementation screenshot gallery
+# Wizard screenshots
 
-These screenshots are the current implementation gallery linked from the
-user-facing [README](../../README.md). They were captured from the local React
-browser preview at a 1600 x 1200 desktop viewport while exercising the wizard's
-Project, Components, Integrations, Git, Install, and provider-selection views.
-The description and identity captures also show generated, editable project
-fields based on a mod name and brief. Active screen headings keep an
-accessible underline focus cue instead of a rounded outline.
+These full-window captures are used beside the matching steps in the
+user-facing [README](../../README.md). They show the current Project, Review,
+Components, Integrations, Git, and Install screens at a desktop viewport with
+the application scrollbar retained where needed.
 
-The preview does not have a live source manifest, native process adapter, or
-credentials. The unavailable states shown in the gallery are therefore honest
-browser-preview states, not evidence that a packaged installer or a clean
-machine is ready. Native package verification and platform evidence are
-published with releases when available.
+No credential, account identity, private mod, or secret value appears in a
+public capture. The optional portrait workflow is linked only after a
+successful setup and is not an installation option.
 
-Capture details:
-
-- local preview served with `pnpm exec vite --host 127.0.0.1 --port 4173`
-- viewport override: 1600 x 1200; browser scrollbar retained in the captures
-- no credentials, identity documents, private mod projects, or secret values
-- screenshots are implementation captures, not the design references in
-  [`ui-references/`](../../ui-references/)
-- image filenames and alt text are stable so README links remain reviewable
+The captures are implementation evidence, not the design references in
+[`ui-references/`](../ui-references/). `11-existing-project.png` shows the
+repair entry before a folder is selected.

@@ -7,7 +7,9 @@ access through their ChatGPT account for the Codex route. The application does
 not use an application-owned OpenAI API key, does not request an API key for
 Codex, and does not implement a separate token service. Users may instead
 select a bounded non-Codex provider profile; those routes require an explicit
-endpoint and OS-vault credential when the verified profile requires one.
+endpoint and OS-vault credential when the verified profile requires one. The
+bounded non-Codex registry uses Claude, Kimi, GLM, DeepSeek, local, and
+`custom` profiles.
 
 The integration boundary is the official local `codex app-server` process. The desktop application launches it as a child process and communicates over its default stdio JSONL transport. This is the Codex interface intended for product integrations that need authentication, threads, approvals, and streamed events.
 
@@ -33,7 +35,7 @@ Recovery, rollback, backup inspection, and local removal of managed files remain
 ### Non-Codex provider route
 
 Claude uses an Anthropic messages envelope. Kimi, GLM, DeepSeek, local, and
-another configured provider use the OpenAI-compatible envelope. Hosted routes
+the `custom` provider use the OpenAI-compatible envelope. Hosted routes
 accept only a user-supplied HTTPS endpoint and a provider-keyed OS-vault
 reference. Local models accept only a user-supplied loopback HTTP endpoint and
 are described as configured local adapters, not hosted accounts. The app does
@@ -57,10 +59,14 @@ names. The first schema-validated request is the capability check.
 ```
 
 6. Open the returned `authUrl` through the typed Rust system-browser command, which accepts only a validated HTTPS URL and a fixed OS-owned opener.
-7. Wait for `account/login/completed` and `account/updated`.
-8. Recheck `account/read` before starting analysis.
-9. When the browser callback fails or is unsuitable, offer `chatgptDeviceCode`. Display the returned verification URL and user code.
-10. Use `account/logout` for sign-out.
+7. Bind the pending UI state to the returned `loginId`. Cancellation calls
+   `account/login/cancel` with that exact ID and stops only the matching local
+   wait. A retry receives independent cancellation state.
+8. Wait for `account/login/completed` and `account/updated`.
+9. Recheck `account/read` before starting analysis.
+10. When the browser callback fails or is unsuitable, offer
+    `chatgptDeviceCode`. Display the returned verification URL and user code.
+11. Use `account/logout` for sign-out.
 
 The normal product UI must not expose App Server API-key login. API-key authentication does not satisfy the product requirement to use the user's ChatGPT Codex subscription.
 
@@ -199,4 +205,4 @@ The final readiness report includes blocking checks for:
 - every required proposal confirmed by the user
 - no account identity, provider key, or token stored in project artifacts
 
-Optional 3D and LoRA states remain independent of this core provider gate.
+Optional 3D state remains independent of this core provider gate.

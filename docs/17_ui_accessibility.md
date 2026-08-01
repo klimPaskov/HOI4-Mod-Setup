@@ -101,22 +101,31 @@ Do not display permanent keyboard shortcut hints in the footer. Keyboard support
 
 1. **Welcome and project selection**: two choices and a compact recent-project list. Hide source policy and installation policy details.
 2. **New mod description**: mod name plus one large brief field with optional inferred-topic chips.
-3. **Project identity and descriptor setup**: populated generated identity fields, compact form, generated-file rows, previews on demand, advanced fields collapsed.
-4. **Existing project scan**: one progress surface, current scan stage, detected count, cancel or pause.
+3. **Project identity and descriptor setup**: populated generated identity fields, auto-filled root and launcher paths with editable overrides, compact form, generated-file rows, previews on demand, advanced fields collapsed.
+4. **Existing project scan**: visible bounded launcher-candidate confirmation before one progress surface with current scan stage, detected count, and cancel or pause.
 5. **Finding review**: compact finding list and one selected finding. Show evidence only for the selected item.
 6. **Component selection**: recommended component rows, sizes, one collapsed dependency and file-list control.
-7. **Optional workflows**: the two required questions as two concise rows.
+7. **Optional workflows**: two concise rows in order—the exact 3D question,
+   immediately followed by **Do you want to set up the Super Events workflow?**
+   The Super Events row shows no credential control or provider-specific
+   status.
 8. **3D and Meshy key**: credential field, secure-storage choice, test action, compact status, requirements collapsed.
-9. **LoRA and ComfyUI placeholder**: unavailable state, one sentence, one interest preference.
-10. **MCP and credentials**: compact server rows and credential names. Expand capabilities and environment details on demand.
-11. **Git setup**: three choices, branch and commit fields for the selected choice, remote and advanced options collapsed.
-12. **Dry run**: change counts, short plan summary, preflight state, full file plan on demand.
-13. **Installation progress**: one progress bar, six grouped stages, current item, transaction log collapsed.
-14. **Final readiness**: one success state, an Open in Codex action only for Codex, four grouped core checks, compact optional-workflow state.
-18. **Flattened Chat sources**: only in the Codex Git phase; one native checkbox, an optional project-relative file list, and one final ChatGPT “Chat” recommendation.
-15. **Update and repair**: four primary maintenance actions and a short installed-state list.
-16. **Merge conflict review**: local and incoming comparison, resolution choices, result preview after selection.
-17. **Interrupted recovery**: one checkpoint summary and three recovery choices.
+9. **MCP and credentials**: compact server rows and credential names. Expand capabilities and environment details on demand.
+10. **Git setup**: three choices, branch and commit fields for the selected choice, remote and advanced options collapsed.
+11. **Install review**: change counts, the Codex-only flattened Chat sources checkbox, short plan summary, preflight state, and full file plan on demand.
+12. **Installation progress**: one progress bar, six grouped stages, current item, transaction log collapsed.
+13. **Final readiness**: one success state, an Open in Codex action only for Codex, four grouped core checks, compact 3D state, the final ChatGPT “Chat” recommendation when applicable, and one concise fixed HTTPS external portrait-workflow link.
+14. **Update and repair**: four primary maintenance actions and a short installed-state list.
+15. **Merge conflict review**: local and incoming comparison, resolution choices, result preview after selection.
+16. **Interrupted recovery**: one checkpoint summary and three recovery choices.
+
+The final readiness area also shows the non-blocking `workflow.super_events`
+state beside 3D, without adding a separate screen.
+
+When scan evidence identifies a managed installation, the maintenance screen
+offers **Repair or add workflows**. Show the exact 3D or Super Events question
+again only for its previously unselected workflow; an installed workflow is a
+non-duplicating state. The Super Events state never exposes a credential field.
 
 ## Evidence and file previews
 
@@ -152,6 +161,10 @@ Do not surround the diff with unrelated project status, source policy, or depend
 
 Show the current stage, completed stages, current operation, item count, elapsed time when useful, cancellation state, and last durable checkpoint.
 
+Long-running Tauri commands remain responsive because filesystem, network, Git,
+and provider waits use async/thread-pool dispatch; the UI must not imply
+progress from a blocked event loop.
+
 Do not invent a percentage when total work is unknown. Do not expose the full transaction log by default.
 
 ## Accessibility
@@ -182,7 +195,7 @@ Respect reduced motion. Replace animated transitions with immediate state change
 
 ## References
 
-All 17 implementation references are under `ui-references/`. They are 1536 by 1024 pixels and use the minimal grouped-phase design described above.
+All 14 implementation references are under `ui-references/`. They are 1536 by 1024 pixels and use the minimal grouped-phase design described above.
 
 ## Codex progress states
 
@@ -196,3 +209,7 @@ vault-key controls needed by their verified adapter. Do not show provider
 prices, raw protocol events, or token locations. Semantic review uses one
 compact table for Detected, Suggested by the selected provider, and Confirmed
 values. Reasons and input evidence open on demand.
+
+The portrait link has a clear external destination in its accessible name and
+is opened by the typed browser action. It is never labeled as setup, installed,
+healthy, or ready.

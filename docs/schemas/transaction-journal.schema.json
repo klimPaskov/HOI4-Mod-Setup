@@ -1,0 +1,515 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://klimpaskov.github.io/hoi4-mod-setup/schemas/transaction-journal.schema.json",
+  "title": "Transaction Journal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "transaction_id",
+    "transaction_kind",
+    "parent_transaction_id",
+    "rollback_transaction_id",
+    "result_lock_sha256",
+    "result_lock_exists",
+    "rollback_record_sha256",
+    "project_id",
+    "project_root",
+    "project_root_lifecycle",
+    "state",
+    "created_at",
+    "updated_at",
+    "last_checkpoint",
+    "plan_sha256",
+    "stages",
+    "operations",
+    "recovery",
+    "git_initialized",
+    "git_remote_added_name",
+    "git_remote_added_url",
+    "previous_lock_backup_path",
+    "previous_lock_sha256",
+    "error"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "transaction_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "transaction_kind": {
+      "enum": [
+        "installation",
+        "rollback"
+      ]
+    },
+    "parent_transaction_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "rollback_transaction_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "project_root": {
+      "type": "string"
+    },
+    "project_root_lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "canonical_parent",
+        "leaf",
+        "checkpoint",
+        "created_by_transaction",
+        "observed_exists",
+        "cleanup_result"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "existing",
+            "create_leaf"
+          ]
+        },
+        "canonical_parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "leaf": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checkpoint": {
+          "enum": [
+            "not_required",
+            "pending",
+            "applying",
+            "created",
+            "removing",
+            "removed",
+            "retained_user_content"
+          ]
+        },
+        "created_by_transaction": {
+          "type": "boolean"
+        },
+        "observed_exists": {
+          "type": "boolean"
+        },
+        "cleanup_result": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "state": {
+      "enum": [
+        "preflight",
+        "resolving",
+        "downloading",
+        "verifying",
+        "reviewed",
+        "backing_up",
+        "staging",
+        "validating",
+        "applying",
+        "post_check",
+        "reporting",
+        "finalizing",
+        "completed",
+        "interrupted",
+        "staging_discarded",
+        "rolling_back",
+        "rolled_back",
+        "failed"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_checkpoint": {
+      "type": "string"
+    },
+    "plan_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "git_remote_added_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "git_remote_added_url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "prefixItems": [
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "preflight" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "repository source resolution" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "selective download" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "checksum verification" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "dry-run review" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "backup" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "staging" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "validation" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "apply" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "post-install checks" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "readiness report" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/stage" }, { "properties": { "id": { "const": "rollback record" } } }] }
+      ],
+      "items": false
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "destination",
+          "ownership",
+          "component_id",
+          "source_path",
+          "source_size",
+          "action",
+          "location_scope",
+          "external",
+          "backup_path",
+          "before_sha256",
+          "before_executable",
+          "expected_sha256",
+          "expected_executable",
+          "source_sha256",
+          "result_sha256",
+          "rollback",
+          "rollback_source_path",
+          "resolution",
+          "backup_sha256",
+          "staged_sha256",
+          "after_sha256",
+          "after_exists",
+          "after_executable"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "staged",
+              "applying",
+              "applied",
+              "verified",
+              "rollback_applying",
+              "rolled_back",
+              "failed"
+            ]
+          },
+          "destination": {
+            "type": "string"
+          },
+          "ownership": {
+            "enum": [
+              "managed",
+              "merged",
+              "generated",
+              "external"
+            ]
+          },
+          "component_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "action": {
+            "enum": [
+              "create",
+              "replace",
+              "merge",
+              "rename",
+              "skip",
+              "delete_managed",
+              "generate",
+              "chmod",
+              "external",
+              null
+            ]
+          },
+          "location_scope": {
+            "enum": [
+              "project",
+              "external_launcher",
+              "application_data",
+              null
+            ]
+          },
+          "external": {
+            "type": "boolean"
+          },
+          "backup_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "before_sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "before_executable": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "expected_sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_executable": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "source_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "result_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "rollback": {
+            "enum": [
+              "remove_created",
+              "restore_backup",
+              "reverse_merge",
+              "none",
+              null
+            ]
+          },
+          "rollback_source_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolution": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "backup_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "staged_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "after_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "after_exists": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "after_executable": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "required": [
+        "resume_allowed",
+        "rollback_allowed",
+        "discard_staging_allowed",
+        "project_apply_started",
+        "recommended_action"
+      ],
+      "properties": {
+        "resume_allowed": {
+          "type": "boolean"
+        },
+        "rollback_allowed": {
+          "type": "boolean"
+        },
+        "discard_staging_allowed": {
+          "type": "boolean"
+        },
+        "project_apply_started": {
+          "type": "boolean"
+        },
+        "recommended_action": {
+          "enum": [
+            "resume",
+            "rollback",
+            "discard_staging",
+            "inspect",
+            "none"
+          ]
+        }
+      }
+    },
+    "git_initialized": {
+      "type": "boolean"
+    },
+    "previous_lock_backup_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "previous_lock_sha256": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "result_lock_sha256": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "result_lock_exists": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "rollback_record_sha256": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "error": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "started_at",
+        "completed_at",
+        "evidence"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "status": {
+          "enum": ["pending", "active", "complete", "failed", "skipped"]
+        },
+        "started_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": { "type": "string", "maxLength": 1024 }
+        }
+      }
+    }
+  }
+}

@@ -12,7 +12,7 @@ Read:
 - `AGENTS.md`
 - `docs/02_user_flows.md`
 - `docs/17_ui_accessibility.md`
-- `ui-references/README.md`
+- `docs/ui-references/README.md`
 - the relevant full-resolution screen references
 - `docs/22_acceptance_criteria.md`
 - `docs/screenshots/README.md` when adding or auditing implementation screenshots
@@ -71,16 +71,55 @@ Conflict review is the exception. It may show a three-way comparison and more co
 - Back remains visible where navigation is reversible.
 - Destructive actions require clear scope and confirmation.
 - Disabled actions explain the blocking reason in a tooltip or adjacent concise status.
+- The Description primary action uses a visible `Preparing details…` pending
+  label with `aria-busy`, blocks duplicate submission, and exposes any provider
+  or schema failure in the persistent announced footer without losing the
+  entered name or brief.
+- The Welcome and planning actions remain disabled until the selected provider
+  is ready and not usage-limited; Codex requires ChatGPT mode. Keep signed-out
+  recovery and removal reachable from Welcome.
 - Progress shows current stage and durable checkpoint, not the full log.
 - Existing-project scans show the current stage, bounded relative path, file/directory/byte counters, and an accessible Cancel scan action. Use an indeterminate progress bar until a total is known; partial and cancelled results must remain visibly incomplete and announce that no provider evidence was approved.
+- On the optional-workflow screen, keep the exact first question **Do you want to set up the 3D models workflow?** and place the **Do you want to set up the Super Events workflow?** checkbox/toggle immediately after it. Preserve that order in maintenance when both workflows are offered; do not paraphrase the 3D question.
+- When scan evidence identifies a valid managed installation, show a concise
+  existing-setup callout with a keyboard-accessible **Repair or add workflows**
+  action. The maintenance screen must show the exact 3D question again only
+  for a previously unselected workflow; an already installed workflow is a
+  non-duplicating state. If the lock reports a selected workflow without a
+  stored key, keep the exact question visible as a disabled installed state
+  and expose the vault-only key field for repair.
 - Readiness leads with core status. Open in Codex is shown only for Codex; other providers receive an honest provider-specific handoff or no opener.
 - Optional source-declared health actions are rendered only when readiness identifies a runnable verified route. `planned_unavailable` and `unsupported_platform` remain visible as status text without an actionable button.
 - When no verified Codex opener is available, keep a passed readiness result visible and expose the validated project path as an announced manual-opening result.
 - Optional incomplete states remain secondary.
+- `workflow.super_events` is provider-neutral and its `not_selected`,
+  `incomplete`, or unsupported status remains visible but never disables core
+  readiness. Retain the non-secret lock summary, completed scan context, and
+  readiness result while navigating review/maintenance; refresh them only after
+  a new scan, transaction, or explicit readiness refresh.
+- Do not use decorative traffic-light dots, title boxes, title underlines, or
+  an app-window mock frame inside the native window. The app shell is the
+  window.
+- Components link to the public Agentic HOI4 Modding source by name. Keep exact
+  commit and file evidence inside progressive disclosure instead of using it
+  as the primary status message.
+- In the desktop runtime, reviewed source and Ready-screen links use the typed
+  system-browser bridge and its fixed allowlist; browser preview may use a
+  normal anchor. Do not add arbitrary URL navigation to React.
+- LoRA and ComfyUI are not setup choices or readiness rows. After core setup
+  completes, Ready may show one concise keyboard-accessible link to the fixed
+  `klimPaskov/comfyui-hoi4-portraits` repository; do not present it as an
+  install, maintenance, or health action.
 - Keep a local recovery/removal entry reachable from Welcome when signed out; rollback, backup inspection, and managed removal do not depend on Codex.
 - Preserve account and analysis state when logout or usage-limit errors occur, and announce the actionable error without losing focus.
-- The final Git-phase option `Prepare a flattened ChatGPT project-sources folder` is a native keyboard-accessible checkbox shown only when Codex is selected. Its optional extras control is progressive, its mapping and no-upload Chat recommendation are stated concisely, and it never appears for another provider.
+- The Install-review option `Prepare a flattened ChatGPT project-sources folder` is a native keyboard-accessible checkbox shown only when Codex is selected. Present it with the same visual structure as a selectable component: title, concise contents, calculated file count and total size, plus an expandable per-file size list after the plan is prepared. It has no additional-files control, the no-upload Chat recommendation appears on Ready, and it never appears for another provider.
+- Keep each status symbol and its label in one inline row. Do not let generic child selectors turn the `Status` component into a grid or stack the symbol above the text.
 - The new-project description screen asks for the mod name and brief. The identity screen opens with generated project ID, prefix, namespace, tags, and starter folders; advanced metadata and external paths remain the only secondary/manual controls.
+- New-project identity auto-fills the standard HOI4 Documents/mod destination
+  and matching launcher descriptor when available, reports collisions or an
+  unavailable standard directory, and keeps one explicit manual folder route.
+  Existing-project selection displays only a launcher descriptor discovered
+  from the selected root's immediate parent.
 
 ## Accessibility
 
@@ -99,9 +138,9 @@ Require:
 - error recovery without focus loss
 - accessible diff and code preview semantics
 
-Programmatically focused screen headings use a visible underline treatment,
-not a rounded title box; preserve the focus cue without adding decorative
-containers around headings.
+Screen headings are plain text with no underline, rounded box, or decorative
+container. Programmatic heading focus supports screen-reader navigation; visible
+focus remains mandatory for every interactive control.
 
 Keyboard shortcuts should exist where useful, but do not display a permanent shortcut legend.
 
@@ -119,7 +158,7 @@ A visible change requires:
 
 Implementation screenshots live in `docs/screenshots/` and are linked from the
 user-facing README. Keep their alt text and capture notes accurate. The
-`ui-references/` directory contains design references and is not a substitute
+`docs/ui-references/` directory contains design references and is not a substitute
 for screenshots of the current implementation. Never capture credentials,
 identity documents, private projects, or secret values.
 

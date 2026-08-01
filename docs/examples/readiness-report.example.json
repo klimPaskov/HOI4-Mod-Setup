@@ -1,0 +1,156 @@
+{
+  "schema_version": "1.0.0",
+  "report_id": "f41d9cec-573f-44ea-b03d-7c2a833c4760",
+  "project_id": "cold_war_curtain",
+  "generated_at": "2026-07-25T17:43:00+03:00",
+  "checks": [
+    {
+      "id": "descriptor.project",
+      "category": "descriptor",
+      "label": "Project descriptor",
+      "status": "pass",
+      "blocking": true,
+      "message": "descriptor.mod parses and matches the confirmed project identity.",
+      "evidence": [
+        {
+          "kind": "path",
+          "value": "descriptor.mod",
+          "path": "descriptor.mod"
+        }
+      ]
+    },
+    {
+      "id": "launcher.registration",
+      "category": "launcher",
+      "label": "Launcher registration",
+      "status": "pass",
+      "blocking": true,
+      "message": "The external launcher descriptor resolves to the selected project root.",
+      "evidence": [
+        {
+          "kind": "path",
+          "value": "cold_war_curtain.mod",
+          "path": "C:\\Users\\example\\OneDrive\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain.mod"
+        }
+      ]
+    },
+    {
+      "id": "thumbnail.integrity",
+      "category": "thumbnail",
+      "label": "Thumbnail placeholder",
+      "status": "pass",
+      "blocking": true,
+      "message": "thumbnail.png decodes successfully and matches the staged hash.",
+      "evidence": [
+        {
+          "kind": "sha256",
+          "value": "9999999999999999999999999999999999999999999999999999999999999999",
+          "path": "thumbnail.png"
+        }
+      ]
+    },
+    {
+      "id": "analysis.chatgpt",
+      "category": "analysis",
+      "label": "ChatGPT Codex analysis",
+      "status": "pass",
+      "blocking": true,
+      "message": "Required schema-constrained semantic analysis was confirmed by the user.",
+      "evidence": [
+        {
+          "kind": "analysis_id",
+          "value": "8da5758f-e9d8-4ad4-bba6-99c9bc6583ee",
+          "path": null
+        }
+      ]
+    },
+    {
+      "id": "codex.agents",
+      "category": "codex",
+      "label": "Project instructions",
+      "status": "pass",
+      "blocking": true,
+      "message": "AGENTS.md is present and contains no unresolved template tokens.",
+      "evidence": [
+        {
+          "kind": "sha256",
+          "value": "6666666666666666666666666666666666666666666666666666666666666666",
+          "path": "AGENTS.md"
+        }
+      ]
+    },
+    {
+      "id": "wiki.coverage",
+      "category": "wiki",
+      "label": "Offline wiki coverage",
+      "status": "pass",
+      "blocking": true,
+      "message": "All required core pages are present.",
+      "evidence": [
+        {
+          "kind": "required_pages",
+          "value": 11,
+          "path": "paradox_wiki/"
+        }
+      ]
+    },
+    {
+      "id": "workflow.3d",
+      "category": "workflow",
+      "label": "3D model workflow",
+      "status": "pass",
+      "blocking": false,
+      "message": "Credential, dependencies, and selected MCP health checks passed.",
+      "evidence": [
+        {
+          "kind": "credential_reference",
+          "value": "configured",
+          "path": null
+        }
+      ]
+    },
+    {
+      "id": "workflow.super_events",
+      "category": "workflow",
+      "label": "Super Events workflow",
+      "status": "pass",
+      "blocking": false,
+      "message": "The manifest-bound generic skill tree is installed; no credential or external health action is required.",
+      "evidence": [
+        {
+          "kind": "path",
+          "value": ".agents/skills/hoi4-super-events/SKILL.md",
+          "path": ".agents/skills/hoi4-super-events/SKILL.md"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "pass": 8,
+    "warn": 0,
+    "block": 0,
+    "not_selected": 0,
+    "planned_unavailable": 0
+  },
+  "core_ready": true,
+  "open_in_codex": {
+    "enabled": true,
+    "blocking_check_ids": [],
+    "command_preview": "codex --cd \"D:\\HOI4 Mods\\cold_war_curtain\""
+  },
+  "notes": [
+    "The ChatGPT account was used for setup analysis, but account identity and tokens were not written to the project or lock.",
+    "Optional workflow status does not block core Codex readiness."
+  ],
+  "codex": {
+    "provider": "codex",
+    "model": "default",
+    "integration": "codex_app_server",
+    "auth_mode": "chatgpt",
+    "authenticated_during_setup": true,
+    "analysis_status": "confirmed",
+    "confirmed_field_count": 7,
+    "no_account_metadata_persisted": true,
+    "blocking_check_ids": []
+  }
+}

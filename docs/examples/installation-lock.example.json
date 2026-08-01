@@ -1,0 +1,212 @@
+{
+  "schema_version": "1.0.0",
+  "project_id": "cold_war_curtain",
+  "installed_at": "2026-07-25T17:42:00+03:00",
+  "updated_at": null,
+  "ai_provider": "codex",
+  "ai_model": "default",
+  "ai_endpoint": null,
+  "ai_optimization_profile": "Codex project and ChatGPT Chat",
+  "flatten_chat_sources": false,
+  "source": {
+    "repository": "klimPaskov/Agentic-HOI4-Modding",
+    "mode": "pinned_commit",
+    "revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+    "release": null,
+    "manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "manifest_origin": "remote"
+  },
+  "wiki_required_pages": [
+    "Data structures - Hearts of Iron 4 Wiki.md"
+  ],
+  "wiki_metadata": {
+    "snapshot_marker": null,
+    "required_media_policy": "all_declared",
+    "source_status": "repository_only",
+    "license_status": "not_found",
+    "notes": [
+      "Provenance and license remain visibly unverified because the inspected repository did not declare them."
+    ]
+  },
+  "components": [
+    {
+      "id": "project.launcher_scaffold",
+      "version": "1.0.0",
+      "state": "installed",
+      "source_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+      "validation": "pass"
+    },
+    {
+      "id": "core.agents",
+      "version": null,
+      "state": "installed",
+      "source_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+      "validation": "pass"
+    },
+    {
+      "id": "core.skills",
+      "version": null,
+      "state": "installed",
+      "source_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+      "validation": "pass"
+    },
+    {
+      "id": "workflow.3d",
+      "version": "repository-resolved",
+      "state": "installed",
+      "source_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+      "validation": "pass"
+    },
+    {
+      "id": "workflow.super_events",
+      "version": "repository-resolved",
+      "state": "installed",
+      "source_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+      "validation": "pass"
+    }
+  ],
+  "files": [
+    {
+      "path": "descriptor.mod",
+      "location_scope": "project",
+      "component_id": "project.launcher_scaffold",
+      "source_path": "generator://descriptor/internal",
+      "source_revision": "generator-v1",
+      "source_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "base_sha256": null,
+      "installed_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "ownership": "generated",
+      "preserved_local": false,
+      "executable": false,
+      "platform": "all"
+    },
+    {
+      "path": "C:\\Users\\example\\OneDrive\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod\\cold_war_curtain.mod",
+      "location_scope": "external_launcher",
+      "component_id": "project.launcher_scaffold",
+      "source_path": "generator://descriptor/launcher",
+      "source_revision": "generator-v1",
+      "source_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "base_sha256": null,
+      "installed_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "ownership": "generated",
+      "preserved_local": false,
+      "external": true,
+      "executable": false,
+      "platform": "windows"
+    },
+    {
+      "path": "thumbnail.png",
+      "location_scope": "project",
+      "component_id": "project.launcher_scaffold",
+      "source_path": "generator://thumbnail/placeholder",
+      "source_revision": "generator-v1",
+      "source_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+      "base_sha256": null,
+      "installed_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+      "ownership": "generated",
+      "preserved_local": false,
+      "executable": false,
+      "platform": "all"
+    },
+    {
+      "path": "AGENTS.md",
+      "component_id": "core.agents",
+      "source_path": "AGENTS_template.md",
+      "source_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+      "source_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "base_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "installed_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "ownership": "merged",
+      "preserved_local": false,
+      "executable": false,
+      "platform": "all",
+      "location_scope": "project"
+    },
+    {
+      "path": ".agents/skills/hoi4-events/SKILL.md",
+      "component_id": "core.skills",
+      "source_path": ".agents/skills/hoi4-events/SKILL.md",
+      "source_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+      "source_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "base_sha256": null,
+      "installed_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "ownership": "managed",
+      "preserved_local": false,
+      "executable": false,
+      "platform": "all",
+      "location_scope": "project"
+    },
+    {
+      "path": ".agents/skills/hoi4-super-events/SKILL.md",
+      "component_id": "workflow.super_events",
+      "source_path": ".agents/skills/hoi4-super-events/SKILL.md",
+      "source_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+      "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "base_sha256": null,
+      "installed_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "ownership": "managed",
+      "preserved_local": false,
+      "executable": false,
+      "platform": "all",
+      "location_scope": "project"
+    },
+    {
+      "path": ".agents/skills/hoi4-super-events/agents/openai.yaml",
+      "component_id": "workflow.super_events",
+      "source_path": ".agents/skills/hoi4-super-events/agents/openai.yaml",
+      "source_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+      "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "base_sha256": null,
+      "installed_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "ownership": "managed",
+      "preserved_local": false,
+      "executable": false,
+      "platform": "all",
+      "location_scope": "project"
+    }
+  ],
+  "merge_choices": [
+    {
+      "path": "AGENTS.md",
+      "choice": "merge",
+      "result_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+    }
+  ],
+  "optional_workflows": {
+    "workflow.3d": {
+      "state": "ready",
+      "reason": null,
+      "credential_reference": "credential://meshy_api_key/00000000-0000-0000-0000-000000000000"
+    },
+    "workflow.super_events": {
+      "state": "ready",
+      "reason": null
+    }
+  },
+  "local_modifications": [],
+  "rollback_records": [
+    "transactions/960ccbb7-c36a-41b0-9d76-0105bcd83b05/rollback-record.json"
+  ],
+  "codex_analysis": {
+    "engine": "codex_app_server",
+    "analysis_id": "8da5758f-e9d8-4ad4-bba6-99c9bc6583ee",
+    "schema_version": "1.0.0",
+    "input_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "output_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "confirmed_fields": [
+      "display_name",
+      "project_id",
+      "script_prefix",
+      "primary_namespace",
+      "project_description",
+      "descriptor_tags",
+      "folder_profile",
+      "agents_profile",
+      "localisation_convention",
+      "documentation_convention"
+    ],
+    "confirmed_at": "2026-07-25T17:34:00+03:00",
+    "account_identity_persisted": false
+  }
+}

@@ -23,6 +23,7 @@ Persist only the integration type, auth state needed by the current application 
 | `remote-manifest.schema.json` | Source components, files, dependencies, tools, environments, validation, and update rules |
 | `conflict-record.schema.json` | Base, local, incoming, resolution, and evidence for one conflict |
 | `transaction-journal.schema.json` | Durable stage and operation checkpoints for recovery and rollback |
+| `git-online-record.schema.json` | Secret-free record of a separately approved online Git action |
 
 `scan-result.schema.json` requires bounded-scan completion metadata (`partial`, `cancelled`, `limits_hit`, and file/directory/byte counters). Live stage/path progress is delivered only through correlated Tauri events and is not persisted as project content.
 
@@ -60,12 +61,15 @@ visible as `not_declared` rather than becoming inferred capabilities.
 The lock records source revisions, the exact required wiki-page list and
 snapshot/media/provenance/license metadata for that revision, generated and
 downloaded files, external launcher ownership, installed hashes, merge
-decisions, optional states, and confirmed analysis digests. A legacy lock
+decisions, optional states including `workflow.super_events`, and confirmed
+analysis digests. A legacy lock
 missing either the list or metadata is readable but readiness remains
 incomplete until source evidence is refreshed. It must never be used as an
 authentication cache.
 Removal clears optional-workflow credential references and does not retain a
-Meshy reference outside the selected `workflow.3d` entry.
+Meshy reference outside the selected `workflow.3d` entry. A
+`workflow.super_events` entry has no credential reference because the component
+has no credential or environment requirement.
 
 ### Project state
 
@@ -88,6 +92,12 @@ The journal records transaction state only. Semantic analysis is complete before
 ## Generated launcher artifacts
 
 Generated `descriptor.mod`, the external `<project_id>.mod`, and `thumbnail.png` are first-class operations and lock rows. Every row records `location_scope`, generator source, installed hash, ownership, platform, and rollback behavior. The external descriptor receives backup and restoration like any other managed destination.
+
+New-project plans additionally record whether the root is an existing path or a
+single `create_leaf`, the canonical parent, and the reviewed leaf name. A
+`create_leaf` is created only at apply. The journal records whether this
+transaction created it and whether rollback removed it or retained it because
+unknown content remained.
 
 ## Credential references
 

@@ -2,16 +2,19 @@
 
 ## AI provider integration matrix
 
-Use a protocol fixture that emulates App Server JSONL without real account credentials in ordinary CI. Cover process absence, incompatible versions, initialize ordering, an existing ChatGPT session, browser login, cancellation, device-code fallback, logout, account updates, usage limits, App Server crash, turn cancellation, output schema acceptance and rejection, unexpected fields, deterministic rejection of bad identifiers, token and account-data absence, and recovery while signed out. Add fake Anthropic, OpenAI-compatible, and loopback adapters for configured, missing-key, malformed-response, endpoint, redirect, bounded-response, provider-switch, and no-secret-persistence cases.
+Use a protocol fixture that emulates App Server JSONL without real account credentials in ordinary CI. Cover process absence, incompatible versions, initialize ordering, an existing ChatGPT session, browser login, exact per-`loginId` `account/login/cancel` behavior, isolated concurrent cancellation, device-code fallback, logout, account updates, usage limits, App Server crash, turn cancellation, output schema acceptance and rejection, unexpected fields, deterministic rejection of bad identifiers, token and account-data absence, and recovery while signed out. Add fake Anthropic, OpenAI-compatible, and loopback adapters for configured, missing-key, malformed-response, endpoint, redirect, bounded-response, provider-switch, and no-secret-persistence cases.
 
 Run a controlled manual release test against a real ChatGPT account. Never place real credentials in CI.
 
 ## Unit tests
 
 - path normalization and containment
+- Windows and macOS native Documents resolution, including redirected
+  Documents, missing locations, and explicit path overrides
 - project ID validation
 - descriptors
-- manifest schema
+- authoritative Draft 2020-12 manifest schema before typed deserialization,
+  including unknown nested-field rejection
 - dependency graph and cycles
 - platform resolution
 - hashing
@@ -31,7 +34,10 @@ Run a controlled manual release test against a real ChatGPT account. Never place
 - removal never deletes unowned files
 - secret-like values never survive serialization
 - provider credential references remain keyed and never cross provider switches
-- flattening is deterministic and rejects traversal, links, collisions, secret-shaped content, and oversized files
+- flattening is deterministic and rejects links, collisions, secret-shaped content, and oversized files
+- selecting `workflow.super_events` downloads only its verified manifest tree,
+  keeps the provider-neutral component credential-free, records its state in the
+  lock and scan summary, and adds no Super Events guidance when unselected
 
 ## Fuzzing
 
@@ -56,21 +62,37 @@ path, and Codex targets.
 - cache corruption
 - Windows Credential Manager mock
 - macOS Keychain mock
-- Git fixtures
+- Git fixtures with ambient configuration isolation, hostile local config
+  rejection before spawn, and direct bounded submodule discovery
 - MCP test server
 - launcher descriptor outside project
+- bounded parent-level launcher descriptor discovery, explicit pre-scan
+  confirmation/decline/cancel, candidate mismatch, and no read of an
+  unconfirmed candidate
 - provider API envelopes and bounded response bodies
-- flattened source file names and user-selected extra paths
+- flattened skill names, required project documents, and subagent names
+- Super Events manifest selection, exact `.agents/skills/hoi4-super-events/`
+  destination, `core.skills` dependency, no-credential plan, and deselected
+  exclusion from the core skills tree
 
 ## Transaction fault injection
 
 Fail at every stage and operation boundary through process kill, disk full, permission denied, file lock, network loss, checksum mismatch, command timeout, health failure, and cancellation. Verify recovery and final hashes. Rollback tests must also assert a separate child journal, parent linkage, inverse backup of live post-transaction bytes, durable parent/child rollback records, safe reuse of the child identity on retry, and inverse rollback refusal after a later user file or lock edit.
 
+For an absent new-project root, inject failure before apply, at leaf creation,
+after managed files are applied, and during rollback. Assert that exactly one
+reviewed leaf is created only at apply, that a pre-apply race stops safely, and
+that rollback removes the leaf only when empty while preserving unknown content
+and its parent.
+
 ## End-to-end cases
 
 ### New Windows project
 
-Create, generate descriptors, install core, initialize Git, run readiness, and open project.
+Resolve redirected Documents, auto-fill the project root and launcher descriptor
+from the project ID, preserve an explicit override, create the reviewed leaf at
+apply, generate descriptors, install core, initialize Git, run readiness, and
+open the project.
 
 ### Existing Windows project
 
@@ -84,9 +106,23 @@ Install platform-neutral core, report unsupported current Windows-only MCP and 3
 
 Select 3D, omit key, complete core, verify incomplete optional status, configure later, and rerun health.
 
-### LoRA placeholder
+### Super Events workflow
 
-Record interest and assert zero forbidden operations.
+On the Optional workflows screen, verify that the exact Super Events question
+is immediately after the exact 3D question. Test selected installation from one
+verified manifest revision, the managed skill destination, readiness and lock
+state, and the read-only scan summary. Test a declined install for absence of
+the skill tree and Super Events-specific `AGENTS.md` guidance. Test Update adding
+the component from a target manifest and Repair adding it only when the locked
+manifest at the same immutable revision declares it; otherwise Repair must
+direct the user to Update.
+
+### Portrait workflow handoff
+
+Verify no setup switch, component, preference, operation, lock state,
+maintenance option, or readiness check exists. The completed Ready screen
+contains exactly the fixed HTTPS external portrait-workflow link and opens it
+through the safe typed browser action.
 
 ### Interrupted install
 
@@ -97,7 +133,7 @@ Terminate during staging and apply. Verify resume and rollback.
 Run each provider profile through new and existing-project planning with a fake
 adapter. Change provider and model after a proposal is returned and verify the
 old record cannot enter a plan. For Codex, select the flatten checkbox and
-verify skill renames, subagents, adapted AGENTS, README, extras, conflicts,
+verify skill renames, subagents, adapted AGENTS, README, conflicts,
 flat-conflict preservation across a later source conflict, backup, interruption
 recovery, and rollback. For non-Codex profiles, verify
 the checkbox and Open in Codex action are absent.
@@ -108,15 +144,24 @@ Descriptors, provider-adapted AGENTS and README, flattened Chat sources, TOML me
 
 ## UI tests
 
-Keyboard traversal, focus order, screen reader labels, contrast, scaling, long paths, long translations, error states, reduced motion, and visual regression for all 17 screens. Add density assertions for the seven-phase rail, one primary task per screen, maximum visible content regions, collapsed secondary details, absence of permanent keyboard hints, and no repeated explanatory copy.
+Keyboard traversal, focus order, screen reader labels, contrast, scaling, long paths, long translations, error states, reduced motion, and visual regression for all 16 screen states. Add density assertions for the seven-phase rail, one primary task per screen, maximum visible content regions, collapsed secondary details, absence of permanent keyboard hints, and no repeated explanatory copy.
 
 ## Security tests
 
-Traversal, symlink and junction race, case collision, reserved device name, command injection, environment injection, secret in stderr, crash redaction, archive limits, and compromised manifest.
+Traversal, symlink and junction race, case collision, reserved device name,
+command injection, environment injection, secret in stderr, crash redaction,
+archive limits, compromised manifest, and rejection of dynamic/non-HTTPS
+external browser URLs.
 
 ## Performance
 
 Test 500, 20,000, and 150,000 file projects plus a large wiki media set. Measure first finding, total scan, memory, UI responsiveness, hash throughput, and cancellation latency.
+
+Add a Tauri command responsiveness regression test with blocking fake
+filesystem, network, Git, and provider waits. Hold each representative wait
+open and assert that a desktop event-loop probe remains schedulable and that
+cancellation is observable. Every command must use async/thread-pool dispatch;
+an eventual correct result does not excuse event-loop blocking.
 
 ## Compatibility
 
@@ -129,7 +174,10 @@ Test supported Windows and macOS versions, x64 and Apple Silicon where applicabl
 - transaction fault suite passes
 - core new and existing flows pass on both platforms
 - 3D states are honest
-- LoRA placeholder creates zero forbidden actions
+- Super Events selection, integrity, maintenance, and non-blocking readiness are
+  honest
+- no LoRA or ComfyUI setup state exists; the Ready-screen link is fixed and
+  external
 - accessibility audit passes
 - artifacts are signed or checksummed
 

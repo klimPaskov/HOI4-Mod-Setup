@@ -1,0 +1,14 @@
+flowchart LR
+    User[User] --> UI[HOI4 Mod Setup]
+    UI --> Core[Deterministic Rust core]
+    UI --> AppServer[Local Codex App Server]
+    AppServer --> ChatGPT[ChatGPT-managed Codex account]
+    Core --> Project[Mod project]
+    Core --> Documents[Native redirected Documents]
+    Documents --> Launcher[HOI4 user mod directory]
+    Core --> Source[Agentic HOI4 Modding source]
+    Core --> Vault[OS credential vault]
+    Core --> Git[Local Git]
+    Core --> Wiki[Offline Paradox wiki]
+    AppServer -. semantic proposals .-> UI
+    Core -. validation and rendering .-> UI

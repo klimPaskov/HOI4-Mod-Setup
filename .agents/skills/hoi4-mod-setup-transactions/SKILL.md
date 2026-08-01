@@ -13,9 +13,9 @@ Read:
 - `docs/10_merge_conflict_rules.md`
 - `docs/14_transaction_rollback.md`
 - `docs/15_update_repair.md`
-- `schemas/installation-plan.schema.json`
-- `schemas/transaction-journal.schema.json`
-- `schemas/installation-lock.schema.json`
+- `docs/schemas/installation-plan.schema.json`
+- `docs/schemas/transaction-journal.schema.json`
+- `docs/schemas/installation-lock.schema.json`
 - corresponding examples
 
 ## Stage order
@@ -36,6 +36,10 @@ Every mutation uses:
 12. rollback record
 
 Do not collapse these into a single copy operation.
+Do not create the backup or staging directories before their corresponding
+stages. Source resolution, selective download evidence, and checksum
+verification must fail before any predecessor or project-file backup is
+written.
 
 ## Operation model
 
@@ -62,6 +66,12 @@ non-destructive no-op until the project is re-planned.
 
 Persist the journal before and after irreversible boundaries. Use atomic file replacement for journal writes.
 
+For Unix destinations, the manifest/lock executable declaration is durable
+metadata evidence. Apply and verify it in staging and live paths, record
+before/expected/after executable state in the journal, preserve it in backups,
+restore it on rollback, and verify it during readiness. Standalone `chmod`
+operations are not accepted; mode belongs to the reviewed file operation.
+
 ## Apply rules
 
 - Backup all replace or delete targets before mutation.
@@ -75,7 +85,13 @@ Persist the journal before and after irreversible boundaries. Use atomic file re
 - Persist an `applying` operation intent before replacing or deleting a live destination. Use the platform atomic replace route where available and verify the expected incoming hash, not only an observed self-hash.
 - Bind UI apply to a core-owned reviewed plan session and prepared bytes; do not accept a renderer-edited plan as authoritative.
 - Track source hash separately from result hash: generated files, structured merges, and optional MCP TOML adaptation may have a verified incoming source hash and a different deterministic installed hash.
-- Treat provider/model/profile selection and the Codex-only flattened ChatGPT-source export as reviewed plan inputs. Flattening is a generated, root-contained operation: direct skill `SKILL.md` files become `<skill>.md`, required adapted `AGENTS.md`, README, subagents, and user-approved extras are included, and collisions/links/secrets are rejected before staging.
+- Every remote prepared file has one plan `download_ledger` entry bound to its
+  operation ID, component, source path, destination, exact source revision,
+  manifest hash, source hash, size, ownership, platform, and executable
+  declaration. Revalidate that
+  ledger before backup. Generated inputs use an explicit `generated:` source
+  and do not fabricate remote evidence.
+- Treat provider/model/profile selection and the Codex-only flattened ChatGPT-source export as reviewed plan inputs. Flattening is a generated, root-contained operation: direct skill `SKILL.md` files become `<skill>.md`; required adapted `AGENTS.md`, README, and subagents are included; and collisions, links, and secrets are rejected before staging. Build it only from files selected for the current plan. When review keeps a selected local skill or subagent, read that exact root-contained regular file without following links and flatten the kept bytes; never enumerate unrelated skills or subagents already present in an existing project.
 - When a non-flattened conflict changes the accepted source set, rebuild the flat
   view from accepted bytes only. Preserve an already reviewed flat keep/replace/
   rename decision only when its incoming hash and local precondition still
@@ -111,9 +127,35 @@ Persist the journal before and after irreversible boundaries. Use atomic file re
   incoming hash as the installed baseline and the local hash as a modification,
   so later managed removal preserves that user content.
 
+### Absent-root first install
+
+- Only a new, non-maintenance plan may use `project_root_mode: create_leaf`.
+  The plan and journal carry a canonical existing parent plus a normalized leaf
+  equal to the reviewed project ID; the parent must validate before any
+  transaction storage or project write proceeds.
+- `run_transaction` journals and validates the absent destination through
+  source resolution, download/checksum verification, dry-run, backup, staging,
+  and staged-output validation without creating the project root. The root is
+  created exactly at the apply boundary with durable `applying` and `created`
+  lifecycle checkpoints.
+- A failure before apply leaves the reviewed root absent and permits only the
+  exact staging-discard path. Rollback removes a transaction-created root only
+  after managed files and metadata are gone and the directory is empty; if
+  user content appears, it removes no more than verified managed content and
+  records `retained_user_content`.
+- Inverse rollback recreates only the reviewed empty leaf, records its own
+  lifecycle checkpoint, and refuses to overwrite later content or recreate Git
+  or other external side effects.
+
 ## Recovery
 
-On startup, detect incomplete journals. Offer resume, rollback, or discard staging only when the recorded state makes the action safe.
+On startup, detect every non-terminal journal state, including ordinary active
+stage states left by process termination. The core transaction preflight must
+also scan the bound application-data transaction root and refuse overlapping
+mutations for the same canonical project. Corrupt journals whose bounded root
+matches the selected project are a recovery blocker, not something to skip.
+Offer resume, rollback, or discard staging only when the recorded state makes
+the action safe.
 
 Resume must compare the recorded plan hash, operation preconditions, journal expectations, staged-file hashes, the exact predecessor-lock existence/hash state, and observed filesystem state. `resume_transaction` replays the full runner only from a pre-apply interrupted checkpoint; once project apply has started it refuses resume and requires rollback or manual review. Never trust the last journal line alone.
 
@@ -142,11 +184,26 @@ Every new journal binds its canonical `project_root`; recovery discovery and com
 
 Rollback and staging discard must enforce that binding inside the transaction module before resolving any destination or deleting any staging directory. Verify the journal path and transaction UUID as well as the caller-provided root.
 
+Every direct journal read rejects a symlink or junction in the journal path,
+including a linked transaction directory; discovery-time checks are not a
+substitute for command-boundary validation.
+
 Discard staging removes only the exact transaction UUID staging directory after the same pre-apply state checks. It preserves the journal and backup material for audit/review, and records a terminal `staging_discarded` journal state.
 
 Rollback restores original content and metadata within supported limits. It must not delete user work created after the transaction without review.
 
 When a prior installation lock exists, copy and hash it into the transaction backup before mutation. A maintenance lock refresh carries forward skipped files, ownership, merge choices, local modifications, optional states, and rollback history. Rollback validates the current lock against the exact recorded result or already-restored predecessor before touching project files, restores the verified predecessor lock, and removes a current lock only when no predecessor exists. Explicit `skip`, `external`, and `rollback: none` operations are rollback no-ops and must never delete the user's preserved destination.
+
+The lock is the durable remembered installation state: scanning may expose only
+its bounded non-secret summary, the current session carries the completed scan
+context and readiness report, and installed readiness re-evaluates the lock's
+components, source evidence, and optional states before reporting success.
+Transient UI state must never manufacture an installed component or readiness
+pass.
+
+Legacy locks may contain `workflow.lora_comfyui_interest`. Keep them readable
+for recovery, but ignore that preference during scanning and readiness and
+remove it from every newly verified lock; it is no longer a product workflow.
 
 Opaque OS-vault credential references are carried separately from secret values. A lock refresh may preserve the non-secret Meshy reference only in the selected `workflow.3d` entry; provider-key references remain core-owned and outside project state, plans, and locks. Managed removal clears optional-workflow references without deleting an OS credential implicitly. A flatten preference is copied only when the selected provider is Codex.
 
@@ -154,10 +211,24 @@ Opaque OS-vault credential references are carried separately from secret values.
 
 - Update compares base, local, and incoming.
 - Repair defaults to the locked revision.
+- If a valid lock reports `workflow.3d` as `not_selected`, repair may expand
+  that component and its manifest-declared dependencies at the exact locked
+  revision. Add only missing component ownership; equal local bytes become a
+  tracked no-op/replacement baseline and different bytes become a
+  `review_required` keep/replace/merge/rename/skip conflict.
+- Repair may add `workflow.super_events` or another optional component only
+  when that component and its dependencies are declared by the immutable
+  locked revision and its manifest hash still matches the lock. If the desired
+  component is absent from that locked source, Update must resolve the current
+  source first; Repair must not mix a newer component into the old lock.
 - Reinstall preserves local modifications through the same conflict engine.
 - Managed removal deletes only owned, unmodified content by default.
 - A credential removal is a separate explicit choice.
 - Optional workflow health is separate from the core lock gate. A stored Meshy reference may be carried forward only for `workflow.3d`, but a workflow is `incomplete` or `selected_pending` until its approved, manifest-derived health route reports success; missing optional credentials never block the core readiness gate.
+- `workflow.super_events` has no credential health action; its installed or
+  `not_selected` state is recorded in the lock and its readiness check is
+  always `blocking: false`.
+- Repair may add the 3D files at the lock's exact revision and may refresh only the opaque Meshy reference for an already-selected incomplete workflow; a previously `ready` workflow remains ready when its existing reference is carried forward.
 - Reinstall and repair must re-read the locked revision and preserve modified files for review. Managed removal must not delete merged ownership wholesale. The current planners are `repair_operations`, `reinstall_operations`, `update_operations`, and `managed_removal_operations` in `src-tauri/src/transaction.rs`.
 - Update preserves the lock's latest/pinned source mode and filters generated artifact IDs out of manifest component expansion. Descriptor, external launcher, and thumbnail artifacts are planned independently for both new and existing projects.
 - Repair and reinstall do not reconstruct a merged file from a raw source blob without a verified merge base; missing or changed merged files become reverse-merge review entries.
@@ -181,10 +252,16 @@ Inject failure at every stage and operation boundary:
 - command timeout
 - cancellation
 - journal write failure
+- immediately after a live file or metadata mutation but before the operation
+  result is observed and journaled
 
 Verify that recovery never creates a false success lock and rollback restores expected hashes.
 
-The current Rust fault test iterates every stage and operation before/after boundary and asserts that no success lock is written; targeted regression tests also cover skipped-file rollback, immutable ownership, remote approval, reanalysis scan binding, inverse rollback refusal after later file or lock edits, and the completed child inverse path. Native execution still requires the supported CI toolchains.
+The current Rust fault test iterates every stage and operation before/after boundary and asserts that no success lock is written; targeted regression tests also cover absent-root creation at apply, pre-apply staging discard, root removal, inverse recreation, later-user-content retention, skipped-file rollback, immutable ownership, remote approval, reanalysis scan binding, inverse rollback refusal after later file or lock edits, and the completed child inverse path. Native execution still requires the supported CI toolchains.
+
+Maintenance regression coverage must also prove that Repair uses only the
+locked revision, rejects a component absent from that revision, and that
+Update is the path that can acquire it from a newly resolved source.
 
 ## Update this skill when
 

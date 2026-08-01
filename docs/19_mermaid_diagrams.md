@@ -15,7 +15,8 @@ flowchart LR
   REVIEW --> PLAN[Confirmed installation plan]
   PLAN --> TX[Transactional installer]
   TX --> MOD[HOI4 mod project]
-  TX --> LAUNCHER[External launcher descriptor]
+  TX --> DOCS[Native redirected Documents]
+  DOCS --> LAUNCHER[External launcher descriptor]
   TX --> VAULT[OS credential vault]
   UI --> MAN[Manifest and dependency engine]
   MAN --> GH[GitHub API and raw files]
@@ -50,7 +51,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-  AUTH[codex.app_server and ChatGPT sign-in] --> ANALYSIS[Confirmed Codex analysis]
+  AUTH[selected provider or Codex ChatGPT sign-in] --> ANALYSIS[Confirmed provider analysis]
   ANALYSIS --> AG[core.agents]
   ANALYSIS --> LAUNCH[project.launcher_scaffold]
   AG --> SK[core.skills]
@@ -61,6 +62,7 @@ flowchart TD
   SK --> D3[workflow.3d]
   SA --> D3
   KEY[MESHY_API_KEY in OS vault] --> D3
+  SK -. selected .-> SE[workflow.super_events]
   AG --> READY[Core readiness]
   LAUNCH --> READY
   SK --> READY
@@ -68,6 +70,7 @@ flowchart TD
   CX --> READY
   W --> READY
   D3 -. optional .-> REPORT[Readiness report]
+  SE -. optional, no credential .-> REPORT
   READY --> REPORT
 ```
 

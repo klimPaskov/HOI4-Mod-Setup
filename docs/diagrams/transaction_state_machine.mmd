@@ -1,0 +1,41 @@
+stateDiagram-v2
+  [*] --> Preflight
+  Preflight --> ResolveSource
+  ResolveSource --> Download
+  Download --> Verify
+  Verify --> DryRunReview
+  DryRunReview --> Backup: approved
+  DryRunReview --> [*]: cancelled
+  Backup --> Staging
+  Staging --> Validation
+  Validation --> Apply
+  Apply --> CreateLeaf
+  CreateLeaf: Create one reviewed leaf when root was absent
+  CreateLeaf --> ApplyFiles
+  ApplyFiles: Apply staged files and external descriptor
+  ApplyFiles --> PostInstallChecks
+  PostInstallChecks --> ReadinessReport
+  ReadinessReport --> RollbackRecord
+  RollbackRecord --> Completed
+  Preflight --> Failed
+  ResolveSource --> Failed
+  Download --> Failed
+  Verify --> Failed
+  Backup --> Failed
+  Staging --> Interrupted
+  Validation --> Failed
+  Apply --> Interrupted
+  Apply --> Failed
+  Interrupted --> Staging: resume before apply
+  Interrupted --> Rollback
+  Failed --> Rollback
+  Rollback --> EmptyLeaf
+  EmptyLeaf: Created leaf empty?
+  EmptyLeaf --> RemoveLeaf
+  RemoveLeaf: Remove leaf only
+  EmptyLeaf --> RetainLeaf
+  RetainLeaf: Retain leaf and unknown content
+  RemoveLeaf --> RolledBack
+  RetainLeaf --> RolledBack
+  Completed --> [*]
+  RolledBack --> [*]

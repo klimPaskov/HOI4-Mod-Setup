@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0.0",
+  "action": "create_public_github",
+  "recorded_at": "2026-07-29T12:00:00Z",
+  "branch": "main",
+  "remote_name": "origin",
+  "repository": "example/hoi4-mod",
+  "repository_url": "https://github.com/example/hoi4-mod",
+  "message": "Public GitHub repository created. Review it, then approve the separate push action."
+}

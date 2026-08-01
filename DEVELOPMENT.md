@@ -67,6 +67,7 @@ cargo check --manifest-path fuzz/Cargo.toml --bins
 $env:HOI4_MOD_SETUP_TAURI="1"; $env:HOI4_MOD_SETUP_BUNDLE="nsis"; pnpm release:build
 pnpm release:verify
 pnpm desktop:e2e
+pnpm installer:e2e
 ```
 
 The Tauri CLI uses the workspace-root `target/release` directory for native
@@ -81,7 +82,7 @@ Before application source exists, or after changing planning, GitHub, AGENTS, sk
 
 ```bash
 python -m pip install jsonschema PyYAML
-python scripts/validate_repository_templates.py
+python scripts/validate_repository.py
 python scripts/check_committed_secrets.py
 ```
 

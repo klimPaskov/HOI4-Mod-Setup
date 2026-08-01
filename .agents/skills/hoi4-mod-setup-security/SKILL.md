@@ -37,7 +37,16 @@ Store secrets in Windows Credential Manager or macOS Keychain. Store only an opa
 
 Never serialize a secret to project files, lock files, plans, manifests, logs, crash reports, screenshots, command previews, test fixtures, or Git.
 
+Password drafts are renderer-memory-only and are cleared before the vault IPC
+promise begins, on both success and failure. State-bearing IPC sanitizers still
+blank the Meshy field as a second boundary.
+
 Inject a secret only into an allowlisted process environment for the lifetime of that process. Redact known values and credential-shaped output before storage or display.
+
+On Windows, resolve OS-owned verifier and browser executables from native
+Windows directory APIs rather than `SystemRoot`. Authenticode checks compare
+an exact reviewed certificate simple name, never a subject substring, and
+re-hash the candidate across verification.
 
 Version 1 has two distinct secret routes. The Meshy value lives in the OS
 credential vault under an opaque reference and may be injected only as
@@ -89,7 +98,11 @@ bounded and schema-validated before any proposal is accepted.
 - Use executable plus argument arrays.
 - Do not build shell strings from user or manifest input.
 - Allowlist executable identity and working roots.
-- Open Codex login URLs only through the HTTPS-validated system-browser command using fixed OS-owned opener paths (`explorer.exe` on Windows or `/usr/bin/open` on macOS); never navigate an arbitrary renderer URL through a shell or PATH shim.
+- Open returned Codex login URLs and reviewed source or Ready-screen external
+  links only through the HTTPS/allowlist-validated system-browser command using
+  fixed OS-owned opener paths (`explorer.exe` on Windows or `/usr/bin/open` on
+  macOS); never navigate an arbitrary renderer URL through a shell or PATH
+  shim. The external-link command accepts only its fixed reviewed URL set.
 - Do not treat a regular file found on `PATH` as independent executable trust.
   Every process identity must be hash-checked immediately before spawn; a
   manifest route without immutable executable evidence is unavailable. Codex
@@ -104,6 +117,26 @@ bounded and schema-validated before any proposal is accepted.
 - Git executable discovery rejects linked PATH entries, and Git initialization or
   rollback rejects linked or junctioned `.git` metadata before invoking Git or
   removing metadata.
+- Read-only Git inspection disables system/global configuration, optional
+  locks, prompts, credential helpers, hooks, external diff/attribute behavior,
+  replace objects, and file/ext transports. Before any Git child starts, parse
+  the bounded local `.git/config` without includes and reject executable,
+  transport, credential, URL-rewrite, filter, alias, or include settings.
+  Discover submodule paths by reading the bounded `.gitmodules` file directly;
+  never start recursive submodule processes during a scan.
+- Account-bearing Codex and secret-bearing optional workflow processes require
+  a canonical, unlinked executable whose platform signature publisher matches
+  the reviewed vendor immediately before spawn. A matching filename or stable
+  hash alone does not establish provenance.
+- On Unix, supervised children start in their own process group and timeout,
+  restart, close, and drop paths terminate that entire group so descendants do
+  not retain scoped environment or account access.
+- Reviewed online Git actions bind the canonical root, named branch, clean
+  worktree, exact HEAD, actual push URL, and GitHub CLI hash. Recheck all of
+  them immediately before execution. Reject configured URL rewrites,
+  `core.sshCommand`, `core.gitProxy`, `core.hooksPath`, submodules, active
+  hooks, detached branches, and dirty trees. Public repository creation and
+  the first push are separate approvals, and the result record is secret-free.
 - Readiness must parse installed skill frontmatter and subagent TOML, require
   explicit `fork_context=false`, reject link-containing agent trees, and avoid
   claiming the manifest-declared MCP wrapper is healthy when its PATH entry is
@@ -147,8 +180,15 @@ Use read-only default permissions. Grant write permission only to a release job 
 - secret in stdout, stderr, panic, and crash state
 - malicious manifest and redirect
 - compromised cache
+- verified-cache path replacement between inspection and return
+- unsigned or wrong-publisher executable substitution
+- Unix descendant survival after supervised-process shutdown
 - rollback data loss
 - Git hook and config edge cases
+- read-only Git environment isolation, hostile local-config rejection before
+  spawn, and direct bounded `.gitmodules` parsing
+- online Git approval expiry, changed HEAD/remote, GitHub CLI replacement, and
+  no-action-before-approval
 - updater metadata tampering
 - support bundle redaction
 - scoped Meshy injection into an approved child with secret-free stdout/stderr

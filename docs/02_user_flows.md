@@ -48,11 +48,14 @@ then confirms the proposals before rendering.
 ### Identity and paths
 
 The identity screen opens populated. Review or edit the generated display name,
-stable project ID, script prefix, namespace, tags, and folder profile, then
-choose the project folder and launcher descriptor destination. Version and
-supported game version retain verified defaults or appear as advanced fields
-when they need confirmation. The project ID uses a lowercase stable slug and
-remains independent of future display-name changes after confirmation.
+stable project ID, script prefix, namespace, tags, and folder profile. Once the
+ID is valid, the app auto-fills the project root and launcher descriptor path
+from the ID and the resolved HOI4 user `mod` directory. Both are editable. A
+changed ID updates only untouched auto-filled fields; explicit overrides stay
+in place and are revalidated. Version and supported game version retain
+verified defaults or appear as advanced fields when they need confirmation. The
+project ID uses a lowercase stable slug and remains independent of future
+display-name changes after confirmation.
 
 ### Descriptors
 
@@ -68,7 +71,23 @@ Choose latest, pinned commit, or pinned release. Select components and review au
 
 ### Optional workflows
 
-Ask both exact questions. A missing 3D key can be deferred. LoRA and ComfyUI interest can be recorded.
+On one Optional workflows screen, ask these questions in order:
+
+1. **Do you want to set up the 3D models workflow?**
+2. **Do you want to set up the Super Events workflow?**
+
+The second row selects provider-neutral `workflow.super_events`. When selected,
+resolve the verified manifest at the one source revision and install its skill
+plus the hidden dependency components containing the reusable GUI, GFX,
+scripted registration and selectors, example event, localisation, editable
+templates, assets, and guide. Adapt text identifiers to the confirmed project
+namespace only after source verification. It has no credential, environment
+variable, external command, or provider-specific route. Its state is optional
+and non-blocking, appears in readiness, and is remembered by the managed lock
+and the existing-project scan. If it is declined, do not install any part of
+the dependency closure or add Super Events-specific guidance to `AGENTS.md`.
+Keep LoRA and ComfyUI out of setup and readiness; the only portrait behavior
+remains the fixed Ready link described below.
 
 ### MCP, credentials, and Git
 
@@ -76,18 +95,18 @@ Review server requirements, credential storage, external commands, Git mode, ign
 
 ### Dry run and apply
 
-Show every create, merge, replace, rename, skip, external command, Git action, source revision, hash, disk estimate, and rollback rule. Next stays disabled while a blocking conflict is unresolved.
+Show every create, merge, replace, rename, skip, external command, Git action, source revision, hash, and recovery rule. Next stays disabled while a blocking conflict is unresolved.
 
 Run the 12-stage transaction. Verify the launcher descriptor resolves to the project, both descriptors agree, the thumbnail decodes, and the selected scaffold exists. Then show readiness. Offer Open in Codex only for the Codex profile.
 
 ### Optional flattened Chat sources
 
-Only when Codex is selected, show the final optional checkbox **Prepare a
+Only when Codex is selected, show the optional checkbox in the Install review: **Prepare a
 flattened ChatGPT project-sources folder**. Review its generated
 `chatgpt_project_sources/` operations. Skills become `<skill>.md`; selected
-subagents, adapted `AGENTS.md`, created or existing `README.md`, and explicitly
-entered project-relative extras are included. Reject traversal, links,
-collisions, secret-shaped paths/content, and oversized files before staging.
+subagents, adapted `AGENTS.md`, and created or existing `README.md` are
+included. Reject links, collisions, secret-shaped content, and oversized files
+before staging.
 After setup, recommend starting planning using ChatGPT “Chat”. Do not upload,
 open a conversation, or start planning automatically.
 
@@ -95,11 +114,25 @@ open a conversation, or start planning automatically.
 
 ### Root selection
 
-The user selects one explicit root. The scanner does not search sibling drives or unrelated folders.
+The user selects one explicit root. Before scanning, the app checks only direct
+`*.mod` descriptor candidates in that root's immediate parent. It displays each
+candidate and its normalized `path=` match, then requires an explicit visible
+choice: confirm the candidate, scan without an external descriptor, or cancel.
+The scanner does not search sibling trees, sibling drives, or unrelated
+folders, and it reads no unconfirmed external descriptor.
 
 ### Read-only scan
 
-Run staged detectors with progress and current-path evidence. Cancellation stops reads and discards unapproved profile state.
+Run staged detectors with progress and current-path evidence. The scan reads a
+parent-level launcher descriptor only when the user confirmed it in the
+pre-scan choice. Cancellation stops reads and discards unapproved profile
+state.
+
+When the bounded scan finds a valid managed lock, it reports the stored states
+of `workflow.3d` and `workflow.super_events` in its concise optional-workflow
+summary. It does not infer selection from a loose skill directory or expose a
+credential value. A valid `not_selected` Super Events state remains a remembered
+decline until Update or Repair changes it.
 
 ### Review sequence
 
@@ -156,13 +189,13 @@ Resolve each path with keep, replace, merge, rename, or skip. Binary files do no
 
 Declined produces no 3D-only operations. Unsupported platform state is shown before dry run. The app never translates commands by guesswork. Neither state blocks core AI readiness.
 
-## LoRA and ComfyUI placeholder
+## Portrait workflow handoff
 
-1. Show the exact question.
-2. Explain setup is unavailable.
-3. Save interest when selected.
-4. Generate zero ComfyUI, model, Python, GPU, or driver operations.
-5. Show `planned_unavailable` in readiness.
+After successful setup, show one concise Ready-screen link to
+`https://github.com/klimPaskov/comfyui-hoi4-portraits`. It is a fixed HTTPS
+link opened through the typed system-browser action, not a wizard step,
+component, preference, transaction action, maintenance option, or readiness
+result.
 
 ## Update flow
 
@@ -180,9 +213,22 @@ Declined produces no 3D-only operations. Unsupported platform state is shown bef
 12. Execute a new transaction.
 13. Refresh lock and rollback record.
 
+Update can add `workflow.super_events` when the target verified manifest
+declares it, even when the existing lock records `not_selected`. The normal
+dependency, conflict, selective-download, and rollback rules still apply.
+
 ## Repair flow
 
 Verify the selected provider before creating a repair plan. Classify managed files as healthy, missing, corrupted, or modified. Restore only missing or corrupted unmodified files automatically after review. Modified files enter conflict review. Re-run component health and readiness.
+
+For `workflow.super_events`, Repair may offer the exact Super Events question
+again when the lock records `not_selected`, but only after reading the
+manifest at the lock's immutable revision. If that revision declares the
+component, Repair expands its exact locked dependency closure and installs the
+skill and runtime through the normal transaction. If it does not, Repair must
+explain that Update is
+required and must not substitute a newer source. An already selected workflow
+is shown as installed or incomplete without duplicating files.
 
 ## Removal flow
 

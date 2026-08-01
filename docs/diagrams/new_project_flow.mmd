@@ -1,0 +1,23 @@
+flowchart TD
+    Start[Create new mod] --> Auth{Selected provider configured?}
+    Auth -- no --> Login[Provider setup or ChatGPT login]
+    Login --> Brief[Plain-language mod brief]
+    Auth -- yes --> Brief
+    Brief --> Provider[Selected provider proposes identity and profile]
+    Provider --> Validate[Deterministic validation]
+    Validate --> Review[User edits and confirms]
+    Review --> Paths[Auto-fill root and launcher paths from project ID]
+    Paths --> Override{Edit either path?}
+    Override -- yes --> ValidatePaths[Validate explicit overrides]
+    Override -- no --> Preview[Preview descriptors, thumbnail, and folders]
+    ValidatePaths --> Preview
+    Preview --> Optional3D[Ask exact 3D workflow question]
+    Optional3D --> OptionalSE[Ask exact Super Events workflow question]
+    OptionalSE --> DryRun[Dry-run review]
+    DryRun --> Apply[Apply: create one reviewed leaf if absent]
+    Apply --> Ready[Launcher-ready and Open in Codex]
+    Apply -. rollback .-> Empty{Created leaf empty?}
+    Empty -- yes --> RemoveLeaf[Remove leaf only]
+    Empty -- no --> Preserve[Preserve unknown content and leaf]
+    RemoveLeaf --> RolledBack[Rolled back]
+    Preserve --> RolledBack

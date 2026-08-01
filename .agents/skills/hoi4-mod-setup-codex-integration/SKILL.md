@@ -11,6 +11,23 @@ Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The us
 
 Create, Import, Update, and Repair planning require an authenticated, selected AI capability. Codex uses the official local `codex app-server` interface and ChatGPT-managed sign-in. Other providers use only their verified adapter profile, explicit user endpoint where supported, and an OS-vault credential where required. Do not silently switch providers or invent a provider route.
 
+Optional components remain provider-neutral unless their manifest explicitly
+declares a provider dependency. `workflow.super_events` is an ordinary
+manifest component for every selected provider; its selection, recommendation,
+file plan, and non-blocking readiness state must not create a Codex-only route.
+
+The planning-ready gate is checked in both layers: the React start gate keeps
+Create/Import/Update/Repair unavailable until the selected provider is
+available, authenticated, and not usage-limited, while Rust rechecks the
+capability before building a plan. Codex additionally requires
+`auth_mode = chatgpt`.
+
+The Description primary action enters one visible pending state while semantic
+analysis runs, disables duplicate submission, and always resolves to either the
+Identity screen or an announced actionable error. Provider unavailability is a
+failure, never a successful navigation result, and the name and brief remain
+editable after failure.
+
 Recovery, rollback, backup inspection, and managed removal remain locally usable while signed out.
 
 ## Required contract
@@ -20,13 +37,20 @@ Recovery, rollback, backup inspection, and managed removal remain locally usable
 - launch `codex app-server` as a child process for Codex
 - use stdio JSONL transport
 - complete the initialize handshake before other requests
+- enforce initialization in the protocol object so account, login,
+  cancellation, logout, thread, and turn requests fail before a successful
+  initialize response plus `initialized` notification
 - use `account/read` for current state
 - use `account/login/start` with `type: chatgpt` for the browser flow
 - use `chatgptDeviceCode` only as the fallback flow
 - open returned HTTPS login and device-code URLs through the typed fixed-path system-browser command
 - wait for login and account update notifications
 - use `account/logout` for sign-out
-- expose a cancellation command that can interrupt a pending login wait before device-code fallback or logout
+- bind every pending login to the App Server `loginId`; cancellation must target
+  only that attempt with `account/login/cancel` and then interrupt its local
+  wait, without resetting or cancelling another attempt
+- route reviewed login and external links through typed system-browser commands;
+  never let the renderer invoke an opener or navigate an arbitrary URL
 - never read or copy Codex token storage
 - never serialize account identity, tokens, plan details, rate limits, or usage into a mod project or installation lock
 - do not use experimental externally managed ChatGPT tokens
@@ -49,14 +73,24 @@ Every analysis turn must:
 - expose no writable project root
 - contain only user-approved inputs
 - exclude secrets, binaries, Git objects, and credential stores
-  - set the current `codex-analysis` output schema for every adapter
+- require the current `codex-analysis` output schema for every adapter; Codex
+  sends it as `outputSchema`, while hosted/local adapters receive the exact
+  checked-in schema in their system request
 - reject additional or malformed fields
+- validate component recommendations as the checked-in
+  `docs/schemas/codex-analysis.schema.json` objects
+  `{component_id,recommendation,reason}`; `component_id` must be a
+  deterministic registry ID, including `workflow.super_events`, and unknown
+  IDs or fields are rejected
+- reject account-shaped text in summaries, proposal reasons, recommendation
+  reasons, warnings, and proposal values
 - require the complete ten-key proposal set before confirmation or planning
 - return concise proposal reasons, not hidden reasoning
 
 For existing-project analysis, the core accepts only evidence references and
 excerpt hashes emitted by a completed deterministic read-only scan in the
-current app session. Reject `.git`, environment, credential, token, key, PEM,
+current app session and an explicit approval of that exact evidence vector.
+Completion of a scan alone is not an approval. Reject `.git`, environment, credential, token, key, PEM,
 and other secret-bearing paths, duplicate references, and credential-shaped
 briefs, constraints, or excerpts before prompt construction. New-project
 analysis may have no scan evidence but still receives only the bounded user
@@ -87,13 +121,25 @@ JSONL lines. `src-tauri/src/commands.rs` owns the process singleton and exposes
 typed account, browser/device login, fixed-path system-browser opening, logout,
 analysis, and confirmation commands
 through `src/lib/tauri.ts`; React never invokes the low-level Tauri bridge.
+`open_codex_login_url` accepts only the validated URL returned by Codex, while
+`open_external_url` accepts the fixed reviewed source and Ready-screen portrait
+URLs. Both routes use the platform-owned browser executable and argument array.
 
 Before reuse, the core polls the supervised child transport and replaces an
-exited App Server. Logout always tears down the local process and clears
+exited App Server. Replacing or discarding a dead transport clears pending
+analyses and approved scan evidence before a fresh initialize handshake.
+Logout always tears down the local process and clears
 pending analyses and approved evidence even when the remote logout request
 returns an error.
 
-Codex `turn/start` receives the checked-in `schemas/codex-analysis.schema.json` as its
+Browser and device-code login attempts use a bounded per-`loginId` cancellation
+registry. A direct cancellation request is sent to App Server when the session
+is available; otherwise the bounded login wait observes the same token and
+sends the managed cancellation before it returns. Login retries never clear a
+different attempt's cancellation state. Reject missing, malformed, duplicate,
+or excessive active login IDs.
+
+Codex `turn/start` receives the checked-in `docs/schemas/codex-analysis.schema.json` as its
 `outputSchema`, uses `approvalPolicy: never` and a restricted read-only sandbox
 with no project-readable roots, and the core rejects extra fields, duplicate
 proposal keys, incomplete proposal sets, invalid evidence references, incorrect
@@ -106,6 +152,15 @@ confirmation to its exact analysis ID and complete proposal set; the renderer
 cannot forge the immutable record fields. A plan or maintenance plan must carry
 a confirmed `CodexAnalysisRecord`; it stores only digests, proposal keys,
 confirmation time, and `account_identity_persisted: false`.
+
+The deterministic AGENTS adapter appends the optional Super Events guidance
+only when `workflow.super_events` is selected. An unselected workflow must not
+leave Super Events instructions, skill references, or equivalent guidance in
+the generated project `AGENTS.md`.
+
+Folder proposals and final folder state share a core validator that rejects
+application-managed roots such as `.git`, `.codex`, `.agents`,
+`.hoi4-mod-setup`, `paradox_wiki`, and `chatgpt_project_sources`.
 
 The UI shows a collapsed input preview before a turn, labels the result “Suggested
 by Codex,” and requires an explicit confirmation action. Drafts and scan findings
@@ -127,6 +182,8 @@ Cover:
 - initialize ordering
 - existing ChatGPT session
 - browser login success, cancellation, and failure
+- exact `account/login/cancel` method and `loginId` payload, including isolated
+  concurrent-attempt cancellation and cancellation while the session is busy
 - device-code fallback
 - logout
 - rate-limit state
@@ -137,6 +194,9 @@ Cover:
 - deterministic rejection of invalid Codex identifiers
 - recovery access while signed out
 - provider-profile/model optimization binding and non-Codex credential isolation, including cross-provider reference rejection
+- provider-neutral optional component recommendations, including the
+  `workflow.super_events` registry ID/schema path and selected-vs-unselected
+  AGENTS guidance
 - Codex-only flatten visibility, mapping, collision rejection, secret rejection, and recommendation copy
 
 ## Update this skill when

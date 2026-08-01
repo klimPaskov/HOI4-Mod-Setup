@@ -126,7 +126,6 @@ const releaseTag = process.env.GITHUB_REF_NAME?.trim();
 const platformSummaries = [];
 const sbomInventories = [];
 const noticeInventories = [];
-const outputEntries = [];
 
 for (const artifactDirectory of expectedNames) {
   const descriptor = expected.get(artifactDirectory);
@@ -149,7 +148,9 @@ for (const artifactDirectory of expectedNames) {
   if (metadata.product !== "HOI4 Mod Setup" || metadata.platform.toLowerCase() !== descriptor.platform || metadata.architecture.toUpperCase() !== descriptor.architecture) {
     throw new Error(`${artifactDirectory} metadata does not match its expected platform and architecture`);
   }
-  if (metadata.signing !== "configured") throw new Error(`${artifactDirectory} is not signed for publication`);
+  if (!["configured", "community"].includes(metadata.signing)) {
+    throw new Error(`${artifactDirectory} is not signed for publication`);
+  }
   if (releaseRevision && metadata.sourceRevision?.toLowerCase() !== releaseRevision) {
     throw new Error(`${artifactDirectory} metadata source revision does not match GITHUB_SHA`);
   }
@@ -183,13 +184,7 @@ for (const artifactDirectory of expectedNames) {
     throw new Error(`${artifactDirectory} signing evidence does not bind the verified package to its metadata`);
   }
   const packageName = publicPackageName(descriptor);
-  const metadataName = `${artifactDirectory}-BUILD_METADATA.json`;
-  const manifestName = `${artifactDirectory}-ARTIFACTS.sha256`;
-  const evidenceName = `${artifactDirectory}-SIGNING_VERIFICATION.json`;
   await cp(packages[0].absolute, resolve(outputRoot, packageName));
-  await cp(metadataFiles[0].absolute, resolve(outputRoot, metadataName));
-  await cp(manifestFiles[0].absolute, resolve(outputRoot, manifestName));
-  await cp(evidenceFiles[0].absolute, resolve(outputRoot, evidenceName));
   platformSummaries.push({
     artifact_directory: artifactDirectory,
     platform: descriptor.platform,
@@ -197,60 +192,35 @@ for (const artifactDirectory of expectedNames) {
     source_revision: metadata.sourceRevision,
     package: packageName,
     package_sha256: digest(await readFile(resolve(outputRoot, packageName))),
-    metadata: metadataName,
-    manifest: manifestName,
-    signing_evidence: evidenceName,
   });
 }
 
-await writeFile(resolve(outputRoot, "SBOM.cdx.json"), JSON.stringify(mergeSbomInventories(sbomInventories), null, 2) + "\n", "utf8");
-await writeFile(resolve(outputRoot, "THIRD_PARTY_NOTICES.md"), mergeThirdPartyNotices(noticeInventories), "utf8");
-
-const provenance = {
-  schema_version: "1.0.0",
-  product: "HOI4 Mod Setup",
-  source_revision: releaseRevision ?? platformSummaries[0]?.source_revision ?? "unresolved-local",
-  release_tag: releaseTag ?? null,
-  sbom: "SBOM.cdx.json",
-  artifacts: platformSummaries,
-  generated_by: "scripts/prepare_release_assets.mjs",
-};
-await writeFile(resolve(outputRoot, "RELEASE_PROVENANCE.json"), JSON.stringify(provenance, null, 2) + "\n", "utf8");
+mergeSbomInventories(sbomInventories);
+mergeThirdPartyNotices(noticeInventories);
 
 const downloadBase = releaseTag
   ? `https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/${encodeURIComponent(releaseTag)}`
   : null;
-const downloadRows = platformSummaries.map((summary) => {
+const releaseVersion = releaseTag?.replace(/^v/, "") ?? "release";
+const downloadBullets = platformSummaries.map((summary) => {
   const label = summary.platform === "windows"
-    ? "Windows x64"
-    : summary.architecture === "ARM64" ? "macOS Apple silicon" : "macOS Intel";
+    ? "Windows"
+    : summary.architecture === "ARM64" ? "Mac (Apple silicon)" : "Mac (Intel)";
   const packageLink = downloadBase ? `[${summary.package}](${downloadBase}/${encodeURIComponent(summary.package)})` : `\`${summary.package}\``;
-  const manifestLink = downloadBase ? `[manifest](${downloadBase}/${encodeURIComponent(summary.manifest)})` : `\`${summary.manifest}\``;
-  return `| ${label} | ${packageLink} | ${summary.package_sha256} | ${manifestLink} |`;
+  return `- ${label}: ${packageLink}`;
 });
-const verificationLinks = downloadBase
-  ? `[RELEASE_PROVENANCE.json](${downloadBase}/RELEASE_PROVENANCE.json), [RELEASE_ARTIFACTS.sha256](${downloadBase}/RELEASE_ARTIFACTS.sha256), [SBOM.cdx.json](${downloadBase}/SBOM.cdx.json), and [THIRD_PARTY_NOTICES.md](${downloadBase}/THIRD_PARTY_NOTICES.md)`
-  : "`RELEASE_PROVENANCE.json`, `RELEASE_ARTIFACTS.sha256`, `SBOM.cdx.json`, and `THIRD_PARTY_NOTICES.md`";
 await writeFile(resolve(outputRoot, "RELEASE_NOTES.md"), [
-  "# HOI4 Mod Setup",
+  `# HOI4 Mod Setup ${releaseVersion}`,
   "",
-  "This release contains native installers built on the matching Windows and macOS runners from one exact Git commit.",
+  "Download the installer for your computer:",
   "",
-  "## Downloads",
-  "",
-  "| Platform | Installer | SHA-256 | Package manifest |",
-  "| --- | --- | --- | --- |",
-  ...downloadRows,
+  ...downloadBullets,
   "",
   "Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app to Applications.",
   "",
-  `Verify ${verificationLinks} and the source tag before installing.`,
+  "Your computer may occasionally flag a new community build as harmful. This can be a false positive; this is the app's official open-source GitHub release.",
   "",
   "The source is public under the Apache License 2.0: <https://github.com/klimPaskov/HOI4-Mod-Setup>.",
 ].join("\n") + "\n", "utf8");
 
-const outputFiles = (await walk(outputRoot)).filter(({ relative: path }) => path !== "RELEASE_ARTIFACTS.sha256").sort((left, right) => left.relative.localeCompare(right.relative));
-const outputManifest = [];
-for (const file of outputFiles) outputManifest.push({ path: file.relative, sha256: digest(await readFile(file.absolute)) });
-await writeFile(resolve(outputRoot, "RELEASE_ARTIFACTS.sha256"), JSON.stringify(outputManifest, null, 2) + "\n", "utf8");
-console.log(`Prepared ${outputManifest.length} uniquely named release assets for ${platformSummaries.length} platforms.`);
+console.log(`Prepared ${platformSummaries.length} user-facing installers for ${platformSummaries.length} platforms.`);

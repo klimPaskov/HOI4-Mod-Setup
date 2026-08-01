@@ -43,9 +43,11 @@ Before the first stable release, only the latest published preview may receive s
 
 ## Public repository configuration
 
-Enable private vulnerability reporting before the first public release. Keep the public issue forms free of vulnerability intake. Set default GitHub Actions permissions to read-only and grant release write permission only to the draft-release job.
+Private vulnerability reporting is the security intake. Keep public issue forms
+free of vulnerability reports. Default GitHub Actions permissions are
+read-only; only the final gated publication job receives release write access.
 
-The readable action tags in this planning package are templates. Review and pin production third-party actions to immutable revisions before stable release.
+Production third-party actions are pinned to reviewed immutable revisions.
 
 ## ChatGPT authentication
 

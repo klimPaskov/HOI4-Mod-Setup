@@ -1,4 +1,4 @@
-import type { AiAccountStatus, AiAnalysisRequest, AiProviderProfile, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, InstallationPlan, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
+import type { AiAccountStatus, AiAnalysisRequest, AiProviderProfile, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
   id: string;
@@ -41,7 +41,6 @@ interface ReadinessInput {
   project_id: string;
   project_root: string;
   workflow_3d_state: string;
-  lora_interest: boolean;
 }
 
 interface TauriCommandMap {
@@ -49,22 +48,24 @@ interface TauriCommandMap {
   ai_account_read: { args: { provider: string; model: string; endpoint: string }; result: AiAccountStatus };
   store_ai_provider_credential: { args: { provider: string; value: string }; result: boolean };
   remove_ai_provider_credential: { args: { provider: string }; result: boolean };
-  ai_analyze: { args: AiAnalysisRequest; result: CodexAnalysisResult };
+  ai_analyze: { args: { request: AiAnalysisRequest }; result: CodexAnalysisResult };
   approve_scan_evidence: { args: { projectRoot: string; scanId: string; evidence: Array<{ reference: string; path: string; excerpt: string; excerpt_sha256: string; confidence?: number | null }> }; result: void };
   codex_account_read: { args: Record<string, never>; result: CodexAccountStatus };
   codex_login_start: { args: { mode: "browser" | "device" }; result: CodexLoginStart };
   codex_login_wait: { args: { loginId: string }; result: CodexAccountStatus };
-  codex_login_cancel: { args: Record<string, never>; result: void };
+  codex_login_cancel: { args: { loginId: string }; result: void };
   open_codex_login_url: { args: { url: string }; result: void };
+  open_external_url: { args: { url: string }; result: void };
   codex_logout: { args: Record<string, never>; result: void };
-  codex_analyze: { args: CodexAnalysisRequest; result: CodexAnalysisResult };
-  confirm_codex_analysis: { args: { record: CodexAnalysisRecord; confirmedFields: string[] }; result: CodexAnalysisRecord };
+  codex_analyze: { args: { request: CodexAnalysisRequest }; result: CodexAnalysisResult };
+  confirm_codex_analysis: { args: { record: CodexAnalysisRecord; confirmedFields: string[]; confirmedValues: unknown }; result: CodexAnalysisRecord };
   pick_project_folder: { args: Record<string, never>; result: FolderSelection };
   pick_launcher_folder: { args: Record<string, never>; result: FolderSelection };
+  suggest_project_paths: { args: { projectId: string }; result: SuggestedProjectPaths };
   preview_source_manifest: { args: { sourceMode: WizardState["sourceMode"]; pinnedRef: string }; result: SourceManifestPreview };
   store_meshy_credential: { args: { value: string }; result: CredentialReference };
   remove_meshy_credential: { args: { reference: CredentialReference }; result: void };
-  scan_project: { args: { root: string; requestId: string }; result: RawScanResult };
+  scan_project: { args: { root: string; requestId: string; launcherDescriptorPath?: string | null }; result: RawScanResult };
   cancel_scan: { args: { requestId: string }; result: void };
   evaluate_readiness: { args: { input: ReadinessInput }; result: RawReadinessReport };
   run_3d_health_check: { args: { projectRoot: string }; result: WorkflowHealthResult };
@@ -72,7 +73,7 @@ interface TauriCommandMap {
   preview_descriptors: { args: { state: WizardState }; result: GeneratedArtifactPreview[] };
   preview_installation_conflict: { args: { planId: string; path: string }; result: ConflictPreview };
   build_installation_plan: { args: { state: WizardState }; result: InstallationPlan };
-  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; codexAnalysis?: CodexAnalysisRecord | null }; result: InstallationPlan };
+  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; codexAnalysis?: CodexAnalysisRecord | null; addOptionalComponents?: string[] }; result: InstallationPlan };
   approve_installation: { args: { planId: string }; result: void };
   resolve_installation_conflict: { args: { planId: string; path: string; choice: string }; result: InstallationPlan };
   apply_installation: { args: { plan: InstallationPlan; projectRoot: string }; result: TransactionJournal };
@@ -82,6 +83,8 @@ interface TauriCommandMap {
   resume_installation: { args: { projectRoot: string; transactionId: string }; result: TransactionJournal };
   discard_installation_staging: { args: { projectRoot: string; transactionId: string }; result: TransactionJournal };
   open_in_codex: { args: { projectRoot: string }; result: OpenInCodexResult };
+  git_online_prepare: { args: { projectRoot: string; action: Exclude<GitOnlineAction, "none">; remoteName: string; repository: string; branch: string }; result: GitOnlinePlan };
+  git_online_action: { args: { projectRoot: string; planId: string; confirmed: boolean; transactionId?: string | null }; result: GitOnlineResult };
 }
 
 type Invoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -133,7 +136,7 @@ export async function storeMeshyCredential(value: string): Promise<CredentialRef
 }
 
 export async function removeMeshyCredential(reference: CredentialReference): Promise<boolean> {
-  return (await invokeCommand("remove_meshy_credential", { reference })) !== null;
+  return (await invokeCommandResult("remove_meshy_credential", { reference })).error === undefined;
 }
 
 export async function readCodexAccount(): Promise<CodexAccountStatus | null> {
@@ -177,16 +180,21 @@ export async function waitForCodexLoginResult(loginId: string): Promise<CommandR
   return invokeCommandResult("codex_login_wait", { loginId });
 }
 
-export async function cancelCodexLogin(): Promise<boolean> {
-  return (await invokeCommandResult("codex_login_cancel", {})).value !== null;
+export async function cancelCodexLogin(loginId: string): Promise<boolean> {
+  if (!loginId.trim()) return false;
+  return (await invokeCommandResult("codex_login_cancel", { loginId })).error === undefined;
 }
 
 export async function openCodexLoginUrlResult(url: string): Promise<CommandResult<void>> {
   return invokeCommandResult("open_codex_login_url", { url });
 }
 
+export async function openExternalUrlResult(url: string): Promise<CommandResult<void>> {
+  return invokeCommandResult("open_external_url", { url });
+}
+
 export async function logoutCodex(): Promise<boolean> {
-  return (await invokeCommand("codex_logout", {})) !== null;
+  return (await logoutCodexResult()).error === undefined;
 }
 
 export async function logoutCodexResult(): Promise<CommandResult<void>> {
@@ -194,11 +202,23 @@ export async function logoutCodexResult(): Promise<CommandResult<void>> {
 }
 
 export async function runCodexAnalysis(request: CodexAnalysisRequest): Promise<CodexAnalysisResult | null> {
-  return invokeCommand("codex_analyze", request);
+  return invokeCommand("codex_analyze", { request });
+}
+
+export async function runCodexAnalysisResult(
+  request: CodexAnalysisRequest,
+): Promise<CommandResult<CodexAnalysisResult>> {
+  return invokeCommandResult("codex_analyze", { request });
 }
 
 export async function runAiAnalysis(request: AiAnalysisRequest): Promise<CodexAnalysisResult | null> {
-  return invokeCommand("ai_analyze", request);
+  return invokeCommand("ai_analyze", { request });
+}
+
+export async function runAiAnalysisResult(
+  request: AiAnalysisRequest,
+): Promise<CommandResult<CodexAnalysisResult>> {
+  return invokeCommandResult("ai_analyze", { request });
 }
 
 export async function approveScanEvidence(
@@ -206,11 +226,11 @@ export async function approveScanEvidence(
   scanId: string,
   evidence: Array<{ reference: string; path: string; excerpt: string; excerpt_sha256: string; confidence?: number | null }>,
 ): Promise<boolean> {
-  return (await invokeCommand("approve_scan_evidence", { projectRoot, scanId, evidence })) !== null;
+  return (await invokeCommandResult("approve_scan_evidence", { projectRoot, scanId, evidence })).error === undefined;
 }
 
-export async function confirmCodexAnalysis(record: CodexAnalysisRecord, confirmedFields: string[]): Promise<CodexAnalysisRecord | null> {
-  return invokeCommand("confirm_codex_analysis", { record, confirmedFields });
+export async function confirmCodexAnalysis(record: CodexAnalysisRecord, confirmedFields: string[], confirmedValues: unknown): Promise<CodexAnalysisRecord | null> {
+  return invokeCommand("confirm_codex_analysis", { record, confirmedFields, confirmedValues });
 }
 
 export async function pickProjectFolder(): Promise<FolderSelection | null> {
@@ -221,8 +241,16 @@ export async function pickLauncherFolder(): Promise<FolderSelection | null> {
   return invokeCommand("pick_launcher_folder", {});
 }
 
+export async function suggestProjectPaths(projectId: string): Promise<SuggestedProjectPaths | null> {
+  return invokeCommand("suggest_project_paths", { projectId });
+}
+
 export async function previewSourceManifest(sourceMode: WizardState["sourceMode"], pinnedRef: string): Promise<SourceManifestPreview | null> {
-  return invokeCommand("preview_source_manifest", { sourceMode, pinnedRef });
+  return (await previewSourceManifestResult(sourceMode, pinnedRef)).value;
+}
+
+export async function previewSourceManifestResult(sourceMode: WizardState["sourceMode"], pinnedRef: string): Promise<CommandResult<SourceManifestPreview>> {
+  return invokeCommandResult("preview_source_manifest", { sourceMode, pinnedRef });
 }
 
 function newScanRequestId(): string {
@@ -234,6 +262,7 @@ export async function scanProject(
   root: string,
   onProgress?: (progress: ScanProgress) => void,
   onRequestId?: (requestId: string) => void,
+  launcherDescriptorPath?: string,
 ): Promise<ScanSnapshot | null> {
   const requestId = newScanRequestId();
   onRequestId?.(requestId);
@@ -256,7 +285,11 @@ export async function scanProject(
         // The browser preview has no Tauri event bus; the final command result remains authoritative.
       }
     }
-    const result = await invokeCommand("scan_project", { root, requestId });
+    const result = await invokeCommand("scan_project", {
+      root,
+      requestId,
+      launcherDescriptorPath: launcherDescriptorPath || null,
+    });
     if (!result) return null;
     return {
       findings: (result.findings ?? []).map((finding) => ({
@@ -288,41 +321,12 @@ export async function cancelScan(requestId: string): Promise<CommandResult<void>
   return invokeCommandResult("cancel_scan", { requestId });
 }
 
-/*
-export async function scanProjectLegacy(root: string): Promise<ScanSnapshot | null> {
-  const result = await invokeCommand("scan_project", { root, requestId: newScanRequestId() });
-  if (!result) return null;
-  return {
-    findings: (result?.findings ?? []).map((finding) => ({
-    id: finding.id,
-    label: finding.key,
-    value: typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? "",
-    evidenceExcerpt: typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? "",
-    confidence: Math.max(0, ...(finding.evidence ?? []).map((evidence) => evidence.confidence)),
-    evidencePath: finding.evidence?.[0]?.path,
-    status: finding.status === "blocking" ? "blocking" : finding.status === "needs_review" ? "needs_review" : "accepted",
-    evidence: (finding.evidence ?? []).map((evidence) => `${evidence.path}${evidence.note ? ` · ${evidence.note}` : ""}`).join("; "),
-    })),
-    scanId: result.scan_id,
-    projectRoot: result.project_root,
-    completedAt: result.completed_at,
-    partial: result.partial ?? false,
-    cancelled: result.cancelled ?? false,
-    limitsHit: result.limits_hit ?? [],
-    filesScanned: result.files_scanned ?? 0,
-    directoriesScanned: result.directories_scanned ?? 0,
-    bytesRead: result.bytes_read ?? 0,
-  };
-}
-*/
-
-export async function evaluateReadiness(projectRoot: string, projectId: string, optional3d: string, loraInterest: boolean): Promise<ReadinessReport | null> {
+export async function evaluateReadiness(projectRoot: string, projectId: string, optional3d: string): Promise<ReadinessReport | null> {
   const raw = await invokeCommand("evaluate_readiness", {
     input: {
       project_id: projectId,
       project_root: projectRoot,
       workflow_3d_state: optional3d,
-      lora_interest: loraInterest,
     },
   });
   if (!raw) return null;
@@ -375,8 +379,8 @@ export async function resolveInstallationConflict(planId: string, path: string, 
   return invokeCommand("resolve_installation_conflict", { planId, path, choice });
 }
 
-export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord): Promise<InstallationPlan | null> {
-  return invokeCommand("build_maintenance_plan", { mode, projectRoot, codexAnalysis: codexAnalysis ?? null });
+export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord, addOptionalComponents: string[] = []): Promise<InstallationPlan | null> {
+  return invokeCommand("build_maintenance_plan", { mode, projectRoot, codexAnalysis: codexAnalysis ?? null, addOptionalComponents });
 }
 
 export async function rollbackInstallation(projectRoot: string, transactionId: string): Promise<TransactionJournal | null> {
@@ -405,4 +409,12 @@ export async function applyInstallation(plan: InstallationPlan, projectRoot: str
 
 export async function openInCodex(projectRoot: string): Promise<OpenInCodexResult | null> {
   return invokeCommand("open_in_codex", { projectRoot });
+}
+
+export async function prepareGitOnlineAction(args: TauriCommandMap["git_online_prepare"]["args"]): Promise<CommandResult<GitOnlinePlan>> {
+  return invokeCommandResult("git_online_prepare", args);
+}
+
+export async function runGitOnlineAction(args: TauriCommandMap["git_online_action"]["args"]): Promise<CommandResult<GitOnlineResult>> {
+  return invokeCommandResult("git_online_action", args);
 }

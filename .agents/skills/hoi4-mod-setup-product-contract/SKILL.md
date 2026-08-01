@@ -21,7 +21,7 @@ Use the narrower owning skill for scanner, source, transaction, security, UI, te
 Read:
 
 - `AGENTS.md`
-- `GOAL_PROMPT.md`
+- `docs/GOAL_PROMPT.md`
 - `docs/01_product_requirements.md`
 - `docs/02_user_flows.md`
 - `docs/09_component_dependency_model.md`
@@ -35,6 +35,8 @@ Read:
 - The user selects an AI provider and model at the start; Codex/ChatGPT is the default, and selected-provider authentication plus confirmed schema-valid analysis are required before Create, Import, Update, or Repair planning.
 - Provider optimization changes semantic conventions only; deterministic validation, source trust, transaction safety, and readiness rules are provider-independent.
 - New projects create both descriptors, a valid replaceable thumbnail, and the selected folder profile.
+- On Windows and macOS, a new project defaults to the platform-resolved `Documents/Paradox Interactive/Hearts of Iron IV/mod` directory. A missing or untrusted standard directory is visible and requires one explicit manual destination choice.
+- The launcher descriptor is `<project_id>.mod` in the confirmed HOI4 `mod` directory; existing-project launcher registration is discovered from bounded sibling evidence and remains unresolved when registrations are ambiguous.
 - Existing projects are scanned before mutation.
 - No target project file is written before dry-run approval.
 - Agentic HOI4 Modding is selectively fetched, never fully cloned by the app.
@@ -44,7 +46,14 @@ Read:
 - Secrets never enter target project files or locks.
 - Transactions are staged and reversible.
 - Optional workflows cannot block core readiness when unselected or incomplete.
-- The optional flattened ChatGPT project-sources export is visible only for Codex, maps skill `SKILL.md` files to `<skill>.md`, includes the adapted AGENTS/README/subagents and approved extras, and recommends Chat without uploading or planning.
+- `workflow.super_events` is a provider-neutral optional component. Its
+  recommendation uses the checked-in `codex-analysis` component ID/schema
+  contract, unselected installs add no Super Events guidance to `AGENTS.md`,
+  and its readiness check is non-blocking.
+- LoRA/ComfyUI is not an optional workflow in the app; successful Ready may
+  show only the fixed external portrait-workflow link, with no persisted or
+  transactional state.
+- The optional flattened ChatGPT project-sources export is visible only for Codex in the Install review, maps skill `SKILL.md` files to `<skill>.md`, includes the adapted AGENTS/README/subagents, and recommends Chat without uploading or planning.
 - Unsupported platform routes remain honest and visible.
 - The UI stays focused and uses progressive disclosure.
 - New-project identity conventions are generated from the mod name and brief before review; project ID, script prefix, namespace, tags, and starter folders are never presented blank when a usable input exists. Every generated value remains editable, and explicit edits are preserved.
@@ -52,6 +61,11 @@ Read:
 ## Architecture rules
 
 Keep domain behavior in Rust core modules. Keep UI components declarative and typed. The UI may edit draft state, but it does not decide filesystem safety, hashes, source trust, merge validity, transaction success, or credential policy.
+
+Every desktop Tauri command must use `#[tauri::command(async)]`, including
+read-only scans, readiness, health checks, planning, and maintenance. Blocking
+Rust core work must not run on the UI event loop; retain the regression test
+`every_desktop_command_uses_the_async_dispatcher` in `src-tauri/src/commands.rs`.
 
 Platform APIs belong behind interfaces. Core tests should run with fakes. Do not let Windows path assumptions leak into platform-neutral types.
 

@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0.0",
+  "project_id": "cold_war_curtain",
+  "project_root": "D:\\HOI4 Mods\\cold_war_curtain",
+  "platform": "windows",
+  "wizard": {
+    "current_step": "ready",
+    "completed_steps": [
+      "welcome",
+      "chatgpt_sign_in",
+      "description",
+      "identity",
+      "scan",
+      "review",
+      "components",
+      "workflows",
+      "3d",
+      "mcp",
+      "git",
+      "dry_run",
+      "install",
+      "ready"
+    ],
+    "draft_values": {}
+  },
+  "preferences": {
+    "source_mode": "pinned_commit",
+    "telemetry": false
+  },
+  "codex": {
+    "integration": "codex_app_server",
+    "auth_mode": "chatgpt",
+    "auth_status": "signed_in",
+    "analysis_required": true,
+    "analysis_status": "confirmed",
+    "last_error": null,
+    "account_values_persisted": false
+  },
+  "ai": {
+    "provider": "codex",
+    "model": "default",
+    "optimization_profile": "Codex project and ChatGPT Chat"
+  },
+  "credential_references": [
+    {
+      "name": "MESHY_API_KEY",
+      "provider": "windows_credential_manager",
+      "reference": "credential://meshy_api_key/00000000-0000-0000-0000-000000000000"
+    }
+  ]
+}

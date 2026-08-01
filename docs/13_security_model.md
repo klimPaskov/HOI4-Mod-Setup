@@ -60,6 +60,16 @@ evidence checks pass.
 
 Normalize Unicode and separators, reject absolute managed destinations and parent traversal, resolve links, verify final parent containment, detect case collisions, reject Windows device names and alternate data streams, and block archive-link escapes.
 
+## External link security
+
+Application-generated browser links are not provider or project content. The
+version 1 Ready screen may expose only the fixed HTTPS URL
+`https://github.com/klimPaskov/comfyui-hoi4-portraits`. Validate the exact
+scheme, host, owner, and repository path before invoking the typed
+system-browser action. Do not construct it from a provider response, manifest,
+scan result, project file, or user text; do not pass it through a shell. The
+link is informational and cannot satisfy installation, health, or readiness.
+
 ## ChatGPT, Codex, and provider credential boundary
 
 The application delegates ChatGPT authentication to the official Codex App Server managed flow. It does not own OAuth tokens and does not read Codex credential storage.
@@ -91,11 +101,21 @@ Non-Codex rules:
 
 ## Secrets
 
-Secret values do not enter logs through debug formatting, are not copied automatically, do not enter crash reports, are not stored or hashed, are not shown in previews, and are injected only into the approved request header or verified Meshy child process. State-bearing renderer calls blank the Meshy password draft before Tauri IPC; planning receives only the vault-backed opaque reference. The optional flattened Chat export rejects secret-shaped paths and content before staging.
+Secret values do not enter logs through debug formatting, are not copied automatically, do not enter crash reports, are not stored or hashed, are not shown in previews, and are injected only into the approved request header or verified Meshy child process. State-bearing renderer calls blank the Meshy password draft before Tauri IPC; planning receives only the vault-backed opaque reference. The optional flattened Chat export rejects secret-shaped paths and content before staging. `workflow.super_events` has no credential or environment requirement and never creates a vault reference; its unselected state must not add Super Events-specific `AGENTS.md` guidance.
 
 ## Command execution
 
 Represent commands as executable plus argument array. Do not build a shell string for ordinary execution. A checked repository wrapper is an executable artifact with a verified hash. A wrapper route is executable only when the manifest also supplies size and SHA-256 evidence for each core-resolved interpreter and runtime dependency; verify those identities immediately before spawn. Display arguments in a safely escaped form with secrets removed.
+
+Read-only Git inspection runs with system and global configuration disabled,
+optional locks and prompts off, an empty credential helper, inert hook and
+attribute paths, no external diff, no replace objects, and file/ext transports
+disabled. Before spawning Git, the core parses the bounded local `.git/config`
+without includes and rejects executable aliases, hooks, filters, credential or
+transport helpers, URL rewrites, and other external-process settings. Submodule
+paths come from a bounded direct `.gitmodules` read; scanning does not recurse
+through submodule Git processes. This isolation does not make a PATH-discovered
+Git executable independently trusted.
 
 ## Privilege
 
@@ -124,7 +144,7 @@ No telemetry in version 1. Update checks contact only the selected source after 
 
 ## Security tests
 
-Traversal, symlink races, Windows junction escape, case collision, reserved names, huge files, malformed TOML, command injection, environment injection, secret redaction, crash reporting, interrupted apply, and compromised manifest fixtures.
+Traversal, symlink races, Windows junction escape, case collision, reserved names, huge files, malformed TOML, command injection, environment injection, secret redaction, crash reporting, interrupted apply, compromised manifest fixtures, and hostile local Git configuration rejected before process start.
 
 ## Provider input disclosure
 

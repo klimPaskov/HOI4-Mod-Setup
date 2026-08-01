@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://klimpaskov.github.io/hoi4-mod-setup/schemas/project-state.schema.json",
+  "title": "Project Setup State",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project_id",
+    "project_root",
+    "platform",
+    "wizard",
+    "preferences",
+    "codex",
+    "ai",
+    "credential_references"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "project_root": {
+      "type": "string"
+    },
+    "platform": {
+      "enum": [
+        "windows",
+        "macos"
+      ]
+    },
+    "wizard": {
+      "type": "object",
+      "required": [
+        "current_step",
+        "completed_steps"
+      ],
+      "properties": {
+        "current_step": {
+          "type": "string"
+        },
+        "completed_steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "draft_values": {
+          "type": "object"
+        }
+      }
+    },
+    "preferences": {
+      "type": "object",
+      "properties": {
+        "source_mode": {
+          "enum": [
+            "latest",
+            "pinned_commit",
+            "pinned_release"
+          ]
+        },
+        "telemetry": {
+          "const": false
+        }
+      }
+    },
+    "credential_references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "provider",
+          "reference"
+        ],
+        "properties": {
+          "name": {
+            "const": "MESHY_API_KEY"
+          },
+          "provider": {
+            "enum": [
+              "windows_credential_manager",
+              "macos_keychain"
+            ]
+          },
+          "reference": {
+            "type": "string",
+            "pattern": "^credential://meshy_api_key/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "secret_value": {
+            "not": {}
+          }
+        }
+      }
+    },
+    "codex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "integration",
+        "auth_mode",
+        "auth_status",
+        "analysis_required",
+        "analysis_status",
+        "account_values_persisted"
+      ],
+      "properties": {
+        "integration": {
+          "enum": [
+            "codex_app_server",
+            "provider_api"
+          ]
+        },
+        "auth_mode": {
+          "enum": [
+            "chatgpt",
+            "api_key",
+            "local_endpoint"
+          ]
+        },
+        "auth_status": {
+          "enum": [
+            "signed_out",
+            "signing_in",
+            "signed_in",
+            "configured",
+            "failed",
+            "usage_limited"
+          ]
+        },
+        "analysis_required": {
+          "const": true
+        },
+        "analysis_status": {
+          "enum": [
+            "pending",
+            "running",
+            "review",
+            "confirmed",
+            "blocked"
+          ]
+        },
+        "last_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "account_values_persisted": {
+          "const": false
+        }
+      }
+    },
+    "ai": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "model", "optimization_profile"],
+      "properties": {
+        "provider": {
+          "enum": ["codex", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "optimization_profile": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
