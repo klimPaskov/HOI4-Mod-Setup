@@ -55,6 +55,9 @@ The release environment stores `TAURI_SIGNING_PRIVATE_KEY` and
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; only the matching public key is committed.
 The app checks the fixed `releases/latest/download/latest.json` endpoint and
 requires a valid updater signature before install.
+The curation job verifies each final updater artifact against that committed
+public key before it creates `latest.json`; a wrong or rotated private key
+therefore blocks publication instead of shipping an unusable update.
 
 ## Development previews
 

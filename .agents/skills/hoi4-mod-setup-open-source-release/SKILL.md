@@ -151,6 +151,9 @@ the protected Tauri updater key after Authenticode or macOS signing, embed
 signatures in `latest.json`, and publish the two macOS app archives alongside
 the three user-facing installers. A check or install failure must preserve the
 running version and remain non-blocking.
+Before curation, stream-verify every final update artifact against the exact
+public key embedded in `tauri.conf.json`; existence of a `.sig` file alone is
+not release evidence.
 
 ## Skill and docs alignment
 

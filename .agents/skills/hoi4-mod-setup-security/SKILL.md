@@ -165,6 +165,8 @@ bounded and schema-validated before any proposal is accepted.
 - Background checks are non-blocking; installation requires explicit user
   action, and any metadata, download, or signature failure preserves the
   running app.
+- Release curation stream-verifies each final updater artifact with the
+  embedded public key so a stale or mismatched private key blocks publication.
 
 - Resolve exact revisions.
 - Verify SHA-256.

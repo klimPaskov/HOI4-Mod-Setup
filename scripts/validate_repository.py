@@ -177,7 +177,7 @@ def validate_implementation_boundary() -> None:
         fail("Tauri updater must use the fixed latest GitHub Release endpoint")
     if len(updater.get("pubkey", "")) < 80:
         fail("Tauri updater public key is missing")
-    for token in ("latest.json", "TAURI_SIGNING_PRIVATE_KEY", "Package and sign macOS update", "Sign Windows update"):
+    for token in ("latest.json", "TAURI_SIGNING_PRIVATE_KEY", "Package and sign macOS update", "Sign Windows update", "Verify updater signatures against the embedded key"):
         if token not in release:
             fail(f"release workflow is missing updater gate: {token}")
 

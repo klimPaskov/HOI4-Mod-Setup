@@ -1373,11 +1373,13 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 name = "hoi4-mod-setup"
 version = "0.2.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "hex",
  "jsonschema",
  "keyring",
  "libc",
+ "minisign-verify",
  "objc2-foundation",
  "png 0.17.16",
  "proptest",

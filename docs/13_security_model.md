@@ -158,3 +158,6 @@ only in the protected release environment and signs final package bytes after
 platform signing. A metadata, platform, version, URL, download, or signature
 failure leaves the running version unchanged and does not block mod setup.
 Installation requires an explicit user action.
+Release curation stream-verifies every final update artifact with the embedded
+public key before metadata is published, catching stale or mismatched signing
+keys before users can receive an unusable update.
