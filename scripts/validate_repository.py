@@ -59,6 +59,8 @@ FULL_EXPECTED = [
     "scripts/refresh_release_manifest.mjs",
     "scripts/generate_sbom.mjs",
     "scripts/run_desktop_e2e.mjs",
+    "tools/updater-signature-verify/Cargo.toml",
+    "tools/updater-signature-verify/src/main.rs",
     "THIRD_PARTY_NOTICES.md",
 ]
 

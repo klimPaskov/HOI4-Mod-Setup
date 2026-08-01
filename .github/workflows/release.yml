@@ -493,7 +493,7 @@ jobs:
           mac_x64="$(find release-artifacts/hoi4-mod-setup-macos-x64/packages -type f -name '*.app.tar.gz')"
           for artifact in "$windows" "$mac_arm" "$mac_x64"; do
             [[ -f "$artifact" && -f "${artifact}.sig" ]]
-            cargo run --locked --quiet --manifest-path src-tauri/Cargo.toml --bin updater-signature-verify -- "$artifact" "${artifact}.sig"
+            cargo run --locked --quiet --manifest-path tools/updater-signature-verify/Cargo.toml -- "$artifact" "${artifact}.sig" src-tauri/tauri.conf.json
           done
       - name: Curate signed publication bundle
         env:

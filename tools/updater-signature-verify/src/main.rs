@@ -7,14 +7,11 @@ use std::io::Read;
 
 fn run() -> Result<(), String> {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
-    if !(2..=3).contains(&arguments.len()) {
-        return Err("usage: updater-signature-verify <artifact> <signature> [tauri-config]".into());
+    if arguments.len() != 3 {
+        return Err("usage: updater-signature-verify <artifact> <signature> <tauri-config>".into());
     }
-    let configuration_text = if let Some(path) = arguments.get(2) {
-        std::fs::read_to_string(path).map_err(|_| "updater configuration cannot be read")?
-    } else {
-        include_str!("../../tauri.conf.json").to_string()
-    };
+    let configuration_text = std::fs::read_to_string(&arguments[2])
+        .map_err(|_| "updater configuration cannot be read")?;
     let configuration: Value = serde_json::from_str(&configuration_text)
         .map_err(|_| "updater configuration is invalid")?;
     let encoded_key = configuration
