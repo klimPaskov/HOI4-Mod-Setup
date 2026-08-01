@@ -129,12 +129,13 @@ The Ubuntu release-validation job installs the same Tauri system libraries as th
 Linux CI compile job before running all-feature Clippy and tests. These packages
 support validation only and do not declare Linux as a distributed app platform.
 
-Community Windows signing locates `signtool.exe` through the bounded SDK version
-path rather than recursively scanning the SDK. The RFC 3161 attempt has a two-minute
-process bound; if the configured service does not complete, the workflow replaces
-the partial result with a verified ChaosX Authenticode signature without a timestamp
-and records that method in internal signing evidence. The signing job has a hard
-twenty-minute limit and always removes temporary certificate material.
+Community Windows signing uses the generated ChaosX certificate directly through
+`Set-AuthenticodeSignature`; it does not export a PFX, scan the Windows SDK, or wait
+on a timestamp service. The certificate is trusted only in current-user stores for
+verification, the untimestamped method is recorded in internal signing evidence,
+and the certificate is always removed afterward. Official Azure signing retains
+the configured RFC 3161 timestamp route. The signing job has a hard twenty-minute
+limit.
 
 ## License and updater gates
 

@@ -208,11 +208,7 @@ jobs:
       - name: Sign community build as ChaosX
         if: ${{ vars.HOI4_MOD_SETUP_RELEASE_SIGNING_CONFIGURED != 'true' }}
         shell: pwsh
-        env:
-          TIMESTAMP_URL: ${{ vars.HOI4_MOD_SETUP_WINDOWS_TIMESTAMP_URL }}
         run: |
-          $passwordText = [Guid]::NewGuid().ToString("N")
-          $password = ConvertTo-SecureString -String $passwordText -AsPlainText -Force
           $certificate = New-SelfSignedCertificate `
             -Type CodeSigningCert `
             -Subject "CN=ChaosX" `
@@ -220,52 +216,22 @@ jobs:
             -CertStoreLocation "Cert:\CurrentUser\My" `
             -NotAfter (Get-Date).AddYears(3) `
             -HashAlgorithm SHA256
-          $pfxPath = Join-Path $env:RUNNER_TEMP "hoi4-mod-setup-community-signing.pfx"
-          $cerPath = Join-Path $env:RUNNER_TEMP "hoi4-mod-setup-community-signing.cer"
           "COMMUNITY_CERT_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "COMMUNITY_PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "COMMUNITY_CER_PATH=$cerPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Export-PfxCertificate -Cert $certificate -FilePath $pfxPath -Password $password | Out-Null
-          Export-Certificate -Cert $certificate -FilePath $cerPath | Out-Null
-          Import-Certificate -FilePath $cerPath -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
-          Import-Certificate -FilePath $cerPath -CertStoreLocation "Cert:\CurrentUser\TrustedPublisher" | Out-Null
-          $signTool = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -File |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1
-          if (-not $signTool) { throw "signtool.exe is unavailable on the Windows runner" }
-          function Invoke-BoundedSignTool([string[]]$Arguments, [int]$TimeoutSeconds) {
-            $startInfo = [Diagnostics.ProcessStartInfo]::new()
-            $startInfo.FileName = $signTool.FullName
-            $startInfo.UseShellExecute = $false
-            $startInfo.CreateNoWindow = $true
-            $startInfo.RedirectStandardOutput = $true
-            $startInfo.RedirectStandardError = $true
-            foreach ($argument in $Arguments) { [void]$startInfo.ArgumentList.Add($argument) }
-            $process = [Diagnostics.Process]::new()
-            $process.StartInfo = $startInfo
-            [void]$process.Start()
-            if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-              $process.Kill($true)
-              $process.WaitForExit()
-              return 124
+          foreach ($storeName in @("Root", "TrustedPublisher")) {
+            $store = [Security.Cryptography.X509Certificates.X509Store]::new(
+              $storeName,
+              [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser
+            )
+            try {
+              $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+              $store.Add($certificate)
+            } finally {
+              $store.Close()
             }
-            $standardOutput = $process.StandardOutput.ReadToEnd()
-            $standardError = $process.StandardError.ReadToEnd()
-            if ($standardOutput) { Write-Host $standardOutput }
-            if ($standardError) { Write-Warning $standardError }
-            return $process.ExitCode
           }
-          $baseArguments = @(
-            "sign", "/fd", "SHA256", "/f", $pfxPath, "/p", $passwordText,
-            "/d", "HOI4 Mod Setup", "/du", "https://github.com/klimPaskov/HOI4-Mod-Setup"
-          )
-          $timestampedExit = Invoke-BoundedSignTool ($baseArguments + @("/tr", $env:TIMESTAMP_URL, "/td", "SHA256", $env:WINDOWS_PACKAGE)) 120
-          if ($timestampedExit -ne 0) {
-            Write-Warning "The timestamp service did not complete; preserving a bounded ChaosX Authenticode signature without a timestamp."
-            $fallbackExit = Invoke-BoundedSignTool ($baseArguments + @($env:WINDOWS_PACKAGE)) 60
-            if ($fallbackExit -ne 0) { throw "ChaosX Authenticode signing failed" }
-            "SIGNATURE_METHOD=authenticode-community-untimestamped" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          }
+          $signature = Set-AuthenticodeSignature -FilePath $env:WINDOWS_PACKAGE -Certificate $certificate -HashAlgorithm SHA256
+          if ($signature.Status -ne "Valid") { throw "ChaosX Authenticode signing failed: $($signature.Status)" }
+          "SIGNATURE_METHOD=authenticode-community-untimestamped" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Verify and record Windows signature
         shell: pwsh
         run: |
