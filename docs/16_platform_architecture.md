@@ -146,6 +146,13 @@ A component can be unsupported without making the application unsupported. Curre
 
 Production should use Windows code signing, macOS Developer ID signing and notarization, deterministic build metadata, and signed application-update packages. Application updates are separate from project workflow updates.
 
+The desktop shell checks the fixed GitHub Release update channel asynchronously
+after launch. Rust owns the updater client, signature verification, download,
+installation, and restart. React only presents an available version and the
+user's install action. Offline checks are non-blocking. Windows installs the
+verified final NSIS package in passive mode; macOS installs a verified archive
+of the final signed application for the current architecture.
+
 ## Local data
 
 ### Windows

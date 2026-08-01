@@ -149,3 +149,15 @@ Traversal, symlink races, Windows junction escape, case collision, reserved name
 ## Provider input disclosure
 
 Every existing-project provider request has a visible input manifest. The user can remove files or excerpts before transmission. Exclude binaries, `.git/`, credential stores, environment files, secrets, provider caches, large generated assets, and any path outside approved roots. Hash the approved input and validate the response schema before showing proposals.
+
+## Application updates
+
+Application updates use a fixed HTTPS GitHub Release metadata endpoint and a
+Tauri updater public key embedded in the app. The private updater key exists
+only in the protected release environment and signs final package bytes after
+platform signing. A metadata, platform, version, URL, download, or signature
+failure leaves the running version unchanged and does not block mod setup.
+Installation requires an explicit user action.
+Release curation stream-verifies every final update artifact with the embedded
+public key before metadata is published, catching stale or mismatched signing
+keys before users can receive an unusable update.

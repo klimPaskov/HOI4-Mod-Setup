@@ -4,6 +4,19 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+## 0.2.0 - 2026-08-01
+
+### Added
+
+- Signed in-app updates with a quiet launch check and user-approved install
+- Optional Super Events workflow and repair support for previously prepared mods
+- Codex-only flattened ChatGPT project sources in the Components step
+
+### Changed
+
+- Simplified user-facing text, component review, and application artwork
+- Consolidated routine dependency updates into one pull request per ecosystem
+
 ## 0.1.1 - 2026-07-29
 
 ### Added

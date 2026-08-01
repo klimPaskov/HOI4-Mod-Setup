@@ -28,7 +28,7 @@ checkout, or search. Latest resolves one commit; pinned uses a commit/release.
 Fetch only declared files and wiki, verify SHA-256, and never invent provenance,
 dependencies, commands, packages, servers, or support.
 
-When Codex is selected, offer a final optional checkbox for
+When Codex is selected, offer an optional Components checkbox for
 `<mod_project>/chatgpt_project_sources/`. Flatten each skill to `<skill>.md`;
 include selected subagents, adapted AGENTS, and README.
 Use normal transaction/recovery; recommend ChatGPT "Chat" only, never upload or

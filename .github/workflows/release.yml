@@ -76,6 +76,7 @@ jobs:
           pnpm test:a11y
           pnpm test:e2e
           pnpm test:manifest
+          pnpm test:release-assets
           python scripts/validate_repository.py
           python scripts/check_committed_secrets.py
           cargo fmt --all -- --check
@@ -156,6 +157,12 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Install updater signer
+        shell: pwsh
+        run: npm install --global --ignore-scripts @tauri-apps/cli@2.11.4
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: hoi4-mod-setup-unsigned-windows-x64
@@ -236,6 +243,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "ChaosX Authenticode signing failed" }
           $certificate.Dispose()
           Remove-Variable pfxPassword -ErrorAction SilentlyContinue
+      - name: Sign Windows update
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) { throw "Updater signing key is unavailable" }
+          tauri signer sign $env:WINDOWS_PACKAGE
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath "$env:WINDOWS_PACKAGE.sig")) { throw "Windows updater signing failed" }
       - name: Verify and record Windows signature
         shell: pwsh
         run: |
@@ -301,6 +317,12 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Install updater signer
+        shell: bash
+        run: npm install --global --ignore-scripts @tauri-apps/cli@2.11.4
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: hoi4-mod-setup-unsigned-${{ matrix.platform }}
@@ -360,6 +382,8 @@ jobs:
           xcrun notarytool submit "$MACOS_PACKAGE" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
           xcrun stapler staple "$MACOS_PACKAGE"
           xcrun stapler validate "$MACOS_PACKAGE"
+          xcrun stapler staple "$MACOS_APP"
+          xcrun stapler validate "$MACOS_APP"
           echo "MACOS_SIGNING_LEVEL=configured" >> "$GITHUB_ENV"
           echo "MACOS_SIGNATURE_METHOD=codesign-and-stapler" >> "$GITHUB_ENV"
       - name: Sign community macOS build
@@ -373,6 +397,19 @@ jobs:
           hdiutil create -volname "HOI4 Mod Setup" -srcfolder "$(dirname "$MACOS_APP")" -ov -format UDZO "$MACOS_PACKAGE"
           echo "MACOS_SIGNING_LEVEL=community" >> "$GITHUB_ENV"
           echo "MACOS_SIGNATURE_METHOD=codesign-ad-hoc" >> "$GITHUB_ENV"
+      - name: Package and sign macOS update
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${TAURI_SIGNING_PRIVATE_KEY:?Updater signing key is unavailable}"
+          updater_package="release-artifact/packages/HOI4 Mod Setup.app.tar.gz"
+          COPYFILE_DISABLE=1 /usr/bin/tar -czf "$updater_package" -C "$(dirname "$MACOS_APP")" "$(basename "$MACOS_APP")"
+          tauri signer sign "$updater_package"
+          [[ -s "$updater_package" && -s "${updater_package}.sig" ]]
+          echo "MACOS_UPDATER_PACKAGE=$updater_package" >> "$GITHUB_ENV"
       - name: Record macOS signing evidence
         shell: bash
         run: |
@@ -431,6 +468,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
+      - name: Configure Rust verifier
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: hoi4-mod-setup-windows-x64
@@ -443,20 +484,34 @@ jobs:
         with:
           name: hoi4-mod-setup-macos-x64
           path: release-artifacts/hoi4-mod-setup-macos-x64
+      - name: Verify updater signatures against the embedded key
+        shell: bash
+        run: |
+          set -euo pipefail
+          windows="$(find release-artifacts/hoi4-mod-setup-windows-x64/packages -type f -name '*.exe')"
+          mac_arm="$(find release-artifacts/hoi4-mod-setup-macos-arm64/packages -type f -name '*.app.tar.gz')"
+          mac_x64="$(find release-artifacts/hoi4-mod-setup-macos-x64/packages -type f -name '*.app.tar.gz')"
+          for artifact in "$windows" "$mac_arm" "$mac_x64"; do
+            [[ -f "$artifact" && -f "${artifact}.sig" ]]
+            cargo run --locked --quiet --manifest-path tools/updater-signature-verify/Cargo.toml -- "$artifact" "${artifact}.sig" src-tauri/tauri.conf.json
+          done
       - name: Curate signed publication bundle
         env:
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: node scripts/prepare_release_assets.mjs release-artifacts publication-assets
-      - name: Require exactly three public installers
+      - name: Require installers and update files
         shell: bash
         run: |
           set -euo pipefail
           expected=(
             "HOI4-Mod-Setup-macos-arm64.dmg"
+            "HOI4-Mod-Setup-macos-arm64.app.tar.gz"
             "HOI4-Mod-Setup-macos-x64.dmg"
+            "HOI4-Mod-Setup-macos-x64.app.tar.gz"
             "HOI4-Mod-Setup-windows-x64-setup.exe"
             "RELEASE_NOTES.md"
+            "latest.json"
           )
           mapfile -t actual < <(find publication-assets -maxdepth 1 -type f -printf '%f\n' | sort)
           [[ "${actual[*]}" == "${expected[*]}" ]]
@@ -486,13 +541,16 @@ jobs:
           set -euo pipefail
           assets=(
             publication-assets/HOI4-Mod-Setup-macos-arm64.dmg
+            publication-assets/HOI4-Mod-Setup-macos-arm64.app.tar.gz
             publication-assets/HOI4-Mod-Setup-macos-x64.dmg
+            publication-assets/HOI4-Mod-Setup-macos-x64.app.tar.gz
             publication-assets/HOI4-Mod-Setup-windows-x64-setup.exe
+            publication-assets/latest.json
           )
           for asset in "${assets[@]}" publication-assets/RELEASE_NOTES.md; do
             [[ -f "$asset" && ! -L "$asset" ]]
           done
-          [[ "$(find publication-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" == "4" ]]
+          [[ "$(find publication-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" == "7" ]]
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "A release already exists for ${GITHUB_REF_NAME}; published tags are never reused" >&2
             exit 1

@@ -1,137 +1,115 @@
 # HOI4 Mod Setup
 
-HOI4 Mod Setup is a Windows and macOS desktop wizard that prepares a new or
-existing Hearts of Iron IV mod for agentic development. It creates launcher
-files, project structure, workflow files, and a readiness report
-without silently replacing user work.
+HOI4 Mod Setup is a Windows and macOS wizard for creating a new Hearts of Iron
+IV mod or preparing an existing mod for AI-assisted development. It creates the
+launcher files, folders, instructions, and tools you choose while keeping your
+existing work safe.
 
-> **Current release:** [HOI4 Mod Setup 0.1.1](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/tag/v0.1.1) for Windows and macOS.
+## Download
 
-## Install
+[Open the latest release page](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
 
-The public source repository is [klimPaskov/HOI4-Mod-Setup](https://github.com/klimPaskov/HOI4-Mod-Setup).
+- Windows: [Download the `.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.0/HOI4-Mod-Setup-windows-x64-setup.exe)
+- Mac (Apple silicon): [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.0/HOI4-Mod-Setup-macos-arm64.dmg)
+- Mac (Intel): [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.0/HOI4-Mod-Setup-macos-x64.dmg)
 
-### Downloads
-
-- Windows: [Download the `.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.1.1/HOI4-Mod-Setup-windows-x64-setup.exe)
-- Mac (Apple silicon): [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.1.1/HOI4-Mod-Setup-macos-arm64.dmg)
-- Mac (Intel): [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.1.1/HOI4-Mod-Setup-macos-x64.dmg)
-
-Your computer may occasionally flag a new community build as harmful. This can
-be a false positive; the app is open source and these links use its official
-GitHub release page.
+Your computer may occasionally show a warning for a new community build. This
+can be a false positive. HOI4 Mod Setup is safe and open source.
 
 ## Use the wizard
 
-The wizard has seven short phases. Each screen keeps the current task in focus,
-and earlier choices remain editable with Back.
+The wizard has seven short phases. You can go back and change earlier choices
+at any time before setup begins.
 
 ### 1. Project — choose what you are preparing
 
 ![HOI4 Mod Setup welcome screen](docs/screenshots/01-welcome.png)
 
-Choose **Create new mod** for a fresh launcher-ready scaffold or **Existing
-mod** for a bounded, read-only scan. Codex is the default planning provider;
-the provider selection view lets you choose Claude, Kimi, GLM, DeepSeek, a
-local model, or another explicitly configured route before analysis begins.
+Choose **Create new mod** to start a fresh mod or **Existing mod** to prepare a
+mod you already have. Codex is selected by default, and you can instead choose
+Claude, Kimi, GLM, DeepSeek, a local model, or another supported provider.
 
-![Provider selection with model and vault-key controls](docs/screenshots/10-provider-selection.png)
+![Provider selection with model and sign-in controls](docs/screenshots/10-provider-selection.png)
 
-For an existing mod, choose **Import existing mod** or use **Manage an existing
-project** to check a setup already created by the wizard.
+For a mod that has already been prepared, choose **Manage an existing project**
+to repair missing files or add a workflow later.
 
 ![Existing project entry for repair and workflow updates](docs/screenshots/11-existing-project.png)
 
-The selected profile shapes the generated project guidance and conventions.
+### 2. Review — describe the mod and check its details
 
-### 2. Review — describe the mod and confirm its identity
+For a new mod, enter its name and a short description. The app fills in the mod
+ID, script prefix, namespace, tags, starter folders, project location, and
+launcher file. It also creates the mod's `descriptor.mod` and a replaceable
+`thumbnail.png`. You can change any of the suggested details before continuing.
 
-For a new mod, enter only a name and a short natural-language brief. The app
-fills the project ID, script prefix, primary namespace, descriptor tags, starter
-folders, project path, and launcher descriptor path. Review or edit any value;
-manual edits stay preserved.
+![Mod name and description](docs/screenshots/02-description.png)
 
-New projects include `descriptor.mod`, the matching launcher `.mod` file, and
-an editable `thumbnail.png`.
+![Editable generated mod details](docs/screenshots/03-identity.png)
 
-![Mod name and description with generated-value explanation](docs/screenshots/02-description.png)
+For an existing mod, the app checks its current structure and shows anything
+that needs attention before making changes.
 
-![Editable generated identity and descriptor preview](docs/screenshots/03-identity.png)
+### 3. Components — choose what to install
 
-For an existing mod, the same phase shows scan findings with evidence,
-confidence, proposed action, and an editable decision. The scan does not create
-temporary files or alter the project. If the project already has a valid HOI4
-Mod Setup lock, the review shows **Repair or add workflows**. Use it later to
-restore managed files or add the 3D or Super Events workflow without starting
-over.
+![Component selection](docs/screenshots/04-components.png)
 
-### 3. Components — choose workflow material
+Choose the instructions, skills, tools, and offline wiki you want in the mod.
+Required items stay selected so the setup remains usable.
 
-![Verified component selection](docs/screenshots/04-components.png)
-
-Select the components you want. The app downloads only what those components
-need and leaves everything else alone.
+When Codex is selected, you can also choose **Prepare a flattened ChatGPT
+project-sources folder**. This creates one easy-to-upload folder containing the
+project guidance, README, selected skills, and selected subagents. Open its file
+list to see the filenames and sizes.
 
 ### 4. Integrations — choose optional workflows
 
 ![Optional 3D and Super Events workflows](docs/screenshots/05-integrations.png)
 
-The 3D question is exactly **Do you want to set up the 3D models workflow?**.
-Its Meshy key stays in the OS credential vault and is injected only when the
-allowlisted workflow needs `MESHY_API_KEY`. A missing key leaves 3D incomplete
-without blocking core setup.
+Select **Do you want to set up the 3D models workflow?** to add the available 3D
+tools. Your Meshy key stays in your computer's secure credential storage and
+can also be added later.
 
-Immediately after it, **Do you want to set up the Super Events workflow?**
-adds a ready-to-use popup, reusable registration workflow, GUI and GFX files,
-templates, example event, visual examples, and Photoshop templates. The package
-is adapted to the mod's namespace and remains optional.
+Select **Do you want to set up the Super Events workflow?** to add a ready-made
+popup, templates, an example event, and reusable files for adding more events.
 
-![MCP and credential review](docs/screenshots/06-mcp-credentials.png)
+![Connections and credentials](docs/screenshots/06-mcp-credentials.png)
 
-MCP and provider credentials are reviewed here. Secrets are never placed in
-the project, installation lock, logs, or screenshots.
+Review the optional tools and keys used by your selected workflows.
 
 ### 5. Git — keep the project local or publish it
 
 ![Git choices](docs/screenshots/07-git.png)
 
-Choose whether to initialize, preserve, or skip Git; review `.gitignore`,
-branch, initial commit, and remote choices. You can keep the mod local, push to
-an existing remote, or create a public GitHub repository. Online actions ask
-for separate approval.
+You can keep the mod local, connect it to an existing Git repository, or create
+a public GitHub repository. Nothing is published until you approve it.
 
 ### 6. Install — review and set up
 
-![Install review with planned changes and optional ChatGPT sources](docs/screenshots/09-dry-run.png)
+![Install review](docs/screenshots/09-dry-run.png)
 
-When Codex is selected, this screen offers one optional checkbox to prepare
-`chatgpt_project_sources/` for ChatGPT **Chat**. It flattens skills to
-`<skill>.md` and includes the adapted `AGENTS.md`, created `README.md`, and
-selected subagents while leaving the normal source tree intact.
-
-Read the planned files, conflicts, Git actions, optional workflows, and any
-external actions, then start installation. Existing edits are kept unless you
-approve a valid conflict choice.
+Review what will be added or changed, resolve any file conflicts, and start the
+setup. Your existing files remain unchanged unless you approve a replacement
+or merge.
 
 ### 7. Ready — open the project
 
-The final report shows whether the project is ready for the selected provider.
-**Open in Codex** is enabled when the required setup checks pass. If you selected
-flattened Chat sources, the final message recommends starting planning with
-ChatGPT **Chat**.
+The final screen shows whether the mod is ready for your selected AI provider.
+Codex projects can be opened directly with **Open in Codex**.
 
-For AI portraits, the completed screen links to
+HOI4 Mod Setup checks for new versions when it opens. If an update is
+available, choose **Update now** to install it.
+
+If you selected the ChatGPT project folder, start planning with ChatGPT
+**Chat** after setup.
+
+For AI portraits, the final screen also links to
 [ComfyUI HOI4 Portraits](https://github.com/klimPaskov/comfyui-hoi4-portraits).
 
 ## Privacy
 
-The app has no telemetry in version 1. Provider keys stay in Windows Credential
-Manager or macOS Keychain, and ChatGPT sign-in remains managed by Codex.
-User-modified files are never silently replaced.
-
-Contributor setup, security reporting, and release maintenance are in
-[CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),
-[DEVELOPMENT.md](DEVELOPMENT.md), and [RELEASING.md](RELEASING.md).
+HOI4 Mod Setup has no telemetry. Provider keys stay in Windows Credential
+Manager or macOS Keychain, and ChatGPT sign-in is handled by Codex.
 
 ## License
 

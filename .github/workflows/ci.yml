@@ -62,6 +62,9 @@ jobs:
       - name: Test frontend
         if: steps.detect.outputs.present == 'true'
         run: pnpm test
+      - name: Test release updater assets
+        if: steps.detect.outputs.present == 'true'
+        run: pnpm test:release-assets
       - name: Build frontend
         if: steps.detect.outputs.present == 'true'
         run: pnpm build

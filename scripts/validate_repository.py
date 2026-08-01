@@ -59,6 +59,8 @@ FULL_EXPECTED = [
     "scripts/refresh_release_manifest.mjs",
     "scripts/generate_sbom.mjs",
     "scripts/run_desktop_e2e.mjs",
+    "tools/updater-signature-verify/Cargo.toml",
+    "tools/updater-signature-verify/src/main.rs",
     "THIRD_PARTY_NOTICES.md",
 ]
 
@@ -160,6 +162,8 @@ def validate_implementation_boundary() -> None:
         "preview_source_manifest",
         "preview_installation_conflict",
         "build_installation_plan",
+        "app_update_check",
+        "app_update_install",
     ):
         if token not in commands or token not in tauri_boundary:
             fail(f"typed desktop boundary is missing {token}")
@@ -170,6 +174,14 @@ def validate_implementation_boundary() -> None:
             fail(f"CI is missing the repository-owned gate: {token}")
     if "pnpm desktop:e2e" not in release:
         fail("release workflow must launch the built native application smoke test")
+    updater = tauri.get("plugins", {}).get("updater", {})
+    if updater.get("endpoints") != ["https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/latest.json"]:
+        fail("Tauri updater must use the fixed latest GitHub Release endpoint")
+    if len(updater.get("pubkey", "")) < 80:
+        fail("Tauri updater public key is missing")
+    for token in ("latest.json", "TAURI_SIGNING_PRIVATE_KEY", "Package and sign macOS update", "Sign Windows update", "Verify updater signatures against the embedded key"):
+        if token not in release:
+            fail(f"release workflow is missing updater gate: {token}")
 
 
 def validate_yaml() -> None:

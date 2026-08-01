@@ -46,6 +46,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tauri::Emitter;
+use tauri_plugin_updater::UpdaterExt;
 use uuid::Uuid;
 
 struct PreparedPlan {
@@ -113,6 +114,14 @@ struct WorkflowHealthResult {
     timed_out: bool,
     stdout: String,
     stderr: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppUpdateStatus {
+    current_version: String,
+    available_version: Option<String>,
+    available: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -537,6 +546,7 @@ fn journal_bound_to_root(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|_window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 cancel_all_codex_logins();
@@ -547,6 +557,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
+            app_update_check,
+            app_update_install,
             ai_provider_profiles,
             ai_account_read,
             store_ai_provider_credential,
@@ -601,6 +613,38 @@ fn app_info() -> Value {
         "manifest": crate::source::MANIFEST_PATH,
         "supported_platforms": ["windows", "macos"],
     })
+}
+
+#[tauri::command(async)]
+async fn app_update_check(app: tauri::AppHandle) -> Result<AppUpdateStatus, String> {
+    let current_version = app.package_info().version.to_string();
+    let update = app
+        .updater()
+        .map_err(|_| "Updates are unavailable in this build.".to_string())?
+        .check()
+        .await
+        .map_err(|_| "The update service could not be reached.".to_string())?;
+    Ok(AppUpdateStatus {
+        current_version,
+        available_version: update.as_ref().map(|candidate| candidate.version.clone()),
+        available: update.is_some(),
+    })
+}
+
+#[tauri::command(async)]
+async fn app_update_install(app: tauri::AppHandle) -> Result<(), String> {
+    let update = app
+        .updater()
+        .map_err(|_| "Updates are unavailable in this build.".to_string())?
+        .check()
+        .await
+        .map_err(|_| "The update service could not be reached.".to_string())?
+        .ok_or_else(|| "HOI4 Mod Setup is already up to date.".to_string())?;
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|_| "The update could not be verified or installed.".to_string())?;
+    app.restart();
 }
 
 #[tauri::command(async)]

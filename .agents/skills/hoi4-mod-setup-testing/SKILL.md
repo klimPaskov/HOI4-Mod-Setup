@@ -152,6 +152,8 @@ A release is blocked by:
 - inaccessible core UI
 - unsigned or unverified stable artifacts when signing is required
 - missing license for public release
+- updater metadata missing a platform, using a wrong release URL, carrying an
+  empty signature, or referencing bytes changed after updater signing
 - failing ChatGPT authentication, provider adapter, or common analysis contract tests
 - launcher scaffold failure on either supported platform
 

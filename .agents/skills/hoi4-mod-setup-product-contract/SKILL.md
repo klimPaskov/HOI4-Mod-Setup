@@ -53,7 +53,7 @@ Read:
 - LoRA/ComfyUI is not an optional workflow in the app; successful Ready may
   show only the fixed external portrait-workflow link, with no persisted or
   transactional state.
-- The optional flattened ChatGPT project-sources export is visible only for Codex in the Install review, maps skill `SKILL.md` files to `<skill>.md`, includes the adapted AGENTS/README/subagents, and recommends Chat without uploading or planning.
+- The optional flattened ChatGPT project-sources export is selectable only for Codex on Components, maps skill `SKILL.md` files to `<skill>.md`, includes the adapted AGENTS/README/subagents, shows its files and sizes, and recommends Chat without starting an upload or planning action.
 - Unsupported platform routes remain honest and visible.
 - The UI stays focused and uses progressive disclosure.
 - New-project identity conventions are generated from the mod name and brief before review; project ID, script prefix, namespace, tags, and starter folders are never presented blank when a usable input exists. Every generated value remains editable, and explicit edits are preserved.

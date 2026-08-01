@@ -101,8 +101,9 @@ Run the 12-stage transaction. Verify the launcher descriptor resolves to the pro
 
 ### Optional flattened Chat sources
 
-Only when Codex is selected, show the optional checkbox in the Install review: **Prepare a
-flattened ChatGPT project-sources folder**. Review its generated
+Only when Codex is selected, show the optional checkbox on Components under
+**Choose what to install**: **Prepare a flattened ChatGPT project-sources
+folder**. Show its filenames and available sizes there. Review its generated
 `chatgpt_project_sources/` operations. Skills become `<skill>.md`; selected
 subagents, adapted `AGENTS.md`, and created or existing `README.md` are
 included. Reject links, collisions, secret-shaped content, and oversized files

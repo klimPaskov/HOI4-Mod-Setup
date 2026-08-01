@@ -31,6 +31,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .titlebar { height: 72px; flex: 0 0 72px; display: flex; align-items: center; gap: 12px; padding: 0 28px; border-bottom: 1px solid var(--line); background: #0b101a; }
 .brand-mark { width: 34px; height: 34px; display: block; flex: 0 0 auto; border-radius: 9px; }
 .brand-name { font-size: 16px; font-weight: 750; letter-spacing: -.01em; }
+.app-update { min-width: 0; margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--muted-strong); font-size: 13px; }
+.update-button { min-height: 34px; padding-inline: 13px; }
 
 .workspace { min-height: 0; flex: 1; display: grid; grid-template-columns: 224px minmax(0, 1fr); }
 .phase-rail { display: flex; min-height: 0; flex-direction: column; padding: 28px 15px 16px; border-right: 1px solid var(--line); background: #0a1019; }

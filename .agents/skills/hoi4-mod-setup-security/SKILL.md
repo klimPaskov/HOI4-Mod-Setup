@@ -159,6 +159,15 @@ bounded and schema-validated before any proposal is accepted.
 
 ## Source and update trust
 
+- Application updates use one fixed HTTPS GitHub Release endpoint and the
+  committed Tauri updater public key. The private key is release-environment
+  only and signs final platform bytes after platform publisher signing.
+- Background checks are non-blocking; installation requires explicit user
+  action, and any metadata, download, or signature failure preserves the
+  running app.
+- Release curation stream-verifies each final updater artifact with the
+  embedded public key so a stale or mismatched private key blocks publication.
+
 - Resolve exact revisions.
 - Verify SHA-256.
 - Keep manifest and files on one revision.
