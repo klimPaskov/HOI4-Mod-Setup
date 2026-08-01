@@ -125,6 +125,10 @@ inspection artifact, but it is not release evidence.
 ref. The release source gate fetches that one exact remote tag ref before checking
 its object type and peeling its commit; do not weaken this to trust the checkout ref.
 
+The Ubuntu release-validation job installs the same Tauri system libraries as the
+Linux CI compile job before running all-feature Clippy and tests. These packages
+support validation only and do not declare Linux as a distributed app platform.
+
 ## License and updater gates
 
 The repository is licensed under Apache 2.0 in `LICENSE`, and the decision is
