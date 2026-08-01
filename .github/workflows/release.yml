@@ -30,6 +30,7 @@ jobs:
           fail() { echo "::error title=Invalid release source::$1"; exit 1; }
           [[ "$GITHUB_REF" == "refs/tags/$GITHUB_REF_NAME" ]] || fail "Release must run from the pushed tag ref."
           [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || fail "Tag must use vMAJOR.MINOR.PATCH format."
+          git fetch --force --no-tags origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
           [[ "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" == "tag" ]] || fail "Release tag must be annotated."
           tag_commit="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
           checkout_commit="$(git rev-parse "HEAD^{commit}")"
