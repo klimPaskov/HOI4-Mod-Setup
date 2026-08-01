@@ -91,12 +91,18 @@ The repository-owned `pnpm release:build`, `pnpm release:verify`, `pnpm desktop:
 The release environment always requires
 `HOI4_MOD_SETUP_RELEASE_PUBLISH=true`. With
 `HOI4_MOD_SETUP_RELEASE_SIGNING_CONFIGURED=false`, Windows creates an ephemeral
-code-signing certificate named `ChaosX`, timestamps the installer through
-`http://timestamp.digicert.com`, and discards the private key after signing;
+copy of the protected `WINDOWS_COMMUNITY_PFX_BASE64` certificate named `ChaosX`,
+uses `WINDOWS_COMMUNITY_PFX_PASSWORD_BASE64` to sign without network access, and
+removes the temporary PFX after signing;
 macOS applies an ad-hoc code signature to each app before rebuilding its DMG.
 Apple certificate and notarization secrets are injected only into the
 official-signing step; the community macOS path receives no Apple secrets.
 The public release contains no certificate or private key.
+
+The two `WINDOWS_COMMUNITY_*` values are encrypted repository secrets. Rotate
+them together; never store the decoded PFX or password in source, artifacts, or
+logs. The official Azure route continues to use the reviewed DigiCert RFC 3161
+timestamp endpoint.
 
 Set `HOI4_MOD_SETUP_RELEASE_SIGNING_CONFIGURED=true` only after the protected
 official credentials below are available:
