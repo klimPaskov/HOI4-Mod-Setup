@@ -7,7 +7,7 @@
 3. Open recovery first when a journal is incomplete.
 4. Otherwise show Welcome.
 5. Show the provider and model selection before semantic planning.
-6. For Codex, start the local Codex App Server and read account state; for other providers, validate the explicit endpoint and vault reference.
+6. For Codex, start the local Codex App Server and read account state; for a known hosted provider, fill its verified defaults and validate the vault reference; for local or custom providers, validate the entered address.
 7. Require the selected provider to be configured before Create, Import, Update, or Repair planning.
 8. Display current remote source status without downloading selected components yet.
 9. Choose new or existing project.
@@ -25,11 +25,13 @@
 
 The app does not show an OpenAI API key field.
 
-For non-Codex providers, show a model field, an explicit endpoint field, and a
-provider API-key field only when the selected profile requires one. Store the
-key in the OS vault, show names and connection state only, and use the first
-schema-validated semantic request as the capability check. Local models use
-loopback HTTP and are not described as hosted accounts.
+For a known hosted provider, show its official API-key page, one provider API
+key field, and a **Connect** action. Fill its verified model and address
+automatically and keep them under **Advanced**. Store the key in the OS vault,
+show names and connection state only, and use the first schema-validated
+semantic request as the capability check. Local models ask for the address
+shown by the local model app, use loopback HTTP, and are not described as
+hosted accounts.
 
 ## New mod flow
 

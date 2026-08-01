@@ -9,7 +9,7 @@ Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The us
 
 ## Product rule
 
-Create, Import, Update, and Repair planning require an authenticated, selected AI capability. Codex uses the official local `codex app-server` interface and ChatGPT-managed sign-in. Other providers use only their verified adapter profile, explicit user endpoint where supported, and an OS-vault credential where required. Do not silently switch providers or invent a provider route.
+Create, Import, Update, and Repair planning require an authenticated, selected AI capability. Codex uses the official local `codex app-server` interface and ChatGPT-managed sign-in. Known hosted providers use checked-in, officially verified model/address defaults plus a provider-keyed OS-vault credential; model and address are editable under Advanced. Local and custom routes require explicit user configuration. Do not silently switch providers or invent a provider route or OAuth flow.
 
 Optional components remain provider-neutral unless their manifest explicitly
 declares a provider dependency. `workflow.super_events` is an ordinary
@@ -128,6 +128,10 @@ URLs. Both routes use the platform-owned browser executable and argument array.
 Before reuse, the core polls the supervised child transport and replaces an
 exited App Server. Replacing or discarding a dead transport clears pending
 analyses and approved scan evidence before a fresh initialize handshake.
+Ordinary App Server request/response pairs use a 15-second limit; only the
+separate analysis-completion and login waits retain their explicit longer
+bounds. Keep these limits separate so a stalled account check cannot make the
+first screen appear frozen.
 Logout always tears down the local process and clears
 pending analyses and approved evidence even when the remote logout request
 returns an error.
@@ -139,9 +143,12 @@ sends the managed cancellation before it returns. Login retries never clear a
 different attempt's cancellation state. Reject missing, malformed, duplicate,
 or excessive active login IDs.
 
-Codex `turn/start` receives the checked-in `docs/schemas/codex-analysis.schema.json` as its
-`outputSchema`, uses `approvalPolicy: never` and a restricted read-only sandbox
-with no project-readable roots, and the core rejects extra fields, duplicate
+Codex `thread/start` uses `sandbox: read-only`, `approvalPolicy: never`, and an
+empty temporary working directory that contains no target-project path. Codex
+`turn/start` receives the checked-in `docs/schemas/codex-analysis.schema.json`
+as its `outputSchema` and uses the current App Server policy shape
+`{type: readOnly, networkAccess: false}`. Do not add legacy `readOnly.access`
+fields: current App Server schemas reject them. The core rejects extra fields, duplicate
 proposal keys, incomplete proposal sets, invalid evidence references, incorrect
 excerpt hashes, unsafe identifiers, malformed tags, unsafe folder profiles, and
 credential/account-shaped output before the result can reach planning. The
@@ -171,6 +178,14 @@ agreement, and replaceable PNG placeholder; these are deterministic Rust checks.
 ## Failure handling
 
 Missing selected provider capability, signed-out state, cancelled login, usage limits, App Server or HTTP adapter exit, malformed output, or rejected proposals must preserve the local draft and scan. No failure may start a project transaction.
+
+Map renderer-bound failures by sanitized category. Keep cancellation, signed
+out, usage-limited, and private-looking-input states distinct; do not collapse
+usage or input rejection into a sign-in error. Raw App Server method, error
+code, parameter, account identity, credential, and protocol details never reach
+React, including when the rate-limit lookup fails. A dead or malformed App
+Server session is discarded, clears session-scoped proposals and evidence, and
+must complete a fresh initialize handshake before reuse.
 
 Do not silently switch to another provider, an unverified endpoint, heuristic-only identity generation, or direct model writes.
 

@@ -1148,6 +1148,12 @@ pub struct AiProviderProfile {
     pub protocol: String,
     pub requires_credential: bool,
     pub optimization_profile: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_endpoint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

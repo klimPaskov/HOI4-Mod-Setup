@@ -31,7 +31,7 @@ Use seven grouped phases:
 - Install
 - Ready
 
-Provider selection is the first compact setup step and defaults to Codex. The selected provider's model, optimization profile, and supported credential/endpoint controls must be visible without exposing secret values. Codex uses a compact ChatGPT sign-in with one primary action, one status line, a device-code fallback link, and a visible cancellation action while the App Server is waiting. Usage-limited state preserves the draft and offers retry or refresh without pretending planning succeeded. Never show raw protocol logs or model billing details.
+Provider selection is the first compact setup step and defaults to Codex. Codex uses a compact ChatGPT sign-in with one primary action, one status line, a device-code fallback link, and a visible cancellation action while the App Server is waiting. Known hosted profiles auto-fill their verified model and address, show one fixed official API-key link, one secret field, and one Connect action, and place model/address overrides under Advanced. Local and custom profiles expose only the details they genuinely require. Usage-limited state preserves the draft and offers retry or refresh without pretending planning succeeded. Never show raw protocol logs, model billing details, or technical terms such as endpoint in the normal hosted-provider path.
 
 Each screen normally has:
 

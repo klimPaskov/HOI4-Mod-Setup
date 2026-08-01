@@ -50,8 +50,9 @@ The application must never require a hidden detail panel to understand the prima
 Before project selection, show a compact provider gate with the product name,
 provider and model selection, and one short configuration state. Codex shows a
 **Sign in with ChatGPT** action and device-code fallback through the official
-App Server. Other hosted profiles show explicit endpoint and OS-vault key
-controls; local profiles show a loopback endpoint and no hosted account claim.
+App Server. Known hosted profiles show an official API-key page, one key field,
+and a Connect action; verified model and address defaults stay under Advanced.
+Local profiles show a loopback address and no hosted account claim.
 Keep a local recovery link when an interrupted transaction exists.
 
 Do not show token fields, model marketing copy, plan comparisons, protocol details, or long privacy text. Put technical details behind one disclosure.
@@ -204,8 +205,10 @@ Semantic analysis uses one progress region with plain states: Preparing approved
 ## Semantic review density
 
 The Codex screen shows one ChatGPT action, one compact status, and a
-device-code fallback link. Other profiles show only the endpoint, model, and
-vault-key controls needed by their verified adapter. Do not show provider
+device-code fallback link. Known hosted profiles show only their account-key
+link, key field, and Connect action by default; model and address are under one
+Advanced disclosure. Local and custom profiles show only the configuration
+their adapter genuinely needs. Do not show provider
 prices, raw protocol events, or token locations. Semantic review uses one
 compact table for Detected, Suggested by the selected provider, and Confirmed
 values. Reasons and input evidence open on demand.

@@ -9,9 +9,9 @@ existing work safe.
 
 [Open the latest release page](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
 
-- Windows: [Download the `.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.0/HOI4-Mod-Setup-windows-x64-setup.exe)
-- Mac (Apple silicon): [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.0/HOI4-Mod-Setup-macos-arm64.dmg)
-- Mac (Intel): [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.0/HOI4-Mod-Setup-macos-x64.dmg)
+- Windows: [Download the `.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.1/HOI4-Mod-Setup-windows-x64-setup.exe)
+- Mac (Apple silicon): [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.1/HOI4-Mod-Setup-macos-arm64.dmg)
+- Mac (Intel): [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.1/HOI4-Mod-Setup-macos-x64.dmg)
 
 Your computer may occasionally show a warning for a new community build. This
 can be a false positive. HOI4 Mod Setup is safe and open source.
@@ -28,6 +28,8 @@ at any time before setup begins.
 Choose **Create new mod** to start a fresh mod or **Existing mod** to prepare a
 mod you already have. Codex is selected by default, and you can instead choose
 Claude, Kimi, GLM, DeepSeek, a local model, or another supported provider.
+For Claude, Kimi, GLM, or DeepSeek, open the provider's API-key page, paste the
+key, and choose **Connect**. The app fills the other connection details for you.
 
 ![Provider selection with model and sign-in controls](docs/screenshots/10-provider-selection.png)
 

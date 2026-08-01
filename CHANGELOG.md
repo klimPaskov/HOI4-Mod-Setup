@@ -4,6 +4,17 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+## 0.2.1 - 2026-08-01
+
+### Fixed
+
+- Restored Codex planning with the current Codex App Server read-only request format
+- Made stalled Codex checks return to a retryable state instead of waiting for minutes
+
+### Changed
+
+- Claude, Kimi, GLM, and DeepSeek now fill their connection details automatically and ask only for an API key in the normal setup path
+
 ## 0.2.0 - 2026-08-01
 
 ### Added

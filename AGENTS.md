@@ -132,7 +132,7 @@ Use `hoi4-mod-setup-source-manifest` for changes to this surface.
 
 Codex remains the default provider. ChatGPT sign-in is a core prerequisite for Codex Create, Import, Update, and Repair planning. Use the official local `codex app-server` process over stdio JSONL. Do not implement an application-owned OAuth service or an OpenAI API-key fallback for the Codex route.
 
-The first setup screen also supports the bounded provider registry in `docs/31_ai_provider_profiles_and_chat_sources.md`. Claude, Kimi, GLM, DeepSeek, and other hosted routes require an explicit user endpoint and OS-vault API key. Local models require an explicit loopback HTTP endpoint and do not claim a hosted account. The app must not invent provider URLs, login routes, packages, commands, model names, MCP servers, or platform support.
+The first setup screen also supports the bounded provider registry in `docs/31_ai_provider_profiles_and_chat_sources.md`. Claude, Kimi, GLM, and DeepSeek use checked-in model/address defaults verified against official provider documentation plus an OS-vault API key; those non-secret defaults remain editable under Advanced. Custom hosted routes require an explicit HTTPS address and OS-vault API key. Local models require an explicit loopback HTTP address and do not claim a hosted account. The app must not invent provider URLs, login routes, packages, commands, model names, MCP servers, or platform support.
 
 Required behavior:
 

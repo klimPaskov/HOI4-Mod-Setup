@@ -40,7 +40,7 @@
 
 - ANA-01: Observable project facts come from the deterministic Rust scanner.
 - ANA-02: Create, Import, Update, and Repair planning require the selected provider configuration, or a compatible local Codex App Server for Codex.
-- ANA-03: Codex users sign in through the App Server managed ChatGPT flow; other profiles use their explicit verified endpoint and OS-vault credential route.
+- ANA-03: Codex users sign in through the App Server managed ChatGPT flow; known hosted profiles automatically use their verified model/address defaults and a provider-scoped OS-vault credential route.
 - ANA-04: Browser login is primary and device-code login is available as fallback.
 - ANA-05: The Codex route has no OpenAI API key field or API-key fallback; non-Codex key fields are provider-scoped, vault-backed, and never serialized.
 - ANA-06: Codex owns ChatGPT token persistence and refresh; provider adapters never persist hosted tokens.
@@ -58,13 +58,14 @@
 - ANA-18: Recovery, rollback, backup inspection, and managed removal remain available while signed out or disconnected.
 - ANA-19: Codex does not hardcode a model; non-Codex users select a model and the profile is persisted as non-secret configuration.
 - ANA-20: Stored analysis metadata contains only schema version, analysis ID, provider/model/profile, input and output digests, confirmed fields, and timestamps.
-- ANA-21: Provider references are keyed by provider, hosted endpoints are explicit HTTPS, local endpoints are loopback HTTP, redirects are disabled, and response bodies are bounded before parsing.
+- ANA-21: Provider references are keyed by provider, hosted addresses are HTTPS, local addresses are loopback HTTP, redirects are disabled, and response bodies are bounded before parsing.
 
 ## Provider profiles and flattened Chat sources
 
 - AI-01: Codex, Claude, Kimi, GLM, DeepSeek, local, and custom provider profiles are selectable at the start.
 - AI-02: The selected profile changes semantic guidance, adapted `AGENTS.md`, generated `README.md`, state, plan, lock, and maintenance review.
 - AI-03: Provider changes clear stale analysis and cannot reuse a record from another provider or model.
+- AI-03A: Claude, Kimi, GLM, and DeepSeek fill verified model and address defaults automatically; their normal path shows an official API-key link, key field, and Connect action, while overrides remain under Advanced.
 - AI-04: A Codex-only Components checkbox prepares `chatgpt_project_sources/`; non-Codex setup never renders or persists it as selected.
 - AI-05: Flattening renames `.agents/skills/<skill>/SKILL.md` to `<skill>.md` and includes selected subagents, adapted AGENTS, and README.
 - AI-06: Flattening rejects links, case-insensitive collisions, secret-shaped content, and bounded file/aggregate-size violations.

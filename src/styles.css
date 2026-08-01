@@ -151,6 +151,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
+.provider-connect-intro { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; color: var(--muted); line-height: 1.45; }
+.provider-connect-intro > span { min-width: 0; overflow-wrap: anywhere; }
+.provider-connect-intro .text-button, .provider-connect-intro a { flex: 0 0 auto; color: #9db5ff; font-size: 12px; font-weight: 650; text-decoration: none; }
+.provider-connect-intro .text-button:hover, .provider-connect-intro a:hover { color: white; text-decoration: underline; }
+.provider-manual-details, .provider-advanced { display: grid; gap: 14px; min-width: 0; }
+.provider-manual-details > .field, .provider-advanced > .field { margin: 0; }
+.provider-panel details { min-width: 0; }
+.provider-panel details > summary { width: fit-content; }
+.provider-panel details[open] > summary { margin-bottom: 14px; }
 .list-row, .server-row, .check-row, .change-row, .component-row, .toggle-row, .radio-row, .finding-row { min-height: 56px; display: flex; align-items: center; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--line); }
 .toggle-row { min-height: 82px; gap: 16px; padding: 18px 20px; }
 .list-row:last-child, .server-row:last-child, .check-row:last-child, .change-row:last-child, .component-row:last-child, .toggle-row:last-child, .radio-row:last-child, .finding-row:last-child { border-bottom: 0; }

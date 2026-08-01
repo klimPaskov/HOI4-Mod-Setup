@@ -66,6 +66,7 @@ const MAX_PROTOCOL_ERROR_DETAIL_CHARS: usize = 512;
 const MAX_BRIEF_BYTES: usize = 32 * 1024;
 const MAX_EVIDENCE_ITEMS: usize = 256;
 const MAX_EVIDENCE_BYTES: usize = 512 * 1024;
+const APP_SERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CodexAccountStatus {
@@ -240,7 +241,7 @@ pub struct AppServerProtocol<T: JsonlTransport> {
 
 impl<T: JsonlTransport> AppServerProtocol<T> {
     pub fn new(transport: T) -> Self {
-        Self::with_timeout(transport, Duration::from_secs(120))
+        Self::with_timeout(transport, APP_SERVER_REQUEST_TIMEOUT)
     }
 
     pub fn with_timeout(transport: T, request_timeout: Duration) -> Self {
@@ -286,9 +287,9 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
                 Ok(rate_limits) => {
                     status.usage_limited |= rate_limits_limited(&rate_limits);
                 }
-                Err(error) => {
-                    status.error = Some(format!(
-                        "Codex rate-limit state could not be checked: {error}"
+                Err(_) => {
+                    return Err(AppError::Process(
+                        "Codex usage state could not be checked".into(),
                     ));
                 }
             }
@@ -498,8 +499,7 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
             json!({
                 "approvalPolicy": "never",
                 "sandbox": "read-only",
-                "cwd": analysis_directory.path_string()?,
-                "sandboxPolicy": read_only_no_project_access()
+                "cwd": analysis_directory.path_string()?
             }),
         )?;
         let thread_id = thread_id(&thread)?;
@@ -952,11 +952,7 @@ fn forbidden_evidence_path(path: &str) -> bool {
 fn read_only_no_project_access() -> Value {
     json!({
         "type": "readOnly",
-        "access": {
-            "type": "restricted",
-            "includePlatformDefaults": false,
-            "readableRoots": []
-        }
+        "networkAccess": false
     })
 }
 
@@ -2447,6 +2443,16 @@ mod tests {
     }
 
     #[test]
+    fn production_protocol_uses_the_short_request_timeout() {
+        let protocol = AppServerProtocol::new(FakeTransport {
+            sent: Vec::new(),
+            incoming: VecDeque::new(),
+            alive: true,
+        });
+        assert_eq!(protocol.request_timeout, Duration::from_secs(15));
+    }
+
+    #[test]
     fn app_server_request_errors_keep_safe_protocol_details() {
         let transport = FakeTransport {
             sent: Vec::new(),
@@ -2586,6 +2592,36 @@ mod tests {
             protocol.transport.sent[1]["method"],
             "account/rateLimits/read"
         );
+    }
+
+    #[test]
+    fn account_read_returns_a_sanitized_process_error_for_rate_limit_failures() {
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming: VecDeque::from([
+                response(1, json!({"account": {"type": "chatgpt"}})),
+                json!({
+                    "id": 2,
+                    "error": {
+                        "code": -32000,
+                        "message": "owner@example.com account_id=acct_private token=secret"
+                    }
+                }),
+            ]),
+            alive: true,
+        };
+        let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
+
+        let error = protocol.account_read(false).unwrap_err();
+
+        assert!(matches!(error, AppError::Process(_)));
+        let safe_error = error.to_string();
+        assert!(safe_error.contains("usage state could not be checked"));
+        assert!(!safe_error.contains("owner@example.com"));
+        assert!(!safe_error.contains("acct_private"));
+        assert!(!safe_error.contains("secret"));
+        assert!(!safe_error.contains("-32000"));
     }
 
     #[test]
@@ -3172,17 +3208,9 @@ mod tests {
         assert!(protocol.transport.sent[2]["params"]
             .get("runtimeWorkspaceRoots")
             .is_none());
-        assert_eq!(
-            protocol.transport.sent[2]["params"]["sandboxPolicy"],
-            json!({
-                "type": "readOnly",
-                "access": {
-                    "type": "restricted",
-                    "includePlatformDefaults": false,
-                    "readableRoots": []
-                }
-            })
-        );
+        assert!(protocol.transport.sent[2]["params"]
+            .get("sandboxPolicy")
+            .is_none());
         let analysis_directory = protocol.transport.sent[2]["params"]["cwd"]
             .as_str()
             .expect("analysis directory")
@@ -3192,11 +3220,7 @@ mod tests {
             protocol.transport.sent[3]["params"]["sandboxPolicy"],
             json!({
                 "type": "readOnly",
-                "access": {
-                    "type": "restricted",
-                    "includePlatformDefaults": false,
-                    "readableRoots": []
-                }
+                "networkAccess": false
             })
         );
         assert!(protocol.transport.sent[3]["params"]

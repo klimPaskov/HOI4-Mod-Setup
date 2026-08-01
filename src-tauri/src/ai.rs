@@ -1,8 +1,9 @@
 //! Provider-neutral semantic analysis adapters.
 //!
 //! Codex remains the default and keeps its official App Server ownership. All
-//! other providers use an explicit user-supplied endpoint and an OS-vault
-//! credential when required. The project never receives a secret or a raw
+//! known hosted providers use checked-in verified defaults and an OS-vault
+//! credential, while local and custom routes use explicit addresses. The
+//! project never receives a secret or a raw
 //! provider response; only the schema-validated proposal record crosses into
 //! the planning boundary.
 
@@ -41,6 +42,9 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             "codex_app_server",
             false,
             "Codex project and ChatGPT Chat",
+            None,
+            None,
+            None,
         ),
         (
             "claude",
@@ -48,6 +52,9 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             "anthropic_messages",
             true,
             "Claude Code / Anthropic conventions",
+            Some("claude-sonnet-5"),
+            Some("https://api.anthropic.com/v1/messages"),
+            Some("https://platform.claude.com/settings/keys"),
         ),
         (
             "kimi",
@@ -55,6 +62,9 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             "openai_compatible",
             true,
             "Kimi coding conventions",
+            Some("kimi-k2.6"),
+            Some("https://api.moonshot.ai/v1/chat/completions"),
+            Some("https://platform.kimi.ai/console/api-keys"),
         ),
         (
             "glm",
@@ -62,6 +72,9 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             "openai_compatible",
             true,
             "GLM coding conventions",
+            Some("glm-5.2"),
+            Some("https://open.bigmodel.cn/api/paas/v4/chat/completions"),
+            Some("https://bigmodel.cn/usercenter/proj-mgmt/apikeys"),
         ),
         (
             "deepseek",
@@ -69,6 +82,9 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             "openai_compatible",
             true,
             "DeepSeek coding conventions",
+            Some("deepseek-v4-pro"),
+            Some("https://api.deepseek.com/chat/completions"),
+            Some("https://platform.deepseek.com/api_keys"),
         ),
         (
             "local",
@@ -76,6 +92,9 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             "openai_compatible",
             false,
             "Local model conventions",
+            None,
+            None,
+            None,
         ),
         (
             "custom",
@@ -83,17 +102,32 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             "openai_compatible",
             true,
             "User-supplied provider conventions",
+            None,
+            None,
+            None,
         ),
     ]
     .into_iter()
     .map(
-        |(id, display_name, protocol, requires_credential, optimization_profile)| {
+        |(
+            id,
+            display_name,
+            protocol,
+            requires_credential,
+            optimization_profile,
+            default_model,
+            default_endpoint,
+            account_url,
+        )| {
             AiProviderProfile {
                 id: id.into(),
                 display_name: display_name.into(),
                 protocol: protocol.into(),
                 requires_credential,
                 optimization_profile: optimization_profile.into(),
+                default_model: default_model.map(str::to_owned),
+                default_endpoint: default_endpoint.map(str::to_owned),
+                account_url: account_url.map(str::to_owned),
             }
         },
     )
@@ -450,6 +484,40 @@ mod tests {
         );
         assert!(profiles.iter().any(|profile| profile.id == "claude"));
         assert!(profiles.iter().any(|profile| profile.id == "custom"));
+        for (id, model, endpoint, account_url) in [
+            (
+                "claude",
+                "claude-sonnet-5",
+                "https://api.anthropic.com/v1/messages",
+                "https://platform.claude.com/settings/keys",
+            ),
+            (
+                "kimi",
+                "kimi-k2.6",
+                "https://api.moonshot.ai/v1/chat/completions",
+                "https://platform.kimi.ai/console/api-keys",
+            ),
+            (
+                "glm",
+                "glm-5.2",
+                "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+                "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
+            ),
+            (
+                "deepseek",
+                "deepseek-v4-pro",
+                "https://api.deepseek.com/chat/completions",
+                "https://platform.deepseek.com/api_keys",
+            ),
+        ] {
+            let profile = profiles
+                .iter()
+                .find(|profile| profile.id == id)
+                .unwrap_or_else(|| panic!("missing {id} profile"));
+            assert_eq!(profile.default_model.as_deref(), Some(model));
+            assert_eq!(profile.default_endpoint.as_deref(), Some(endpoint));
+            assert_eq!(profile.account_url.as_deref(), Some(account_url));
+        }
     }
 
     #[test]
