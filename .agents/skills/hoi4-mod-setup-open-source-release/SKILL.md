@@ -121,6 +121,10 @@ checked-out `HEAD`, current protected `main`, and the annotated tag target befor
 a package is treated as release evidence. A local build may still produce an unsigned
 inspection artifact, but it is not release evidence.
 
+`actions/checkout` may materialize a pushed annotated tag as a lightweight local
+ref. The release source gate fetches that one exact remote tag ref before checking
+its object type and peeling its commit; do not weaken this to trust the checkout ref.
+
 ## License and updater gates
 
 The repository is licensed under Apache 2.0 in `LICENSE`, and the decision is
