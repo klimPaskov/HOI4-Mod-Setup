@@ -6,6 +6,6 @@ license = "Apache-2.0"
 publish = false
 
 [dependencies]
-base64 = "0.22.1"
+base64 = "0.23.0"
 minisign-verify = "0.2.5"
 serde_json = "1.0.151"
