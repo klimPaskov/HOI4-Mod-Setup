@@ -129,6 +129,13 @@ The Ubuntu release-validation job installs the same Tauri system libraries as th
 Linux CI compile job before running all-feature Clippy and tests. These packages
 support validation only and do not declare Linux as a distributed app platform.
 
+Community Windows signing locates `signtool.exe` through the bounded SDK version
+path rather than recursively scanning the SDK. The RFC 3161 attempt has a two-minute
+process bound; if the configured service does not complete, the workflow replaces
+the partial result with a verified ChaosX Authenticode signature without a timestamp
+and records that method in internal signing evidence. The signing job has a hard
+twenty-minute limit and always removes temporary certificate material.
+
 ## License and updater gates
 
 The repository is licensed under Apache 2.0 in `LICENSE`, and the decision is
