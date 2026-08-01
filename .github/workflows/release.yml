@@ -493,16 +493,17 @@ jobs:
             [[ -f "$asset" && ! -L "$asset" ]]
           done
           [[ "$(find publication-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" == "4" ]]
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "A release already exists for ${GITHUB_REF_NAME}; published tags are never reused" >&2
             exit 1
           fi
           gh release create "$GITHUB_REF_NAME" \
             "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --draft \
             --title "HOI4 Mod Setup ${GITHUB_REF_NAME#v}" \
             --notes-file publication-assets/RELEASE_NOTES.md
-          [[ "$(gh release view "$GITHUB_REF_NAME" --json isDraft,isPrerelease --jq '(.isDraft and (.isPrerelease | not))')" == "true" ]]
-          gh release edit "$GITHUB_REF_NAME" --draft=false
-          [[ "$(gh release view "$GITHUB_REF_NAME" --json isDraft,isPrerelease --jq '(.isDraft or .isPrerelease)')" == "false" ]]
+          [[ "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease --jq '(.isDraft and (.isPrerelease | not))')" == "true" ]]
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+          [[ "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease --jq '(.isDraft or .isPrerelease)')" == "false" ]]
