@@ -99,6 +99,9 @@ export interface AiProviderProfile {
   protocol: string;
   requires_credential: boolean;
   optimization_profile: string;
+  default_model?: string | null;
+  default_endpoint?: string | null;
+  account_url?: string | null;
 }
 
 export interface AiAccountStatus {

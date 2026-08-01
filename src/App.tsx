@@ -58,10 +58,10 @@ const DEFAULT_COMPONENTS: ComponentRow[] = [
 
 const FALLBACK_AI_PROFILES: AiProviderProfile[] = [
   { id: "codex", display_name: "Codex", protocol: "codex_app_server", requires_credential: false, optimization_profile: "Codex project and ChatGPT Chat" },
-  { id: "claude", display_name: "Claude", protocol: "anthropic_messages", requires_credential: true, optimization_profile: "Claude Code / Anthropic conventions" },
-  { id: "kimi", display_name: "Kimi", protocol: "openai_compatible", requires_credential: true, optimization_profile: "Kimi coding conventions" },
-  { id: "glm", display_name: "GLM", protocol: "openai_compatible", requires_credential: true, optimization_profile: "GLM coding conventions" },
-  { id: "deepseek", display_name: "DeepSeek", protocol: "openai_compatible", requires_credential: true, optimization_profile: "DeepSeek coding conventions" },
+  { id: "claude", display_name: "Claude", protocol: "anthropic_messages", requires_credential: true, optimization_profile: "Claude Code / Anthropic conventions", default_model: "claude-sonnet-5", default_endpoint: "https://api.anthropic.com/v1/messages", account_url: "https://platform.claude.com/settings/keys" },
+  { id: "kimi", display_name: "Kimi", protocol: "openai_compatible", requires_credential: true, optimization_profile: "Kimi coding conventions", default_model: "kimi-k2.6", default_endpoint: "https://api.moonshot.ai/v1/chat/completions", account_url: "https://platform.kimi.ai/console/api-keys" },
+  { id: "glm", display_name: "GLM", protocol: "openai_compatible", requires_credential: true, optimization_profile: "GLM coding conventions", default_model: "glm-5.2", default_endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions", account_url: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys" },
+  { id: "deepseek", display_name: "DeepSeek", protocol: "openai_compatible", requires_credential: true, optimization_profile: "DeepSeek coding conventions", default_model: "deepseek-v4-pro", default_endpoint: "https://api.deepseek.com/chat/completions", account_url: "https://platform.deepseek.com/api_keys" },
   { id: "local", display_name: "Local model", protocol: "openai_compatible", requires_credential: false, optimization_profile: "Local model conventions" },
   { id: "custom", display_name: "Other provider", protocol: "openai_compatible", requires_credential: true, optimization_profile: "User-supplied provider conventions" },
 ];
@@ -250,6 +250,7 @@ export default function App() {
   const [semanticAnalysisPending, setSemanticAnalysisPending] = useState(false);
   const [appUpdate, setAppUpdate] = useState<AppUpdateStatus | null>(null);
   const [appUpdateState, setAppUpdateState] = useState<"idle" | "installing" | "error">("idle");
+  const codexAccountReadPending = useRef(false);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -269,14 +270,15 @@ export default function App() {
   useEffect(() => {
     if (state.screen !== "welcome" && state.screen !== "description" && state.screen !== "identity" && state.screen !== "findings") return;
     if (state.aiProvider === "codex") {
-      if (state.codexAccount !== null) return;
+      if (state.codexAccount !== null || codexAccountReadPending.current) return;
+      codexAccountReadPending.current = true;
       void readCodexAccount().then((account) => {
         if (account) {
           setState((current) => ({ ...current, codexAccount: account }));
         } else if (isTauriRuntime()) {
           setState((current) => ({ ...current, codexAccount: { available: false, authenticated: false, auth_mode: "", usage_limited: false, error: "Codex could not be reached." } }));
         }
-      });
+      }).finally(() => { codexAccountReadPending.current = false; });
       return;
     }
     if (!state.aiProfiles) {
@@ -531,7 +533,7 @@ export default function App() {
     } else {
       providerAccount = providerAccount ?? await readAiAccount(provider, state.aiModel, state.aiEndpoint);
       if (!providerAccount?.available) {
-        if (isTauriRuntime()) update({ aiAccount: providerAccount, transactionError: `${aiProviderLabel(provider, state.aiProfiles)} is not configured. Enter its endpoint and connect before planning the setup.` });
+        if (isTauriRuntime()) update({ aiAccount: providerAccount, transactionError: `${aiProviderLabel(provider, state.aiProfiles)} is not connected. Return to the first step and connect it before planning the setup.` });
         return false;
       }
       if (providerAccount.error) {
@@ -704,7 +706,7 @@ export default function App() {
     } else {
       aiAccount = aiAccount ?? await readAiAccount(provider, state.aiModel, state.aiEndpoint);
       if (!aiAccount || !aiAccount.available) {
-        update({ aiAccount, transactionError: `${providerLabel} is not configured for reanalysis. Check the endpoint and connection.` });
+        update({ aiAccount, transactionError: `${providerLabel} is not connected for reanalysis. Return to the first step and check the connection.` });
         return false;
       }
       if (aiAccount.error) {
@@ -1250,11 +1252,13 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
   const profiles = state.aiProfiles?.length ? state.aiProfiles : FALLBACK_AI_PROFILES;
   const profile = profiles.find((candidate) => candidate.id === selectedProvider) ?? profiles[0];
   const selectedLabel = aiProviderLabel(selectedProvider, profiles);
+  const providerNeedsManualDetails = selectedProvider === "local" || selectedProvider === "custom";
   const selectProvider = (provider: AiProviderId) => {
+    const selectedProfile = profiles.find((candidate) => candidate.id === provider);
     update({
       aiProvider: provider,
-      aiModel: provider === "codex" ? "default" : "",
-      aiEndpoint: "",
+      aiModel: provider === "codex" ? "default" : selectedProfile?.default_model ?? "",
+      aiEndpoint: selectedProfile?.default_endpoint ?? "",
       aiAccount: null,
       codexAnalysis: undefined,
       codexAnalysisRecord: undefined,
@@ -1352,6 +1356,18 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
       update({ transactionError: `The ${selectedLabel} credential was not removed; no project files were changed.` });
     }
   };
+  const openProviderAccount = async () => {
+    if (!profile?.account_url) return;
+    const result = await openExternalUrlResult(profile.account_url);
+    update({ transactionError: result.error });
+  };
+  const providerStatus = state.aiAccount?.authenticated
+    ? `${selectedLabel} is connected.`
+    : state.aiAccount?.error && !state.aiAccount.error.toLowerCase().includes("credential is not available")
+      ? state.aiAccount.error
+      : providerNeedsManualDetails
+        ? `Enter the ${selectedLabel} details and connect.`
+        : `Paste your ${selectedLabel} API key to connect.`;
   return <div className="stack wide welcome-screen"><div className="choice-grid">
     <button type="button" className={`choice-card ${state.mode === "new" ? "selected" : ""}`} aria-pressed={state.mode === "new"} onClick={() => update({ mode: "new" })}>
       <ChoiceIcon kind="plus" /><span className="choice-radio" aria-hidden="true" /><h2>Create new mod</h2><p>Start from a short description.</p>
@@ -1359,7 +1375,14 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
     <button type="button" className={`choice-card ${state.mode === "existing" ? "selected" : ""}`} aria-pressed={state.mode === "existing"} onClick={() => update({ mode: "existing" })}>
       <ChoiceIcon kind="search" /><span className="choice-radio" aria-hidden="true" /><h2>Import existing mod</h2><p>Scan the project without changing it.</p>
     </button>
-  </div><section><div className="section-label">Planning provider</div><div className="panel recent-list provider-panel"><label className="field"><span className="field-label">AI provider</span><select className="text-input" value={state.aiProvider} onChange={(event) => selectProvider(event.target.value as AiProviderId)}>{profiles.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>)}</select></label><p className="muted provider-help">Codex is the default. The project follows the provider you choose.</p>{state.aiProvider !== "codex" && <><Field label="Model" value={state.aiModel} onChange={(value) => update({ aiModel: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder="Enter the provider-supplied model identifier" mono /><Field label="Endpoint" value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder={state.aiProvider === "local" ? "Enter the loopback HTTP endpoint" : "Enter the provider-supplied HTTPS endpoint"} mono /><p className="muted provider-help">Hosted providers use HTTPS. Local models use a loopback HTTP address.</p>{profile?.requires_credential && <><label className="field"><span className="field-label">Provider API key</span><input className="text-input" type="password" value={aiKeyDraft} onChange={(event) => setAiKeyDraft(event.target.value)} autoComplete="off" /></label><p className="muted provider-help">Saved securely by your operating system.</p></>}<div className="button-row"><button type="button" className="button secondary" onClick={() => void connectProvider()}>{aiKeyDraft ? "Store and connect" : "Check configuration"}</button>{state.aiAccount?.authenticated && profile?.requires_credential && <button type="button" className="text-button" onClick={() => void removeProviderCredential()}>Delete stored key</button>}</div>{state.aiAccount && <p className="callout" role="status">{state.aiAccount.error ?? (state.aiAccount.authenticated ? `${selectedLabel} is configured for ${state.aiModel}; the first request checks capability.` : `Connect ${selectedLabel} before continuing.`)}</p>}{state.aiProvider === "local" && <p className="muted provider-help">No hosted account is needed for a local model.</p>}</>}</div></section>{state.aiProvider === "codex" && <section><div className="section-label">Codex access</div><div className="panel recent-list">
+  </div><section><div className="section-label">Planning provider</div><div className="panel recent-list provider-panel"><label className="field"><span className="field-label">AI provider</span><select className="text-input" value={state.aiProvider} onChange={(event) => selectProvider(event.target.value as AiProviderId)}>{profiles.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>)}</select></label><p className="muted provider-help">Codex is the default. The project follows the provider you choose.</p>{state.aiProvider !== "codex" && <>
+    {profile?.account_url && <div className="provider-connect-intro"><span>Use an API key from your {selectedLabel} account.</span>{desktopRuntime ? <button type="button" className="text-button" onClick={() => void openProviderAccount()}>Get {selectedLabel} API key</button> : <a href={profile.account_url} target="_blank" rel="noreferrer">Get {selectedLabel} API key</a>}</div>}
+    {profile?.requires_credential && <label className="field"><span className="field-label">{selectedLabel} API key</span><input className="text-input" type="password" value={aiKeyDraft} onChange={(event) => setAiKeyDraft(event.target.value)} autoComplete="off" /></label>}
+    {providerNeedsManualDetails ? <div className="provider-manual-details"><Field label="Model" value={state.aiModel} onChange={(value) => update({ aiModel: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder="Model name" mono /><Field label={state.aiProvider === "local" ? "Local model address" : "Provider address"} value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder={state.aiProvider === "local" ? "http://127.0.0.1:…" : "https://…"} mono /></div> : <details><summary>Advanced</summary><div className="provider-advanced"><Field label="Model" value={state.aiModel} onChange={(value) => update({ aiModel: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder="Model name" mono /><Field label="Provider address" value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder="Filled automatically" mono /></div></details>}
+    {state.aiProvider === "local" && <p className="muted provider-help">Enter the address shown by your local model app. No online account is needed.</p>}
+    <div className="button-row"><button type="button" className="button secondary" onClick={() => void connectProvider()} disabled={!state.aiModel.trim() || !state.aiEndpoint.trim() || (profile?.requires_credential === true && !aiKeyDraft.trim() && !state.aiAccount?.authenticated)}>{state.aiAccount?.authenticated ? `Check ${selectedLabel}` : `Connect ${selectedLabel}`}</button>{state.aiAccount?.authenticated && profile?.requires_credential && <button type="button" className="text-button" onClick={() => void removeProviderCredential()}>Disconnect</button>}</div>
+    {state.aiAccount && <p className="callout" role="status">{providerStatus}</p>}
+  </>}</div></section>{state.aiProvider === "codex" && <section><div className="section-label">Codex access</div><div className="panel recent-list">
     {!desktopRuntime && <p className="muted">Open the installed desktop app to sign in with ChatGPT.</p>}
     {desktopRuntime && !account && <p className="muted" role="status">Checking Codex…</p>}
     {desktopRuntime && account && account.available && account.authenticated && account.auth_mode === "chatgpt" && <><p><strong>Signed in with ChatGPT</strong>{account.email ? ` · ${account.email}` : ""}</p>{account.usage_limited && <p className="callout review" role="status">Codex usage is currently limited. Planning is paused until usage is available again; recovery remains available.</p>}<button type="button" className="text-button" onClick={() => void refresh()}>Refresh account status</button><button type="button" className="text-button" onClick={() => void signOut()}>Sign out</button></>}

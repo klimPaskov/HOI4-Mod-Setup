@@ -39,10 +39,12 @@ Git, Node, Python, Blender, Codex, and MCP servers run as separate allowlisted p
 ### AI provider adapters
 
 The renderer calls typed Rust commands only. Codex uses the official local App
-Server; hosted non-Codex adapters use an explicit user endpoint and a
-provider-keyed OS-vault credential; local adapters use loopback HTTP. Hosted
-endpoints require HTTPS, contain no userinfo, use no redirects, and have
-bounded response bodies. Local endpoints cannot leave loopback. Provider
+Server; known hosted non-Codex adapters use a checked-in, officially verified
+HTTPS default and a provider-keyed OS-vault credential; custom adapters use an
+explicit user address; local adapters use loopback HTTP. Fixed provider account
+links pass a Rust allowlist before the system browser opens. Hosted addresses
+require HTTPS, contain no userinfo, use no redirects, and have bounded response
+bodies. Local addresses cannot leave loopback. Provider
 responses are untrusted text until the common schema and deterministic
 evidence checks pass.
 

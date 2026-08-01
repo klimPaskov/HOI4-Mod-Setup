@@ -359,32 +359,49 @@ fn with_codex_session<R>(
     let mut session = codex_session()
         .lock()
         .map_err(|_| AppError::Process("Codex session lock is unavailable".into()))?;
-    if session
-        .as_mut()
-        .is_some_and(|protocol| !protocol.is_alive())
-    {
-        // Drop the dead transport before creating a replacement. The
-        // transport's Drop implementation supervises and terminates any
-        // remaining child tree, while Codex retains authentication state.
+    with_supervised_codex_session(
+        &mut session,
+        || {
+            let executable = find_codex_executable().ok_or_else(|| {
+                AppError::Process(
+                    "official Codex executable was not found on the reviewed PATH".into(),
+                )
+            })?;
+            let mut protocol = AppServerProtocol::new(ProcessJsonlTransport::start(executable)?);
+            protocol.initialize()?;
+            Ok(protocol)
+        },
+        AppServerProtocol::is_alive,
+        callback,
+        clear_codex_local_state,
+    )
+}
+
+fn with_supervised_codex_session<S, R>(
+    session: &mut Option<S>,
+    start_initialized: impl FnOnce() -> Result<S, AppError>,
+    is_alive: impl FnOnce(&mut S) -> bool,
+    callback: impl FnOnce(&mut S) -> Result<R, AppError>,
+    mut clear_local_state: impl FnMut() -> Result<(), String>,
+) -> Result<R, AppError> {
+    if session.as_mut().is_some_and(|protocol| !is_alive(protocol)) {
         *session = None;
-        clear_codex_local_state().map_err(AppError::Process)?;
+        clear_local_state().map_err(AppError::Process)?;
     }
     if session.is_none() {
-        let executable = find_codex_executable().ok_or_else(|| {
-            AppError::Process("official Codex executable was not found on the reviewed PATH".into())
-        })?;
-        let mut protocol = AppServerProtocol::new(ProcessJsonlTransport::start(executable)?);
-        protocol.initialize()?;
-        *session = Some(protocol);
+        *session = Some(start_initialized()?);
     }
     let result = callback(
         session
             .as_mut()
             .expect("Codex session was just initialized"),
     );
-    if matches!(&result, Err(AppError::Process(_))) {
+    if matches!(
+        &result,
+        Err(AppError::Process(_) | AppError::Serialization(_))
+    ) {
         *session = None;
-        clear_codex_local_state().map_err(AppError::Process)?;
+        clear_local_state().map_err(AppError::Process)?;
     }
     result
 }
@@ -509,13 +526,28 @@ fn codex_user_error(error: AppError) -> String {
             "Codex is not installed or could not be found. Install or update Codex, then choose Check again."
                 .into()
         }
+        AppError::Process(message)
+            if message.contains("Codex usage state could not be checked") =>
+        {
+            "Codex usage could not be checked. Choose Check again to retry.".into()
+        }
         AppError::Process(_) => {
             "Codex is temporarily unavailable. Close and reopen Codex, then try again.".into()
         }
-        AppError::Credential(message) if message.contains("cancel") => {
-            "ChatGPT sign-in was cancelled.".into()
+        AppError::Credential(message) => {
+            let category = message.to_ascii_lowercase();
+            if category.contains("cancel") {
+                "ChatGPT sign-in was cancelled.".into()
+            } else if category.contains("usage") && category.contains("limited") {
+                "Codex usage is currently limited. Your draft is unchanged; try again when usage is available.".into()
+            } else if category.contains("credential-shaped") {
+                "Codex blocked private-looking information. Remove secrets from the description or selected evidence, then try again.".into()
+            } else if category.contains("sign in") || category.contains("authentication") {
+                "Sign in with ChatGPT before continuing.".into()
+            } else {
+                "ChatGPT sign-in needs attention. Try again.".into()
+            }
         }
-        AppError::Credential(_) => "ChatGPT sign-in needs attention. Try again.".into(),
         AppError::Serialization(_) => {
             "Codex returned an unexpected response. Update Codex and try again.".into()
         }
@@ -817,6 +849,10 @@ fn is_allowed_external_url(url: &str) -> bool {
         "https://github.com/klimPaskov/comfyui-hoi4-portraits",
     ];
     ALLOWED_URLS.contains(&url)
+        || ai::provider_profiles()
+            .iter()
+            .filter_map(|profile| profile.account_url.as_deref())
+            .any(|account_url| account_url == url)
 }
 
 fn open_url_in_system_browser(url: String) -> Result<(), String> {
@@ -843,15 +879,41 @@ fn codex_logout() -> Result<(), String> {
     // initialize a fresh App Server when needed so sign-out always attempts
     // the official account/logout method.
     let logout_result = with_codex_session(|protocol| protocol.logout()).map_err(codex_user_error);
+    complete_codex_logout(logout_result)
+}
+
+fn complete_codex_logout(logout_result: Result<(), String>) -> Result<(), String> {
     if let Ok(mut session) = codex_session().lock() {
-        *session = None;
+        return finalize_codex_logout_state(
+            &mut *session,
+            logout_result,
+            clear_codex_local_state,
+            || {
+                if let Ok(mut cancellations) = codex_login_cancellations().lock() {
+                    cancellations.clear();
+                }
+            },
+        );
     }
-    // Local proposals and evidence are session-scoped and must be discarded
-    // even when the supervised App Server cannot complete account/logout.
     let clear_result = clear_codex_local_state();
     if let Ok(mut cancellations) = codex_login_cancellations().lock() {
         cancellations.clear();
     }
+    clear_result?;
+    logout_result
+}
+
+fn finalize_codex_logout_state<S>(
+    session: &mut Option<S>,
+    logout_result: Result<(), String>,
+    clear_local_state: impl FnOnce() -> Result<(), String>,
+    clear_cancellations: impl FnOnce(),
+) -> Result<(), String> {
+    *session = None;
+    // Local proposals and evidence are session-scoped and must be discarded
+    // even when the supervised App Server cannot complete account/logout.
+    let clear_result = clear_local_state();
+    clear_cancellations();
     clear_result?;
     logout_result
 }
@@ -868,7 +930,8 @@ fn codex_analyze(request: CodexAnalysisRequest) -> Result<CodexAnalysisResult, S
         );
     }
     validate_codex_evidence_approval(&request).map_err(command_error)?;
-    let result = with_codex_session(|session| session.analyze(&request)).map_err(command_error)?;
+    let result =
+        with_codex_session(|session| session.analyze(&request)).map_err(codex_user_error)?;
     let mut analyses = codex_analyses()
         .lock()
         .map_err(|_| "Codex analysis store is unavailable".to_string())?;
@@ -5197,6 +5260,7 @@ fn manual_open_in_codex_result(root: &Path) -> OpenInCodexResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     use std::sync::MutexGuard;
     use tempfile::tempdir;
 
@@ -5207,6 +5271,70 @@ mod tests {
             .get_or_init(|| Mutex::new(()))
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    #[test]
+    fn supervisor_restarts_after_interruption_and_reinitializes_after_malformed_jsonl() {
+        #[derive(Debug)]
+        struct FakeSession {
+            alive: bool,
+            initialized: bool,
+        }
+
+        let starts = Cell::new(0_u8);
+        let clears = Cell::new(0_u8);
+        let mut session = Some(FakeSession {
+            alive: false,
+            initialized: true,
+        });
+
+        let malformed = with_supervised_codex_session(
+            &mut session,
+            || {
+                starts.set(starts.get() + 1);
+                Ok(FakeSession {
+                    alive: true,
+                    initialized: true,
+                })
+            },
+            |session| session.alive,
+            |session| {
+                assert!(session.initialized);
+                Err::<(), _>(AppError::Serialization("malformed JSONL".into()))
+            },
+            || {
+                clears.set(clears.get() + 1);
+                Ok(())
+            },
+        );
+
+        assert!(matches!(malformed, Err(AppError::Serialization(_))));
+        assert!(session.is_none());
+        assert_eq!(starts.get(), 1);
+        assert_eq!(clears.get(), 2);
+
+        let recovered = with_supervised_codex_session(
+            &mut session,
+            || {
+                starts.set(starts.get() + 1);
+                Ok(FakeSession {
+                    alive: true,
+                    initialized: true,
+                })
+            },
+            |session| session.alive,
+            |session| Ok(session.initialized),
+            || {
+                clears.set(clears.get() + 1);
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(recovered);
+        assert_eq!(starts.get(), 2);
+        assert_eq!(clears.get(), 2);
+        assert!(session.as_ref().is_some_and(|value| value.initialized));
     }
 
     #[test]
@@ -5413,6 +5541,18 @@ mod tests {
         assert!(is_allowed_external_url(
             "https://github.com/klimPaskov/comfyui-hoi4-portraits"
         ));
+        assert!(is_allowed_external_url(
+            "https://platform.claude.com/settings/keys"
+        ));
+        assert!(is_allowed_external_url(
+            "https://platform.kimi.ai/console/api-keys"
+        ));
+        assert!(is_allowed_external_url(
+            "https://bigmodel.cn/usercenter/proj-mgmt/apikeys"
+        ));
+        assert!(is_allowed_external_url(
+            "https://platform.deepseek.com/api_keys"
+        ));
         assert!(!is_allowed_external_url(
             "https://github.com/klimPaskov/Agentic-HOI4-Modding/issues"
         ));
@@ -5432,6 +5572,40 @@ mod tests {
                 "Codex App Server closed during account/read".into()
             )),
             "Codex is temporarily unavailable. Close and reopen Codex, then try again."
+        );
+        assert_eq!(
+            codex_user_error(AppError::Process(
+                "Codex App Server turn/start failed (-32600): Invalid request: readOnly.access is not allowed".into()
+            )),
+            "Codex is temporarily unavailable. Close and reopen Codex, then try again."
+        );
+    }
+
+    #[test]
+    fn codex_analysis_error_categories_remain_actionable_and_sanitized() {
+        assert_eq!(
+            codex_user_error(AppError::Process(
+                "Codex usage state could not be checked".into()
+            )),
+            "Codex usage could not be checked. Choose Check again to retry."
+        );
+        assert_eq!(
+            codex_user_error(AppError::Credential(
+                "Codex usage is currently limited; retry later".into()
+            )),
+            "Codex usage is currently limited. Your draft is unchanged; try again when usage is available."
+        );
+        assert_eq!(
+            codex_user_error(AppError::Credential(
+                "Codex evidence contains credential-shaped content sk-live-secret".into()
+            )),
+            "Codex blocked private-looking information. Remove secrets from the description or selected evidence, then try again."
+        );
+        assert_eq!(
+            codex_user_error(AppError::Credential(
+                "sign in with ChatGPT through the official Codex App Server before planning".into()
+            )),
+            "Sign in with ChatGPT before continuing."
         );
     }
 
@@ -6354,9 +6528,7 @@ mod tests {
         assert!(three_d_health().lock().unwrap().is_empty());
     }
 
-    #[test]
-    fn local_codex_state_can_be_cleared_without_starting_an_external_session() {
-        let _state_guard = test_state_guard();
+    fn seed_codex_local_state_for_test() {
         let analysis_id = Uuid::new_v4();
         codex_analyses().lock().unwrap().insert(
             analysis_id,
@@ -6402,10 +6574,43 @@ mod tests {
             entries: HashMap::from([("finding".into(), Vec::new())]),
             evidence_sha256: None,
         };
+    }
+
+    #[test]
+    fn local_codex_state_can_be_cleared_without_starting_an_external_session() {
+        let _state_guard = test_state_guard();
+        seed_codex_local_state_for_test();
 
         clear_codex_local_state().unwrap();
 
         assert!(codex_analyses().lock().unwrap().is_empty());
+        let evidence = codex_approved_evidence().lock().unwrap();
+        assert!(evidence.project_root.is_none());
+        assert!(evidence.scan_id.is_none());
+        assert!(evidence.entries.is_empty());
+    }
+
+    #[test]
+    fn failed_remote_logout_still_clears_all_local_session_state() {
+        let _state_guard = test_state_guard();
+        seed_codex_local_state_for_test();
+        codex_login_cancellations()
+            .lock()
+            .unwrap()
+            .insert("login-pending".into(), Arc::new(AtomicBool::new(false)));
+        let mut session = Some("initialized App Server session");
+
+        let result = finalize_codex_logout_state(
+            &mut session,
+            Err("Sign-out could not reach Codex.".into()),
+            clear_codex_local_state,
+            || codex_login_cancellations().lock().unwrap().clear(),
+        );
+
+        assert_eq!(result.unwrap_err(), "Sign-out could not reach Codex.");
+        assert!(session.is_none());
+        assert!(codex_analyses().lock().unwrap().is_empty());
+        assert!(codex_login_cancellations().lock().unwrap().is_empty());
         let evidence = codex_approved_evidence().lock().unwrap();
         assert!(evidence.project_root.is_none());
         assert!(evidence.scan_id.is_none());

@@ -73,6 +73,12 @@ custom endpoints must pass the core URL policy (HTTPS, no userinfo, query, or
 fragment; loopback HTTP only for the local profile), and requests/responses are
 bounded and schema-validated before any proposal is accepted.
 
+Known hosted provider account pages and checked-in defaults must come from
+official provider documentation. The renderer may request only a fixed account
+URL carried by the reviewed profile; Rust must still compare it against the
+exact allowlist before invoking the system browser. Do not describe API-key
+entry as OAuth or account login.
+
 ## Filesystem
 
 - Normalize and contain every path.

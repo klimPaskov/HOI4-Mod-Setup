@@ -17,17 +17,22 @@ The bounded registry currently contains:
 | Profile | Transport | Credential route | Endpoint rule |
 | --- | --- | --- | --- |
 | Codex | official local Codex App Server | ChatGPT browser or device-code login owned by Codex | App Server owns its route |
-| Claude | Anthropic messages | user-supplied API key in the OS vault | user-supplied HTTPS endpoint |
-| Kimi | OpenAI-compatible | user-supplied API key in the OS vault | user-supplied HTTPS endpoint |
-| GLM | OpenAI-compatible | user-supplied API key in the OS vault | user-supplied HTTPS endpoint |
-| DeepSeek | OpenAI-compatible | user-supplied API key in the OS vault | user-supplied HTTPS endpoint |
+| Claude | Anthropic messages | provider API key in the OS vault | verified default; editable under Advanced |
+| Kimi | OpenAI-compatible | provider API key in the OS vault | verified default; editable under Advanced |
+| GLM | OpenAI-compatible | provider API key in the OS vault | verified default; editable under Advanced |
+| DeepSeek | OpenAI-compatible | provider API key in the OS vault | verified default; editable under Advanced |
 | Local model | OpenAI-compatible | no hosted credential | user-supplied loopback HTTP endpoint |
 | Custom provider (`custom`) | OpenAI-compatible | user-supplied API key in the OS vault | user-supplied HTTPS endpoint |
 
-The application does not invent provider URLs, OAuth routes, package names,
+The known hosted profiles ship with checked-in model and HTTPS address defaults
+verified against the providers' official documentation. The first screen asks
+the user to open the provider's fixed official API-key page, paste the key, and
+choose **Connect**. Model and address remain available under **Advanced**. This
+is a simple provider connection, not a claim of third-party OAuth support. The
+application does not invent provider URLs, login routes, package names,
 commands, model names, MCP servers, or platform support. A hosted provider is
-shown as configured only after its endpoint and credential reference pass
-local validation; the first semantic request is the capability check. Local
+shown as connected only after its address and credential reference pass local
+validation; the first semantic request is the capability check. Local
 models are explicitly configuration-based and are not described as hosted
 accounts.
 

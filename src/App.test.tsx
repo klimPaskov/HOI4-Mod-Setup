@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useState } from "react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { Components, DryRun, Git, Ready, Scan, Update, Welcome } from "./App";
 import { cancelCodexLogin, checkForAppUpdate, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewSourceManifestResult, readCodexAccount, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
@@ -87,6 +87,35 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByRole("button", { name: /create new mod/i })).toBeInTheDocument();
   });
 
+  it("does not queue duplicate Codex account checks during a pending startup", async () => {
+    enableTauriRuntime();
+    let resolveAccount: ((value: Awaited<ReturnType<typeof readCodexAccount>>) => void) | undefined;
+    vi.mocked(readCodexAccount).mockReturnValue(new Promise((resolve) => { resolveAccount = resolve; }));
+
+    render(<StrictMode><App /></StrictMode>);
+
+    await waitFor(() => expect(readCodexAccount).toHaveBeenCalledTimes(1));
+    await act(async () => resolveAccount?.({ available: false, authenticated: false, auth_mode: "none", usage_limited: false }));
+    expect(await screen.findByRole("button", { name: "Sign in with ChatGPT" })).toBeInTheDocument();
+  });
+
+  it("shows a retryable Codex usage-check failure and keeps Continue disabled", async () => {
+    enableTauriRuntime();
+    vi.mocked(readCodexAccount).mockResolvedValue({
+      available: false,
+      authenticated: false,
+      auth_mode: "",
+      usage_limited: false,
+      error: "Codex usage could not be checked. Choose Check again to retry.",
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Codex usage could not be checked. Choose Check again to retry.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+  });
+
   it("keeps the wizard usable and offers retry when update installation fails", async () => {
     enableTauriRuntime();
     vi.mocked(checkForAppUpdate).mockResolvedValue({
@@ -131,11 +160,26 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.change(screen.getByLabelText("AI provider"), { target: { value: "claude" } });
 
     expect(screen.getByLabelText("Model")).toBeInTheDocument();
-    expect(screen.getByLabelText("Endpoint")).toBeInTheDocument();
-    expect(screen.getByLabelText("Model")).toHaveValue("");
-    expect(screen.getByLabelText("Endpoint")).toHaveValue("");
-    expect(screen.getByLabelText("Provider API key")).toHaveAttribute("type", "password");
+    expect(screen.getByLabelText("Provider address")).toBeInTheDocument();
+    expect(screen.getByLabelText("Model")).toHaveValue("claude-sonnet-5");
+    expect(screen.getByLabelText("Provider address")).toHaveValue("https://api.anthropic.com/v1/messages");
+    expect(screen.getByLabelText("Claude API key")).toHaveAttribute("type", "password");
+    expect(screen.getByText("Advanced")).toBeInTheDocument();
     expect(screen.queryByText(/flattened ChatGPT project-sources/i)).not.toBeInTheDocument();
+  });
+
+  it("opens only the fixed provider account page from the simple connection flow", async () => {
+    enableTauriRuntime();
+    function ControlledWelcome() {
+      const [state, setState] = useState(welcomeState({ available: false, authenticated: false, auth_mode: "none", usage_limited: false }));
+      return <Welcome state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
+    }
+
+    render(<ControlledWelcome />);
+    fireEvent.change(screen.getByLabelText("AI provider"), { target: { value: "claude" } });
+    fireEvent.click(screen.getByRole("button", { name: "Get Claude API key" }));
+
+    await waitFor(() => expect(openExternalUrlResult).toHaveBeenCalledWith("https://platform.claude.com/settings/keys"));
   });
 
   it("shows the flattened ChatGPT sources checkbox only in Codex Components", async () => {

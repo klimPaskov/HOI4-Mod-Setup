@@ -6,8 +6,10 @@ Codex is the default semantic provider. HOI4 Mod Setup uses the user's Codex
 access through their ChatGPT account for the Codex route. The application does
 not use an application-owned OpenAI API key, does not request an API key for
 Codex, and does not implement a separate token service. Users may instead
-select a bounded non-Codex provider profile; those routes require an explicit
-endpoint and OS-vault credential when the verified profile requires one. The
+select a bounded non-Codex provider profile. Known hosted providers fill their
+verified model and address automatically and ask only for a provider API key,
+which is stored in the OS vault. Advanced users may review or change those
+defaults. The
 bounded non-Codex registry uses Claude, Kimi, GLM, DeepSeek, local, and
 `custom` profiles.
 
@@ -18,6 +20,11 @@ fresh App Server when the prior child has exited. Logout always drops the local
 process and clears pending analysis and approved scan state even if the App
 Server's remote logout request fails; the error remains visible so the user can
 retry the Codex-owned sign-out flow.
+
+Small App Server requests such as initialize, account state, and turn start use
+a 15-second response limit. The completed analysis notification wait remains
+separately bounded at 120 seconds. A stalled handshake therefore returns the UI
+to a retryable state instead of leaving the first screen waiting for minutes.
 
 Verified OpenAI references:
 
@@ -35,12 +42,14 @@ Recovery, rollback, backup inspection, and local removal of managed files remain
 ### Non-Codex provider route
 
 Claude uses an Anthropic messages envelope. Kimi, GLM, DeepSeek, local, and
-the `custom` provider use the OpenAI-compatible envelope. Hosted routes
-accept only a user-supplied HTTPS endpoint and a provider-keyed OS-vault
-reference. Local models accept only a user-supplied loopback HTTP endpoint and
-are described as configured local adapters, not hosted accounts. The app does
-not invent provider URLs, OAuth routes, package names, commands, or model
-names. The first schema-validated request is the capability check.
+the `custom` provider use the OpenAI-compatible envelope. Known hosted routes
+use checked-in provider defaults and a provider-keyed OS-vault reference. Their
+fixed account link opens the provider's official API-key page. Custom hosted
+routes accept a user-supplied HTTPS address. Local models accept only a
+user-supplied loopback HTTP address and are described as configured local
+adapters, not hosted accounts. The app does not claim that an API key is an
+OAuth login, and it does not invent provider URLs, package names, commands, or
+model names. The first schema-validated request is the capability check.
 
 ## Authentication flow
 
@@ -86,9 +95,14 @@ The app may display the live signed-in email and plan type returned by `account/
 
 ## Usage and limits
 
-Before a semantic analysis turn, read the current account and rate-limit state. A reached usage limit blocks new semantic analysis and produces a clear resumable state. It does not damage the current scan or transaction plan.
+Before a semantic analysis turn, read the current account and rate-limit state. A reached usage limit blocks new semantic analysis and produces a clear resumable state. It does not damage the current scan or transaction plan. If the rate-limit lookup itself fails, show only a bounded retry message; never forward the App Server method, error code, account identity, or protocol detail to the interface.
 
 Do not silently switch providers, endpoints, models, or credential routes. The user can retry after the selected provider becomes available. Recovery and rollback remain usable.
+
+Renderer-bound errors preserve sanitized categories: cancellation stays a
+cancelled login, signed-out state asks for ChatGPT sign-in, usage exhaustion
+preserves the draft and gives a retry-later action, private-looking input asks
+the user to remove secrets, and protocol details remain hidden.
 
 ## Semantic responsibilities
 
@@ -130,9 +144,9 @@ No provider can override a deterministic failure. It cannot create files during 
 Use a dedicated App Server thread for each Codex setup session. Start every semantic turn with:
 
 - no model override by default, so the user's Codex configuration controls the available model
-- read-only sandbox policy
-- no project write roots
-- a restricted read-only access policy with no project-readable roots
+- `sandbox: read-only` on `thread/start`
+- `sandboxPolicy: { type: readOnly, networkAccess: false }` on `turn/start`
+- an empty temporary working directory, with no target-project path supplied
 - explicit approved input excerpts
 - a task-specific `outputSchema`
 - a bounded prompt that asks for proposals and short rationale, not hidden reasoning
