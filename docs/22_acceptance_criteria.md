@@ -65,7 +65,7 @@
 - AI-01: Codex, Claude, Kimi, GLM, DeepSeek, local, and custom provider profiles are selectable at the start.
 - AI-02: The selected profile changes semantic guidance, adapted `AGENTS.md`, generated `README.md`, state, plan, lock, and maintenance review.
 - AI-03: Provider changes clear stale analysis and cannot reuse a record from another provider or model.
-- AI-04: A Codex-only final checkbox prepares `chatgpt_project_sources/`; non-Codex setup never renders or persists it as selected.
+- AI-04: A Codex-only Components checkbox prepares `chatgpt_project_sources/`; non-Codex setup never renders or persists it as selected.
 - AI-05: Flattening renames `.agents/skills/<skill>/SKILL.md` to `<skill>.md` and includes selected subagents, adapted AGENTS, and README.
 - AI-06: Flattening rejects links, case-insensitive collisions, secret-shaped content, and bounded file/aggregate-size violations.
 - AI-07: Flattening uses the normal dry-run, backup, staging, validation, apply, readiness, journal, and rollback path.
@@ -249,7 +249,7 @@
 - UI-11: 200 percent scaling works.
 - UI-12: Project identity shows compact descriptor rows and thumbnail preview on demand.
 - UI-13: Selected-provider analysis shows the approved request manifest and separates detected, suggested, and confirmed values without adding a permanent explanatory panel.
-- UI-14: The flatten checkbox is native, keyboard accessible, Codex-only, appears in the Install review, and is followed on Ready by the ChatGPT “Chat” recommendation.
+- UI-14: The flatten checkbox is native, keyboard accessible, Codex-only, appears under **Choose what to install** with its file list and sizes, remains read-only during Install review, and is followed on Ready by the ChatGPT “Chat” recommendation.
 - UI-15: The Ready-screen portrait workflow link is keyboard accessible, has a
   clear name, and is not presented as setup or readiness state.
 - UI-16: New-project identity fields are populated from the name and brief; optional metadata stays secondary and generated values remain keyboard-editable.
@@ -258,6 +258,15 @@
 - UI-19: The Ready-screen external link has a clear name and fixed safe destination.
 - UI-20: The Optional workflows screen places the exact Super Events question directly after the exact 3D question and shows no Super Events credential control.
 - UI-21: Ready and maintenance screens expose Super Events state and add/repair actions without adding a separate workflow phase or a LoRA/ComfyUI setup surface.
+- UI-22: A newer application version appears as one keyboard-accessible, non-blocking update action; current and offline checks add no persistent banner.
+
+## Application updates
+
+- UPD-01: The packaged app checks one fixed HTTPS GitHub Release metadata endpoint asynchronously after launch.
+- UPD-02: Update metadata and final platform packages require the committed updater public key; signature verification cannot be bypassed.
+- UPD-03: Windows x64, macOS arm64, and macOS x64 metadata resolve to exact release-tag assets.
+- UPD-04: Download or verification failure preserves the running version and never blocks mod setup.
+- UPD-05: Installation starts only after the user chooses **Update now** and restarts into the verified version.
 
 ## Open-source repository
 
@@ -273,7 +282,7 @@
 - OSS-10: GitHub workflow YAML parses and uses read-only default permissions.
 - OSS-11: Main is protected through a pull-request ruleset with required checks.
 - OSS-12: Release automation builds from an exact annotated tag and publishes a normal release only after all platform, signature, and curation gates pass.
-- OSS-13: The public stable release contains exactly the Windows x64 installer and macOS arm64 and x64 disk images; checksums and platform verification remain in internal workflow evidence.
+- OSS-13: The public stable release keeps the Windows x64 installer and macOS arm64 and x64 disk images clearly named, and also contains signed updater metadata plus the two macOS update archives; checksums and platform verification remain in internal workflow evidence.
 - OSS-14: Pull requests require documentation and living-skill review.
 - OSS-15: Planning validation checks schemas, examples, YAML, TOML, skills, subagents, README boundary, and goal prompt length.
 - OSS-16: The canonical goal prompt is included at `docs/GOAL_PROMPT.md` and remains no more than 4000 characters.

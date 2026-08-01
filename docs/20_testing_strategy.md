@@ -196,6 +196,8 @@ Validate the public repository layer:
 - release builds use the exact tag commit
 - public release is blocked when `LICENSE` is missing
 - committed-secret pattern checks pass
+- updater metadata contains all three supported targets, exact release URLs,
+  and non-empty signatures for the final platform packages
 
 ## Skill drift tests
 

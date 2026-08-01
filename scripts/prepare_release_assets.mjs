@@ -7,9 +7,9 @@ const root = resolve(import.meta.dirname, "..");
 const inputRoot = resolve(root, process.argv[2] ?? "release-artifacts");
 const outputRoot = resolve(root, process.argv[3] ?? "publication-assets");
 const expected = new Map([
-  ["hoi4-mod-setup-windows-x64", { platform: "windows", architecture: "X64", extension: ".exe" }],
-  ["hoi4-mod-setup-macos-arm64", { platform: "macos", architecture: "ARM64", extension: ".dmg" }],
-  ["hoi4-mod-setup-macos-x64", { platform: "macos", architecture: "X64", extension: ".dmg" }],
+  ["hoi4-mod-setup-windows-x64", { platform: "windows", architecture: "X64", extension: ".exe", updaterPlatform: "windows-x86_64" }],
+  ["hoi4-mod-setup-macos-arm64", { platform: "macos", architecture: "ARM64", extension: ".dmg", updaterPlatform: "darwin-aarch64" }],
+  ["hoi4-mod-setup-macos-x64", { platform: "macos", architecture: "X64", extension: ".dmg", updaterPlatform: "darwin-x86_64" }],
 ]);
 
 if (!existsSync(inputRoot) || !(await stat(inputRoot)).isDirectory()) {
@@ -123,9 +123,14 @@ function publicPackageName(descriptor) {
 
 const releaseRevision = process.env.GITHUB_SHA?.trim().toLowerCase();
 const releaseTag = process.env.GITHUB_REF_NAME?.trim();
+const downloadBase = releaseTag
+  ? `https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/${encodeURIComponent(releaseTag)}`
+  : null;
+const releaseVersion = releaseTag?.replace(/^v/, "") ?? "release";
 const platformSummaries = [];
 const sbomInventories = [];
 const noticeInventories = [];
+const updaterPlatforms = {};
 
 for (const artifactDirectory of expectedNames) {
   const descriptor = expected.get(artifactDirectory);
@@ -185,6 +190,22 @@ for (const artifactDirectory of expectedNames) {
   }
   const packageName = publicPackageName(descriptor);
   await cp(packages[0].absolute, resolve(outputRoot, packageName));
+  const updaterBundle = descriptor.platform === "windows"
+    ? packages[0]
+    : files.find(({ relative: path }) => path.startsWith("packages/") && path.endsWith(".app.tar.gz"));
+  if (!updaterBundle) throw new Error(`${artifactDirectory} is missing its updater bundle`);
+  const updaterSignature = files.find(({ relative: path }) => path === `${updaterBundle.relative}.sig`);
+  if (!updaterSignature) throw new Error(`${artifactDirectory} is missing its updater signature`);
+  const signature = (await readFile(updaterSignature.absolute, "utf8")).trim();
+  if (!signature || signature.length > 16_384) throw new Error(`${artifactDirectory} updater signature is invalid`);
+  const updaterName = descriptor.platform === "windows"
+    ? packageName
+    : `HOI4-Mod-Setup-${descriptor.platform}-${descriptor.architecture.toLowerCase()}.app.tar.gz`;
+  if (descriptor.platform !== "windows") await cp(updaterBundle.absolute, resolve(outputRoot, updaterName));
+  updaterPlatforms[descriptor.updaterPlatform] = {
+    signature,
+    url: downloadBase ? `${downloadBase}/${encodeURIComponent(updaterName)}` : updaterName,
+  };
   platformSummaries.push({
     artifact_directory: artifactDirectory,
     platform: descriptor.platform,
@@ -198,10 +219,11 @@ for (const artifactDirectory of expectedNames) {
 mergeSbomInventories(sbomInventories);
 mergeThirdPartyNotices(noticeInventories);
 
-const downloadBase = releaseTag
-  ? `https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/${encodeURIComponent(releaseTag)}`
-  : null;
-const releaseVersion = releaseTag?.replace(/^v/, "") ?? "release";
+await writeFile(resolve(outputRoot, "latest.json"), JSON.stringify({
+  version: releaseVersion,
+  notes: "A newer version of HOI4 Mod Setup is available.",
+  platforms: updaterPlatforms,
+}, null, 2) + "\n", "utf8");
 const downloadBullets = platformSummaries.map((summary) => {
   const label = summary.platform === "windows"
     ? "Windows"

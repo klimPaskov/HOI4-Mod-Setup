@@ -26,6 +26,12 @@ export type WorkflowState = "not_selected" | "selected_pending" | "ready" | "inc
 
 export type StatusTone = "pass" | "review" | "block" | "info" | "muted";
 
+export interface AppUpdateStatus {
+  currentVersion: string;
+  availableVersion?: string | null;
+  available: boolean;
+}
+
 export type ConflictChoice = "keep" | "replace" | "merge" | "rename" | "skip";
 
 export type RecoveryChoice = "resume" | "rollback" | "discard";

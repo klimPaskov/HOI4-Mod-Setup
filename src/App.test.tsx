@@ -2,12 +2,12 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { Components, DryRun, Git, Ready, Scan, Update, Welcome } from "./App";
-import { cancelCodexLogin, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewSourceManifestResult, readCodexAccount, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
+import { cancelCodexLogin, checkForAppUpdate, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewSourceManifestResult, readCodexAccount, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
 import type { CodexAnalysisResult, FolderSelection, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, cancelCodexLogin: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewSourceManifestResult: vi.fn(), readCodexAccount: vi.fn(), runCodexAnalysisResult: vi.fn(), suggestProjectPaths: vi.fn() };
+  return { ...actual, cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), installAppUpdate: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewSourceManifestResult: vi.fn(), readCodexAccount: vi.fn(), runCodexAnalysisResult: vi.fn(), suggestProjectPaths: vi.fn() };
 });
 
 afterEach(() => {
@@ -27,6 +27,8 @@ beforeEach(() => {
   vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: null });
   vi.mocked(runCodexAnalysisResult).mockResolvedValue({ value: null });
   vi.mocked(suggestProjectPaths).mockResolvedValue(null);
+  vi.mocked(checkForAppUpdate).mockResolvedValue({ value: null });
+  vi.mocked(installAppUpdate).mockResolvedValue({ value: undefined });
 });
 
 function readyState(): WizardState {
@@ -60,6 +62,46 @@ function enableTauriRuntime() {
 }
 
 describe("HOI4 Mod Setup wizard", () => {
+  it("checks quietly on launch and installs an available signed update only after approval", async () => {
+    enableTauriRuntime();
+    vi.mocked(checkForAppUpdate).mockResolvedValue({
+      value: { currentVersion: "0.1.1", availableVersion: "0.2.0", available: true },
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Version 0.2.0 is available")).toBeInTheDocument();
+    expect(installAppUpdate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+    await waitFor(() => expect(installAppUpdate).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not interrupt setup when the background update check is offline", async () => {
+    enableTauriRuntime();
+    vi.mocked(checkForAppUpdate).mockResolvedValue({ value: null, error: "offline" });
+
+    render(<App />);
+
+    await waitFor(() => expect(checkForAppUpdate).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button", { name: "Update now" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /create new mod/i })).toBeInTheDocument();
+  });
+
+  it("keeps the wizard usable and offers retry when update installation fails", async () => {
+    enableTauriRuntime();
+    vi.mocked(checkForAppUpdate).mockResolvedValue({
+      value: { currentVersion: "0.1.1", availableVersion: "0.2.0", available: true },
+    });
+    vi.mocked(installAppUpdate).mockResolvedValue({ value: null, error: "signature rejected" });
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Update now" }));
+
+    expect(await screen.findByText("Update failed. Try again.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Update now" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /create new mod/i })).toBeInTheDocument();
+  });
+
   it("starts in the Project phase and exposes the two supported entry routes", () => {
     render(<App />);
     expect(screen.getByText("HOI4 Mod Setup")).toBeInTheDocument();
@@ -96,44 +138,59 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.queryByText(/flattened ChatGPT project-sources/i)).not.toBeInTheDocument();
   });
 
-  it("shows the flattened ChatGPT sources checkbox only in the Codex Install review", () => {
-    function ControlledDryRun({ provider }: { provider: "codex" | "claude" }) {
+  it("shows the flattened ChatGPT sources checkbox only in Codex Components", async () => {
+    const manifest = {
+      schema_version: "1.0.0",
+      manifest_id: "example",
+      source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
+      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
+      components: [],
+    } as unknown as SourceManifestPreview;
+    vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: manifest });
+
+    function ControlledComponents({ provider }: { provider: "codex" | "claude" }) {
       const [state, setState] = useState({
         aiProvider: provider,
         flattenForChat: false,
-        gitMode: "skip",
-        gitBranch: "main",
-        gitRemoteName: "origin",
-        gitRemoteUrl: "",
-        initialCommit: false,
+        sourceMode: "latest",
+        pinnedRef: "",
+        selectedComponents: [],
       } as unknown as WizardState);
-      return <DryRun state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
+      return <Components state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
     }
 
     render(<Git state={{ aiProvider: "codex", gitMode: "skip", gitBranch: "main", gitRemoteName: "origin", gitRemoteUrl: "", initialCommit: false } as unknown as WizardState} update={vi.fn()} />);
     expect(screen.queryByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i })).not.toBeInTheDocument();
     cleanup();
 
-    const { unmount } = render(<ControlledDryRun provider="codex" />);
-    const checkbox = screen.getByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i });
+    const { unmount } = render(<ControlledComponents provider="codex" />);
+    const checkbox = await screen.findByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i });
     fireEvent.click(checkbox);
     expect(checkbox).toBeChecked();
     expect(screen.queryByLabelText(/Additional project files/i)).not.toBeInTheDocument();
     unmount();
 
-    render(<ControlledDryRun provider="claude" />);
+    render(<ControlledComponents provider="claude" />);
+    await screen.findByText("Components loaded.");
     expect(screen.queryByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i })).not.toBeInTheDocument();
   });
 
-  it("shows flattened ChatGPT sources as a sized file package after planning", () => {
-    render(<DryRun state={{
+  it("shows flattened ChatGPT sources as a sized file package in Components after planning", async () => {
+    const manifest = {
+      schema_version: "1.0.0",
+      manifest_id: "example",
+      source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
+      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
+      components: [],
+    } as unknown as SourceManifestPreview;
+    vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: manifest });
+
+    render(<Components state={{
       aiProvider: "codex",
       flattenForChat: true,
-      gitMode: "skip",
-      gitBranch: "main",
-      gitRemoteName: "origin",
-      gitRemoteUrl: "",
-      initialCommit: false,
+      sourceMode: "latest",
+      pinnedRef: "",
+      selectedComponents: [],
       plan: {
         operations: [],
         conflicts: [],
@@ -144,10 +201,35 @@ describe("HOI4 Mod Setup wizard", () => {
       },
     } as unknown as WizardState} update={vi.fn()} />);
 
-    expect(screen.getByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i })).toBeChecked();
-    expect(screen.getAllByText("2 files · 7 B")).toHaveLength(2);
+    expect(await screen.findByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i })).toBeChecked();
+    expect(screen.getByText("2 files · 7 B")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Files in the ChatGPT folder"));
     expect(screen.getByText("AGENTS.md")).toBeInTheDocument();
     expect(screen.getByText("README.md")).toBeInTheDocument();
+  });
+
+  it("previews flattened skill and subagent filenames and source sizes in Components", async () => {
+    const manifest = {
+      schema_version: "1.0.0",
+      manifest_id: "example",
+      source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
+      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
+      components: [
+        { id: "core.skills", display_name: "Skills", category: "skill", optional: false, platforms: ["all"], source: { kind: "tree", path: ".agents/skills" }, destination: { path: ".agents/skills/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [{ path: ".agents/skills/hoi4-events/SKILL.md", size: 120 }], capabilities: [], validation: [], update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true } },
+        { id: "core.subagents", display_name: "Subagents", category: "subagent", optional: false, platforms: ["all"], source: { kind: "tree", path: ".codex/agents" }, destination: { path: ".codex/agents/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [{ path: ".codex/agents/hoi4_researcher.toml", size: 80 }], capabilities: [], validation: [], update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true } },
+      ],
+    } as unknown as SourceManifestPreview;
+    vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: manifest });
+
+    render(<Components state={{ aiProvider: "codex", flattenForChat: true, sourceMode: "latest", pinnedRef: "", selectedComponents: ["core.skills", "core.subagents"] } as unknown as WizardState} update={vi.fn()} />);
+
+    await screen.findByText("Components loaded.");
+    fireEvent.click(screen.getByText("Files in the ChatGPT folder"));
+    expect(screen.getByText("hoi4-events.md")).toBeInTheDocument();
+    expect(screen.getByText("hoi4_researcher.toml")).toBeInTheDocument();
+    expect(screen.getByText("120 B")).toBeInTheDocument();
+    expect(screen.getByText("80 B")).toBeInTheDocument();
+    expect(screen.getAllByText("Size calculated during review")).toHaveLength(2);
   });
 
   it("offers both optional workflows again for an existing managed setup", () => {

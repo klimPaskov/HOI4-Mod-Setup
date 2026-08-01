@@ -48,12 +48,16 @@ limited to loopback HTTP.
 
 ## Codex-only flattened Chat export
 
-The Install review shows the optional checkbox only when the selected provider
-is Codex:
+The Components screen shows the optional checkbox only when the selected
+provider is Codex:
 
 > Prepare a flattened ChatGPT project-sources folder
 
-It is the last optional setup operation. When selected, the core stages a
+It appears alongside the other choices under **Choose what to install**. The
+row shows the file count and an expandable list of flattened filenames and
+sizes. Source-declared sizes can appear before planning; generated-file sizes
+and the exact total appear after the plan is prepared. The Install review shows
+the selected package as read-only. When selected, the core stages a
 `<mod_project>/chatgpt_project_sources/` folder containing:
 
 - the adapted project `AGENTS.md`;

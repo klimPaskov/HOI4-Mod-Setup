@@ -78,6 +78,12 @@ def main() -> None:
             for step in release_jobs[job_name].get("steps", [])
         ):
             raise SystemExit(f"{job_name} must not check out repository code")
+        updater_steps = [
+            step for step in release_jobs[job_name].get("steps", [])
+            if "TAURI_SIGNING_PRIVATE_KEY" in str(step.get("env", {}))
+        ]
+        if len(updater_steps) != 1:
+            raise SystemExit(f"{job_name} must expose the updater key to exactly one bounded step")
 
     mac_steps = {
         step.get("name"): step for step in release_jobs["sign-macos"].get("steps", [])

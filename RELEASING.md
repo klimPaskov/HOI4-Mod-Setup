@@ -41,15 +41,20 @@ The tag workflow should build from that exact commit. Release jobs must not modi
 - Windows Authenticode-signed installer
 - macOS code-signed disk image for each supported architecture
 - release notes with direct platform download links
+- signed updater metadata plus a macOS update bundle for each architecture
 
 Checksums, build metadata, signing evidence, the SBOM, and generated
 third-party notice inventory remain internal workflow artifacts. The
-user-facing GitHub Release uploads only the three installers. GitHub supplies
-the tag source archives automatically.
+user-facing GitHub Release keeps the three installers easy to identify and also
+publishes `latest.json` plus the two macOS update bundles used by installed
+apps. GitHub supplies the tag source archives automatically.
 
-Automatic application updates are explicitly deferred for version 0.1.x. Do
-not publish updater metadata or claim update support until the signed update
-channel, rollback behavior, and clean-machine tests are implemented.
+Every stable release signs the final Authenticode-signed Windows installer and
+the final code-signed macOS app archives with the dedicated Tauri updater key.
+The release environment stores `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; only the matching public key is committed.
+The app checks the fixed `releases/latest/download/latest.json` endpoint and
+requires a valid updater signature before install.
 
 ## Development previews
 
@@ -67,8 +72,8 @@ published assets use the deterministic names `HOI4-Mod-Setup-windows-x64-setup.e
 `HOI4-Mod-Setup-macos-arm64.dmg`, and `HOI4-Mod-Setup-macos-x64.dmg`. Generated
 release notes lead with direct installer bullets. Hashes, provenance, the SBOM,
 third-party notices, metadata, and per-platform manifests remain in CI evidence
-and are verified before publication; the user-facing GitHub Release uploads
-only the three installers.
+and are verified before publication. Stable releases add the updater metadata
+and macOS app archives beside the three clearly named installers.
 
 ## Publication gate
 

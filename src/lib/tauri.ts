@@ -1,4 +1,4 @@
-import type { AiAccountStatus, AiAnalysisRequest, AiProviderProfile, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
+import type { AiAccountStatus, AiAnalysisRequest, AiProviderProfile, AppUpdateStatus, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
   id: string;
@@ -44,6 +44,8 @@ interface ReadinessInput {
 }
 
 interface TauriCommandMap {
+  app_update_check: { args: Record<string, never>; result: AppUpdateStatus };
+  app_update_install: { args: Record<string, never>; result: void };
   ai_provider_profiles: { args: Record<string, never>; result: AiProviderProfile[] };
   ai_account_read: { args: { provider: string; model: string; endpoint: string }; result: AiAccountStatus };
   store_ai_provider_credential: { args: { provider: string; value: string }; result: boolean };
@@ -85,6 +87,14 @@ interface TauriCommandMap {
   open_in_codex: { args: { projectRoot: string }; result: OpenInCodexResult };
   git_online_prepare: { args: { projectRoot: string; action: Exclude<GitOnlineAction, "none">; remoteName: string; repository: string; branch: string }; result: GitOnlinePlan };
   git_online_action: { args: { projectRoot: string; planId: string; confirmed: boolean; transactionId?: string | null }; result: GitOnlineResult };
+}
+
+export async function checkForAppUpdate(): Promise<CommandResult<AppUpdateStatus>> {
+  return invokeCommandResult("app_update_check", {});
+}
+
+export async function installAppUpdate(): Promise<CommandResult<void>> {
+  return invokeCommandResult("app_update_install", {});
 }
 
 type Invoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;

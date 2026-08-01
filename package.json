@@ -1,6 +1,6 @@
 {
   "name": "hoi4-mod-setup",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "license": "Apache-2.0",
   "description": "Windows and macOS desktop wizard for preparing HOI4 mods for agentic development.",
@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:manifest": "python -m unittest scripts/test_generate_manifest_evidence.py",
+    "test:release-assets": "node --test scripts/prepare_release_assets.node-test.mjs",
     "test:workflows": "python scripts/check_workflow_security.py",
     "test:a11y": "node scripts/check_accessibility.mjs",
     "test:e2e": "node scripts/run_e2e_smoke.mjs",

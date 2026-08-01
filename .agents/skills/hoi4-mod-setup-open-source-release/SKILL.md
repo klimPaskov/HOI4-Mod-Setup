@@ -27,7 +27,8 @@ Read:
 - Keep CODEOWNERS current for sensitive paths.
 - Use issue forms for actionable reports.
 - Route vulnerabilities through private reporting.
-- Use weekly Dependabot version updates for npm, Cargo, and Actions.
+- Use weekly Dependabot version updates for npm, Cargo, and Actions, grouped to
+  at most one open version-update pull request per ecosystem.
 - Review sensitive dependency changes manually.
 
 ## Git workflow
@@ -58,7 +59,7 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - Release build jobs are tag-only and attach the protected `release` environment to the signing and publication jobs. Windows and macOS signing inputs are kept in separate platform steps; Apple secrets are injected only into the official-signing step, while the community path receives no Apple credentials. Cleanup removes temporary private material and disposable macOS keychains.
 - The publish job consumes only the curated artifact from `scripts/prepare_release_assets.mjs`, which rechecks every downloaded platform manifest, source/tag/architecture binding, package hash, signature evidence, and exact platform set. It refuses to reuse an existing tag release and creates a normal release only after every gate passes.
 - The manually dispatched `development-preview.yml` uses `scripts/prepare_preview_assets.mjs` to recheck exact source, platform, architecture, package hashes, and notices before publishing one user-facing semantic-version prerelease; the workflow refuses to reuse a published tag, receives no stable signing credentials, and keeps the GitHub prerelease label.
-- Preview and stable publication scripts use deterministic installer names (`HOI4-Mod-Setup-windows-x64-setup.exe`, `HOI4-Mod-Setup-macos-arm64.dmg`, and `HOI4-Mod-Setup-macos-x64.dmg`). Preview release notes lead with three direct installer bullets. Hashes, metadata, provenance, notices, and SBOM remain in CI evidence and are verified before publication; the user-facing GitHub Release uploads only the three installers.
+- Preview and stable publication scripts use deterministic installer names (`HOI4-Mod-Setup-windows-x64-setup.exe`, `HOI4-Mod-Setup-macos-arm64.dmg`, and `HOI4-Mod-Setup-macos-x64.dmg`). Preview release notes lead with three direct installer bullets. Hashes, metadata, provenance, notices, and SBOM remain in CI evidence and are verified before publication. Stable releases add `latest.json` and the two signed macOS app archives beside the three installers.
 - Platform-native lockfiles can contain legitimate optional packages for only one runner (for example, a Windows or macOS bundler). Preview and stable curation therefore require identical source, package, and platform evidence but merge the verified platform SBOM and third-party notice inventories into one deterministic union; they must not reject a release merely because those inventories differ by platform.
 - `scripts/generate_sbom.mjs` derives a CycloneDX dependency inventory from the locked pnpm and Cargo metadata and places `SBOM.cdx.json` in native release output. `scripts/generate_third_party_notices.mjs` separately derives the human-readable license inventory. Neither is a substitute for reviewing bundled assets or complete dependency license text.
 - Every signing route changes package bytes after the unsigned build manifest. The platform signing job verifies the resulting signature, records package-bound evidence, and regenerates the complete internal artifact manifest before curation.
@@ -144,10 +145,12 @@ route. The signing job has a hard twenty-minute limit.
 The repository is licensed under Apache 2.0 in `LICENSE`, and the decision is
 recorded in `docs/LICENSE_SELECTION.md`. Run `pnpm release:notices`, keep the
 license and generated notices in source and binary distributions, and review
-third-party notices before publication. Automatic
-application updates are explicitly deferred for the 0.1.x releases; do not
-claim updater support or publish updater metadata until the update channel,
-signature policy, rollback behavior, and clean-machine tests are implemented.
+third-party notices before publication. Automatic application updates use the
+fixed GitHub latest-release metadata endpoint. Sign final platform bytes with
+the protected Tauri updater key after Authenticode or macOS signing, embed
+signatures in `latest.json`, and publish the two macOS app archives alongside
+the three user-facing installers. A check or install failure must preserve the
+running version and remain non-blocking.
 
 ## Skill and docs alignment
 

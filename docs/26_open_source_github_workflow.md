@@ -221,7 +221,11 @@ Commit `.github/dependabot.yml` on the default branch. Monitor:
 - Cargo manifests
 - GitHub Actions
 
-Use weekly updates by default. Group routine compatible updates where it keeps pull request volume manageable. Never auto-merge a dependency update that affects filesystem access, cryptography, archive handling, Git, credentials, Tauri, updater code, or release signing without review and tests.
+Use weekly updates by default. Group all version updates into at most one pull
+request per ecosystem so dependency maintenance does not flood the repository.
+Never auto-merge a dependency update that affects filesystem access,
+cryptography, archive handling, Git, credentials, Tauri, updater code, or
+release signing without review and tests.
 
 Enable Dependabot alerts and security updates in repository settings. A configuration file controls version update pull requests, while alert settings remain repository settings.
 
@@ -251,7 +255,8 @@ signature, and platform evidence. Community releases use a ChaosX
 Authenticode signature on Windows and an ad-hoc code signature on the macOS
 application; protected credentials upgrade those routes to Azure Artifact
 Signing and Apple Developer ID signing plus notarization. The public GitHub
-Release contains only the three installers and concise notes.
+Release keeps the three installers clearly named and includes only the update
+metadata and macOS update bundles needed by installed copies.
 
 ### Development previews
 
@@ -271,7 +276,9 @@ same gates when official signing is configured. Publication renames the installe
 `HOI4-Mod-Setup-macos-x64.dmg`, then generates release notes with three direct
 download bullets. Package hashes, source provenance, SBOM, third-party notices,
 metadata, and platform manifests remain verified CI evidence; the public
-GitHub Release uploads only the three installers.
+GitHub Release uploads the three installers, `latest.json`, and the two macOS
+update archives. Signatures are embedded in the metadata and do not appear as
+separate public files.
 
 The protected environment sets
 `HOI4_MOD_SETUP_RELEASE_PUBLISH=true`. When
@@ -348,9 +355,11 @@ after Windows and macOS package verification, signature checks, native launch
 smoke tests, internal hash validation, curation, and the protected release
 environment gate pass.
 
-Updater metadata and automatic application updates are intentionally deferred
-for version 0.1.x. A future update channel must define signed metadata,
-rollback behavior, and clean-machine tests before it is enabled.
+Version 0.2.0 introduces the signed application update channel. The app checks
+the fixed latest-release metadata endpoint without blocking setup, shows only
+a verified newer version, and installs only after explicit user action. The
+release environment signs the final Windows installer and final macOS app
+archives with the dedicated updater key after platform signing.
 
 Never move or reuse a published tag. Fix problems in a new version.
 
