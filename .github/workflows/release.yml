@@ -505,10 +505,10 @@ jobs:
         run: |
           set -euo pipefail
           expected=(
-            "HOI4-Mod-Setup-macos-arm64.dmg"
             "HOI4-Mod-Setup-macos-arm64.app.tar.gz"
-            "HOI4-Mod-Setup-macos-x64.dmg"
+            "HOI4-Mod-Setup-macos-arm64.dmg"
             "HOI4-Mod-Setup-macos-x64.app.tar.gz"
+            "HOI4-Mod-Setup-macos-x64.dmg"
             "HOI4-Mod-Setup-windows-x64-setup.exe"
             "RELEASE_NOTES.md"
             "latest.json"
