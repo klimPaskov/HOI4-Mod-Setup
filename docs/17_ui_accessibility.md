@@ -113,7 +113,7 @@ Do not display permanent keyboard shortcut hints in the footer. Keyboard support
 8. **3D and Meshy key**: credential field, secure-storage choice, test action, compact status, requirements open by default.
 9. **MCP and credentials**: compact server rows and credential names. Expand capabilities and environment details on demand.
 10. **Git setup**: three choices, branch and commit fields for the selected choice, remote and advanced options collapsed.
-11. **Install review**: change counts, a read-only summary of selected ChatGPT project files, short plan summary, preflight state, and a lazily rendered full file plan on demand. Keep the preparation panel aligned to the same maximum width as the review below it.
+11. **Install review**: change counts, a read-only summary of selected ChatGPT project files, short plan summary, preflight state, and a lazily rendered full file-and-folder plan on demand. Show starter directories as **Create folder** entries and never as `.gitkeep` files. Keep the preparation panel aligned to the same maximum width as the review below it.
 12. **Installation progress**: one progress bar, six grouped stages, current item, transaction log collapsed.
 13. **Final readiness**: one success state, an Open in Codex action only for Codex, four grouped core checks, compact 3D state, the final ChatGPT “Chat” recommendation when applicable, and one concise fixed HTTPS external portrait-workflow link.
 14. **Update and repair**: four primary maintenance actions and a short installed-state list.

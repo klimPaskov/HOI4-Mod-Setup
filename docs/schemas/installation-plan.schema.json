@@ -290,6 +290,14 @@
         "staging_root": {
           "type": "string"
         },
+        "directories": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
         "atomic_apply_expected": {
           "type": "boolean"
         },

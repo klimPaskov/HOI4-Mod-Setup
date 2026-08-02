@@ -1436,6 +1436,9 @@ pub fn select_component_files(
             SourceKind::File => {
                 let source_path = normalize_relative_path(&component.source.path)
                     .map_err(|error| AppError::Source(error.to_string()))?;
+                if is_gitkeep_path(&source_path) {
+                    continue;
+                }
                 add_source_file(component, &source_path, &mut destinations, &mut selected)?;
             }
             SourceKind::Tree => {
@@ -1468,6 +1471,9 @@ pub fn select_component_files(
                     {
                         continue;
                     }
+                    if is_gitkeep_path(&entry.path) {
+                        continue;
+                    }
                     if component
                         .expected_files
                         .iter()
@@ -1480,6 +1486,9 @@ pub fn select_component_files(
                 for expected in &component.expected_files {
                     let expected_path = normalize_relative_path(&expected.path)
                         .map_err(|error| AppError::Source(error.to_string()))?;
+                    if is_gitkeep_path(&expected_path) {
+                        continue;
+                    }
                     if !matched_evidence.contains(&expected_path) {
                         return Err(AppError::Source(format!(
                             "manifest evidence is not present in the selected source tree: {}",
@@ -1506,6 +1515,10 @@ pub fn select_component_files(
         ));
     }
     Ok(selected)
+}
+
+fn is_gitkeep_path(path: &str) -> bool {
+    path.rsplit('/').next() == Some(".gitkeep")
 }
 
 fn add_source_file(
@@ -1719,6 +1732,54 @@ mod tests {
             .components
             .iter()
             .all(|component| component.id != "workflow.lora_comfyui_interest"));
+    }
+
+    #[test]
+    fn selected_sources_omit_gitkeep_markers() {
+        let mut tree_component = component("skills", &[]);
+        tree_component.source = SourceDefinition {
+            kind: SourceKind::Tree,
+            path: "package".into(),
+            include: vec!["**".into()],
+            exclude: vec![],
+            template_engine: None,
+        };
+        tree_component.destination.path = ".agents/skills/".into();
+        tree_component.expected_files = vec![
+            ExpectedFile {
+                path: "package/.gitkeep".into(),
+                sha256: Some("0".repeat(64)),
+                size: Some(0),
+            },
+            ExpectedFile {
+                path: "package/hoi4-events/SKILL.md".into(),
+                sha256: Some("1".repeat(64)),
+                size: Some(12),
+            },
+        ];
+        let manifest = minimal_manifest(vec![tree_component]);
+        let tree = vec![
+            TreeEntry {
+                path: "package/.gitkeep".into(),
+                kind: "blob".into(),
+                size: Some(0),
+            },
+            TreeEntry {
+                path: "package/hoi4-events/SKILL.md".into(),
+                kind: "blob".into(),
+                size: Some(12),
+            },
+        ];
+
+        let selected = select_component_files(&manifest, &["skills".into()], &tree).unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(
+            selected[0].destination,
+            ".agents/skills/hoi4-events/SKILL.md"
+        );
+        assert!(selected
+            .iter()
+            .all(|file| !file.destination.ends_with("/.gitkeep")));
     }
 
     #[test]

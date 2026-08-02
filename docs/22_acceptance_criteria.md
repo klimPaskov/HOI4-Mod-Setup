@@ -17,6 +17,9 @@
 - NEW-03: Project ID is stable and valid.
 - NEW-04: No file is created before approval.
 - NEW-05: The initial folder profile is editable.
+- NEW-05A: Apply creates selected starter directories without installing
+  `.gitkeep` files; rollback removes only transaction-created directories that
+  remain empty and preserves directories containing later user work.
 - NEW-06: Apply creates the internal `descriptor.mod`.
 - NEW-07: Apply creates the external `<project_id>.mod` in the confirmed HOI4 user mod directory.
 - NEW-08: The launcher descriptor points to the canonical project root with platform-correct escaping.
@@ -64,6 +67,9 @@
 
 - AI-01: Codex, Claude, Kimi, GLM, DeepSeek, local, and custom provider profiles are selectable at the start.
 - AI-02: The selected profile changes semantic guidance, adapted `AGENTS.md`, generated `README.md`, state, plan, lock, and maintenance review.
+- AI-02A: The installed and flattened adapted `AGENTS.md` omit the source
+  template's entire `## Placeholder Guide` section while preserving the first
+  real project-instruction section.
 - AI-03: Provider changes clear stale analysis and cannot reuse a record from another provider or model.
 - AI-03A: Claude, Kimi, GLM, and DeepSeek fill verified model and address defaults automatically; their normal path shows an official API-key link, key field, and Connect action, while overrides remain under Advanced.
 - AI-04: A Codex-only Components checkbox prepares `chatgpt_project_sources/`; non-Codex setup never renders or persists it as selected.

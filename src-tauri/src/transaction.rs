@@ -65,6 +65,21 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
             "plan does not contain the required twelve ordered stages".into(),
         ));
     }
+    let mut profile_directories = std::collections::HashSet::new();
+    for directory in &plan.transaction.directories {
+        let normalized = normalize_relative_path(directory)?;
+        if &normalized != directory || normalized.rsplit('/').next() == Some(".gitkeep") {
+            return Err(AppError::PathSecurity(format!(
+                "invalid profile directory: {directory}"
+            )));
+        }
+        let key = canonical_relative_key(&normalized)?;
+        if !profile_directories.insert(key) {
+            return Err(AppError::PathSecurity(format!(
+                "duplicate profile directory: {directory}"
+            )));
+        }
+    }
     crate::source::validate_commit(&plan.source.resolved_revision)?;
     crate::source::validate_sha256(&plan.source.manifest_sha256)?;
     let ai_profile = crate::ai::profile(&plan.ai_provider).ok_or_else(|| {
@@ -476,6 +491,7 @@ pub fn new_journal(
                 after_executable: None,
             })
             .collect(),
+        created_directories: Vec::new(),
         recovery: RecoveryState {
             resume_allowed: true,
             rollback_allowed: true,
@@ -992,6 +1008,7 @@ pub fn run_transaction(
             &mut journal,
             &journal_path,
         )?;
+        stage_profile_directories(plan, &roots.staging)?;
         compact_operation_checkpoints(&journal_path, &mut journal)?;
         stage_complete(
             &mut journal,
@@ -1023,6 +1040,7 @@ pub fn run_transaction(
             options.fail_before_stage,
         )?;
         ensure_project_root_for_apply(&project_root, plan, &mut journal, &journal_path)?;
+        apply_profile_directories(&project_root, plan, &mut journal, &journal_path)?;
         apply_operations(
             &project_root,
             plan,
@@ -2107,12 +2125,34 @@ fn stage_files(
     Ok(())
 }
 
+fn stage_profile_directories(plan: &InstallationPlan, staging_root: &Path) -> Result<(), AppError> {
+    for directory in &plan.transaction.directories {
+        let staged = safe_join(staging_root, directory)?;
+        if path_has_link_component(&staged) {
+            return Err(AppError::PathSecurity(format!(
+                "staged profile directory contains a symlink or junction: {directory}"
+            )));
+        }
+        fs::create_dir_all(staged)?;
+    }
+    Ok(())
+}
+
 fn validate_staging(
     project_root: &Path,
     plan: &InstallationPlan,
     prepared_files: &[PreparedFile],
     staging_root: &Path,
 ) -> Result<(), AppError> {
+    for directory in &plan.transaction.directories {
+        let staged = safe_join(staging_root, directory)?;
+        let metadata = fs::symlink_metadata(&staged)?;
+        if is_link_metadata(&metadata) || !metadata.is_dir() {
+            return Err(AppError::PathSecurity(format!(
+                "staged profile path is not a regular directory: {directory}"
+            )));
+        }
+    }
     let prepared: HashMap<&str, &PreparedFile> = prepared_files
         .iter()
         .map(|file| (file.operation_id.as_str(), file))
@@ -2356,6 +2396,57 @@ fn ensure_project_root_for_apply(
             persist_journal(journal_path, journal)
         }
     }
+}
+
+fn apply_profile_directories(
+    project_root: &Path,
+    plan: &InstallationPlan,
+    journal: &mut TransactionJournal,
+    journal_path: &Path,
+) -> Result<(), AppError> {
+    let mut missing = std::collections::BTreeSet::new();
+    for directory in &plan.transaction.directories {
+        let destination = safe_join(project_root, directory)?;
+        if destination == project_root {
+            return Err(AppError::PathSecurity(
+                "profile directory cannot be the project root".into(),
+            ));
+        }
+        let mut current = project_root.to_path_buf();
+        for component in Path::new(directory).components() {
+            current.push(component.as_os_str());
+            match fs::symlink_metadata(&current) {
+                Ok(metadata) if is_link_metadata(&metadata) || !metadata.is_dir() => {
+                    return Err(AppError::PathSecurity(format!(
+                        "profile destination is not a regular directory: {directory}"
+                    )))
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let relative = current.strip_prefix(project_root).map_err(|_| {
+                        AppError::PathSecurity("profile directory escaped the project root".into())
+                    })?;
+                    missing.insert(relative.to_string_lossy().replace('\\', "/"));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    journal.created_directories = missing.into_iter().collect();
+    journal.last_checkpoint = "apply-profile-directories-intent".into();
+    persist_journal(journal_path, journal)?;
+    for directory in &plan.transaction.directories {
+        let destination = safe_join(project_root, directory)?;
+        fs::create_dir_all(&destination)?;
+        let metadata = fs::symlink_metadata(&destination)?;
+        if is_link_metadata(&metadata) || !metadata.is_dir() {
+            return Err(AppError::PathSecurity(format!(
+                "created profile path is not a regular directory: {directory}"
+            )));
+        }
+    }
+    journal.last_checkpoint = "apply-profile-directories-created".into();
+    persist_journal(journal_path, journal)
 }
 
 fn apply_operations(
@@ -3732,6 +3823,7 @@ fn new_rollback_journal(
                 }
             })
             .collect(),
+        created_directories: parent.created_directories.clone(),
         recovery: RecoveryState {
             resume_allowed: false,
             rollback_allowed: false,
@@ -4469,6 +4561,7 @@ pub fn rollback_transaction(
             }
         }
         restore_previous_lock(&project_root, journal, journal_path)?;
+        cleanup_created_profile_directories(&project_root, journal, journal_path)?;
         if journal.transaction_kind != "rollback" {
             cleanup_created_project_root(
                 &project_root,
@@ -4570,6 +4663,34 @@ pub fn rollback_transaction(
         let _ = persist_journal(&rollback_path, &mut rollback_journal);
     }
     result
+}
+
+fn cleanup_created_profile_directories(
+    project_root: &Path,
+    journal: &mut TransactionJournal,
+    journal_path: &Path,
+) -> Result<(), AppError> {
+    let mut directories = journal.created_directories.clone();
+    directories.sort_by_key(|path| std::cmp::Reverse(Path::new(path).components().count()));
+    for directory in directories {
+        let destination = safe_join(project_root, &directory)?;
+        match fs::remove_dir(&destination) {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                ) => {}
+            Err(error) => {
+                return Err(AppError::Transaction(format!(
+                    "could not remove empty profile directory {}: {error}",
+                    destination.display()
+                )))
+            }
+        }
+    }
+    journal.last_checkpoint = "rollback-profile-directories-checked".into();
+    persist_journal(journal_path, journal)
 }
 
 fn cleanup_created_project_root(
@@ -5656,6 +5777,7 @@ mod tests {
                     .collect(),
                 backup_root: "external".into(),
                 staging_root: "external".into(),
+                directories: Vec::new(),
                 atomic_apply_expected: true,
                 project_root_mode: ProjectRootMode::Existing,
                 project_root_parent: None,
@@ -5754,6 +5876,29 @@ mod tests {
             read_journal(&journal_path).unwrap().operations[0].status,
             "staged"
         );
+    }
+
+    #[test]
+    fn profile_directories_are_created_without_markers_and_rollback_removes_only_empty_ones() {
+        let project = tempdir().unwrap();
+        let transaction = tempdir().unwrap();
+        let mut plan = plan();
+        plan.transaction.directories = vec!["events".into(), "localisation/english".into()];
+        let journal_path = transaction.path().join("journal.json");
+        let mut journal = new_journal(&plan, &plan.project_id, project.path());
+        persist_journal(&journal_path, &mut journal).unwrap();
+
+        apply_profile_directories(project.path(), &plan, &mut journal, &journal_path).unwrap();
+        assert!(project.path().join("events").is_dir());
+        assert!(project.path().join("localisation/english").is_dir());
+        assert!(!project.path().join("events/.gitkeep").exists());
+        fs::write(project.path().join("events/user_event.txt"), "user content").unwrap();
+
+        cleanup_created_profile_directories(project.path(), &mut journal, &journal_path).unwrap();
+        assert!(project.path().join("events").is_dir());
+        assert!(project.path().join("events/user_event.txt").is_file());
+        assert!(!project.path().join("localisation/english").exists());
+        assert!(!project.path().join("localisation").exists());
     }
 
     #[test]

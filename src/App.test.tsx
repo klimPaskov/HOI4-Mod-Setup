@@ -852,18 +852,21 @@ describe("HOI4 Mod Setup wizard", () => {
           { id: "agents", action: "create", destination: "AGENTS.md" },
           { id: "skill", action: "replace", destination: ".agents/skills/example/SKILL.md" },
         ],
+        transaction: { directories: ["events"] },
         conflicts: [],
         external_actions: [],
       },
     } as unknown as WizardState} update={vi.fn()} />);
 
-    const files = screen.getByText("Files to install · 2", { selector: "summary" });
+    const files = screen.getByText("Files and folders to install · 3", { selector: "summary" });
     expect(screen.queryByText("AGENTS.md")).not.toBeInTheDocument();
     const details = files.closest("details")!;
     details.open = true;
     fireEvent(details, new Event("toggle"));
     expect(screen.getByText("AGENTS.md")).toBeInTheDocument();
     expect(screen.getByText(".agents/skills/example/SKILL.md")).toBeInTheDocument();
+    expect(screen.getByText("events/")).toBeInTheDocument();
+    expect(screen.getByText("Create folder")).toBeInTheDocument();
     expect(screen.queryByText("Open full file plan")).not.toBeInTheDocument();
   });
 

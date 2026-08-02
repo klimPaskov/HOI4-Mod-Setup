@@ -2430,6 +2430,7 @@ fn adapt_agents_for_selection(
     let mut adapted = text
         .replace("[MOD_NAME]", &identity.display_name)
         .replace("[MOD_PREFIX]", prefix);
+    adapted = strip_agents_placeholder_guide(&adapted);
     if adapted.contains("[MOD_") || adapted.contains("{{PROJECT_") || adapted.contains("<PROJECT_")
     {
         return Err(AppError::Source(
@@ -2470,6 +2471,21 @@ fn adapt_agents_for_selection(
         }
     }
     Ok(adapted.into_bytes())
+}
+
+fn strip_agents_placeholder_guide(text: &str) -> String {
+    let heading = Regex::new(r"(?m)^## Placeholder Guide[\t ]*\r?$")
+        .expect("static placeholder-guide heading regex");
+    let next_heading = Regex::new(r"(?m)^## [^\r\n]+").expect("static Markdown heading regex");
+    let mut stripped = text.to_string();
+    while let Some(section) = heading.find(&stripped) {
+        let section_end = next_heading
+            .find(&stripped[section.end()..])
+            .map(|next| section.end() + next.start())
+            .unwrap_or(stripped.len());
+        stripped.replace_range(section.start()..section_end, "");
+    }
+    stripped
 }
 
 fn adapt_super_events_source(
@@ -3220,18 +3236,6 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             external: false,
             bytes: None,
         });
-        for folder in selected_folder_profile(state)? {
-            let destination = format!("{folder}/.gitkeep");
-            let content = format!("# Managed folder marker for the confirmed {folder} profile.\n");
-            generated.push(GeneratedArtifact {
-                component_id: "project.folder_profile".into(),
-                destination,
-                expected_sha256: sha256_bytes(content.as_bytes()),
-                content,
-                external: false,
-                bytes: None,
-            });
-        }
     }
     if flatten_chat_sources
         && !generated
@@ -3500,6 +3504,11 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                 .join("staging")
                 .display()
                 .to_string(),
+            directories: if mode == "new" {
+                selected_folder_profile(state)?
+            } else {
+                Vec::new()
+            },
             atomic_apply_expected: true,
             project_root_mode: if root.exists() {
                 ProjectRootMode::Existing
@@ -4913,6 +4922,7 @@ fn build_maintenance_plan_blocking(
                 .join("staging")
                 .display()
                 .to_string(),
+            directories: Vec::new(),
             atomic_apply_expected: true,
             project_root_mode: ProjectRootMode::Existing,
             project_root_parent: None,
@@ -5516,6 +5526,41 @@ mod tests {
         assert!(!String::from_utf8(unselected)
             .unwrap()
             .contains("Optional Super Events workflow"));
+    }
+
+    #[test]
+    fn adapted_agents_omits_the_template_only_placeholder_guide() {
+        let identity = ProjectIdentity {
+            display_name: "Cold War: Southeast Asia".into(),
+            project_id: "cwsea".into(),
+            author: String::new(),
+            version: "0.1.0".into(),
+            supported_game_version: "1.17.*".into(),
+            project_root: PathBuf::from("C:/mods/cwsea"),
+            default_branch: "main".into(),
+            script_prefix: Some("cwsea".into()),
+            primary_namespace: Some("cwsea".into()),
+            descriptor_tags: Vec::new(),
+            launcher_descriptor_path: None,
+        };
+        let template = b"# [MOD_NAME]\r\n\r\n\
+## Placeholder Guide\r\n\r\n\
+Use this guide once before turning the template into a real `AGENTS.md` file.\r\n\r\n\
+- `[MOD_NAME]`: full mod name used in prose.\r\n\
+- `[MOD_PREFIX]`: short script prefix.\r\n\r\n\
+---\r\n\r\n\
+## 0. Required Reading Before Any Change\r\n\r\n\
+Use `[MOD_PREFIX]` for identifiers.\r\n";
+
+        let adapted =
+            adapt_agents_for_selection(template, &identity, "codex", "default", false).unwrap();
+        let text = String::from_utf8(adapted).unwrap();
+        assert!(text.starts_with("# Cold War: Southeast Asia"));
+        assert!(text.contains("## 0. Required Reading Before Any Change"));
+        assert!(text.contains("Use `cwsea` for identifiers."));
+        assert!(!text.contains("Placeholder Guide"));
+        assert!(!text.contains("Use this guide once"));
+        assert!(!text.contains("full mod name used in prose"));
     }
 
     #[test]
@@ -6335,6 +6380,7 @@ developer_instructions = "Work on the named files."
                     stages: Vec::new(),
                     backup_root: String::new(),
                     staging_root: String::new(),
+                    directories: Vec::new(),
                     atomic_apply_expected: true,
                     project_root_mode: ProjectRootMode::Existing,
                     project_root_parent: None,

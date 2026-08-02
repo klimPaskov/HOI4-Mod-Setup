@@ -57,6 +57,9 @@ session, cancellation, credential-health, or analysis assertions.
 ## Property examples
 
 - normalized destinations remain inside the approved root
+- selected starter directories are created without `.gitkeep` files, and
+  rollback removes empty transaction-created directories while preserving
+  later user content
 - apply followed by rollback restores original hashes
 - per-operation checkpoint size stays bounded as the plan grows, replay restores the latest durable operation state, and compaction preserves that state in the full journal
 - batched apply and rollback intents cover every possible live mutation before it starts, while interrupted groups reconcile safely from backups and observed hashes
@@ -66,6 +69,7 @@ session, cancellation, credential-health, or analysis assertions.
 - one plan revision produces one file set
 - selected manifest components and dependencies are the only downloaded files;
   an unselected `workflow.super_events` tree cannot enter the ledger or stage
+- manifest-declared `.gitkeep` markers never enter the selected file set
 - scan produces no project mutation
 - no launcher artifact is generated before confirmed Codex proposals
 - standard Documents/mod resolution and launcher discovery reject links,
@@ -84,6 +88,9 @@ session, cancellation, credential-health, or analysis assertions.
 - every selected Codex subagent either already declares the bounded spawn rule
   or is deterministically adapted to contain `fork_context=false`; an explicit
   true declaration is rejected, and the adapted TOML remains parseable
+- adapted AGENTS output contains no template-only Placeholder Guide text,
+  preserves the first real instruction section across LF and CRLF templates,
+  and supplies those same cleaned bytes to flattened Chat sources
 - flattening rejects output collisions, traversal, links, secret-shaped paths,
   and secret-shaped content while preserving the source transaction boundary;
   large selected wiki trees and other ineligible component files neither enter

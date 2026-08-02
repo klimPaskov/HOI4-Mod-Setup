@@ -35,6 +35,8 @@ Read:
 - The user selects an AI provider and model at the start; Codex/ChatGPT is the default, and selected-provider authentication plus confirmed schema-valid analysis are required before Create, Import, Update, or Repair planning.
 - Provider optimization changes semantic conventions only; deterministic validation, source trust, transaction safety, and readiness rules are provider-independent.
 - New projects create both descriptors, a valid replaceable thumbnail, and the selected folder profile.
+- Selected starter folders are real reviewed directory entries, not `.gitkeep`
+  files; rollback removes only transaction-created folders that remain empty.
 - On Windows and macOS, a new project defaults to the platform-resolved `Documents/Paradox Interactive/Hearts of Iron IV/mod` directory. A missing or untrusted standard directory is visible and requires one explicit manual destination choice.
 - The launcher descriptor is `<project_id>.mod` in the confirmed HOI4 `mod` directory; existing-project launcher registration is discovered from bounded sibling evidence and remains unresolved when registrations are ambiguous.
 - Existing projects are scanned before mutation.
@@ -54,6 +56,9 @@ Read:
   show only the fixed external portrait-workflow link, with no persisted or
   transactional state.
 - The optional flattened ChatGPT project-sources export is selectable only for Codex on Components, maps skill `SKILL.md` files to `<skill>.md`, includes the adapted AGENTS/README/subagents, shows its files and sizes, and recommends Chat without starting an upload or planning action.
+- Adapted project instructions remove the source template's complete
+  `## Placeholder Guide` section before staging, merge review, or flattened
+  export; template setup directions never become final project guidance.
 - Unsupported platform routes remain honest and visible.
 - The UI stays focused and uses progressive disclosure.
 - New-project identity conventions are generated from the mod name and brief before review; project ID, script prefix, namespace, tags, and starter folders are never presented blank when a usable input exists. Every generated value remains editable, and explicit edits are preserved.

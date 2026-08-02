@@ -397,6 +397,7 @@ export interface InstallationPlan {
     stages: string[];
     backup_root: string;
     staging_root: string;
+    directories?: string[];
     atomic_apply_expected?: boolean;
     project_root_mode: "existing" | "create_leaf";
     project_root_parent?: string | null;

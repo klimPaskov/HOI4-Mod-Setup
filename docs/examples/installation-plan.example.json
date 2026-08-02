@@ -250,6 +250,11 @@
     ],
     "backup_root": "%LOCALAPPDATA%\\HOI4 Mod Setup\\backups\\960ccbb7",
     "staging_root": "D:\\HOI4 Mods\\.hoi4-mod-setup-staging\\960ccbb7",
+    "directories": [
+      "common",
+      "events",
+      "localisation/english"
+    ],
     "atomic_apply_expected": true,
     "project_root_mode": "create_leaf",
     "project_root_parent": "C:\\Users\\example\\OneDrive\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod",

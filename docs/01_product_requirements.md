@@ -13,7 +13,7 @@ A successful core setup leaves the selected mod project with:
 - a deterministic, valid, replaceable `thumbnail.png` placeholder
 - a readable profile-specific initial mod folder structure
 - launcher discoverability without manual file creation or descriptor editing
-- an adapted `AGENTS.md`
+- an adapted `AGENTS.md` with template-only placeholder guidance removed
 - selected generic HOI4 skills and helper files
 - selected generic Codex subagents
 - Codex configuration

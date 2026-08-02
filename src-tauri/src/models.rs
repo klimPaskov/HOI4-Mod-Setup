@@ -686,6 +686,8 @@ pub struct TransactionPlanInfo {
     pub backup_root: String,
     pub staging_root: String,
     #[serde(default)]
+    pub directories: Vec<String>,
+    #[serde(default)]
     pub atomic_apply_expected: bool,
     #[serde(default)]
     pub project_root_mode: ProjectRootMode,
@@ -1036,6 +1038,8 @@ pub struct TransactionJournal {
     pub plan_sha256: Option<String>,
     pub stages: Vec<StageCheckpoint>,
     pub operations: Vec<JournalOperation>,
+    #[serde(default)]
+    pub created_directories: Vec<String>,
     pub recovery: RecoveryState,
     #[serde(default)]
     pub git_initialized: bool,

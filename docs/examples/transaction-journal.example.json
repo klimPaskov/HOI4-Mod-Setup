@@ -179,6 +179,11 @@
       "after_executable": null
     }
   ],
+  "created_directories": [
+    "events",
+    "localisation",
+    "localisation/english"
+  ],
   "recovery": {
     "resume_allowed": true,
     "rollback_allowed": true,

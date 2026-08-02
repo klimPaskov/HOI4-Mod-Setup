@@ -65,7 +65,7 @@ Preview and validate `descriptor.mod`, `<project_id>.mod`, and `thumbnail.png`. 
 
 ### Folder profile
 
-Propose a minimal editable structure. A total conversion can include bookmarks, map, and history. A focused event mod can start with `events/`, `localisation/english/`, `common/`, `interface/`, `gfx/`, `docs/`, and tests. The transaction creates the selected directories. Missing unselected folders are not defects.
+Propose a minimal editable structure. A total conversion can include bookmarks, map, and history. A focused event mod can start with `events/`, `localisation/english/`, `common/`, `interface/`, `gfx/`, `docs/`, and tests. The transaction creates the selected directories directly and does not add `.gitkeep` marker files. Missing unselected folders are not defects.
 
 ### Source and components
 

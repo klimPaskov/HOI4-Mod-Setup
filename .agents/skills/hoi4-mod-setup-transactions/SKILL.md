@@ -78,6 +78,10 @@ operations are not accepted; mode belongs to the reviewed file operation.
 
 - Backup all replace or delete targets before mutation.
 - Stage files outside live destinations.
+- Carry selected starter folders as normalized reviewed directory entries.
+  Stage and validate them as directories, create them at apply without marker
+  files, journal the paths that were absent before mutation, and remove only
+  transaction-created directories that remain empty during rollback.
 - Validate staged output.
 - Recheck preconditions immediately before each live operation.
 - Use atomic rename or replace where supported.

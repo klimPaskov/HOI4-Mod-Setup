@@ -118,9 +118,10 @@ Conflict review is the exception. It may show a three-way comparison and more co
 - In the dry run, call manifest-declared validation actions **Setup checks**. Show a simple included count and human-readable check names by default; keep commands, folders, environment names, and expected changes behind a nested disclosure. Do not show internal risk labels or component IDs in the normal interface.
 - Keep the plan-preparation panel aligned to the same maximum width as the
   dry-run metrics and columns. The file-plan disclosure must show the actual
-  destination and user-facing action for every reviewed operation and should
-  mount the large list only while open. Integration requirements are open by
-  default when that screen's purpose is to review them.
+  destination and user-facing action for every reviewed file and starter
+  folder, label directory entries **Create folder**, and mount the large list
+  only while open. Integration requirements are open by default when that
+  screen's purpose is to review them.
 - When no verified Codex opener is available, keep a passed readiness result visible and expose the validated project path as an announced manual-opening result.
 - Optional incomplete states remain secondary.
 - `workflow.super_events` is provider-neutral and its `not_selected`,

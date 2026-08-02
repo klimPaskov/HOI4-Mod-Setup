@@ -53,6 +53,9 @@ Pinned commit uses the supplied commit for every step. Pinned release resolves a
   owns the user-visible selection and expands to optional hidden runtime
   components for its skill, interface, common scripts, event, localisation,
   GFX/templates, and guide only when selected.
+- Ignore `.gitkeep` marker files even if a future selected source tree declares
+  them; they never enter download, destination, staging, lock, or flattened
+  output evidence.
 
 ## Manifest change workflow
 
@@ -109,6 +112,11 @@ MCP servers and external dependencies are components. Their command, arguments, 
   rule to developer instructions when absent and rejects an explicit true
   declaration; the operation keeps source SHA-256 evidence distinct from the
   adapted result SHA-256.
+- The verified `core.agents` template is project-adapted only after download.
+  Remove its complete template-only `## Placeholder Guide` section before the
+  adapted bytes enter staging, conflict review, or the flattened Chat export.
+  Preserve the following real H2 instruction section and continue to reject
+  unresolved project placeholders.
 - Dependency resolution exposes a deterministic reverse-dependency map for update/removal impact review; provider constraints are applied after forward dependency expansion.
 - The published component graph has no LoRA/ComfyUI interest component. Do not
   synthesize one from older manifests or project state; legacy lock values are
