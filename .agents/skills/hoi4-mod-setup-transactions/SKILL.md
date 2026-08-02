@@ -82,6 +82,12 @@ operations are not accepted; mode belongs to the reviewed file operation.
   Stage and validate them as directories, create them at apply without marker
   files, journal the paths that were absent before mutation, and remove only
   transaction-created directories that remain empty during rollback.
+- Every setup carries an empty `.tmp` project directory as a managed directory
+  entry without a marker file. Every plan also generates or reviews the
+  managed `.gitignore` block even when Git setup is skipped; the block ignores
+  `.tmp/`, `.agents/`, `.codex/`, `.tools/`, `paradox_wiki/`, `AGENTS.md`, and
+  application-local cache/backup paths while preserving project rules outside
+  the managed block.
 - Validate staged output.
 - Recheck preconditions immediately before each live operation.
 - Use atomic rename or replace where supported.

@@ -143,6 +143,14 @@ entry as OAuth or account login.
   a canonical, unlinked executable whose platform signature publisher matches
   the reviewed vendor immediately before spawn. A matching filename or stable
   hash alone does not establish provenance.
+- The isolated Windows launcher environment restores only the non-secret
+  drive/home routing variables needed by native applications (`SystemDrive`,
+  `HOMEDRIVE`, and `HOMEPATH`); never replace their values with literal
+  placeholders or add credential-bearing parent variables.
+- Open in Codex may reuse only process-local readiness evidence bound to the
+  canonical project root and exact current lock hash. Clear that evidence on
+  app-controlled logout. A cached Codex executable remains usable only after
+  its link boundary, OpenAI publisher, and SHA-256 are rechecked.
 - On Unix, supervised children start in their own process group and timeout,
   restart, close, and drop paths terminate that entire group so descendants do
   not retain scoped environment or account access.

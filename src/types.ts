@@ -450,6 +450,7 @@ export interface TransactionJournal {
 
 export interface WizardState {
   screen: ScreenId;
+  finished?: boolean;
   mode: "new" | "existing";
   recoveryEntry?: boolean;
   identity: ProjectIdentity;

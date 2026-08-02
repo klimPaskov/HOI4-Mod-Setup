@@ -1156,6 +1156,10 @@ export default function App() {
       update({ screen: "ready" });
       return;
     }
+    if (state.screen === "ready") {
+      update({ finished: true, transactionError: undefined });
+      return;
+    }
     update({ screen: nextScreen(state), installProgress: state.installProgress });
   };
   const goBack = () => update({ screen: previousScreen(state) });
@@ -1184,7 +1188,13 @@ export default function App() {
     });
   };
 
-  const copy = state.screen === "ready"
+  const copy = state.screen === "ready" && state.finished
+    ? {
+      title: "Congratulations, you are all set!",
+      supporting: `${state.identity.displayName || "Your mod"} is ready for agentic development.`,
+      status: { label: "Complete", tone: "pass" as const },
+    }
+    : state.screen === "ready"
     ? {
       title: "Project ready",
       supporting: state.readiness ? state.readiness.coreReady ? `Core requirements passed for ${aiProviderLabel(state.aiProvider, state.aiProfiles)}.` : "Resolve blocking checks before continuing." : "Checking core requirements.",
@@ -1259,8 +1269,8 @@ function ScreenFrame({ screen, copy, state, canAdvance, pending, semanticProgres
   const installDone = screen === "install" && state.installProgress >= 100;
   const unresolvedConflicts = state.plan?.conflicts.some((conflict) => !conflict.selected) === true;
   const recoveryLabel = state.recoveryChoice === "rollback" ? "Undo changes" : state.recoveryChoice === "discard" ? "Discard prepared files" : "Continue setup";
-  const primaryLabel = pending && screen === "description" ? "Preparing details…" : pending && screen === "recovery" ? state.recoveryChoice === "rollback" ? "Undoing changes…" : state.recoveryChoice === "discard" ? "Discarding files…" : "Continuing setup…" : screen === "welcome" ? "Continue" : screen === "findings" && !state.codexAnalysis ? `Review with ${aiProviderLabel(state.aiProvider, state.aiProfiles)}` : screen === "dry-run" ? "Start installation" : screen === "install" ? (installDone ? "Continue" : "") : screen === "ready" ? "Finish" : screen === "recovery" ? recoveryLabel : screen === "conflict" ? "Apply" : screen === "update" ? (state.plan ? "Apply reviewed plan" : "") : "Next";
-  const showBack = !["welcome", "install"].includes(screen);
+  const primaryLabel = pending && screen === "description" ? "Preparing details…" : pending && screen === "recovery" ? state.recoveryChoice === "rollback" ? "Undoing changes…" : state.recoveryChoice === "discard" ? "Discarding files…" : "Continuing setup…" : screen === "welcome" ? "Continue" : screen === "findings" && !state.codexAnalysis ? `Review with ${aiProviderLabel(state.aiProvider, state.aiProfiles)}` : screen === "dry-run" ? "Start installation" : screen === "install" ? (installDone ? "Continue" : "") : screen === "ready" ? state.finished ? "" : "Finish" : screen === "recovery" ? recoveryLabel : screen === "conflict" ? "Apply" : screen === "update" ? (state.plan ? "Apply reviewed plan" : "") : "Next";
+  const showBack = !["welcome", "install"].includes(screen) && !(screen === "ready" && state.finished);
   return <>
     <div className="content-scroll">
       <div className="screen-heading">
@@ -1274,7 +1284,7 @@ function ScreenFrame({ screen, copy, state, canAdvance, pending, semanticProgres
     <footer className="footer-bar">
       <span className="footer-note" role={state.transactionError ? "alert" : undefined}>{footerNote(screen, state)}</span>
       <div className="footer-actions">
-        {screen === "ready" && <button className="button secondary" onClick={() => onMaintenance("update")}>Update and repair</button>}
+        {screen === "ready" && !state.finished && <button className="button secondary" onClick={() => onMaintenance("update")}>Update and repair</button>}
         {screen === "dry-run" && (!state.plan || unresolvedConflicts) && <button className="button secondary" onClick={() => void onPrepareConflicts()} disabled={preparingPlan} aria-busy={preparingPlan || undefined}>{preparingPlan ? "Preparing changes…" : state.plan ? "Resolve conflicts" : "Prepare changes"}</button>}
         {showBack && <button className="button secondary" onClick={onBack}>Back</button>}
         {primaryLabel && <button className="button primary" onClick={onNext} disabled={!canAdvance} aria-busy={pending || undefined}>{primaryLabel}</button>}
@@ -2025,7 +2035,7 @@ export function Git({ state, update }: { state: WizardState; update: (patch: Par
   const repository = state.gitHubRepository || state.identity?.projectId || "my-mod";
   const chooseGitMode = (mode: WizardState["gitMode"]) => update({ gitMode: mode, ...(mode === "skip" ? { gitOnlineAction: "none" as const } : {}) });
   const chooseOnlineAction = (action: GitOnlineAction) => update({ gitOnlineAction: action });
-  return <div className="stack narrow"><section className="panel">{(["initialize", "preserve", "skip"] as const).map((mode) => <label key={mode} className="radio-row"><input type="radio" name="git-mode" checked={state.gitMode === mode} onChange={() => chooseGitMode(mode)} /><span><strong>{mode === "initialize" ? "Initialize a Git repository" : mode === "preserve" ? "Preserve the existing repository" : "Skip Git setup"}</strong><small>{mode === "initialize" ? "Create .git, merge .gitignore, and prepare an initial commit" : mode === "preserve" ? "Keep remotes, history, and branch state" : "Continue without repository changes"}</small></span>{mode === "initialize" && <Status label="Recommended" tone="info" />}</label>)}</section><section className="panel form-panel"><div className="form-grid"><Field label="Default branch" value={state.gitBranch} onChange={(value) => update({ gitBranch: value })} /><label className="field"><span className="field-label">Initial commit</span><select className="text-input" value={state.initialCommit ? "after-validation" : "none"} onChange={(event) => update({ initialCommit: event.target.value === "after-validation" })}><option value="after-validation">Create after validation</option><option value="none">Do not create</option></select></label></div><details><summary>Remote settings</summary><div className="form-grid"><Field label="Remote name" value={state.gitRemoteName} onChange={(value) => update({ gitRemoteName: value })} placeholder="origin" /><Field label="Remote URL" value={state.gitRemoteUrl} onChange={(value) => update({ gitRemoteUrl: value })} placeholder="https://github.com/owner/repo.git" mono /></div></details></section>{state.gitMode !== "skip" && <section className="panel form-panel"><div className="section-label">Online Git</div>{(["none", "push_remote", "create_public_github"] as const).map((action) => <label key={action} className="radio-row"><input type="radio" name="git-online-action" checked={onlineAction === action} onChange={() => chooseOnlineAction(action)} /><span><strong>{action === "none" ? "Keep this project local" : action === "push_remote" ? "Push to an existing remote" : "Create a public GitHub repository"}</strong><small>{action === "none" ? "No online action will run." : action === "push_remote" ? "Push the validated branch after setup." : "Create the repository as public, then push this project."}</small></span>{action === "create_public_github" && <Status label="Separate approval" tone="review" />}</label>)}{onlineAction === "push_remote" && <p className="muted">The remote must already be configured and signed in through your Git credential helper.</p>}{onlineAction === "create_public_github" && <><Field label="GitHub repository" value={repository} onChange={(value) => update({ gitHubRepository: value })} placeholder="my-hoi4-mod" /><p className="muted">The app uses the GitHub sign-in already set up on this computer. It asks you to approve publication after setup.</p></>}</section>}</div>;
+  return <div className="stack narrow"><section className="panel">{(["initialize", "preserve", "skip"] as const).map((mode) => <label key={mode} className="radio-row"><input type="radio" name="git-mode" checked={state.gitMode === mode} onChange={() => chooseGitMode(mode)} /><span><strong>{mode === "initialize" ? "Initialize a Git repository" : mode === "preserve" ? "Preserve the existing repository" : "Skip Git setup"}</strong><small>{mode === "initialize" ? "Create .git, merge .gitignore, and prepare an initial commit" : mode === "preserve" ? "Keep remotes, history, and branch state" : "Continue without creating a Git repository"}</small></span>{mode === "initialize" && <Status label="Recommended" tone="info" />}</label>)}</section><section className="panel form-panel"><div className="form-grid"><Field label="Default branch" value={state.gitBranch} onChange={(value) => update({ gitBranch: value })} /><label className="field"><span className="field-label">Initial commit</span><select className="text-input" value={state.initialCommit ? "after-validation" : "none"} onChange={(event) => update({ initialCommit: event.target.value === "after-validation" })}><option value="after-validation">Create after validation</option><option value="none">Do not create</option></select></label></div><details><summary>Remote settings</summary><div className="form-grid"><Field label="Remote name" value={state.gitRemoteName} onChange={(value) => update({ gitRemoteName: value })} placeholder="origin" /><Field label="Remote URL" value={state.gitRemoteUrl} onChange={(value) => update({ gitRemoteUrl: value })} placeholder="https://github.com/owner/repo.git" mono /></div></details></section>{state.gitMode !== "skip" && <section className="panel form-panel"><div className="section-label">Online Git</div>{(["none", "push_remote", "create_public_github"] as const).map((action) => <label key={action} className="radio-row"><input type="radio" name="git-online-action" checked={onlineAction === action} onChange={() => chooseOnlineAction(action)} /><span><strong>{action === "none" ? "Keep this project local" : action === "push_remote" ? "Push to an existing remote" : "Create a public GitHub repository"}</strong><small>{action === "none" ? "No online action will run." : action === "push_remote" ? "Push the validated branch after setup." : "Create the repository as public, then push this project."}</small></span>{action === "create_public_github" && <Status label="Separate approval" tone="review" />}</label>)}{onlineAction === "push_remote" && <p className="muted">The remote must already be configured and signed in through your Git credential helper.</p>}{onlineAction === "create_public_github" && <><Field label="GitHub repository" value={repository} onChange={(value) => update({ gitHubRepository: value })} placeholder="my-hoi4-mod" /><p className="muted">The app uses the GitHub sign-in already set up on this computer. It asks you to approve publication after setup.</p></>}</section>}</div>;
 }
 
 export function DryRun({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
@@ -2037,7 +2047,7 @@ export function DryRun({ state, update }: { state: WizardState; update: (patch: 
     else if (operation.action === "skip") summary.skip += 1;
     return summary;
   }, { create: 0, update: 0, skip: 0 }) ?? { create: 0, update: 0, skip: 0 };
-  const profileDirectories = plan?.transaction?.directories ?? [];
+  const profileDirectories = (plan?.transaction?.directories ?? []).filter((directory) => directory !== ".tmp");
   counts.create += profileDirectories.length;
   const unresolved = plan?.conflicts.filter((conflict) => !conflict.selected).length;
   const planStatus = plan ? `${plan.operations.length} files · ${profileDirectories.length} folders` : "Plan unavailable";
@@ -2188,6 +2198,13 @@ function OnlineGitAction({ state, update }: { state: WizardState; update: (patch
 export function Ready({ state, update, onMaintenance }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onMaintenance: (screen: "update" | "conflict" | "recovery") => void }) {
   const [mcpCheck, setMcpCheck] = useState<WorkflowHealthResult>();
   const [openMessage, setOpenMessage] = useState<string>();
+  const [openPending, setOpenPending] = useState(false);
+  if (state.finished) {
+    return <section className="panel completion-panel" role="status">
+      <span className="ready-icon" aria-hidden="true">✓</span>
+      <div><h2>Setup complete</h2><p>Your project files and selected workflows are ready.</p></div>
+    </section>;
+  }
   const report = state.readiness;
   const selectedProvider = state.aiProvider ?? "codex";
   const providerLabel = aiProviderLabel(selectedProvider, state.aiProfiles);
@@ -2212,14 +2229,20 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
     update({ readiness: null, transactionError: result.status === "ready" ? undefined : "The source-declared MCP initialize check did not pass." });
   };
   const handleOpen = async () => {
+    if (openPending) return;
     setOpenMessage(undefined);
-    const result = await openInCodex(state.identity.projectRoot);
-    if (!result) {
-      update({ transactionError: "Codex could not be opened. Check the Codex installation or open the project folder manually." });
-      return;
+    setOpenPending(true);
+    try {
+      const result = await openInCodex(state.identity.projectRoot);
+      if (!result) {
+        update({ transactionError: "Codex could not be opened. Check the Codex installation or open the project folder manually." });
+        return;
+      }
+      update({ transactionError: undefined });
+      setOpenMessage(result.opened ? "Codex opened successfully." : result.message);
+    } finally {
+      setOpenPending(false);
     }
-    update({ transactionError: undefined });
-    setOpenMessage(result.message);
   };
   return (
     <div className="stack">
@@ -2230,7 +2253,7 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
           <p>{readinessPending ? "Core checks are still being evaluated." : coreReady ? `Optional workflow status does not block ${providerLabel}.` : "Resolve blocking checks before continuing."}</p>
         </div>
         <div className="ready-action">
-          {selectedProvider === "codex" && <button type="button" className="button primary" disabled={!open} aria-describedby="open-in-codex-help" onClick={() => void handleOpen()}>Open in Codex ↗</button>}
+          {selectedProvider === "codex" && <button type="button" className="button primary" disabled={!open || openPending} aria-busy={openPending || undefined} aria-describedby="open-in-codex-help" onClick={() => void handleOpen()}>{openPending ? "Opening Codex…" : openMessage === "Codex opened successfully." ? "Codex opened ✓" : "Open in Codex ↗"}</button>}
           {openMessage && <p className="ready-action-message" role="status">{openMessage}</p>}
         </div>
         <span id="open-in-codex-help" className="visually-hidden">

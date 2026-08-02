@@ -48,11 +48,11 @@ desktop command dispatch away from the UI event loop.
 
 ## Current source and release boundary
 
-The Agentic HOI4 Modding default branch, conditional Super Events guidance,
-and current published manifest are at commit
-`bdef773758125b367fff3ab40d85433675d511cb`. The manifest declares selected-file
+The Agentic HOI4 Modding default branch, one-skill Super Events workflow, and
+current published manifest are at commit
+`6d4a84cf31004a3ba899535be433b42f962e7dee`. The manifest declares selected-file
 evidence generated from immutable Git blobs at revision
-`8c619f7dfee59f50096573e4ed1ea200e06632be`.
+`de725e52ec2cb8d2d5796e86a93bf14bf1bb5c6b`.
 
 The release route produces a ChaosX Authenticode-signed Windows installer and
 ad-hoc signed macOS disk images when official credentials are absent. The same

@@ -121,6 +121,10 @@ Conflict review is the exception. It may show a three-way comparison and more co
   stored key, keep the exact question visible as a disabled installed state
   and expose the vault-only key field for repair.
 - Readiness leads with core status. Open in Codex is shown only for Codex; other providers receive an honest provider-specific handoff or no opener.
+- Open in Codex enters a disabled `Opening Codex…` state immediately, blocks
+  duplicate clicks, and changes to a concise success state after the verified
+  launcher starts. Finish replaces Ready with a concise congratulations page
+  while keeping the existing Ready phase selected.
 - Keep Ready-screen actions inside padded panel content. Do not expose a second 3D health button after installation; the reviewed transaction and readiness report already own that state. When flattened ChatGPT sources were selected, link the concise handoff directly to `https://chatgpt.com`.
 - Optional source-declared health actions are rendered only when readiness identifies a runnable verified route. `planned_unavailable` and `unsupported_platform` remain visible as status text without an actionable button.
 - Run optional health checks outside the UI thread, block duplicate clicks,

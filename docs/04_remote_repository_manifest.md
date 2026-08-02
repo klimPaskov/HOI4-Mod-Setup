@@ -73,8 +73,8 @@ The complete schema is `schemas/remote-manifest.schema.json`.
 
 The verified manifest defines `workflow.super_events` as an optional,
 provider-neutral component for a complete reusable Super Events package. The
-parent installs the selected-only `hoi4-super-events*` skill packages and three
-narrow research subagents, then expands to hidden dependency components for
+parent installs the single `hoi4-super-events` skill and three narrow research
+subagents, then expands to hidden dependency components for
 `interface/`, `common/`, `events/`, `localisation/`, `gfx/`, and
 `docs/super_events/`. These dependencies install the working GUI,
 GFX declarations, scripted GUI and registration effect, dynamic text and image
@@ -89,10 +89,12 @@ later project addition with separate source and rights evidence. Every managed
 component uses `replace_if_unmodified`, with obsolete-file removal and local
 additions preserved according to the manifest.
 
-The core skills selection must exclude `hoi4-super-events*/**`, the core
+The core skills selection excludes `hoi4-super-events/**`, while deterministic
+adaptation removes the marked Super Events sections from the ordinary planning,
+events, assets, text/audio, and subagent skills unless the workflow is selected. The core
 subagent selection must exclude `hoi4_super_event_*.toml`, and every hidden
 runtime dependency remains optional, so an install that declines the workflow
-cannot receive any Super Events file accidentally. The adapted `AGENTS.md`
+cannot receive the Super Events skill, runtime, research subagents, or conditional guidance accidentally. The adapted `AGENTS.md`
 receives Super Events-specific guidance only when this component is selected
 and its operation is approved. Selection, dependency expansion, file download,
 hash verification, namespace adaptation, and lock evidence remain bound to the

@@ -148,6 +148,7 @@ static CODEX_LOGIN_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>
 static SCAN_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
 static MESHY_CREDENTIAL_REFERENCE: OnceLock<Mutex<Option<CredentialReference>>> = OnceLock::new();
 static THREE_D_HEALTH: OnceLock<Mutex<HashMap<String, CachedThreeDHealth>>> = OnceLock::new();
+static READY_PROJECTS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 
 struct PendingCodexAnalysis {
     analysis: CodexAnalysis,
@@ -171,6 +172,10 @@ struct ApprovedScanEvidence {
 
 fn prepared_plans() -> &'static Mutex<std::collections::HashMap<Uuid, PreparedPlan>> {
     PREPARED_PLANS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn ready_projects() -> &'static Mutex<HashMap<String, String>> {
+    READY_PROJECTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn codex_session() -> &'static Mutex<Option<AppServerProtocol<ProcessJsonlTransport>>> {
@@ -890,6 +895,9 @@ fn codex_logout() -> Result<(), String> {
 }
 
 fn complete_codex_logout(logout_result: Result<(), String>) -> Result<(), String> {
+    if let Ok(mut projects) = ready_projects().lock() {
+        projects.clear();
+    }
     if let Ok(mut session) = codex_session().lock() {
         return finalize_codex_logout_state(
             &mut *session,
@@ -1981,13 +1989,20 @@ fn evaluate_readiness(input: ReadinessInput) -> Result<ReadinessReport, String> 
     let root = PathBuf::from(&input.project_root);
     if root.is_dir() {
         let root = validate_project_root(&root).map_err(command_error)?;
-        evaluate_installed_readiness(
+        let report = evaluate_installed_readiness(
             &root,
             &input.project_id,
             input.workflow_3d_state,
             input.notes,
         )
-        .map_err(command_error)
+        .map_err(command_error)?;
+        if crate::readiness::core_ready(&report) {
+            let lock_hash = sha256_file(&crate::paths::lock_path(&root)).map_err(command_error)?;
+            if let Ok(mut ready) = ready_projects().lock() {
+                ready.insert(root.display().to_string(), lock_hash);
+            }
+        }
+        Ok(report)
     } else {
         Ok(crate::readiness::evaluate(&input))
     }
@@ -2430,6 +2445,41 @@ fn adapt_subagent_for_spawn(bytes: &[u8]) -> Result<Vec<u8>, AppError> {
     Ok(rendered.into_bytes())
 }
 
+fn adapt_optional_super_events_skill(
+    bytes: &[u8],
+    super_events_selected: bool,
+) -> Result<Vec<u8>, AppError> {
+    const START: &str = "<!-- HOI4_MOD_SETUP_SUPER_EVENTS_START -->";
+    const END: &str = "<!-- HOI4_MOD_SETUP_SUPER_EVENTS_END -->";
+    if !bytes
+        .windows(START.len())
+        .any(|window| window == START.as_bytes())
+        && !bytes
+            .windows(END.len())
+            .any(|window| window == END.as_bytes())
+    {
+        return Ok(bytes.to_vec());
+    }
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| AppError::Source(format!("conditional skill is not UTF-8: {error}")))?;
+    match (text.find(START), text.find(END)) {
+        (Some(start), Some(end)) if start < end => {
+            let block_end = end + END.len();
+            let mut adapted = text.to_string();
+            if super_events_selected {
+                adapted.replace_range(end..block_end, "");
+                adapted.replace_range(start..start + START.len(), "");
+            } else {
+                adapted.replace_range(start..block_end, "");
+            }
+            Ok(adapted.into_bytes())
+        }
+        _ => Err(AppError::Source(
+            "skill has an incomplete optional Super Events section".into(),
+        )),
+    }
+}
+
 fn adapt_agents_for_selection(
     bytes: &[u8],
     identity: &ProjectIdentity,
@@ -2477,7 +2527,7 @@ fn adapt_agents_for_selection(
         }
         (None, None) if super_events_selected => {
             adapted.push_str(
-                "\n## Optional Super Events workflow\n\n- Use `hoi4-super-events` for the installed runtime contract, `hoi4-super-events-planning` for the implementation brief, `hoi4-super-events-event-integration` for caller and cleanup wiring, `hoi4-super-events-text-audio-research` and `hoi4-super-events-feature-assets` for sourced presentation assets, and `hoi4-super-events-subagents` for bounded delegation. Keep registration, caller, text, quote, response, image, optional or explicitly required audio, provenance, documentation, cleanup, and the acceptance scenario aligned.\n- Spawn `hoi4_super_event_quote_researcher`, `hoi4_super_event_audio_researcher`, or `hoi4_super_event_art_researcher` with `fork_context=false` only when its narrow selected-only handoff is needed.\n",
+                "\n## Optional Super Events workflow\n\n- Use `hoi4-super-events` for the complete installed runtime and presentation contract. Use the Super Events sections added to `hoi4-feature-planning`, `hoi4-events`, `hoi4-feature-assets`, `hoi4-text-audio-research`, and `hoi4-subagents` for their normal ownership boundaries. Keep registration, caller, text, quote, response, image, optional or explicitly required audio, provenance, documentation, cleanup, and the acceptance scenario aligned.\n- Spawn `hoi4_super_event_quote_researcher`, `hoi4_super_event_audio_researcher`, or `hoi4_super_event_art_researcher` with `fork_context=false` only when its narrow handoff is needed.\n",
             );
         }
         (None, None) => {}
@@ -2562,6 +2612,8 @@ fn adapt_selected_source(
     super_events_selected: bool,
     mcp_selected: bool,
 ) -> Result<Vec<u8>, AppError> {
+    let conditional = adapt_optional_super_events_skill(bytes, super_events_selected)?;
+    let bytes = conditional.as_slice();
     if component_id == "core.agents" {
         adapt_agents_for_selection(
             bytes,
@@ -2818,6 +2870,18 @@ fn selected_folder_profile(state: &Value) -> Result<Vec<String>, AppError> {
         .filter(|values| !values.is_empty())
         .unwrap_or_else(|| defaults.iter().map(|value| (*value).into()).collect());
     crate::codex::validate_folder_profile_paths(&values)
+}
+
+fn transaction_directories(state: &Value, mode: &str) -> Result<Vec<String>, AppError> {
+    let mut directories = if mode == "new" {
+        selected_folder_profile(state)?
+    } else {
+        Vec::new()
+    };
+    if !directories.iter().any(|directory| directory == ".tmp") {
+        directories.push(".tmp".into());
+    }
+    Ok(directories)
 }
 
 fn ai_provider_from_state(state: &Value) -> Result<String, AppError> {
@@ -3337,18 +3401,16 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             bytes: None,
         });
     }
-    if git_setup.is_some() {
-        let current = std::fs::read_to_string(root.join(".gitignore")).ok();
-        let content = crate::git::merge_gitignore(current.as_deref());
-        generated.push(GeneratedArtifact {
-            component_id: "git.ignore".into(),
-            destination: ".gitignore".into(),
-            expected_sha256: sha256_bytes(content.as_bytes()),
-            content,
-            external: false,
-            bytes: None,
-        });
-    }
+    let current = std::fs::read_to_string(root.join(".gitignore")).ok();
+    let content = crate::git::merge_gitignore(current.as_deref());
+    generated.push(GeneratedArtifact {
+        component_id: "git.ignore".into(),
+        destination: ".gitignore".into(),
+        expected_sha256: sha256_bytes(content.as_bytes()),
+        content,
+        external: false,
+        bytes: None,
+    });
     if flatten_chat_sources {
         let flatten_artifacts = crate::flatten::build_artifacts(&prepared, &generated, &root)?;
         generated.extend(flatten_artifacts);
@@ -3530,11 +3592,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                 .join("staging")
                 .display()
                 .to_string(),
-            directories: if mode == "new" {
-                selected_folder_profile(state)?
-            } else {
-                Vec::new()
-            },
+            directories: transaction_directories(state, &mode)?,
             atomic_apply_expected: true,
             project_root_mode: if root.exists() {
                 ProjectRootMode::Existing
@@ -5279,29 +5337,42 @@ fn discard_installation_staging(
 #[tauri::command(async)]
 fn open_in_codex(project_root: String) -> Result<OpenInCodexResult, String> {
     let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
-    let live_codex =
-        with_codex_session(|session| session.account_read(false)).map_err(command_error)?;
-    if live_codex.error.is_some()
-        || !live_codex.authenticated
-        || live_codex.auth_mode != "chatgpt"
-        || live_codex.usage_limited
-    {
-        return Err("Open in Codex requires an active ChatGPT-authenticated Codex session".into());
-    }
-    let lock = read_project_lock(&root).map_err(command_error)?;
-    let workflow_3d_state = lock
-        .optional_workflows
-        .get("workflow.3d")
-        .map(|workflow| workflow.state.clone())
-        .unwrap_or_else(|| "not_selected".into());
-    let readiness =
-        evaluate_installed_readiness(&root, &lock.project_id, workflow_3d_state, Vec::new())
-            .map_err(command_error)?;
-    if !crate::readiness::core_ready(&readiness) {
-        return Err(format!(
-            "Codex remains disabled until core readiness passes: {}",
-            readiness.open_in_codex.blocking_check_ids.join(", ")
-        ));
+    let current_lock_hash = sha256_file(&crate::paths::lock_path(&root)).map_err(command_error)?;
+    let cached_ready = ready_projects()
+        .lock()
+        .ok()
+        .and_then(|ready| ready.get(&root.display().to_string()).cloned())
+        .is_some_and(|hash| hash == current_lock_hash);
+    if !cached_ready {
+        let live_codex =
+            with_codex_session(|session| session.account_read(false)).map_err(command_error)?;
+        if live_codex.error.is_some()
+            || !live_codex.authenticated
+            || live_codex.auth_mode != "chatgpt"
+            || live_codex.usage_limited
+        {
+            return Err(
+                "Open in Codex requires an active ChatGPT-authenticated Codex session".into(),
+            );
+        }
+        let lock = read_project_lock(&root).map_err(command_error)?;
+        let workflow_3d_state = lock
+            .optional_workflows
+            .get("workflow.3d")
+            .map(|workflow| workflow.state.clone())
+            .unwrap_or_else(|| "not_selected".into());
+        let readiness =
+            evaluate_installed_readiness(&root, &lock.project_id, workflow_3d_state, Vec::new())
+                .map_err(command_error)?;
+        if !crate::readiness::core_ready(&readiness) {
+            return Err(format!(
+                "Codex remains disabled until core readiness passes: {}",
+                readiness.open_in_codex.blocking_check_ids.join(", ")
+            ));
+        }
+        if let Ok(mut ready) = ready_projects().lock() {
+            ready.insert(root.display().to_string(), current_lock_hash);
+        }
     }
     let Some(executable) = find_codex_executable() else {
         return Ok(manual_open_in_codex_result(&root));
@@ -5567,6 +5638,48 @@ mod tests {
         assert!(!String::from_utf8(unselected)
             .unwrap()
             .contains("Optional Super Events workflow"));
+    }
+
+    #[test]
+    fn every_setup_creates_the_private_work_directory_without_duplicates() {
+        let new_state = serde_json::json!({
+            "folderProfile": ["common", ".tmp"]
+        });
+        assert_eq!(
+            transaction_directories(&new_state, "new").unwrap(),
+            vec!["common".to_string(), ".tmp".to_string()]
+        );
+        assert_eq!(
+            transaction_directories(&serde_json::json!({}), "existing").unwrap(),
+            vec![".tmp".to_string()]
+        );
+    }
+
+    #[test]
+    fn ordinary_skill_keeps_super_events_guidance_only_when_selected() {
+        let source = b"# Ordinary skill\n\nAlways present.\n\n<!-- HOI4_MOD_SETUP_SUPER_EVENTS_START -->\n## Super Events integration\n\nSelected only.\n<!-- HOI4_MOD_SETUP_SUPER_EVENTS_END -->\n";
+        let selected = adapt_optional_super_events_skill(source, true).unwrap();
+        let selected = String::from_utf8(selected).unwrap();
+        assert!(selected.contains("Selected only."));
+        assert!(!selected.contains("HOI4_MOD_SETUP_SUPER_EVENTS"));
+
+        let unselected = adapt_optional_super_events_skill(source, false).unwrap();
+        let unselected = String::from_utf8(unselected).unwrap();
+        assert!(unselected.contains("Always present."));
+        assert!(!unselected.contains("Super Events integration"));
+        assert!(!unselected.contains("Selected only."));
+    }
+
+    #[test]
+    fn incomplete_optional_skill_marker_fails_closed() {
+        let error = adapt_optional_super_events_skill(
+            b"<!-- HOI4_MOD_SETUP_SUPER_EVENTS_START -->\nmissing end",
+            true,
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("incomplete optional Super Events section"));
     }
 
     #[test]
@@ -6719,5 +6832,19 @@ developer_instructions = "Work on the named files."
         assert!(evidence.project_root.is_none());
         assert!(evidence.scan_id.is_none());
         assert!(evidence.entries.is_empty());
+    }
+
+    #[test]
+    fn logout_clears_process_local_ready_project_evidence() {
+        let _state_guard = test_state_guard();
+        ready_projects()
+            .lock()
+            .unwrap()
+            .insert("C:/mods/example".into(), "lock-sha256".into());
+
+        let result = complete_codex_logout(Err("Sign-out could not reach Codex.".into()));
+
+        assert_eq!(result.unwrap_err(), "Sign-out could not reach Codex.");
+        assert!(ready_projects().lock().unwrap().is_empty());
     }
 }

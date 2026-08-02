@@ -65,7 +65,7 @@ display-name changes after confirmation.
 
 ### Descriptors
 
-Preview and validate `descriptor.mod`, `<project_id>.mod`, and `thumbnail.png`. Check duplicate keys, quoting, supported-version syntax, project path, destination, descriptor consistency, picture reference, PNG decoding, dimensions, and replacement policy. The script prefix and primary namespace remain project conventions and do not appear as descriptor keys.
+Preview and validate `descriptor.mod`, `<project_id>.mod`, and the deterministic 600×600 solid-black `thumbnail.png`. Check duplicate keys, quoting, supported-version syntax, project path, destination, descriptor consistency, picture reference, PNG decoding, dimensions, and replacement policy. The script prefix and primary namespace remain project conventions and do not appear as descriptor keys.
 
 ### Folder profile
 

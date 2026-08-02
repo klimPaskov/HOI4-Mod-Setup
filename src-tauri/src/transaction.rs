@@ -6443,8 +6443,8 @@ mod tests {
         let project = tempdir().unwrap();
         let app = tempdir().unwrap();
         let canonical_app = fs::canonicalize(app.path()).unwrap();
-        let thumbnail = crate::descriptors::PLACEHOLDER_THUMBNAIL_PNG;
-        fs::write(project.path().join("thumbnail.png"), thumbnail).unwrap();
+        let thumbnail = crate::descriptors::placeholder_thumbnail_png().unwrap();
+        fs::write(project.path().join("thumbnail.png"), &thumbnail).unwrap();
         let mut plan = ready_plan(project.path());
         let launcher_path = canonical_app.join("example.mod");
         let canonical_project = validate_project_root(project.path()).unwrap();
@@ -6487,7 +6487,7 @@ mod tests {
             executable: false,
             result_sha256: None,
             base_sha256: None,
-            local_sha256: Some(sha256_bytes(thumbnail)),
+            local_sha256: Some(sha256_bytes(&thumbnail)),
             local_state: LocalState::Modified,
             resolution: Some("keep".into()),
             external: false,
@@ -6524,7 +6524,7 @@ mod tests {
             .find(|file| file.path == "thumbnail.png")
             .expect("kept thumbnail should remain represented in the lock");
         assert!(locked_thumbnail.preserved_local);
-        assert_eq!(locked_thumbnail.installed_sha256, sha256_bytes(thumbnail));
+        assert_eq!(locked_thumbnail.installed_sha256, sha256_bytes(&thumbnail));
         let reloaded: InstallationLock = serde_json::from_slice(
             &fs::read(project.path().join(".hoi4-mod-setup/install.lock.json")).unwrap(),
         )

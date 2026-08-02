@@ -885,8 +885,9 @@ fn detect_thumbnail(
     match crate::descriptors::validate_thumbnail_png(&thumbnail.bytes) {
         Ok((width, height)) => {
             let hash = sha256_bytes(&thumbnail.bytes);
-            let managed_placeholder =
-                hash == sha256_bytes(crate::descriptors::PLACEHOLDER_THUMBNAIL_PNG);
+            let managed_placeholder = crate::descriptors::placeholder_thumbnail_png()
+                .map(|placeholder| hash == sha256_bytes(&placeholder))
+                .unwrap_or(false);
             findings.push(finding(
                 "thumbnail.integrity",
                 "thumbnail",

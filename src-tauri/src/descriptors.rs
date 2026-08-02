@@ -181,16 +181,27 @@ pub fn render_descriptor_mod(identity: &ProjectIdentity) -> Result<String, AppEr
     Ok(descriptor)
 }
 
-/// A fixed 1x1 RGBA PNG keeps a fresh project launcher-ready without
-/// pretending to be user artwork. The file is deliberately replaceable and
-/// its bytes are tracked as generated content in the transaction lock.
-pub const PLACEHOLDER_THUMBNAIL_PNG: &[u8] = &[
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
-    0x89, 0x00, 0x00, 0x00, 0x0b, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0x60, 0x00, 0x02, 0x00,
-    0x00, 0x05, 0x00, 0x01, 0xe9, 0xfa, 0xdc, 0xd8, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44,
-    0xae, 0x42, 0x60, 0x82,
-];
+/// A deterministic 600x600 black PNG keeps a fresh project launcher-ready
+/// without pretending to be user artwork. The file is replaceable and its
+/// exact bytes are tracked as generated content in the transaction lock.
+pub fn placeholder_thumbnail_png() -> Result<Vec<u8>, AppError> {
+    const SIDE: u32 = 600;
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, SIDE, SIDE);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Best);
+        let mut writer = encoder.write_header().map_err(|error| {
+            AppError::InvalidInput(format!("thumbnail header could not be encoded: {error}"))
+        })?;
+        let pixels = vec![0_u8; (SIDE * SIDE * 3) as usize];
+        writer.write_image_data(&pixels).map_err(|error| {
+            AppError::InvalidInput(format!("thumbnail pixels could not be encoded: {error}"))
+        })?;
+    }
+    Ok(bytes)
+}
 
 pub fn validate_thumbnail_png(bytes: &[u8]) -> Result<(u32, u32), AppError> {
     if bytes.len() > 16 * 1024 * 1024 {
@@ -285,11 +296,11 @@ pub fn generated_artifacts(identity: &ProjectIdentity) -> Result<Vec<GeneratedAr
             bytes: None,
         });
     }
-    let thumbnail = PLACEHOLDER_THUMBNAIL_PNG.to_vec();
+    let thumbnail = placeholder_thumbnail_png()?;
     artifacts.push(GeneratedArtifact {
         component_id: "project.thumbnail".into(),
         destination: "thumbnail.png".into(),
-        content: "Deterministic 1x1 RGBA PNG placeholder; replaceable after install.".into(),
+        content: "Deterministic 600x600 black PNG placeholder; replaceable after install.".into(),
         expected_sha256: sha256_bytes(&thumbnail),
         external: false,
         bytes: Some(thumbnail),
@@ -378,11 +389,17 @@ mod tests {
     }
 
     #[test]
-    fn bundled_thumbnail_decodes_as_a_small_png() {
-        assert_eq!(
-            validate_thumbnail_png(PLACEHOLDER_THUMBNAIL_PNG).unwrap(),
-            (1, 1)
-        );
+    fn generated_thumbnail_is_a_600_square_with_only_black_pixels() {
+        let bytes = placeholder_thumbnail_png().unwrap();
+        assert_eq!(validate_thumbnail_png(&bytes).unwrap(), (600, 600));
+        let decoder = png::Decoder::new(Cursor::new(bytes));
+        let mut reader = decoder.read_info().unwrap();
+        let mut pixels = vec![0_u8; reader.output_buffer_size()];
+        let frame = reader.next_frame(&mut pixels).unwrap();
+        assert_eq!(frame.color_type, png::ColorType::Rgb);
+        assert!(pixels[..frame.buffer_size()]
+            .iter()
+            .all(|pixel| *pixel == 0));
     }
 
     #[test]
