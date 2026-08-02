@@ -730,7 +730,8 @@ describe("HOI4 Mod Setup wizard", () => {
 
     vi.mocked(findInterruptedTransaction).mockResolvedValue(null);
     await act(async () => finishRollback?.({ value: { transaction_id: "partial-transaction", state: "rolled_back" } as never }));
-    expect(await screen.findByRole("heading", { name: "Project ready" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Start a mod project" })).toBeInTheDocument();
+    expect(screen.getByText("The partial setup was undone. You can start again.")).toBeInTheDocument();
   });
 
   it("shows only Discard when setup stopped before changing project files", async () => {

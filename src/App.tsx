@@ -1013,7 +1013,13 @@ export default function App() {
         readiness: null,
         installProgress: 0,
         screen: "dry-run",
-      } : { transaction: result.value, transactionError: undefined, readiness: null, screen: "ready" });
+      } : {
+        transaction: result.value,
+        transactionError: "The partial setup was undone. You can start again.",
+        readiness: null,
+        recoveryEntry: false,
+        screen: "welcome",
+      });
       return;
     }
     if (!transaction.recovery.discard_staging_allowed) {

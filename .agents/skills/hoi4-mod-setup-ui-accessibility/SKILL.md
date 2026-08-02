@@ -90,7 +90,7 @@ Conflict review is the exception. It may show a three-way comparison and more co
   allowed recommended action; a stale or disabled choice must never retain the
   selected appearance.
 - Render only recovery actions that the normalized journal currently permits. Do not show Undo when no project files changed, or show Continue/Discard after apply began, as disabled cards that look broken.
-- Label the recovery primary action with the selected action rather than generic Continue. While it runs, disable duplicate actions and replace the cards with one live progress surface. Derive rollback backup and restore counts only from actionable operations in the child rollback journal; show an indeterminate state until that child exists.
+- Label the recovery primary action with the selected action rather than generic Continue. While it runs, disable duplicate actions and replace the cards with one live progress surface. Derive rollback backup and restore counts only from actionable operations in the child rollback journal; show an indeterminate state until that child exists. A standalone undo returns to project selection; an undo reached from a newly prepared plan invalidates that stale plan and returns to review for fresh preparation.
 - While the transaction command is active, poll its exact reviewed transaction
   ID through the typed journal reader and render the durable stage plus a
   human-readable file count. Accept the schema's `complete` stage status; do

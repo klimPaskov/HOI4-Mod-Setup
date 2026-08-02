@@ -168,7 +168,7 @@ progress from a blocked event loop.
 
 Do not invent a percentage when total work is unknown. Plan preparation uses a visibly active indeterminate bar. Installation rows show 0% before work and 100% after completion; staging and apply use journaled file counts for truthful intermediate percentages and expose the current relative destination. The overall surface shows a clearly approximate time remaining derived from measured elapsed progress and falls back to `Calculating time remaining` until enough evidence exists. Do not expose the full transaction log by default.
 
-Recovery uses the selected action as the primary-button label. While Continue, Undo, or Discard is running, disable duplicate actions and replace the choice cards with one live progress surface. Rollback backup and restore percentages come only from the child rollback journal's actionable-file records; use an indeterminate state until that journal exists.
+Recovery uses the selected action as the primary-button label. While Continue, Undo, or Discard is running, disable duplicate actions and replace the choice cards with one live progress surface. Rollback backup and restore percentages come only from the child rollback journal's actionable-file records; use an indeterminate state until that journal exists. After a standalone undo, return to project selection so setup can start again; if a newly prepared plan encountered the older transaction, invalidate that stale plan and return to review for a fresh preparation.
 
 ## Accessibility
 
