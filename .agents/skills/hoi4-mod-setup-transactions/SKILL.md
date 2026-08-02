@@ -94,6 +94,12 @@ operations are not accepted; mode belongs to the reviewed file operation.
   ledger before backup. Generated inputs use an explicit `generated:` source
   and do not fabricate remote evidence.
 - Treat provider/model/profile selection and the Codex-only flattened ChatGPT-source export as reviewed plan inputs. Flattening is a generated, root-contained operation: direct skill `SKILL.md` files become `<skill>.md`; required adapted `AGENTS.md`, README, and subagents are included; and collisions, links, and secrets are rejected before staging. Build it only from eligible files selected for the current plan. Never include offline-wiki pages, wiki media, descriptors, configuration, workflow assets, or other unrelated selected component files in the flat view or count them against its limits. When review keeps a selected local skill or subagent, read that exact root-contained regular file without following links and flatten the kept bytes; never enumerate unrelated skills or subagents already present in an existing project.
+- Deterministically adapt every selected Codex subagent definition before
+  staging so its developer instructions explicitly require
+  `fork_context=false`, unless verified TOML already declares the same rule.
+  Reject an explicit `fork_context=true`. Preserve the verified source hash
+  separately from the adapted result hash so readiness validates exactly the
+  installed bytes without weakening source evidence.
 - When a non-flattened conflict changes the accepted source set, rebuild the flat
   view from accepted bytes only. Preserve an already reviewed flat keep/replace/
   rename decision only when its incoming hash and local precondition still

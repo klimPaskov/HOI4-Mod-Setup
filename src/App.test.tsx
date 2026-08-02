@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { Components, DryRun, Git, Identity, Ready, Scan, Update, Welcome, estimateRemainingTime, recoveryProgress } from "./App";
+import App, { Components, DryRun, Git, Identity, Mcp, Ready, Scan, Update, Welcome, estimateRemainingTime, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
 import type { CodexAnalysisResult, FolderSelection, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 
@@ -825,6 +825,55 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByText("Setup checks", { selector: "summary" }));
     expect(screen.getByText("Check the installed AI tools")).toBeInTheDocument();
     expect(screen.getByText("Check the 3D workflow")).toBeInTheDocument();
+  });
+
+  it("shows the real file plan only when the user opens it", () => {
+    render(<DryRun state={{
+      aiProvider: "codex",
+      gitBranch: "main",
+      gitOnlineAction: "none",
+      flattenForChat: false,
+      plan: {
+        operations: [
+          { id: "agents", action: "create", destination: "AGENTS.md" },
+          { id: "skill", action: "replace", destination: ".agents/skills/example/SKILL.md" },
+        ],
+        conflicts: [],
+        external_actions: [],
+      },
+    } as unknown as WizardState} update={vi.fn()} />);
+
+    const files = screen.getByText("Files to install · 2", { selector: "summary" });
+    expect(screen.queryByText("AGENTS.md")).not.toBeInTheDocument();
+    const details = files.closest("details")!;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
+    expect(screen.getByText("AGENTS.md")).toBeInTheDocument();
+    expect(screen.getByText(".agents/skills/example/SKILL.md")).toBeInTheDocument();
+    expect(screen.queryByText("Open full file plan")).not.toBeInTheDocument();
+  });
+
+  it("opens integration requirements by default", () => {
+    render(<Mcp state={{
+      selectedComponents: ["mcp.hoi4_agent_tools"],
+      manifestPreview: {
+        components: [{
+          id: "mcp.hoi4_agent_tools",
+          category: "mcp",
+          display_name: "HOI4 Agent Tools",
+          description: "Project tools",
+          platforms: ["windows"],
+          required_tools: [],
+          environment: [],
+          capabilities: [],
+          validation: [],
+        }],
+      },
+      meshSelected: false,
+      meshKeyStatus: "missing",
+    } as unknown as WizardState} />);
+
+    expect(screen.getByText("Requirements", { selector: "summary" }).closest("details")).toHaveAttribute("open");
   });
 
   it("shows dry-run preparation as busy and enables installation only after a plan succeeds", async () => {

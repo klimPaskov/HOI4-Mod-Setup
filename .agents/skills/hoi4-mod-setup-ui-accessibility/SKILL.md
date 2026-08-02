@@ -90,6 +90,9 @@ Conflict review is the exception. It may show a three-way comparison and more co
   allowed recommended action; a stale or disabled choice must never retain the
   selected appearance.
 - Render only recovery actions that the normalized journal currently permits. Do not show Undo when no project files changed, or show Continue/Discard after apply began, as disabled cards that look broken.
+- Give the live recovery progress panel explicit internal padding and contain
+  long relative paths at 200 percent scaling so labels, progress bars, and
+  filenames never touch or cross its border.
 - Label the recovery primary action with the selected action rather than generic Continue. While it runs, disable duplicate actions and replace the cards with one live progress surface. Derive rollback backup and restore counts only from actionable operations in the child rollback journal; show an indeterminate state until that child exists. A standalone undo returns to project selection; an undo reached from a newly prepared plan invalidates that stale plan and returns to review for fresh preparation.
 - While the transaction command is active, poll its exact reviewed transaction
   ID through the typed journal reader and render the durable stage plus a
@@ -108,6 +111,11 @@ Conflict review is the exception. It may show a three-way comparison and more co
 - Readiness leads with core status. Open in Codex is shown only for Codex; other providers receive an honest provider-specific handoff or no opener.
 - Optional source-declared health actions are rendered only when readiness identifies a runnable verified route. `planned_unavailable` and `unsupported_platform` remain visible as status text without an actionable button.
 - In the dry run, call manifest-declared validation actions **Setup checks**. Show a simple included count and human-readable check names by default; keep commands, folders, environment names, and expected changes behind a nested disclosure. Do not show internal risk labels or component IDs in the normal interface.
+- Keep the plan-preparation panel aligned to the same maximum width as the
+  dry-run metrics and columns. The file-plan disclosure must show the actual
+  destination and user-facing action for every reviewed operation and should
+  mount the large list only while open. Integration requirements are open by
+  default when that screen's purpose is to review them.
 - When no verified Codex opener is available, keep a passed readiness result visible and expose the validated project path as an announced manual-opening result.
 - Optional incomplete states remain secondary.
 - `workflow.super_events` is provider-neutral and its `not_selected`,

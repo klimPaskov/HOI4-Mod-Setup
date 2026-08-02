@@ -293,9 +293,9 @@ pub fn validate_manifest_destinations(components: &[ComponentDefinition]) -> Res
         if components.len() > 1
             && !shared_tree_root
             && !structured_merge
-            && components
-                .iter()
-                .any(|component| component.destination.ownership != crate::models::Ownership::Merged)
+            && components.iter().any(|component| {
+                component.destination.ownership != crate::models::Ownership::Merged
+            })
         {
             return Err(AppError::PathSecurity(format!(
                 "duplicate destination: {key}"

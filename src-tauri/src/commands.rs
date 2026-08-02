@@ -2375,6 +2375,44 @@ fn adapt_codex_config_for_selection(bytes: &[u8], mcp_selected: bool) -> Result<
     Ok(rendered.into_bytes())
 }
 
+fn adapt_subagent_for_spawn(bytes: &[u8]) -> Result<Vec<u8>, AppError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| AppError::Source(format!("subagent definition is not UTF-8: {error}")))?;
+    let mut value = text.parse::<toml::Value>().map_err(|error| {
+        AppError::Source(format!("subagent definition is not valid TOML: {error}"))
+    })?;
+    if let Some(fork_context) = value.get("fork_context").and_then(toml::Value::as_bool) {
+        if fork_context {
+            return Err(AppError::Source(
+                "subagent definition requires inherited conversation context".into(),
+            ));
+        }
+        return Ok(bytes.to_vec());
+    }
+    if text.contains("fork_context=false") {
+        return Ok(bytes.to_vec());
+    }
+    let instructions = value
+        .get_mut("developer_instructions")
+        .and_then(|instructions| instructions.as_str())
+        .ok_or_else(|| {
+            AppError::Source("subagent definition has no developer instructions".into())
+        })?
+        .to_string();
+    value["developer_instructions"] = toml::Value::String(format!(
+        "{instructions}\n\nThe parent must spawn this subagent with fork_context=false."
+    ));
+    let rendered = toml::to_string_pretty(&value).map_err(|error| {
+        AppError::Source(format!(
+            "adapted subagent definition could not be written: {error}"
+        ))
+    })?;
+    rendered.parse::<toml::Value>().map_err(|error| {
+        AppError::Source(format!("adapted subagent definition is invalid: {error}"))
+    })?;
+    Ok(rendered.into_bytes())
+}
+
 fn adapt_agents_for_selection(
     bytes: &[u8],
     identity: &ProjectIdentity,
@@ -2501,6 +2539,8 @@ fn adapt_selected_source(
         )
     } else if component_id == "codex.config" {
         adapt_codex_config_for_selection(bytes, mcp_selected)
+    } else if component_id == "core.subagents" || component_id.ends_with(".subagents") {
+        adapt_subagent_for_spawn(bytes)
     } else if is_super_events_runtime_component(component_id) {
         adapt_super_events_source(bytes, identity)
     } else {
@@ -5084,10 +5124,7 @@ fn resolve_installation_conflict(
 }
 
 #[tauri::command(async)]
-fn apply_installation(
-    plan_id: String,
-    project_root: String,
-) -> Result<TransactionJournal, String> {
+fn apply_installation(plan_id: String, project_root: String) -> Result<TransactionJournal, String> {
     let id = Uuid::parse_str(&plan_id).map_err(|_| "invalid installation plan ID".to_string())?;
     let root = validate_project_root_or_destination(Path::new(&project_root))
         .map(|(root, _)| root)
@@ -5505,6 +5542,31 @@ mod tests {
         assert!(text.contains("name = example_super_events"));
         assert!(text.contains("text = \"Example \\\"Mod\\\"\""));
         assert!(!text.contains("[MOD_"));
+    }
+
+    #[test]
+    fn selected_subagents_explicitly_require_fork_context_false() {
+        let source = br#"name = "worker"
+description = "A bounded worker"
+developer_instructions = """
+Work only on the files named by the parent.
+"""
+"#;
+        let adapted = adapt_subagent_for_spawn(source).unwrap();
+        let text = String::from_utf8(adapted).unwrap();
+        let value = text.parse::<toml::Value>().unwrap();
+        assert!(value
+            .get("developer_instructions")
+            .and_then(toml::Value::as_str)
+            .unwrap()
+            .contains("fork_context=false"));
+
+        let unsafe_source = br#"name = "worker"
+description = "An unsafe worker"
+fork_context = true
+developer_instructions = "Work on the named files."
+"#;
+        assert!(adapt_subagent_for_spawn(unsafe_source).is_err());
     }
 
     #[test]

@@ -81,6 +81,9 @@ session, cancellation, credential-health, or analysis assertions.
   dependency closure, namespace-adapts only verified text files, leaves
   binary DDS/PSD bytes unchanged, is isolated from unselected downloads, adds
   no unselected AGENTS guidance, and remains non-blocking in readiness
+- every selected Codex subagent either already declares the bounded spawn rule
+  or is deterministically adapted to contain `fork_context=false`; an explicit
+  true declaration is rejected, and the adapted TOML remains parseable
 - flattening rejects output collisions, traversal, links, secret-shaped paths,
   and secret-shaped content while preserving the source transaction boundary;
   large selected wiki trees and other ineligible component files neither enter

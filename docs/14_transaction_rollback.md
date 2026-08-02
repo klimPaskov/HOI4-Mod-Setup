@@ -83,6 +83,12 @@ Copy every path that may be replaced, merged, removed, or have metadata changed.
 
 Build the complete target outside live paths. Generate both descriptors, the thumbnail, profile folders, provider-adapted AGENTS/README files, selected optional workflow trees such as `workflow.super_events`, optional flattened Chat sources, and merge results from confirmed values here.
 
+Selected Codex subagent TOML remains bound to its verified source bytes, but
+staging deterministically adds the required `fork_context=false` spawn rule to
+developer instructions when the verified file does not already state it. A
+definition that explicitly requires inherited context is rejected. The plan
+keeps the verified source hash separate from the adapted installed hash.
+
 ### 8. Validation
 
 Run parsers, schemas, containment, wiki coverage and the exact locked wiki

@@ -299,7 +299,7 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .timeline-row.active .timeline-percent { color: #b9caff; }
 .stage-progress { grid-column: 2 / 4; min-width: 0; }
 .stage-progress .progress { height: 5px; }
-.plan-preparation { display: grid; gap: 14px; margin-bottom: 18px; padding: 18px; }
+.plan-preparation { width: 100%; max-width: 920px; display: grid; gap: 14px; margin: 0 auto 18px; padding: 18px; }
 .plan-preparation > div { display: grid; gap: 4px; }
 .plan-preparation strong { font-size: 14px; }
 .plan-preparation span { color: var(--muted); font-size: 12px; }
@@ -322,8 +322,11 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .diff-pane { min-height: 360px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: #090f19; }.diff-title { display: flex; justify-content: space-between; margin: 0; padding: 13px; border-bottom: 1px solid var(--line); color: #b8c4d7; font-size: 12px; }.diff-title span { color: var(--muted); }.diff-code { margin: 0; min-height: 310px; padding: 18px; color: #aab8ca; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 12px; line-height: 1.65; }.diff-code.minus { background: linear-gradient(90deg, rgba(207, 83, 102, .08), transparent 55%); }.diff-code.plus { background: linear-gradient(90deg, rgba(63, 189, 135, .08), transparent 55%); }.diff-code.neutral { background: linear-gradient(90deg, rgba(130, 150, 180, .08), transparent 55%); }.conflict-actions { padding: 16px; }
 .recovery-card { position: relative; min-height: 150px; padding: 23px 17px; text-align: left; }.recovery-card:hover, .recovery-card.selected { border-color: #6588f7; }.recovery-card .choice-radio { top: 17px; right: 17px; }.recovery-card strong { display: block; margin: 29px 0 6px; }.recovery-card p { line-height: 1.5; }
 .recovery-grid-1 { grid-template-columns: minmax(0, 1fr); }
-.recovery-progress { display: grid; gap: 14px; }
+.file-plan-list { max-height: 320px; overflow: auto; }
+.file-plan-list > div { gap: 7px; }
+.recovery-progress { display: grid; gap: 14px; padding: 22px 24px; overflow: hidden; }
 .recovery-progress > span, .recovery-progress > small { min-width: 0; overflow-wrap: anywhere; color: var(--muted); }
+.recovery-progress > small { display: block; line-height: 1.5; word-break: break-word; }
 
 @media (max-width: 900px) {
   .app-shell { width: 100%; min-height: 100vh; }

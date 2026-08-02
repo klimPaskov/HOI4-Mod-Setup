@@ -104,6 +104,11 @@ MCP servers and external dependencies are components. Their command, arguments, 
 - The MCP component is optional and Windows-only; selecting it changes the structurally generated Codex TOML, while macOS retains an explicit unsupported state and never receives a substitute command. A wrapper action requires immutable executable, command-interpreter, and runtime hash/size evidence; if any is absent, the MCP action is visible but `planned_unavailable` and no same-named `PATH` command is run. The offline wiki is always rooted at `paradox_wiki/`; the plan and lock copy the exact manifest `wiki.required_pages` list plus snapshot/media/provenance/license metadata for the resolved revision, and readiness blocks legacy locks that lack that evidence instead of using a newer bundle.
 - `generated_for_revision` is required immutable provenance but may precede the publication commit because a manifest cannot contain the final hash of the commit that contains it. The resolver consumes the remote manifest at the resolved commit, and selective download fails closed when its per-file size or SHA-256 evidence does not match that same commit. A bundled bootstrap is never substituted for a newly resolved remote commit.
 - Expected file evidence carries both SHA-256 and byte size into selected-file records, operations, locks, and readiness. Command-bearing validation rules become plan-visible, approval-bound external actions; their target, platform, and risk come from the verified manifest rather than renderer input. All-platform command declarations are bound to the current supported platform so they are not silently dropped.
+- Selected `.codex/agents/*.toml` bytes are verified before deterministic
+  adaptation. Staging adds the project-required `fork_context=false` spawn
+  rule to developer instructions when absent and rejects an explicit true
+  declaration; the operation keeps source SHA-256 evidence distinct from the
+  adapted result SHA-256.
 - Dependency resolution exposes a deterministic reverse-dependency map for update/removal impact review; provider constraints are applied after forward dependency expansion.
 - The published component graph has no LoRA/ComfyUI interest component. Do not
   synthesize one from older manifests or project state; legacy lock values are
