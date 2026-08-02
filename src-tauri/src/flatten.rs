@@ -544,7 +544,7 @@ mod tests {
             &[
                 prepared(
                     ".agents/skills/hoi4-3d-model-pipeline/SKILL.md",
-                    "MESHY_API_KEY=msy_1234567890abcdef",
+                    &format!("MESHY_API_KEY={}{}", "msy_123456", "7890abcdef"),
                 ),
                 prepared(".codex/agents/worker.toml", "fork_context=false"),
             ],

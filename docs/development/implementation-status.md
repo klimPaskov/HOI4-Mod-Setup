@@ -19,12 +19,16 @@ This document is the concise developer status. User guidance stays in the root
   Meshy credentials.
 - Git initialize/preserve/skip, guarded online push, and separately approved
   public GitHub-repository creation.
-- Optional Codex-only flattened ChatGPT project sources.
+- Optional Codex-only flattened ChatGPT project sources without offline-wiki
+  files, shown with filenames and sizes before installation.
 - Rust unit/property tests, fuzz targets, transaction fault injection,
   frontend/accessibility tests, workflow authority checks, and Windows/macOS
   native build and launch-smoke workflows.
 - User-facing release curation that publishes only the Windows installer and
   two macOS disk images.
+- Automatic signed application-update checks and an in-app update action.
+- Sanitized development-only documentation fixtures for consistent public
+  screenshots of the current wizard and maintenance flow.
 
 ## Current optional workflow and responsiveness behavior
 
@@ -44,10 +48,11 @@ desktop command dispatch away from the UI event loop.
 
 ## Current source and release boundary
 
-The Agentic HOI4 Modding default branch and generic Super Events skill are
-published at commit `7590f7f1b09bffaa0ea7a5009df807727a21fa87`. The selected-file
-manifest evidence was generated from immutable Git blobs at revision
-`ba2551a2caba6c35c5439c5802a44f30d59f1a3d`.
+The Agentic HOI4 Modding default branch, conditional Super Events guidance,
+and current published manifest are at commit
+`bdef773758125b367fff3ab40d85433675d511cb`. The manifest declares selected-file
+evidence generated from immutable Git blobs at revision
+`8c619f7dfee59f50096573e4ed1ea200e06632be`.
 
 The release route produces a ChaosX Authenticode-signed Windows installer and
 ad-hoc signed macOS disk images when official credentials are absent. The same

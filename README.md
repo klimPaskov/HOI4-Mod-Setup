@@ -1,117 +1,137 @@
 # HOI4 Mod Setup
 
-HOI4 Mod Setup is a Windows and macOS wizard for creating a new Hearts of Iron
-IV mod or preparing an existing mod for AI-assisted development. It creates the
-launcher files, folders, instructions, and tools you choose while keeping your
-existing work safe.
+HOI4 Mod Setup is a desktop wizard for preparing a Hearts of Iron IV mod for
+AI-assisted development. Start a new mod from its name and description, or
+choose an existing mod to add, update, or repair its development setup.
+
+The app supports Codex, Claude, Kimi, GLM, DeepSeek, local models, and custom
+providers. Codex is selected by default.
 
 ## Download
 
-[Open the latest release page](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
-
 - Windows: [Download the `.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.1/HOI4-Mod-Setup-windows-x64-setup.exe)
-- Mac (Apple silicon): [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.1/HOI4-Mod-Setup-macos-arm64.dmg)
-- Mac (Intel): [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.1/HOI4-Mod-Setup-macos-x64.dmg)
+- Mac with Apple silicon: [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.1/HOI4-Mod-Setup-macos-arm64.dmg)
+- Mac with Intel: [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.1/HOI4-Mod-Setup-macos-x64.dmg)
 
-Your computer may occasionally show a warning for a new community build. This
-can be a false positive. HOI4 Mod Setup is safe and open source.
+[View the latest release](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
 
-## Use the wizard
+On Windows, run the downloaded setup file. On Mac, open the disk image and
+move HOI4 Mod Setup to Applications. Your computer may occasionally flag a new
+community build as harmful falsely. The project is safe and open source.
 
-The wizard has seven short phases. You can go back and change earlier choices
-at any time before setup begins.
+## Using the app
 
-### 1. Project — choose what you are preparing
+The wizard has seven short phases. Nothing is added to the mod until you have
+reviewed the changes and started installation.
 
-![HOI4 Mod Setup welcome screen](docs/screenshots/01-welcome.png)
+### 1. Choose a project and AI provider
 
-Choose **Create new mod** to start a fresh mod or **Existing mod** to prepare a
-mod you already have. Codex is selected by default, and you can instead choose
-Claude, Kimi, GLM, DeepSeek, a local model, or another supported provider.
-For Claude, Kimi, GLM, or DeepSeek, open the provider's API-key page, paste the
-key, and choose **Connect**. The app fills the other connection details for you.
+![Create a new mod or import an existing one](docs/screenshots/01-welcome.png)
 
-![Provider selection with model and sign-in controls](docs/screenshots/10-provider-selection.png)
+Choose **Create new mod** or **Import existing mod**. For Codex, sign in with
+ChatGPT. For Claude, Kimi, GLM, or DeepSeek, paste an API key from the provider;
+the app fills the normal connection details automatically. Local and custom
+models let you enter the address supplied by that model service.
 
-For a mod that has already been prepared, choose **Manage an existing project**
-to repair missing files or add a workflow later.
+![Choose and connect another AI provider](docs/screenshots/10-provider-selection.png)
 
-![Existing project entry for repair and workflow updates](docs/screenshots/11-existing-project.png)
+If the app has prepared the project before, **Manage an existing project** lets
+you repair it, update it, add an optional workflow, or remove installed setup
+files. Choose the project folder; the app finds its launcher file.
 
-### 2. Review — describe the mod and check its details
+![Choose a previously prepared project](docs/screenshots/11-existing-project.png)
 
-For a new mod, enter its name and a short description. The app fills in the mod
-ID, script prefix, namespace, tags, starter folders, project location, and
-launcher file. It also creates the mod's `descriptor.mod` and a replaceable
-`thumbnail.png`. You can change any of the suggested details before continuing.
+### 2. Describe the mod and review its details
 
-![Mod name and description](docs/screenshots/02-description.png)
+For a new mod, enter its name and a short description.
 
-![Editable generated mod details](docs/screenshots/03-identity.png)
+![Enter the mod name and description](docs/screenshots/02-description.png)
 
-For an existing mod, the app checks its current structure and shows anything
-that needs attention before making changes.
+The app fills the project ID, script prefix, namespace, valid descriptor tags,
+starter folders, standard HOI4 mod location, and launcher file. Every generated
+value remains editable. It also prepares `descriptor.mod`, the launcher
+descriptor, and a placeholder `thumbnail.png`.
 
-### 3. Components — choose what to install
+![Review the generated project identity and locations](docs/screenshots/03-identity.png)
 
-![Component selection](docs/screenshots/04-components.png)
+For an existing mod, a read-only scan checks the descriptors, structure,
+naming, localisation, current tools, and possible file conflicts before any
+changes are offered.
 
-Choose the instructions, skills, tools, and offline wiki you want in the mod.
-Required items stay selected so the setup remains usable.
+### 3. Choose what to install
 
-When Codex is selected, you can also choose **Prepare a flattened ChatGPT
-project-sources folder**. This creates one easy-to-upload folder containing the
-project guidance, README, selected skills, and selected subagents. Open its file
-list to see the filenames and sizes.
+![Choose instructions, skills, tools, wiki, and ChatGPT files](docs/screenshots/04-components.png)
 
-### 4. Integrations — choose optional workflows
+Select the instructions, skills, helpers, tools, and offline wiki you want.
+Required items stay selected so the project remains usable.
 
-![Optional 3D and Super Events workflows](docs/screenshots/05-integrations.png)
+When Codex is selected, **Prepare a flattened ChatGPT project-sources folder**
+creates a separate folder with the adapted project guidance, README, selected
+skills, and selected subagents. The offline wiki is not copied into this
+folder. Its file list and sizes are shown before installation.
 
-Select **Do you want to set up the 3D models workflow?** to add the available 3D
-tools. Your Meshy key stays in your computer's secure credential storage and
-can also be added later.
+### 4. Add optional workflows
 
-Select **Do you want to set up the Super Events workflow?** to add a ready-made
-popup, templates, an example event, and reusable files for adding more events.
+![Choose the optional 3D and Super Events workflows](docs/screenshots/05-integrations.png)
 
-![Connections and credentials](docs/screenshots/06-mcp-credentials.png)
+The 3D workflow is optional. If selected, a Meshy key can be stored in Windows
+Credential Manager or macOS Keychain and is never written into the mod.
 
-Review the optional tools and keys used by your selected workflows.
+The optional Super Events workflow adds the reusable popup, templates,
+examples, images, and supporting guidance needed to add more Super Events.
 
-### 5. Git — keep the project local or publish it
+![Review selected integrations and credential state](docs/screenshots/06-mcp-credentials.png)
 
-![Git choices](docs/screenshots/07-git.png)
+### 5. Choose Git setup
 
-You can keep the mod local, connect it to an existing Git repository, or create
-a public GitHub repository. Nothing is published until you approve it.
+![Keep the mod local, connect a remote, or publish it](docs/screenshots/07-git.png)
 
-### 6. Install — review and set up
+Initialize Git, preserve an existing repository, or skip Git. You can keep the
+project local, connect an existing remote, or create a public GitHub repository.
+Publishing and pushing always require a separate confirmation.
 
-![Install review](docs/screenshots/09-dry-run.png)
+### 6. Review and install
 
-Review what will be added or changed, resolve any file conflicts, and start the
-setup. Your existing files remain unchanged unless you approve a replacement
-or merge.
+![Review the files and folders before installation](docs/screenshots/09-dry-run.png)
 
-### 7. Ready — open the project
+Review the files and folders that will be added or updated. If an existing file
+was edited, the app asks whether to keep it, use the new version, merge it, keep
+both, or skip the change when those choices are valid.
 
-The final screen shows whether the mod is ready for your selected AI provider.
-Codex projects can be opened directly with **Open in Codex**.
+Installation shows live progress, completed file counts, percentages, and an
+estimated time. If setup is interrupted, reopening the project offers the safe
+recovery choices that still apply.
 
-HOI4 Mod Setup checks for new versions when it opens. If an update is
-available, choose **Update now** to install it.
+### 7. Open the prepared project
 
-If you selected the ChatGPT project folder, start planning with ChatGPT
-**Chat** after setup.
+![Completed setup and readiness checks](docs/screenshots/08-ready.png)
 
-For AI portraits, the final screen also links to
-[ComfyUI HOI4 Portraits](https://github.com/klimPaskov/comfyui-hoi4-portraits).
+The Ready screen checks the project, instructions, selected tools, offline
+wiki, Git state, and optional workflows. **Open in Codex** becomes available
+when the required checks pass.
+
+If flattened ChatGPT files were selected, the Ready screen links directly to
+[ChatGPT Chat](https://chatgpt.com). It also links to the separate
+[ComfyUI HOI4 Portraits](https://github.com/klimPaskov/comfyui-hoi4-portraits)
+project for users who want an optional portrait workflow.
+
+### Update, repair, or add a workflow later
+
+![Update and repair a prepared project](docs/screenshots/12-maintenance.png)
+
+Open **Manage an existing project** to check for setup updates, repair missing
+or damaged files, add the 3D or Super Events workflow later, remove installed
+components, or recover an interrupted setup. Changes are shown for review
+before they are applied.
+
+HOI4 Mod Setup also checks for app updates when it opens. When a new version is
+available, choose **Update now**.
 
 ## Privacy
 
 HOI4 Mod Setup has no telemetry. Provider keys stay in Windows Credential
-Manager or macOS Keychain, and ChatGPT sign-in is handled by Codex.
+Manager or macOS Keychain. ChatGPT sign-in is handled by Codex, and secret
+values are not written into the mod.
 
 ## License
 

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { Components, DryRun, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, maintenanceReviewScreen, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
 import type { CodexAnalysisResult, FolderSelection, ScanProgress, SourceManifestPreview, WizardState } from "./types";
+import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
@@ -11,6 +12,7 @@ vi.mock("./lib/tauri", async () => {
 });
 
 afterEach(() => {
+  window.history.replaceState({}, "", "/");
   delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
   cleanup();
   vi.clearAllMocks();
@@ -68,6 +70,25 @@ function enableTauriRuntime() {
 }
 
 describe("HOI4 Mod Setup wizard", () => {
+  it("provides sanitized development-only states for public screenshots", () => {
+    const base = readyState();
+    window.history.replaceState({}, "", "/?screenshot=ready");
+    const fixture = documentationFixture(base);
+
+    expect(isDocumentationScreenshot()).toBe(true);
+    expect(fixture.screen).toBe("ready");
+    expect(fixture.identity.displayName).toBe("Atlantis Rising");
+    expect(fixture.codexAccount?.email).toBeUndefined();
+    expect(fixture.meshKeyDraft).toBeFalsy();
+  });
+
+  it("ignores unknown documentation screenshot routes", () => {
+    const base = readyState();
+    window.history.replaceState({}, "", "/?screenshot=unknown");
+    expect(isDocumentationScreenshot()).toBe(false);
+    expect(documentationFixture(base)).toBe(base);
+  });
+
   it("keeps semantic planning estimates bounded within each real stage", () => {
     const startedAt = Date.parse("2026-08-02T12:00:00Z");
     expect(estimateSemanticPlanningProgress("preparing", startedAt, startedAt)).toEqual({ percent: 5, remaining: "About 2 minutes remaining" });
