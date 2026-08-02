@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { approveScanEvidence, buildInstallationPlan, buildMaintenancePlan, cancelCodexLogin, cancelScan, confirmCodexAnalysis, evaluateReadiness, openExternalUrlResult, previewDescriptors, runAiAnalysis, runCodexAnalysis, scanProject } from "./tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildMaintenancePlan, cancelCodexLogin, cancelScan, confirmCodexAnalysis, evaluateReadiness, openExternalUrlResult, previewDescriptors, readMeshyCredential, runAiAnalysis, runCodexAnalysis, scanProject } from "./tauri";
 import type { AiAnalysisRequest, CodexAnalysisRequest, ScanProgress, WizardState } from "../types";
 
 const { invoke, listen, unlisten } = vi.hoisted(() => ({
@@ -89,6 +89,41 @@ describe("typed scanner bridge", () => {
       scanId: "scan-1",
       evidence,
     });
+  });
+
+  it("treats a null unit-command payload as successful installation approval", async () => {
+    invoke.mockResolvedValue(null);
+
+    const approved = await approveInstallation("plan-1");
+
+    expect(approved).toBe(true);
+    expect(invoke).toHaveBeenCalledWith("approve_installation", { planId: "plan-1" });
+  });
+
+  it("starts installation with only the core-owned plan ID", async () => {
+    invoke.mockResolvedValue(null);
+
+    await applyInstallationResult("plan-1", "C:/mods/example");
+
+    expect(invoke).toHaveBeenCalledWith("apply_installation", {
+      planId: "plan-1",
+      projectRoot: "C:/mods/example",
+    });
+    expect(JSON.stringify(invoke.mock.calls)).not.toContain("codex_analysis");
+  });
+
+  it("reads an existing Meshy vault reference without sending a key value", async () => {
+    invoke.mockResolvedValue({
+      name: "MESHY_API_KEY",
+      provider: "windows_credential_manager",
+      reference: "credential://meshy_api_key/default",
+    });
+
+    const reference = await readMeshyCredential();
+
+    expect(reference?.reference).toBe("credential://meshy_api_key/default");
+    expect(invoke).toHaveBeenCalledWith("meshy_credential_status", {});
+    expect(JSON.stringify(invoke.mock.calls)).not.toMatch(/msy_|secret|key[_-]?value/i);
   });
 
   it("passes existing-project optional workflow choices to the core", async () => {

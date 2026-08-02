@@ -84,11 +84,14 @@ TOML uses semantic tables and keys. JSON uses schema-aware paths and identity ke
 
 A component is supported only when its platform declaration and every command-bearing dependency have a verified route. Unsupported optional components remain visible. A macOS core profile can omit or warn on a current Windows-only MCP component while still installing platform-neutral instructions, skills, subagents, Codex base config, and wiki.
 
-`workflow.super_events` depends only on `core.skills`, has no tool or
-environment requirement, and contributes only its manifest-declared managed
-skill tree. It is not selected by the core skills component: the core tree must
-exclude `hoi4-super-events/**`. Selecting it adds the tree and the corresponding
-Super Events guidance to the adapted `AGENTS.md`; declining it adds neither.
+`workflow.super_events` depends on the core skills and subagents, has no tool or
+environment requirement, and contributes only its manifest-declared
+selected-only skill and research-agent trees plus the reusable runtime. The
+core trees exclude `hoi4-super-events*/**` and
+`hoi4_super_event_*.toml`. Selecting it adds those packages and the
+corresponding guidance to the adapted `AGENTS.md`; declining it adds none of
+them, and the ordinary AGENTS, skills, and subagents contain no equivalent
+references.
 The component is provider-neutral and remains optional on both supported
 platforms when the verified manifest declares its `all` route.
 

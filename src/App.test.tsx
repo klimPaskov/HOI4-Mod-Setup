@@ -1,13 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { Components, DryRun, Git, Ready, Scan, Update, Welcome } from "./App";
-import { cancelCodexLogin, checkForAppUpdate, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewSourceManifestResult, readCodexAccount, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
+import App, { Components, DryRun, Git, Identity, Ready, Scan, Update, Welcome } from "./App";
+import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
 import type { CodexAnalysisResult, FolderSelection, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), installAppUpdate: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewSourceManifestResult: vi.fn(), readCodexAccount: vi.fn(), runCodexAnalysisResult: vi.fn(), suggestProjectPaths: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), runCodexAnalysisResult: vi.fn(), suggestProjectPaths: vi.fn() };
 });
 
 afterEach(() => {
@@ -19,16 +19,21 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.mocked(readCodexAccount).mockResolvedValue({ available: false, authenticated: false, auth_mode: "none", usage_limited: false });
+  vi.mocked(readTransactionJournal).mockResolvedValue(null);
   vi.mocked(logoutCodexResult).mockResolvedValue({ value: null });
   vi.mocked(openCodexLoginUrlResult).mockResolvedValue({ value: undefined });
   vi.mocked(openExternalUrlResult).mockResolvedValue({ value: undefined });
   vi.mocked(cancelCodexLogin).mockResolvedValue(true);
   vi.mocked(pickProjectFolder).mockResolvedValue(null);
+  vi.mocked(previewDescriptorsResult).mockResolvedValue({ value: null });
   vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: null });
   vi.mocked(runCodexAnalysisResult).mockResolvedValue({ value: null });
   vi.mocked(suggestProjectPaths).mockResolvedValue(null);
   vi.mocked(checkForAppUpdate).mockResolvedValue({ value: null });
   vi.mocked(installAppUpdate).mockResolvedValue({ value: undefined });
+  vi.mocked(findInterruptedTransaction).mockResolvedValue(null);
+  vi.mocked(approveInstallation).mockResolvedValue(true);
+  vi.mocked(applyInstallationResult).mockResolvedValue({ value: null });
 });
 
 function readyState(): WizardState {
@@ -457,6 +462,43 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByRole("button", { name: "Change location project folder" })).toBeInTheDocument();
   });
 
+  it("previews each generated text or image file after identity confirmation", async () => {
+    enableTauriRuntime();
+    vi.mocked(previewDescriptorsResult).mockResolvedValue({
+      value: [
+        { component_id: "project.descriptor", destination: "descriptor.mod", content: "name=\"Atlantis\"", expected_sha256: "a".repeat(64) },
+        { component_id: "project.launcher_descriptor", destination: "C:\\mods\\atlantis.mod", content: "path=\"C:/mods/atlantis\"", expected_sha256: "b".repeat(64), external: true },
+        { component_id: "project.thumbnail", destination: "thumbnail.png", content: "Generated placeholder", expected_sha256: "c".repeat(64), bytes: [137, 80, 78, 71] },
+      ],
+    });
+    const state = {
+      mode: "new",
+      identity: {
+        displayName: "Atlantis",
+        projectId: "atlantis",
+        author: "",
+        version: "0.1.0",
+        supportedGameVersion: "1.17.*",
+        projectRoot: "C:\\mods\\atlantis",
+        launcherDescriptorPath: "C:\\mods\\atlantis.mod",
+        defaultBranch: "main",
+        scriptPrefix: "atlantis",
+        primaryNamespace: "atlantis",
+        descriptorTags: ["Alternative History"],
+      },
+      folderProfile: ["common"],
+      codexAnalysisRecord: { confirmed_fields: ["project_id"] },
+    } as unknown as WizardState;
+
+    render(<Identity state={state} update={vi.fn()} updateIdentity={vi.fn()} onPickProjectFolder={vi.fn().mockResolvedValue(null)} onPickLauncherFolder={vi.fn().mockResolvedValue(null)} onConfirmAnalysis={vi.fn().mockResolvedValue(undefined)} />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Preview" })[0]);
+    expect(await screen.findByText('name="Atlantis"')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "Preview" })[2]);
+    const image = await screen.findByRole("img", { name: "Generated thumbnail placeholder preview" });
+    expect(image).toHaveAttribute("src", expect.stringMatching(/^data:image\/png;base64,/));
+  });
+
   it("uses automated new-project paths and exposes the matching launcher descriptor", async () => {
     enableTauriRuntime();
     vi.mocked(suggestProjectPaths).mockResolvedValue({
@@ -598,6 +640,55 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByRole("button", { name: /remove managed components/i })).toBeEnabled();
   });
 
+  it("shows only Undo after project apply has started", async () => {
+    vi.mocked(findInterruptedTransaction).mockResolvedValue({
+      transaction_id: "6a26d121-5bdc-4d0a-9d2f-6e3168ca7528",
+      state: "applying",
+      last_checkpoint: "apply-intent-op-00007",
+      recovery: {
+        resume_allowed: false,
+        rollback_allowed: true,
+        discard_staging_allowed: false,
+        project_apply_started: true,
+        recommended_action: "rollback",
+      },
+    } as never);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /manage an existing project/i }));
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\partial" } });
+
+    expect(await screen.findByText("Some project files were already changed, so continuing automatically is unavailable.")).toBeInTheDocument();
+    expect(screen.getByText("Undo the partial setup before installing again.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /continue setup/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /undo changes/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: /discard prepared files/i })).not.toBeInTheDocument();
+  });
+
+  it("shows only Discard when setup stopped before changing project files", async () => {
+    vi.mocked(findInterruptedTransaction).mockResolvedValue({
+      transaction_id: "pre-apply-transaction",
+      state: "staging",
+      last_checkpoint: "stage-file-op-00007",
+      recovery: {
+        resume_allowed: false,
+        rollback_allowed: false,
+        discard_staging_allowed: true,
+        project_apply_started: false,
+        recommended_action: "discard_staging",
+      },
+    } as never);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /manage an existing project/i }));
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\prepared-only" } });
+
+    expect(await screen.findByText("Setup stopped before any project files were changed.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /continue setup/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /undo changes/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /discard prepared files/i })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("shows a distinct usage-limited state and preserves remote logout errors", async () => {
     enableTauriRuntime();
     const update = vi.fn();
@@ -641,6 +732,140 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByText("Plan unavailable")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /start installation/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /prepare changes/i })).toBeInTheDocument();
+  });
+
+  it("presents manifest-declared verification tools as simple setup checks", () => {
+    render(<DryRun state={{
+      aiProvider: "codex",
+      gitBranch: "main",
+      gitOnlineAction: "none",
+      flattenForChat: false,
+      plan: {
+        operations: [],
+        conflicts: [],
+        external_actions: [
+          { id: "mcp", component_id: "mcp.hoi4_agent_tools", risk: "high", requires_approval: true },
+          { id: "3d", component_id: "workflow.3d", risk: "high", requires_approval: true },
+        ],
+      },
+    } as unknown as WizardState} update={vi.fn()} />);
+
+    expect(screen.getByText("Setup checks", { selector: "summary" })).toBeInTheDocument();
+    expect(screen.getByText("2 included")).toBeInTheDocument();
+    expect(screen.queryByText(/high risk|approval required|external tools/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Setup checks", { selector: "summary" }));
+    expect(screen.getByText("Check the installed AI tools")).toBeInTheDocument();
+    expect(screen.getByText("Check the 3D workflow")).toBeInTheDocument();
+  });
+
+  it("shows dry-run preparation as busy and enables installation only after a plan succeeds", async () => {
+    let finishPlan: ((result: { value: unknown }) => void) | undefined;
+    vi.mocked(buildInstallationPlanResult).mockImplementation(() => new Promise((resolve) => { finishPlan = resolve as (result: { value: unknown }) => void; }));
+    await renderAuthenticatedApp();
+    fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    for (let index = 0; index < 6; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
+    expect(screen.getByRole("button", { name: "Preparing changes…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /start installation/i })).toBeDisabled();
+
+    await act(async () => finishPlan?.({ value: { operations: [], conflicts: [], generated_artifacts: [], external_actions: [] } }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
+  });
+
+  it("opens recovery instead of starting a second transaction for the same project", async () => {
+    vi.mocked(buildInstallationPlanResult).mockResolvedValue({
+      value: { plan_id: "new-plan", operations: [], conflicts: [], generated_artifacts: [], external_actions: [] } as never,
+    });
+    await renderAuthenticatedApp();
+    fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\cold_war_curtain" } });
+    for (let index = 0; index < 5; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
+
+    vi.mocked(findInterruptedTransaction).mockResolvedValue({
+      transaction_id: "6a26d121-5bdc-4d0a-9d2f-6e3168ca7528",
+      state: "staging",
+      last_checkpoint: "stage-file-op-00068",
+      recovery: {
+        resume_allowed: true,
+        rollback_allowed: true,
+        discard_staging_allowed: true,
+        project_apply_started: false,
+        recommended_action: "resume",
+      },
+    } as never);
+    vi.mocked(approveInstallation).mockClear();
+    vi.mocked(applyInstallationResult).mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /start installation/i }));
+
+    expect(await screen.findByRole("heading", { name: "Installation was interrupted" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue setup/i })).toBeEnabled();
+    expect(approveInstallation).not.toHaveBeenCalled();
+    expect(applyInstallationResult).not.toHaveBeenCalled();
+  });
+
+  it("stays on installation progress while the reviewed transaction is running", async () => {
+    let finishInstallation: ((result: { value: unknown }) => void) | undefined;
+    vi.mocked(buildInstallationPlanResult).mockResolvedValue({
+      value: { plan_id: "active-plan", operations: [], conflicts: [], generated_artifacts: [], external_actions: [] } as never,
+    });
+    vi.mocked(applyInstallationResult).mockImplementation(() => new Promise((resolve) => {
+      finishInstallation = resolve as (result: { value: unknown }) => void;
+    }));
+    vi.mocked(readTransactionJournal).mockResolvedValue({
+      transaction_id: "active-plan",
+      state: "staging",
+      last_checkpoint: "stage-file-op-2",
+      stages: [
+        "preflight", "repository source resolution", "selective download", "checksum verification", "dry-run review", "backup",
+      ].map((id) => ({ id, status: "complete" })).concat([
+        { id: "staging", status: "active" },
+        { id: "validation", status: "pending" },
+        { id: "apply", status: "pending" },
+        { id: "post-install checks", status: "pending" },
+        { id: "readiness report", status: "pending" },
+        { id: "rollback record", status: "pending" },
+      ]),
+      operations: [
+        { id: "op-1", status: "staged" },
+        { id: "op-2", status: "staged" },
+        { id: "op-3", status: "pending" },
+        { id: "op-4", status: "pending" },
+      ],
+      recovery: { resume_allowed: true, rollback_allowed: false, discard_staging_allowed: true, project_apply_started: false, recommended_action: "resume" },
+    } as never);
+    await renderAuthenticatedApp();
+    fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\active" } });
+    for (let index = 0; index < 5; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
+
+    fireEvent.click(screen.getByRole("button", { name: /start installation/i }));
+
+    expect(await screen.findByRole("heading", { name: "Installing components" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Installation was interrupted" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Preparing file 2 of 4")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Installation progress" })).toHaveAttribute("aria-valuetext", "Preparing file 2 of 4");
+    expect(within(screen.getByText("Check the project").closest(".timeline-row") as HTMLElement).getByText("Done")).toBeInTheDocument();
+    expect(within(screen.getByText("Prepare the setup").closest(".timeline-row") as HTMLElement).getByText("In progress")).toBeInTheDocument();
+
+    await act(async () => finishInstallation?.({
+      value: {
+        transaction_id: "active-plan",
+        state: "completed",
+        last_checkpoint: "completed",
+        stages: [],
+        recovery: { resume_allowed: false, rollback_allowed: true, discard_staging_allowed: false, project_apply_started: true, recommended_action: "none" },
+      },
+    }));
   });
 
   it("announces a manual project-opening path when Codex has no verified opener", async () => {

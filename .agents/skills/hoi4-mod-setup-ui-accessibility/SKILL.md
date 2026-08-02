@@ -79,6 +79,21 @@ Conflict review is the exception. It may show a three-way comparison and more co
   is ready and not usage-limited; Codex requires ChatGPT mode. Keep signed-out
   recovery and removal reachable from Welcome.
 - Progress shows current stage and durable checkpoint, not the full log.
+- Starting installation rechecks for an unfinished setup on the selected
+  project. When found, open the recovery screen with a concise message and the
+  core-approved Continue, Undo, or Discard choices instead of leaving a raw
+  overlapping-transaction error on the Install screen.
+- Once a reviewed installation starts, switch to Progress before awaiting the
+  core transaction and suspend background recovery discovery until that call
+  finishes. On Recovery, refresh the journal and select only its currently
+  allowed recommended action; a stale or disabled choice must never retain the
+  selected appearance.
+- Render only recovery actions that the normalized journal currently permits. Do not show Undo when no project files changed, or show Continue/Discard after apply began, as disabled cards that look broken.
+- While the transaction command is active, poll its exact reviewed transaction
+  ID through the typed journal reader and render the durable stage plus a
+  human-readable file count. Accept the schema's `complete` stage status; do
+  not leave completed rows labeled Next or show Awaiting transaction after the
+  journal exists.
 - Existing-project scans show the current stage, bounded relative path, file/directory/byte counters, and an accessible Cancel scan action. Use an indeterminate progress bar until a total is known; partial and cancelled results must remain visibly incomplete and announce that no provider evidence was approved.
 - On the optional-workflow screen, keep the exact first question **Do you want to set up the 3D models workflow?** and place the **Do you want to set up the Super Events workflow?** checkbox/toggle immediately after it. Preserve that order in maintenance when both workflows are offered; do not paraphrase the 3D question.
 - When scan evidence identifies a valid managed installation, show a concise
@@ -90,6 +105,7 @@ Conflict review is the exception. It may show a three-way comparison and more co
   and expose the vault-only key field for repair.
 - Readiness leads with core status. Open in Codex is shown only for Codex; other providers receive an honest provider-specific handoff or no opener.
 - Optional source-declared health actions are rendered only when readiness identifies a runnable verified route. `planned_unavailable` and `unsupported_platform` remain visible as status text without an actionable button.
+- In the dry run, call manifest-declared validation actions **Setup checks**. Show a simple included count and human-readable check names by default; keep commands, folders, environment names, and expected changes behind a nested disclosure. Do not show internal risk labels or component IDs in the normal interface.
 - When no verified Codex opener is available, keep a passed readiness result visible and expose the validated project path as an announced manual-opening result.
 - Optional incomplete states remain secondary.
 - `workflow.super_events` is provider-neutral and its `not_selected`,

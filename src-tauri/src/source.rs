@@ -1693,7 +1693,7 @@ mod tests {
     #[test]
     fn checked_in_manifest_matches_the_supported_source_contract() {
         let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
-        let source_snapshot = "1592a763dad14027653dc0846328b70c4f3af73e";
+        let source_snapshot = "a4cf7656d543a5cf08affd15040544941a79c38b";
         let manifest = parse_manifest(bytes, Some(source_snapshot)).unwrap();
         assert_eq!(manifest.repository.owner, SOURCE_OWNER);
         assert_eq!(
@@ -1735,6 +1735,16 @@ mod tests {
         assert!(!core
             .iter()
             .any(|id| id.starts_with("workflow.super_events")));
+        let core_paths = manifest
+            .components
+            .iter()
+            .filter(|component| core.contains(&component.id))
+            .flat_map(|component| component.expected_files.iter())
+            .map(|file| file.path.to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        assert!(core_paths
+            .iter()
+            .all(|path| !path.contains("hoi4-super-events") && !path.contains("hoi4_super_event")));
 
         let selected = expand_components(&manifest, &["workflow.super_events".into()]).unwrap();
         for expected in [
@@ -1744,6 +1754,7 @@ mod tests {
             "workflow.super_events.runtime.localisation",
             "workflow.super_events.runtime.gfx",
             "workflow.super_events.runtime.docs",
+            "workflow.super_events.subagents",
             "workflow.super_events",
         ] {
             assert!(selected.iter().any(|id| id == expected), "{expected}");
@@ -1758,6 +1769,11 @@ mod tests {
             .collect::<HashSet<_>>();
         for expected in [
             ".agents/skills/hoi4-super-events/SKILL.md",
+            ".agents/skills/hoi4-super-events-planning/SKILL.md",
+            ".agents/skills/hoi4-super-events-event-integration/SKILL.md",
+            ".agents/skills/hoi4-super-events-text-audio-research/SKILL.md",
+            ".agents/skills/hoi4-super-events-feature-assets/SKILL.md",
+            ".agents/skills/hoi4-super-events-subagents/SKILL.md",
             ".agents/skills/hoi4-super-events/assets/examples/contact_sheet.png",
             ".agents/skills/hoi4-super-events/assets/examples/super_event_world_in_fury.png",
             "interface/hoi4ms_super_events.gui",
@@ -1770,9 +1786,36 @@ mod tests {
             "gfx/super_events/super_event_template.psd",
             "gfx/super_events/super_event_image_template_457x328.psd",
             "docs/super_events/README.md",
+            ".codex/agents/hoi4_super_event_quote_researcher.toml",
+            ".codex/agents/hoi4_super_event_audio_researcher.toml",
+            ".codex/agents/hoi4_super_event_art_researcher.toml",
         ] {
             assert!(paths.contains(expected), "{expected}");
         }
+
+        let tree = manifest
+            .components
+            .iter()
+            .flat_map(|component| component.expected_files.iter())
+            .map(|file| TreeEntry {
+                path: file.path.clone(),
+                kind: "blob".into(),
+                size: file.size,
+            })
+            .collect::<Vec<_>>();
+        let selected_files = select_component_files(&manifest, &selected, &tree).unwrap();
+        let selected_destinations = selected_files
+            .iter()
+            .map(|file| canonical_relative_key(&file.destination).unwrap())
+            .collect::<HashSet<_>>();
+        assert_eq!(selected_destinations.len(), selected_files.len());
+        assert!(selected_files.iter().any(|file| {
+            file.destination
+                == ".agents/skills/hoi4-super-events-planning/SKILL.md"
+        }));
+        assert!(selected_files.iter().any(|file| {
+            file.destination == ".codex/agents/hoi4_super_event_audio_researcher.toml"
+        }));
     }
 
     #[test]

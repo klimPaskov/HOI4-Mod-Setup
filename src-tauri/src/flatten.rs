@@ -6,7 +6,8 @@
 
 use crate::models::{GeneratedArtifact, PreparedFile};
 use crate::security::{
-    canonical_relative_key, is_link_metadata, normalize_relative_path, redact_secrets, safe_join,
+    canonical_relative_key, contains_credential_shaped_content, is_link_metadata,
+    normalize_relative_path, safe_join,
 };
 use crate::AppError;
 use std::collections::BTreeMap;
@@ -44,6 +45,9 @@ pub fn build_artifacts(
 ) -> Result<Vec<GeneratedArtifact>, AppError> {
     let mut sources = BTreeMap::<String, Vec<u8>>::new();
     for file in prepared {
+        if !is_flatten_source_candidate(&file.destination) {
+            continue;
+        }
         insert_source(
             &mut sources,
             &file.destination.replace('\\', "/"),
@@ -51,6 +55,12 @@ pub fn build_artifacts(
         )?;
     }
     for file in generated {
+        if !matches!(
+            file.destination.replace('\\', "/").as_str(),
+            "AGENTS.md" | "README.md"
+        ) {
+            continue;
+        }
         insert_source(
             &mut sources,
             &file.destination.replace('\\', "/"),
@@ -151,6 +161,19 @@ pub fn build_artifacts(
                 .then_some(bytes),
         })
         .collect())
+}
+
+fn is_flatten_source_candidate(destination: &str) -> bool {
+    let normalized = destination.replace('\\', "/");
+    if matches!(normalized.as_str(), "AGENTS.md" | "README.md") {
+        return true;
+    }
+    let parts = normalized.split('/').collect::<Vec<_>>();
+    (parts.len() == 4 && parts[0] == ".agents" && parts[1] == "skills" && parts[3] == "SKILL.md")
+        || (parts.len() == 3
+            && parts[0] == ".codex"
+            && parts[1] == "agents"
+            && parts[2].ends_with(".toml"))
 }
 
 pub(crate) fn read_regular_file_no_follow_under_root(
@@ -331,7 +354,7 @@ fn insert_output(
         )));
     }
     let text = String::from_utf8_lossy(&bytes);
-    if redact_secrets(&text, &[]) != text {
+    if contains_credential_shaped_content(&text) {
         return Err(AppError::Credential(format!(
             "flattened Chat source contains secret-shaped content: {destination}"
         )));
@@ -404,8 +427,88 @@ mod tests {
         let project = tempfile::tempdir().unwrap();
         let output = build_artifacts(
             &[
+                prepared("AGENTS.md", "adapted agents"),
                 prepared(".agents/skills/hoi4-events/SKILL.md", "events"),
                 prepared(".codex/agents/hoi4setup_worker.toml", "fork_context=false"),
+                prepared("paradox_wiki/AGENTS.md", "wiki instructions"),
+            ],
+            &[GeneratedArtifact {
+                component_id: "project.readme".into(),
+                destination: "README.md".into(),
+                content: "readme".into(),
+                expected_sha256: crate::security::sha256_bytes(b"readme"),
+                external: false,
+                bytes: None,
+            }],
+            project.path(),
+        )
+        .unwrap();
+        let destinations = output
+            .iter()
+            .map(|artifact| artifact.destination.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(destinations.contains("chatgpt_project_sources/hoi4-events.md"));
+        assert!(destinations.contains("chatgpt_project_sources/hoi4setup_worker.toml"));
+        assert!(destinations.contains("chatgpt_project_sources/AGENTS.md"));
+        assert!(destinations.contains("chatgpt_project_sources/README.md"));
+        assert!(!destinations.contains("chatgpt_project_sources/paradox_wiki/AGENTS.md"));
+        assert_eq!(
+            output
+                .iter()
+                .find(|artifact| artifact.destination == "chatgpt_project_sources/AGENTS.md")
+                .map(|artifact| artifact.content.as_str()),
+            Some("adapted agents")
+        );
+    }
+
+    #[test]
+    fn unrelated_selected_files_do_not_consume_the_flatten_file_limit() {
+        let project = tempfile::tempdir().unwrap();
+        let mut prepared_files = (0..600)
+            .map(|index| prepared(&format!("paradox_wiki/page-{index}.md"), "wiki"))
+            .collect::<Vec<_>>();
+        prepared_files.push(prepared(".agents/skills/hoi4-events/SKILL.md", "events"));
+        prepared_files.push(prepared(
+            ".codex/agents/hoi4setup_worker.toml",
+            "fork_context=false",
+        ));
+        let generated = [
+            GeneratedArtifact {
+                component_id: "core.agents".into(),
+                destination: "AGENTS.md".into(),
+                content: "agents".into(),
+                expected_sha256: crate::security::sha256_bytes(b"agents"),
+                external: false,
+                bytes: None,
+            },
+            GeneratedArtifact {
+                component_id: "project.readme".into(),
+                destination: "README.md".into(),
+                content: "readme".into(),
+                expected_sha256: crate::security::sha256_bytes(b"readme"),
+                external: false,
+                bytes: None,
+            },
+        ];
+
+        let output = build_artifacts(&prepared_files, &generated, project.path()).unwrap();
+
+        assert_eq!(output.len(), 4);
+        assert!(output
+            .iter()
+            .all(|artifact| !artifact.destination.contains("paradox_wiki")));
+    }
+
+    #[test]
+    fn documented_meshy_placeholder_is_not_treated_as_a_real_credential() {
+        let project = tempfile::tempdir().unwrap();
+        let output = build_artifacts(
+            &[
+                prepared(
+                    ".agents/skills/hoi4-3d-model-pipeline/SKILL.md",
+                    "Use MESHY_API_KEY with msy_your_actual_key_here only as documentation.",
+                ),
+                prepared(".codex/agents/worker.toml", "fork_context=false"),
             ],
             &[
                 GeneratedArtifact {
@@ -428,14 +531,46 @@ mod tests {
             project.path(),
         )
         .unwrap();
-        let destinations = output
+
+        assert!(output
             .iter()
-            .map(|artifact| artifact.destination.as_str())
-            .collect::<BTreeSet<_>>();
-        assert!(destinations.contains("chatgpt_project_sources/hoi4-events.md"));
-        assert!(destinations.contains("chatgpt_project_sources/hoi4setup_worker.toml"));
-        assert!(destinations.contains("chatgpt_project_sources/AGENTS.md"));
-        assert!(destinations.contains("chatgpt_project_sources/README.md"));
+            .any(|artifact| artifact.destination.ends_with("hoi4-3d-model-pipeline.md")));
+    }
+
+    #[test]
+    fn real_meshy_shaped_values_remain_blocked_from_flattening() {
+        let project = tempfile::tempdir().unwrap();
+        let error = build_artifacts(
+            &[
+                prepared(
+                    ".agents/skills/hoi4-3d-model-pipeline/SKILL.md",
+                    "MESHY_API_KEY=msy_1234567890abcdef",
+                ),
+                prepared(".codex/agents/worker.toml", "fork_context=false"),
+            ],
+            &[
+                GeneratedArtifact {
+                    component_id: "core.agents".into(),
+                    destination: "AGENTS.md".into(),
+                    content: "agents".into(),
+                    expected_sha256: crate::security::sha256_bytes(b"agents"),
+                    external: false,
+                    bytes: None,
+                },
+                GeneratedArtifact {
+                    component_id: "project.readme".into(),
+                    destination: "README.md".into(),
+                    content: "readme".into(),
+                    expected_sha256: crate::security::sha256_bytes(b"readme"),
+                    external: false,
+                    bytes: None,
+                },
+            ],
+            project.path(),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("secret-shaped content"));
     }
 
     #[test]

@@ -136,6 +136,8 @@ PATH command.
 
 The lock is a completion artifact. A partial apply cannot look successful because the lock is written only after final verification.
 
+The Rust core retains the reviewed plan and prepared bytes in its bounded session. Starting installation sends only that plan's ID and the reviewed project root; it does not send the full plan or confirmed AI-analysis record back from the renderer. This prevents a second serialization boundary from invalidating or altering an already approved plan.
+
 ## Rollback
 
 Reverse operations: remove created files, restore backups, restore metadata,

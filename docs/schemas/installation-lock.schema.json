@@ -232,7 +232,7 @@
               "string",
               "null"
             ],
-            "pattern": "^credential://meshy_api_key/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            "pattern": "^credential://meshy_api_key/(?:default|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
           }
         }
       }

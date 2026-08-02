@@ -4,6 +4,16 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+### Fixed
+
+- Made installation use the core-owned reviewed plan so provider analysis records are not serialized through the interface
+- Show only recovery actions that can actually be used at the current transaction checkpoint
+- Install the complete optional Super Events guidance and research package at its intended project paths
+
+### Changed
+
+- Keep the standard skills and subagents free of Super Events guidance unless the workflow is selected
+
 ## 0.2.1 - 2026-08-01
 
 ### Fixed

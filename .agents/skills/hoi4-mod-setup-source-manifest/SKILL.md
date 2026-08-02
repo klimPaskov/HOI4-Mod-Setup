@@ -91,6 +91,7 @@ MCP servers and external dependencies are components. Their command, arguments, 
   applies each component's include/exclude rules, and rejects missing evidence
   or destination collisions before any selected blob is fetched. This is
   selective manifest isolation, not a filtered full-repository clone.
+- Multiple tree components may target the same managed directory only so disjoint selected-only packages can share standard `.agents/skills/` or `.codex/agents/` roots. The selected-file pass still canonicalizes every concrete destination and rejects any overlap before download or staging.
 - An immutable install requires `generated_for_revision` in the manifest; the runtime schema and validator reject a manifest that cannot prove which commit produced its evidence.
 - Verified blobs are cached under the application data cache by `<revision>/<sha256>` and are accepted only after size (when declared) and SHA-256 revalidation. A corrupt cache entry is discarded and fetched again.
 - Cache reads bind the path to one no-follow file handle, read a bounded byte

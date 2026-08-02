@@ -610,6 +610,16 @@ fn normalize_incomplete_recovery(journal: &mut TransactionJournal) {
     .into();
 }
 
+fn mark_project_apply_started(journal: &mut TransactionJournal) {
+    journal.recovery = RecoveryState {
+        resume_allowed: false,
+        rollback_allowed: true,
+        discard_staging_allowed: false,
+        project_apply_started: true,
+        recommended_action: "rollback".into(),
+    };
+}
+
 fn roots_match_for_transaction(bound: &str, requested: &Path) -> bool {
     let Ok((bound_root, _)) = validate_project_root_or_destination(Path::new(bound)) else {
         return false;
@@ -1178,6 +1188,7 @@ pub fn run_transaction(
                 journal.state = "interrupted".into();
             }
             journal.updated_at = Utc::now().to_rfc3339();
+            normalize_incomplete_recovery(&mut journal);
             let staging_complete = journal
                 .stages
                 .get(6)
@@ -2092,7 +2103,7 @@ fn ensure_project_root_for_apply(
                     "new project destination changed before apply".into(),
                 ));
             }
-            journal.recovery.project_apply_started = true;
+            mark_project_apply_started(journal);
             journal.project_root_lifecycle.checkpoint = "applying".into();
             journal.project_root_lifecycle.observed_exists = false;
             journal.last_checkpoint = "apply-project-root-intent".into();
@@ -2128,7 +2139,7 @@ fn apply_operations(
     journal_path: &Path,
     options: &TransactionOptions,
 ) -> Result<(), AppError> {
-    journal.recovery.project_apply_started = true;
+    mark_project_apply_started(journal);
     persist_journal(journal_path, journal)?;
     for (index, operation) in plan.operations.iter().enumerate() {
         if options.fail_before_operation == Some(index) {
@@ -5545,6 +5556,11 @@ mod tests {
         );
         assert!(journal.project_root_lifecycle.created_by_transaction);
         assert_eq!(journal.project_root_lifecycle.checkpoint, "created");
+        assert!(journal.recovery.project_apply_started);
+        assert!(!journal.recovery.resume_allowed);
+        assert!(journal.recovery.rollback_allowed);
+        assert!(!journal.recovery.discard_staging_allowed);
+        assert_eq!(journal.recovery.recommended_action, "rollback");
         rollback_transaction(&project_root, &mut journal, &journal_path).unwrap();
         assert!(!project_root.exists());
         assert_eq!(journal.project_root_lifecycle.checkpoint, "removed");

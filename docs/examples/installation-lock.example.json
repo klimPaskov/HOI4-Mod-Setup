@@ -177,7 +177,7 @@
     "workflow.3d": {
       "state": "ready",
       "reason": null,
-      "credential_reference": "credential://meshy_api_key/00000000-0000-0000-0000-000000000000"
+      "credential_reference": "credential://meshy_api_key/default"
     },
     "workflow.super_events": {
       "state": "ready",

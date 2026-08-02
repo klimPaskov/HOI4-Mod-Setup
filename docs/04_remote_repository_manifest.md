@@ -73,9 +73,10 @@ The complete schema is `schemas/remote-manifest.schema.json`.
 
 The verified manifest defines `workflow.super_events` as an optional,
 provider-neutral component for a complete reusable Super Events package. The
-parent installs `.agents/skills/hoi4-super-events/` and expands to hidden
-dependency components for `interface/`, `common/`, `events/`, `localisation/`,
-`gfx/`, and `docs/super_events/`. These dependencies install the working GUI,
+parent installs the selected-only `hoi4-super-events*` skill packages and three
+narrow research subagents, then expands to hidden dependency components for
+`interface/`, `common/`, `events/`, `localisation/`, `gfx/`, and
+`docs/super_events/`. These dependencies install the working GUI,
 GFX declarations, scripted GUI and registration effect, dynamic text and image
 selectors, one console-test example, default localisation, DDS assets, and
 editable Photoshop templates.
@@ -88,7 +89,8 @@ later project addition with separate source and rights evidence. Every managed
 component uses `replace_if_unmodified`, with obsolete-file removal and local
 additions preserved according to the manifest.
 
-The core skills selection must exclude `hoi4-super-events/**`, and every hidden
+The core skills selection must exclude `hoi4-super-events*/**`, the core
+subagent selection must exclude `hoi4_super_event_*.toml`, and every hidden
 runtime dependency remains optional, so an install that declines the workflow
 cannot receive any Super Events file accidentally. The adapted `AGENTS.md`
 receives Super Events-specific guidance only when this component is selected
@@ -105,6 +107,8 @@ One repository file maps to one destination or template transformer.
 ### Tree
 
 A selected subtree expands at the resolved commit. Every resolved file receives a plan row and SHA-256. The installer still downloads only selected trees.
+
+Disjoint tree components may share a standard managed destination directory such as `.agents/skills/` or `.codex/agents/`. Every selected concrete destination remains unique and is canonicalized before download; any selected overlap is rejected.
 
 ### Generated
 

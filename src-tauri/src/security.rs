@@ -1,4 +1,4 @@
-use crate::models::{ComponentDefinition, DestinationDefinition};
+use crate::models::{ComponentDefinition, SourceKind};
 use crate::AppError;
 use regex::Regex;
 use sha2::{Digest, Sha256};
@@ -274,19 +274,28 @@ pub fn validate_destination_set(destinations: &[String]) -> Result<(), AppError>
 }
 
 pub fn validate_manifest_destinations(components: &[ComponentDefinition]) -> Result<(), AppError> {
-    let mut owners: std::collections::HashMap<String, Vec<&DestinationDefinition>> =
+    let mut owners: std::collections::HashMap<String, Vec<&ComponentDefinition>> =
         std::collections::HashMap::new();
     for component in components {
         let key = canonical_relative_key(&component.destination.path)?;
-        owners.entry(key).or_default().push(&component.destination);
+        owners.entry(key).or_default().push(component);
     }
-    for (key, destinations) in owners {
-        // Structured merged contributions such as .codex/config.toml are the
-        // only supported shared destination. Every participant must be merged.
-        if destinations.len() > 1
-            && destinations
+    for (key, components) in owners {
+        // Multiple tree components may contribute disjoint files to one
+        // managed directory. Concrete selected destinations are still
+        // canonicalized and rejected unconditionally by select_component_files.
+        let shared_tree_root = components
+            .iter()
+            .all(|component| component.source.kind == SourceKind::Tree);
+        let structured_merge = components
+            .iter()
+            .all(|component| component.destination.ownership == crate::models::Ownership::Merged);
+        if components.len() > 1
+            && !shared_tree_root
+            && !structured_merge
+            && components
                 .iter()
-                .any(|d| d.ownership != crate::models::Ownership::Merged)
+                .any(|component| component.destination.ownership != crate::models::Ownership::Merged)
         {
             return Err(AppError::PathSecurity(format!(
                 "duplicate destination: {key}"
@@ -393,12 +402,23 @@ pub fn atomic_write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<
     reject_secret_like_keys(&json)?;
     let bytes = serde_json::to_vec_pretty(&json)?;
     let text = String::from_utf8_lossy(&bytes);
-    if redact_secrets(&text, &[]) != text {
+    if contains_credential_shaped_content(&text) {
         return Err(AppError::Credential(
             "credential-shaped content is not serializable".into(),
         ));
     }
     atomic_write(path, &bytes)
+}
+
+/// Detect credential-shaped content while allowing the exact non-secret
+/// Meshy example documented by the verified 3D workflow. A longer value that
+/// merely starts with the placeholder remains detectable because the token
+/// replacement requires word boundaries.
+pub fn contains_credential_shaped_content(value: &str) -> bool {
+    let placeholder = Regex::new(r"\bmsy_your_actual_key_here\b")
+        .expect("static documented Meshy placeholder regex");
+    let inspected = placeholder.replace_all(value, "[DOCUMENTED_MESHY_KEY_PLACEHOLDER]");
+    redact_secrets(&inspected, &[]) != inspected
 }
 
 pub fn redact_secrets(value: &str, known_secrets: &[String]) -> String {
@@ -626,6 +646,32 @@ mod tests {
         assert!(!output.contains("example-secret"));
         assert!(!output.contains("another-secret"));
         assert_eq!(output.matches("[REDACTED]").count(), 2);
+    }
+
+    #[test]
+    fn serialized_json_allows_only_the_exact_documented_meshy_placeholder() {
+        let directory = tempfile::tempdir().unwrap();
+        let documented_path = directory.path().join("documented.json");
+        let documented = serde_json::json!({
+            "documentation": "Use msy_your_actual_key_here as an example only"
+        });
+
+        atomic_write_json(&documented_path, &documented).unwrap();
+        assert!(fs::read_to_string(&documented_path)
+            .unwrap()
+            .contains("msy_your_actual_key_here"));
+
+        let real_path = directory.path().join("real.json");
+        let real = serde_json::json!({
+            "documentation": "msy_1234567890abcdef"
+        });
+        assert!(atomic_write_json(&real_path, &real).is_err());
+
+        let extended_path = directory.path().join("extended.json");
+        let extended = serde_json::json!({
+            "documentation": "msy_your_actual_key_here123"
+        });
+        assert!(atomic_write_json(&extended_path, &extended).is_err());
     }
 
     #[test]

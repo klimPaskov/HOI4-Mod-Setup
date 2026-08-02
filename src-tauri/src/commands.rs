@@ -7,9 +7,9 @@ use crate::codex::{
     CodexLoginStart, ProcessJsonlTransport,
 };
 use crate::credentials::{
-    provider_name, save_ai_provider_key, save_meshy_key, validate_ai_provider_credential_for,
-    validate_credential_reference, CredentialStore, OsCredentialStore, ScopedSecretEnvironment,
-    MESHY_ENVIRONMENT_NAME,
+    discover_meshy_credential_reference, provider_name, save_ai_provider_key, save_meshy_key,
+    validate_ai_provider_credential_for, validate_credential_reference, CredentialStore,
+    OsCredentialStore, ScopedSecretEnvironment, MESHY_ENVIRONMENT_NAME,
 };
 use crate::descriptors::generated_artifacts as render_generated_artifacts;
 use crate::merge::{
@@ -229,6 +229,20 @@ fn clear_approved_scan_evidence() -> Result<(), String> {
 
 fn meshy_credential_reference() -> &'static Mutex<Option<CredentialReference>> {
     MESHY_CREDENTIAL_REFERENCE.get_or_init(|| Mutex::new(None))
+}
+
+fn current_meshy_credential_reference() -> Result<Option<CredentialReference>, AppError> {
+    let mut current = meshy_credential_reference().lock().map_err(|_| {
+        AppError::Credential("Meshy credential reference store is unavailable".into())
+    })?;
+    if current.as_ref().is_some_and(|reference| {
+        crate::credentials::mesh_key_status(&OsCredentialStore, Some(reference)) == "present"
+    }) {
+        return Ok(current.clone());
+    }
+    let discovered = discover_meshy_credential_reference(&OsCredentialStore)?;
+    *current = discovered.clone();
+    Ok(discovered)
 }
 
 fn ai_credential_reference(provider: &str) -> Option<CredentialReference> {
@@ -463,16 +477,6 @@ fn validate_codex_planning_account(status: &CodexAccountStatus) -> Result<(), Ap
     }
 }
 
-fn plan_fingerprint(plan: &InstallationPlan) -> Result<String, AppError> {
-    let mut comparable = plan.clone();
-    comparable.approvals.dry_run_reviewed = false;
-    comparable.approvals.external_actions_reviewed = false;
-    comparable.approvals.git_remote_approved = false;
-    comparable.approvals.push_approved = false;
-    let bytes = serde_json::to_vec(&comparable)?;
-    Ok(sha256_bytes(&bytes))
-}
-
 fn store_prepared_plan(
     plan: InstallationPlan,
     prepared_files: Vec<crate::models::PreparedFile>,
@@ -612,6 +616,7 @@ pub fn run() {
             scan_project,
             cancel_scan,
             store_meshy_credential,
+            meshy_credential_status,
             remove_meshy_credential,
             run_3d_health_check,
             run_mcp_health_check,
@@ -1483,6 +1488,11 @@ fn store_meshy_credential(value: String) -> Result<CredentialReference, String> 
         .map_err(|_| "Meshy credential reference store is unavailable".to_string())? =
         Some(reference.clone());
     Ok(reference)
+}
+
+#[tauri::command(async)]
+fn meshy_credential_status() -> Result<Option<CredentialReference>, String> {
+    current_meshy_credential_reference().map_err(command_error)
 }
 
 #[tauri::command(async)]
@@ -2411,7 +2421,7 @@ fn adapt_agents_for_selection(
         }
         (None, None) if super_events_selected => {
             adapted.push_str(
-                "\n## Optional Super Events workflow\n\n- Use `hoi4-super-events` when a major reveal, escalation, world-order change, victory, defeat, collapse, or campaign-ending moment needs a complete presentation package with aligned triggers, text, quote, image, audio, playback, provenance, and validation.\n",
+                "\n## Optional Super Events workflow\n\n- Use `hoi4-super-events` for the installed runtime contract, `hoi4-super-events-planning` for the implementation brief, `hoi4-super-events-event-integration` for caller and cleanup wiring, `hoi4-super-events-text-audio-research` and `hoi4-super-events-feature-assets` for sourced presentation assets, and `hoi4-super-events-subagents` for bounded delegation. Keep registration, caller, text, quote, response, image, optional or explicitly required audio, provenance, documentation, cleanup, and the acceptance scenario aligned.\n- Spawn `hoi4_super_event_quote_researcher`, `hoi4_super_event_audio_researcher`, or `hoi4_super_event_art_researcher` with `fork_context=false` only when its narrow selected-only handoff is needed.\n",
             );
         }
         (None, None) => {}
@@ -3205,12 +3215,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         });
     }
     let mut credential_references = if mesh_selected {
-        meshy_credential_reference()
-            .lock()
-            .map_err(|_| {
-                AppError::Credential("Meshy credential reference store is unavailable".into())
-            })?
-            .clone()
+        current_meshy_credential_reference()?
             .into_iter()
             .collect::<Vec<_>>()
     } else {
@@ -3398,6 +3403,9 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         });
     }
     let mut optional_workflows = generated_state(state);
+    if mesh_selected && !credential_references.is_empty() {
+        optional_workflows.insert("workflow.3d".into(), "selected_pending".into());
+    }
     for item in &support {
         if item.state == "unsupported_platform" {
             optional_workflows.insert(item.component_id.clone(), "unsupported_platform".into());
@@ -4775,10 +4783,8 @@ fn build_maintenance_plan_blocking(
         .collect();
     let mut credential_references = Vec::new();
     if add_optional_components.iter().any(|id| id == "workflow.3d") {
-        let mesh_reference = meshy_credential_reference()
-            .lock()
-            .map_err(|_| "Meshy credential reference store is unavailable".to_string())?
-            .clone()
+        let mesh_reference = current_meshy_credential_reference()
+            .map_err(command_error)?
             .or_else(|| {
                 lock.optional_workflows
                     .get("workflow.3d")
@@ -5079,10 +5085,10 @@ fn resolve_installation_conflict(
 
 #[tauri::command(async)]
 fn apply_installation(
-    plan: InstallationPlan,
+    plan_id: String,
     project_root: String,
 ) -> Result<TransactionJournal, String> {
-    let id = plan.plan_id;
+    let id = Uuid::parse_str(&plan_id).map_err(|_| "invalid installation plan ID".to_string())?;
     let root = validate_project_root_or_destination(Path::new(&project_root))
         .map(|(root, _)| root)
         .map_err(command_error)?;
@@ -5095,11 +5101,6 @@ fn apply_installation(
             .ok_or_else(|| "installation plan is not available in the core session".to_string())?;
         if prepared.canonical_root != root {
             return Err("installation root changed after review".into());
-        }
-        let submitted_fingerprint = plan_fingerprint(&plan).map_err(command_error)?;
-        let approved_fingerprint = plan_fingerprint(&prepared.plan).map_err(command_error)?;
-        if submitted_fingerprint != approved_fingerprint {
-            return Err("installation plan changed after core review".into());
         }
         if !prepared.approved || !prepared.plan.approvals.dry_run_reviewed {
             return Err("explicit dry-run approval is required before installation".into());
@@ -5811,67 +5812,6 @@ mod tests {
         ] {
             assert!(validate_codex_planning_account(&status).is_err());
         }
-    }
-
-    #[test]
-    fn approval_transition_does_not_change_plan_fingerprint() {
-        let mut plan = InstallationPlan {
-            schema_version: "1.0.0".into(),
-            plan_id: Uuid::new_v4(),
-            project_id: "example".into(),
-            created_at: None,
-            maintenance_mode: None,
-            source: SourceIdentity {
-                repository: crate::source::SOURCE_REPOSITORY.into(),
-                mode: SourceMode::PinnedCommit,
-                resolved_revision: "599497ea2f93612d9094461c6fde114fc87a5c0f".into(),
-                requested_ref: None,
-                release: None,
-                manifest_sha256: "a".repeat(64),
-                manifest_origin: "remote".into(),
-            },
-            ai_provider: "codex".into(),
-            ai_model: "default".into(),
-            ai_endpoint: None,
-            ai_optimization_profile: ai_optimization_profile("codex"),
-            flatten_chat_sources: false,
-            codex_analysis: None,
-            selected_components: vec![],
-            wiki_required_pages: vec![],
-            wiki_metadata: None,
-            generated_artifacts: vec![],
-            download_ledger: vec![],
-            git_setup: None,
-            credential_references: vec![],
-            optional_workflows: Default::default(),
-            operations: vec![],
-            conflicts: vec![],
-            external_actions: vec![],
-            transaction: TransactionPlanInfo {
-                stages: TRANSACTION_STAGES
-                    .iter()
-                    .map(|stage| (*stage).into())
-                    .collect(),
-                backup_root: "backup".into(),
-                staging_root: "staging".into(),
-                atomic_apply_expected: true,
-                project_root_mode: ProjectRootMode::Existing,
-                project_root_parent: None,
-                project_root_leaf: None,
-            },
-            approvals: PlanApprovals {
-                dry_run_reviewed: false,
-                external_actions_reviewed: false,
-                git_remote_approved: false,
-                push_approved: false,
-            },
-        };
-        let before = plan_fingerprint(&plan).unwrap();
-        plan.approvals.dry_run_reviewed = true;
-        plan.approvals.external_actions_reviewed = true;
-        plan.approvals.git_remote_approved = true;
-        plan.approvals.push_approved = true;
-        assert_eq!(plan_fingerprint(&plan).unwrap(), before);
     }
 
     #[test]

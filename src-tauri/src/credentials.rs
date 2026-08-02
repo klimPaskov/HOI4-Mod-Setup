@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub const MESHY_ENVIRONMENT_NAME: &str = "MESHY_API_KEY";
 pub const AI_PROVIDER_ENVIRONMENT_NAME: &str = "AI_PROVIDER_API_KEY";
 const MAX_SECRET_INPUT_BYTES: usize = 64 * 1024;
+const MESHY_STABLE_REFERENCE: &str = "credential://meshy_api_key/default";
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 const KEYRING_SERVICE: &str = "com.klimpaskov.hoi4-mod-setup";
 
@@ -33,11 +34,15 @@ impl CredentialStore for MemoryCredentialStore {
         let reference = CredentialReference {
             name: name.into(),
             provider: provider_name(Platform::current()).into(),
-            reference: format!(
-                "credential://{}/{}",
-                name.to_ascii_lowercase(),
-                Uuid::new_v4()
-            ),
+            reference: if name == MESHY_ENVIRONMENT_NAME {
+                MESHY_STABLE_REFERENCE.into()
+            } else {
+                format!(
+                    "credential://{}/{}",
+                    name.to_ascii_lowercase(),
+                    Uuid::new_v4()
+                )
+            },
             provider_id: None,
         };
         self.values
@@ -97,11 +102,15 @@ impl CredentialStore for OsCredentialStore {
         let reference = CredentialReference {
             name: name.into(),
             provider: provider_name(platform).into(),
-            reference: format!(
-                "credential://{}/{}",
-                name.to_ascii_lowercase(),
-                Uuid::new_v4()
-            ),
+            reference: if name == MESHY_ENVIRONMENT_NAME {
+                MESHY_STABLE_REFERENCE.into()
+            } else {
+                format!(
+                    "credential://{}/{}",
+                    name.to_ascii_lowercase(),
+                    Uuid::new_v4()
+                )
+            },
             provider_id: None,
         };
         let entry = keyring::Entry::new(KEYRING_SERVICE, &reference.reference)
@@ -194,7 +203,7 @@ pub fn provider_name(platform: Platform) -> &'static str {
 
 pub fn validate_credential_reference(reference: &CredentialReference) -> Result<(), AppError> {
     if reference.name == MESHY_ENVIRONMENT_NAME {
-        return validate_opaque_reference(reference, "meshy_api_key", "Meshy");
+        return validate_meshy_credential_reference(reference);
     }
     if reference.name == AI_PROVIDER_ENVIRONMENT_NAME {
         return validate_ai_provider_credential_reference(reference);
@@ -202,6 +211,112 @@ pub fn validate_credential_reference(reference: &CredentialReference) -> Result<
     Err(AppError::Credential(
         "credential reference is not a supported application credential".into(),
     ))
+}
+
+fn stable_meshy_reference() -> CredentialReference {
+    CredentialReference {
+        name: MESHY_ENVIRONMENT_NAME.into(),
+        provider: provider_name(Platform::current()).into(),
+        reference: MESHY_STABLE_REFERENCE.into(),
+        provider_id: None,
+    }
+}
+
+fn validate_meshy_credential_reference(reference: &CredentialReference) -> Result<(), AppError> {
+    if reference.reference == MESHY_STABLE_REFERENCE
+        && reference.provider == provider_name(Platform::current())
+        && reference.provider_id.is_none()
+    {
+        return Ok(());
+    }
+    validate_opaque_reference(reference, "meshy_api_key", "Meshy")
+}
+
+pub fn discover_meshy_credential_reference<S: CredentialStore>(
+    store: &S,
+) -> Result<Option<CredentialReference>, AppError> {
+    let stable = stable_meshy_reference();
+    if mesh_key_status(store, Some(&stable)) == "present" {
+        return Ok(Some(stable));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        for reference in windows_legacy_meshy_references()? {
+            if mesh_key_status(store, Some(&reference)) == "present" {
+                return Ok(Some(reference));
+            }
+        }
+    }
+    Ok(None)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_legacy_meshy_references() -> Result<Vec<CredentialReference>, AppError> {
+    use std::ffi::c_void;
+    use windows_sys::Win32::Security::Credentials::{CredEnumerateW, CredFree, CREDENTIALW};
+
+    let filter = "credential://meshy_api_key/*"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut count = 0_u32;
+    let mut credentials: *mut *mut CREDENTIALW = std::ptr::null_mut();
+    if unsafe { CredEnumerateW(filter.as_ptr(), 0, &mut count, &mut credentials) } == 0 {
+        return Ok(Vec::new());
+    }
+    struct CredentialBuffer(*mut *mut CREDENTIALW);
+    impl Drop for CredentialBuffer {
+        fn drop(&mut self) {
+            unsafe { CredFree(self.0.cast::<c_void>()) };
+        }
+    }
+    let _buffer = CredentialBuffer(credentials);
+    if credentials.is_null() || count > 1024 {
+        return Ok(Vec::new());
+    }
+    let entries = unsafe { std::slice::from_raw_parts(credentials, count as usize) };
+    let suffix = format!(".{KEYRING_SERVICE}");
+    let mut matches = Vec::<(u64, CredentialReference)>::new();
+    for entry in entries {
+        let Some(credential) = (unsafe { entry.as_ref() }) else {
+            continue;
+        };
+        if credential.TargetName.is_null() {
+            continue;
+        }
+        let mut length = 0_usize;
+        while length < 2048 && unsafe { *credential.TargetName.add(length) } != 0 {
+            length += 1;
+        }
+        if length == 2048 {
+            continue;
+        }
+        let target = String::from_utf16_lossy(unsafe {
+            std::slice::from_raw_parts(credential.TargetName, length)
+        });
+        let Some(reference) = target.strip_suffix(&suffix) else {
+            continue;
+        };
+        let candidate = CredentialReference {
+            name: MESHY_ENVIRONMENT_NAME.into(),
+            provider: provider_name(Platform::current()).into(),
+            reference: reference.into(),
+            provider_id: None,
+        };
+        if candidate.reference == MESHY_STABLE_REFERENCE
+            || validate_meshy_credential_reference(&candidate).is_err()
+        {
+            continue;
+        }
+        let written = ((credential.LastWritten.dwHighDateTime as u64) << 32)
+            | credential.LastWritten.dwLowDateTime as u64;
+        matches.push((written, candidate));
+    }
+    matches.sort_by(|left, right| right.0.cmp(&left.0));
+    Ok(matches
+        .into_iter()
+        .map(|(_, reference)| reference)
+        .collect())
 }
 
 fn validate_opaque_reference(
@@ -400,6 +515,25 @@ mod tests {
             .unwrap()
             .contains("test_value"));
         assert_eq!(mesh_key_status(&store, Some(&reference)), "present");
+    }
+
+    #[test]
+    fn stored_meshy_key_is_rediscovered_without_rewriting_it() {
+        let store = MemoryCredentialStore::default();
+        let saved = save_meshy_key(&store, "mesh_key_existing_value").unwrap();
+
+        let discovered = discover_meshy_credential_reference(&store)
+            .unwrap()
+            .expect("stored Meshy key should be found");
+
+        assert_eq!(discovered.reference, saved.reference);
+        assert_eq!(store.read(&discovered).unwrap(), "mesh_key_existing_value");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_meshy_discovery_is_read_only_and_bounded() {
+        let _ = discover_meshy_credential_reference(&OsCredentialStore).unwrap();
     }
 
     #[test]

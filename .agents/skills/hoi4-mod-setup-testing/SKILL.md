@@ -80,7 +80,9 @@ session, cancellation, credential-health, or analysis assertions.
   binary DDS/PSD bytes unchanged, is isolated from unselected downloads, adds
   no unselected AGENTS guidance, and remains non-blocking in readiness
 - flattening rejects output collisions, traversal, links, secret-shaped paths,
-  and secret-shaped content while preserving the source transaction boundary
+  and secret-shaped content while preserving the source transaction boundary;
+  large selected wiki trees and other ineligible component files neither enter
+  the flat output nor consume its file and size limits
 - App Server account data and tokens never survive serialization
 - login cancellation targets one validated App Server `loginId`, calls the
   managed cancel method, and cannot clear or cancel another active attempt

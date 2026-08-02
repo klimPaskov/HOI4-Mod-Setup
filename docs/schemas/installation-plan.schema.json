@@ -148,7 +148,7 @@
         "properties": {
           "name": { "const": "MESHY_API_KEY" },
           "provider": { "enum": ["windows_credential_manager", "macos_keychain"] },
-          "reference": { "type": "string", "pattern": "^credential://meshy_api_key/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }
+          "reference": { "type": "string", "pattern": "^credential://meshy_api_key/(?:default|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$" }
         }
       }
     },

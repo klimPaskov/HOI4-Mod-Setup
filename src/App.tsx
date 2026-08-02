@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallation, approveInstallation, approveScanEvidence, buildInstallationPlan, buildMaintenancePlan, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptors, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiProviderProfiles, readCodexAccount, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallation, run3DHealthCheck, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlan, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallation, run3DHealthCheck, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity } from "./identity";
 import type { AiProviderId, AiProviderProfile, AppUpdateStatus, CodexAnalysisRequest, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, ManifestComponentPreview, PhaseId, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
@@ -248,6 +248,9 @@ export default function App() {
   const [selectedFinding, setSelectedFinding] = useState("localisation");
   const [findings, setFindings] = useState<ScanFinding[]>([]);
   const [semanticAnalysisPending, setSemanticAnalysisPending] = useState(false);
+  const [planPreparationPending, setPlanPreparationPending] = useState(false);
+  const [installationPending, setInstallationPending] = useState(false);
+  const [activeTransactionId, setActiveTransactionId] = useState<string>();
   const [appUpdate, setAppUpdate] = useState<AppUpdateStatus | null>(null);
   const [appUpdateState, setAppUpdateState] = useState<"idle" | "installing" | "error">("idle");
   const codexAccountReadPending = useRef(false);
@@ -257,6 +260,21 @@ export default function App() {
     let active = true;
     void checkForAppUpdate().then((result) => {
       if (active && result.value?.available) setAppUpdate(result.value);
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let active = true;
+    void readMeshyCredential().then((reference) => {
+      if (active && reference) {
+        setState((current) => ({
+          ...current,
+          meshKeyStatus: "present",
+          meshCredentialReference: reference,
+        }));
+      }
     });
     return () => { active = false; };
   }, []);
@@ -428,11 +446,44 @@ export default function App() {
   }, [state.screen, state.mode, state.identity.projectRoot]);
 
   useEffect(() => {
-    if (!state.identity.projectRoot || state.transaction) return;
+    if (!state.identity.projectRoot || installationPending || state.screen === "install") return;
+    let active = true;
     void findInterruptedTransaction(state.identity.projectRoot).then((journal) => {
-      if (journal) setState((current) => current.transaction ? current : ({ ...current, transaction: journal, screen: "recovery", transactionError: "An interrupted transaction needs a recovery decision." }));
+      if (!active || !journal) return;
+      setState((current) => current.screen === "install" ? current : ({
+        ...current,
+        transaction: journal,
+        recoveryChoice: preferredRecoveryChoice(journal),
+        screen: "recovery",
+        transactionError: "A previous setup needs one recovery choice before installation can continue.",
+      }));
     });
-  }, [state.identity.projectRoot, state.screen, state.transaction]);
+    return () => { active = false; };
+  }, [state.identity.projectRoot, state.screen, installationPending]);
+
+  useEffect(() => {
+    const transactionId = activeTransactionId ?? state.plan?.plan_id;
+    if (!installationPending || !transactionId || !state.identity.projectRoot) return;
+    let active = true;
+    let timer: number | undefined;
+    const refresh = async () => {
+      const journal = await readTransactionJournal(state.identity.projectRoot, transactionId);
+      if (!active) return;
+      if (journal) {
+        setState((current) => current.screen !== "install" ? current : ({
+          ...current,
+          transaction: journal,
+          installStage: journal.last_checkpoint,
+        }));
+      }
+      timer = window.setTimeout(() => void refresh(), 500);
+    };
+    void refresh();
+    return () => {
+      active = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [installationPending, activeTransactionId, state.identity.projectRoot, state.plan?.plan_id]);
 
   useEffect(() => {
     if (state.screen === "ready" && !state.readiness) {
@@ -789,47 +840,84 @@ export default function App() {
     });
   };
   const applyReviewedPlan = async (plan: InstallationPlan) => {
+    const pendingTransaction = state.identity.projectRoot.trim()
+      ? await findInterruptedTransaction(state.identity.projectRoot)
+      : null;
+    if (pendingTransaction) {
+      update({
+        transaction: pendingTransaction,
+        recoveryChoice: preferredRecoveryChoice(pendingTransaction),
+        transactionError: "Finish recovering the previous setup before starting another installation.",
+        screen: "recovery",
+      });
+      return;
+    }
     if (plan.conflicts.some((conflict) => !conflict.selected)) {
       update({ plan, screen: "conflict", transactionError: undefined });
       return;
     }
-    if (!(await approveInstallation(plan.plan_id))) {
-      update({ transactionError: "The reviewed installation plan could not be approved. Nothing was changed." });
-      return;
-    }
-    const journal = await applyInstallation(plan, state.identity.projectRoot);
-    if (!journal) {
-      const interrupted = await readTransactionJournal(state.identity.projectRoot, plan.plan_id);
-      if (interrupted?.state === "interrupted") {
-        update({ transaction: interrupted, transactionError: "Installation was interrupted. Choose a recovery action before continuing.", screen: "recovery" });
-      } else {
-        update({ transactionError: "Installation could not start. Nothing was changed." });
+    const originScreen = state.screen;
+    setInstallationPending(true);
+    update({ screen: "install", transaction: undefined, installProgress: 2, installStage: "Starting setup", transactionError: undefined });
+    try {
+      if (!(await approveInstallation(plan.plan_id))) {
+        update({ screen: originScreen, installProgress: 0, transactionError: "Setup could not start. Prepare the changes again." });
+        return;
       }
-      return;
+      setActiveTransactionId(plan.plan_id);
+      const installation = await applyInstallationResult(plan.plan_id, state.identity.projectRoot);
+      const journal = installation.value;
+      if (!journal) {
+        const interrupted = await findInterruptedTransaction(state.identity.projectRoot);
+        if (interrupted) {
+          update({
+            transaction: interrupted,
+            recoveryChoice: preferredRecoveryChoice(interrupted),
+            transactionError: "Setup stopped. Choose the available recovery action before trying again.",
+            screen: "recovery",
+          });
+        } else {
+          update({ screen: originScreen, installProgress: 0, transactionError: installation.error ? `Installation could not start: ${installation.error}` : "Installation could not start. Prepare the changes again." });
+        }
+        return;
+      }
+      const maintenance = state.maintenanceMode !== undefined;
+      update({
+        plan: maintenance ? undefined : plan,
+        maintenanceMode: maintenance ? undefined : state.maintenanceMode,
+        maintenanceCodexAnalysisRecord: maintenance ? undefined : state.maintenanceCodexAnalysisRecord,
+        maintenanceEvidenceReady: maintenance ? undefined : state.maintenanceEvidenceReady,
+        codexAnalysis: maintenance ? undefined : state.codexAnalysis,
+        codexAnalysisRecord: maintenance ? undefined : state.codexAnalysisRecord,
+        transaction: journal,
+        transactionError: undefined,
+        readiness: maintenance ? null : state.readiness,
+        installProgress: 100,
+        installStage: journal.last_checkpoint,
+        screen: maintenance ? "ready" : "install",
+      });
+    } finally {
+      setActiveTransactionId(undefined);
+      setInstallationPending(false);
     }
-    const maintenance = state.maintenanceMode !== undefined;
-    update({
-      plan: maintenance ? undefined : plan,
-      maintenanceMode: maintenance ? undefined : state.maintenanceMode,
-      maintenanceCodexAnalysisRecord: maintenance ? undefined : state.maintenanceCodexAnalysisRecord,
-      maintenanceEvidenceReady: maintenance ? undefined : state.maintenanceEvidenceReady,
-      codexAnalysis: maintenance ? undefined : state.codexAnalysis,
-      codexAnalysisRecord: maintenance ? undefined : state.codexAnalysisRecord,
-      transaction: journal,
-      transactionError: undefined,
-      readiness: maintenance ? null : state.readiness,
-      installProgress: 100,
-      installStage: journal.last_checkpoint,
-      screen: maintenance ? "ready" : "install",
-    });
   };
   const prepareSetupPlan = async () => {
-    const plan = await buildInstallationPlan({ ...state, conflictChoice: undefined });
-    if (!plan) {
-      update({ transactionError: "The installation plan is unavailable. Nothing was changed." });
-      return;
+    if (planPreparationPending) return;
+    setPlanPreparationPending(true);
+    update({ transactionError: undefined });
+    try {
+      const result = await buildInstallationPlanResult({ ...state, conflictChoice: undefined });
+      const plan = result.value;
+      if (!plan) {
+        update({ transactionError: result.error ?? "The installation plan is unavailable. Nothing was changed." });
+        return;
+      }
+      update({ plan, conflictChoice: undefined, transactionError: undefined, screen: plan.conflicts.some((conflict) => !conflict.selected) ? "conflict" : "dry-run" });
+    } catch {
+      update({ transactionError: "Preparing the installation stopped unexpectedly. Nothing was changed; try again." });
+    } finally {
+      setPlanPreparationPending(false);
     }
-    update({ plan, conflictChoice: undefined, transactionError: undefined, screen: plan.conflicts.some((conflict) => !conflict.selected) ? "conflict" : "dry-run" });
   };
   const startMaintenance = async (mode: "update" | "repair" | "reinstall" | "remove") => {
     if (mode === "update" && !state.maintenanceCodexAnalysisRecord?.confirmed_fields.length) {
@@ -884,7 +972,14 @@ export default function App() {
       }
       const resumed = await resumeInstallation(state.identity.projectRoot, transactionId);
       if (!resumed) {
-        update({ transactionError: "Setup could not continue safely. Review the project or choose Undo changes." });
+        const refreshed = await findInterruptedTransaction(state.identity.projectRoot);
+        update(refreshed ? {
+          transaction: refreshed,
+          recoveryChoice: preferredRecoveryChoice(refreshed),
+          transactionError: refreshed.recovery.rollback_allowed
+            ? "Some files had already changed, so this setup must be undone before trying again."
+            : "Setup could not continue safely. Choose another available recovery action.",
+        } : { transactionError: "Setup could not continue safely. Review the project or choose Undo changes." });
         return;
       }
       update({ transaction: resumed, transactionError: undefined, installProgress: 100, installStage: resumed.last_checkpoint, screen: "install" });
@@ -1018,7 +1113,16 @@ export default function App() {
       supporting: state.readiness ? state.readiness.coreReady ? `Core requirements passed for ${aiProviderLabel(state.aiProvider, state.aiProfiles)}.` : "Resolve blocking checks before continuing." : "Checking core requirements.",
       status: state.readiness ? state.readiness.coreReady ? { label: `Ready for ${aiProviderLabel(state.aiProvider, state.aiProfiles)}`, tone: "pass" as const } : { label: "Needs review", tone: "block" as const } : { label: "Checking readiness", tone: "info" as const },
     }
-    : screenCopy[state.screen];
+    : state.screen === "recovery" && state.transaction
+      ? {
+        title: "Installation was interrupted",
+        supporting: state.transaction.recovery.project_apply_started
+          ? "Undo the partial setup before installing again."
+          : state.transaction.recovery.resume_allowed
+            ? "Continue from the last safe checkpoint."
+            : "Clear the prepared files before installing again.",
+      }
+      : screenCopy[state.screen];
   return (
     <div className="app-shell">
       <header className="titlebar">
@@ -1035,7 +1139,7 @@ export default function App() {
         <PhaseRail screen={state.screen} />
         <main className="main-viewport" aria-labelledby="screen-title" aria-describedby="screen-supporting" onKeyDown={closeDisclosureOnEscape}>
           <div className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{copy.title}</div>
-          <ScreenFrame screen={state.screen} copy={copy} state={state} canAdvance={!semanticAnalysisPending && canAdvanceFromScreen(state, { scanComplete, scanError, scanPartial, findings })} pending={semanticAnalysisPending} headingRef={headingRef} onBack={goBack} onNext={goNext} onMaintenance={openMaintenance} onPrepareConflicts={prepareSetupPlan}>
+          <ScreenFrame screen={state.screen} copy={copy} state={state} canAdvance={!semanticAnalysisPending && !planPreparationPending && !installationPending && canAdvanceFromScreen(state, { scanComplete, scanError, scanPartial, findings })} pending={semanticAnalysisPending} preparingPlan={planPreparationPending} headingRef={headingRef} onBack={goBack} onNext={goNext} onMaintenance={openMaintenance} onPrepareConflicts={prepareSetupPlan}>
             {renderScreen(state, update, updateIdentity, updateDescription, findings, selectedFinding, setSelectedFinding, setFindings, scanComplete, scanError, scanProgress, scanPartial, scanLimitsHit, scanRequestId, scanCancellationRequested, cancelActiveScan, openMaintenance, startMaintenance, runMaintenanceReanalysis, chooseConflict, chooseProjectFolder, chooseLauncherFolder, confirmAnalysis)}
           </ScreenFrame>
         </main>
@@ -1074,7 +1178,7 @@ function ExternalLink({ href, className, children }: { href: string; className?:
   >{children}</a>;
 }
 
-function ScreenFrame({ screen, copy, state, canAdvance, pending, headingRef, onBack, onNext, onMaintenance, onPrepareConflicts, children }: { screen: ScreenId; copy: { title: string; supporting?: string; status?: { label: string; tone: StatusTone } }; state: WizardState; canAdvance: boolean; pending: boolean; headingRef: { current: HTMLHeadingElement | null }; onBack: () => void; onNext: () => void; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onPrepareConflicts: () => void; children: ReactNode }) {
+function ScreenFrame({ screen, copy, state, canAdvance, pending, preparingPlan, headingRef, onBack, onNext, onMaintenance, onPrepareConflicts, children }: { screen: ScreenId; copy: { title: string; supporting?: string; status?: { label: string; tone: StatusTone } }; state: WizardState; canAdvance: boolean; pending: boolean; preparingPlan: boolean; headingRef: { current: HTMLHeadingElement | null }; onBack: () => void; onNext: () => void; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onPrepareConflicts: () => Promise<void>; children: ReactNode }) {
   const installDone = screen === "install" && state.installProgress >= 100;
   const unresolvedConflicts = state.plan?.conflicts.some((conflict) => !conflict.selected) === true;
   const primaryLabel = pending && screen === "description" ? "Preparing details…" : screen === "welcome" ? "Continue" : screen === "findings" && !state.codexAnalysis ? `Review with ${aiProviderLabel(state.aiProvider, state.aiProfiles)}` : screen === "dry-run" ? "Start installation" : screen === "install" ? (installDone ? "Continue" : "") : screen === "ready" ? "Finish" : screen === "recovery" ? "Continue" : screen === "conflict" ? "Apply" : screen === "update" ? (state.plan ? "Apply reviewed plan" : "") : "Next";
@@ -1091,7 +1195,7 @@ function ScreenFrame({ screen, copy, state, canAdvance, pending, headingRef, onB
       <span className="footer-note" role={state.transactionError ? "alert" : undefined}>{footerNote(screen, state)}</span>
       <div className="footer-actions">
         {screen === "ready" && <button className="button secondary" onClick={() => onMaintenance("update")}>Update and repair</button>}
-        {screen === "dry-run" && (!state.plan || unresolvedConflicts) && <button className="button secondary" onClick={onPrepareConflicts}>{state.plan ? "Resolve conflicts" : "Prepare changes"}</button>}
+        {screen === "dry-run" && (!state.plan || unresolvedConflicts) && <button className="button secondary" onClick={() => void onPrepareConflicts()} disabled={preparingPlan} aria-busy={preparingPlan || undefined}>{preparingPlan ? "Preparing changes…" : state.plan ? "Resolve conflicts" : "Prepare changes"}</button>}
         {showBack && <button className="button secondary" onClick={onBack}>Back</button>}
         {primaryLabel && <button className="button primary" onClick={onNext} disabled={!canAdvance} aria-busy={pending || undefined}>{primaryLabel}</button>}
       </div>
@@ -1112,7 +1216,7 @@ function footerNote(screen: ScreenId, state: WizardState): string {
     if (state.plan.conflicts.some((conflict) => !conflict.selected)) return "Resolve blocking conflicts before installation.";
     return "The reviewed changes are ready to install.";
   }
-  if (screen === "install") return state.installProgress >= 100 ? "Setup saved. Readiness is next." : "Saving your progress…";
+  if (screen === "install") return state.installProgress >= 100 ? "Setup saved. Readiness is next." : "Installing selected files…";
   if (screen === "ready") return state.transactionError ?? "Readiness checks saved.";
   if (screen === "update") return state.transactionError ?? "User-modified files are never overwritten silently.";
   if (screen === "conflict") return "A preview and validation run follow the selected resolution.";
@@ -1135,6 +1239,15 @@ function recoveryChoiceAllowed(state: WizardState): boolean {
   if (state.recoveryChoice === "resume") return state.transaction.recovery.resume_allowed;
   if (state.recoveryChoice === "rollback") return state.transaction.recovery.rollback_allowed;
   return state.transaction.recovery.discard_staging_allowed;
+}
+
+function preferredRecoveryChoice(transaction: NonNullable<WizardState["transaction"]>): RecoveryChoice {
+  if (transaction.recovery.recommended_action === "resume" && transaction.recovery.resume_allowed) return "resume";
+  if (transaction.recovery.recommended_action === "rollback" && transaction.recovery.rollback_allowed) return "rollback";
+  if (transaction.recovery.recommended_action === "discard_staging" && transaction.recovery.discard_staging_allowed) return "discard";
+  if (transaction.recovery.rollback_allowed) return "rollback";
+  if (transaction.recovery.resume_allowed) return "resume";
+  return "discard";
 }
 
 function providerReady(state: WizardState): boolean {
@@ -1452,15 +1565,33 @@ function ExistingProjectPicker({ state, updateIdentity, onPickProjectFolder }: {
   return <div className="stack narrow"><section className="panel form-panel"><p className="muted">Choose the mod project. Its descriptors, identity, structure, and existing setup will be detected during the read-only scan.</p><Field label="Project folder" value={state.identity.projectRoot} placeholder="Choose an existing mod project" onChange={(value) => updateIdentity({ projectRoot: value, launcherDescriptorPath: undefined })} action="Browse" onAction={() => void choose()} />{state.identity.launcherDescriptorPath && <p className="muted path-preview" role="status"><strong>Launcher file:</strong> <code>{state.identity.launcherDescriptorPath}</code></p>}{message && <p className="muted" role="status">{message}</p>}</section></div>;
 }
 
-function Identity({ state, update, updateIdentity, onPickProjectFolder, onPickLauncherFolder, onConfirmAnalysis }: { state: WizardState; update: (patch: Partial<WizardState>) => void; updateIdentity: (patch: Partial<ProjectIdentity>) => void; onPickProjectFolder: () => Promise<FolderSelection | null>; onPickLauncherFolder: () => Promise<FolderSelection | null>; onConfirmAnalysis: () => Promise<void> }) {
-  const [previews, setPreviews] = useState<GeneratedArtifactPreview[]>([]);
+export function Identity({ state, update, updateIdentity, onPickProjectFolder, onPickLauncherFolder, onConfirmAnalysis }: { state: WizardState; update: (patch: Partial<WizardState>) => void; updateIdentity: (patch: Partial<ProjectIdentity>) => void; onPickProjectFolder: () => Promise<FolderSelection | null>; onPickLauncherFolder: () => Promise<FolderSelection | null>; onConfirmAnalysis: () => Promise<void> }) {
+  const [selectedPreview, setSelectedPreview] = useState<GeneratedArtifactPreview>();
   const [previewMessage, setPreviewMessage] = useState<string>();
+  const [previewPending, setPreviewPending] = useState(false);
   const [folderMessage, setFolderMessage] = useState<string>();
-  const showPreviews = async () => {
+  const previewReady = Boolean(state.identity.projectRoot.trim())
+    && (!isTauriRuntime() || Boolean(state.codexAnalysisRecord?.confirmed_fields.length));
+  const showPreview = async (componentId: string) => {
+    if (!previewReady || previewPending) return;
+    setPreviewPending(true);
     setPreviewMessage("Preparing preview…");
-    const result = await previewDescriptors(state);
-    setPreviews(result);
-    setPreviewMessage(result.length ? undefined : "Descriptor preview is available in the desktop core after a project path is selected.");
+    try {
+      const result = await previewDescriptorsResult(state);
+      if (!result.value) {
+        setSelectedPreview(undefined);
+        setPreviewMessage(result.error ?? "The preview could not be prepared. Nothing was changed.");
+        return;
+      }
+      const artifact = result.value.find((candidate) => candidate.component_id === componentId);
+      setSelectedPreview(artifact);
+      setPreviewMessage(artifact ? undefined : "That generated file is not available in this setup.");
+    } catch {
+      setSelectedPreview(undefined);
+      setPreviewMessage("The preview stopped unexpectedly. Nothing was changed; try again.");
+    } finally {
+      setPreviewPending(false);
+    }
   };
   const chooseFolder = async () => {
     setFolderMessage(undefined);
@@ -1521,7 +1652,25 @@ function Identity({ state, update, updateIdentity, onPickProjectFolder, onPickLa
     <Field label="Supported game version" value={state.identity.supportedGameVersion} onChange={(value) => updateIdentity({ supportedGameVersion: value })} />
     <Field label="Default branch" value={state.identity.defaultBranch} onChange={(value) => updateIdentity({ defaultBranch: value })} />
     </details>
-  </div><Field label="Project folder" value={state.identity.projectRoot} placeholder="Finding the HOI4 mod folder…" onChange={(value) => { updateIdentity({ projectRoot: value }); update({ projectPathsOverridden: true, projectPathStatus: "manual", projectPathMessage: "Using your project location." }); }} action="Change location" onAction={() => void chooseFolder()} mono />{state.projectPathMessage && <p className={state.projectPathStatus === "collision" || state.projectPathStatus === "unavailable" ? "callout review" : "muted"} role="status">{state.projectPathMessage}</p>}{folderMessage && <p className="muted" role="status">{folderMessage}</p>}<details><summary>Launcher file location</summary><Field label="Launcher descriptor path" value={state.identity.launcherDescriptorPath ?? ""} placeholder="Filled automatically" onChange={(value) => { updateIdentity({ launcherDescriptorPath: value }); update({ projectPathsOverridden: true, projectPathStatus: "manual", projectPathMessage: "Using your project location." }); }} action="Choose mod folder" onAction={() => void chooseLauncherFolder()} mono /></details></section><section className="panel"><PanelTitle title="Generated files" /><div className="list-row"><div><strong>descriptor.mod</strong><span>Inside the project</span></div><button type="button" className="text-button" onClick={() => void showPreviews()}>Preview</button></div><div className="list-row"><div><strong>{state.identity.projectId || "project"}.mod</strong><span>HOI4 launcher file</span></div><button type="button" className="text-button" onClick={() => void showPreviews()}>Preview</button></div><div className="list-row"><div><strong>thumbnail.png</strong><span>Replaceable placeholder</span></div><button type="button" className="text-button" onClick={() => void showPreviews()}>Preview</button></div>{previewMessage && <p className="muted" role="status">{previewMessage}</p>}{previews.map((artifact) => <details key={artifact.destination}><summary>{artifact.destination}</summary><pre className="report-preview">{artifact.content}</pre></details>)}</section></div></div>;
+  </div><Field label="Project folder" value={state.identity.projectRoot} placeholder="Finding the HOI4 mod folder…" onChange={(value) => { updateIdentity({ projectRoot: value }); update({ projectPathsOverridden: true, projectPathStatus: "manual", projectPathMessage: "Using your project location." }); }} action="Change location" onAction={() => void chooseFolder()} mono />{state.projectPathMessage && <p className={state.projectPathStatus === "collision" || state.projectPathStatus === "unavailable" ? "callout review" : "muted"} role="status">{state.projectPathMessage}</p>}{folderMessage && <p className="muted" role="status">{folderMessage}</p>}<details><summary>Launcher file location</summary><Field label="Launcher descriptor path" value={state.identity.launcherDescriptorPath ?? ""} placeholder="Filled automatically" onChange={(value) => { updateIdentity({ launcherDescriptorPath: value }); update({ projectPathsOverridden: true, projectPathStatus: "manual", projectPathMessage: "Using your project location." }); }} action="Choose mod folder" onAction={() => void chooseLauncherFolder()} mono /></details></section><GeneratedFilesPreview state={state} ready={previewReady} pending={previewPending} selected={selectedPreview} message={previewMessage} onPreview={showPreview} /></div></div>;
+}
+
+function GeneratedFilesPreview({ state, ready, pending, selected, message, onPreview }: { state: WizardState; ready: boolean; pending: boolean; selected?: GeneratedArtifactPreview; message?: string; onPreview: (componentId: string) => Promise<void> }) {
+  const files = [
+    { componentId: "project.descriptor", name: "descriptor.mod", detail: "Inside the project" },
+    { componentId: "project.launcher_descriptor", name: `${state.identity.projectId || "project"}.mod`, detail: "HOI4 launcher file" },
+    { componentId: "project.thumbnail", name: "thumbnail.png", detail: "Replaceable placeholder" },
+  ];
+  const imageUrl = selected?.bytes?.length ? pngDataUrl(selected.bytes) : undefined;
+  return <section className="panel generated-files-panel"><PanelTitle title="Generated files" />{files.map((file) => <div className="list-row" key={file.componentId}><div><strong>{file.name}</strong><span>{file.detail}</span></div><button type="button" className="text-button" disabled={!ready || pending} title={!ready ? "Confirm the generated details and project location first." : undefined} aria-expanded={selected?.component_id === file.componentId} onClick={() => void onPreview(file.componentId)}>{pending ? "Preparing…" : "Preview"}</button></div>)}{!ready && <p className="muted" role="status">Confirm the generated details and project location to enable previews.</p>}{message && <p className="muted" role="status">{message}</p>}{selected && <div className="artifact-preview" aria-live="polite"><div className="artifact-preview-heading"><strong>{selected.destination}</strong><button type="button" className="text-button" onClick={() => void onPreview(selected.component_id)}>Refresh</button></div>{imageUrl ? <><div className="thumbnail-preview"><img src={imageUrl} alt="Generated thumbnail placeholder preview" /></div><p className="muted">{selected.content}</p></> : <pre className="report-preview">{selected.content}</pre>}</div>}</section>;
+}
+
+function pngDataUrl(bytes: number[]): string {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.slice(index, index + 0x8000));
+  }
+  return `data:image/png;base64,${btoa(binary)}`;
 }
 
 const SCAN_STAGE_LABELS: Record<string, string> = {
@@ -1757,7 +1906,13 @@ export function DryRun({ state, update }: { state: WizardState; update: (patch: 
   const flattenedSummary = flattenedFiles.length
     ? `${flattenedFiles.length} files · ${formatScanBytes(flattenedSize)}`
     : state.flattenForChat ? "Prepare changes to calculate" : "Optional";
-  return <div className="stack"><div className="metric-grid"><Metric label="Create" value={plan ? String(counts.create) : "—"} tone={plan ? "pass" : "info"} /><Metric label="Update" value={plan ? String(counts.update) : "—"} tone={plan ? "info" : "muted"} /><Metric label="Skip" value={plan ? String(counts.skip) : "—"} tone={plan ? "review" : "muted"} /><Metric label="Conflicts" value={plan ? String(unresolved) : "—"} tone={plan ? unresolved ? "block" : "pass" : "info"} /></div><div className="two-column"><section className="panel"><PanelTitle title="Plan summary" /><ChangeRow title="Add development tools" detail="Skills, instructions, configuration, and offline wiki" value={planStatus} /><ChangeRow title="Update project instructions" detail="Keeps your existing edits" status={plan ? "Review if modified" : "Pending"} /><ChangeRow title="Configure integrations" detail="Selected tools only" value={plan ? "Ready" : "Pending"} /><ChangeRow title="Git setup" detail={`${state.gitBranch} · local changes`} value={plan ? "Ready" : "Pending"} /><ChangeRow title="Online Git" detail="Runs only after setup" value={plan ? onlineActionLabel : "Pending"} />{state.aiProvider === "codex" && state.flattenForChat && <ChangeRow title="ChatGPT project files" detail="Selected in Components" value={flattenedSummary} />}{plan && <details><summary>Open full file plan</summary><p className="muted">Review every file that will be created, updated, or kept.</p></details>}{plan?.external_actions?.length ? <details><summary>External tools requiring approval</summary><div className="manifest-details">{plan.external_actions.map((action) => <div key={action.id}><strong>{action.component_id}</strong><span>{action.display_command ?? action.command_source} · {action.risk} risk · approval required</span><small>Program: {action.executable ?? "Not declared"}; expected changes: {action.expected_writes?.join(", ") || "None declared"}</small></div>)}</div></details> : null}{!plan && <p className="muted">Prepare the changes before installation.</p>}</section><section className="panel"><PanelTitle title="Before setup" />{state.flattenForChat && flattenedFiles.length > 0 && <details><summary>ChatGPT folder · {flattenedSummary}</summary><div className="manifest-details flattened-file-list">{flattenedFiles.map((artifact) => { const bytes = artifact.bytes?.length ?? new TextEncoder().encode(artifact.content).length; return <div key={artifact.destination}><strong>{artifact.destination.replace("chatgpt_project_sources/", "")}</strong><small>{formatScanBytes(bytes)}</small></div>; })}</div></details>}<CheckRow label="Existing files saved" status={plan ? "Ready" : "Pending"} tone={plan ? "pass" : "info"} /><CheckRow label="External tools" status={plan ? "Review required actions" : "Pending"} tone="review" /><CheckRow label="Unresolved conflicts" status={plan ? String(unresolved) : "Pending"} tone={plan ? unresolved ? "block" : "pass" : "info"} /></section></div></div>;
+  const setupChecks = plan?.external_actions ?? [];
+  const setupCheckLabel = (componentId: string) => componentId === "mcp.hoi4_agent_tools"
+    ? "Check the installed AI tools"
+    : componentId === "workflow.3d"
+      ? "Check the 3D workflow"
+      : "Check an installed integration";
+  return <div className="stack"><div className="metric-grid"><Metric label="Create" value={plan ? String(counts.create) : "—"} tone={plan ? "pass" : "info"} /><Metric label="Update" value={plan ? String(counts.update) : "—"} tone={plan ? "info" : "muted"} /><Metric label="Skip" value={plan ? String(counts.skip) : "—"} tone={plan ? "review" : "muted"} /><Metric label="Conflicts" value={plan ? String(unresolved) : "—"} tone={plan ? unresolved ? "block" : "pass" : "info"} /></div><div className="two-column"><section className="panel"><PanelTitle title="Plan summary" /><ChangeRow title="Add development tools" detail="Skills, instructions, configuration, and offline wiki" value={planStatus} /><ChangeRow title="Update project instructions" detail="Keeps your existing edits" status={plan ? "Review if modified" : "Pending"} /><ChangeRow title="Configure integrations" detail="Selected tools only" value={plan ? "Ready" : "Pending"} /><ChangeRow title="Git setup" detail={`${state.gitBranch} · local changes`} value={plan ? "Ready" : "Pending"} /><ChangeRow title="Online Git" detail="Runs only after setup" value={plan ? onlineActionLabel : "Pending"} />{state.aiProvider === "codex" && state.flattenForChat && <ChangeRow title="ChatGPT project files" detail="Selected in Components" value={flattenedSummary} />}{plan && <details><summary>Open full file plan</summary><p className="muted">Review every file that will be created, updated, or kept.</p></details>}{setupChecks.length > 0 && <details><summary>Setup checks</summary><div className="manifest-details">{setupChecks.map((action) => <details key={action.id}><summary>{setupCheckLabel(action.component_id)}</summary><small>Runs automatically after the files are installed.</small><small>Command: {action.display_command ?? action.command_source}</small><small>Folder: {action.working_directory ?? "Project folder"}</small><small>Environment: {action.environment_names?.join(", ") || "None"}</small><small>Expected changes: {action.expected_writes?.join(", ") || "None"}</small></details>)}</div></details>}{!plan && <p className="muted">Prepare the changes before installation.</p>}</section><section className="panel"><PanelTitle title="Before setup" />{state.flattenForChat && flattenedFiles.length > 0 && <details><summary>ChatGPT folder · {flattenedSummary}</summary><div className="manifest-details flattened-file-list">{flattenedFiles.map((artifact) => { const bytes = artifact.bytes?.length ?? new TextEncoder().encode(artifact.content).length; return <div key={artifact.destination}><strong>{artifact.destination.replace("chatgpt_project_sources/", "")}</strong><small>{formatScanBytes(bytes)}</small></div>; })}</div></details>}<CheckRow label="Existing files saved" status={plan ? "Ready" : "Pending"} tone={plan ? "pass" : "info"} /><CheckRow label="Setup checks" status={plan ? setupChecks.length ? `${setupChecks.length} included` : "None needed" : "Pending"} tone={plan ? "pass" : "info"} /><CheckRow label="Unresolved conflicts" status={plan ? String(unresolved) : "Pending"} tone={plan ? unresolved ? "block" : "pass" : "info"} /></section></div></div>;
 }
 
 function Install({ state }: { state: WizardState }) {
@@ -1776,9 +1931,29 @@ function Install({ state }: { state: WizardState }) {
     "readiness report": "Check readiness",
     "rollback record": "Save recovery information",
   } as Record<string, string>)[id] ?? id;
-  const completed = state.transaction?.stages.filter((stage) => stage.status === "completed").length ?? 0;
-  const progress = state.transaction ? Math.round((completed / stages.length) * 100) : state.installProgress;
-  return <div className="center-column"><section className="panel install-panel"><div className="install-progress"><Progress value={progress} label="Installation progress" /><Status label={state.transaction ? `${progress}%` : "Awaiting transaction"} tone={state.transaction ? "info" : "muted"} /></div>{stages.map((stage) => { const done = stage.status === "completed"; const active = !done && state.transaction?.last_checkpoint === stage.id; return <div key={stage.id} className={`timeline-row ${done ? "done" : active ? "active" : ""}`}><span className="timeline-icon">{done ? "✓" : active ? "●" : ""}</span><strong>{stageLabel(stage.id)}</strong><span>{done ? "Done" : active ? "In progress" : "Next"}</span></div>; })}<details><summary>Show setup details</summary><p className="muted">The app keeps a protected record of each step so an interrupted setup can continue safely.</p></details></section></div>;
+  const isDone = (status: string) => status === "complete" || status === "completed";
+  const completed = stages.filter((stage) => isDone(stage.status)).length;
+  const activeStage = stages.find((stage) => stage.status === "active");
+  const operations = state.transaction?.operations ?? [];
+  const completedOperations = activeStage?.id === "staging"
+    ? operations.filter((operation) => operation.status !== "pending").length
+    : activeStage?.id === "apply"
+      ? operations.filter((operation) => ["applied", "verified"].includes(operation.status)).length
+      : 0;
+  const operationFraction = operations.length > 0 && (activeStage?.id === "staging" || activeStage?.id === "apply")
+    ? completedOperations / operations.length
+    : 0;
+  const progress = state.transaction
+    ? Math.min(100, Math.round(((completed + operationFraction) / stages.length) * 100))
+    : state.installProgress;
+  const progressLabel = operations.length > 0 && activeStage?.id === "staging"
+    ? `Preparing file ${completedOperations} of ${operations.length}`
+    : operations.length > 0 && activeStage?.id === "apply"
+      ? `Installing file ${completedOperations} of ${operations.length}`
+      : state.transaction
+        ? `${progress}% complete`
+        : "Starting setup…";
+  return <div className="center-column"><section className="panel install-panel"><div className="install-progress"><Progress value={progress} label="Installation progress" valueText={progressLabel} /><Status label={progressLabel} tone={state.transaction ? "info" : "muted"} /></div>{stages.map((stage) => { const done = isDone(stage.status); const active = !done && stage.status === "active"; return <div key={stage.id} className={`timeline-row ${done ? "done" : active ? "active" : ""}`}><span className="timeline-icon">{done ? "✓" : active ? "●" : ""}</span><strong>{stageLabel(stage.id)}</strong><span>{done ? "Done" : active ? "In progress" : "Next"}</span></div>; })}<details><summary>Show setup details</summary><p className="muted">The app keeps a protected record of each step so an interrupted setup can continue safely.</p></details></section></div>;
 }
 
 function OnlineGitAction({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
@@ -2027,6 +2202,7 @@ function Recovery({ state, update, onPickProjectFolder, onStartMaintenance }: { 
     { id: "rollback", title: "Undo changes", detail: "Return the project to the state it had before this setup began.", allowed: transaction.recovery.rollback_allowed },
     { id: "discard", title: "Discard prepared files", detail: "Remove temporary setup files without changing the project.", allowed: transaction.recovery.discard_staging_allowed },
   ];
+  const availableOptions = options.filter((item) => item.allowed);
   const checkpoint = transaction.state === "finalizing"
     ? "The files are installed. Continue setup to finish the final checks."
     : transaction.state === "rolling_back"
@@ -2034,7 +2210,7 @@ function Recovery({ state, update, onPickProjectFolder, onStartMaintenance }: { 
       : transaction.recovery.project_apply_started
         ? "Some project files were already changed, so continuing automatically is unavailable."
     : "Setup stopped before any project files were changed.";
-  return <div className="stack"><div className="callout review">{checkpoint}</div><div className="recovery-grid">{options.map((item) => <button type="button" key={item.id} className={`recovery-card ${state.recoveryChoice === item.id ? "selected" : ""}`} aria-pressed={state.recoveryChoice === item.id} disabled={!item.allowed} onClick={() => update({ recoveryChoice: item.id })}><span className="choice-radio" aria-hidden="true" /><strong>{item.title}</strong><p>{item.detail}</p></button>)}</div><section className="panel recovery-actions"><button type="button" className="text-button" onClick={() => void onStartMaintenance("remove")}>Manage installed components</button></section></div>;
+  return <div className="stack"><div className="callout review">{checkpoint}</div><div className={`recovery-grid recovery-grid-${availableOptions.length}`}>{availableOptions.map((item) => <button type="button" key={item.id} className={`recovery-card ${state.recoveryChoice === item.id ? "selected" : ""}`} aria-pressed={state.recoveryChoice === item.id} onClick={() => update({ recoveryChoice: item.id })}><span className="choice-radio" aria-hidden="true" /><strong>{item.title}</strong><p>{item.detail}</p></button>)}</div><section className="panel recovery-actions"><button type="button" className="text-button" onClick={() => void onStartMaintenance("remove")}>Manage installed components</button></section></div>;
 }
 
 function Field({ label, value, onChange, placeholder, action, onAction, mono }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; action?: string; onAction?: () => void; mono?: boolean }) {

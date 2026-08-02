@@ -165,6 +165,8 @@ only when `workflow.super_events` is selected. An unselected workflow must not
 leave Super Events instructions, skill references, or equivalent guidance in
 the generated project `AGENTS.md`.
 
+Starting an approved installation passes only the core-owned plan ID and project root. Do not serialize the confirmed analysis record back through the renderer during apply; the Rust plan session already owns and validates that record.
+
 Folder proposals and final folder state share a core validator that rejects
 application-managed roots such as `.git`, `.codex`, `.agents`,
 `.hoi4-mod-setup`, `paradox_wiki`, and `chatgpt_project_sources`.

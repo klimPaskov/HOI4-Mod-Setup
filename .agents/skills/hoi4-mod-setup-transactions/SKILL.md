@@ -83,7 +83,7 @@ operations are not accepted; mode belongs to the reviewed file operation.
 - Do not write a successful lock until all required post-install checks pass.
 - Persist the readiness report, then refuse stage 12 and the success lock when any blocking core check is `block`; optional `incomplete`, `planned_unavailable`, and unsupported optional routes remain non-blocking.
 - Persist an `applying` operation intent before replacing or deleting a live destination. Use the platform atomic replace route where available and verify the expected incoming hash, not only an observed self-hash.
-- Bind UI apply to a core-owned reviewed plan session and prepared bytes; do not accept a renderer-edited plan as authoritative.
+- Bind UI apply to a core-owned reviewed plan session and prepared bytes. The renderer sends only the approved plan ID and project root when installation starts; never reserialize or accept a renderer-edited plan as authoritative.
 - Track source hash separately from result hash: generated files, structured merges, and optional MCP TOML adaptation may have a verified incoming source hash and a different deterministic installed hash.
 - Every remote prepared file has one plan `download_ledger` entry bound to its
   operation ID, component, source path, destination, exact source revision,
@@ -91,7 +91,7 @@ operations are not accepted; mode belongs to the reviewed file operation.
   declaration. Revalidate that
   ledger before backup. Generated inputs use an explicit `generated:` source
   and do not fabricate remote evidence.
-- Treat provider/model/profile selection and the Codex-only flattened ChatGPT-source export as reviewed plan inputs. Flattening is a generated, root-contained operation: direct skill `SKILL.md` files become `<skill>.md`; required adapted `AGENTS.md`, README, and subagents are included; and collisions, links, and secrets are rejected before staging. Build it only from files selected for the current plan. When review keeps a selected local skill or subagent, read that exact root-contained regular file without following links and flatten the kept bytes; never enumerate unrelated skills or subagents already present in an existing project.
+- Treat provider/model/profile selection and the Codex-only flattened ChatGPT-source export as reviewed plan inputs. Flattening is a generated, root-contained operation: direct skill `SKILL.md` files become `<skill>.md`; required adapted `AGENTS.md`, README, and subagents are included; and collisions, links, and secrets are rejected before staging. Build it only from eligible files selected for the current plan. Never include offline-wiki pages, wiki media, descriptors, configuration, workflow assets, or other unrelated selected component files in the flat view or count them against its limits. When review keeps a selected local skill or subagent, read that exact root-contained regular file without following links and flatten the kept bytes; never enumerate unrelated skills or subagents already present in an existing project.
 - When a non-flattened conflict changes the accepted source set, rebuild the flat
   view from accepted bytes only. Preserve an already reviewed flat keep/replace/
   rename decision only when its incoming hash and local precondition still
@@ -102,7 +102,7 @@ operations are not accepted; mode belongs to the reviewed file operation.
   metadata, keep the lock readable but report source/wiki evidence incomplete
   until update or repair refreshes the lock.
 - External launcher descriptors are represented by an explicit absolute destination plus `external=true`; lock and readiness code must validate that path separately from project-relative destinations.
-- Manifest-declared repository scripts are surfaced as high-risk external actions in the dry run and remain approval-bound. Their command source and platform are copied from the verified manifest; a successful project transaction must not imply that an optional external action or provider health check passed.
+- Manifest-declared repository scripts remain approval-bound external actions in the core plan. The dry run presents them as concise **Setup checks** with technical command details behind a second disclosure; do not expose internal risk labels or developer-facing component IDs in the normal summary. Their command source and platform are copied from the verified manifest; a successful project transaction must not imply that an optional external action or provider health check passed.
 - When the MCP component is selected and the reviewed manifest supplies
   immutable executable, command-interpreter, and runtime identity evidence,
   transaction readiness must use the reviewed external action to perform the
@@ -156,6 +156,20 @@ mutations for the same canonical project. Corrupt journals whose bounded root
 matches the selected project are a recovery blocker, not something to skip.
 Offer resume, rollback, or discard staging only when the recorded state makes
 the action safe.
+
+Immediately before approving or applying a newly reviewed plan, the UI must
+ask the core for an existing non-terminal transaction bound to the same
+project. When one exists, route to its recovery choices without approving or
+applying the new plan. If apply reports an overlap or interruption, discover
+the bound non-terminal journal rather than looking up only the new plan ID.
+Treat the in-flight command as active work, not an interrupted transaction:
+show Progress and suspend renderer-side recovery discovery until the command
+returns. Refresh a Recovery screen from core-normalized journal state so an
+apply-started transaction offers rollback instead of a stale pre-apply resume
+or staging discard.
+Progress reads only the exact active transaction ID already approved by the
+renderer/core session. It may display journal checkpoints while the command is
+running, but it never edits the journal or treats a polled snapshot as success.
 
 Resume must compare the recorded plan hash, operation preconditions, journal expectations, staged-file hashes, the exact predecessor-lock existence/hash state, and observed filesystem state. `resume_transaction` replays the full runner only from a pre-apply interrupted checkpoint; once project apply has started it refuses resume and requires rollback or manual review. Never trust the last journal line alone.
 

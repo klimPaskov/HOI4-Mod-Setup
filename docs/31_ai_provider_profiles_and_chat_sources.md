@@ -71,6 +71,8 @@ the selected package as read-only. When selected, the core stages a
 - every selected `.codex/agents/*.toml` subagent file.
 
 The normal `.agents/skills/` and `.codex/agents/` trees remain intact. The
+offline wiki, wiki media, descriptors, configuration, and workflow assets are
+not copied into this folder and do not count against its flattening limits. The
 flattened folder is generated through the same plan, conflict, backup,
 staging, validation, apply, readiness, journal, and rollback contract. Rust
 rejects links, secret-shaped content, case-insensitive

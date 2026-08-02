@@ -53,11 +53,20 @@ credential vault under an opaque reference and may be injected only as
 `MESHY_API_KEY`. Reject other secret environment declarations and reject
 credential-shaped keys or values before serializing plans, locks, journals,
 diagnostics, or generated artifacts.
-The typed plan and generated project state may carry only the opaque
-`credential://meshy_api_key/<uuid>` reference returned by the OS vault adapter,
+The verified 3D skill's exact documentation token
+`msy_your_actual_key_here` is non-secret and may pass serialization checks.
+Apply that exception through the shared bounded-token detector so plans,
+journals, and flattened exports agree; longer values and every other `msy_`
+shape remain blocked. Persist the documentation token unchanged rather than
+silently rewriting selected source content.
+The typed plan and generated project state may carry only the opaque stable
+`credential://meshy_api_key/default` reference returned by the OS vault adapter,
 only when `workflow.3d` is selected; validate the exact reference shape during
-migration and never accept a renderer-supplied secret or arbitrary provider.
-The explicit delete route accepts only the platform's generated Meshy UUID
+migration and continue accepting legacy app-generated UUID references. On
+startup, read the stable reference; on Windows, boundedly rediscover the newest
+valid legacy entry and reuse it in place without copying, rewriting, logging,
+or deleting its value. Never accept a renderer-supplied secret or arbitrary
+provider. The explicit delete route accepts only the stable or legacy Meshy
 reference and clears the in-memory reference after the vault operation. A
   managed component removal never deletes an OS credential implicitly.
 Renderer state calls must blank the Meshy password draft before Tauri IPC; only
@@ -207,6 +216,8 @@ Use read-only default permissions. Grant write permission only to a release job 
 - updater metadata tampering
 - support bundle redaction
 - scoped Meshy injection into an approved child with secret-free stdout/stderr
+- exact documented Meshy placeholder accepted while real and extended `msy_`
+  values remain rejected from every persisted JSON boundary
 - provider-keyed AI credential isolation, endpoint validation, bounded response
   handling, and no-secret flatten output
 

@@ -66,6 +66,7 @@ interface TauriCommandMap {
   suggest_project_paths: { args: { projectId: string }; result: SuggestedProjectPaths };
   preview_source_manifest: { args: { sourceMode: WizardState["sourceMode"]; pinnedRef: string }; result: SourceManifestPreview };
   store_meshy_credential: { args: { value: string }; result: CredentialReference };
+  meshy_credential_status: { args: Record<string, never>; result: CredentialReference | null };
   remove_meshy_credential: { args: { reference: CredentialReference }; result: void };
   scan_project: { args: { root: string; requestId: string; launcherDescriptorPath?: string | null }; result: RawScanResult };
   cancel_scan: { args: { requestId: string }; result: void };
@@ -78,7 +79,7 @@ interface TauriCommandMap {
   build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; codexAnalysis?: CodexAnalysisRecord | null; addOptionalComponents?: string[] }; result: InstallationPlan };
   approve_installation: { args: { planId: string }; result: void };
   resolve_installation_conflict: { args: { planId: string; path: string; choice: string }; result: InstallationPlan };
-  apply_installation: { args: { plan: InstallationPlan; projectRoot: string }; result: TransactionJournal };
+  apply_installation: { args: { planId: string; projectRoot: string }; result: TransactionJournal };
   rollback_installation: { args: { projectRoot: string; transactionId: string }; result: TransactionJournal };
   read_transaction_journal: { args: { projectRoot: string; transactionId: string }; result: TransactionJournal };
   find_interrupted_transaction: { args: { projectRoot: string }; result: TransactionJournal | null };
@@ -143,6 +144,10 @@ export async function invokeCommandResult<Command extends keyof TauriCommandMap>
 export async function storeMeshyCredential(value: string): Promise<CredentialReference | null> {
   if (!value.trim()) return null;
   return invokeCommand("store_meshy_credential", { value });
+}
+
+export async function readMeshyCredential(): Promise<CredentialReference | null> {
+  return invokeCommand("meshy_credential_status", {});
 }
 
 export async function removeMeshyCredential(reference: CredentialReference): Promise<boolean> {
@@ -367,12 +372,20 @@ export async function previewDescriptors(state: WizardState): Promise<GeneratedA
   return (await invokeCommand("preview_descriptors", { state: stateForCore(state) })) ?? [];
 }
 
+export async function previewDescriptorsResult(state: WizardState): Promise<CommandResult<GeneratedArtifactPreview[]>> {
+  return invokeCommandResult("preview_descriptors", { state: stateForCore(state) });
+}
+
 export async function previewInstallationConflict(planId: string, path: string): Promise<ConflictPreview | null> {
   return invokeCommand("preview_installation_conflict", { planId, path });
 }
 
 export async function buildInstallationPlan(state: WizardState): Promise<InstallationPlan | null> {
   return invokeCommand("build_installation_plan", { state: stateForCore(state) });
+}
+
+export async function buildInstallationPlanResult(state: WizardState): Promise<CommandResult<InstallationPlan>> {
+  return invokeCommandResult("build_installation_plan", { state: stateForCore(state) });
 }
 
 function stateForCore(state: WizardState): WizardState {
@@ -382,7 +395,7 @@ function stateForCore(state: WizardState): WizardState {
 }
 
 export async function approveInstallation(planId: string): Promise<boolean> {
-  return (await invokeCommand("approve_installation", { planId })) !== null;
+  return (await invokeCommandResult("approve_installation", { planId })).error === undefined;
 }
 
 export async function resolveInstallationConflict(planId: string, path: string, choice: string): Promise<InstallationPlan | null> {
@@ -413,8 +426,12 @@ export async function discardInstallationStaging(projectRoot: string, transactio
   return invokeCommand("discard_installation_staging", { projectRoot, transactionId });
 }
 
-export async function applyInstallation(plan: InstallationPlan, projectRoot: string): Promise<TransactionJournal | null> {
-  return invokeCommand("apply_installation", { plan, projectRoot });
+export async function applyInstallation(planId: string, projectRoot: string): Promise<TransactionJournal | null> {
+  return invokeCommand("apply_installation", { planId, projectRoot });
+}
+
+export async function applyInstallationResult(planId: string, projectRoot: string): Promise<CommandResult<TransactionJournal>> {
+  return invokeCommandResult("apply_installation", { planId, projectRoot });
 }
 
 export async function openInCodex(projectRoot: string): Promise<OpenInCodexResult | null> {
