@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Keep script prefixes and primary namespaces out of generated HOI4 descriptor files while retaining them for project guidance and later maintenance.
+
 ### Fixed
 
 - Made installation use the core-owned reviewed plan so provider analysis records are not serialized through the interface

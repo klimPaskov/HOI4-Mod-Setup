@@ -140,6 +140,7 @@ revalidated.
   redirection are honored; the user may explicitly override it.
 - The launcher descriptor contains the canonical absolute project path using platform-correct escaping.
 - The descriptors share the reviewed name, version, supported game version, tags, and picture reference where applicable.
+- Script prefixes and primary namespaces are scripting conventions stored in setup metadata and project guidance. They are never written as `script_prefix` or `namespace` keys in either descriptor.
 - The app does not fabricate `remote_file_id` or another Workshop identity.
 - `thumbnail.png` is rendered deterministically from a bundled template, previewed before apply, decoded after staging, and tracked by hash.
 - The placeholder remains managed until the user modifies or replaces it. Updates and repairs never overwrite a modified thumbnail silently.

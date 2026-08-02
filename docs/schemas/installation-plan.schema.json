@@ -44,6 +44,14 @@
     "project_id": {
       "type": "string"
     },
+    "script_prefix": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z_][a-z0-9_]{0,63}$"
+    },
+    "primary_namespace": {
+      "type": ["string", "null"],
+      "pattern": "^[a-z_][a-z0-9_]{0,63}$"
+    },
     "ai_provider": {
       "enum": ["codex", "claude", "kimi", "glm", "deepseek", "local", "custom"]
     },

@@ -21,6 +21,7 @@ Use the smallest useful layer and keep high-risk behavior covered at more than o
 
 - unit tests for deterministic domain functions
 - property tests for invariants
+- descriptor regression tests must use identities with a script prefix and primary namespace and prove that neither unsupported key is emitted into the internal or launcher descriptor
 - fuzzing for parsers and hostile input; the checked-in cargo-fuzz targets cover
   manifests, relative paths, provider analysis payloads, descriptors/thumbnail
   PNGs, structured TOML merges, and flattened ChatGPT-source mappings

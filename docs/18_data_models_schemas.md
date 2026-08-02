@@ -91,7 +91,7 @@ The journal records transaction state only. Semantic analysis is complete before
 
 ## Generated launcher artifacts
 
-Generated `descriptor.mod`, the external `<project_id>.mod`, and `thumbnail.png` are first-class operations and lock rows. Every row records `location_scope`, generator source, installed hash, ownership, platform, and rollback behavior. The external descriptor receives backup and restoration like any other managed destination.
+Generated `descriptor.mod`, the external `<project_id>.mod`, and `thumbnail.png` are first-class operations and lock rows. Every row records `location_scope`, generator source, installed hash, ownership, platform, and rollback behavior. The external descriptor receives backup and restoration like any other managed destination. `script_prefix` and `primary_namespace` are optional installation-plan and installation-lock metadata used by generated guidance and maintenance; they are not HOI4 descriptor fields. Legacy locks remain readable because both fields default to null.
 
 New-project plans additionally record whether the root is an existing path or a
 single `create_leaf`, the canonical parent, and the reviewed leaf name. A

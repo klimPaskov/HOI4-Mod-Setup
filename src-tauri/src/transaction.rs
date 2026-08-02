@@ -3576,6 +3576,14 @@ fn build_lock(
     Ok(InstallationLock {
         schema_version: "1.0.0".into(),
         project_id: plan.project_id.clone(),
+        script_prefix: plan
+            .script_prefix
+            .clone()
+            .or_else(|| previous_lock.and_then(|lock| lock.script_prefix.clone())),
+        primary_namespace: plan
+            .primary_namespace
+            .clone()
+            .or_else(|| previous_lock.and_then(|lock| lock.primary_namespace.clone())),
         installed_at,
         updated_at,
         source: LockSourceIdentity {
@@ -5723,6 +5731,8 @@ mod tests {
             schema_version: "1.0.0".into(),
             plan_id: uuid::Uuid::new_v4(),
             project_id: "example".into(),
+            script_prefix: Some("example".into()),
+            primary_namespace: Some("example".into()),
             created_at: Some(Utc::now().to_rfc3339()),
             maintenance_mode: None,
             source: SourceIdentity {
@@ -7971,6 +7981,8 @@ mod tests {
         let lock = InstallationLock {
             schema_version: "1.0.0".into(),
             project_id: "demo".into(),
+            script_prefix: Some("demo".into()),
+            primary_namespace: Some("demo".into()),
             installed_at: Utc::now().to_rfc3339(),
             updated_at: None,
             source: LockSourceIdentity {
@@ -8031,6 +8043,8 @@ mod tests {
         let lock = InstallationLock {
             schema_version: "1.0.0".into(),
             project_id: "demo".into(),
+            script_prefix: Some("demo".into()),
+            primary_namespace: Some("demo".into()),
             installed_at: Utc::now().to_rfc3339(),
             updated_at: None,
             source: LockSourceIdentity {

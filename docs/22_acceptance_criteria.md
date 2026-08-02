@@ -21,6 +21,7 @@
   `.gitkeep` files; rollback removes only transaction-created directories that
   remain empty and preserves directories containing later user work.
 - NEW-06: Apply creates the internal `descriptor.mod`.
+- NEW-06A: Neither generated descriptor contains the unsupported `script_prefix` or `namespace` keys; those conventions remain in setup metadata and project guidance.
 - NEW-07: Apply creates the external `<project_id>.mod` in the confirmed HOI4 user mod directory.
 - NEW-08: The launcher descriptor points to the canonical project root with platform-correct escaping.
 - NEW-09: Both descriptors are previewed, parsed, and validated before apply and after staging.

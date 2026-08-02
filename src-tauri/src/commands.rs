@@ -2581,12 +2581,19 @@ fn maintenance_identity(lock: &InstallationLock, root: &Path) -> ProjectIdentity
         supported_game_version: "*".into(),
         project_root: root.to_path_buf(),
         default_branch: "main".into(),
-        script_prefix: descriptor
-            .as_ref()
-            .and_then(|fields| fields.get("script_prefix").cloned()),
-        primary_namespace: descriptor
-            .as_ref()
-            .and_then(|fields| fields.get("namespace").cloned()),
+        // Prefer metadata written by current versions. The descriptor fallback
+        // reads legacy installs once so repair can migrate away from the old,
+        // unsupported descriptor keys without losing the user's convention.
+        script_prefix: lock.script_prefix.clone().or_else(|| {
+            descriptor
+                .as_ref()
+                .and_then(|fields| fields.get("script_prefix").cloned())
+        }),
+        primary_namespace: lock.primary_namespace.clone().or_else(|| {
+            descriptor
+                .as_ref()
+                .and_then(|fields| fields.get("namespace").cloned())
+        }),
         descriptor_tags: Vec::new(),
         launcher_descriptor_path: None,
     }
@@ -3471,6 +3478,8 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             .and_then(Value::as_str)
             .unwrap_or("project")
             .into(),
+        script_prefix: identity.script_prefix.clone(),
+        primary_namespace: identity.primary_namespace.clone(),
         created_at: Some(chrono::Utc::now().to_rfc3339()),
         maintenance_mode: None,
         source: resolution.identity,
@@ -4887,6 +4896,8 @@ fn build_maintenance_plan_blocking(
         schema_version: "1.0.0".into(),
         plan_id: Uuid::new_v4(),
         project_id: lock.project_id.clone(),
+        script_prefix: lock.script_prefix.clone(),
+        primary_namespace: lock.primary_namespace.clone(),
         created_at: Some(chrono::Utc::now().to_rfc3339()),
         maintenance_mode: Some(mode.clone()),
         source: plan_source,
@@ -6298,6 +6309,8 @@ developer_instructions = "Work on the named files."
                 schema_version: "1.0.0".into(),
                 plan_id: Uuid::new_v4(),
                 project_id: "example".into(),
+                script_prefix: Some("example".into()),
+                primary_namespace: Some("example".into()),
                 created_at: None,
                 maintenance_mode: None,
                 source: SourceIdentity {

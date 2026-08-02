@@ -126,14 +126,9 @@ pub fn render_descriptor_mod(identity: &ProjectIdentity) -> Result<String, AppEr
         quote(&identity.version),
         quote(&identity.supported_game_version),
     );
-    if let Some(prefix) = identity.script_prefix.as_deref() {
-        validate_identifier(prefix, "script prefix")?;
-        descriptor.push_str(&format!("script_prefix=\"{}\"\n", quote(prefix)));
-    }
-    if let Some(namespace) = identity.primary_namespace.as_deref() {
-        validate_identifier(namespace, "primary namespace")?;
-        descriptor.push_str(&format!("namespace=\"{}\"\n", quote(namespace)));
-    }
+    // Script prefixes and namespaces are project conventions, not valid HOI4
+    // descriptor fields. They are retained in installation metadata and
+    // adapted project guidance instead of being written to either .mod file.
     if !identity.descriptor_tags.is_empty() {
         let mut tags = identity.descriptor_tags.clone();
         tags.sort();
@@ -155,24 +150,6 @@ pub fn render_descriptor_mod(identity: &ProjectIdentity) -> Result<String, AppEr
         descriptor.push_str(&rendered);
     }
     Ok(descriptor)
-}
-
-fn validate_identifier(value: &str, label: &str) -> Result<(), AppError> {
-    if value.is_empty()
-        || value.chars().count() > 64
-        || !value.chars().enumerate().all(|(index, character)| {
-            (index == 0 && (character.is_ascii_lowercase() || character == '_'))
-                || (index > 0
-                    && (character.is_ascii_lowercase()
-                        || character.is_ascii_digit()
-                        || character == '_'))
-        })
-    {
-        return Err(AppError::InvalidInput(format!(
-            "{label} contains unsupported characters"
-        )));
-    }
-    Ok(())
 }
 
 /// A fixed 1x1 RGBA PNG keeps a fresh project launcher-ready without
@@ -339,10 +316,17 @@ mod tests {
 
     #[test]
     fn descriptors_round_trip_and_escape_values() {
-        let rendered = render_descriptor_mod(&identity()).unwrap();
+        let mut identity = identity();
+        identity.script_prefix = Some("cwsea".into());
+        identity.primary_namespace = Some("cwsea".into());
+        let rendered = render_descriptor_mod(&identity).unwrap();
         let parsed = parse_descriptor(rendered.as_bytes()).unwrap();
         assert_eq!(parsed.fields.get("name").unwrap(), "Cold War Curtain");
         assert_eq!(parsed.fields.get("supported_version").unwrap(), "1.17.*");
+        assert!(!parsed.fields.contains_key("script_prefix"));
+        assert!(!parsed.fields.contains_key("namespace"));
+        assert!(!rendered.contains("script_prefix="));
+        assert!(!rendered.contains("namespace="));
     }
 
     #[test]
@@ -354,9 +338,14 @@ mod tests {
 
     #[test]
     fn launcher_descriptor_contains_the_selected_project_path() {
+        let mut identity = identity();
+        identity.script_prefix = Some("cwsea".into());
+        identity.primary_namespace = Some("cwsea".into());
         let text =
-            render_launcher_descriptor(&identity(), Path::new("C:/mods/cold_war_curtain")).unwrap();
+            render_launcher_descriptor(&identity, Path::new("C:/mods/cold_war_curtain")).unwrap();
         assert!(text.contains("path=\"C:/mods/cold_war_curtain\""));
+        assert!(!text.contains("script_prefix="));
+        assert!(!text.contains("namespace="));
     }
 
     #[test]

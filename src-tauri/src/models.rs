@@ -718,6 +718,14 @@ pub struct InstallationPlan {
     pub schema_version: String,
     pub plan_id: Uuid,
     pub project_id: String,
+    /// Project scripting convention. This is never written to a HOI4
+    /// descriptor; it is retained for generated guidance and maintenance.
+    #[serde(default)]
+    pub script_prefix: Option<String>,
+    /// Primary event namespace used by generated workflows. This is never a
+    /// descriptor field.
+    #[serde(default)]
+    pub primary_namespace: Option<String>,
     #[serde(default)]
     pub created_at: Option<String>,
     #[serde(default)]
@@ -841,6 +849,10 @@ pub struct LocalModification {
 pub struct InstallationLock {
     pub schema_version: String,
     pub project_id: String,
+    #[serde(default)]
+    pub script_prefix: Option<String>,
+    #[serde(default)]
+    pub primary_namespace: Option<String>,
     pub installed_at: String,
     #[serde(default)]
     pub updated_at: Option<String>,

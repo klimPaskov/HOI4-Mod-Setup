@@ -35,6 +35,7 @@ Read:
 - The user selects an AI provider and model at the start; Codex/ChatGPT is the default, and selected-provider authentication plus confirmed schema-valid analysis are required before Create, Import, Update, or Repair planning.
 - Provider optimization changes semantic conventions only; deterministic validation, source trust, transaction safety, and readiness rules are provider-independent.
 - New projects create both descriptors, a valid replaceable thumbnail, and the selected folder profile.
+- Script prefixes and primary namespaces are retained as project conventions in installation metadata and adapted guidance; neither is emitted as a key in the internal or launcher descriptor.
 - Selected starter folders are real reviewed directory entries, not `.gitkeep`
   files; rollback removes only transaction-created folders that remain empty.
 - On Windows and macOS, a new project defaults to the platform-resolved `Documents/Paradox Interactive/Hearts of Iron IV/mod` directory. A missing or untrusted standard directory is visible and requires one explicit manual destination choice.
