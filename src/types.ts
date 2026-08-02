@@ -442,7 +442,7 @@ export interface TransactionJournal {
   last_checkpoint: string;
   plan_sha256?: string | null;
   stages: Array<{ id: string; status: string; started_at?: string | null; completed_at?: string | null; evidence?: string[] }>;
-  operations: Array<{ id: string; status: string; destination: string; external?: boolean; backup_path?: string | null; rollback_source_path?: string | null; before_sha256?: string | null; expected_sha256?: string | null; after_sha256?: string | null; after_exists?: boolean | null }>;
+  operations: Array<{ id: string; status: string; destination: string; action?: InstallationAction; external?: boolean; backup_path?: string | null; rollback_source_path?: string | null; before_sha256?: string | null; expected_sha256?: string | null; after_sha256?: string | null; after_exists?: boolean | null }>;
   recovery: { resume_allowed: boolean; rollback_allowed: boolean; discard_staging_allowed: boolean; project_apply_started: boolean; recommended_action: string };
   error?: { code: string; message: string; stage: string } | null;
 }

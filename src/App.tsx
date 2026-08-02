@@ -1189,6 +1189,7 @@ function ScreenFrame({ screen, copy, state, canAdvance, pending, preparingPlan, 
         <div><div className="eyebrow">{(screen === "update" ? "Update" : screen === "conflict" ? "Conflicts" : screen === "recovery" ? "Recovery" : SCREEN_PHASE[screen]).toUpperCase()}</div><h1 id="screen-title" ref={headingRef} tabIndex={-1}>{copy.title}</h1>{copy.supporting && <p id="screen-supporting">{copy.supporting}</p>}</div>
         {copy.status && <Status label={copy.status.label} tone={copy.status.tone} />}
       </div>
+      {preparingPlan && screen === "dry-run" && <section className="panel plan-preparation" role="status" aria-label="Plan preparation status" aria-live="polite" aria-busy="true"><div><strong>Preparing changes</strong><span>Checking the selected files and building the review.</span></div><Progress label="Preparing changes" valueText="Preparing the installation review" /></section>}
       {children}
     </div>
     <footer className="footer-bar">
@@ -1935,25 +1936,34 @@ function Install({ state }: { state: WizardState }) {
   const completed = stages.filter((stage) => isDone(stage.status)).length;
   const activeStage = stages.find((stage) => stage.status === "active");
   const operations = state.transaction?.operations ?? [];
-  const completedOperations = activeStage?.id === "staging"
-    ? operations.filter((operation) => operation.status !== "pending").length
-    : activeStage?.id === "apply"
-      ? operations.filter((operation) => ["applied", "verified"].includes(operation.status)).length
-      : 0;
-  const operationFraction = operations.length > 0 && (activeStage?.id === "staging" || activeStage?.id === "apply")
-    ? completedOperations / operations.length
-    : 0;
+  const stagingOperations = operations.filter((operation) => !operation.external && !["skip", "external", "delete_managed"].includes(operation.action ?? ""));
+  const applyingOperations = operations.filter((operation) => !operation.external && operation.action !== "external");
+  const stageMeasurement = (stageId: string) => {
+    if (stageId === "staging" && stagingOperations.length > 0) {
+      const complete = stagingOperations.filter((operation) => ["staged", "applying", "applied", "verified"].includes(operation.status)).length;
+      const current = stagingOperations.find((operation) => !["staged", "applying", "applied", "verified"].includes(operation.status));
+      return { complete, total: stagingOperations.length, current: current?.destination };
+    }
+    if (stageId === "apply" && applyingOperations.length > 0) {
+      const complete = applyingOperations.filter((operation) => ["applied", "verified"].includes(operation.status)).length;
+      const current = applyingOperations.find((operation) => !["applied", "verified"].includes(operation.status));
+      return { complete, total: applyingOperations.length, current: current?.destination };
+    }
+    return undefined;
+  };
+  const activeMeasurement = activeStage ? stageMeasurement(activeStage.id) : undefined;
+  const operationFraction = activeMeasurement ? activeMeasurement.complete / activeMeasurement.total : 0;
   const progress = state.transaction
     ? Math.min(100, Math.round(((completed + operationFraction) / stages.length) * 100))
     : state.installProgress;
-  const progressLabel = operations.length > 0 && activeStage?.id === "staging"
-    ? `Preparing file ${completedOperations} of ${operations.length}`
-    : operations.length > 0 && activeStage?.id === "apply"
-      ? `Installing file ${completedOperations} of ${operations.length}`
+  const progressLabel = activeMeasurement && activeStage?.id === "staging"
+    ? `Preparing file ${activeMeasurement.complete} of ${activeMeasurement.total}`
+    : activeMeasurement && activeStage?.id === "apply"
+      ? `Installing file ${activeMeasurement.complete} of ${activeMeasurement.total}`
       : state.transaction
         ? `${progress}% complete`
         : "Starting setup…";
-  return <div className="center-column"><section className="panel install-panel"><div className="install-progress"><Progress value={progress} label="Installation progress" valueText={progressLabel} /><Status label={progressLabel} tone={state.transaction ? "info" : "muted"} /></div>{stages.map((stage) => { const done = isDone(stage.status); const active = !done && stage.status === "active"; return <div key={stage.id} className={`timeline-row ${done ? "done" : active ? "active" : ""}`}><span className="timeline-icon">{done ? "✓" : active ? "●" : ""}</span><strong>{stageLabel(stage.id)}</strong><span>{done ? "Done" : active ? "In progress" : "Next"}</span></div>; })}<details><summary>Show setup details</summary><p className="muted">The app keeps a protected record of each step so an interrupted setup can continue safely.</p></details></section></div>;
+  return <div className="center-column"><section className="panel install-panel"><div className="install-progress"><div className="install-progress-track"><Progress value={progress} label="Installation progress" valueText={progressLabel} /><span className="install-progress-label">{progressLabel}</span></div><span className="install-percent" aria-hidden="true">{progress}%</span></div><div className="timeline" aria-live="polite">{stages.map((stage) => { const done = isDone(stage.status); const active = !done && stage.status === "active"; const measurement = active ? stageMeasurement(stage.id) : undefined; const stagePercent = done ? 100 : measurement ? Math.round((measurement.complete / measurement.total) * 100) : 0; const valueText = done ? `${stageLabel(stage.id)} complete` : active && measurement ? `${stageLabel(stage.id)} ${stagePercent}% complete` : active ? `${stageLabel(stage.id)} in progress` : `${stageLabel(stage.id)} not started`; return <div key={stage.id} className={`timeline-row ${done ? "done" : active ? "active" : ""}`}><span className="timeline-icon" aria-hidden="true">{done ? "✓" : active ? "●" : ""}</span><div className="timeline-copy"><strong>{stageLabel(stage.id)}</strong>{active && measurement?.current && <small title={measurement.current}>{measurement.current}</small>}</div><span className="timeline-percent">{done ? "100%" : active && measurement ? `${stagePercent}%` : active ? "Working…" : "0%"}</span>{active && <div className="stage-progress"><Progress value={measurement ? stagePercent : undefined} label={`${stageLabel(stage.id)} progress`} valueText={valueText} /></div>}</div>; })}</div><details><summary>Show setup details</summary><p className="muted">The app keeps a protected record of each step so an interrupted setup can continue safely.</p></details></section></div>;
 }
 
 function OnlineGitAction({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
@@ -2218,7 +2228,7 @@ function Field({ label, value, onChange, placeholder, action, onAction, mono }: 
   return <div className="field"><label className="field-label" htmlFor={id}>{label}</label><span className="input-with-action"><input id={id} className={`text-input ${mono ? "mono" : ""}`} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />{action && onAction && <button type="button" className="input-action" aria-label={`${action} ${label.toLowerCase()}`} onClick={onAction}>{action}</button>}</span></div>;
 }
 function PanelTitle({ title }: { title: string }) { return <h2 className="panel-title">{title}</h2>; }
-function Status({ label, tone }: { label: string; tone: StatusTone }) { return <span className={`status status-${tone}`}><span className="status-symbol" aria-hidden="true">{tone === "pass" ? "✓" : tone === "block" ? "!" : tone === "review" ? "!" : tone === "info" ? "i" : "–"}</span>{label}</span>; }
+function Status({ label, tone }: { label: string; tone: StatusTone }) { const symbol = tone === "pass" ? "✓" : tone === "block" || tone === "review" ? "!" : tone === "muted" ? "–" : ""; return <span className={`status status-${tone}`}>{symbol && <span className="status-symbol" aria-hidden="true">{symbol}</span>}{label}</span>; }
 function Progress({ value, label, valueText }: { value?: number; label: string; valueText?: string }) {
   const bounded = value === undefined ? undefined : Math.min(100, Math.max(0, value));
   return <div className={`progress ${bounded === undefined ? "indeterminate" : ""}`} role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuetext={valueText ?? (bounded === undefined ? "In progress" : `${bounded}% complete`)} {...(bounded === undefined ? {} : { "aria-valuenow": bounded })}><span style={bounded === undefined ? undefined : { width: `${bounded}%` }} /></div>;

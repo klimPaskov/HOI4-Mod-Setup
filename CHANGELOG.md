@@ -9,6 +9,8 @@ HOI4 Mod Setup follows semantic versioning.
 - Made installation use the core-owned reviewed plan so provider analysis records are not serialized through the interface
 - Show only recovery actions that can actually be used at the current transaction checkpoint
 - Install the complete optional Super Events guidance and research package at its intended project paths
+- Keep plan preparation visibly active and show journal-backed percentages and current files during installation
+- Remove decorative information letters from status labels
 
 ### Changed
 

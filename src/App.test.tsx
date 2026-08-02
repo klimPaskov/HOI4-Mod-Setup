@@ -768,6 +768,8 @@ describe("HOI4 Mod Setup wizard", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     expect(screen.getByRole("button", { name: "Preparing changes…" })).toBeDisabled();
+    expect(screen.getByRole("status", { name: "Plan preparation status" })).toHaveTextContent("Preparing changes");
+    expect(screen.getByRole("progressbar", { name: "Preparing changes" })).toHaveAttribute("aria-valuetext", "Preparing the installation review");
     expect(screen.getByRole("button", { name: /start installation/i })).toBeDisabled();
 
     await act(async () => finishPlan?.({ value: { operations: [], conflicts: [], generated_artifacts: [], external_actions: [] } }));
@@ -854,8 +856,11 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.queryByRole("heading", { name: "Installation was interrupted" })).not.toBeInTheDocument();
     expect(await screen.findByText("Preparing file 2 of 4")).toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: "Installation progress" })).toHaveAttribute("aria-valuetext", "Preparing file 2 of 4");
-    expect(within(screen.getByText("Check the project").closest(".timeline-row") as HTMLElement).getByText("Done")).toBeInTheDocument();
-    expect(within(screen.getByText("Prepare the setup").closest(".timeline-row") as HTMLElement).getByText("In progress")).toBeInTheDocument();
+    const prepareRow = screen.getByText("Prepare the setup").closest(".timeline-row") as HTMLElement;
+    expect(within(prepareRow).getByText("50%")).toBeInTheDocument();
+    expect(within(prepareRow).getByRole("progressbar", { name: "Prepare the setup progress" })).toHaveAttribute("aria-valuenow", "50");
+    expect(within(screen.getByText("Check the project").closest(".timeline-row") as HTMLElement).getByText("100%")).toBeInTheDocument();
+    expect(within(screen.getByText("Validate the project").closest(".timeline-row") as HTMLElement).getByText("0%")).toBeInTheDocument();
 
     await act(async () => finishInstallation?.({
       value: {

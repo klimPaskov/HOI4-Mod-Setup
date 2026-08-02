@@ -79,6 +79,7 @@ Conflict review is the exception. It may show a three-way comparison and more co
   is ready and not usage-limited; Codex requires ChatGPT mode. Keep signed-out
   recovery and removal reachable from Welcome.
 - Progress shows current stage and durable checkpoint, not the full log.
+- Plan preparation must have a visible indeterminate busy region so the window never appears frozen while the reviewed file plan is built. Installation rows show 0% before work and 100% after completion; staging and apply may show intermediate percentages only from journaled completed-file counts, together with the current root-relative destination. Use an active non-numeric state when a stage has no measurable total.
 - Starting installation rechecks for an unfinished setup on the selected
   project. When found, open the recovery screen with a concise message and the
   core-approved Continue, Undo, or Discard choices instead of leaving a raw
