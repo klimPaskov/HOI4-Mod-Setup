@@ -82,10 +82,15 @@ Conflict review is the exception. It may show a three-way comparison and more co
   label both as estimates because the provider exposes no exact total.
 - Keep the Description planning progress panel centered at the same width as
   the Description form so the pending state does not shift the visual column.
+- Keep ordinary single-column panels centered at the same 920-pixel maximum
+  width as the screen heading. Do not narrow only selected pages or left-align
+  wider panels.
 - The Welcome and planning actions remain disabled until the selected provider
   is ready and not usage-limited; Codex requires ChatGPT mode. Keep signed-out
   recovery and removal reachable from Welcome.
-- Progress shows current stage and durable checkpoint, not the full log.
+- Progress shows current stage and durable checkpoint, not the full log. Keep
+  the journal-backed `x of y files` count, percentage, and estimated time with
+  the main installation progress bar.
 - Plan preparation must have a visible indeterminate busy region so the window never appears frozen while the reviewed file plan is built. Installation rows show 0% before work and 100% after completion; staging and apply may show intermediate percentages only from journaled completed-file counts, together with the current root-relative destination. Use an active non-numeric state when a stage has no measurable total. Show an approximate remaining-time label only after real elapsed progress is available and keep a once-per-second clock while active so a long file does not make the window appear frozen.
 - Starting installation rechecks for an unfinished setup on the selected
   project. When found, open the recovery screen with a concise message and the
@@ -117,6 +122,12 @@ Conflict review is the exception. It may show a three-way comparison and more co
   and expose the vault-only key field for repair.
 - Readiness leads with core status. Open in Codex is shown only for Codex; other providers receive an honest provider-specific handoff or no opener.
 - Optional source-declared health actions are rendered only when readiness identifies a runnable verified route. `planned_unavailable` and `unsupported_platform` remain visible as status text without an actionable button.
+- Run optional health checks outside the UI thread, block duplicate clicks,
+  and convert process or startup failures into an incomplete optional state. A
+  3D check failure must not crash or block the core-ready app.
+- Do not show operating-system or generic platform details in ordinary UI.
+  Resolve compatibility internally and say **Not available on this computer**
+  only when the distinction affects the selected route.
 - In the dry run, call manifest-declared validation actions **Setup checks**. Show a simple included count and human-readable check names by default; keep commands, folders, environment names, and expected changes behind a nested disclosure. Do not show internal risk labels or component IDs in the normal interface.
 - Keep the plan-preparation panel aligned to the same maximum width as the
   dry-run metrics and columns. The file-plan disclosure must show the actual

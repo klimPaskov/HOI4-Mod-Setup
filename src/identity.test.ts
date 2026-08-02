@@ -11,7 +11,7 @@ describe("generated project identity", () => {
     expect(generated.projectId).toBe("iron_dawn");
     expect(generated.scriptPrefix).toBe("id");
     expect(generated.primaryNamespace).toBe("id");
-    expect(generated.descriptorTags).toEqual(["Total Conversion", "Alternative History", "Events"]);
+    expect(generated.descriptorTags).toEqual(["Alternative History", "Events", "Gameplay"]);
     expect(generated.folderProfile).toEqual(["common", "events", "localisation/english", "gfx", "interface", "docs", "history"]);
   });
 

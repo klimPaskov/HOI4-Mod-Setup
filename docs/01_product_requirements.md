@@ -71,7 +71,7 @@ All semantic fields use the selected provider profile:
 - display name proposal
 - project ID proposal
 - script prefix and namespace proposal
-- descriptor tag proposal
+- descriptor tag proposal restricted to the current official Hearts of Iron IV Workshop categories
 - initial folder profile proposal
 - `AGENTS.md` adaptation
 - skill and subagent recommendations
@@ -279,7 +279,7 @@ installation or readiness.
 
 ### MCP setup
 
-Show source, capabilities, platform support, tools, environment variables, command preview without secrets, installation state, health result, and update policy. Never invent an unsupported platform command.
+Show source, capabilities, tools, environment variables, command preview without secrets, installation state, health result, and update policy. Platform compatibility is evaluated internally; ordinary screens show only a concise unavailable state when a selected route cannot run. Never invent an unsupported platform command.
 
 ### Git setup
 

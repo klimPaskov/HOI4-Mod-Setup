@@ -1556,10 +1556,25 @@ fn bound_process_output(value: String) -> String {
 }
 
 #[tauri::command(async)]
-fn run_3d_health_check(project_root: String) -> Result<WorkflowHealthResult, String> {
-    run_blocking_command("3d-health-check", move || {
-        run_3d_health_check_blocking(project_root)
+async fn run_3d_health_check(project_root: String) -> Result<WorkflowHealthResult, String> {
+    let result =
+        tauri::async_runtime::spawn_blocking(move || run_3d_health_check_blocking(project_root))
+            .await;
+    Ok(match result {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => three_d_failure(error),
+        Err(_) => three_d_failure("the 3D setup check stopped unexpectedly".into()),
     })
+}
+
+fn three_d_failure(error: String) -> WorkflowHealthResult {
+    WorkflowHealthResult {
+        status: "incomplete".into(),
+        exit_code: None,
+        timed_out: error.to_ascii_lowercase().contains("timed out"),
+        stdout: String::new(),
+        stderr: bound_process_output(redact_secrets(&error, &[])),
+    }
 }
 
 fn run_3d_health_check_blocking(project_root: String) -> Result<WorkflowHealthResult, String> {
@@ -5333,6 +5348,15 @@ mod tests {
     }
 
     #[test]
+    fn three_d_failures_return_a_redacted_non_blocking_result() {
+        let result = three_d_failure("Bearer private-health-token timed out".into());
+        assert_eq!(result.status, "incomplete");
+        assert!(result.timed_out);
+        assert!(result.stderr.contains("REDACTED"));
+        assert!(!result.stderr.contains("private-health-token"));
+    }
+
+    #[test]
     fn supervisor_restarts_after_interruption_and_reinitializes_after_malformed_jsonl() {
         #[derive(Debug)]
         struct FakeSession {
@@ -5423,7 +5447,7 @@ mod tests {
                 "defaultBranch": "main",
                 "scriptPrefix": "cwc",
                 "primaryNamespace": "cold_war_curtain",
-                "descriptorTags": ["Gameplay", "Total Conversion"],
+                "descriptorTags": ["Gameplay", "Graphics"],
                 "launcherDescriptorPath": launcher.display().to_string()
             }
         });
@@ -5437,7 +5461,7 @@ mod tests {
         );
         assert_eq!(
             identity.descriptor_tags,
-            vec!["Gameplay".to_string(), "Total Conversion".to_string()]
+            vec!["Gameplay".to_string(), "Graphics".to_string()]
         );
     }
 

@@ -1071,7 +1071,7 @@ pub(crate) fn analysis_prompt_for_provider(
 ) -> Result<String, AppError> {
     let input = serde_json::to_string(&model_visible_analysis_input(request))?;
     Ok(format!(
-        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Set analysis_id to a fresh RFC 4122 UUID. Return every required proposal key exactly once. descriptor_tags and folder_profile proposal values must be JSON arrays of strings; every other proposal value must be a string. Propose concise reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs; never invent paths or references. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
+        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Set analysis_id to a fresh RFC 4122 UUID. Return every required proposal key exactly once. descriptor_tags and folder_profile proposal values must be JSON arrays of strings; every other proposal value must be a string. Descriptor tags may use only these official categories: Alternative History, Balance, Events, Fixes, Gameplay, Graphics, Historical, Ideologies, Map, Military, National Focuses, Sound, Technologies, Translation, Utilities. Propose concise, user-facing reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs; never invent paths or references. Keep project_summary, reasons, and warnings focused on the mod; never mention schemas, constraints, evidence fields, operating systems, platforms, or Workshop ID rules. Return warnings only when the user must make a decision or correct something. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
     ))
 }
 
@@ -1191,6 +1191,7 @@ pub(crate) fn validate_analysis_output(
             ));
         }
         validate_output_text(&proposal.reason, "Codex proposal reason")?;
+        validate_user_facing_analysis_text(&proposal.reason, "Codex proposal reason")?;
         reject_sensitive_output_value(&proposal.value)?;
         validate_proposal_value(&proposal.key, &proposal.value)?;
     }
@@ -1220,13 +1221,40 @@ pub(crate) fn validate_analysis_output(
         ));
     }
     validate_output_text(&analysis.project_summary, "Codex project summary")?;
+    validate_user_facing_analysis_text(&analysis.project_summary, "Codex project summary")?;
     for warning in &analysis.warnings {
         validate_output_text(warning, "Codex warning")?;
+        validate_user_facing_analysis_text(warning, "Codex warning")?;
     }
     for recommendation in &analysis.component_recommendations {
         validate_output_text(&recommendation.reason, "Codex recommendation reason")?;
+        validate_user_facing_analysis_text(&recommendation.reason, "Codex recommendation reason")?;
     }
     Ok(analysis)
+}
+
+fn validate_user_facing_analysis_text(value: &str, label: &str) -> Result<(), AppError> {
+    let normalized = value.to_ascii_lowercase();
+    const INTERNAL_TERMS: &[&str] = &[
+        "approved input",
+        "constraint",
+        "evidence_refs",
+        "evidence refs",
+        "input_sha256",
+        "input sha-256",
+        "output schema",
+        "workshop id",
+        "windows",
+        "macos",
+        "operating system",
+        "platform",
+    ];
+    if INTERNAL_TERMS.iter().any(|term| normalized.contains(term)) {
+        return Err(AppError::Serialization(format!(
+            "{label} contains internal setup details"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_output_text(value: &str, label: &str) -> Result<(), AppError> {
@@ -1345,17 +1373,11 @@ fn validate_proposal_value(key: &ProposalKey, value: &Value) -> Result<(), AppEr
             let tags = value.as_array().ok_or_else(|| {
                 AppError::Serialization("Codex descriptor tags proposal must be an array".into())
             })?;
-            if tags.len() > 32
-                || tags.iter().any(|tag| {
-                    tag.as_str().is_none_or(|tag| {
-                        tag.trim().is_empty()
-                            || tag.len() > 64
-                            || tag.contains('\0')
-                            || tag.contains('\n')
-                            || tag.contains('\r')
-                    })
-                })
-            {
+            let tags = tags
+                .iter()
+                .map(|tag| tag.as_str().unwrap_or_default().to_string())
+                .collect::<Vec<_>>();
+            if crate::descriptors::validate_descriptor_tags(&tags).is_err() {
                 return Err(AppError::Serialization(
                     "Codex descriptor tags proposal is invalid".into(),
                 ));
@@ -2874,6 +2896,27 @@ mod tests {
     }
 
     #[test]
+    fn analysis_output_rejects_unknown_descriptor_tags_and_internal_notes() {
+        let input_sha256 = "a".repeat(64);
+        let mut invalid_tag = valid_analysis_value(&input_sha256);
+        invalid_tag["proposals"][5]["value"] = json!(["Total Conversion"]);
+        assert!(
+            validate_analysis_output(invalid_tag, "new_project_identity", &input_sha256, &[],)
+                .is_err()
+        );
+
+        let mut internal_note = valid_analysis_value(&input_sha256);
+        internal_note["warnings"] = json!(["The approved input contains no evidence_refs."]);
+        assert!(validate_analysis_output(
+            internal_note,
+            "new_project_identity",
+            &input_sha256,
+            &[],
+        )
+        .is_err());
+    }
+
+    #[test]
     fn evidence_paths_are_root_contained_and_hashes_are_lowercase() {
         let request = CodexAnalysisRequest {
             mode: "existing_project_semantics".into(),
@@ -3283,7 +3326,7 @@ mod tests {
                 excerpt_sha256: sha256_bytes(b"fact"),
                 confidence: Some(0.9),
             }],
-            constraints: json!({"platform": "windows_or_macos"}),
+            constraints: json!({"project_id_pattern": "^[a-z][a-z0-9_]{1,63}$"}),
             analysis_purpose: Some("existing_project_import".into()),
             project_root: Some("C:/Users/private/mod".into()),
             scan_id: Some(Uuid::new_v4()),
@@ -3294,8 +3337,11 @@ mod tests {
         assert!(prompt.contains("finding-1"));
         assert!(prompt.contains("fresh RFC 4122 UUID"));
         assert!(prompt.contains("descriptor_tags and folder_profile"));
+        assert!(prompt.contains("Alternative History, Balance, Events"));
+        assert!(prompt.contains("Return warnings only when the user must make a decision"));
         assert!(!prompt.contains("C:/Users/private/mod"));
         assert!(!prompt.contains("scan_id"));
+        assert!(!prompt.contains("windows_or_macos"));
     }
 
     #[test]

@@ -90,7 +90,7 @@ Update, conflict resolution, and interrupted recovery use a separate four-item m
 
 Keep the active form or review surface near the upper left of the content area. Use a comfortable maximum width instead of stretching controls across the window.
 
-Most setup screens should use a single column between 760 and 900 pixels. A two-column layout is reserved for direct comparisons or a selected-item detail view.
+Most setup screens use a centered single column up to 920 pixels, aligned with the screen heading. A two-column layout is reserved for direct comparisons or a selected-item detail view.
 
 ### Footer
 
@@ -110,11 +110,11 @@ Do not display permanent keyboard shortcut hints in the footer. Keyboard support
    immediately followed by **Do you want to set up the Super Events workflow?**
    The Super Events row shows no credential control or provider-specific
    status.
-8. **3D and Meshy key**: credential field, secure-storage choice, test action, compact status, requirements open by default.
+8. **3D and Meshy key**: credential field, secure-storage choice, test action, compact status, requirements open by default. Keep credential actions visibly separated from the field; Configure later advances without deleting an existing stored key.
 9. **MCP and credentials**: compact server rows and credential names. Expand capabilities and environment details on demand.
 10. **Git setup**: three choices, branch and commit fields for the selected choice, remote and advanced options collapsed.
 11. **Install review**: change counts, a read-only summary of selected ChatGPT project files, short plan summary, preflight state, and a lazily rendered full file-and-folder plan on demand. Show starter directories as **Create folder** entries and never as `.gitkeep` files. Keep the preparation panel aligned to the same maximum width as the review below it.
-12. **Installation progress**: one progress bar, six grouped stages, current item, transaction log collapsed.
+12. **Installation progress**: one progress bar with the current `x of y files` count, percentage, and time estimate; six grouped stages; transaction log collapsed.
 13. **Final readiness**: one success state, an Open in Codex action only for Codex, four grouped core checks, compact 3D state, the final ChatGPT “Chat” recommendation when applicable, and one concise fixed HTTPS external portrait-workflow link.
 14. **Update and repair**: four primary maintenance actions and a short installed-state list.
 15. **Merge conflict review**: local and incoming comparison, resolution choices, result preview after selection.
@@ -167,6 +167,8 @@ and provider waits use async/thread-pool dispatch; the UI must not imply
 progress from a blocked event loop.
 
 Do not invent a percentage when total work is unknown. Plan preparation uses a visibly active indeterminate bar. Installation rows show 0% before work and 100% after completion; staging and apply use journaled file counts for truthful intermediate percentages and expose the current relative destination. The overall surface shows a clearly approximate time remaining derived from measured elapsed progress and falls back to `Calculating time remaining` until enough evidence exists. Do not expose the full transaction log by default.
+
+The app detects the current computer internally. Do not display operating-system or generic platform details in ordinary forms, planning summaries, component requirements, or guidance. When a selected route cannot run, use the concise user-facing state **Not available on this computer**.
 
 Recovery uses the selected action as the primary-button label. While Continue, Undo, or Discard is running, disable duplicate actions and replace the choice cards with one live progress surface. Rollback backup and restore percentages come only from the child rollback journal's actionable-file records; use an indeterminate state until that journal exists. After a standalone undo, return to project selection so setup can start again; if a newly prepared plan encountered the older transaction, invalidate that stale plan and return to review for a fresh preparation.
 

@@ -5,6 +5,7 @@ HOI4 Mod Setup follows semantic versioning.
 ## Unreleased
 
 - Keep script prefixes and primary namespaces out of generated HOI4 descriptor files while retaining them for project guidance and later maintenance.
+- Limit descriptor tags to official HOI4 categories and present them as editable choices.
 
 ### Fixed
 
@@ -20,6 +21,9 @@ HOI4 Mod Setup follows semantic versioning.
 - Show percentage and estimated time remaining while generated mod details are prepared from the description
 - Remove the source template's placeholder guide from installed and flattened project instructions
 - Create starter folders directly without installing `.gitkeep` marker files
+- Keep centered setup panels consistently wide, separate Meshy actions from the key field, and make Configure later advance without touching a stored key
+- Keep file counts with installation progress and prevent optional 3D checks from freezing or crashing the app
+- Remove operating-system details and internal planning notes from normal project guidance
 
 ### Changed
 

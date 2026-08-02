@@ -9,6 +9,24 @@ use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::path::Path;
 
+pub const HOI4_DESCRIPTOR_TAGS: &[&str] = &[
+    "Alternative History",
+    "Balance",
+    "Events",
+    "Fixes",
+    "Gameplay",
+    "Graphics",
+    "Historical",
+    "Ideologies",
+    "Map",
+    "Military",
+    "National Focuses",
+    "Sound",
+    "Technologies",
+    "Translation",
+    "Utilities",
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Descriptor {
     pub fields: BTreeMap<String, String>,
@@ -34,6 +52,22 @@ pub fn validate_field(value: &str, label: &str) -> Result<(), AppError> {
         return Err(AppError::InvalidInput(format!(
             "{label} is empty or contains a newline"
         )));
+    }
+    Ok(())
+}
+
+pub fn validate_descriptor_tags(tags: &[String]) -> Result<(), AppError> {
+    let unique = tags.iter().collect::<std::collections::BTreeSet<_>>();
+    if tags.is_empty()
+        || tags.len() > HOI4_DESCRIPTOR_TAGS.len()
+        || unique.len() != tags.len()
+        || tags
+            .iter()
+            .any(|tag| !HOI4_DESCRIPTOR_TAGS.contains(&tag.as_str()))
+    {
+        return Err(AppError::InvalidInput(
+            "descriptor tags must use the supported Hearts of Iron IV categories".into(),
+        ));
     }
     Ok(())
 }
@@ -130,14 +164,9 @@ pub fn render_descriptor_mod(identity: &ProjectIdentity) -> Result<String, AppEr
     // descriptor fields. They are retained in installation metadata and
     // adapted project guidance instead of being written to either .mod file.
     if !identity.descriptor_tags.is_empty() {
+        validate_descriptor_tags(&identity.descriptor_tags)?;
         let mut tags = identity.descriptor_tags.clone();
         tags.sort();
-        tags.dedup();
-        if tags.len() != identity.descriptor_tags.len() || tags.len() > 32 {
-            return Err(AppError::InvalidInput(
-                "descriptor tags must be unique and bounded".into(),
-            ));
-        }
         let mut rendered = String::from("tags={");
         for tag in tags {
             validate_field(&tag, "descriptor tag")?;
@@ -359,13 +388,20 @@ mod tests {
     #[test]
     fn tags_are_parseable_by_readiness_validation() {
         let mut identity = identity();
-        identity.descriptor_tags = vec!["Gameplay".into(), "Total Conversion".into()];
+        identity.descriptor_tags = vec!["Gameplay".into(), "Graphics".into()];
         let rendered = render_descriptor_mod(&identity).unwrap();
         let parsed = parse_descriptor(rendered.as_bytes()).unwrap();
         assert_eq!(
             parsed.fields.get("tags"),
-            Some(&r#"{ "Gameplay" "Total Conversion" }"#.into())
+            Some(&r#"{ "Gameplay" "Graphics" }"#.into())
         );
+    }
+
+    #[test]
+    fn unknown_descriptor_tags_are_rejected() {
+        let mut identity = identity();
+        identity.descriptor_tags = vec!["Total Conversion".into()];
+        assert!(render_descriptor_mod(&identity).is_err());
     }
 
     #[test]

@@ -60,7 +60,13 @@ Read:
 - Adapted project instructions remove the source template's complete
   `## Placeholder Guide` section before staging, merge review, or flattened
   export; template setup directions never become final project guidance.
-- Unsupported platform routes remain honest and visible.
+- Unsupported routes remain honest. Detect the current operating system
+  internally; ordinary screens do not display generic platform facts and show
+  **Not available on this computer** only when compatibility affects the
+  selected route.
+- Detect the current operating system internally. Ordinary screens do not
+  display generic platform facts; when compatibility affects the selected
+  route, show only **Not available on this computer**.
 - The UI stays focused and uses progressive disclosure.
 - New-project identity conventions are generated from the mod name and brief before review; project ID, script prefix, namespace, tags, and starter folders are never presented blank when a usable input exists. Every generated value remains editable, and explicit edits are preserved.
 

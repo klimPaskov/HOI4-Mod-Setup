@@ -6,6 +6,24 @@ export interface GeneratedIdentityDefaults {
   folderProfile: string[];
 }
 
+export const HOI4_DESCRIPTOR_TAGS = [
+  "Alternative History",
+  "Balance",
+  "Events",
+  "Fixes",
+  "Gameplay",
+  "Graphics",
+  "Historical",
+  "Ideologies",
+  "Map",
+  "Military",
+  "National Focuses",
+  "Sound",
+  "Technologies",
+  "Translation",
+  "Utilities",
+] as const;
+
 function asciiWords(value: string): string[] {
   return value
     .normalize("NFKD")
@@ -32,12 +50,22 @@ function identifierPrefix(name: string, projectId: string): string {
 function inferredTags(name: string, description: string): string[] {
   const text = `${name} ${description}`.toLowerCase();
   const tags: string[] = [];
-  if (/total conversion|overhaul|new countries|new nations|map|province|provinces/.test(text)) tags.push("Total Conversion");
-  if (/alternate|diverg|cold war|history|historical/.test(text)) tags.push("Alternative History");
-  if (/\bevents?\b|\bdecisions?\b|\bfocus tree\b|\bpolitic\w*|\bdiplomac\w*/.test(text)) tags.push("Events");
-  if (/portrait|character|leader/.test(text)) tags.push("Portraits");
-  if (/3d|model|unit|building/.test(text)) tags.push("3D");
-  return (tags.length ? tags : ["Gameplay"]).slice(0, 4);
+  if (/alternate|diverg|cold war|alternate history/.test(text)) tags.push("Alternative History");
+  if (/\bhistorical\b|world war|wwii|ww2/.test(text)) tags.push("Historical");
+  if (/\bevents?\b|\bdecisions?\b|\bpolitic\w*|\bdiplomac\w*/.test(text)) tags.push("Events");
+  if (/focus tree|national focus/.test(text)) tags.push("National Focuses");
+  if (/map|province|provinces|island|continent/.test(text)) tags.push("Map");
+  if (/unit|navy|army|military|division|ship/.test(text)) tags.push("Military");
+  if (/portrait|character|leader|3d|model|graphic|art/.test(text)) tags.push("Graphics");
+  if (/sound|music|audio|voice/.test(text)) tags.push("Sound");
+  if (/technology|technologies|research/.test(text)) tags.push("Technologies");
+  if (/localisation|localization|translation|language/.test(text)) tags.push("Translation");
+  if (/ideology|ideologies/.test(text)) tags.push("Ideologies");
+  if (/balance|rebalance/.test(text)) tags.push("Balance");
+  if (/fix|patch|bug/.test(text)) tags.push("Fixes");
+  if (/utility|tool/.test(text)) tags.push("Utilities");
+  if (/total conversion|overhaul|new countries|new nations|mechanic|gameplay/.test(text)) tags.push("Gameplay");
+  return Array.from(new Set(tags.length ? tags : ["Gameplay"])).slice(0, 4);
 }
 
 function inferredFolders(description: string): string[] {

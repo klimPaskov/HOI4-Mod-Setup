@@ -1022,9 +1022,7 @@ fn add_workflow_3d_check(checks: &mut Vec<ReadinessCheck>, status: &str) {
         blocking: false,
         message: Some(match normalized {
             "pass" => "Credential, dependencies, and selected 3D health checks passed.".into(),
-            "unsupported_platform" => {
-                "The current repository 3D route is not verified on this platform.".into()
-            }
+            "unsupported_platform" => "Not available on this computer.".into(),
             "not_selected" => "The 3D workflow was not selected.".into(),
             _ => "The optional 3D workflow is incomplete; core setup remains usable.".into(),
         }),

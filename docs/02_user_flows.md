@@ -47,6 +47,10 @@ relevance, and component selection. Deterministic validators check every
 field. The user edits only when desired or when the app identifies ambiguity,
 then confirms the proposals before rendering.
 
+Descriptor tags are selected only from the official Hearts of Iron IV
+Workshop categories; generated and provider-proposed values use the same
+deterministic allowlist.
+
 ### Identity and paths
 
 The identity screen opens populated. Review or edit the generated display name,

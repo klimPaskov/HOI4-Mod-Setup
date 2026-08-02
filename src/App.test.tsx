@@ -1,13 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { Components, DryRun, Git, Identity, Mcp, Ready, Scan, Update, Welcome, estimateRemainingTime, estimateSemanticPlanningProgress, recoveryProgress } from "./App";
-import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
+import App, { Components, DryRun, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, estimateRemainingTime, estimateSemanticPlanningProgress, recoveryProgress } from "./App";
+import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, rollbackInstallationResult, run3DHealthCheck, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
 import type { CodexAnalysisResult, FolderSelection, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), suggestProjectPaths: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), rollbackInstallationResult: vi.fn(), run3DHealthCheck: vi.fn(), runCodexAnalysisResult: vi.fn(), suggestProjectPaths: vi.fn() };
 });
 
 afterEach(() => {
@@ -29,6 +29,7 @@ beforeEach(() => {
   vi.mocked(previewDescriptorsResult).mockResolvedValue({ value: null });
   vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: null });
   vi.mocked(runCodexAnalysisResult).mockResolvedValue({ value: null });
+  vi.mocked(run3DHealthCheck).mockResolvedValue(null);
   vi.mocked(suggestProjectPaths).mockResolvedValue(null);
   vi.mocked(checkForAppUpdate).mockResolvedValue({ value: null });
   vi.mocked(installAppUpdate).mockResolvedValue({ value: undefined });
@@ -383,6 +384,31 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByRole("heading", { name: "MCP and credentials" })).toBeInTheDocument();
   });
 
+  it("advances from Meshy configuration without changing an existing stored key", () => {
+    const update = vi.fn();
+    render(<Mesh state={{
+      meshKeyDraft: "",
+      meshKeyStatus: "present",
+      meshCredentialReference: "credential://existing",
+      selectedComponents: ["workflow.3d"],
+    } as unknown as WizardState} update={update} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Configure later" }));
+
+    expect(update).toHaveBeenCalledWith({ meshKeyDraft: "", meshKeyStatus: "present", screen: "mcp" });
+    expect(update.mock.calls[0][0]).not.toHaveProperty("meshCredentialReference");
+  });
+
+  it("keeps a failed optional 3D check inside the Ready screen", async () => {
+    const update = vi.fn();
+    render(<Ready state={{ ...readyState(), meshSelected: true } as unknown as WizardState} update={update} onMaintenance={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Check 3D setup" }));
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ transactionError: expect.stringMatching(/could not be checked/i) })));
+    expect(screen.getByRole("button", { name: "Check 3D setup" })).toBeEnabled();
+  });
+
   it("links to the separate portrait workflow only after core setup succeeds", () => {
     const { rerender } = render(<Ready state={{ ...readyState(), readiness: null }} update={vi.fn()} onMaintenance={vi.fn()} />);
     expect(screen.queryByRole("link", { name: /portrait workflow/i })).not.toBeInTheDocument();
@@ -425,7 +451,10 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByLabelText("Project ID")).toHaveValue("iron_dawn");
     expect(screen.getByLabelText("Script prefix")).toHaveValue("id");
     expect(screen.getByLabelText("Primary namespace")).toHaveValue("id");
-    expect(screen.getByLabelText("Descriptor tags")).toHaveValue("Total Conversion, Alternative History, Events");
+    expect(screen.getByRole("group", { name: "Descriptor tags" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Alternative History" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Events" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Gameplay" })).toBeChecked();
     expect(screen.getByLabelText("Initial folders")).toHaveValue("common, events, localisation/english, gfx, interface, docs, history");
 
     fireEvent.change(screen.getByLabelText("Script prefix"), { target: { value: "iron" } });
@@ -433,7 +462,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.change(screen.getByLabelText("Mod description"), { target: { value: "A focused portrait workflow." } });
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     expect(screen.getByLabelText("Script prefix")).toHaveValue("iron");
-    expect(screen.getByLabelText("Descriptor tags")).toHaveValue("Portraits");
+    expect(screen.getByRole("checkbox", { name: "Graphics" })).toBeChecked();
   });
 
   it("shows progress and an actionable error when Description planning does not complete", async () => {
@@ -989,8 +1018,8 @@ describe("HOI4 Mod Setup wizard", () => {
 
     expect(await screen.findByRole("heading", { name: "Installing components" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Installation was interrupted" })).not.toBeInTheDocument();
-    expect(await screen.findByText("Preparing file 2 of 4")).toBeInTheDocument();
-    expect(screen.getByRole("progressbar", { name: "Installation progress" }).getAttribute("aria-valuetext")).toContain("Preparing file 2 of 4");
+    expect(await screen.findByText("2 of 4 files")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Installation progress" }).getAttribute("aria-valuetext")).toContain("2 of 4 files");
     const prepareRow = screen.getByText("Prepare the setup").closest(".timeline-row") as HTMLElement;
     expect(within(prepareRow).getByText("50%")).toBeInTheDocument();
     expect(within(prepareRow).getByRole("progressbar", { name: "Prepare the setup progress" })).toHaveAttribute("aria-valuenow", "50");
@@ -1062,7 +1091,7 @@ describe("HOI4 Mod Setup wizard", () => {
     await waitFor(() => expect(screen.getByText("1 file · destination: .agents/skills/")).toBeInTheDocument());
     expect(screen.getByText("Dependencies and file list")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Dependencies and file list"));
-    expect(screen.getByText("Requires core.agents · all")).toBeInTheDocument();
+    expect(screen.getByText("Requires core.agents")).toBeInTheDocument();
     expect(screen.getByText("1 file · destination: .agents/skills/")).toBeInTheDocument();
   });
 });

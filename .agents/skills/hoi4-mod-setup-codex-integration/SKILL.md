@@ -70,6 +70,12 @@ The selected provider owns semantic proposals. Deterministic Rust owns facts, va
 
 Use the selected provider for project description interpretation, display name, project ID, script prefix, namespace, descriptor tags, folder profile, `AGENTS.md` adaptation, component recommendations, existing-project purpose, and conflict explanation. The optimization profile changes the prompt and presentation convention, not deterministic safety rules.
 
+Provider-visible summaries, reasons, and warnings are user-facing mod guidance.
+Reject internal planning language about schemas, constraints, evidence fields,
+operating systems, platforms, and Workshop ID rules. Warnings exist only for
+an action or decision the user must take. Descriptor-tag proposals are limited
+to the deterministic official HOI4 Workshop-category allowlist.
+
 Use the scanner and validators for paths, hashes, descriptors, PNGs, encodings, Git state, identifier syntax, collisions, manifest checks, and file ownership.
 
 Every analysis turn must:

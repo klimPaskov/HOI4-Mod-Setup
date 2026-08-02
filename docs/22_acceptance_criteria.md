@@ -39,6 +39,7 @@
 - NEW-21: A validated project ID auto-fills the new project root and external launcher descriptor filename before review.
 - NEW-22: The user can explicitly override either auto-filled path; changing the ID updates only untouched auto-filled fields and preserves explicit overrides.
 - NEW-23: No project root or launcher descriptor is created during resolution, scan, planning, or staging.
+- NEW-24: Generated, provider-proposed, edited, and rendered descriptor tags are limited to official Hearts of Iron IV Workshop categories.
 
 ## Deterministic scanning and required provider analysis
 
@@ -106,7 +107,7 @@
 
 ## Components
 
-- CMP-01: Source, destination, dependencies, platforms, tools, environment, validation, and update behavior are shown.
+- CMP-01: Source, destination, dependencies, tools, environment, validation, and update behavior are available under progressive disclosure; platform compatibility is checked internally and only an unavailable state is shown when relevant.
 - CMP-02: Automatic dependencies remain visible.
 - CMP-03: Dependency cycles block.
 - CMP-04: Unsupported optional components remain visible and non-blocking.
@@ -248,6 +249,10 @@
 - UI-02: Each screen has one title and no more than one supporting sentence by default.
 - UI-03: Each screen has one primary work area and no more than two visible content regions by default.
 - UI-04: Evidence, hashes, dependency graphs, full file lists, logs, and advanced settings use progressive disclosure.
+- UI-40: Standard single-column panels remain centered and share the 920-pixel heading width; narrower content does not drift left.
+- UI-41: Installation progress keeps `x of y files`, percentage, and estimated time attached to the main progress bar.
+- UI-42: Configure later on the Meshy step advances without storing, replacing, or deleting a credential.
+- UI-43: The optional 3D check runs without blocking the interface and returns an incomplete optional state on startup or process failure.
 - UI-05: The same fact is not repeated across several interface regions.
 - UI-06: Ordinary controls do not receive copy that only restates their label.
 - UI-07: Clear Back and primary action controls remain reachable.

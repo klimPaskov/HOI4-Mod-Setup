@@ -56,7 +56,7 @@ for (const token of ["scan-dots", "fake-window", "window-chrome", "app-window", 
 if (/\.panel-title\s*\{[^}]*border-bottom/i.test(css)) throw new Error("panel titles must not use underline borders");
 if (/\.screen-heading h1\s*\{[^}]*text-decoration\s*:\s*underline/i.test(css)) throw new Error("screen headings must not be underlined");
 const semanticProgressRule = css.match(/\.semantic-planning-progress\s*\{([^}]*)\}/)?.[1] ?? "";
-if (!/width\s*:\s*min\(100%,\s*760px\)/i.test(semanticProgressRule) || !/margin\s*:\s*0\s+auto\s+18px/i.test(semanticProgressRule)) {
+if (!/width\s*:\s*min\(100%,\s*920px\)/i.test(semanticProgressRule) || !/margin\s*:\s*0\s+auto\s+18px/i.test(semanticProgressRule)) {
   throw new Error("Description planning progress must stay centered at the Description form width");
 }
 for (const [surface, contents] of Object.entries({ app, types, tauri, sourceManifest })) {
