@@ -129,6 +129,12 @@ For every transaction operation, support controlled failure before and after the
 
 ## UI tests
 
+Public README captures use the sanitized, development-only scenarios in
+`src/documentation-fixtures.ts`. Tests prove known routes return synthetic
+state without account identity or secret values, unknown routes are ignored,
+and production builds cannot activate the fixture. Capture at 1280 by 960 from
+the top of the page so comparison evidence is consistent.
+
 Test all 16 required screen states and seven phases. Include density assertions, keyboard traversal, scaling, reduced motion, long values, errors, conflict comparison, staged scanner progress, correlated event filtering, indeterminate progress semantics, and cancellation evidence messaging. Assert the exact 3D question and the immediately following Super Events checkbox order.
 
 Keep a desktop responsiveness regression test that verifies every Tauri command

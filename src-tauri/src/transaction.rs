@@ -3716,9 +3716,10 @@ fn rollback_destination_is_restored(
                 .backup_sha256
                 .clone()
                 .unwrap_or(sha256_file(&expected_backup)?);
-            let executable_matches = match operation.before_executable {
-                Some(expected) => observed_executable(destination)? == Some(expected),
-                None => true,
+            let executable_matches = match (operation.before_executable, current.as_ref()) {
+                (Some(expected), Some(_)) => observed_executable(destination)? == Some(expected),
+                (Some(_), None) => false,
+                (None, _) => true,
             };
             Ok(current.as_deref() == Some(expected.as_str()) && executable_matches)
         }

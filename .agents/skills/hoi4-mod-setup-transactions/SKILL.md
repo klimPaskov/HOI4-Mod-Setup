@@ -161,6 +161,12 @@ operations are not accepted; mode belongs to the reviewed file operation.
 
 ## Recovery
 
+When checking whether a rollback destination is already restored on Unix, only
+inspect executable permissions after confirming that the destination file
+exists. An absent file is a normal intermediate state for inverse rollback of a
+newly created project root; report it as not yet restored so the verified backup
+can recreate it.
+
 On startup, detect every non-terminal journal state, including ordinary active
 stage states left by process termination. The core transaction preflight must
 also scan the bound application-data transaction root and refuse overlapping

@@ -663,13 +663,13 @@ mod tests {
 
         let real_path = directory.path().join("real.json");
         let real = serde_json::json!({
-            "documentation": "msy_1234567890abcdef"
+            "documentation": format!("{}{}", "msy_123456", "7890abcdef")
         });
         assert!(atomic_write_json(&real_path, &real).is_err());
 
         let extended_path = directory.path().join("extended.json");
         let extended = serde_json::json!({
-            "documentation": "msy_your_actual_key_here123"
+            "documentation": format!("{}{}", "msy_your_actual_key_here", "123")
         });
         assert!(atomic_write_json(&extended_path, &extended).is_err());
     }

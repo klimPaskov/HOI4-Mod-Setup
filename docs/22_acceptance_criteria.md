@@ -252,7 +252,10 @@
 - UI-40: Standard single-column panels remain centered and share the 920-pixel heading width; narrower content does not drift left.
 - UI-41: Installation progress keeps `x of y files`, percentage, and estimated time attached to the main progress bar.
 - UI-42: Configure later on the Meshy step advances without storing, replacing, or deleting a credential.
-- UI-43: The optional 3D check runs without blocking the interface and returns an incomplete optional state on startup or process failure.
+- UI-43: The reviewed transaction and final readiness report own optional 3D health state; Ready does not expose a duplicate 3D check button.
+- UI-44: Semantic and plan preparation show a live bounded percentage and estimated time, stop below 100 percent until the real result arrives, and never freeze the interface.
+- UI-45: Ready links flattened ChatGPT sources directly to `https://chatgpt.com`, opens the selected project through the typed Codex action, and links the application name to the public HOI4 Mod Setup repository.
+- UI-46: Update, repair, removal, and recovery controls produce visible review or recovery state rather than silently starting a mutation.
 - UI-05: The same fact is not repeated across several interface regions.
 - UI-06: Ordinary controls do not receive copy that only restates their label.
 - UI-07: Clear Back and primary action controls remain reachable.

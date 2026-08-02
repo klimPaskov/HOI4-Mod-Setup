@@ -81,7 +81,7 @@ function ChoiceIcon({ kind }: { kind: "plus" | "search" | "sparkle" | "circle" }
   return <span className="choice-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[kind]}</svg></span>;
 }
 
-const initialState: WizardState = {
+export const initialState: WizardState = {
   screen: "welcome",
   mode: "new",
   recoveryEntry: false,
@@ -240,7 +240,7 @@ export function maintenanceReviewScreen(plan: Pick<InstallationPlan, "conflicts"
 }
 
 export default function App() {
-  const [state, setState] = useState<WizardState>(initialState);
+  const [state, setState] = useState<WizardState>(() => import.meta.env.DEV && window.__HOI4_DOCUMENTATION_STATE__ ? window.__HOI4_DOCUMENTATION_STATE__ : initialState);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [scanComplete, setScanComplete] = useState(false);
   const [scanError, setScanError] = useState<string>();
@@ -1494,7 +1494,7 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
   const [aiKeyDraft, setAiKeyDraft] = useState("");
   const activeCodexLoginId = useRef<string | undefined>(undefined);
   const selectedProvider = state.aiProvider ?? "codex";
-  const desktopRuntime = isTauriRuntime();
+  const desktopRuntime = isTauriRuntime() || Boolean(import.meta.env.DEV && window.__HOI4_DOCUMENTATION_STATE__);
   const profiles = state.aiProfiles?.length ? state.aiProfiles : FALLBACK_AI_PROFILES;
   const profile = profiles.find((candidate) => candidate.id === selectedProvider) ?? profiles[0];
   const selectedLabel = aiProviderLabel(selectedProvider, profiles);
@@ -1920,6 +1920,11 @@ export function Components({ state, update }: { state: WizardState; update: (pat
   const [manifestMessage, setManifestMessage] = useState(state.manifestPreview ? "Components loaded." : "Loading setup components…");
 
   useEffect(() => {
+    if (import.meta.env.DEV && window.__HOI4_DOCUMENTATION_STATE__ && state.manifestPreview) {
+      setManifest(state.manifestPreview);
+      setManifestMessage("Components loaded.");
+      return;
+    }
     let active = true;
     setManifest(null);
     setManifestMessage("Loading setup components…");
