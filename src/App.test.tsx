@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { Components, DryRun, Git, Identity, Mcp, Ready, Scan, Update, Welcome, estimateRemainingTime, recoveryProgress } from "./App";
+import App, { Components, DryRun, Git, Identity, Mcp, Ready, Scan, Update, Welcome, estimateRemainingTime, estimateSemanticPlanningProgress, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
 import type { CodexAnalysisResult, FolderSelection, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 
@@ -68,6 +68,13 @@ function enableTauriRuntime() {
 }
 
 describe("HOI4 Mod Setup wizard", () => {
+  it("keeps semantic planning estimates bounded within each real stage", () => {
+    const startedAt = Date.parse("2026-08-02T12:00:00Z");
+    expect(estimateSemanticPlanningProgress("preparing", startedAt, startedAt)).toEqual({ percent: 5, remaining: "About 2 minutes remaining" });
+    expect(estimateSemanticPlanningProgress("analyzing", startedAt, startedAt + 45_000)).toEqual({ percent: 54, remaining: "About 50 seconds remaining" });
+    expect(estimateSemanticPlanningProgress("validating", startedAt, startedAt + 120_000)).toEqual({ percent: 98, remaining: "Less than 10 seconds remaining" });
+  });
+
   it("estimates remaining installation time from measured elapsed progress", () => {
     const now = Date.parse("2026-08-02T12:01:00Z");
     expect(estimateRemainingTime(50, "2026-08-02T12:00:00Z", now)).toBe("About 1 minute remaining");
@@ -446,9 +453,16 @@ describe("HOI4 Mod Setup wizard", () => {
     const pending = await screen.findByRole("button", { name: "Preparing details…" });
     expect(pending).toBeDisabled();
     expect(pending).toHaveAttribute("aria-busy", "true");
+    const planningProgress = screen.getByRole("progressbar", { name: "Mod detail preparation progress" });
+    expect(planningProgress).toHaveAttribute("aria-valuenow", "20");
+    expect(planningProgress).toHaveAttribute("aria-valuetext", "20% complete. Generating project details. Estimated time: About 2 minutes remaining");
+    expect(screen.getByText("Preparing your mod details")).toBeInTheDocument();
+    expect(screen.getByText("20%")).toBeInTheDocument();
+    expect(screen.getByText("Estimated time: About 2 minutes remaining")).toBeInTheDocument();
 
     finishAnalysis?.({ value: null, error: "The installed Codex version rejected the planning request." });
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("The installed Codex version rejected the planning request."));
+    expect(screen.queryByRole("progressbar", { name: "Mod detail preparation progress" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
     expect(screen.getByLabelText("Mod description")).toHaveValue("An alternate-history event mod.");
   });

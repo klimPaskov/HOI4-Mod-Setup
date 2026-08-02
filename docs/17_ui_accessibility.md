@@ -204,9 +204,16 @@ Respect reduced motion. Replace animated transitions with immediate state change
 
 All 14 implementation references are under `ui-references/`. They are 1536 by 1024 pixels and use the minimal grouped-phase design described above.
 
-## Codex progress states
+## Provider planning progress
 
-Semantic analysis uses one progress region with plain states: Preparing approved context, Analyzing project, Validating suggestions, and Ready for review. A usage-limit state preserves the draft and provides one retry action. Screen readers receive changes through a polite live region.
+After the user continues from the new-mod description, semantic analysis uses
+one visible progress region with plain, user-facing states: Preparing your
+description, Generating project details, and Checking the generated details.
+The bar always shows an approximate percentage and estimated time remaining;
+both advance from elapsed time within the current real request stage because
+providers do not expose an exact total. A usage-limit state preserves the draft
+and provides one retry action. Screen readers receive changes through a polite
+live region.
 
 ## Semantic review density
 

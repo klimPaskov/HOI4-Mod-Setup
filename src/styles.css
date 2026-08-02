@@ -228,6 +228,10 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .progress { height: 9px; overflow: hidden; border-radius: 999px; background: #1b2738; }
 .progress span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #5b8cff, #8b60f3); transition: width .25s ease; }
 .progress.indeterminate span { width: 35%; animation: scan-progress 1.2s ease-in-out infinite; }
+.semantic-planning-progress { width: min(100%, 860px); display: grid; gap: 14px; margin-bottom: 18px; padding: 18px 20px; }
+.semantic-planning-progress > div { display: grid; gap: 4px; }
+.semantic-planning-progress span { color: var(--muted); }
+.semantic-planning-progress .semantic-progress-meta { display: flex; grid-template-columns: none; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; font-size: 12px; }
 .scan-panel .progress { margin: 24px 0 21px; }
 .no-border { margin-top: 23px; padding: 0; border-bottom: 0; }
 .no-border > span { margin-left: auto; }

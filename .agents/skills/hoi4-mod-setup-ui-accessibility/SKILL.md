@@ -75,6 +75,11 @@ Conflict review is the exception. It may show a three-way comparison and more co
   label with `aria-busy`, blocks duplicate submission, and exposes any provider
   or schema failure in the persistent announced footer without losing the
   entered name or brief.
+- After Description is submitted, show one visible progress bar with
+  user-facing stages tied to actual request boundaries: preparing the
+  description, generating project details, and checking the generated details.
+  Always show its approximate percentage and estimated time remaining, and
+  label both as estimates because the provider exposes no exact total.
 - The Welcome and planning actions remain disabled until the selected provider
   is ready and not usage-limited; Codex requires ChatGPT mode. Keep signed-out
   recovery and removal reachable from Welcome.

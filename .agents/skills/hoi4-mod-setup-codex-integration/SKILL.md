@@ -28,6 +28,12 @@ Identity screen or an announced actionable error. Provider unavailability is a
 failure, never a successful navigation result, and the name and brief remain
 editable after failure.
 
+That pending state exposes one provider-neutral progress region. Its stage
+changes only at real lifecycle boundaries: approved input preparation,
+provider generation, and deterministic result checking. Since providers do
+not report an exact total, the visible percentage and time remaining are
+explicit elapsed-time estimates within those stages.
+
 Recovery, rollback, backup inspection, and managed removal remain locally usable while signed out.
 
 ## Required contract

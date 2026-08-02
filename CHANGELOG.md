@@ -15,6 +15,7 @@ HOI4 Mod Setup follows semantic versioning.
 - Batch crash-safe install and rollback intents, accelerate rollback backup/apply, and show live recovery progress
 - Prevent valid installations from falling into recovery because selected subagents omitted the required bounded-context spawn rule
 - Align plan preparation with the review, contain recovery progress text, open integration requirements by default, and make the file-plan disclosure show real files
+- Show percentage and estimated time remaining while generated mod details are prepared from the description
 
 ### Changed
 

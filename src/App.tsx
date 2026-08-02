@@ -248,6 +248,9 @@ export default function App() {
   const [selectedFinding, setSelectedFinding] = useState("localisation");
   const [findings, setFindings] = useState<ScanFinding[]>([]);
   const [semanticAnalysisPending, setSemanticAnalysisPending] = useState(false);
+  const [semanticProgressStage, setSemanticProgressStage] = useState<"preparing" | "analyzing" | "validating">("preparing");
+  const [semanticProgressStartedAt, setSemanticProgressStartedAt] = useState<number>();
+  const [semanticProgressNow, setSemanticProgressNow] = useState(Date.now());
   const [planPreparationPending, setPlanPreparationPending] = useState(false);
   const [installationPending, setInstallationPending] = useState(false);
   const [recoveryPending, setRecoveryPending] = useState(false);
@@ -255,6 +258,13 @@ export default function App() {
   const [appUpdate, setAppUpdate] = useState<AppUpdateStatus | null>(null);
   const [appUpdateState, setAppUpdateState] = useState<"idle" | "installing" | "error">("idle");
   const codexAccountReadPending = useRef(false);
+
+  useEffect(() => {
+    if (!semanticAnalysisPending) return;
+    setSemanticProgressNow(Date.now());
+    const timer = window.setInterval(() => setSemanticProgressNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [semanticAnalysisPending]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -622,6 +632,7 @@ export default function App() {
         return false;
       }
     }
+    setSemanticProgressStage("analyzing");
     const request: CodexAnalysisRequest = {
       mode,
       brief: state.description,
@@ -639,6 +650,7 @@ export default function App() {
         model: state.aiModel,
         endpoint: state.aiEndpoint,
       });
+    setSemanticProgressStage("validating");
     const result = response.value;
     if (!result) {
       update({
@@ -1051,6 +1063,8 @@ export default function App() {
         return;
       }
       if (semanticAnalysisPending) return;
+      setSemanticProgressStage("preparing");
+      setSemanticProgressStartedAt(Date.now());
       setSemanticAnalysisPending(true);
       update({ transactionError: undefined });
       try {
@@ -1166,7 +1180,7 @@ export default function App() {
         <PhaseRail screen={state.screen} />
         <main className="main-viewport" aria-labelledby="screen-title" aria-describedby="screen-supporting" onKeyDown={closeDisclosureOnEscape}>
           <div className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{copy.title}</div>
-          <ScreenFrame screen={state.screen} copy={copy} state={state} canAdvance={!semanticAnalysisPending && !planPreparationPending && !installationPending && !recoveryPending && canAdvanceFromScreen(state, { scanComplete, scanError, scanPartial, findings })} pending={semanticAnalysisPending || recoveryPending} preparingPlan={planPreparationPending} headingRef={headingRef} onBack={goBack} onNext={goNext} onMaintenance={openMaintenance} onPrepareConflicts={prepareSetupPlan}>
+          <ScreenFrame screen={state.screen} copy={copy} state={state} canAdvance={!semanticAnalysisPending && !planPreparationPending && !installationPending && !recoveryPending && canAdvanceFromScreen(state, { scanComplete, scanError, scanPartial, findings })} pending={semanticAnalysisPending || recoveryPending} semanticProgressStage={semanticProgressStage} semanticProgressStartedAt={semanticProgressStartedAt} semanticProgressNow={semanticProgressNow} preparingPlan={planPreparationPending} headingRef={headingRef} onBack={goBack} onNext={goNext} onMaintenance={openMaintenance} onPrepareConflicts={prepareSetupPlan}>
             {renderScreen(state, update, updateIdentity, updateDescription, findings, selectedFinding, setSelectedFinding, setFindings, scanComplete, scanError, scanProgress, scanPartial, scanLimitsHit, scanRequestId, scanCancellationRequested, cancelActiveScan, openMaintenance, startMaintenance, runMaintenanceReanalysis, chooseConflict, chooseProjectFolder, chooseLauncherFolder, confirmAnalysis, recoveryPending)}
           </ScreenFrame>
         </main>
@@ -1205,7 +1219,7 @@ function ExternalLink({ href, className, children }: { href: string; className?:
   >{children}</a>;
 }
 
-function ScreenFrame({ screen, copy, state, canAdvance, pending, preparingPlan, headingRef, onBack, onNext, onMaintenance, onPrepareConflicts, children }: { screen: ScreenId; copy: { title: string; supporting?: string; status?: { label: string; tone: StatusTone } }; state: WizardState; canAdvance: boolean; pending: boolean; preparingPlan: boolean; headingRef: { current: HTMLHeadingElement | null }; onBack: () => void; onNext: () => void; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onPrepareConflicts: () => Promise<void>; children: ReactNode }) {
+function ScreenFrame({ screen, copy, state, canAdvance, pending, semanticProgressStage, semanticProgressStartedAt, semanticProgressNow, preparingPlan, headingRef, onBack, onNext, onMaintenance, onPrepareConflicts, children }: { screen: ScreenId; copy: { title: string; supporting?: string; status?: { label: string; tone: StatusTone } }; state: WizardState; canAdvance: boolean; pending: boolean; semanticProgressStage: "preparing" | "analyzing" | "validating"; semanticProgressStartedAt?: number; semanticProgressNow: number; preparingPlan: boolean; headingRef: { current: HTMLHeadingElement | null }; onBack: () => void; onNext: () => void; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onPrepareConflicts: () => Promise<void>; children: ReactNode }) {
   const installDone = screen === "install" && state.installProgress >= 100;
   const unresolvedConflicts = state.plan?.conflicts.some((conflict) => !conflict.selected) === true;
   const recoveryLabel = state.recoveryChoice === "rollback" ? "Undo changes" : state.recoveryChoice === "discard" ? "Discard prepared files" : "Continue setup";
@@ -1217,6 +1231,7 @@ function ScreenFrame({ screen, copy, state, canAdvance, pending, preparingPlan, 
         <div><div className="eyebrow">{(screen === "update" ? "Update" : screen === "conflict" ? "Conflicts" : screen === "recovery" ? "Recovery" : SCREEN_PHASE[screen]).toUpperCase()}</div><h1 id="screen-title" ref={headingRef} tabIndex={-1}>{copy.title}</h1>{copy.supporting && <p id="screen-supporting">{copy.supporting}</p>}</div>
         {copy.status && <Status label={copy.status.label} tone={copy.status.tone} />}
       </div>
+      {pending && screen === "description" && <SemanticPlanningProgress stage={semanticProgressStage} startedAt={semanticProgressStartedAt} now={semanticProgressNow} />}
       {preparingPlan && screen === "dry-run" && <section className="panel plan-preparation" role="status" aria-label="Plan preparation status" aria-live="polite" aria-busy="true"><div><strong>Preparing changes</strong><span>Checking the selected files and building the review.</span></div><Progress label="Preparing changes" valueText="Preparing the installation review" /></section>}
       {children}
     </div>
@@ -1230,6 +1245,39 @@ function ScreenFrame({ screen, copy, state, canAdvance, pending, preparingPlan, 
       </div>
     </footer>
   </>;
+}
+
+const SEMANTIC_PROGRESS_COPY = {
+  preparing: "Preparing your description",
+  analyzing: "Generating project details",
+  validating: "Checking the generated details",
+} as const;
+
+export function estimateSemanticPlanningProgress(stage: keyof typeof SEMANTIC_PROGRESS_COPY, startedAt = Date.now(), now = Date.now()): { percent: number; remaining: string } {
+  const elapsedSeconds = Math.max(0, (now - startedAt) / 1_000);
+  const bounds = stage === "preparing" ? { minimum: 5, maximum: 18 }
+    : stage === "analyzing" ? { minimum: 20, maximum: 88 }
+      : { minimum: 90, maximum: 98 };
+  const estimatedTotalSeconds = 90;
+  const timedProgress = bounds.minimum + (elapsedSeconds / estimatedTotalSeconds) * (bounds.maximum - bounds.minimum);
+  const percent = Math.min(bounds.maximum, Math.max(bounds.minimum, Math.floor(timedProgress)));
+  const remainingSeconds = Math.max(1, Math.ceil(estimatedTotalSeconds - elapsedSeconds));
+  const remaining = remainingSeconds <= 10
+    ? "Less than 10 seconds remaining"
+    : remainingSeconds < 60
+      ? `About ${Math.ceil(remainingSeconds / 10) * 10} seconds remaining`
+      : `About ${Math.ceil(remainingSeconds / 60)} minutes remaining`;
+  return { percent, remaining };
+}
+
+function SemanticPlanningProgress({ stage, startedAt, now }: { stage: keyof typeof SEMANTIC_PROGRESS_COPY; startedAt?: number; now: number }) {
+  const label = SEMANTIC_PROGRESS_COPY[stage];
+  const progress = estimateSemanticPlanningProgress(stage, startedAt, now);
+  return <section className="panel semantic-planning-progress" role="status" aria-live="polite" aria-busy="true">
+    <div><strong>Preparing your mod details</strong><span>{label}</span></div>
+    <Progress value={progress.percent} label="Mod detail preparation progress" valueText={`${progress.percent}% complete. ${label}. Estimated time: ${progress.remaining}`} />
+    <div className="semantic-progress-meta" aria-hidden="true"><span>{progress.percent}%</span><span>Estimated time: {progress.remaining}</span></div>
+  </section>;
 }
 
 function footerNote(screen: ScreenId, state: WizardState): string {
