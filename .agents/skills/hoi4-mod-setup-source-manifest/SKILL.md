@@ -121,7 +121,11 @@ MCP servers and external dependencies are components. Their command, arguments, 
 - The published component graph has no LoRA/ComfyUI interest component. Do not
   synthesize one from older manifests or project state; legacy lock values are
   ignored and removed by the next verified transaction.
-- The optional Super Events parent expands to six hidden runtime components.
+- The optional Super Events parent installs one additional `hoi4-super-events`
+  skill, three narrow research subagents, and six hidden runtime components.
+  The verified ordinary planning, events, assets, text/audio, and subagent
+  skills contain bounded marked sections that deterministic adaptation retains
+  only when the workflow is selected; unselected installs strip those sections.
   Verify source bytes first, then deterministically replace `[MOD_PREFIX]` and
   `[MOD_NAME]` only in its interface, common-script, event, and localisation
   text components. Reject invalid namespaces and unresolved placeholders.

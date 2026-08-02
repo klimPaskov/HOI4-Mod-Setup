@@ -5,7 +5,7 @@
 This planning package uses two evidence sets:
 
 1. The project files supplied with the request, including all Markdown skills, all supplied subagent TOML files, the project instruction file, the mechanics guide, and the current event, cluster, and scenario catalog CSV snapshots.
-2. The initial audit resolved the live `klimPaskov/Agentic-HOI4-Modding` repository to commit `27128a7b311d728a959afff7238a9aeeb9987f2b` on `main` on 26 July 2026. The public default branch, conditional Super Events guidance, and current published manifest were reverified at commit `bdef773758125b367fff3ab40d85433675d511cb` on 2 August 2026. The manifest declares that its selected-file evidence was generated for commit `8c619f7dfee59f50096573e4ed1ea200e06632be`. It contains 17 components, including provider-neutral `workflow.super_events`, conditional skill packages, and no portrait-interest component. The application resolves the remote manifest at runtime and retains the bundled copy only as offline bootstrap evidence.
+2. The initial audit resolved the live `klimPaskov/Agentic-HOI4-Modding` repository to commit `27128a7b311d728a959afff7238a9aeeb9987f2b` on `main` on 26 July 2026. The public default branch and current Super Events package were reverified at publication commit `6d4a84c` on 2 August 2026. Its manifest evidence was generated from exact source commit `de725e52ec2cb8d2d5796e86a93bf14bf1bb5c6b`. It contains 17 components, including provider-neutral `workflow.super_events`, one additional `hoi4-super-events` skill, conditional additions to the ordinary skills, and no portrait-interest component. The application resolves the remote manifest at runtime and retains the bundled copy only as offline bootstrap evidence.
 
 Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`.
 
@@ -35,10 +35,10 @@ The body of every offline wiki article was not fully read. The installer design 
 No formal root `LICENSE` file or `paradox_wiki/LICENSE` file was found at the tested paths. The repository README contains permissive wording, but this package does not treat that wording as a verified formal license. The proposed manifest records repository license evidence as `declared_unverified` and wiki license status as `not_found`.
 
 The public root manifest at commit
-`bdef773758125b367fff3ab40d85433675d511cb` has raw SHA-256
-`03f45ed7a410c6b48faa1a4224540561ce5461a547d2dcc1befa5ac85fc74325`
+`6d4a84cf31004a3ba899535be433b42f962e7dee` has raw SHA-256
+`06b8829574ed1c3f501e407cfb6efeb18fd19c5c60c104341c2638ba16ad02db`
 and declares `generated_for_revision`
-`8c619f7dfee59f50096573e4ed1ea200e06632be`. Its 957 declared file records
+`de725e52ec2cb8d2d5796e86a93bf14bf1bb5c6b`. Its 952 declared file records
 cover 17 components and were generated from immutable Git blob bytes before
 publication.
 

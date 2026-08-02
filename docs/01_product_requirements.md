@@ -10,7 +10,7 @@ A successful core setup leaves the selected mod project with:
 
 - a valid internal `descriptor.mod` inside the project
 - a valid external launcher `<project_id>.mod` in the confirmed HOI4 user mod directory
-- a deterministic, valid, replaceable `thumbnail.png` placeholder
+- a deterministic, valid, replaceable 600×600 solid-black `thumbnail.png`
 - a readable profile-specific initial mod folder structure
 - launcher discoverability without manual file creation or descriptor editing
 - an adapted `AGENTS.md` with template-only placeholder guidance removed

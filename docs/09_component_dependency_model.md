@@ -86,12 +86,12 @@ A component is supported only when its platform declaration and every command-be
 
 `workflow.super_events` depends on the core skills and subagents, has no tool or
 environment requirement, and contributes only its manifest-declared
-selected-only skill and research-agent trees plus the reusable runtime. The
+single selected-only skill and research-agent tree plus the reusable runtime. The
 core trees exclude `hoi4-super-events*/**` and
 `hoi4_super_event_*.toml`. Selecting it adds those packages and the
-corresponding guidance to the adapted `AGENTS.md`; declining it adds none of
-them, and the ordinary AGENTS, skills, and subagents contain no equivalent
-references.
+corresponding guidance to the adapted `AGENTS.md` and marked sections of the
+ordinary planning, events, assets, text/audio, and subagent skills; declining it
+strips those sections and adds none of the selected-only files.
 The component is provider-neutral and remains optional on both supported
 platforms when the verified manifest declares its `all` route.
 

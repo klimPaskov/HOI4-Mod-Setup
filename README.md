@@ -50,7 +50,7 @@ For a new mod, enter its name and a short description.
 The app fills the project ID, script prefix, namespace, valid descriptor tags,
 starter folders, standard HOI4 mod location, and launcher file. Every generated
 value remains editable. It also prepares `descriptor.mod`, the launcher
-descriptor, and a placeholder `thumbnail.png`.
+descriptor, and a replaceable 600×600 black `thumbnail.png`.
 
 ![Review the generated project identity and locations](docs/screenshots/03-identity.png)
 

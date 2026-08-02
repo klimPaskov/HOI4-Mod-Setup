@@ -166,7 +166,7 @@ struct GitOnlineRecord {
     message: String,
 }
 
-pub const MANAGED_GITIGNORE_BLOCK: &str = "# BEGIN HOI4 Mod Setup managed rules\n.hoi4-mod-setup/backups/\n.hoi4-mod-setup/cache/\n.tools/3d_pipeline/vendor/\n# END HOI4 Mod Setup managed rules";
+pub const MANAGED_GITIGNORE_BLOCK: &str = "# BEGIN HOI4 Mod Setup managed rules\n.tmp/\n.agents/\n.codex/\n.tools/\nparadox_wiki/\nAGENTS.md\n.hoi4-mod-setup/backups/\n.hoi4-mod-setup/cache/\n# END HOI4 Mod Setup managed rules";
 
 pub fn validate_git_setup(setup: &GitSetup) -> Result<(), AppError> {
     if setup.mode == GitMode::Initialize && !valid_branch_name(&setup.branch) {
@@ -772,8 +772,24 @@ pub fn plan_git(
 
 pub fn merge_gitignore(existing: Option<&str>) -> String {
     let existing = existing.unwrap_or("").trim_end();
-    if existing.contains("# BEGIN HOI4 Mod Setup managed rules") {
-        return existing.to_string();
+    const BEGIN: &str = "# BEGIN HOI4 Mod Setup managed rules";
+    const END: &str = "# END HOI4 Mod Setup managed rules";
+    if let Some(start) = existing.find(BEGIN) {
+        if let Some(relative_end) = existing[start..].find(END) {
+            let end = start + relative_end + END.len();
+            let mut updated = String::with_capacity(existing.len() + MANAGED_GITIGNORE_BLOCK.len());
+            updated.push_str(existing[..start].trim_end());
+            if !updated.is_empty() {
+                updated.push_str("\n\n");
+            }
+            updated.push_str(MANAGED_GITIGNORE_BLOCK);
+            let suffix = existing[end..].trim_start();
+            if !suffix.is_empty() {
+                updated.push_str("\n\n");
+                updated.push_str(suffix);
+            }
+            return updated;
+        }
     }
     if existing.is_empty() {
         MANAGED_GITIGNORE_BLOCK.to_string()
@@ -1809,7 +1825,27 @@ mod tests {
         let first = merge_gitignore(Some("# local\n*.tmp"));
         let second = merge_gitignore(Some(&first));
         assert!(first.contains("*.tmp"));
+        for managed in [
+            ".tmp/",
+            ".agents/",
+            ".codex/",
+            ".tools/",
+            "paradox_wiki/",
+            "AGENTS.md",
+        ] {
+            assert!(first.lines().any(|line| line == managed));
+        }
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn gitignore_merge_refreshes_an_older_managed_block() {
+        let old = "local-rule\n\n# BEGIN HOI4 Mod Setup managed rules\n.tools/3d_pipeline/vendor/\n# END HOI4 Mod Setup managed rules\n\nother-rule";
+        let merged = merge_gitignore(Some(old));
+        assert!(merged.starts_with("local-rule\n\n"));
+        assert!(merged.ends_with("\n\nother-rule"));
+        assert!(merged.lines().any(|line| line == ".tmp/"));
+        assert!(!merged.contains(".tools/3d_pipeline/vendor/"));
     }
 
     #[test]

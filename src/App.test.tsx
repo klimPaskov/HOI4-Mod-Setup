@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { Components, DryRun, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, maintenanceReviewScreen, recoveryProgress } from "./App";
+import App, { Components, DryRun, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
 import type { CodexAnalysisResult, FolderSelection, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
@@ -14,6 +14,7 @@ vi.mock("./lib/tauri", async () => {
 afterEach(() => {
   window.history.replaceState({}, "", "/");
   delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+  delete window.__HOI4_DOCUMENTATION_STATE__;
   cleanup();
   vi.clearAllMocks();
   vi.restoreAllMocks();
@@ -1082,6 +1083,35 @@ describe("HOI4 Mod Setup wizard", () => {
 
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/open this folder manually/i));
     expect(screen.getByRole("status")).toHaveTextContent(/cold-war-curtain/i);
+  });
+
+  it("shows immediate and completed feedback while opening Codex", async () => {
+    let finishOpen: ((result: { opened: boolean; message: string }) => void) | undefined;
+    vi.mocked(openInCodex).mockReturnValue(new Promise((resolve) => { finishOpen = resolve; }));
+    render(<Ready state={readyState()} update={vi.fn()} onMaintenance={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /open in codex/i }));
+    expect(screen.getByRole("button", { name: /opening codex/i })).toBeDisabled();
+
+    await act(async () => finishOpen?.({ opened: true, message: "Codex was launched." }));
+    expect(screen.getByRole("button", { name: /codex opened/i })).toBeEnabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Codex opened successfully.");
+  });
+
+  it("opens a completion page in the existing Ready phase when Finish is pressed", () => {
+    window.__HOI4_DOCUMENTATION_STATE__ = {
+      ...initialState,
+      ...readyState(),
+      screen: "ready",
+    };
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+
+    expect(screen.getByRole("heading", { name: "Congratulations, you are all set!" })).toBeInTheDocument();
+    expect(screen.getByText("Setup complete")).toBeInTheDocument();
+    expect(screen.getByLabelText("Setup phases").querySelector('[aria-current="step"]')).toHaveTextContent("Ready");
+    expect(screen.queryByRole("button", { name: "Finish" })).not.toBeInTheDocument();
   });
 
   it("does not offer an MCP health action when the verified route is unavailable", () => {

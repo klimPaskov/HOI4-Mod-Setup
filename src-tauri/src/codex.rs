@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -32,6 +32,14 @@ use std::os::windows::io::AsRawHandle;
 use windows_sys::Win32::Storage::FileSystem::{GetFinalPathNameByHandleW, FILE_NAME_NORMALIZED};
 
 pub const CODEX_SCHEMA_VERSION: &str = "1.0.0";
+
+#[derive(Clone)]
+struct CachedCodexExecutable {
+    path: PathBuf,
+    sha256: String,
+}
+
+static CODEX_EXECUTABLE: OnceLock<Mutex<Option<CachedCodexExecutable>>> = OnceLock::new();
 pub const REQUIRED_ANALYSIS_PROPOSAL_KEYS: &[&str] = &[
     "display_name",
     "project_id",
@@ -1930,6 +1938,19 @@ impl Drop for ProcessJsonlTransport {
 }
 
 pub fn find_codex_executable() -> Option<PathBuf> {
+    let cache = CODEX_EXECUTABLE.get_or_init(|| Mutex::new(None));
+    if let Ok(cached) = cache.lock() {
+        if let Some(cached) = cached.as_ref() {
+            if cached.path.is_file()
+                && !crate::security::path_has_link_component(&cached.path)
+                && crate::process::validate_executable_publisher(&cached.path, "OpenAI").is_ok()
+                && crate::security::sha256_file(&cached.path).ok().as_deref()
+                    == Some(cached.sha256.as_str())
+            {
+                return Some(cached.path.clone());
+            }
+        }
+    }
     let names: &[&str] = if cfg!(target_os = "windows") {
         &["codex.exe"]
     } else {
@@ -1943,7 +1964,7 @@ pub fn find_codex_executable() -> Option<PathBuf> {
         local_app_data.as_deref(),
         names,
     ));
-    candidates.into_iter().find_map(|candidate| {
+    let found = candidates.into_iter().find_map(|candidate| {
         let metadata = std::fs::symlink_metadata(&candidate).ok()?;
         if is_link_metadata(&metadata) || !metadata.is_file() {
             return None;
@@ -1955,7 +1976,18 @@ pub fn find_codex_executable() -> Option<PathBuf> {
         crate::process::validate_executable_publisher(&canonical, "OpenAI")
             .ok()
             .map(|_| canonical)
-    })
+    });
+    if let Some(path) = found.as_ref() {
+        if let Ok(sha256) = crate::security::sha256_file(path) {
+            if let Ok(mut cached) = cache.lock() {
+                *cached = Some(CachedCodexExecutable {
+                    path: path.clone(),
+                    sha256,
+                });
+            }
+        }
+    }
+    found
 }
 
 #[cfg(target_os = "windows")]

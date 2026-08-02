@@ -317,6 +317,7 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .ready-banner { display: flex; align-items: center; gap: 18px; padding: 22px; border: 1px solid; border-radius: 13px; }.ready-banner.pass { border-color: #1d6f5a; background: rgba(40, 164, 119, .09); }.ready-banner.block { border-color: #74384a; background: rgba(190, 73, 99, .08); }
 .ready-icon { width: 44px; height: 44px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%; color: #07150f; background: var(--green); font-size: 22px; font-weight: 900; }.ready-banner.block .ready-icon { color: white; background: var(--red); }
 .ready-banner h2 { margin: 0 0 3px; font-size: 20px; }.ready-banner p { margin: 0; color: var(--muted); font-size: 13px; }.ready-banner .button { margin-left: auto; }.ready-action { display: grid; justify-items: end; gap: 7px; margin-left: auto; }.ready-action .button { margin-left: 0; }.ready-action-message { max-width: 360px; text-align: right; }
+.completion-panel { min-height: 180px; display: flex; align-items: center; justify-content: center; gap: 18px; text-align: left; }.completion-panel h2 { margin: 0 0 5px; font-size: 22px; }.completion-panel p { margin: 0; color: var(--muted); }
 .ready-options-panel { display: grid; gap: 14px; padding: 0 16px 16px; }
 .ready-check-list { margin: 0 -16px; }
 .ready-panel-action { width: fit-content; }
