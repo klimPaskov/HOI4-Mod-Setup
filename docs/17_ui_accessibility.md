@@ -115,7 +115,7 @@ Do not display permanent keyboard shortcut hints in the footer. Keyboard support
 10. **Git setup**: three choices, branch and commit fields for the selected choice, remote and advanced options collapsed.
 11. **Install review**: change counts, a read-only summary of selected ChatGPT project files, short plan summary, preflight state, and a lazily rendered full file-and-folder plan on demand. Show starter directories as **Create folder** entries and never as `.gitkeep` files. Keep the preparation panel aligned to the same maximum width as the review below it.
 12. **Installation progress**: one progress bar with the current `x of y files` count, percentage, and time estimate; six grouped stages; transaction log collapsed.
-13. **Final readiness**: one success state, an Open in Codex action only for Codex, four grouped core checks, compact 3D state, the final ChatGPT “Chat” recommendation when applicable, and one concise fixed HTTPS external portrait-workflow link.
+13. **Final readiness**: one success state, an Open in Codex action only for Codex, four grouped core checks, compact 3D state without a duplicate health button, a direct `https://chatgpt.com` handoff when flattened Chat sources were prepared, and one concise fixed HTTPS external portrait-workflow link.
 14. **Update and repair**: four primary maintenance actions and a short installed-state list.
 15. **Merge conflict review**: local and incoming comparison, resolution choices, result preview after selection.
 16. **Interrupted recovery**: one checkpoint summary and three recovery choices.

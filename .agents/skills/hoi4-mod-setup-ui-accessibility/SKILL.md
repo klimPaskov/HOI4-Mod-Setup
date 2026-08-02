@@ -91,7 +91,7 @@ Conflict review is the exception. It may show a three-way comparison and more co
 - Progress shows current stage and durable checkpoint, not the full log. Keep
   the journal-backed `x of y files` count, percentage, and estimated time with
   the main installation progress bar.
-- Plan preparation must have a visible indeterminate busy region so the window never appears frozen while the reviewed file plan is built. Installation rows show 0% before work and 100% after completion; staging and apply may show intermediate percentages only from journaled completed-file counts, together with the current root-relative destination. Use an active non-numeric state when a stage has no measurable total. Show an approximate remaining-time label only after real elapsed progress is available and keep a once-per-second clock while active so a long file does not make the window appear frozen.
+- Plan preparation must show a bounded live percentage and clearly labeled estimated time while the reviewed file plan is built, then disappear when the real plan arrives. The estimate stops below 100 percent and does not pretend to be a measured file count. Installation rows show 0% before work and 100% after completion; staging and apply may show intermediate percentages only from journaled completed-file counts, together with the current root-relative destination. Use an active non-numeric state when a stage has no measurable total. Show an approximate remaining-time label only after real elapsed progress is available and keep a once-per-second clock while active so a long file does not make the window appear frozen.
 - Starting installation rechecks for an unfinished setup on the selected
   project. When found, open the recovery screen with a concise message and the
   core-approved Continue, Undo, or Discard choices instead of leaving a raw
@@ -121,6 +121,7 @@ Conflict review is the exception. It may show a three-way comparison and more co
   stored key, keep the exact question visible as a disabled installed state
   and expose the vault-only key field for repair.
 - Readiness leads with core status. Open in Codex is shown only for Codex; other providers receive an honest provider-specific handoff or no opener.
+- Keep Ready-screen actions inside padded panel content. Do not expose a second 3D health button after installation; the reviewed transaction and readiness report already own that state. When flattened ChatGPT sources were selected, link the concise handoff directly to `https://chatgpt.com`.
 - Optional source-declared health actions are rendered only when readiness identifies a runnable verified route. `planned_unavailable` and `unsupported_platform` remain visible as status text without an actionable button.
 - Run optional health checks outside the UI thread, block duplicate clicks,
   and convert process or startup failures into an incomplete optional state. A

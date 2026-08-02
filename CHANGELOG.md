@@ -4,6 +4,9 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Show live percentage and estimated time while preparing the installation review.
+- Open maintenance plans in visible review, fix the Codex desktop opener, simplify Ready-screen optional states, and link the product repository and ChatGPT handoff correctly.
+
 - Keep script prefixes and primary namespaces out of generated HOI4 descriptor files while retaining them for project guidance and later maintenance.
 - Limit descriptor tags to official HOI4 categories and present them as editable choices.
 

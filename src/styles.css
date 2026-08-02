@@ -312,10 +312,18 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .plan-preparation > div { display: grid; gap: 4px; }
 .plan-preparation strong { font-size: 14px; }
 .plan-preparation span { color: var(--muted); font-size: 12px; }
+.plan-preparation-meta { display: flex !important; grid-template-columns: none !important; justify-content: space-between; gap: 16px; }
+.plan-preparation-meta span:last-child { text-align: right; }
 .ready-banner { display: flex; align-items: center; gap: 18px; padding: 22px; border: 1px solid; border-radius: 13px; }.ready-banner.pass { border-color: #1d6f5a; background: rgba(40, 164, 119, .09); }.ready-banner.block { border-color: #74384a; background: rgba(190, 73, 99, .08); }
 .ready-icon { width: 44px; height: 44px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%; color: #07150f; background: var(--green); font-size: 22px; font-weight: 900; }.ready-banner.block .ready-icon { color: white; background: var(--red); }
 .ready-banner h2 { margin: 0 0 3px; font-size: 20px; }.ready-banner p { margin: 0; color: var(--muted); font-size: 13px; }.ready-banner .button { margin-left: auto; }.ready-action { display: grid; justify-items: end; gap: 7px; margin-left: auto; }.ready-action .button { margin-left: 0; }.ready-action-message { max-width: 360px; text-align: right; }
-.portrait-workflow-note { padding: 14px 16px; border-top: 1px solid var(--line); color: var(--muted-strong); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.ready-options-panel { display: grid; gap: 14px; padding: 0 16px 16px; }
+.ready-check-list { margin: 0 -16px; }
+.ready-panel-action { width: fit-content; }
+.ready-panel-note { padding: 0 !important; }
+.chatgpt-ready-callout a { display: grid; gap: 4px; }
+.chatgpt-ready-callout span { color: var(--muted-strong); font-weight: 500; }
+.portrait-workflow-note { padding: 0; color: var(--muted-strong); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .portrait-workflow-note a { color: #a9bdff; font-weight: 700; text-underline-offset: 3px; }
 .portrait-workflow-note a:hover { color: white; }
 .portrait-workflow-note a:focus-visible { border-radius: 4px; outline: 3px solid var(--focus); outline-offset: 4px; }

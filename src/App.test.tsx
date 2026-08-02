@@ -1,13 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { Components, DryRun, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, estimateRemainingTime, estimateSemanticPlanningProgress, recoveryProgress } from "./App";
-import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, rollbackInstallationResult, run3DHealthCheck, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
+import App, { Components, DryRun, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, maintenanceReviewScreen, recoveryProgress } from "./App";
+import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
 import type { CodexAnalysisResult, FolderSelection, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), rollbackInstallationResult: vi.fn(), run3DHealthCheck: vi.fn(), runCodexAnalysisResult: vi.fn(), suggestProjectPaths: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), suggestProjectPaths: vi.fn() };
 });
 
 afterEach(() => {
@@ -29,7 +29,6 @@ beforeEach(() => {
   vi.mocked(previewDescriptorsResult).mockResolvedValue({ value: null });
   vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: null });
   vi.mocked(runCodexAnalysisResult).mockResolvedValue({ value: null });
-  vi.mocked(run3DHealthCheck).mockResolvedValue(null);
   vi.mocked(suggestProjectPaths).mockResolvedValue(null);
   vi.mocked(checkForAppUpdate).mockResolvedValue({ value: null });
   vi.mocked(installAppUpdate).mockResolvedValue({ value: undefined });
@@ -74,6 +73,18 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(estimateSemanticPlanningProgress("preparing", startedAt, startedAt)).toEqual({ percent: 5, remaining: "About 2 minutes remaining" });
     expect(estimateSemanticPlanningProgress("analyzing", startedAt, startedAt + 45_000)).toEqual({ percent: 54, remaining: "About 50 seconds remaining" });
     expect(estimateSemanticPlanningProgress("validating", startedAt, startedAt + 120_000)).toEqual({ percent: 98, remaining: "Less than 10 seconds remaining" });
+  });
+
+  it("shows a bounded live estimate while preparing the installation review", () => {
+    const startedAt = Date.parse("2026-08-02T12:00:00Z");
+    expect(estimatePlanPreparationProgress(startedAt, startedAt)).toEqual({ percent: 4, remaining: "About 30 seconds remaining" });
+    expect(estimatePlanPreparationProgress(startedAt, startedAt + 15_000)).toEqual({ percent: 50, remaining: "About 15 seconds remaining" });
+    expect(estimatePlanPreparationProgress(startedAt, startedAt + 60_000).percent).toBe(96);
+  });
+
+  it("opens every prepared maintenance plan in a visible review step", () => {
+    expect(maintenanceReviewScreen({ conflicts: [] })).toBe("dry-run");
+    expect(maintenanceReviewScreen({ conflicts: [{ selected: undefined }] as never })).toBe("conflict");
   });
 
   it("estimates remaining installation time from measured elapsed progress", () => {
@@ -170,7 +181,7 @@ describe("HOI4 Mod Setup wizard", () => {
 
   it("starts in the Project phase and exposes the two supported entry routes", () => {
     render(<App />);
-    expect(screen.getByText("HOI4 Mod Setup")).toBeInTheDocument();
+    expect(screen.getAllByText("HOI4 Mod Setup").length).toBeGreaterThan(0);
     expect(screen.getByText("Project")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /create new mod/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /import existing mod/i })).toBeInTheDocument();
@@ -399,14 +410,10 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(update.mock.calls[0][0]).not.toHaveProperty("meshCredentialReference");
   });
 
-  it("keeps a failed optional 3D check inside the Ready screen", async () => {
-    const update = vi.fn();
-    render(<Ready state={{ ...readyState(), meshSelected: true } as unknown as WizardState} update={update} onMaintenance={vi.fn()} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Check 3D setup" }));
-
-    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ transactionError: expect.stringMatching(/could not be checked/i) })));
-    expect(screen.getByRole("button", { name: "Check 3D setup" })).toBeEnabled();
+  it("keeps 3D readiness in the report without a redundant Ready-screen action", () => {
+    render(<Ready state={{ ...readyState(), meshSelected: true } as unknown as WizardState} update={vi.fn()} onMaintenance={vi.fn()} />);
+    expect(screen.getByText("3D model workflow")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /check 3d setup/i })).not.toBeInTheDocument();
   });
 
   it("links to the separate portrait workflow only after core setup succeeds", () => {
@@ -421,6 +428,11 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", "https://github.com/klimPaskov/comfyui-hoi4-portraits");
     expect(screen.queryByRole("switch", { name: /LoRA|ComfyUI|portrait/i })).not.toBeInTheDocument();
+  });
+
+  it("links prepared ChatGPT sources directly to ChatGPT Chat", () => {
+    render(<Ready state={{ ...readyState(), flattenForChat: true }} update={vi.fn()} onMaintenance={vi.fn()} />);
+    expect(screen.getByRole("link", { name: /ChatGPT Chat sources prepared/i })).toHaveAttribute("href", "https://chatgpt.com");
   });
 
   it("moves focus to the new screen heading and names scan progress", async () => {
@@ -692,9 +704,9 @@ describe("HOI4 Mod Setup wizard", () => {
     enableTauriRuntime();
     render(<App />);
 
-    fireEvent.click(screen.getByRole("link", { name: /Agentic-HOI4-Modding/i }));
+    fireEvent.click(screen.getByRole("link", { name: /HOI4 Mod Setup/i }));
 
-    await waitFor(() => expect(openExternalUrlResult).toHaveBeenCalledWith("https://github.com/klimPaskov/Agentic-HOI4-Modding"));
+    await waitFor(() => expect(openExternalUrlResult).toHaveBeenCalledWith("https://github.com/klimPaskov/HOI4-Mod-Setup"));
   });
 
   it("keeps signed-out local recovery reachable from the welcome screen", () => {
@@ -933,7 +945,8 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     expect(screen.getByRole("button", { name: "Preparing changes…" })).toBeDisabled();
     expect(screen.getByRole("status", { name: "Plan preparation status" })).toHaveTextContent("Preparing changes");
-    expect(screen.getByRole("progressbar", { name: "Preparing changes" })).toHaveAttribute("aria-valuetext", "Preparing the installation review");
+    expect(screen.getByRole("progressbar", { name: "Preparing changes" })).toHaveAttribute("aria-valuenow");
+    expect(screen.getByRole("progressbar", { name: "Preparing changes" }).getAttribute("aria-valuetext")).toMatch(/% complete.*estimated time/i);
     expect(screen.getByRole("button", { name: /start installation/i })).toBeDisabled();
 
     await act(async () => finishPlan?.({ value: { operations: [], conflicts: [], generated_artifacts: [], external_actions: [] } }));
@@ -1063,7 +1076,7 @@ describe("HOI4 Mod Setup wizard", () => {
     } as unknown as WizardState} update={vi.fn()} onMaintenance={vi.fn()} />);
 
     expect(screen.queryByRole("button", { name: /run source-declared MCP check/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(/optional integration is unavailable/i);
+    expect(screen.getByText("Optional")).toBeInTheDocument();
   });
 
   it("keeps recovery actions out of the completed readiness screen", () => {

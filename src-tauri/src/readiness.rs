@@ -1,6 +1,7 @@
 use crate::descriptors::{parse_descriptor, validate_thumbnail_png};
 use crate::git::read_git_head;
 use crate::models::*;
+use crate::process::find_path_executable;
 use crate::security::{
     is_link_metadata, path_has_link_component, safe_join, sha256_file,
     validate_external_destination,
@@ -742,7 +743,7 @@ fn add_status_check(
     path: &str,
 ) {
     let normalized = match status {
-        "pass" | "ready" | "healthy" | "installed" | "supported" => "pass",
+        "pass" | "ready" | "healthy" | "installed" | "supported" | "configured" => "pass",
         "not_selected" => "not_selected",
         "planned_unavailable" => "planned_unavailable",
         "unsupported_platform" => "unsupported_platform",
@@ -1181,7 +1182,11 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
     } else if !mcp_declared {
         "block".into()
     } else if on_windows && mcp_planned_unavailable {
-        "planned_unavailable".into()
+        if find_path_executable(&["hoi4-agent-tools.cmd"]).is_ok() {
+            "configured".into()
+        } else {
+            "planned_unavailable".into()
+        }
     } else if on_windows {
         "health_not_run".into()
     } else {

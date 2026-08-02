@@ -849,9 +849,11 @@ fn open_external_url(url: String) -> Result<(), String> {
 }
 
 fn is_allowed_external_url(url: &str) -> bool {
-    const ALLOWED_URLS: [&str; 2] = [
+    const ALLOWED_URLS: [&str; 4] = [
         "https://github.com/klimPaskov/Agentic-HOI4-Modding",
+        "https://github.com/klimPaskov/HOI4-Mod-Setup",
         "https://github.com/klimPaskov/comfyui-hoi4-portraits",
+        "https://chatgpt.com",
     ];
     ALLOWED_URLS.contains(&url)
         || ai::provider_profiles()
@@ -5307,7 +5309,7 @@ fn open_in_codex(project_root: String) -> Result<OpenInCodexResult, String> {
     let spec = crate::process::ProcessSpec {
         executable: executable.clone(),
         executable_sha256: Some(sha256_file(&executable).map_err(command_error)?),
-        args: vec!["--cd".into(), root.display().to_string()],
+        args: codex_app_args(&root),
         cwd: Some(root),
         platform: Platform::current(),
         environment_names: vec![],
@@ -5319,6 +5321,10 @@ fn open_in_codex(project_root: String) -> Result<OpenInCodexResult, String> {
         opened: true,
         message: "Codex was launched for the verified project.".into(),
     })
+}
+
+fn codex_app_args(root: &Path) -> Vec<String> {
+    vec!["app".into(), root.display().to_string()]
 }
 
 fn manual_open_in_codex_result(root: &Path) -> OpenInCodexResult {
@@ -5671,6 +5677,15 @@ developer_instructions = "Work on the named files."
     }
 
     #[test]
+    fn codex_opener_launches_the_desktop_app_for_the_project() {
+        let root = tempdir().unwrap();
+        assert_eq!(
+            codex_app_args(root.path()),
+            vec!["app".to_string(), root.path().display().to_string()]
+        );
+    }
+
+    #[test]
     fn login_url_opener_rejects_untrusted_urls_before_process_resolution() {
         let error = open_codex_login_url("javascript:alert(1)".into()).unwrap_err();
         assert!(error.contains("invalid HTTPS authentication URL"));
@@ -5681,6 +5696,10 @@ developer_instructions = "Work on the named files."
         assert!(is_allowed_external_url(
             "https://github.com/klimPaskov/Agentic-HOI4-Modding"
         ));
+        assert!(is_allowed_external_url(
+            "https://github.com/klimPaskov/HOI4-Mod-Setup"
+        ));
+        assert!(is_allowed_external_url("https://chatgpt.com"));
         assert!(is_allowed_external_url(
             "https://github.com/klimPaskov/comfyui-hoi4-portraits"
         ));

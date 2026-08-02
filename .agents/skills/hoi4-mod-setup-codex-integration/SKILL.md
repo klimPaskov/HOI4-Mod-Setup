@@ -134,8 +134,11 @@ typed account, browser/device login, fixed-path system-browser opening, logout,
 analysis, and confirmation commands
 through `src/lib/tauri.ts`; React never invokes the low-level Tauri bridge.
 `open_codex_login_url` accepts only the validated URL returned by Codex, while
-`open_external_url` accepts the fixed reviewed source and Ready-screen portrait
-URLs. Both routes use the platform-owned browser executable and argument array.
+`open_external_url` accepts the fixed reviewed source, product repository,
+ChatGPT handoff, and Ready-screen portrait URLs. Both routes use the
+platform-owned browser executable and argument array. The Ready-screen opener
+launches the verified Codex executable with `codex app <project-root>`; do not
+substitute the interactive CLI `--cd` route.
 
 Before reuse, the core polls the supervised child transport and replaces an
 exited App Server. Replacing or discarding a dead transport clears pending

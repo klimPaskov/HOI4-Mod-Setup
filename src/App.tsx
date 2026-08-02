@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlan, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, run3DHealthCheck, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlan, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
 import type { AiProviderId, AiProviderProfile, AppUpdateStatus, CodexAnalysisRequest, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, ManifestComponentPreview, PhaseId, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
@@ -235,6 +235,10 @@ function previousScreen(state: WizardState): ScreenId {
   }
 }
 
+export function maintenanceReviewScreen(plan: Pick<InstallationPlan, "conflicts">): ScreenId {
+  return plan.conflicts.some((conflict) => !conflict.selected) ? "conflict" : "dry-run";
+}
+
 export default function App() {
   const [state, setState] = useState<WizardState>(initialState);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -252,6 +256,9 @@ export default function App() {
   const [semanticProgressStartedAt, setSemanticProgressStartedAt] = useState<number>();
   const [semanticProgressNow, setSemanticProgressNow] = useState(Date.now());
   const [planPreparationPending, setPlanPreparationPending] = useState(false);
+  const [planPreparationStartedAt, setPlanPreparationStartedAt] = useState<number>();
+  const [planPreparationNow, setPlanPreparationNow] = useState(Date.now());
+  const [maintenancePending, setMaintenancePending] = useState(false);
   const [installationPending, setInstallationPending] = useState(false);
   const [recoveryPending, setRecoveryPending] = useState(false);
   const [activeTransactionId, setActiveTransactionId] = useState<string>();
@@ -265,6 +272,13 @@ export default function App() {
     const timer = window.setInterval(() => setSemanticProgressNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, [semanticAnalysisPending]);
+
+  useEffect(() => {
+    if (!planPreparationPending) return;
+    setPlanPreparationNow(Date.now());
+    const timer = window.setInterval(() => setPlanPreparationNow(Date.now()), 500);
+    return () => window.clearInterval(timer);
+  }, [planPreparationPending]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -914,6 +928,9 @@ export default function App() {
   };
   const prepareSetupPlan = async () => {
     if (planPreparationPending) return;
+    const startedAt = Date.now();
+    setPlanPreparationStartedAt(startedAt);
+    setPlanPreparationNow(startedAt);
     setPlanPreparationPending(true);
     update({ transactionError: undefined });
     try {
@@ -931,6 +948,10 @@ export default function App() {
     }
   };
   const startMaintenance = async (mode: "update" | "repair" | "reinstall" | "remove") => {
+    if (maintenancePending) return;
+    setMaintenancePending(true);
+    update({ transactionError: "Preparing the review…" });
+    try {
     if (mode === "update" && !state.maintenanceCodexAnalysisRecord?.confirmed_fields.length) {
       if (!state.maintenanceEvidenceReady) {
         await prepareMaintenanceReanalysis();
@@ -953,7 +974,10 @@ export default function App() {
       update({ transactionError: "The maintenance plan is unavailable. Nothing was changed." });
       return;
     }
-    update({ plan, maintenanceMode: mode, transactionError: undefined, screen: plan.conflicts.some((conflict) => !conflict.selected) ? "conflict" : "update" });
+    update({ plan, maintenanceMode: mode, transactionError: undefined, screen: maintenanceReviewScreen(plan) });
+    } finally {
+      setMaintenancePending(false);
+    }
   };
   const chooseConflict = async (choice: ConflictChoice) => {
     const plan = state.plan;
@@ -1144,7 +1168,21 @@ export default function App() {
       setScanError(`The scan could not be cancelled: ${result.error}`);
     }
   };
-  const openMaintenance = (screen: "update" | "conflict" | "recovery") => update({ screen, plan: undefined, maintenanceMode: undefined, maintenanceCodexAnalysisRecord: undefined, maintenanceEvidenceReady: undefined, transactionError: undefined });
+  const openMaintenance = async (screen: "update" | "conflict" | "recovery") => {
+    const transaction = screen === "recovery" && state.identity.projectRoot.trim()
+      ? await findInterruptedTransaction(state.identity.projectRoot)
+      : undefined;
+    update({
+      screen,
+      transaction: screen === "recovery" ? transaction ?? undefined : state.transaction,
+      recoveryChoice: transaction ? preferredRecoveryChoice(transaction) : state.recoveryChoice,
+      plan: undefined,
+      maintenanceMode: undefined,
+      maintenanceCodexAnalysisRecord: undefined,
+      maintenanceEvidenceReady: undefined,
+      transactionError: screen === "recovery" && !transaction ? "There is no interrupted setup for this project." : undefined,
+    });
+  };
 
   const copy = state.screen === "ready"
     ? {
@@ -1178,8 +1216,8 @@ export default function App() {
         <PhaseRail screen={state.screen} />
         <main className="main-viewport" aria-labelledby="screen-title" aria-describedby="screen-supporting" onKeyDown={closeDisclosureOnEscape}>
           <div className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{copy.title}</div>
-          <ScreenFrame screen={state.screen} copy={copy} state={state} canAdvance={!semanticAnalysisPending && !planPreparationPending && !installationPending && !recoveryPending && canAdvanceFromScreen(state, { scanComplete, scanError, scanPartial, findings })} pending={semanticAnalysisPending || recoveryPending} semanticProgressStage={semanticProgressStage} semanticProgressStartedAt={semanticProgressStartedAt} semanticProgressNow={semanticProgressNow} preparingPlan={planPreparationPending} headingRef={headingRef} onBack={goBack} onNext={goNext} onMaintenance={openMaintenance} onPrepareConflicts={prepareSetupPlan}>
-            {renderScreen(state, update, updateIdentity, updateDescription, findings, selectedFinding, setSelectedFinding, setFindings, scanComplete, scanError, scanProgress, scanPartial, scanLimitsHit, scanRequestId, scanCancellationRequested, cancelActiveScan, openMaintenance, startMaintenance, runMaintenanceReanalysis, chooseConflict, chooseProjectFolder, chooseLauncherFolder, confirmAnalysis, recoveryPending)}
+          <ScreenFrame screen={state.screen} copy={copy} state={state} canAdvance={!semanticAnalysisPending && !planPreparationPending && !installationPending && !recoveryPending && canAdvanceFromScreen(state, { scanComplete, scanError, scanPartial, findings })} pending={semanticAnalysisPending || recoveryPending} semanticProgressStage={semanticProgressStage} semanticProgressStartedAt={semanticProgressStartedAt} semanticProgressNow={semanticProgressNow} preparingPlan={planPreparationPending} planPreparationStartedAt={planPreparationStartedAt} planPreparationNow={planPreparationNow} headingRef={headingRef} onBack={goBack} onNext={goNext} onMaintenance={openMaintenance} onPrepareConflicts={prepareSetupPlan}>
+            {renderScreen(state, update, updateIdentity, updateDescription, findings, selectedFinding, setSelectedFinding, setFindings, scanComplete, scanError, scanProgress, scanPartial, scanLimitsHit, scanRequestId, scanCancellationRequested, cancelActiveScan, openMaintenance, startMaintenance, runMaintenanceReanalysis, chooseConflict, chooseProjectFolder, chooseLauncherFolder, confirmAnalysis, recoveryPending, maintenancePending)}
           </ScreenFrame>
         </main>
       </div>
@@ -1201,7 +1239,7 @@ function PhaseRail({ screen }: { screen: ScreenId }) {
         <span className="phase-number">{completed ? "✓" : index + 1}</span><span>{phase.label}</span>
       </div>;
     })}
-    <ExternalLink className="rail-repo" href="https://github.com/klimPaskov/Agentic-HOI4-Modding">Agentic-HOI4-Modding <span aria-hidden="true">↗</span></ExternalLink>
+    <ExternalLink className="rail-repo" href="https://github.com/klimPaskov/HOI4-Mod-Setup">HOI4 Mod Setup <span aria-hidden="true">↗</span></ExternalLink>
   </nav>;
 }
 
@@ -1217,7 +1255,7 @@ function ExternalLink({ href, className, children }: { href: string; className?:
   >{children}</a>;
 }
 
-function ScreenFrame({ screen, copy, state, canAdvance, pending, semanticProgressStage, semanticProgressStartedAt, semanticProgressNow, preparingPlan, headingRef, onBack, onNext, onMaintenance, onPrepareConflicts, children }: { screen: ScreenId; copy: { title: string; supporting?: string; status?: { label: string; tone: StatusTone } }; state: WizardState; canAdvance: boolean; pending: boolean; semanticProgressStage: "preparing" | "analyzing" | "validating"; semanticProgressStartedAt?: number; semanticProgressNow: number; preparingPlan: boolean; headingRef: { current: HTMLHeadingElement | null }; onBack: () => void; onNext: () => void; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onPrepareConflicts: () => Promise<void>; children: ReactNode }) {
+function ScreenFrame({ screen, copy, state, canAdvance, pending, semanticProgressStage, semanticProgressStartedAt, semanticProgressNow, preparingPlan, planPreparationStartedAt, planPreparationNow, headingRef, onBack, onNext, onMaintenance, onPrepareConflicts, children }: { screen: ScreenId; copy: { title: string; supporting?: string; status?: { label: string; tone: StatusTone } }; state: WizardState; canAdvance: boolean; pending: boolean; semanticProgressStage: "preparing" | "analyzing" | "validating"; semanticProgressStartedAt?: number; semanticProgressNow: number; preparingPlan: boolean; planPreparationStartedAt?: number; planPreparationNow: number; headingRef: { current: HTMLHeadingElement | null }; onBack: () => void; onNext: () => void; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onPrepareConflicts: () => Promise<void>; children: ReactNode }) {
   const installDone = screen === "install" && state.installProgress >= 100;
   const unresolvedConflicts = state.plan?.conflicts.some((conflict) => !conflict.selected) === true;
   const recoveryLabel = state.recoveryChoice === "rollback" ? "Undo changes" : state.recoveryChoice === "discard" ? "Discard prepared files" : "Continue setup";
@@ -1230,7 +1268,7 @@ function ScreenFrame({ screen, copy, state, canAdvance, pending, semanticProgres
         {copy.status && <Status label={copy.status.label} tone={copy.status.tone} />}
       </div>
       {pending && screen === "description" && <SemanticPlanningProgress stage={semanticProgressStage} startedAt={semanticProgressStartedAt} now={semanticProgressNow} />}
-      {preparingPlan && screen === "dry-run" && <section className="panel plan-preparation" role="status" aria-label="Plan preparation status" aria-live="polite" aria-busy="true"><div><strong>Preparing changes</strong><span>Checking the selected files and building the review.</span></div><Progress label="Preparing changes" valueText="Preparing the installation review" /></section>}
+      {preparingPlan && screen === "dry-run" && <PlanPreparationProgress startedAt={planPreparationStartedAt} now={planPreparationNow} />}
       {children}
     </div>
     <footer className="footer-bar">
@@ -1275,6 +1313,26 @@ function SemanticPlanningProgress({ stage, startedAt, now }: { stage: keyof type
     <div><strong>Preparing your mod details</strong><span>{label}</span></div>
     <Progress value={progress.percent} label="Mod detail preparation progress" valueText={`${progress.percent}% complete. ${label}. Estimated time: ${progress.remaining}`} />
     <div className="semantic-progress-meta" aria-hidden="true"><span>{progress.percent}%</span><span>Estimated time: {progress.remaining}</span></div>
+  </section>;
+}
+
+export function estimatePlanPreparationProgress(startedAt = Date.now(), now = Date.now()): { percent: number; remaining: string } {
+  const elapsedSeconds = Math.max(0, (now - startedAt) / 1_000);
+  const estimatedTotalSeconds = 30;
+  const percent = Math.min(96, Math.max(4, Math.floor(4 + (elapsedSeconds / estimatedTotalSeconds) * 92)));
+  const remainingSeconds = Math.max(1, Math.ceil(estimatedTotalSeconds - elapsedSeconds));
+  return {
+    percent,
+    remaining: remainingSeconds < 60 ? `About ${remainingSeconds} seconds remaining` : `About ${Math.ceil(remainingSeconds / 60)} minutes remaining`,
+  };
+}
+
+function PlanPreparationProgress({ startedAt, now }: { startedAt?: number; now: number }) {
+  const progress = estimatePlanPreparationProgress(startedAt, now);
+  return <section className="panel plan-preparation" role="status" aria-label="Plan preparation status" aria-live="polite" aria-busy="true">
+    <div><strong>Preparing changes</strong><span>Checking the selected files and building the review.</span></div>
+    <Progress value={progress.percent} label="Preparing changes" valueText={`${progress.percent}% complete. Estimated time: ${progress.remaining}`} />
+    <div className="plan-preparation-meta" aria-hidden="true"><span>{progress.percent}%</span><span>Estimated time: {progress.remaining}</span></div>
   </section>;
 }
 
@@ -1411,7 +1469,7 @@ function canAdvanceFromScreen(
   }
 }
 
-function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) => void, updateIdentity: (patch: Partial<ProjectIdentity>) => void, updateDescription: (description: string) => void, findings: ScanFinding[], selectedFinding: string, setSelectedFinding: (id: string) => void, setFindings: Dispatch<SetStateAction<ScanFinding[]>>, scanComplete: boolean, scanError: string | undefined, scanProgress: ScanProgress, scanPartial: boolean, scanLimitsHit: string[], scanRequestId: string | undefined, scanCancellationRequested: boolean, onCancelScan: () => Promise<void>, onMaintenance: (screen: "update" | "conflict" | "recovery") => void, startMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void, onReanalyze: () => Promise<boolean>, chooseConflict: (choice: ConflictChoice) => void, onPickProjectFolder: () => Promise<FolderSelection | null>, onPickLauncherFolder: () => Promise<FolderSelection | null>, onConfirmAnalysis: () => Promise<void>, recoveryPending: boolean) {
+function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) => void, updateIdentity: (patch: Partial<ProjectIdentity>) => void, updateDescription: (description: string) => void, findings: ScanFinding[], selectedFinding: string, setSelectedFinding: (id: string) => void, setFindings: Dispatch<SetStateAction<ScanFinding[]>>, scanComplete: boolean, scanError: string | undefined, scanProgress: ScanProgress, scanPartial: boolean, scanLimitsHit: string[], scanRequestId: string | undefined, scanCancellationRequested: boolean, onCancelScan: () => Promise<void>, onMaintenance: (screen: "update" | "conflict" | "recovery") => void, startMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void, onReanalyze: () => Promise<boolean>, chooseConflict: (choice: ConflictChoice) => void, onPickProjectFolder: () => Promise<FolderSelection | null>, onPickLauncherFolder: () => Promise<FolderSelection | null>, onConfirmAnalysis: () => Promise<void>, recoveryPending: boolean, maintenancePending: boolean) {
   switch (state.screen) {
     case "welcome": return <Welcome state={state} update={update} />;
     case "description": return <Description state={state} updateDescription={updateDescription} updateIdentity={updateIdentity} />;
@@ -1426,7 +1484,7 @@ function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) 
     case "dry-run": return <DryRun state={state} update={update} />;
     case "install": return <Install state={state} />;
     case "ready": return <Ready state={state} update={update} onMaintenance={onMaintenance} />;
-    case "update": return <Update state={state} update={update} findings={findings} setFindings={setFindings} onMaintenance={onMaintenance} onStartMaintenance={startMaintenance} onReanalyze={onReanalyze} />;
+    case "update": return <Update state={state} update={update} findings={findings} setFindings={setFindings} onMaintenance={onMaintenance} onStartMaintenance={startMaintenance} onReanalyze={onReanalyze} pending={maintenancePending} />;
     case "conflict": return <Conflict state={state} update={update} onChoice={chooseConflict} />;
     case "recovery": return <Recovery state={state} update={update} onPickProjectFolder={onPickProjectFolder} onStartMaintenance={startMaintenance} pending={recoveryPending} />;
   }
@@ -2124,7 +2182,6 @@ function OnlineGitAction({ state, update }: { state: WizardState; update: (patch
 
 export function Ready({ state, update, onMaintenance }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onMaintenance: (screen: "update" | "conflict" | "recovery") => void }) {
   const [mcpCheck, setMcpCheck] = useState<WorkflowHealthResult>();
-  const [checking3d, setChecking3d] = useState(false);
   const [openMessage, setOpenMessage] = useState<string>();
   const report = state.readiness;
   const selectedProvider = state.aiProvider ?? "codex";
@@ -2136,28 +2193,10 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
   const codex = readinessRow(report, ["codex.agents", "skills.core", "subagents.core", "codex.config"]);
   const mcpWiki = readinessRow(report, ["mcp.hoi4", "wiki.coverage"]);
   const mcpStatus = report?.checks.find((check) => check.id === "mcp.hoi4")?.status;
-  const mcpRouteUnavailable = mcpStatus === "planned_unavailable" || mcpStatus === "unsupported_platform";
+  const canCheckMcp = mcpStatus === "health_not_run";
   const gitHashes = readinessRow(report, ["git.project", "hashes.managed", "conflicts.resolved", "dependencies.core"]);
   const mesh = readinessRow(report, ["workflow.3d"]);
   const superEvents = readinessRow(report, ["workflow.super_events"]);
-  const run3dCheck = async () => {
-    if (checking3d) return;
-    setChecking3d(true);
-    try {
-      const result = await run3DHealthCheck(state.identity.projectRoot);
-      if (!result) {
-        update({ transactionError: "The 3D setup could not be checked. The rest of the project is still ready to use." });
-        return;
-      }
-      if (result.status === "ready") {
-        update({ meshKeyStatus: "verified", readiness: null, transactionError: undefined });
-      } else {
-        update({ readiness: null, transactionError: "The 3D setup is not ready yet. The rest of the project is still ready to use." });
-      }
-    } finally {
-      setChecking3d(false);
-    }
-  };
   const runMcpCheck = async () => {
     const result = await runMcpHealthCheck(state.identity.projectRoot);
     if (!result) {
@@ -2194,25 +2233,26 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
         </span>
       </section>
       <div className="two-column">
-        <section className="panel">
-          <CheckRow label="Project and descriptors" status={project.status} tone={project.tone} />
-          <CheckRow label={`${providerLabel} instructions and skills`} status={codex.status} tone={codex.tone} />
-          <CheckRow label="MCP and offline wiki" status={mcpWiki.status} tone={mcpWiki.tone} />
-          {state.selectedComponents.includes("mcp.hoi4_agent_tools") && <>
-            {mcpRouteUnavailable ? <p className="muted" role="status">This optional integration is unavailable on this computer.</p> : <button type="button" className="button secondary" onClick={() => void runMcpCheck()}>Check integration</button>}
-            {mcpCheck && <p className="muted" role="status">{mcpCheck.status === "ready" ? "Integration checked" : "Integration needs review"}</p>}
-          </>}
-          <CheckRow label="Git and managed files" status={gitHashes.status} tone={gitHashes.tone} />
+        <section className="panel ready-options-panel">
+          <div className="ready-check-list">
+            <CheckRow label="Project and descriptors" status={project.status} tone={project.tone} />
+            <CheckRow label={`${providerLabel} instructions and skills`} status={codex.status} tone={codex.tone} />
+            <CheckRow label="MCP and offline wiki" status={mcpWiki.status} tone={mcpWiki.tone} />
+            <CheckRow label="Git and managed files" status={gitHashes.status} tone={gitHashes.tone} />
+          </div>
+          {state.selectedComponents.includes("mcp.hoi4_agent_tools") && canCheckMcp && <button type="button" className="button secondary ready-panel-action" onClick={() => void runMcpCheck()}>Check integration</button>}
+          {mcpCheck && <p className="ready-panel-note muted" role="status">{mcpCheck.status === "ready" ? "Integration checked" : "Integration needs review"}</p>}
         </section>
-        <section className="panel">
-          <CheckRow label="3D model workflow" status={mesh.status} tone={mesh.tone} />
-          <CheckRow label="Super Events workflow" status={superEvents.status} tone={superEvents.tone} />
-          {state.flattenForChat && selectedProvider === "codex" && <div className="callout info"><strong>ChatGPT Chat sources prepared</strong><p>After setup, start planning using ChatGPT &quot;Chat&quot;. No upload or planning action starts automatically.</p></div>}
-          {state.meshSelected && <button type="button" className="button secondary" onClick={() => void run3dCheck()} disabled={checking3d} aria-busy={checking3d}>{checking3d ? "Checking 3D setup…" : "Check 3D setup"}</button>}
+        <section className="panel ready-options-panel">
+          <div className="ready-check-list">
+            <CheckRow label="3D model workflow" status={mesh.status} tone={mesh.tone} />
+            <CheckRow label="Super Events workflow" status={superEvents.status} tone={superEvents.tone} />
+          </div>
+          {state.flattenForChat && selectedProvider === "codex" && <div className="callout info chatgpt-ready-callout"><ExternalLink href="https://chatgpt.com"><strong>ChatGPT Chat sources prepared</strong><span>Start planning in ChatGPT Chat <span aria-hidden="true">↗</span></span></ExternalLink></div>}
           {coreReady && <div className="portrait-workflow-note"><ExternalLink href="https://github.com/klimPaskov/comfyui-hoi4-portraits">Optional portrait workflow: Explore ComfyUI HOI4 Portraits on GitHub <span aria-hidden="true">↗</span></ExternalLink></div>}
           <details>
             <summary>Readiness details</summary>
-            {report ? <div className="manifest-details">{report.checks.map((check) => <div key={check.id}><strong>{check.label}</strong><span>{check.status === "unsupported_platform" || check.status === "planned_unavailable" ? "Not available on this computer" : check.status === "pass" ? "Ready" : check.status === "not_selected" ? "Not selected" : check.blocking ? "Action needed" : "Optional setup incomplete"}</span></div>)}</div> : <p className="muted">Details appear after the checks finish.</p>}
+            {report ? <div className="manifest-details">{report.checks.map((check) => <div key={check.id}><strong>{check.label}</strong><span>{check.status === "configured" || check.status === "pass" ? "Ready" : check.status === "unsupported_platform" ? "Not available on this computer" : check.status === "planned_unavailable" ? "Optional tool not installed" : check.status === "not_selected" ? "Not selected" : check.blocking ? "Action needed" : "Optional setup incomplete"}</span></div>)}</div> : <p className="muted">Details appear after the checks finish.</p>}
           </details>
         </section>
       </div>
@@ -2231,7 +2271,7 @@ function readinessRow(report: ReadinessReport | null, ids: string[]): { status: 
   if (!checks.length) return { status: "Not reported", tone: "review" };
   if (checks.some((check) => check.status === "block" && check.blocking)) return { status: "Blocked", tone: "block" };
   if (checks.some((check) => ["block", "warn", "unsupported_platform"].includes(check.status))) return { status: "Review", tone: "review" };
-  if (checks.some((check) => check.status === "planned_unavailable")) return { status: "Planned", tone: "review" };
+  if (checks.some((check) => check.status === "planned_unavailable")) return { status: "Optional", tone: "muted" };
   if (checks.every((check) => check.status === "not_selected")) return { status: "Not selected", tone: "muted" };
   return { status: "Pass", tone: "pass" };
 }
@@ -2258,7 +2298,7 @@ function MaintenanceWorkflowOptions({ state, update }: { state: WizardState; upd
   return <section className="panel maintenance-workflow-panel"><PanelTitle title="Optional workflows" /><ToggleRow label="Do you want to set up the 3D models workflow?" detail={meshInstalled ? "Already part of this project" : "Add it during the next update or repair"} checked={meshInstalled || state.meshSelected} disabled={meshInstalled} onChange={(checked) => update({ meshSelected: checked })} /><ToggleRow label="Do you want to set up the Super Events workflow?" detail={superEventsInstalled ? "Already part of this project" : "Add it during the next update or repair"} checked={superEventsInstalled || state.superEventsSelected} disabled={superEventsInstalled} onChange={(checked) => update({ superEventsSelected: checked })} />{state.meshSelected && (!meshInstalled || keyNeedsConfiguration) && <div className="maintenance-key"><p className="muted">A Meshy key is optional for the file repair. Store it now if you want the workflow ready to run.</p><label className="field-label" htmlFor="maintenance-meshy-key">Meshy API key</label><div className="input-with-action"><input id="maintenance-meshy-key" className="text-input" type="password" autoComplete="off" value={state.meshKeyDraft} onChange={(event) => update({ meshKeyDraft: event.target.value })} /><button type="button" className="input-action" onClick={() => void storeKey()} disabled={!state.meshKeyDraft}>Store</button></div><span className="muted">Stored in the operating-system credential vault.</span></div>}</section>;
 }
 
-export function Update({ state, update, findings, setFindings, onMaintenance, onStartMaintenance, onReanalyze }: { state: WizardState; update: (patch: Partial<WizardState>) => void; findings: ScanFinding[]; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void; onReanalyze: () => Promise<boolean> }) {
+export function Update({ state, update, findings, setFindings, onMaintenance, onStartMaintenance, onReanalyze, pending = false }: { state: WizardState; update: (patch: Partial<WizardState>) => void; findings: ScanFinding[]; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void; onReanalyze: () => Promise<boolean>; pending?: boolean }) {
   const plan = state.plan;
   const optional3d = state.meshSelected ? state.meshKeyStatus === "present" ? "Stored; health check pending" : "Selected; key not stored" : "Not selected";
   const superEvents = state.superEventsSelected ? state.installedSuperEventsState === "not_selected" ? "Selected for the next change" : "Installed" : "Not selected";

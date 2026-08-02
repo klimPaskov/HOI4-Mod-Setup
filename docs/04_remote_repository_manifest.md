@@ -154,6 +154,9 @@ and rechecks the interpreter identity immediately before spawn.
 If a manifest does not provide immutable executable identity evidence, the
 action remains visible in the dry run but the health route is
 `planned_unavailable`; the core never runs a same-named command found on `PATH`.
+Installed readiness may detect that the exact configured command exists on the
+reviewed PATH and display it as configured, but discovery alone never executes
+or authorizes the command.
 The current HOI4 MCP declaration is in this honest state because the inspected
 source provides no executable, interpreter, or runtime hash/size evidence,
 package identity, or version evidence.

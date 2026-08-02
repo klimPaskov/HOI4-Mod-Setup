@@ -55,6 +55,11 @@ Security-sensitive root values such as `approval_policy` and `sandbox_mode` rece
 
 Do not run paid or mutating provider actions as generic health checks unless the repository declares a safe operation.
 
+When immutable health-check evidence is unavailable, installed readiness may
+report the exact configured bare command as present after a read-only PATH
+lookup. This is a display state only; it does not run the command or weaken the
+health-check identity requirements above.
+
 ## Capability display
 
 The current HOI4 Agent Tools documentation describes focus, event, technology and doctrine, weighted logic, scripted GUI, and map support. Show these as declared capabilities. Refine them with the live tool list and never invent a missing viewer.

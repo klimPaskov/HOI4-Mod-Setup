@@ -173,6 +173,8 @@ Use a platform adapter that detects a supported Codex app or CLI, previews the e
 
 The Tauri command returns a typed non-error result for this opener-unavailable case. The React Ready screen announces the manual path without downgrading readiness; authentication, invalid-root, readiness, and process failures remain errors.
 
+When the verified Codex executable is available, the desktop opener runs `codex app <project-root>` so the project opens in the Codex desktop application rather than an interactive terminal session.
+
 ## Safe external GitHub links
 
 The version 1 Ready-screen portrait link is a fixed HTTPS URL:

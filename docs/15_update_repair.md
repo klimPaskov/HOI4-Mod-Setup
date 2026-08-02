@@ -83,6 +83,8 @@ state and its managed file ownership; it does not add a credential reference.
 
 Every successful maintenance transaction writes source revision, component states, per-file hashes, preserved ownership and skipped files, preserved choices, local modification records, and a new rollback record. The predecessor lock is backed up and restored if the maintenance transaction is rolled back. Configured remotes require explicit final dry-run approval; push and online repository creation remain outside the transaction.
 
+After a maintenance plan is prepared, the interface opens the normal dry-run review immediately, or conflict review when a choice is still required. Repair, reinstall, update, and removal never leave a completed plan hidden on the maintenance action screen.
+
 ## Signed-out or disconnected operations
 
 Recovery, rollback, backup inspection, and managed removal remain available while signed out or disconnected. Repair and reinstall use the validated locked analysis after the selected provider is configured; update additionally requires the fresh reanalysis described above. An already approved interrupted transaction can resume without repeating provider analysis when its plan and hashes still validate.
