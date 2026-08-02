@@ -213,7 +213,8 @@ The bar always shows an approximate percentage and estimated time remaining;
 both advance from elapsed time within the current real request stage because
 providers do not expose an exact total. A usage-limit state preserves the draft
 and provides one retry action. Screen readers receive changes through a polite
-live region.
+live region. The progress region stays centered at the same width as the
+Description form at every supported scale.
 
 ## Semantic review density
 

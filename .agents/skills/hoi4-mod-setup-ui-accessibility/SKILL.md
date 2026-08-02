@@ -80,6 +80,8 @@ Conflict review is the exception. It may show a three-way comparison and more co
   description, generating project details, and checking the generated details.
   Always show its approximate percentage and estimated time remaining, and
   label both as estimates because the provider exposes no exact total.
+- Keep the Description planning progress panel centered at the same width as
+  the Description form so the pending state does not shift the visual column.
 - The Welcome and planning actions remain disabled until the selected provider
   is ready and not usage-limited; Codex requires ChatGPT mode. Keep signed-out
   recovery and removal reachable from Welcome.
