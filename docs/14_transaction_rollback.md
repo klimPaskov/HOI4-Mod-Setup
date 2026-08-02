@@ -22,6 +22,8 @@ Windows: %LOCALAPPDATA%/HOI4 Mod Setup/
 macOS:   ~/Library/Application Support/HOI4 Mod Setup/
 ```
 
+Large transactions append bounded per-operation records to one durable checkpoint log during backup, staging, and apply instead of rewriting the complete operation array for every file. Each live apply still has an intent record before mutation and a verified-result record after mutation. The log is compacted into an atomic full-journal snapshot every 64 completed operations; journal reads replay only newer records and reject links, wrong bindings, oversized records, and oversized logs.
+
 ## Twelve stages
 
 ### 1. Preflight

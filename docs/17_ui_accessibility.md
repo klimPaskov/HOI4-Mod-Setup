@@ -166,7 +166,7 @@ Long-running Tauri commands remain responsive because filesystem, network, Git,
 and provider waits use async/thread-pool dispatch; the UI must not imply
 progress from a blocked event loop.
 
-Do not invent a percentage when total work is unknown. Plan preparation uses a visibly active indeterminate bar. Installation rows show 0% before work and 100% after completion; staging and apply use journaled file counts for truthful intermediate percentages and expose the current relative destination. Do not expose the full transaction log by default.
+Do not invent a percentage when total work is unknown. Plan preparation uses a visibly active indeterminate bar. Installation rows show 0% before work and 100% after completion; staging and apply use journaled file counts for truthful intermediate percentages and expose the current relative destination. The overall surface shows a clearly approximate time remaining derived from measured elapsed progress and falls back to `Calculating time remaining` until enough evidence exists. Do not expose the full transaction log by default.
 
 ## Accessibility
 

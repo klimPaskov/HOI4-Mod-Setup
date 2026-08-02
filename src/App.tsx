@@ -1917,6 +1917,12 @@ export function DryRun({ state, update }: { state: WizardState; update: (patch: 
 }
 
 function Install({ state }: { state: WizardState }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!state.transaction || ["completed", "rolled_back", "staging_discarded"].includes(state.transaction.state)) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [state.transaction?.transaction_id, state.transaction?.state]);
   const stages = state.transaction?.stages ?? ["preflight", "repository source resolution", "selective download", "checksum verification", "dry-run review", "backup", "staging", "validation", "apply", "post-install checks", "readiness report", "rollback record"].map((id) => ({ id, status: "pending" }));
   const stageLabel = (id: string) => ({
     preflight: "Check the project",
@@ -1963,7 +1969,22 @@ function Install({ state }: { state: WizardState }) {
       : state.transaction
         ? `${progress}% complete`
         : "Starting setup…";
-  return <div className="center-column"><section className="panel install-panel"><div className="install-progress"><div className="install-progress-track"><Progress value={progress} label="Installation progress" valueText={progressLabel} /><span className="install-progress-label">{progressLabel}</span></div><span className="install-percent" aria-hidden="true">{progress}%</span></div><div className="timeline" aria-live="polite">{stages.map((stage) => { const done = isDone(stage.status); const active = !done && stage.status === "active"; const measurement = active ? stageMeasurement(stage.id) : undefined; const stagePercent = done ? 100 : measurement ? Math.round((measurement.complete / measurement.total) * 100) : 0; const valueText = done ? `${stageLabel(stage.id)} complete` : active && measurement ? `${stageLabel(stage.id)} ${stagePercent}% complete` : active ? `${stageLabel(stage.id)} in progress` : `${stageLabel(stage.id)} not started`; return <div key={stage.id} className={`timeline-row ${done ? "done" : active ? "active" : ""}`}><span className="timeline-icon" aria-hidden="true">{done ? "✓" : active ? "●" : ""}</span><div className="timeline-copy"><strong>{stageLabel(stage.id)}</strong>{active && measurement?.current && <small title={measurement.current}>{measurement.current}</small>}</div><span className="timeline-percent">{done ? "100%" : active && measurement ? `${stagePercent}%` : active ? "Working…" : "0%"}</span>{active && <div className="stage-progress"><Progress value={measurement ? stagePercent : undefined} label={`${stageLabel(stage.id)} progress`} valueText={valueText} /></div>}</div>; })}</div><details><summary>Show setup details</summary><p className="muted">The app keeps a protected record of each step so an interrupted setup can continue safely.</p></details></section></div>;
+  const remainingTime = estimateRemainingTime(progress, state.transaction?.created_at, now);
+  return <div className="center-column"><section className="panel install-panel"><div className="install-progress"><div className="install-progress-track"><Progress value={progress} label="Installation progress" valueText={`${progressLabel}. ${remainingTime}`} /><div className="install-progress-meta"><span className="install-progress-label">{progressLabel}</span><span className="install-eta">{remainingTime}</span></div></div><span className="install-percent" aria-hidden="true">{progress}%</span></div><div className="timeline" aria-live="polite">{stages.map((stage) => { const done = isDone(stage.status); const active = !done && stage.status === "active"; const measurement = active ? stageMeasurement(stage.id) : undefined; const stagePercent = done ? 100 : measurement ? Math.round((measurement.complete / measurement.total) * 100) : 0; const valueText = done ? `${stageLabel(stage.id)} complete` : active && measurement ? `${stageLabel(stage.id)} ${stagePercent}% complete` : active ? `${stageLabel(stage.id)} in progress` : `${stageLabel(stage.id)} not started`; return <div key={stage.id} className={`timeline-row ${done ? "done" : active ? "active" : ""}`}><span className="timeline-icon" aria-hidden="true">{done ? "✓" : active ? "●" : ""}</span><div className="timeline-copy"><strong>{stageLabel(stage.id)}</strong>{active && measurement?.current && <small title={measurement.current}>{measurement.current}</small>}</div><span className="timeline-percent">{done ? "100%" : active && measurement ? `${stagePercent}%` : active ? "Working…" : "0%"}</span>{active && <div className="stage-progress"><Progress value={measurement ? stagePercent : undefined} label={`${stageLabel(stage.id)} progress`} valueText={valueText} /></div>}</div>; })}</div><details><summary>Show setup details</summary><p className="muted">The app keeps a protected record of each step so an interrupted setup can continue safely.</p></details></section></div>;
+}
+
+export function estimateRemainingTime(progress: number, startedAt?: string, now = Date.now()): string {
+  if (progress >= 100) return "Complete";
+  const started = startedAt ? Date.parse(startedAt) : Number.NaN;
+  if (!Number.isFinite(started) || progress < 2 || now <= started) return "Calculating time remaining";
+  const elapsedSeconds = (now - started) / 1000;
+  const remainingSeconds = elapsedSeconds * ((100 - progress) / progress);
+  if (!Number.isFinite(remainingSeconds) || remainingSeconds <= 0 || elapsedSeconds > 6 * 60 * 60) return "Calculating time remaining";
+  if (remainingSeconds < 60) return "Less than a minute remaining";
+  const minutes = Math.max(1, Math.round(remainingSeconds / 60));
+  if (minutes < 60) return `About ${minutes} ${minutes === 1 ? "minute" : "minutes"} remaining`;
+  const hours = Math.max(1, Math.round(minutes / 60));
+  return `About ${hours} ${hours === 1 ? "hour" : "hours"} remaining`;
 }
 
 function OnlineGitAction({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {

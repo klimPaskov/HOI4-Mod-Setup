@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { Components, DryRun, Git, Identity, Ready, Scan, Update, Welcome } from "./App";
+import App, { Components, DryRun, Git, Identity, Ready, Scan, Update, Welcome, estimateRemainingTime } from "./App";
 import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
 import type { CodexAnalysisResult, FolderSelection, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 
@@ -67,6 +67,12 @@ function enableTauriRuntime() {
 }
 
 describe("HOI4 Mod Setup wizard", () => {
+  it("estimates remaining installation time from measured elapsed progress", () => {
+    const now = Date.parse("2026-08-02T12:01:00Z");
+    expect(estimateRemainingTime(50, "2026-08-02T12:00:00Z", now)).toBe("About 1 minute remaining");
+    expect(estimateRemainingTime(0, "2026-08-02T12:00:00Z", now)).toBe("Calculating time remaining");
+    expect(estimateRemainingTime(100, "2026-08-02T12:00:00Z", now)).toBe("Complete");
+  });
   it("checks quietly on launch and installs an available signed update only after approval", async () => {
     enableTauriRuntime();
     vi.mocked(checkForAppUpdate).mockResolvedValue({
@@ -855,7 +861,7 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(await screen.findByRole("heading", { name: "Installing components" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Installation was interrupted" })).not.toBeInTheDocument();
     expect(await screen.findByText("Preparing file 2 of 4")).toBeInTheDocument();
-    expect(screen.getByRole("progressbar", { name: "Installation progress" })).toHaveAttribute("aria-valuetext", "Preparing file 2 of 4");
+    expect(screen.getByRole("progressbar", { name: "Installation progress" }).getAttribute("aria-valuetext")).toContain("Preparing file 2 of 4");
     const prepareRow = screen.getByText("Prepare the setup").closest(".timeline-row") as HTMLElement;
     expect(within(prepareRow).getByText("50%")).toBeInTheDocument();
     expect(within(prepareRow).getByRole("progressbar", { name: "Prepare the setup progress" })).toHaveAttribute("aria-valuenow", "50");

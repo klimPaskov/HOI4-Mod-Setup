@@ -11,10 +11,12 @@ HOI4 Mod Setup follows semantic versioning.
 - Install the complete optional Super Events guidance and research package at its intended project paths
 - Keep plan preparation visibly active and show journal-backed percentages and current files during installation
 - Remove decorative information letters from status labels
+- Replace quadratic full-journal rewrites with a bounded durable checkpoint log for much faster large installs
 
 ### Changed
 
 - Keep the standard skills and subagents free of Super Events guidance unless the workflow is selected
+- Show an elapsed-rate estimate of the remaining installation time once enough progress is available
 
 ## 0.2.1 - 2026-08-01
 

@@ -4,15 +4,32 @@ use crate::paths::{
     validate_project_root_or_destination,
 };
 use crate::security::{
-    atomic_write_json, canonical_relative_key, is_link_metadata, normalize_relative_path,
-    path_has_link_component, safe_join, sha256_bytes, sha256_file, validate_external_destination,
+    atomic_write, atomic_write_json, canonical_relative_key, is_link_metadata,
+    normalize_relative_path, path_has_link_component, safe_join, sha256_bytes, sha256_file,
+    validate_external_destination,
 };
 use crate::AppError;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
+
+const OPERATION_CHECKPOINT_BATCH: usize = 64;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OperationCheckpoint {
+    schema_version: String,
+    transaction_id: Uuid,
+    operation_index: usize,
+    operation: JournalOperation,
+    journal_state: String,
+    last_checkpoint: String,
+    recovery: RecoveryState,
+    updated_at: String,
+}
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -943,6 +960,7 @@ pub fn run_transaction(
             &mut journal,
             &journal_path,
         )?;
+        compact_operation_checkpoints(&journal_path, &mut journal)?;
         stage_complete(
             &mut journal,
             5,
@@ -971,6 +989,7 @@ pub fn run_transaction(
             &mut journal,
             &journal_path,
         )?;
+        compact_operation_checkpoints(&journal_path, &mut journal)?;
         stage_complete(
             &mut journal,
             6,
@@ -1009,6 +1028,7 @@ pub fn run_transaction(
             &journal_path,
             options,
         )?;
+        compact_operation_checkpoints(&journal_path, &mut journal)?;
         if let Some(setup) = &plan.git_setup {
             journal.git_initialized = setup.mode == crate::git::GitMode::Initialize;
             if setup.mode == crate::git::GitMode::Preserve && setup.remote_url.is_some() {
@@ -1222,6 +1242,164 @@ pub fn run_transaction(
 fn persist_journal(path: &Path, journal: &mut TransactionJournal) -> Result<(), AppError> {
     journal.updated_at = Utc::now().to_rfc3339();
     atomic_write_json(path, journal)
+}
+
+fn operation_checkpoint_root(journal_path: &Path) -> Result<PathBuf, AppError> {
+    let parent = journal_path
+        .parent()
+        .ok_or_else(|| AppError::PathSecurity("transaction journal has no parent".into()))?;
+    Ok(parent.join("operation-checkpoints.jsonl"))
+}
+
+fn persist_operation_checkpoint(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+    operation_index: usize,
+) -> Result<(), AppError> {
+    let operation = journal
+        .operations
+        .get(operation_index)
+        .cloned()
+        .ok_or_else(|| AppError::Transaction("operation checkpoint index is invalid".into()))?;
+    let checkpoint_path = operation_checkpoint_root(journal_path)?;
+    if path_has_link_component(&checkpoint_path) {
+        return Err(AppError::PathSecurity(
+            "operation checkpoint storage contains a symlink or junction".into(),
+        ));
+    }
+    if !checkpoint_path.exists() {
+        // Atomically create the append log once so its directory entry is
+        // durable before an apply-intent checkpoint can guard a live change.
+        atomic_write(&checkpoint_path, b"")?;
+    }
+    journal.updated_at = Utc::now().to_rfc3339();
+    let checkpoint = OperationCheckpoint {
+        schema_version: "1.0.0".into(),
+        transaction_id: journal.transaction_id,
+        operation_index,
+        operation,
+        journal_state: journal.state.clone(),
+        last_checkpoint: journal.last_checkpoint.clone(),
+        recovery: journal.recovery.clone(),
+        updated_at: journal.updated_at.clone(),
+    };
+    let value = serde_json::to_value(&checkpoint)?;
+    crate::security::reject_secret_like_keys(&value)?;
+    let mut bytes = serde_json::to_vec(&value)?;
+    if bytes.len() > 64 * 1024 {
+        return Err(AppError::Transaction(
+            "operation checkpoint exceeds its bounded size".into(),
+        ));
+    }
+    bytes.push(b'\n');
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&checkpoint_path)?;
+    file.write_all(&bytes)?;
+    file.sync_data()?;
+    Ok(())
+}
+
+fn clear_operation_checkpoints(journal_path: &Path) -> Result<(), AppError> {
+    let root = operation_checkpoint_root(journal_path)?;
+    let metadata = match fs::symlink_metadata(&root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if is_link_metadata(&metadata) || !metadata.is_file() || path_has_link_component(&root) {
+        return Err(AppError::PathSecurity(
+            "operation checkpoint storage is not a regular file".into(),
+        ));
+    }
+    fs::remove_file(root)?;
+    Ok(())
+}
+
+fn compact_operation_checkpoints(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> Result<(), AppError> {
+    persist_journal(journal_path, journal)?;
+    clear_operation_checkpoints(journal_path)
+}
+
+fn replay_operation_checkpoints(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+) -> Result<(), AppError> {
+    let root = operation_checkpoint_root(journal_path)?;
+    let metadata = match fs::symlink_metadata(&root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if is_link_metadata(&metadata) || !metadata.is_file() || path_has_link_component(&root) {
+        return Err(AppError::PathSecurity(
+            "operation checkpoint storage is not a regular file".into(),
+        ));
+    }
+    let snapshot_updated_at = journal.updated_at.clone();
+    let bytes = fs::read(&root)?;
+    if bytes.len() > OPERATION_CHECKPOINT_BATCH * 4 * 64 * 1024 {
+        return Err(AppError::Transaction(
+            "operation checkpoint log exceeds its bounded size".into(),
+        ));
+    }
+    let has_complete_tail = bytes.is_empty() || bytes.ends_with(b"\n");
+    let mut records = 0usize;
+    for (line_index, line) in bytes.split(|byte| *byte == b'\n').enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        if line.len() > 64 * 1024 {
+            return Err(AppError::Transaction(
+                "operation checkpoint exceeds its bounded size".into(),
+            ));
+        }
+        records += 1;
+        if records > OPERATION_CHECKPOINT_BATCH * 4 {
+            return Err(AppError::Transaction(
+                "operation checkpoint log exceeds its bounded record count".into(),
+            ));
+        }
+        let checkpoint: OperationCheckpoint = match serde_json::from_slice(line) {
+            Ok(checkpoint) => checkpoint,
+            Err(_)
+                if !has_complete_tail
+                    && line_index == bytes.split(|byte| *byte == b'\n').count() - 1 =>
+            {
+                break;
+            }
+            Err(error) => {
+                return Err(AppError::Transaction(format!(
+                    "invalid operation checkpoint: {error}"
+                )))
+            }
+        };
+        if checkpoint.schema_version != "1.0.0"
+            || checkpoint.transaction_id != journal.transaction_id
+            || checkpoint.operation_index >= journal.operations.len()
+            || checkpoint.operation.id != journal.operations[checkpoint.operation_index].id
+        {
+            return Err(AppError::Transaction(
+                "operation checkpoint does not match its transaction".into(),
+            ));
+        }
+        if checkpoint.updated_at <= snapshot_updated_at {
+            continue;
+        }
+        journal.operations[checkpoint.operation_index] = checkpoint.operation;
+        if checkpoint.updated_at > journal.updated_at {
+            journal.state = checkpoint.journal_state;
+            journal.last_checkpoint = checkpoint.last_checkpoint;
+            journal.recovery = checkpoint.recovery;
+            journal.updated_at = checkpoint.updated_at;
+        }
+    }
+    Ok(())
 }
 
 /// Return the exact bytes written by `atomic_write_json`. Keeping the lock
@@ -1718,7 +1896,8 @@ fn backup_existing(
             "backup root contains a symlink or junction".into(),
         ));
     }
-    for operation in &plan.operations {
+    let mut checkpointed = 0usize;
+    for (operation_index, operation) in plan.operations.iter().enumerate() {
         if matches!(
             operation.action,
             OperationAction::Skip | OperationAction::External
@@ -1796,10 +1975,15 @@ fn backup_existing(
             {
                 record.backup_sha256 = Some(sha256_file(&backup)?);
             }
-            persist_journal(journal_path, journal)?;
+            journal.last_checkpoint = format!("backup-file-{}", operation.id);
+            persist_operation_checkpoint(journal_path, journal, operation_index)?;
+            checkpointed += 1;
+            if checkpointed % OPERATION_CHECKPOINT_BATCH == 0 {
+                compact_operation_checkpoints(journal_path, journal)?;
+            }
         }
     }
-    persist_journal(journal_path, journal)
+    Ok(())
 }
 
 fn stage_files(
@@ -1813,7 +1997,8 @@ fn stage_files(
         .iter()
         .map(|file| (file.operation_id.as_str(), file))
         .collect();
-    for operation in &plan.operations {
+    let mut checkpointed = 0usize;
+    for (operation_index, operation) in plan.operations.iter().enumerate() {
         if matches!(
             operation.action,
             OperationAction::Skip | OperationAction::External | OperationAction::DeleteManaged
@@ -1875,7 +2060,11 @@ fn stage_files(
             record.staged_sha256 = Some(hash);
         }
         journal.last_checkpoint = format!("stage-file-{}", operation.id);
-        persist_journal(journal_path, journal)?;
+        persist_operation_checkpoint(journal_path, journal, operation_index)?;
+        checkpointed += 1;
+        if checkpointed % OPERATION_CHECKPOINT_BATCH == 0 {
+            compact_operation_checkpoints(journal_path, journal)?;
+        }
     }
     Ok(())
 }
@@ -2141,6 +2330,7 @@ fn apply_operations(
 ) -> Result<(), AppError> {
     mark_project_apply_started(journal);
     persist_journal(journal_path, journal)?;
+    let mut checkpointed = 0usize;
     for (index, operation) in plan.operations.iter().enumerate() {
         if options.fail_before_operation == Some(index) {
             return Err(AppError::Transaction(format!(
@@ -2159,12 +2349,17 @@ fn apply_operations(
             {
                 record.status = "verified".into();
             }
-            persist_journal(journal_path, journal)?;
+            journal.last_checkpoint = format!("apply-noop-{}", operation.id);
+            persist_operation_checkpoint(journal_path, journal, index)?;
             if options.fail_after_operation == Some(index) {
                 return Err(AppError::Transaction(format!(
                     "fault injected after no-op operation {}",
                     operation.id
                 )));
+            }
+            checkpointed += 1;
+            if checkpointed % OPERATION_CHECKPOINT_BATCH == 0 {
+                compact_operation_checkpoints(journal_path, journal)?;
             }
             continue;
         }
@@ -2233,7 +2428,7 @@ fn apply_operations(
             record.after_exists = None;
         }
         journal.last_checkpoint = format!("apply-intent-{}", operation.id);
-        persist_journal(journal_path, journal)?;
+        persist_operation_checkpoint(journal_path, journal, index)?;
         match operation.action {
             OperationAction::DeleteManaged => {
                 if current_hash.is_some() {
@@ -2280,28 +2475,24 @@ fn apply_operations(
             .iter_mut()
             .find(|record| record.id == operation.id)
         {
-            record.status = "applied".into();
+            record.status = "verified".into();
             record.staged_sha256 = staged_hash;
             record.after_sha256 = after_hash;
             record.after_exists = Some(destination.is_file());
             record.after_executable = after_executable;
         }
         journal.last_checkpoint = format!("apply-{}", operation.id);
-        persist_journal(journal_path, journal)?;
+        persist_operation_checkpoint(journal_path, journal, index)?;
         if options.fail_after_operation == Some(index) {
             return Err(AppError::Transaction(format!(
                 "fault injected after operation {}",
                 operation.id
             )));
         }
-        if let Some(record) = journal
-            .operations
-            .iter_mut()
-            .find(|record| record.id == operation.id)
-        {
-            record.status = "verified".into();
+        checkpointed += 1;
+        if checkpointed % OPERATION_CHECKPOINT_BATCH == 0 {
+            compact_operation_checkpoints(journal_path, journal)?;
         }
-        persist_journal(journal_path, journal)?;
     }
     Ok(())
 }
@@ -4494,7 +4685,9 @@ pub fn read_journal(path: &Path) -> Result<TransactionJournal, AppError> {
     let bytes = fs::read(path).map_err(|error| AppError::Transaction(error.to_string()))?;
     let value: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|error| AppError::Transaction(format!("invalid transaction journal: {error}")))?;
-    crate::migrations::migrate_journal(value)
+    let mut journal = crate::migrations::migrate_journal(value)?;
+    replay_operation_checkpoints(path, &mut journal)?;
+    Ok(journal)
 }
 
 fn finish_finalization(
@@ -5442,6 +5635,88 @@ mod tests {
             fs::write(path, "# Test wiki page\n").unwrap();
         }
         plan
+    }
+
+    #[test]
+    fn operation_checkpoint_replays_and_compacts_into_the_full_journal() {
+        let root = tempdir().unwrap();
+        let plan = plan();
+        let transaction_dir = root.path().join(plan.plan_id.to_string());
+        fs::create_dir_all(&transaction_dir).unwrap();
+        let journal_path = transaction_dir.join("journal.json");
+        let mut journal = new_journal(&plan, &plan.project_id, root.path());
+        persist_journal(&journal_path, &mut journal).unwrap();
+
+        journal.operations[0].status = "staged".into();
+        journal.operations[0].staged_sha256 = Some("a".repeat(64));
+        journal.last_checkpoint = "stage-file-op-1".into();
+        persist_operation_checkpoint(&journal_path, &mut journal, 0).unwrap();
+
+        let replayed = read_journal(&journal_path).unwrap();
+        assert_eq!(replayed.operations[0].status, "staged");
+        assert_eq!(replayed.last_checkpoint, "stage-file-op-1");
+
+        compact_operation_checkpoints(&journal_path, &mut journal).unwrap();
+        assert!(!operation_checkpoint_root(&journal_path).unwrap().exists());
+        assert_eq!(
+            read_journal(&journal_path).unwrap().operations[0].status,
+            "staged"
+        );
+    }
+
+    #[test]
+    fn operation_checkpoint_size_does_not_grow_with_the_full_plan() {
+        let root = tempdir().unwrap();
+        let mut plan = plan();
+        let template = plan.operations[0].clone();
+        plan.operations = (0..1_008)
+            .map(|index| PlanOperation {
+                id: format!("op-{index:04}"),
+                destination: format!("files/file-{index:04}.txt"),
+                ..template.clone()
+            })
+            .collect();
+        let transaction_dir = root.path().join(plan.plan_id.to_string());
+        fs::create_dir_all(&transaction_dir).unwrap();
+        let journal_path = transaction_dir.join("journal.json");
+        let mut journal = new_journal(&plan, &plan.project_id, root.path());
+        persist_journal(&journal_path, &mut journal).unwrap();
+
+        journal.operations[0].status = "applying".into();
+        journal.last_checkpoint = "apply-intent-op-0000".into();
+        persist_operation_checkpoint(&journal_path, &mut journal, 0).unwrap();
+
+        let checkpoint_path = operation_checkpoint_root(&journal_path).unwrap();
+        let checkpoint_size = fs::metadata(checkpoint_path).unwrap().len();
+        let journal_size = fs::metadata(journal_path).unwrap().len();
+        assert!(checkpoint_size < 64 * 1024);
+        assert!(journal_size > checkpoint_size * 100);
+    }
+
+    #[test]
+    fn operation_checkpoint_replay_ignores_only_a_torn_final_record() {
+        let root = tempdir().unwrap();
+        let plan = plan();
+        let transaction_dir = root.path().join(plan.plan_id.to_string());
+        fs::create_dir_all(&transaction_dir).unwrap();
+        let journal_path = transaction_dir.join("journal.json");
+        let mut journal = new_journal(&plan, &plan.project_id, root.path());
+        persist_journal(&journal_path, &mut journal).unwrap();
+
+        journal.operations[0].status = "verified".into();
+        journal.last_checkpoint = "apply-op-1".into();
+        persist_operation_checkpoint(&journal_path, &mut journal, 0).unwrap();
+        let checkpoint_path = operation_checkpoint_root(&journal_path).unwrap();
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(checkpoint_path)
+            .unwrap();
+        file.write_all(br#"{"schema_version":"1.0.0""#).unwrap();
+        file.sync_data().unwrap();
+
+        let replayed = read_journal(&journal_path).unwrap();
+        assert_eq!(replayed.operations[0].status, "verified");
+        assert_eq!(replayed.last_checkpoint, "apply-op-1");
     }
 
     #[test]

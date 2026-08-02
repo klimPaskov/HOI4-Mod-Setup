@@ -287,6 +287,8 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .install-progress { display: flex; align-items: flex-start; gap: 18px; margin-bottom: 22px; }
 .install-progress-track { min-width: 0; display: grid; flex: 1; gap: 8px; }
 .install-progress-label { color: #9fb0c8; font-size: 12px; }
+.install-progress-meta { min-width: 0; display: flex; justify-content: space-between; gap: 14px; }
+.install-eta { flex: 0 0 auto; color: #8192aa; font-size: 12px; text-align: right; }
 .install-percent { min-width: 3.25rem; color: #c3d2eb; font-size: 13px; font-weight: 750; text-align: right; }
 .timeline-row { min-height: 54px; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 8px 10px; padding: 5px 0; color: #718198; }
 .timeline-copy { min-width: 0; display: grid; gap: 3px; }
