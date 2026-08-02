@@ -1,13 +1,13 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { Components, DryRun, Git, Identity, Ready, Scan, Update, Welcome, estimateRemainingTime } from "./App";
-import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
+import App, { Components, DryRun, Git, Identity, Ready, Scan, Update, Welcome, estimateRemainingTime, recoveryProgress } from "./App";
+import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
 import type { CodexAnalysisResult, FolderSelection, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), runCodexAnalysisResult: vi.fn(), suggestProjectPaths: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), suggestProjectPaths: vi.fn() };
 });
 
 afterEach(() => {
@@ -20,6 +20,7 @@ afterEach(() => {
 beforeEach(() => {
   vi.mocked(readCodexAccount).mockResolvedValue({ available: false, authenticated: false, auth_mode: "none", usage_limited: false });
   vi.mocked(readTransactionJournal).mockResolvedValue(null);
+  vi.mocked(rollbackInstallationResult).mockResolvedValue({ value: null, error: "Undo is unavailable." });
   vi.mocked(logoutCodexResult).mockResolvedValue({ value: null });
   vi.mocked(openCodexLoginUrlResult).mockResolvedValue({ value: undefined });
   vi.mocked(openExternalUrlResult).mockResolvedValue({ value: undefined });
@@ -72,6 +73,23 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(estimateRemainingTime(50, "2026-08-02T12:00:00Z", now)).toBe("About 1 minute remaining");
     expect(estimateRemainingTime(0, "2026-08-02T12:00:00Z", now)).toBe("Calculating time remaining");
     expect(estimateRemainingTime(100, "2026-08-02T12:00:00Z", now)).toBe("Complete");
+  });
+  it("reports truthful rollback backup progress from the child journal", () => {
+    expect(recoveryProgress({
+      transaction_kind: "rollback",
+      state: "preflight",
+      operations: [
+        { id: "rollback-1", action: "replace", status: "pending", destination: "AGENTS.md", backup_path: "backup/1.bak" },
+        { id: "rollback-2", action: "replace", status: "pending", destination: "README.md", backup_path: null, after_exists: null },
+        { id: "rollback-3", action: "skip", status: "rolled_back", destination: "kept.txt" },
+      ],
+    } as never)).toMatchObject({
+      complete: 1,
+      total: 2,
+      percent: 50,
+      current: "README.md",
+      label: "Saving file 1 of 2",
+    });
   });
   it("checks quietly on launch and installs an available signed update only after approval", async () => {
     enableTauriRuntime();
@@ -667,8 +685,52 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(await screen.findByText("Some project files were already changed, so continuing automatically is unavailable.")).toBeInTheDocument();
     expect(screen.getByText("Undo the partial setup before installing again.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /continue setup/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /undo changes/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getAllByRole("button", { name: /undo changes/i }).find((button) => button.classList.contains("recovery-card"))).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: /discard prepared files/i })).not.toBeInTheDocument();
+  });
+
+  it("shows live work and blocks duplicate clicks while undo is running", async () => {
+    let finishRollback: ((result: Awaited<ReturnType<typeof rollbackInstallationResult>>) => void) | undefined;
+    vi.mocked(findInterruptedTransaction).mockResolvedValue({
+      transaction_id: "partial-transaction",
+      rollback_transaction_id: "rollback-child",
+      state: "rolling_back",
+      last_checkpoint: "apply-op-00007",
+      recovery: {
+        resume_allowed: false,
+        rollback_allowed: true,
+        discard_staging_allowed: false,
+        project_apply_started: true,
+        recommended_action: "rollback",
+      },
+    } as never);
+    vi.mocked(rollbackInstallationResult).mockImplementation(() => new Promise((resolve) => {
+      finishRollback = resolve;
+    }));
+    vi.mocked(readTransactionJournal).mockImplementation(async (_root, transactionId) => transactionId === "rollback-child" ? ({
+      transaction_id: "rollback-child",
+      transaction_kind: "rollback",
+      state: "preflight",
+      operations: [
+        { id: "rollback-1", action: "replace", status: "pending", destination: "AGENTS.md", backup_path: "backup/1.bak" },
+        { id: "rollback-2", action: "replace", status: "pending", destination: "README.md", backup_path: null, after_exists: null },
+      ],
+    } as never) : ({ rollback_transaction_id: "rollback-child" } as never));
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /manage an existing project/i }));
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\partial" } });
+    const primary = (await screen.findAllByRole("button", { name: "Undo changes" })).find((button) => button.classList.contains("primary"));
+    expect(primary).toBeDefined();
+    fireEvent.click(primary!);
+
+    expect(await screen.findByRole("button", { name: "Undoing changes…" })).toBeDisabled();
+    expect(await screen.findByText("Saving file 1 of 2")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Recovery progress" })).toHaveAttribute("aria-valuenow", "50");
+
+    vi.mocked(findInterruptedTransaction).mockResolvedValue(null);
+    await act(async () => finishRollback?.({ value: { transaction_id: "partial-transaction", state: "rolled_back" } as never }));
+    expect(await screen.findByRole("heading", { name: "Project ready" })).toBeInTheDocument();
   });
 
   it("shows only Discard when setup stopped before changing project files", async () => {
@@ -692,7 +754,7 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(await screen.findByText("Setup stopped before any project files were changed.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /continue setup/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /undo changes/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /discard prepared files/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getAllByRole("button", { name: /discard prepared files/i }).find((button) => button.classList.contains("recovery-card"))).toHaveAttribute("aria-pressed", "true");
   });
 
   it("shows a distinct usage-limited state and preserves remote logout errors", async () => {
@@ -812,7 +874,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /start installation/i }));
 
     expect(await screen.findByRole("heading", { name: "Installation was interrupted" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /continue setup/i })).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: /continue setup/i }).find((button) => button.classList.contains("primary"))).toBeEnabled();
     expect(approveInstallation).not.toHaveBeenCalled();
     expect(applyInstallationResult).not.toHaveBeenCalled();
   });

@@ -12,6 +12,7 @@ HOI4 Mod Setup follows semantic versioning.
 - Keep plan preparation visibly active and show journal-backed percentages and current files during installation
 - Remove decorative information letters from status labels
 - Replace quadratic full-journal rewrites with a bounded durable checkpoint log for much faster large installs
+- Batch crash-safe install and rollback intents, accelerate rollback backup/apply, and show live recovery progress
 
 ### Changed
 

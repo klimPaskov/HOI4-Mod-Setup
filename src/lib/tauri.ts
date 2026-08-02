@@ -410,6 +410,10 @@ export async function rollbackInstallation(projectRoot: string, transactionId: s
   return invokeCommand("rollback_installation", { projectRoot, transactionId });
 }
 
+export async function rollbackInstallationResult(projectRoot: string, transactionId: string): Promise<CommandResult<TransactionJournal>> {
+  return invokeCommandResult("rollback_installation", { projectRoot, transactionId });
+}
+
 export async function readTransactionJournal(projectRoot: string, transactionId: string): Promise<TransactionJournal | null> {
   return invokeCommand("read_transaction_journal", { projectRoot, transactionId });
 }

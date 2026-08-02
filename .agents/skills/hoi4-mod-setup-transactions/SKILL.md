@@ -66,7 +66,7 @@ non-destructive no-op until the project is re-planned.
 
 Persist the journal before and after irreversible boundaries. Use atomic file replacement for journal writes.
 
-For large operation sets, append bounded per-operation records to one durable checkpoint log so durability does not require serializing the complete journal for every file. Backup, staging, and apply records are compacted into an atomic full-journal snapshot every 64 completed operations and at each stage boundary. Journal reads replay only records newer than the snapshot and reject links, wrong transaction or operation bindings, oversized records, and oversized logs. A live apply still requires one durable intent record before mutation and one verified-result record after mutation.
+For large operation sets, append bounded per-operation records to one checkpoint log so durability does not require serializing the complete journal for every file. Backup, staging, apply, rollback-child backup, and rollback-apply records are compacted into an atomic full-journal snapshot every 1,024 completed operations and at each stage boundary. Before apply or rollback mutates a live file, persist durable intent records for a group of at most 64 operations; completed records then supply per-file recovery and progress evidence. Journal reads replay only records newer than the snapshot and reject links, wrong transaction or operation bindings, oversized records, oversized logs, and torn records except for an incomplete final append. Recovery resolves a crash inside a group from the durable intents, verified backups, and observed live hashes.
 
 For Unix destinations, the manifest/lock executable declaration is durable
 metadata evidence. Apply and verify it in staging and live paths, record

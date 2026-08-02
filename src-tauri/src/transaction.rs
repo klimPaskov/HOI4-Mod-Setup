@@ -17,7 +17,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-const OPERATION_CHECKPOINT_BATCH: usize = 64;
+const OPERATION_INTENT_BATCH: usize = 64;
+const OPERATION_CHECKPOINT_BATCH: usize = 1_024;
+const OPERATION_CHECKPOINT_MAX_RECORDS: usize = 2_048;
+const OPERATION_CHECKPOINT_MAX_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OperationCheckpoint {
@@ -1251,16 +1254,40 @@ fn operation_checkpoint_root(journal_path: &Path) -> Result<PathBuf, AppError> {
     Ok(parent.join("operation-checkpoints.jsonl"))
 }
 
+#[cfg(test)]
 fn persist_operation_checkpoint(
     journal_path: &Path,
     journal: &mut TransactionJournal,
     operation_index: usize,
 ) -> Result<(), AppError> {
-    let operation = journal
-        .operations
-        .get(operation_index)
-        .cloned()
-        .ok_or_else(|| AppError::Transaction("operation checkpoint index is invalid".into()))?;
+    append_operation_checkpoints(journal_path, journal, &[operation_index], true)
+}
+
+fn append_operation_checkpoint(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+    operation_index: usize,
+) -> Result<(), AppError> {
+    append_operation_checkpoints(journal_path, journal, &[operation_index], false)
+}
+
+fn persist_operation_checkpoint_batch(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+    operation_indices: &[usize],
+) -> Result<(), AppError> {
+    append_operation_checkpoints(journal_path, journal, operation_indices, true)
+}
+
+fn append_operation_checkpoints(
+    journal_path: &Path,
+    journal: &mut TransactionJournal,
+    operation_indices: &[usize],
+    sync: bool,
+) -> Result<(), AppError> {
+    if operation_indices.is_empty() {
+        return Ok(());
+    }
     let checkpoint_path = operation_checkpoint_root(journal_path)?;
     if path_has_link_component(&checkpoint_path) {
         return Err(AppError::PathSecurity(
@@ -1273,32 +1300,43 @@ fn persist_operation_checkpoint(
         atomic_write(&checkpoint_path, b"")?;
     }
     journal.updated_at = Utc::now().to_rfc3339();
-    let checkpoint = OperationCheckpoint {
-        schema_version: "1.0.0".into(),
-        transaction_id: journal.transaction_id,
-        operation_index,
-        operation,
-        journal_state: journal.state.clone(),
-        last_checkpoint: journal.last_checkpoint.clone(),
-        recovery: journal.recovery.clone(),
-        updated_at: journal.updated_at.clone(),
-    };
-    let value = serde_json::to_value(&checkpoint)?;
-    crate::security::reject_secret_like_keys(&value)?;
-    let mut bytes = serde_json::to_vec(&value)?;
-    if bytes.len() > 64 * 1024 {
-        return Err(AppError::Transaction(
-            "operation checkpoint exceeds its bounded size".into(),
-        ));
+    let mut bytes = Vec::new();
+    for operation_index in operation_indices {
+        let operation = journal
+            .operations
+            .get(*operation_index)
+            .cloned()
+            .ok_or_else(|| AppError::Transaction("operation checkpoint index is invalid".into()))?;
+        let checkpoint = OperationCheckpoint {
+            schema_version: "1.0.0".into(),
+            transaction_id: journal.transaction_id,
+            operation_index: *operation_index,
+            operation,
+            journal_state: journal.state.clone(),
+            last_checkpoint: journal.last_checkpoint.clone(),
+            recovery: journal.recovery.clone(),
+            updated_at: journal.updated_at.clone(),
+        };
+        let value = serde_json::to_value(&checkpoint)?;
+        crate::security::reject_secret_like_keys(&value)?;
+        let mut record = serde_json::to_vec(&value)?;
+        if record.len() > 64 * 1024 {
+            return Err(AppError::Transaction(
+                "operation checkpoint exceeds its bounded size".into(),
+            ));
+        }
+        record.push(b'\n');
+        bytes.extend(record);
     }
-    bytes.push(b'\n');
 
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&checkpoint_path)?;
     file.write_all(&bytes)?;
-    file.sync_data()?;
+    if sync {
+        file.sync_data()?;
+    }
     Ok(())
 }
 
@@ -1343,7 +1381,7 @@ fn replay_operation_checkpoints(
     }
     let snapshot_updated_at = journal.updated_at.clone();
     let bytes = fs::read(&root)?;
-    if bytes.len() > OPERATION_CHECKPOINT_BATCH * 4 * 64 * 1024 {
+    if bytes.len() > OPERATION_CHECKPOINT_MAX_BYTES {
         return Err(AppError::Transaction(
             "operation checkpoint log exceeds its bounded size".into(),
         ));
@@ -1360,7 +1398,7 @@ fn replay_operation_checkpoints(
             ));
         }
         records += 1;
-        if records > OPERATION_CHECKPOINT_BATCH * 4 {
+        if records > OPERATION_CHECKPOINT_MAX_RECORDS {
             return Err(AppError::Transaction(
                 "operation checkpoint log exceeds its bounded record count".into(),
             ));
@@ -1976,7 +2014,7 @@ fn backup_existing(
                 record.backup_sha256 = Some(sha256_file(&backup)?);
             }
             journal.last_checkpoint = format!("backup-file-{}", operation.id);
-            persist_operation_checkpoint(journal_path, journal, operation_index)?;
+            append_operation_checkpoint(journal_path, journal, operation_index)?;
             checkpointed += 1;
             if checkpointed % OPERATION_CHECKPOINT_BATCH == 0 {
                 compact_operation_checkpoints(journal_path, journal)?;
@@ -2060,7 +2098,7 @@ fn stage_files(
             record.staged_sha256 = Some(hash);
         }
         journal.last_checkpoint = format!("stage-file-{}", operation.id);
-        persist_operation_checkpoint(journal_path, journal, operation_index)?;
+        append_operation_checkpoint(journal_path, journal, operation_index)?;
         checkpointed += 1;
         if checkpointed % OPERATION_CHECKPOINT_BATCH == 0 {
             compact_operation_checkpoints(journal_path, journal)?;
@@ -2330,8 +2368,27 @@ fn apply_operations(
 ) -> Result<(), AppError> {
     mark_project_apply_started(journal);
     persist_journal(journal_path, journal)?;
-    let mut checkpointed = 0usize;
     for (index, operation) in plan.operations.iter().enumerate() {
+        if index % OPERATION_INTENT_BATCH == 0 {
+            let batch_end = (index + OPERATION_INTENT_BATCH).min(plan.operations.len());
+            let intent_indices = (index..batch_end)
+                .filter(|candidate| {
+                    !matches!(
+                        plan.operations[*candidate].action,
+                        OperationAction::Skip | OperationAction::External
+                    )
+                })
+                .collect::<Vec<_>>();
+            for candidate in &intent_indices {
+                if let Some(record) = journal.operations.get_mut(*candidate) {
+                    record.status = "applying".into();
+                    record.after_sha256 = None;
+                    record.after_exists = None;
+                }
+            }
+            journal.last_checkpoint = format!("apply-batch-intent-{index:05}-{batch_end:05}");
+            persist_operation_checkpoint_batch(journal_path, journal, &intent_indices)?;
+        }
         if options.fail_before_operation == Some(index) {
             return Err(AppError::Transaction(format!(
                 "fault injected before operation {}",
@@ -2350,15 +2407,14 @@ fn apply_operations(
                 record.status = "verified".into();
             }
             journal.last_checkpoint = format!("apply-noop-{}", operation.id);
-            persist_operation_checkpoint(journal_path, journal, index)?;
+            append_operation_checkpoint(journal_path, journal, index)?;
             if options.fail_after_operation == Some(index) {
                 return Err(AppError::Transaction(format!(
                     "fault injected after no-op operation {}",
                     operation.id
                 )));
             }
-            checkpointed += 1;
-            if checkpointed % OPERATION_CHECKPOINT_BATCH == 0 {
+            if (index + 1) % OPERATION_CHECKPOINT_BATCH == 0 || index + 1 == plan.operations.len() {
                 compact_operation_checkpoints(journal_path, journal)?;
             }
             continue;
@@ -2428,7 +2484,6 @@ fn apply_operations(
             record.after_exists = None;
         }
         journal.last_checkpoint = format!("apply-intent-{}", operation.id);
-        persist_operation_checkpoint(journal_path, journal, index)?;
         match operation.action {
             OperationAction::DeleteManaged => {
                 if current_hash.is_some() {
@@ -2482,15 +2537,14 @@ fn apply_operations(
             record.after_executable = after_executable;
         }
         journal.last_checkpoint = format!("apply-{}", operation.id);
-        persist_operation_checkpoint(journal_path, journal, index)?;
+        append_operation_checkpoint(journal_path, journal, index)?;
         if options.fail_after_operation == Some(index) {
             return Err(AppError::Transaction(format!(
                 "fault injected after operation {}",
                 operation.id
             )));
         }
-        checkpointed += 1;
-        if checkpointed % OPERATION_CHECKPOINT_BATCH == 0 {
+        if (index + 1) % OPERATION_CHECKPOINT_BATCH == 0 || index + 1 == plan.operations.len() {
             compact_operation_checkpoints(journal_path, journal)?;
         }
     }
@@ -3852,8 +3906,9 @@ fn prepare_rollback_transaction(
 
     validate_rollback_lock_precondition(project_root, parent)?;
     capture_rollback_lock_backup(project_root, &roots.backup, &mut rollback, parent)?;
-    persist_journal(&journal_path, &mut rollback)?;
+    compact_operation_checkpoints(&journal_path, &mut rollback)?;
 
+    let mut checkpointed = 0usize;
     for index in 0..rollback.operations.len() {
         let operation = rollback.operations[index].clone();
         if operation.status == "rolled_back" || operation.action == Some(OperationAction::Skip) {
@@ -3954,7 +4009,11 @@ fn prepare_rollback_transaction(
             Err(error) => return Err(error.into()),
         }
         rollback.last_checkpoint = format!("rollback-backup-{}", operation.id);
-        persist_journal(&journal_path, &mut rollback)?;
+        append_operation_checkpoint(&journal_path, &mut rollback, index)?;
+        checkpointed += 1;
+        if checkpointed % OPERATION_CHECKPOINT_BATCH == 0 {
+            compact_operation_checkpoints(&journal_path, &mut rollback)?;
+        }
     }
     rollback.state = "applying".into();
     rollback.last_checkpoint = "rollback-backup-complete".into();
@@ -3962,7 +4021,7 @@ fn prepare_rollback_transaction(
         stage.status = "complete".into();
         stage.completed_at = Some(Utc::now().to_rfc3339());
     }
-    persist_journal(&journal_path, &mut rollback)?;
+    compact_operation_checkpoints(&journal_path, &mut rollback)?;
     Ok((rollback, journal_path))
 }
 
@@ -3973,20 +4032,20 @@ fn persist_rollback_checkpoint(
     status: &str,
     checkpoint: &str,
 ) -> Result<(), AppError> {
-    if let Some(operation) = rollback
+    let operation_index = rollback
         .operations
-        .iter_mut()
-        .find(|operation| operation.id == format!("rollback-{parent_operation_id}"))
-    {
-        operation.status = status.into();
-        if status == "rolled_back" {
-            operation.after_sha256 = operation.expected_sha256.clone();
-            operation.after_exists = Some(operation.expected_sha256.is_some());
-            operation.after_executable = operation.expected_executable;
-        }
+        .iter()
+        .position(|operation| operation.id == format!("rollback-{parent_operation_id}"))
+        .ok_or_else(|| AppError::Transaction("rollback checkpoint operation is missing".into()))?;
+    let operation = &mut rollback.operations[operation_index];
+    operation.status = status.into();
+    if status == "rolled_back" {
+        operation.after_sha256 = operation.expected_sha256.clone();
+        operation.after_exists = Some(operation.expected_sha256.is_some());
+        operation.after_executable = operation.expected_executable;
     }
     rollback.last_checkpoint = checkpoint.into();
-    persist_journal(rollback_path, rollback)
+    append_operation_checkpoint(rollback_path, rollback, operation_index)
 }
 
 fn ensure_project_root_for_inverse_rollback(
@@ -4105,7 +4164,7 @@ pub fn rollback_transaction(
         project_apply_started,
         recommended_action: "rollback".into(),
     };
-    persist_journal(journal_path, journal)?;
+    compact_operation_checkpoints(journal_path, journal)?;
     let (mut rollback_journal, rollback_path) =
         prepare_rollback_transaction(&project_root, journal, journal_path)?;
     maybe_abort_for_test(if journal.transaction_kind == "rollback" {
@@ -4141,7 +4200,28 @@ pub fn rollback_transaction(
             rollback_journal.last_checkpoint = "rollback-git-cleanup".into();
             persist_journal(&rollback_path, &mut rollback_journal)?;
         }
-        for index in (0..journal.operations.len()).rev() {
+        let operation_count = journal.operations.len();
+        for index in (0..operation_count).rev() {
+            let processed = operation_count - 1 - index;
+            let batch_complete = (processed + 1) % OPERATION_CHECKPOINT_BATCH == 0 || index == 0;
+            if processed % OPERATION_INTENT_BATCH == 0 {
+                let batch_start = index.saturating_sub(OPERATION_INTENT_BATCH - 1);
+                let intent_indices = (batch_start..=index)
+                    .rev()
+                    .filter(|candidate| {
+                        let operation = &journal.operations[*candidate];
+                        (journal.transaction_kind == "rollback"
+                            || operation.status != "rolled_back")
+                            && rollback_operation_is_actionable(journal, operation)
+                    })
+                    .collect::<Vec<_>>();
+                for candidate in &intent_indices {
+                    journal.operations[*candidate].status = "rollback_applying".into();
+                }
+                journal.last_checkpoint =
+                    format!("rollback-batch-intent-{batch_start:05}-{:05}", index + 1);
+                persist_operation_checkpoint_batch(journal_path, journal, &intent_indices)?;
+            }
             let operation = journal.operations[index].clone();
             if journal.transaction_kind != "rollback" && operation.status == "rolled_back" {
                 if let Some(child_operation) = rollback_journal
@@ -4170,6 +4250,10 @@ pub fn rollback_transaction(
                     "rolled_back",
                     &format!("rollback-{}", operation.id),
                 )?;
+                if batch_complete {
+                    compact_operation_checkpoints(journal_path, journal)?;
+                    compact_operation_checkpoints(&rollback_path, &mut rollback_journal)?;
+                }
                 continue;
             }
             if !(matches!(
@@ -4177,6 +4261,10 @@ pub fn rollback_transaction(
                 "rollback_applying" | "applying" | "applied" | "verified"
             ) || (journal.transaction_kind == "rollback" && operation.status == "rolled_back"))
             {
+                if batch_complete {
+                    compact_operation_checkpoints(journal_path, journal)?;
+                    compact_operation_checkpoints(&rollback_path, &mut rollback_journal)?;
+                }
                 continue;
             }
             // A skip is a durable no-op. In particular, it may represent a
@@ -4192,7 +4280,7 @@ pub fn rollback_transaction(
             {
                 journal.operations[index].status = "rolled_back".into();
                 journal.last_checkpoint = format!("rollback-noop-{}", operation.id);
-                persist_journal(journal_path, journal)?;
+                append_operation_checkpoint(journal_path, journal, index)?;
                 persist_rollback_checkpoint(
                     &mut rollback_journal,
                     &rollback_path,
@@ -4200,6 +4288,10 @@ pub fn rollback_transaction(
                     "rolled_back",
                     &format!("rollback-noop-{}", operation.id),
                 )?;
+                if batch_complete {
+                    compact_operation_checkpoints(journal_path, journal)?;
+                    compact_operation_checkpoints(&rollback_path, &mut rollback_journal)?;
+                }
                 continue;
             }
             let destination = if operation.external {
@@ -4217,7 +4309,7 @@ pub fn rollback_transaction(
             {
                 journal.operations[index].status = "rolled_back".into();
                 journal.last_checkpoint = format!("rollback-{}", operation.id);
-                persist_journal(journal_path, journal)?;
+                append_operation_checkpoint(journal_path, journal, index)?;
                 persist_rollback_checkpoint(
                     &mut rollback_journal,
                     &rollback_path,
@@ -4225,18 +4317,14 @@ pub fn rollback_transaction(
                     "rolled_back",
                     &format!("rollback-{}", operation.id),
                 )?;
+                if batch_complete {
+                    compact_operation_checkpoints(journal_path, journal)?;
+                    compact_operation_checkpoints(&rollback_path, &mut rollback_journal)?;
+                }
                 continue;
             }
             journal.operations[index].status = "rollback_applying".into();
             journal.last_checkpoint = format!("rollback-intent-{}", operation.id);
-            persist_journal(journal_path, journal)?;
-            persist_rollback_checkpoint(
-                &mut rollback_journal,
-                &rollback_path,
-                &operation.id,
-                "rollback_applying",
-                &format!("rollback-intent-{}", operation.id),
-            )?;
             let current = regular_file_hash(&destination)?;
             if let Some(after) = &operation.after_sha256 {
                 if current.as_deref() != Some(after.as_str())
@@ -4367,7 +4455,7 @@ pub fn rollback_transaction(
             }
             journal.operations[index].status = "rolled_back".into();
             journal.last_checkpoint = format!("rollback-{}", operation.id);
-            persist_journal(journal_path, journal)?;
+            append_operation_checkpoint(journal_path, journal, index)?;
             persist_rollback_checkpoint(
                 &mut rollback_journal,
                 &rollback_path,
@@ -4375,6 +4463,10 @@ pub fn rollback_transaction(
                 "rolled_back",
                 &format!("rollback-{}", operation.id),
             )?;
+            if batch_complete {
+                compact_operation_checkpoints(journal_path, journal)?;
+                compact_operation_checkpoints(&rollback_path, &mut rollback_journal)?;
+            }
         }
         restore_previous_lock(&project_root, journal, journal_path)?;
         if journal.transaction_kind != "rollback" {
@@ -5691,6 +5783,38 @@ mod tests {
         let journal_size = fs::metadata(journal_path).unwrap().len();
         assert!(checkpoint_size < 64 * 1024);
         assert!(journal_size > checkpoint_size * 100);
+    }
+
+    #[test]
+    fn batched_operation_intents_replay_before_compaction() {
+        let root = tempdir().unwrap();
+        let mut plan = plan();
+        let template = plan.operations[0].clone();
+        plan.operations = (0..OPERATION_INTENT_BATCH)
+            .map(|index| PlanOperation {
+                id: format!("op-{index:04}"),
+                destination: format!("files/file-{index:04}.txt"),
+                ..template.clone()
+            })
+            .collect();
+        let transaction_dir = root.path().join(plan.plan_id.to_string());
+        fs::create_dir_all(&transaction_dir).unwrap();
+        let journal_path = transaction_dir.join("journal.json");
+        let mut journal = new_journal(&plan, &plan.project_id, root.path());
+        persist_journal(&journal_path, &mut journal).unwrap();
+        let indices = (0..OPERATION_INTENT_BATCH).collect::<Vec<_>>();
+        for index in &indices {
+            journal.operations[*index].status = "applying".into();
+        }
+        persist_operation_checkpoint_batch(&journal_path, &mut journal, &indices).unwrap();
+
+        let replayed = read_journal(&journal_path).unwrap();
+        assert!(replayed
+            .operations
+            .iter()
+            .all(|operation| operation.status == "applying"));
+        compact_operation_checkpoints(&journal_path, &mut journal).unwrap();
+        assert!(!operation_checkpoint_root(&journal_path).unwrap().exists());
     }
 
     #[test]

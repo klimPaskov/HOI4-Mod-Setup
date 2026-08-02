@@ -22,7 +22,7 @@ Windows: %LOCALAPPDATA%/HOI4 Mod Setup/
 macOS:   ~/Library/Application Support/HOI4 Mod Setup/
 ```
 
-Large transactions append bounded per-operation records to one durable checkpoint log during backup, staging, and apply instead of rewriting the complete operation array for every file. Each live apply still has an intent record before mutation and a verified-result record after mutation. The log is compacted into an atomic full-journal snapshot every 64 completed operations; journal reads replay only newer records and reject links, wrong bindings, oversized records, and oversized logs.
+Large transactions append bounded per-operation records to one checkpoint log during backup, staging, apply, and rollback instead of rewriting the complete operation array for every file. Before apply or rollback changes any live file, durable intent records are written in groups of at most 64 operations. Completed-file records then provide per-file recovery and progress evidence. The log is compacted into an atomic full-journal snapshot every 1,024 completed operations and at stage boundaries; journal reads replay only newer records and reject links, wrong bindings, oversized records, and oversized logs. A crash inside a group leaves durable intents that recovery resolves against verified backups and observed live hashes.
 
 ## Twelve stages
 

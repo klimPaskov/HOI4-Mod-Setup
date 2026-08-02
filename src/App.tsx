@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlan, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallation, run3DHealthCheck, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlan, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, run3DHealthCheck, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity } from "./identity";
-import type { AiProviderId, AiProviderProfile, AppUpdateStatus, CodexAnalysisRequest, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, ManifestComponentPreview, PhaseId, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
+import type { AiProviderId, AiProviderProfile, AppUpdateStatus, CodexAnalysisRequest, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, ManifestComponentPreview, PhaseId, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
 
 const PHASES: Array<{ id: PhaseId; label: string }> = [
@@ -250,6 +250,7 @@ export default function App() {
   const [semanticAnalysisPending, setSemanticAnalysisPending] = useState(false);
   const [planPreparationPending, setPlanPreparationPending] = useState(false);
   const [installationPending, setInstallationPending] = useState(false);
+  const [recoveryPending, setRecoveryPending] = useState(false);
   const [activeTransactionId, setActiveTransactionId] = useState<string>();
   const [appUpdate, setAppUpdate] = useState<AppUpdateStatus | null>(null);
   const [appUpdateState, setAppUpdateState] = useState<"idle" | "installing" | "error">("idle");
@@ -959,11 +960,15 @@ export default function App() {
     update({ plan: updatedPlan, conflictChoice: choice, transactionError: undefined });
   };
   const handleRecovery = async () => {
+    if (recoveryPending) return;
     const transaction = state.transaction;
     if (!transaction) {
       update({ transactionError: "No interrupted transaction is available for this project." });
       return;
     }
+    setRecoveryPending(true);
+    update({ transactionError: undefined });
+    try {
     const transactionId = transaction.transaction_id;
     if (state.recoveryChoice === "resume") {
       if (!transaction.recovery.resume_allowed) {
@@ -990,12 +995,25 @@ export default function App() {
         update({ transactionError: "Undo changes is not available for this setup state." });
         return;
       }
-      const rolledBack = await rollbackInstallation(state.identity.projectRoot, transactionId);
-      if (!rolledBack) {
-        update({ transactionError: "Undo changes was refused because the project needs review." });
+      const result = await rollbackInstallationResult(state.identity.projectRoot, transactionId);
+      if (!result.value) {
+        const refreshed = await findInterruptedTransaction(state.identity.projectRoot);
+        update({
+          ...(refreshed ? { transaction: refreshed, recoveryChoice: preferredRecoveryChoice(refreshed) } : {}),
+          transactionError: result.error
+            ? `Undo could not continue: ${result.error}`
+            : "Undo changes was refused because the project needs review.",
+        });
         return;
       }
-      update({ transaction: rolledBack, transactionError: undefined, readiness: null, screen: "ready" });
+      update(state.plan ? {
+        transaction: result.value,
+        plan: undefined,
+        transactionError: undefined,
+        readiness: null,
+        installProgress: 0,
+        screen: "dry-run",
+      } : { transaction: result.value, transactionError: undefined, readiness: null, screen: "ready" });
       return;
     }
     if (!transaction.recovery.discard_staging_allowed) {
@@ -1008,6 +1026,9 @@ export default function App() {
       return;
     }
     update({ transaction: discarded, transactionError: undefined, screen: state.maintenanceMode ? "update" : "dry-run" });
+    } finally {
+      setRecoveryPending(false);
+    }
   };
   const goNext = async () => {
     if (state.screen === "recovery") {
@@ -1139,8 +1160,8 @@ export default function App() {
         <PhaseRail screen={state.screen} />
         <main className="main-viewport" aria-labelledby="screen-title" aria-describedby="screen-supporting" onKeyDown={closeDisclosureOnEscape}>
           <div className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{copy.title}</div>
-          <ScreenFrame screen={state.screen} copy={copy} state={state} canAdvance={!semanticAnalysisPending && !planPreparationPending && !installationPending && canAdvanceFromScreen(state, { scanComplete, scanError, scanPartial, findings })} pending={semanticAnalysisPending} preparingPlan={planPreparationPending} headingRef={headingRef} onBack={goBack} onNext={goNext} onMaintenance={openMaintenance} onPrepareConflicts={prepareSetupPlan}>
-            {renderScreen(state, update, updateIdentity, updateDescription, findings, selectedFinding, setSelectedFinding, setFindings, scanComplete, scanError, scanProgress, scanPartial, scanLimitsHit, scanRequestId, scanCancellationRequested, cancelActiveScan, openMaintenance, startMaintenance, runMaintenanceReanalysis, chooseConflict, chooseProjectFolder, chooseLauncherFolder, confirmAnalysis)}
+          <ScreenFrame screen={state.screen} copy={copy} state={state} canAdvance={!semanticAnalysisPending && !planPreparationPending && !installationPending && !recoveryPending && canAdvanceFromScreen(state, { scanComplete, scanError, scanPartial, findings })} pending={semanticAnalysisPending || recoveryPending} preparingPlan={planPreparationPending} headingRef={headingRef} onBack={goBack} onNext={goNext} onMaintenance={openMaintenance} onPrepareConflicts={prepareSetupPlan}>
+            {renderScreen(state, update, updateIdentity, updateDescription, findings, selectedFinding, setSelectedFinding, setFindings, scanComplete, scanError, scanProgress, scanPartial, scanLimitsHit, scanRequestId, scanCancellationRequested, cancelActiveScan, openMaintenance, startMaintenance, runMaintenanceReanalysis, chooseConflict, chooseProjectFolder, chooseLauncherFolder, confirmAnalysis, recoveryPending)}
           </ScreenFrame>
         </main>
       </div>
@@ -1181,7 +1202,8 @@ function ExternalLink({ href, className, children }: { href: string; className?:
 function ScreenFrame({ screen, copy, state, canAdvance, pending, preparingPlan, headingRef, onBack, onNext, onMaintenance, onPrepareConflicts, children }: { screen: ScreenId; copy: { title: string; supporting?: string; status?: { label: string; tone: StatusTone } }; state: WizardState; canAdvance: boolean; pending: boolean; preparingPlan: boolean; headingRef: { current: HTMLHeadingElement | null }; onBack: () => void; onNext: () => void; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onPrepareConflicts: () => Promise<void>; children: ReactNode }) {
   const installDone = screen === "install" && state.installProgress >= 100;
   const unresolvedConflicts = state.plan?.conflicts.some((conflict) => !conflict.selected) === true;
-  const primaryLabel = pending && screen === "description" ? "Preparing details…" : screen === "welcome" ? "Continue" : screen === "findings" && !state.codexAnalysis ? `Review with ${aiProviderLabel(state.aiProvider, state.aiProfiles)}` : screen === "dry-run" ? "Start installation" : screen === "install" ? (installDone ? "Continue" : "") : screen === "ready" ? "Finish" : screen === "recovery" ? "Continue" : screen === "conflict" ? "Apply" : screen === "update" ? (state.plan ? "Apply reviewed plan" : "") : "Next";
+  const recoveryLabel = state.recoveryChoice === "rollback" ? "Undo changes" : state.recoveryChoice === "discard" ? "Discard prepared files" : "Continue setup";
+  const primaryLabel = pending && screen === "description" ? "Preparing details…" : pending && screen === "recovery" ? state.recoveryChoice === "rollback" ? "Undoing changes…" : state.recoveryChoice === "discard" ? "Discarding files…" : "Continuing setup…" : screen === "welcome" ? "Continue" : screen === "findings" && !state.codexAnalysis ? `Review with ${aiProviderLabel(state.aiProvider, state.aiProfiles)}` : screen === "dry-run" ? "Start installation" : screen === "install" ? (installDone ? "Continue" : "") : screen === "ready" ? "Finish" : screen === "recovery" ? recoveryLabel : screen === "conflict" ? "Apply" : screen === "update" ? (state.plan ? "Apply reviewed plan" : "") : "Next";
   const showBack = !["welcome", "install"].includes(screen);
   return <>
     <div className="content-scroll">
@@ -1337,7 +1359,7 @@ function canAdvanceFromScreen(
   }
 }
 
-function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) => void, updateIdentity: (patch: Partial<ProjectIdentity>) => void, updateDescription: (description: string) => void, findings: ScanFinding[], selectedFinding: string, setSelectedFinding: (id: string) => void, setFindings: Dispatch<SetStateAction<ScanFinding[]>>, scanComplete: boolean, scanError: string | undefined, scanProgress: ScanProgress, scanPartial: boolean, scanLimitsHit: string[], scanRequestId: string | undefined, scanCancellationRequested: boolean, onCancelScan: () => Promise<void>, onMaintenance: (screen: "update" | "conflict" | "recovery") => void, startMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void, onReanalyze: () => Promise<boolean>, chooseConflict: (choice: ConflictChoice) => void, onPickProjectFolder: () => Promise<FolderSelection | null>, onPickLauncherFolder: () => Promise<FolderSelection | null>, onConfirmAnalysis: () => Promise<void>) {
+function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) => void, updateIdentity: (patch: Partial<ProjectIdentity>) => void, updateDescription: (description: string) => void, findings: ScanFinding[], selectedFinding: string, setSelectedFinding: (id: string) => void, setFindings: Dispatch<SetStateAction<ScanFinding[]>>, scanComplete: boolean, scanError: string | undefined, scanProgress: ScanProgress, scanPartial: boolean, scanLimitsHit: string[], scanRequestId: string | undefined, scanCancellationRequested: boolean, onCancelScan: () => Promise<void>, onMaintenance: (screen: "update" | "conflict" | "recovery") => void, startMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void, onReanalyze: () => Promise<boolean>, chooseConflict: (choice: ConflictChoice) => void, onPickProjectFolder: () => Promise<FolderSelection | null>, onPickLauncherFolder: () => Promise<FolderSelection | null>, onConfirmAnalysis: () => Promise<void>, recoveryPending: boolean) {
   switch (state.screen) {
     case "welcome": return <Welcome state={state} update={update} />;
     case "description": return <Description state={state} updateDescription={updateDescription} updateIdentity={updateIdentity} />;
@@ -1354,7 +1376,7 @@ function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) 
     case "ready": return <Ready state={state} update={update} onMaintenance={onMaintenance} />;
     case "update": return <Update state={state} update={update} findings={findings} setFindings={setFindings} onMaintenance={onMaintenance} onStartMaintenance={startMaintenance} onReanalyze={onReanalyze} />;
     case "conflict": return <Conflict state={state} update={update} onChoice={chooseConflict} />;
-    case "recovery": return <Recovery state={state} update={update} onPickProjectFolder={onPickProjectFolder} onStartMaintenance={startMaintenance} />;
+    case "recovery": return <Recovery state={state} update={update} onPickProjectFolder={onPickProjectFolder} onStartMaintenance={startMaintenance} pending={recoveryPending} />;
   }
 }
 
@@ -2218,8 +2240,53 @@ function Conflict({ state, update, onChoice }: { state: WizardState; update: (pa
   return <div className="stack"><div className="diff-grid"><DiffPane title="Original" badge={preview?.base ? "Previously installed" : "Reference"} text={`${conflict?.path ?? "No conflict selected"}\n\n${baseText}`} tone="neutral" /><DiffPane title="Current" badge={operation?.local_state === "modified" ? "Your changes" : "Not present"} text={`${conflict?.path ?? "No conflict selected"}\n\n${localText}`} tone="minus" /><DiffPane title="New" badge={preview?.kind ? "Available update" : "Incoming file"} text={`${conflict?.path ?? "No conflict selected"}\n\n${incomingText}`} tone="plus" /></div>{previewMessage && <p className="muted" role="status">{previewMessage}</p>}<section className="panel conflict-actions"><p className="muted">{conflict ? `Choose what to do with ${conflict.path}. Any merged result is checked before it is saved.` : "All conflicts are resolved."}</p><div className="button-row">{choices.map((choice) => <button type="button" key={choice} className={`button ${state.conflictChoice === choice ? "primary" : "secondary"}`} aria-pressed={state.conflictChoice === choice} onClick={() => { update({ conflictChoice: choice }); void onChoice(choice); }}>{choice === "keep" ? "Keep current" : choice === "replace" ? "Use new" : choice === "merge" ? "Merge" : choice === "rename" ? "Keep both" : "Skip"}</button>)}</div></section></div>;
 }
 
-function Recovery({ state, update, onPickProjectFolder, onStartMaintenance }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onPickProjectFolder: () => Promise<FolderSelection | null>; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => Promise<void> | void }) {
+export function recoveryProgress(journal: TransactionJournal | null | undefined) {
+  if (!journal) return undefined;
+  const operations = journal.operations.filter((operation) => !["skip", "external"].includes(operation.action ?? ""));
+  if (operations.length === 0) return undefined;
+  const saving = journal.transaction_kind === "rollback" && journal.state === "preflight";
+  const complete = saving
+    ? operations.filter((operation) => operation.backup_path || operation.after_exists !== null && operation.after_exists !== undefined).length
+    : operations.filter((operation) => operation.status === "rolled_back").length;
+  const current = saving
+    ? operations.find((operation) => !operation.backup_path && (operation.after_exists === null || operation.after_exists === undefined))
+    : operations.find((operation) => operation.status !== "rolled_back");
+  return {
+    complete,
+    total: operations.length,
+    percent: Math.round((complete / operations.length) * 100),
+    current: current?.destination,
+    label: saving ? `Saving file ${complete} of ${operations.length}` : `Restoring file ${complete} of ${operations.length}`,
+  };
+}
+
+function Recovery({ state, update, onPickProjectFolder, onStartMaintenance, pending }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onPickProjectFolder: () => Promise<FolderSelection | null>; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => Promise<void> | void; pending: boolean }) {
   const transaction = state.transaction;
+  const [progressJournal, setProgressJournal] = useState<TransactionJournal | null>(null);
+  useEffect(() => {
+    if (!pending || !transaction || !state.identity.projectRoot) {
+      setProgressJournal(null);
+      return;
+    }
+    let active = true;
+    let timer: number | undefined;
+    const refresh = async () => {
+      const parent = await readTransactionJournal(state.identity.projectRoot, transaction.transaction_id);
+      if (!active) return;
+      const progressId = parent?.rollback_transaction_id ?? transaction.rollback_transaction_id;
+      const progress = progressId
+        ? await readTransactionJournal(state.identity.projectRoot, progressId)
+        : parent;
+      if (!active) return;
+      if (progress) setProgressJournal(progress);
+      timer = window.setTimeout(() => void refresh(), 500);
+    };
+    void refresh();
+    return () => {
+      active = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [pending, state.identity.projectRoot, transaction?.transaction_id, transaction?.rollback_transaction_id]);
   if (!transaction) {
     const choose = async () => {
       const selected = await onPickProjectFolder();
@@ -2227,6 +2294,11 @@ function Recovery({ state, update, onPickProjectFolder, onStartMaintenance }: { 
       else if (selected?.error) update({ transactionError: `The selected folder could not be used: ${selected.error}` });
     };
     return <div className="stack narrow"><section className="panel"><PanelTitle title="Recover setup" /><p className="muted">Choose an installed project to continue an interrupted setup or remove files added by the app.</p><div className="button-row"><button type="button" className="button secondary" onClick={() => void choose()}>Choose another project</button><button type="button" className="button secondary" disabled={!state.identity.projectRoot.trim()} onClick={() => void onStartMaintenance("remove")}>Remove managed components</button></div></section></div>;
+  }
+  if (pending) {
+    const progress = recoveryProgress(progressJournal);
+    const label = state.recoveryChoice === "rollback" ? progress?.label ?? "Starting undo…" : state.recoveryChoice === "discard" ? "Discarding prepared files…" : "Checking the prepared files…";
+    return <div className="stack narrow"><section className="panel recovery-progress" role="status" aria-live="polite" aria-busy="true"><strong>{state.recoveryChoice === "rollback" ? "Undoing changes" : state.recoveryChoice === "discard" ? "Discarding prepared files" : "Continuing setup"}</strong><span>{label}</span><Progress value={progress?.percent} label="Recovery progress" valueText={progress ? `${progress.percent}% complete. ${label}` : label} />{progress?.current && <small className="mono" title={progress.current}>{progress.current}</small>}</section></div>;
   }
   const options: Array<{ id: RecoveryChoice; title: string; detail: string; allowed: boolean }> = [
     { id: "resume", title: "Continue setup", detail: "Check the prepared files again and continue where setup stopped.", allowed: transaction.recovery.resume_allowed },

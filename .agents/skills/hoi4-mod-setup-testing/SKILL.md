@@ -59,6 +59,7 @@ session, cancellation, credential-health, or analysis assertions.
 - normalized destinations remain inside the approved root
 - apply followed by rollback restores original hashes
 - per-operation checkpoint size stays bounded as the plan grows, replay restores the latest durable operation state, and compaction preserves that state in the full journal
+- batched apply and rollback intents cover every possible live mutation before it starts, while interrupted groups reconcile safely from backups and observed hashes
 - verified operations are idempotent or reject an invalid replay
 - managed removal never deletes unowned content
 - secret-like values never survive serialization
