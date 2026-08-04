@@ -153,7 +153,7 @@ const plan: InstallationPlan = {
       provider_status: "needs_runpod",
       workflow_repository: "https://github.com/klimPaskov/comfyui-hoi4-portraits",
       workflow_branch: "codex/portrait-pipeline",
-      workflow_commit: "92c8118f9ab61a0a658af24bc6868ed7f93cdebd",
+      workflow_commit: "b47222a77f2f6454704530865aa1441fad48bdd3",
       preferred_workflow: "source",
       runpod_workspace: "/workspace/comfyui-hoi4-portraits",
       mcp_registered: false,

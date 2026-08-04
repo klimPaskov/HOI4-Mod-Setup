@@ -118,7 +118,8 @@ descriptor read.
 - 3D component and bootstrap adapter
 - provider-neutral `workflow.super_events` component and generic
   `.agents/skills/hoi4-super-events/` tree from the verified manifest
-- exact Optional workflows title order: 3D models workflow, then Super Events workflow
+- exact Optional workflows title order: 3D models workflow, Super Events workflow, then ComfyUI portrait production
+- selected-provider ComfyUI portrait production with Cloud, Local, RunPod, and Disabled generic states
 - Super Events lock/scan state and no-guidance behavior when unselected
 - optional readiness
 - Update and Repair optional-workflow actions, including same-locked-revision

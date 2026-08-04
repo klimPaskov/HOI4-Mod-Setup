@@ -6,6 +6,11 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.2.3 - 2026-08-04
+
+- Update the ComfyUI portrait integration to the current upstream 2.4.1 workflow package, including adaptive source framing, eight pinned model files, current workflow hashes, and the RunPod slim ComfyUI path.
+- Show the optional portrait workflow's minimum requirement of 16 GB VRAM and 25 GB storage, and refresh the related user guidance, screenshots, and release notes.
+
 ## 0.2.2 - 2026-08-04
 
 - Show live percentage and estimated time while preparing the installation review.

@@ -160,7 +160,8 @@ Conflict review is the exception. It may show a three-way comparison and more co
   normal anchor. Do not add arbitrary URL navigation to React.
 - Portrait setup is one concise optional-workflow row. Show Cloud, Local, or
   RunPod only when enabled, keep provider details behind progressive disclosure,
-  and show honest provider status without making it a core readiness gate.
+  and show honest provider status without making it a core readiness gate. When
+  expanded, state the 16 GB VRAM and 25 GB storage minimum recommendation.
   Disabled projects show source-based portrait handling and no ComfyUI-specific
   guidance. Persist the choice through import, settings, Update, and Repair.
 - Keep a local recovery/removal entry reachable from Welcome when signed out; rollback, backup inspection, and managed removal do not depend on Codex.

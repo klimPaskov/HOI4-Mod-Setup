@@ -2747,7 +2747,7 @@ fn is_super_events_runtime_component(component_id: &str) -> bool {
 fn portrait_pipeline_from_state(state: &Value) -> Result<PortraitPipelineConfig, AppError> {
     const REPOSITORY: &str = "https://github.com/klimPaskov/comfyui-hoi4-portraits";
     const BRANCH: &str = "codex/portrait-pipeline";
-    const COMMIT: &str = "92c8118f9ab61a0a658af24bc6868ed7f93cdebd";
+    const COMMIT: &str = "b47222a77f2f6454704530865aa1441fad48bdd3";
     let draft = state.get("portraitPipeline");
     let enabled = draft
         .and_then(|value| value.get("enabled"))
@@ -4665,7 +4665,7 @@ fn build_maintenance_plan_blocking(
                 provider_status: "not_selected".into(),
                 workflow_repository: "https://github.com/klimPaskov/comfyui-hoi4-portraits".into(),
                 workflow_branch: "codex/portrait-pipeline".into(),
-                workflow_commit: "92c8118f9ab61a0a658af24bc6868ed7f93cdebd".into(),
+                workflow_commit: "b47222a77f2f6454704530865aa1441fad48bdd3".into(),
                 preferred_workflow: "source".into(),
                 local_comfyui_root: String::new(),
                 local_server_url: "http://127.0.0.1:8188".into(),

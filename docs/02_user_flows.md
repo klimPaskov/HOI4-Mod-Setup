@@ -81,6 +81,7 @@ On one Optional workflows screen, show these titles in order:
 
 1. **3D models workflow**
 2. **Super Events workflow**
+3. **ComfyUI portrait production**
 
 The second row selects provider-neutral `workflow.super_events`. When selected,
 resolve the verified manifest at the one source revision and install its skill
@@ -93,13 +94,13 @@ and non-blocking, appears in readiness, and is remembered by the managed lock
 and the existing-project scan. If it is declined, do not install any part of
 the dependency closure or add Super Events-specific guidance to `AGENTS.md`.
 
-Then ask whether the user wants the HOI4 portrait workflow. When enabled,
-show the provider choice **Comfy Cloud**, **Local ComfyUI**, or **RunPod**;
-Disabled is the explicit generic-project default. Persist the choice and show
-only the provider-specific setup state needed for the selected route. Do not
-restore the selected provider after import or reopening an installed project.
-The expanded portrait workflow row also shows the minimum recommendation:
-16 GB VRAM and 25 GB storage.
+The third row asks whether the user wants the HOI4 portrait workflow. When
+enabled, show the provider choice **Comfy Cloud**, **Local ComfyUI**, or
+**RunPod**; Disabled is the explicit generic-project default. Persist the
+choice and show only the provider-specific setup state needed for the selected
+route. Restore the selected provider after import or reopening an installed
+project. The expanded portrait workflow row also shows the minimum
+recommendation: 16 GB VRAM and 25 GB storage.
 
 ### MCP, credentials, and Git
 

@@ -192,7 +192,7 @@
     "provider_status": "not_selected",
     "workflow_repository": "https://github.com/klimPaskov/comfyui-hoi4-portraits",
     "workflow_branch": "codex/portrait-pipeline",
-    "workflow_commit": "92c8118f9ab61a0a658af24bc6868ed7f93cdebd",
+    "workflow_commit": "b47222a77f2f6454704530865aa1441fad48bdd3",
     "preferred_workflow": "source",
     "local_comfyui_root": "",
     "local_server_url": "http://127.0.0.1:8188",

@@ -74,11 +74,12 @@ checks accept only HTTP loopback URLs and bounded ComfyUI roots. RunPod URLs
 must be HTTPS and are never treated as ready until the page and workflow are
 observed.
 
-The local workflow installer downloads only the three current UI workflow
-files at the pinned commit, disables redirects, verifies SHA-256 before
-staging, refuses modified existing files, and applies through an exact
-transaction staging directory. Model downloads remain a separate
-Hugging-Face-gated action; `HF_TOKEN` is only a presence hint and is never
+The local workflow installer downloads only the two authorized current UI
+workflow files and the two pinned adaptive-crop custom-node files at the
+pinned commit, disables redirects, verifies SHA-256 before staging, refuses
+modified existing files, and applies through an exact transaction staging
+directory. Model downloads and Python dependency installation remain separate
+Hugging-Face-gated actions; `HF_TOKEN` is only a presence hint and is never
 read into project state, logs, previews, plans, locks, or React state.
 
 The fixed canonical repository link may still be opened through the typed

@@ -155,7 +155,8 @@
 - POR-05: Disabled output removes portrait components, marker sections, Cloud MCP configuration, and ComfyUI-specific instructions; source-based portrait handling remains available.
 - POR-06: ComfyUI applies only to sourced or grounded portraits; non-sourced fictional or impossible portraits use native ImageGen and never use this workflow. Durable source PNG/TXT pairs share the runtime basename, prompts begin with `hoi4_portrait,` and describe only the person, and runtime files never reference the source archive.
 - POR-07: Temporary provider failure creates a source-based DDS placeholder and pending replacement state; it is not reported as final styled art.
-- POR-08: Current workflow hashes, output dimensions, DDS conversion, no-spend checks, and no-secret persistence are covered by automated or manual validation without paid Cloud or RunPod resources.
+- POR-08: Current workflow and adaptive-crop node hashes, output dimensions, DDS conversion, no-spend checks, and no-secret persistence are covered by automated or manual validation without paid Cloud or RunPod resources.
+- POR-09: Expanding the portrait workflow row shows the minimum recommendation of 16 GB VRAM and 25 GB storage, without turning either value into a blocking core readiness check.
 
 ## MCP
 
@@ -271,7 +272,7 @@
 - UI-17: New-project root and launcher paths are visibly marked as auto-filled or overridden and remain editable.
 - UI-18: Existing-project launcher descriptor candidates are visibly confirmed before scan and unconfirmed paths are not read.
 - UI-19: The Ready-screen external link has a clear name and fixed safe destination.
-- UI-20: The Optional workflows screen places **Super Events workflow** directly after **3D models workflow** and shows no Super Events credential control.
+- UI-20: The Optional workflows screen places **Super Events workflow** directly after **3D models workflow**, places **ComfyUI portrait production** after it, and shows no Super Events credential control.
 - UI-21: Ready and maintenance screens expose Super Events and portrait state,
   provider changes, and add/repair actions without adding a separate workflow
   phase.

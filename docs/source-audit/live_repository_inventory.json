@@ -1,13 +1,13 @@
 {
   "repository": "klimPaskov/Agentic-HOI4-Modding",
-  "resolved_commit": "a20eabbf044c62ade24128c72859e5dc9ed42007",
+  "resolved_commit": "3f0c61d9891344197cab38ab5e760821134f6daf",
   "default_branch": "main",
   "inspection_date": "2026-08-04",
   "manifest_path": "hoi4-mod-setup.manifest.json",
-  "manifest_sha256": "dd6bee2fc81368ed32671ac2efadcfeb5c67b6e54a9bd76a87d6a16c85c69287",
-  "manifest_generated_for_revision": "42a99f60b6818cf20ad572ccf0e835f7a430e0f1",
+  "manifest_sha256": "ba108d4b6d8782befdc3eeb760a74ef24f795ead73b52168b7d2fb9be9a3ac5",
+  "manifest_generated_for_revision": "8f01184fbf6c4ebce6d850e17d752925b76d6182",
   "manifest_worktree_state": "published",
-  "workspace_manifest_sha256": "dd6bee2fc81368ed32671ac2efadcfeb5c67b6e54a9bd76a87d6a16c85c69287",
+  "workspace_manifest_sha256": "ba108d4b6d8782befdc3eeb760a74ef24f795ead73b52168b7d2fb9be9a3ac5",
   "verified_root_entries": [
     ".agents/skills/",
     ".codex/",
@@ -127,6 +127,7 @@
   "verified_findings": [
     "The repository provides a reusable AGENTS template, generic skills, selected-provider portrait skills, generic Codex subagents, Codex configuration, an optional 3D bootstrap, and an offline wiki tree.",
     "The portrait component graph separates the provider-neutral contract from Cloud, Local, and RunPod skills; disabled projects do not receive those components.",
+    "The selected portrait provider lock uses comfyui-hoi4-portraits b47222a and its current eight-file model manifest; non-sourced fictional or impossible portraits use native ImageGen.",
     "The current generic Codex MCP command uses hoi4-agent-tools.cmd, which is Windows-specific.",
     "The current 3D bootstrap and wrappers use Windows paths, .cmd wrappers, PowerShell guidance, winget, and blender.exe discovery.",
     "The 3D bootstrap resolves some dependencies at bootstrap time and writes observed versions and checksums. The README describes the route as pinned, which should be surfaced as documentation drift.",

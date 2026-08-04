@@ -57,8 +57,10 @@ Read:
   Disabled. Provider state and exact upstream revision are non-secret persisted
   state; enabled output installs the provider-neutral portrait contract and
   only the selected provider skill; disabled output strips portrait provider
-  components and ComfyUI guidance. See `docs/32_comfyui_portrait_pipeline.md`
-  for the current contract and acceptance rules.
+  components and ComfyUI guidance. The optional-workflow row shows the honest
+  minimum recommendation of 16 GB VRAM and 25 GB storage without making it a
+  core readiness gate. See `docs/32_comfyui_portrait_pipeline.md` for the
+  current contract and acceptance rules.
 - The optional flattened ChatGPT project-sources export is selectable only for Codex on Components, maps skill `SKILL.md` files to `<skill>.md`, includes the adapted AGENTS/README/subagents, shows its files and sizes, and recommends Chat without starting an upload or planning action.
 - Adapted project instructions remove the source template's complete
   `## Placeholder Guide` section before staging, merge review, or flattened
