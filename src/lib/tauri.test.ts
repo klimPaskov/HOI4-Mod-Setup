@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildMaintenancePlan, cancelCodexLogin, cancelScan, confirmCodexAnalysis, evaluateReadiness, inspectLocalPortraitProvider, installLocalPortraitWorkflows, openExternalUrlResult, previewDescriptors, readMeshyCredential, runAiAnalysis, runCodexAnalysis, scanProject } from "./tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildMaintenancePlan, cancelCodexLogin, cancelScan, confirmCodexAnalysis, evaluateReadiness, inspectLocalPortraitProvider, installLocalPortraitWorkflows, openExternalUrlResult, packageChatSources, pickChatSourcesFolder, previewChatSources, previewDescriptors, readMeshyCredential, runAiAnalysis, runCodexAnalysis, scanProject } from "./tauri";
 import type { AiAnalysisRequest, CodexAnalysisRequest, ScanProgress, WizardState } from "../types";
 
 const { invoke, listen, unlisten } = vi.hoisted(() => ({
@@ -59,6 +59,22 @@ describe("typed scanner bridge", () => {
     expect(result.error).toBeUndefined();
     expect(invoke).toHaveBeenCalledWith("open_external_url", {
       url: "https://github.com/klimPaskov/Agentic-HOI4-Modding",
+    });
+  });
+
+  it("uses typed commands for ChatGPT source preview and packaging", async () => {
+    invoke.mockResolvedValueOnce({ path: "C:/Users/Player/Downloads" }).mockResolvedValueOnce({ eligible: true, files: [] }).mockResolvedValueOnce({ archive_path: "C:/Users/Player/Downloads/example.zip", included_files: [], bytes: 0, sha256: "a".repeat(64) });
+
+    await pickChatSourcesFolder();
+    await previewChatSources("C:/mods/example");
+    await packageChatSources("C:/mods/example", "C:/Users/Player/Downloads", ["AGENTS.md"]);
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "pick_chat_sources_folder", {});
+    expect(invoke).toHaveBeenNthCalledWith(2, "preview_chat_sources", { projectRoot: "C:/mods/example" });
+    expect(invoke).toHaveBeenNthCalledWith(3, "package_chat_sources", {
+      projectRoot: "C:/mods/example",
+      destinationDirectory: "C:/Users/Player/Downloads",
+      selectedFileIds: ["AGENTS.md"],
     });
   });
 

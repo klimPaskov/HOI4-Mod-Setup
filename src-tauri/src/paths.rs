@@ -1,5 +1,6 @@
 use crate::AppError;
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -108,6 +109,99 @@ pub fn hoi4_user_mod_directory() -> Result<PathBuf, AppError> {
             candidate.display()
         ))
     })
+}
+
+pub fn downloads_directory() -> Result<PathBuf, AppError> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+        use windows_sys::Win32::System::Com::CoTaskMemFree;
+        use windows_sys::Win32::UI::Shell::{FOLDERID_Downloads, SHGetKnownFolderPath};
+
+        let mut raw = std::ptr::null_mut::<u16>();
+        let result =
+            unsafe { SHGetKnownFolderPath(&FOLDERID_Downloads, 0, std::ptr::null_mut(), &mut raw) };
+        if result < 0 || raw.is_null() {
+            return Err(AppError::PathSecurity(
+                "Windows could not resolve the Downloads folder".into(),
+            ));
+        }
+        let length = unsafe {
+            let mut length = 0usize;
+            while length < 32_768 && *raw.add(length) != 0 {
+                length += 1;
+            }
+            length
+        };
+        let value = if length == 32_768 {
+            None
+        } else {
+            Some(unsafe { OsString::from_wide(std::slice::from_raw_parts(raw, length)) })
+        };
+        unsafe { CoTaskMemFree(raw.cast()) };
+        validate_export_directory(&PathBuf::from(value.ok_or_else(|| {
+            AppError::PathSecurity("Windows returned an invalid Downloads folder".into())
+        })?))
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_foundation::{
+            NSSearchPathDirectory, NSSearchPathDomainMask, NSSearchPathForDirectoriesInDomains,
+        };
+
+        let candidates = NSSearchPathForDirectoriesInDomains(
+            NSSearchPathDirectory::DownloadsDirectory,
+            NSSearchPathDomainMask::UserDomainMask,
+            true,
+        );
+        let path = candidates
+            .firstObject()
+            .map(|value| PathBuf::from(value.to_string()))
+            .ok_or_else(|| {
+                AppError::PathSecurity("macOS could not resolve the Downloads folder".into())
+            })?;
+        validate_export_directory(&path)
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        Err(AppError::UnsupportedPlatform(
+            "the Downloads folder is supported only on Windows and macOS".into(),
+        ))
+    }
+}
+
+pub fn validate_export_directory(path: &Path) -> Result<PathBuf, AppError> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(AppError::PathSecurity(
+            "export folder must be an absolute path without traversal".into(),
+        ));
+    }
+    if crate::security::path_has_link_component(path) {
+        return Err(AppError::PathSecurity(
+            "export folder contains a symlink or junction".into(),
+        ));
+    }
+    let canonical = fs::canonicalize(path).map_err(|error| {
+        AppError::PathSecurity(format!("export folder is not accessible: {error}"))
+    })?;
+    if !canonical.is_dir() {
+        return Err(AppError::PathSecurity(
+            "export folder must be a directory".into(),
+        ));
+    }
+    if crate::security::path_has_link_component(&canonical) {
+        return Err(AppError::PathSecurity(
+            "export folder contains a symlink or junction".into(),
+        ));
+    }
+    Ok(canonical)
 }
 
 #[cfg(target_os = "windows")]

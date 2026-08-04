@@ -1,9 +1,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { Components, DryRun, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, recoveryProgress } from "./App";
+import App, { ChatSources, Components, DryRun, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
-import type { CodexAnalysisResult, FolderSelection, ScanProgress, SourceManifestPreview, WizardState } from "./types";
+import type { ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
 vi.mock("./lib/tauri", async () => {
@@ -83,6 +83,16 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(fixture.meshKeyDraft).toBeFalsy();
   });
 
+  it("provides a sanitized ChatGPT source-package screenshot state", () => {
+    window.history.replaceState({}, "", "/?screenshot=chat-sources");
+    const fixture = documentationFixture(readyState());
+
+    expect(fixture.screen).toBe("chat-sources");
+    expect(fixture.chatSourcesAvailable).toBe(true);
+    expect(fixture.chatSourcesPreview?.destinationDirectory).toBe("C:\\Users\\Player\\Downloads");
+    expect(fixture.chatSourcesPreview?.files.some((file) => file.category === "root_markdown" && !file.selectedByDefault)).toBe(true);
+  });
+
   it("ignores unknown documentation screenshot routes", () => {
     const base = readyState();
     window.history.replaceState({}, "", "/?screenshot=unknown");
@@ -132,7 +142,7 @@ describe("HOI4 Mod Setup wizard", () => {
       label: "Saving file 1 of 2",
     });
   });
-  it("checks quietly on launch and installs an available signed update only after approval", async () => {
+  it("shows and automatically installs an available signed update on startup", async () => {
     enableTauriRuntime();
     vi.mocked(checkForAppUpdate).mockResolvedValue({
       value: { currentVersion: "0.1.1", availableVersion: "0.2.0", available: true },
@@ -140,9 +150,18 @@ describe("HOI4 Mod Setup wizard", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Version 0.2.0 is available")).toBeInTheDocument();
-    expect(installAppUpdate).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+    expect(await screen.findByText("Installing version 0.2.0...")).toBeInTheDocument();
+    await waitFor(() => expect(installAppUpdate).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not start duplicate startup update installs", async () => {
+    enableTauriRuntime();
+    vi.mocked(checkForAppUpdate).mockResolvedValue({
+      value: { currentVersion: "0.1.1", availableVersion: "0.2.0", available: true },
+    });
+
+    render(<StrictMode><App /></StrictMode>);
+
     await waitFor(() => expect(installAppUpdate).toHaveBeenCalledTimes(1));
   });
 
@@ -194,10 +213,11 @@ describe("HOI4 Mod Setup wizard", () => {
     vi.mocked(installAppUpdate).mockResolvedValue({ value: null, error: "signature rejected" });
 
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: "Update now" }));
-
     expect(await screen.findByText("Update failed. Try again.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Update now" })).toBeEnabled();
+    expect(installAppUpdate).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Retry update" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Retry update" }));
+    await waitFor(() => expect(installAppUpdate).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("button", { name: /create new mod/i })).toBeInTheDocument();
   });
 
@@ -398,6 +418,55 @@ describe("HOI4 Mod Setup wizard", () => {
       onReanalyze={vi.fn().mockResolvedValue(true)}
     />);
     expect(screen.getByLabelText("Meshy API key")).toBeInTheDocument();
+  });
+
+  it("offers ChatGPT source packaging only when the managed core components are present", () => {
+    const onPackageChatSources = vi.fn().mockResolvedValue(undefined);
+    render(<Update
+      state={{ ...readyState(), aiProvider: "codex", chatSourcesAvailable: true } as unknown as WizardState}
+      update={vi.fn()}
+      findings={[]}
+      setFindings={vi.fn()}
+      onMaintenance={vi.fn()}
+      onStartMaintenance={vi.fn()}
+      onReanalyze={vi.fn().mockResolvedValue(true)}
+      onPackageChatSources={onPackageChatSources}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Package ChatGPT project sources/ }));
+    expect(onPackageChatSources).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps required ChatGPT source files selected and root Markdown opt-in", () => {
+    const preview: ChatSourcesPreview = {
+      eligible: true,
+      projectRoot: "C:\\mods\\atlantis_rising",
+      destinationDirectory: "C:\\Users\\Player\\Downloads",
+      archiveName: "atlantis_rising-chatgpt-project-sources.zip",
+      files: [
+        { id: "instructions:AGENTS.md", sourcePath: "AGENTS.md", archivePath: "AGENTS.md", category: "instructions", size: 1024, required: true, selectedByDefault: true },
+        { id: "readme:README.md", sourcePath: "README.md", archivePath: "README.md", category: "readme", size: 512, required: true, selectedByDefault: true },
+        { id: "skill:hoi4-events", sourcePath: ".agents/skills/hoi4-events/SKILL.md", archivePath: "hoi4-events.md", category: "skill", size: 2048, required: true, selectedByDefault: true },
+        { id: "subagent:hoi4_researcher.toml", sourcePath: ".codex/agents/hoi4_researcher.toml", archivePath: "hoi4_researcher.toml", category: "subagent", size: 768, required: true, selectedByDefault: true },
+        { id: "root-markdown:NOTES.md", sourcePath: "NOTES.md", archivePath: "NOTES.md", category: "root_markdown", size: 256, required: false, selectedByDefault: false },
+      ],
+    };
+    const update = vi.fn();
+    const state = { ...readyState(), chatSourcesPreview: preview, chatSourcesDestination: preview.destinationDirectory, chatSourcesSelectedIds: preview.files.filter((file) => file.selectedByDefault).map((file) => file.id) } as unknown as WizardState;
+
+    render(<ChatSources state={state} update={update} onPickFolder={vi.fn().mockResolvedValue(undefined)} />);
+
+    expect(screen.getByLabelText("Download folder")).toHaveValue("C:\\Users\\Player\\Downloads");
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes).toHaveLength(5);
+    expect(checkboxes.slice(0, 4).every((checkbox) => (checkbox as HTMLInputElement).checked && (checkbox as HTMLInputElement).disabled)).toBe(true);
+    const optional = screen.getByText("NOTES.md").closest("label");
+    expect(optional).not.toBeNull();
+    const optionalCheckbox = optional?.querySelector("input");
+    expect(optionalCheckbox).not.toBeNull();
+    expect(optionalCheckbox).not.toBeChecked();
+    fireEvent.click(optionalCheckbox as HTMLInputElement);
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ chatSourcesSelectedIds: expect.arrayContaining(["root-markdown:NOTES.md"]) }));
   });
 
   it("uses declarative workflow titles and places Super Events immediately after 3D", async () => {

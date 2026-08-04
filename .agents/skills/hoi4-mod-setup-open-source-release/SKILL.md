@@ -146,7 +146,9 @@ The repository is licensed under Apache 2.0 in `LICENSE`, and the decision is
 recorded in `docs/LICENSE_SELECTION.md`. Run `pnpm release:notices`, keep the
 license and generated notices in source and binary distributions, and review
 third-party notices before publication. Automatic application updates use the
-fixed GitHub latest-release metadata endpoint. Sign final platform bytes with
+fixed GitHub latest-release metadata endpoint and begin the verified replacement
+and restart when a newer version is found; failures preserve the running
+version and expose retry. Sign final platform bytes with
 the protected Tauri updater key after Authenticode or macOS signing, embed
 signatures in `latest.json`, and publish the two macOS app archives alongside
 the three user-facing installers. A check or install failure must preserve the

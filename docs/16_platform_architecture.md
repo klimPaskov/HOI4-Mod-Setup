@@ -148,10 +148,16 @@ Production should use Windows code signing, macOS Developer ID signing and notar
 
 The desktop shell checks the fixed GitHub Release update channel asynchronously
 after launch. Rust owns the updater client, signature verification, download,
-installation, and restart. React only presents an available version and the
-user's install action. Offline checks are non-blocking. Windows installs the
-verified final NSIS package in passive mode; macOS installs a verified archive
-of the final signed application for the current architecture.
+replacement, and restart; when a newer signed version is found, installation
+starts automatically. React presents the status and a retry action only after
+failure. Offline checks are non-blocking. Windows installs the verified final
+NSIS package in passive mode; macOS installs a verified archive of the final
+signed application for the current architecture.
+
+The existing-project ChatGPT source export also stays in Rust. Native Windows
+and macOS folder APIs resolve the Downloads default; the user-selected folder
+must already exist and contain no link component. The export writes a new ZIP
+outside the project and does not use the project transaction journal.
 
 ## Local data
 

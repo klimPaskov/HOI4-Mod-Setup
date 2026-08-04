@@ -2,8 +2,8 @@
 
 These full-window captures are used beside the matching steps in the
 user-facing [README](../../README.md). They show the current Project, Review,
-Components, Integrations, Git, Install, Ready, and maintenance screens at a
-1280 by 960 desktop viewport.
+Components, Integrations, Git, Install, Ready, maintenance, and ChatGPT source
+package screens at a 1280 by 960 desktop viewport.
 
 No credential, account identity, private mod, or secret value appears in a
 public capture. The optional portrait workflow is provider-selectable for generic
@@ -22,5 +22,6 @@ not Chaos Redux routes.
 
 With `pnpm dev` running, open `http://localhost:1420/?screenshot=<name>` where
 `<name>` is one of `welcome`, `provider`, `existing`, `description`, `identity`,
-`components`, `workflows`, `mcp`, `git`, `dry-run`, `ready`, or `maintenance`.
+`components`, `workflows`, `mcp`, `git`, `dry-run`, `ready`, `maintenance`, or
+`chat-sources`.
 Capture the complete 1280 by 960 application viewport from the top of the page.

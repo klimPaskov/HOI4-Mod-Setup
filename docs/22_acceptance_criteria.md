@@ -276,7 +276,14 @@
 - UI-21: Ready and maintenance screens expose Super Events and portrait state,
   provider changes, and add/repair actions without adding a separate workflow
   phase.
-- UI-22: A newer application version appears as one keyboard-accessible, non-blocking update action; current and offline checks add no persistent banner.
+- UI-22: A newer application version appears immediately as one keyboard-accessible, non-blocking title-bar status; signed installation starts automatically, and current/offline checks add no persistent banner.
+
+## ChatGPT source package export
+
+- EXP-01: Existing-project management shows **Package ChatGPT project sources** only when the lock includes `core.agents`, `core.skills`, and `core.subagents`; incomplete projects do not receive the action.
+- EXP-02: The export page defaults to the native Downloads folder, lists `AGENTS.md`, `README.md`, every flattened skill, every subagent, and immediate root Markdown files, with required entries selected and root Markdown entries unchecked.
+- EXP-03: The user can choose another existing external folder and package only the selected entries into a new ZIP; the project remains unchanged, existing archives are not overwritten, and the result reports the path and included files.
+- EXP-04: Rust rejects stale IDs, links, traversal, archive collisions, non-UTF-8 content, secret-shaped content, and per-file or aggregate limits before output is committed.
 
 ## Application updates
 
@@ -284,7 +291,7 @@
 - UPD-02: Update metadata and final platform packages require the committed updater public key; signature verification cannot be bypassed.
 - UPD-03: Windows x64, macOS arm64, and macOS x64 metadata resolve to exact release-tag assets.
 - UPD-04: Download or verification failure preserves the running version and never blocks mod setup.
-- UPD-05: Installation starts only after the user chooses **Update now** and restarts into the verified version.
+- UPD-05: When a newer signed version is found on startup, installation begins automatically and restarts into the verified version; a failed install preserves the running version and exposes retry.
 
 ## Open-source repository
 

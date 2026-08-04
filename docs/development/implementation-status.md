@@ -26,7 +26,11 @@ This document is the concise developer status. User guidance stays in the root
   native build and launch-smoke workflows.
 - User-facing release curation that publishes only the Windows installer and
   two macOS disk images.
-- Automatic signed application-update checks and an in-app update action.
+- Automatic signed startup update checks that download, verify, replace, and
+  restart into the latest version, with retry after failure.
+- Existing-project ChatGPT source packaging with a Downloads default, required
+  flattened-source selection, optional root Markdown, safe atomic ZIP output,
+  and no project mutation.
 - Sanitized development-only documentation fixtures for consistent public
   screenshots of the current wizard and maintenance flow.
 

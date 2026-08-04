@@ -62,6 +62,12 @@ Read:
   core readiness gate. See `docs/32_comfyui_portrait_pipeline.md` for the
   current contract and acceptance rules.
 - The optional flattened ChatGPT project-sources export is selectable only for Codex on Components, maps skill `SKILL.md` files to `<skill>.md`, includes the adapted AGENTS/README/subagents, shows its files and sizes, and recommends Chat without starting an upload or planning action.
+- Existing-project management separately offers ChatGPT source packaging when
+  the three core Agentic component IDs are installed. It defaults to Downloads,
+  keeps required AGENTS/README/flattened skills/subagents selected, leaves root
+  Markdown unchecked, and writes a safe external ZIP without mutating the mod.
+- A newer signed app version shown at startup is installed and restarted
+  automatically; a failed update leaves the current app usable and retryable.
 - Adapted project instructions remove the source template's complete
   `## Placeholder Guide` section before staging, merge review, or flattened
   export; template setup directions never become final project guidance.

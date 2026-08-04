@@ -1,4 +1,4 @@
-# HOI4 Mod Setup 0.2.3
+# HOI4 Mod Setup 0.2.4
 
 Download the installer for your computer:
 
@@ -10,7 +10,9 @@ This build includes the current ComfyUI HOI4 portrait workflow with
 selected-provider instructions, adaptive source framing, native ImageGen
 handling for non-sourced portraits, and current Windows and macOS packaging.
 The optional workflow panel shows the minimum requirement: 16 GB VRAM and
-25 GB storage.
+25 GB storage. Existing managed projects can package their installed ChatGPT
+sources into a safe ZIP, and newer signed app versions now install
+automatically on startup.
 
 Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app
 to Applications.

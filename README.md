@@ -39,6 +39,13 @@ If the app has prepared the project before, **Manage an existing project** lets
 you repair it, update it, add an optional workflow, or remove installed setup
 files. Choose the project folder; the app finds its launcher file.
 
+When the scan confirms the installed Agentic HOI4 Modding instructions, skills,
+and subagents, the maintenance view also offers **Package ChatGPT project
+sources**. The package page defaults to the Downloads folder, keeps `AGENTS.md`,
+`README.md`, every flattened skill, and every subagent selected, and lists root
+Markdown files as optional unchecked entries. The ZIP is written outside the
+mod project without changing it.
+
 ![Choose a previously prepared project](docs/screenshots/11-existing-project.png)
 
 ### 2. Describe the mod and review its details
@@ -138,8 +145,16 @@ or damaged files, change the portrait provider, add the 3D or Super Events
 workflow later, remove installed components, or recover an interrupted setup.
 Changes are shown for review before they are applied.
 
-HOI4 Mod Setup also checks for app updates when it opens. When a new version is
-available, choose **Update now**.
+![Package ChatGPT project sources](docs/screenshots/13-chat-sources.png)
+
+The source-package page shows the external download folder and the exact files
+that will be included. Required flattened sources stay selected; root Markdown
+files are optional and unchecked until chosen.
+
+HOI4 Mod Setup checks for app updates when it opens. If a newer signed version
+is found, the app shows the update immediately, downloads and verifies it,
+replaces the current installation, and restarts into the new version. If the
+update fails, the running version remains usable and a retry action appears.
 
 ## Privacy
 

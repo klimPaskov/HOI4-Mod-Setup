@@ -54,7 +54,9 @@ the final code-signed macOS app archives with the dedicated Tauri updater key.
 The release environment stores `TAURI_SIGNING_PRIVATE_KEY` and
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; only the matching public key is committed.
 The app checks the fixed `releases/latest/download/latest.json` endpoint and
-requires a valid updater signature before install.
+requires a valid updater signature before its automatic startup install.
+Signature, download, or replacement failure preserves the running version and
+leaves a retry path in the title bar.
 The curation job verifies each final updater artifact against that committed
 public key before it creates `latest.json`; a wrong or rotated private key
 therefore blocks publication instead of shipping an unusable update.

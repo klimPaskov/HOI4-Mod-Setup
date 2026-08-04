@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlan, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlan, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, packageChatSources, pickChatSourcesFolder, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewChatSources, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
-import type { AiProviderId, AiProviderProfile, AppUpdateStatus, CodexAnalysisRequest, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
+import type { AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPreview, CodexAnalysisRequest, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
 
 const PHASES: Array<{ id: PhaseId; label: string }> = [
@@ -150,6 +150,7 @@ export const initialState: WizardState = {
   installedSuperEventsState: "not_selected",
   installedPortraitState: "not_selected",
   installedPortraitProvider: undefined,
+  chatSourcesAvailable: false,
   installProgress: 0,
   installStage: "Preflight",
   conflictChoice: undefined,
@@ -179,6 +180,7 @@ const SCREEN_PHASE: Record<ScreenId, PhaseId> = {
   update: "install",
   conflict: "install",
   recovery: "install",
+  "chat-sources": "install",
 };
 
 const screenCopy: Record<ScreenId, { title: string; supporting?: string; status?: { label: string; tone: StatusTone } }> = {
@@ -198,6 +200,7 @@ const screenCopy: Record<ScreenId, { title: string; supporting?: string; status?
   update: { title: "Update and repair", supporting: "Manage the installed workflow." },
   conflict: { title: "Resolve AGENTS.md", supporting: "Choose the result before continuing." },
   recovery: { title: "Installation was interrupted", supporting: "Resume from the last safe checkpoint." },
+  "chat-sources": { title: "Package ChatGPT project sources", supporting: "Choose the installed source files and download folder.", status: { label: "Export", tone: "info" } },
 };
 
 function phaseIndex(screen: ScreenId): number {
@@ -206,17 +209,19 @@ function phaseIndex(screen: ScreenId): number {
 
 const GENERATED_IDENTITY_FIELDS = ["projectId", "scriptPrefix", "primaryNamespace", "descriptorTags", "folderProfile"] as const;
 
-function managedInstallationDetails(findings: ScanFinding[]): { present: boolean; valid: boolean; workflow3d: WorkflowState; superEvents: WorkflowState; meshKeyConfigured: boolean; portraitPipeline?: Partial<PortraitPipelineState> & { provider_status?: PortraitProviderStatus } } {
+function managedInstallationDetails(findings: ScanFinding[]): { present: boolean; valid: boolean; workflow3d: WorkflowState; superEvents: WorkflowState; meshKeyConfigured: boolean; chatSourcesAvailable: boolean; portraitPipeline?: Partial<PortraitPipelineState> & { provider_status?: PortraitProviderStatus } } {
   const finding = findings.find((candidate) => candidate.id === "installation.managed");
-  if (!finding) return { present: false, valid: false, workflow3d: "not_selected", superEvents: "not_selected", meshKeyConfigured: false };
+  if (!finding) return { present: false, valid: false, workflow3d: "not_selected", superEvents: "not_selected", meshKeyConfigured: false, chatSourcesAvailable: false };
   try {
-    const value = JSON.parse(finding.value) as { present?: boolean; valid?: boolean; workflow_3d_state?: WorkflowState; workflow_super_events_state?: WorkflowState; workflow_3d_key_configured?: boolean; portrait_provider?: PortraitProviderId; portrait_provider_status?: PortraitProviderStatus; portrait_enabled?: boolean; portrait_workflow_commit?: string; portrait_preferred_workflow?: PortraitPipelineState["preferredWorkflow"]; portrait_mcp_registered?: boolean; portrait_local_root?: string; portrait_local_server_url?: string; portrait_runpod_url?: string; portrait_runpod_workspace?: string };
+    const value = JSON.parse(finding.value) as { present?: boolean; valid?: boolean; component_ids?: string[]; workflow_3d_state?: WorkflowState; workflow_super_events_state?: WorkflowState; workflow_3d_key_configured?: boolean; portrait_provider?: PortraitProviderId; portrait_provider_status?: PortraitProviderStatus; portrait_enabled?: boolean; portrait_workflow_commit?: string; portrait_preferred_workflow?: PortraitPipelineState["preferredWorkflow"]; portrait_mcp_registered?: boolean; portrait_local_root?: string; portrait_local_server_url?: string; portrait_runpod_url?: string; portrait_runpod_workspace?: string };
+    const installedComponents = new Set(value.component_ids ?? []);
     return {
       present: value.present === true,
       valid: value.valid === true,
       workflow3d: value.workflow_3d_state ?? "not_selected",
       superEvents: value.workflow_super_events_state ?? "not_selected",
       meshKeyConfigured: value.workflow_3d_key_configured === true,
+      chatSourcesAvailable: ["core.agents", "core.skills", "core.subagents"].every((id) => installedComponents.has(id)),
       portraitPipeline: value.portrait_provider ? {
         enabled: value.portrait_enabled !== false,
         provider: value.portrait_provider,
@@ -231,7 +236,7 @@ function managedInstallationDetails(findings: ScanFinding[]): { present: boolean
       } : undefined,
     };
   } catch {
-    return { present: false, valid: false, workflow3d: "not_selected", superEvents: "not_selected", meshKeyConfigured: false };
+    return { present: false, valid: false, workflow3d: "not_selected", superEvents: "not_selected", meshKeyConfigured: false, chatSourcesAvailable: false };
   }
 }
 
@@ -258,6 +263,7 @@ function nextScreen(state: WizardState): ScreenId {
     case "ready": return "ready";
     case "conflict": return "dry-run";
     case "recovery": return "install";
+    case "chat-sources": return "update";
     default: return "ready";
   }
 }
@@ -277,6 +283,7 @@ function previousScreen(state: WizardState): ScreenId {
     case "install": return "dry-run";
     case "ready": return "install";
     case "update": return "ready";
+    case "chat-sources": return "update";
     default: return "welcome";
   }
 }
@@ -310,6 +317,8 @@ export default function App() {
   const [activeTransactionId, setActiveTransactionId] = useState<string>();
   const [appUpdate, setAppUpdate] = useState<AppUpdateStatus | null>(null);
   const [appUpdateState, setAppUpdateState] = useState<"idle" | "installing" | "error">("idle");
+  const appUpdateInstallStarted = useRef(false);
+  const [chatSourcesPending, setChatSourcesPending] = useState(false);
   const codexAccountReadPending = useRef(false);
 
   useEffect(() => {
@@ -326,11 +335,28 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [planPreparationPending]);
 
+  const installAvailableAppUpdate = async () => {
+    setAppUpdateState("installing");
+    try {
+      const result = await installAppUpdate();
+      if (!result.error) return;
+    } catch {
+      // Keep the current installation usable and expose the same retry path.
+    }
+    appUpdateInstallStarted.current = false;
+    setAppUpdateState("error");
+  };
+
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let active = true;
     void checkForAppUpdate().then((result) => {
-      if (active && result.value?.available) setAppUpdate(result.value);
+      if (!active || !result.value?.available) return;
+      setAppUpdate(result.value);
+      if (!appUpdateInstallStarted.current) {
+        appUpdateInstallStarted.current = true;
+        void installAvailableAppUpdate();
+      }
     });
     return () => { active = false; };
   }, []);
@@ -351,9 +377,9 @@ export default function App() {
   }, []);
 
   const applyAppUpdate = async () => {
-    setAppUpdateState("installing");
-    const result = await installAppUpdate();
-    if (result.error) setAppUpdateState("error");
+    if (appUpdateInstallStarted.current) return;
+    appUpdateInstallStarted.current = true;
+    await installAvailableAppUpdate();
   };
 
   useEffect(() => {
@@ -485,6 +511,7 @@ export default function App() {
             ? { ...current.identity, launcherDescriptorPath: detectedLauncherPath }
             : current.identity,
           existingInstallationDetected: managed.present && managed.valid,
+          chatSourcesAvailable: managed.chatSourcesAvailable,
           installedWorkflow3dState: managed.workflow3d,
           installedSuperEventsState: managed.superEvents,
           installedPortraitState: managed.portraitPipeline?.enabled && managed.portraitPipeline.provider !== "disabled"
@@ -783,6 +810,7 @@ export default function App() {
     const scanWasPartial = scanned.partial || scanned.cancelled;
     update({
       existingInstallationDetected: managed.present && managed.valid,
+      chatSourcesAvailable: managed.chatSourcesAvailable,
       installedWorkflow3dState: managed.workflow3d,
       installedPortraitState: managed.portraitPipeline?.enabled && managed.portraitPipeline.provider !== "disabled"
         ? managed.portraitPipeline.providerStatus === "ready" ? "ready" : "incomplete"
@@ -1134,6 +1162,10 @@ export default function App() {
     }
   };
   const goNext = async () => {
+    if (state.screen === "chat-sources") {
+      await packageChatSourcesNow();
+      return;
+    }
     if (state.screen === "recovery") {
       await handleRecovery();
       return;
@@ -1251,6 +1283,58 @@ export default function App() {
     });
   };
 
+  const openChatSources = async () => {
+    if (chatSourcesPending) return;
+    if (!state.identity.projectRoot.trim()) {
+      update({ transactionError: "Choose the installed project before packaging ChatGPT sources." });
+      return;
+    }
+    setChatSourcesPending(true);
+    const result = await previewChatSources(state.identity.projectRoot);
+    setChatSourcesPending(false);
+    if (!result.value) {
+      update({ transactionError: result.error ?? "The ChatGPT source list could not be prepared. Nothing was changed." });
+      return;
+    }
+    const preview: ChatSourcesPreview = result.value;
+    update({
+      screen: "chat-sources",
+      chatSourcesPreview: preview,
+      chatSourcesDestination: preview.destinationDirectory,
+      chatSourcesSelectedIds: preview.files.filter((file) => file.selectedByDefault).map((file) => file.id),
+      chatSourcesResult: undefined,
+      transactionError: undefined,
+    });
+  };
+
+  const chooseChatSourcesFolder = async () => {
+    const selected = await pickChatSourcesFolder();
+    if (selected?.path) {
+      update({ chatSourcesDestination: selected.path, chatSourcesResult: undefined, transactionError: undefined });
+    } else if (selected?.error) {
+      update({ transactionError: selected.error });
+    }
+  };
+
+  const packageChatSourcesNow = async () => {
+    if (chatSourcesPending) return;
+    const preview = state.chatSourcesPreview;
+    const destination = state.chatSourcesDestination?.trim() ?? "";
+    const selected = state.chatSourcesSelectedIds ?? [];
+    if (!preview?.eligible || !destination || selected.length === 0) {
+      update({ transactionError: "Choose an accessible download folder and keep the required source files selected." });
+      return;
+    }
+    setChatSourcesPending(true);
+    const result = await packageChatSources(state.identity.projectRoot, destination, selected);
+    setChatSourcesPending(false);
+    if (!result.value) {
+      update({ transactionError: result.error ?? "The ChatGPT source package could not be created. Nothing in the project was changed." });
+      return;
+    }
+    update({ chatSourcesResult: result.value, transactionError: undefined });
+  };
+
   const copy = state.screen === "ready" && state.finished
     ? {
       title: "Congratulations, you are all set!",
@@ -1273,24 +1357,29 @@ export default function App() {
             : "Clear the prepared files before installing again.",
       }
       : screenCopy[state.screen];
+  const appUpdateMessage = appUpdateState === "error"
+    ? "Update failed. Try again."
+    : appUpdateState === "installing"
+      ? `Installing version ${appUpdate?.availableVersion}...`
+      : `Version ${appUpdate?.availableVersion} is available`;
   return (
     <div className="app-shell">
       <header className="titlebar">
         <img className="brand-mark" src={appIcon} alt="" aria-hidden="true" />
         <span className="brand-name">HOI4 Mod Setup</span>
         {appUpdate && <div className="app-update" role="status" aria-live="polite">
-          <span>{appUpdateState === "error" ? "Update failed. Try again." : `Version ${appUpdate.availableVersion} is available`}</span>
-          <button className="button update-button" type="button" disabled={appUpdateState === "installing"} onClick={() => void applyAppUpdate()}>
-            {appUpdateState === "installing" ? "Updating…" : "Update now"}
-          </button>
+          <span className="app-update-message">{appUpdateMessage}</span>
+          {appUpdateState === "error" && <button className="button update-button" type="button" onClick={() => void applyAppUpdate()}>
+            Retry update
+          </button>}
         </div>}
       </header>
       <div className="workspace">
         <PhaseRail screen={state.screen} />
         <main className="main-viewport" aria-labelledby="screen-title" aria-describedby="screen-supporting" onKeyDown={closeDisclosureOnEscape}>
           <div className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{copy.title}</div>
-          <ScreenFrame screen={state.screen} copy={copy} state={state} canAdvance={!semanticAnalysisPending && !planPreparationPending && !installationPending && !recoveryPending && canAdvanceFromScreen(state, { scanComplete, scanError, scanPartial, findings })} pending={semanticAnalysisPending || recoveryPending} semanticProgressStage={semanticProgressStage} semanticProgressStartedAt={semanticProgressStartedAt} semanticProgressNow={semanticProgressNow} preparingPlan={planPreparationPending} planPreparationStartedAt={planPreparationStartedAt} planPreparationNow={planPreparationNow} headingRef={headingRef} onBack={goBack} onNext={goNext} onMaintenance={openMaintenance} onPrepareConflicts={prepareSetupPlan}>
-            {renderScreen(state, update, updateIdentity, updateDescription, findings, selectedFinding, setSelectedFinding, setFindings, scanComplete, scanError, scanProgress, scanPartial, scanLimitsHit, scanRequestId, scanCancellationRequested, cancelActiveScan, openMaintenance, startMaintenance, runMaintenanceReanalysis, chooseConflict, chooseProjectFolder, chooseLauncherFolder, confirmAnalysis, recoveryPending, maintenancePending)}
+          <ScreenFrame screen={state.screen} copy={copy} state={state} canAdvance={!semanticAnalysisPending && !planPreparationPending && !installationPending && !recoveryPending && !chatSourcesPending && canAdvanceFromScreen(state, { scanComplete, scanError, scanPartial, findings })} pending={semanticAnalysisPending || recoveryPending || chatSourcesPending} chatSourcesPending={chatSourcesPending} semanticProgressStage={semanticProgressStage} semanticProgressStartedAt={semanticProgressStartedAt} semanticProgressNow={semanticProgressNow} preparingPlan={planPreparationPending} planPreparationStartedAt={planPreparationStartedAt} planPreparationNow={planPreparationNow} headingRef={headingRef} onBack={goBack} onNext={goNext} onMaintenance={openMaintenance} onPrepareConflicts={prepareSetupPlan}>
+            {renderScreen(state, update, updateIdentity, updateDescription, findings, selectedFinding, setSelectedFinding, setFindings, scanComplete, scanError, scanProgress, scanPartial, scanLimitsHit, scanRequestId, scanCancellationRequested, cancelActiveScan, openMaintenance, startMaintenance, runMaintenanceReanalysis, chooseConflict, chooseProjectFolder, chooseLauncherFolder, chooseChatSourcesFolder, confirmAnalysis, recoveryPending, maintenancePending, openChatSources)}
           </ScreenFrame>
         </main>
       </div>
@@ -1299,8 +1388,8 @@ export default function App() {
 }
 
 function PhaseRail({ screen }: { screen: ScreenId }) {
-  const maintenance = screen === "update" || screen === "conflict" || screen === "recovery";
-  const currentMaintenance = maintenance ? screen === "update" ? 1 : screen === "conflict" ? 2 : 3 : -1;
+  const maintenance = screen === "update" || screen === "conflict" || screen === "recovery" || screen === "chat-sources";
+  const currentMaintenance = maintenance ? screen === "update" || screen === "chat-sources" ? 1 : screen === "conflict" ? 2 : 3 : -1;
   const current = phaseIndex(screen);
   const phases = maintenance ? MAINTENANCE_PHASES : PHASES;
   return <nav className="phase-rail" aria-label={maintenance ? "Maintenance phases" : "Setup phases"}>
@@ -1328,16 +1417,17 @@ function ExternalLink({ href, className, children }: { href: string; className?:
   >{children}</a>;
 }
 
-function ScreenFrame({ screen, copy, state, canAdvance, pending, semanticProgressStage, semanticProgressStartedAt, semanticProgressNow, preparingPlan, planPreparationStartedAt, planPreparationNow, headingRef, onBack, onNext, onMaintenance, onPrepareConflicts, children }: { screen: ScreenId; copy: { title: string; supporting?: string; status?: { label: string; tone: StatusTone } }; state: WizardState; canAdvance: boolean; pending: boolean; semanticProgressStage: "preparing" | "analyzing" | "validating"; semanticProgressStartedAt?: number; semanticProgressNow: number; preparingPlan: boolean; planPreparationStartedAt?: number; planPreparationNow: number; headingRef: { current: HTMLHeadingElement | null }; onBack: () => void; onNext: () => void; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onPrepareConflicts: () => Promise<void>; children: ReactNode }) {
+function ScreenFrame({ screen, copy, state, canAdvance, pending, chatSourcesPending, semanticProgressStage, semanticProgressStartedAt, semanticProgressNow, preparingPlan, planPreparationStartedAt, planPreparationNow, headingRef, onBack, onNext, onMaintenance, onPrepareConflicts, children }: { screen: ScreenId; copy: { title: string; supporting?: string; status?: { label: string; tone: StatusTone } }; state: WizardState; canAdvance: boolean; pending: boolean; chatSourcesPending: boolean; semanticProgressStage: "preparing" | "analyzing" | "validating"; semanticProgressStartedAt?: number; semanticProgressNow: number; preparingPlan: boolean; planPreparationStartedAt?: number; planPreparationNow: number; headingRef: { current: HTMLHeadingElement | null }; onBack: () => void; onNext: () => void; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onPrepareConflicts: () => Promise<void>; children: ReactNode }) {
   const installDone = screen === "install" && state.installProgress >= 100;
   const unresolvedConflicts = state.plan?.conflicts.some((conflict) => !conflict.selected) === true;
   const recoveryLabel = state.recoveryChoice === "rollback" ? "Undo changes" : state.recoveryChoice === "discard" ? "Discard prepared files" : "Continue setup";
   const primaryLabel = pending && screen === "description" ? "Preparing details…" : pending && screen === "recovery" ? state.recoveryChoice === "rollback" ? "Undoing changes…" : state.recoveryChoice === "discard" ? "Discarding files…" : "Continuing setup…" : screen === "welcome" ? "Continue" : screen === "findings" && !state.codexAnalysis ? `Review with ${aiProviderLabel(state.aiProvider, state.aiProfiles)}` : screen === "dry-run" ? "Start installation" : screen === "install" ? (installDone ? "Continue" : "") : screen === "ready" ? state.finished ? "" : "Finish" : screen === "recovery" ? recoveryLabel : screen === "conflict" ? "Apply" : screen === "update" ? (state.plan ? "Apply reviewed plan" : "") : "Next";
+  const displayedPrimaryLabel = screen === "chat-sources" ? (chatSourcesPending ? "Packaging..." : "Package sources") : primaryLabel;
   const showBack = !["welcome", "install"].includes(screen) && !(screen === "ready" && state.finished);
   return <>
     <div className="content-scroll">
       <div className="screen-heading">
-        <div><div className="eyebrow">{(screen === "update" ? "Update" : screen === "conflict" ? "Conflicts" : screen === "recovery" ? "Recovery" : SCREEN_PHASE[screen]).toUpperCase()}</div><h1 id="screen-title" ref={headingRef} tabIndex={-1}>{copy.title}</h1>{copy.supporting && <p id="screen-supporting">{copy.supporting}</p>}</div>
+        <div><div className="eyebrow">{(screen === "update" || screen === "chat-sources" ? "Update" : screen === "conflict" ? "Conflicts" : screen === "recovery" ? "Recovery" : SCREEN_PHASE[screen]).toUpperCase()}</div><h1 id="screen-title" ref={headingRef} tabIndex={-1}>{copy.title}</h1>{copy.supporting && <p id="screen-supporting">{copy.supporting}</p>}</div>
         {copy.status && <Status label={copy.status.label} tone={copy.status.tone} />}
       </div>
       {pending && screen === "description" && <SemanticPlanningProgress stage={semanticProgressStage} startedAt={semanticProgressStartedAt} now={semanticProgressNow} />}
@@ -1350,7 +1440,7 @@ function ScreenFrame({ screen, copy, state, canAdvance, pending, semanticProgres
         {screen === "ready" && !state.finished && <button className="button secondary" onClick={() => onMaintenance("update")}>Update and repair</button>}
         {screen === "dry-run" && (!state.plan || unresolvedConflicts) && <button className="button secondary" onClick={() => void onPrepareConflicts()} disabled={preparingPlan} aria-busy={preparingPlan || undefined}>{preparingPlan ? "Preparing changes…" : state.plan ? "Resolve conflicts" : "Prepare changes"}</button>}
         {showBack && <button className="button secondary" onClick={onBack}>Back</button>}
-        {primaryLabel && <button className="button primary" onClick={onNext} disabled={!canAdvance} aria-busy={pending || undefined}>{primaryLabel}</button>}
+        {displayedPrimaryLabel && <button className="button primary" onClick={onNext} disabled={!canAdvance} aria-busy={pending || undefined}>{displayedPrimaryLabel}</button>}
       </div>
     </footer>
   </>;
@@ -1427,6 +1517,7 @@ function footerNote(screen: ScreenId, state: WizardState): string {
   if (screen === "update") return state.transactionError ?? "User-modified files are never overwritten silently.";
   if (screen === "conflict") return "A preview and validation run follow the selected resolution.";
   if (screen === "recovery") return "Recovery actions are reversible until apply begins.";
+  if (screen === "chat-sources") return "Required instructions, README, skills, and subagents stay selected; root Markdown files are optional.";
   return state.draftSaved ? "Draft saved locally." : "";
 }
 
@@ -1533,6 +1624,8 @@ function canAdvanceFromScreen(
       return state.installProgress >= 100;
     case "recovery":
       return recoveryChoiceAllowed(state);
+    case "chat-sources":
+      return Boolean(state.chatSourcesPreview?.eligible && state.chatSourcesDestination?.trim() && state.chatSourcesSelectedIds?.length);
     case "conflict":
       return Boolean(state.plan) && !state.plan?.conflicts.some((conflict) => !conflict.selected);
     case "update":
@@ -1542,7 +1635,7 @@ function canAdvanceFromScreen(
   }
 }
 
-function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) => void, updateIdentity: (patch: Partial<ProjectIdentity>) => void, updateDescription: (description: string) => void, findings: ScanFinding[], selectedFinding: string, setSelectedFinding: (id: string) => void, setFindings: Dispatch<SetStateAction<ScanFinding[]>>, scanComplete: boolean, scanError: string | undefined, scanProgress: ScanProgress, scanPartial: boolean, scanLimitsHit: string[], scanRequestId: string | undefined, scanCancellationRequested: boolean, onCancelScan: () => Promise<void>, onMaintenance: (screen: "update" | "conflict" | "recovery") => void, startMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void, onReanalyze: () => Promise<boolean>, chooseConflict: (choice: ConflictChoice) => void, onPickProjectFolder: () => Promise<FolderSelection | null>, onPickLauncherFolder: () => Promise<FolderSelection | null>, onConfirmAnalysis: () => Promise<void>, recoveryPending: boolean, maintenancePending: boolean) {
+function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) => void, updateIdentity: (patch: Partial<ProjectIdentity>) => void, updateDescription: (description: string) => void, findings: ScanFinding[], selectedFinding: string, setSelectedFinding: (id: string) => void, setFindings: Dispatch<SetStateAction<ScanFinding[]>>, scanComplete: boolean, scanError: string | undefined, scanProgress: ScanProgress, scanPartial: boolean, scanLimitsHit: string[], scanRequestId: string | undefined, scanCancellationRequested: boolean, onCancelScan: () => Promise<void>, onMaintenance: (screen: "update" | "conflict" | "recovery") => void, startMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void, onReanalyze: () => Promise<boolean>, chooseConflict: (choice: ConflictChoice) => void, onPickProjectFolder: () => Promise<FolderSelection | null>, onPickLauncherFolder: () => Promise<FolderSelection | null>, onPickChatSourcesFolder: () => Promise<void>, onConfirmAnalysis: () => Promise<void>, recoveryPending: boolean, maintenancePending: boolean, onPackageChatSources: () => Promise<void>) {
   switch (state.screen) {
     case "welcome": return <Welcome state={state} update={update} />;
     case "description": return <Description state={state} updateDescription={updateDescription} updateIdentity={updateIdentity} />;
@@ -1557,9 +1650,10 @@ function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) 
     case "dry-run": return <DryRun state={state} update={update} />;
     case "install": return <Install state={state} />;
     case "ready": return <Ready state={state} update={update} onMaintenance={onMaintenance} />;
-    case "update": return <Update state={state} update={update} findings={findings} setFindings={setFindings} onMaintenance={onMaintenance} onStartMaintenance={startMaintenance} onReanalyze={onReanalyze} pending={maintenancePending} />;
+    case "update": return <Update state={state} update={update} findings={findings} setFindings={setFindings} onMaintenance={onMaintenance} onStartMaintenance={startMaintenance} onReanalyze={onReanalyze} onPackageChatSources={onPackageChatSources} pending={maintenancePending} />;
     case "conflict": return <Conflict state={state} update={update} onChoice={chooseConflict} />;
     case "recovery": return <Recovery state={state} update={update} onPickProjectFolder={onPickProjectFolder} onStartMaintenance={startMaintenance} pending={recoveryPending} />;
+    case "chat-sources": return <ChatSources state={state} update={update} onPickFolder={onPickChatSourcesFolder} />;
   }
 }
 
@@ -2604,7 +2698,7 @@ function PortraitMaintenanceSetup({
   </section>;
 }
 
-export function Update({ state, update, findings, setFindings, onMaintenance, onStartMaintenance, onReanalyze, pending = false }: { state: WizardState; update: (patch: Partial<WizardState>) => void; findings: ScanFinding[]; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void; onReanalyze: () => Promise<boolean>; pending?: boolean }) {
+export function Update({ state, update, findings, setFindings, onMaintenance, onStartMaintenance, onReanalyze, onPackageChatSources, pending = false }: { state: WizardState; update: (patch: Partial<WizardState>) => void; findings: ScanFinding[]; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void; onReanalyze: () => Promise<boolean>; onPackageChatSources?: () => Promise<void>; pending?: boolean }) {
   const plan = state.plan;
   const optional3d = state.meshSelected ? state.meshKeyStatus === "present" ? "Stored; health check pending" : "Selected; key not stored" : "Not selected";
   const superEvents = state.superEventsSelected ? state.installedSuperEventsState === "not_selected" ? "Selected for the next change" : "Installed" : "Not selected";
@@ -2612,7 +2706,44 @@ export function Update({ state, update, findings, setFindings, onMaintenance, on
   const portraits = portraitPipeline.enabled ? `${portraitPipeline.provider} · ${portraitPipeline.providerStatus}` : "Disabled";
   const providerLabel = aiProviderLabel(state.aiProvider, state.aiProfiles);
   const reanalysisLabel = state.maintenanceEvidenceReady ? state.maintenanceCodexAnalysisRecord ? "Run again" : `Run ${providerLabel} reanalysis` : "Prepare read-only evidence";
-  return <div className="stack"><div className="action-grid"><ActionTile title="Check for updates" detail="Compare this project with a newer setup." onClick={() => onStartMaintenance("update")} /><ActionTile title="Repair installation" detail="Restore missing or damaged setup files." onClick={() => onStartMaintenance("repair")} /><ActionTile title="Remove components" detail="Review the files before removing app-managed setup." onClick={() => onStartMaintenance("remove")} /><ActionTile title="Recover interrupted setup" detail="Continue or undo an interrupted change." onClick={() => onMaintenance("recovery")} /></div><MaintenanceWorkflowOptions state={state} update={update} /><section className="panel"><PanelTitle title={`${providerLabel} review`} /><p className="muted">Review the project before updating its setup.</p><button type="button" className="button secondary" onClick={() => void onReanalyze()}>{reanalysisLabel}</button>{state.maintenanceEvidenceReady && <details open><summary>{findings.filter((finding) => finding.status !== "rejected").length} approved findings</summary><div className="manifest-details">{findings.filter((finding) => finding.status !== "rejected").map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small><button type="button" className="text-button" aria-pressed="true" onClick={() => setFindings((current) => current.map((candidate) => candidate.id === finding.id ? { ...candidate, status: "rejected" } : candidate))}>Exclude</button></div>)}</div></details>}{state.maintenanceCodexAnalysisRecord && <p className="muted" role="status">Review returned. Confirm the {providerLabel} suggestions before checking for updates.</p>}</section><section className="panel"><PanelTitle title="Installed state" /><CheckRow label="Core setup" status={plan ? `${plan.operations.length} planned changes` : "No plan loaded"} tone={plan ? "info" : "muted"} /><CheckRow label="Optional 3D workflow" status={optional3d} tone={state.meshSelected ? "review" : "muted"} /><CheckRow label="Super Events workflow" status={superEvents} tone={state.superEventsSelected ? "review" : "muted"} /><CheckRow label="Portrait production" status={portraits} tone={portraitPipeline.enabled ? "review" : "muted"} /><CheckRow label="Modified files" status={plan ? String(plan.conflicts.length) : "Not evaluated"} tone={plan?.conflicts.length ? "review" : "muted"} />{plan && <details open><summary>Reviewed changes</summary><p className="muted">Modified files remain visible until resolved.</p></details>}</section></div>;
+  return <div className="stack"><div className="action-grid"><ActionTile title="Check for updates" detail="Compare this project with a newer setup." onClick={() => onStartMaintenance("update")} /><ActionTile title="Repair installation" detail="Restore missing or damaged setup files." onClick={() => onStartMaintenance("repair")} /><ActionTile title="Remove components" detail="Review the files before removing app-managed setup." onClick={() => onStartMaintenance("remove")} /><ActionTile title="Recover interrupted setup" detail="Continue or undo an interrupted change." onClick={() => onMaintenance("recovery")} />{state.chatSourcesAvailable && onPackageChatSources && <ActionTile title="Package ChatGPT project sources" detail="Choose installed files and download a source ZIP." onClick={() => void onPackageChatSources()} />}</div><MaintenanceWorkflowOptions state={state} update={update} /><section className="panel"><PanelTitle title={`${providerLabel} review`} /><p className="muted">Review the project before updating its setup.</p><button type="button" className="button secondary" onClick={() => void onReanalyze()}>{reanalysisLabel}</button>{state.maintenanceEvidenceReady && <details open><summary>{findings.filter((finding) => finding.status !== "rejected").length} approved findings</summary><div className="manifest-details">{findings.filter((finding) => finding.status !== "rejected").map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small><button type="button" className="text-button" aria-pressed="true" onClick={() => setFindings((current) => current.map((candidate) => candidate.id === finding.id ? { ...candidate, status: "rejected" } : candidate))}>Exclude</button></div>)}</div></details>}{state.maintenanceCodexAnalysisRecord && <p className="muted" role="status">Review returned. Confirm the {providerLabel} suggestions before checking for updates.</p>}</section><section className="panel"><PanelTitle title="Installed state" /><CheckRow label="Core setup" status={plan ? `${plan.operations.length} planned changes` : "No plan loaded"} tone={plan ? "info" : "muted"} /><CheckRow label="Optional 3D workflow" status={optional3d} tone={state.meshSelected ? "review" : "muted"} /><CheckRow label="Super Events workflow" status={superEvents} tone={state.superEventsSelected ? "review" : "muted"} /><CheckRow label="Portrait production" status={portraits} tone={portraitPipeline.enabled ? "review" : "muted"} /><CheckRow label="Modified files" status={plan ? String(plan.conflicts.length) : "Not evaluated"} tone={plan?.conflicts.length ? "review" : "muted"} />{plan && <details open><summary>Reviewed changes</summary><p className="muted">Modified files remain visible until resolved.</p></details>}</section></div>;
+}
+
+export function ChatSources({ state, update, onPickFolder }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onPickFolder: () => Promise<void> }) {
+  const preview = state.chatSourcesPreview;
+  const selectedIds = state.chatSourcesSelectedIds ?? preview?.files.filter((file) => file.selectedByDefault).map((file) => file.id) ?? [];
+  const selected = new Set(selectedIds);
+  const toggle = (file: NonNullable<ChatSourcesPreview["files"]>[number], checked: boolean) => {
+    if (file.required) return;
+    const next = checked
+      ? Array.from(new Set([...selectedIds, file.id]))
+      : selectedIds.filter((id) => id !== file.id);
+    update({ chatSourcesSelectedIds: next, chatSourcesResult: undefined, transactionError: undefined });
+  };
+  if (!preview) {
+    return <section className="panel chat-sources-empty"><PanelTitle title="Preparing source list" /><p className="muted">The installed project files are being checked.</p></section>;
+  }
+  return <div className="stack chat-sources-page">
+    {!preview.eligible && <div className="callout review" role="status">{preview.message ?? "The installed project does not have the complete Agentic HOI4 Modding components."}</div>}
+    <section className="panel form-panel chat-sources-destination">
+      <PanelTitle title="Download location" />
+      <p className="muted">The package is created outside the mod project. It defaults to the Downloads folder.</p>
+      <label className="field" htmlFor="chat-sources-destination"><span className="field-label">Download folder</span><div className="input-with-action"><input id="chat-sources-destination" className="text-input" value={state.chatSourcesDestination ?? preview.destinationDirectory} onChange={(event) => update({ chatSourcesDestination: event.target.value, chatSourcesResult: undefined, transactionError: undefined })} /><button type="button" className="input-action" onClick={() => void onPickFolder()}>Choose folder</button></div></label>
+      <div className="chat-sources-output"><span>Package name</span><code>{preview.archiveName}</code></div>
+    </section>
+    <section className="panel chat-sources-files">
+      <PanelTitle title="Files included" />
+      <p className="muted">{selectedIds.length} of {preview.files.length} files selected. Required instructions, README, skills, and subagents stay included.</p>
+      <div className="chat-source-file-list" role="group" aria-label="ChatGPT project source files">
+        {preview.files.map((file) => <label className="chat-source-file" key={file.id}>
+          <input type="checkbox" checked={selected.has(file.id)} disabled={file.required} onChange={(event) => toggle(file, event.target.checked)} />
+          <span><strong>{file.archivePath}</strong><small>From {file.sourcePath} · {file.required ? "Included by default" : "Optional root Markdown"}</small></span>
+          <span className="size">{formatScanBytes(file.size)}</span>
+        </label>)}
+      </div>
+    </section>
+    {state.chatSourcesResult && <section className="callout pass chat-sources-result" role="status"><strong>Package downloaded</strong><span>{state.chatSourcesResult.includedFiles.length} files were saved to <code>{state.chatSourcesResult.archivePath}</code>.</span></section>}
+  </div>;
 }
 
 function Conflict({ state, update, onChoice }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onChoice: (choice: ConflictChoice) => void }) {
