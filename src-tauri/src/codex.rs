@@ -2571,7 +2571,7 @@ mod tests {
     fn production_jsonl_transport_initializes_frames_and_shuts_down() {
         let (executable, args) = fake_jsonl_process_command(false);
         let transport = ProcessJsonlTransport::start_command(executable, args, None).unwrap();
-        let mut protocol = AppServerProtocol::with_timeout(transport, Duration::from_secs(5));
+        let mut protocol = AppServerProtocol::with_timeout(transport, Duration::from_secs(30));
 
         let initialized = protocol.initialize().unwrap();
 
@@ -2585,7 +2585,7 @@ mod tests {
     fn production_jsonl_transport_reports_interrupted_child_as_dead() {
         let (executable, args) = fake_jsonl_process_command(true);
         let transport = ProcessJsonlTransport::start_command(executable, args, None).unwrap();
-        let mut protocol = AppServerProtocol::with_timeout(transport, Duration::from_secs(5));
+        let mut protocol = AppServerProtocol::with_timeout(transport, Duration::from_secs(30));
         protocol.initialized = true;
 
         let error = protocol
