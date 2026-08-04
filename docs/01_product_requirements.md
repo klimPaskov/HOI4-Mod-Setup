@@ -271,6 +271,8 @@ never blocks core readiness.
 
 Generic projects may select Cloud, Local, RunPod, or Disabled on the Optional workflows screen. The selection is persisted in project state, the installation plan and lock, the scan summary, readiness, settings, Update, and Repair. Enabled projects receive the provider-neutral portrait contract, only the selected provider skill, a bounded subagent, non-secret configuration, and the exact upstream revision recorded in `docs/32_comfyui_portrait_pipeline.md`. Disabled projects receive source-based portrait handling and no ComfyUI-specific files, marker sections, MCP configuration, or instructions.
 
+The expanded portrait row states the minimum local recommendation as 16 GB of VRAM and 25 GB of storage. These are honest resource guidance, not a blocking core readiness requirement.
+
 Cloud registers the official Comfy Cloud MCP route and may remain incomplete while authorization or subscription is deferred. Local discovery is bounded, loopback-only, and reports hardware, workflow, model, and Hugging Face state. RunPod records its URL/workspace and shows canonical setup and browser-control guidance without claiming readiness until the page and workflow are found. All provider credentials remain outside project files and locks.
 
 Portrait sourcing remains separate from production. ComfyUI production applies only to sourced or grounded portraits. Non-sourced fictional or impossible portraits use native ImageGen and never enter the ComfyUI workflow. Durable source PNG/TXT pairs use the runtime basename, person-only prompts begin with `hoi4_portrait,`, and temporary provider failures produce an honest source-based DDS placeholder with a pending replacement state. See `docs/32_comfyui_portrait_pipeline.md` for the complete contract.
@@ -306,7 +308,7 @@ Support update, repair, reinstall, rollback, managed removal, optional-workflow 
 
 ### Readiness
 
-Check the internal descriptor, external launcher descriptor, external destination, descriptor agreement, thumbnail existence and decoding, selected structure, AGENTS, skills, subagents, selected provider instructions, MCP, wiki integrity and page coverage, Git, environment variables, hashes, conflicts, external dependencies, and optional `workflow.3d` and `workflow.super_events` states. Codex authentication or selected-provider configuration and confirmed analysis are blocking core checks; optional workflow states are not.
+Check the internal descriptor, external launcher descriptor, external destination, descriptor agreement, thumbnail existence and decoding, selected structure, AGENTS, skills, subagents, selected provider instructions, MCP, wiki integrity and page coverage, Git, environment variables, hashes, conflicts, external dependencies, and optional `workflow.3d`, `workflow.super_events`, and portrait-provider states. Codex authentication or selected-provider configuration and confirmed analysis are blocking core checks; optional workflow states are not.
 
 Open in Codex is enabled only when blocking core checks pass.
 

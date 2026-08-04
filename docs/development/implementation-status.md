@@ -50,9 +50,9 @@ desktop command dispatch away from the UI event loop.
 
 The Agentic HOI4 Modding default branch, provider-specific portrait workflows,
 one-skill Super Events workflow, and current published manifest are at commit
-`a20eabbf044c62ade24128c72859e5dc9ed42007`. The 24-component manifest declares
-959 selected-file records generated from immutable Git blobs at revision
-`42a99f60b6818cf20ad572ccf0e835f7a430e0f1`.
+`3f0c61d9891344197cab38ab5e760821134f6daf`. The 24-component manifest declares
+the selected-file records generated from immutable Git blobs at revision
+`8f01184fbf6c4ebce6d850e17d752925b76d6182`.
 
 The release route produces a ChaosX Authenticode-signed Windows installer and
 ad-hoc signed macOS disk images when official credentials are absent. The same
@@ -63,13 +63,13 @@ remains optional and non-blocking.
 
 The ComfyUI HOI4 portrait workflow is integrated as an optional
 Cloud, Local, RunPod, or Disabled project capability. Provider selection and
-exact upstream revision are persisted without secrets; Cloud MCP registration,
-bounded local discovery/workflow installation, RunPod guidance, source-based
-fallback, and disabled cleanup are covered by the portrait pipeline contract
-in `docs/32_comfyui_portrait_pipeline.md`.
+the exact upstream revision `b47222a77f2f6454704530865aa1441fad48bdd3` are
+persisted without secrets; Cloud MCP registration, bounded local discovery and
+workflow installation, RunPod guidance, source-based fallback, and disabled
+cleanup are covered by the portrait pipeline contract in
+`docs/32_comfyui_portrait_pipeline.md`.
 
-The working tree carries the next application version, `0.2.2`, with current
-Windows x64 and macOS arm64/x64 packaging metadata and screenshot evidence.
-The public stable release remains `v0.2.1` until the protected release workflow
-builds, signs, verifies, and publishes the `0.2.2` installers and updater
-metadata.
+The application version is declared in `package.json`, Tauri configuration, and
+the Rust package metadata. The release workflow builds the current Windows x64
+installer and macOS arm64/x64 disk images from the exact annotated tag, then
+publishes updater metadata and both macOS updater archives after verification.

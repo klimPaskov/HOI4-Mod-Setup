@@ -72,13 +72,22 @@ folder. Its file list and sizes are shown before installation.
 
 ### 4. Add optional workflows
 
-![Choose the optional 3D and Super Events workflows](docs/screenshots/05-integrations.png)
+![Choose the optional workflows](docs/screenshots/05-integrations.png)
 
 The 3D workflow is optional. If selected, a Meshy key can be stored in Windows
 Credential Manager or macOS Keychain and is never written into the mod.
 
 The optional Super Events workflow adds the reusable popup, templates,
 examples, images, and supporting guidance needed to add more Super Events.
+
+The optional ComfyUI portrait production workflow supports Comfy Cloud, Local
+ComfyUI, RunPod, or Disabled for generic projects. Its expanded panel shows the
+minimum requirement: **16 GB VRAM and 25 GB storage**. Only the selected
+provider's instructions are installed. Sourced portraits use the pinned source
+or processing workflow; non-sourced fictional or impossible portraits use
+native ImageGen and never enter ComfyUI. See
+[`docs/32_comfyui_portrait_pipeline.md`](docs/32_comfyui_portrait_pipeline.md)
+for the current workflow and setup details.
 
 ![Review selected integrations and credential state](docs/screenshots/06-mcp-credentials.png)
 
@@ -113,10 +122,11 @@ when the required checks pass.
 If flattened ChatGPT files were selected, the Ready screen links directly to
 [ChatGPT Chat](https://chatgpt.com). When the optional portrait workflow is
 enabled, it also shows its persisted Cloud, Local, or RunPod readiness and
-canonical source guidance. Chaos Redux uses RunPod API-first; computer control
-is used only when explicitly requested. Non-sourced fictional or impossible
-portraits use native ImageGen. Disabled generic projects keep source-based
-portrait handling without ComfyUI-specific project files. See
+canonical source guidance, or the explicit Disabled state. Chaos Redux uses
+RunPod API-first; computer control is used only when explicitly requested.
+Non-sourced fictional or impossible portraits use native ImageGen. Disabled
+generic projects keep source-based portrait handling without ComfyUI-specific
+project files. See
 [`docs/32_comfyui_portrait_pipeline.md`](docs/32_comfyui_portrait_pipeline.md).
 
 ### Update, repair, or add a workflow later

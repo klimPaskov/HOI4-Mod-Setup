@@ -20,20 +20,31 @@ use std::time::Duration;
 
 pub const PORTRAIT_REPOSITORY: &str = "https://github.com/klimPaskov/comfyui-hoi4-portraits";
 pub const PORTRAIT_BRANCH: &str = "codex/portrait-pipeline";
-pub const PORTRAIT_COMMIT: &str = "92c8118f9ab61a0a658af24bc6868ed7f93cdebd";
+pub const PORTRAIT_COMMIT: &str = "b47222a77f2f6454704530865aa1441fad48bdd3";
 
 const WORKFLOW_FILES: [(&str, &str); 2] = [
     (
         "hoi4_portrait_flux2_klein_9b_source.json",
-        "fb1c9d58275034461054aed7d2cf005b91e982745b4653c5581cec318cc40e55",
+        "7c0ad4926a2b64ca7a596f63e92147b38c196ff247fd855867987f6bef0082a0",
     ),
     (
         "hoi4_portrait_processing_only.json",
-        "3aeec172c0c63e2fe39eb0935f9ad850a44ef3e6b9956515b561c9a27ff51b01",
+        "fb0d219de7ceb5576d3deae8e743204ad32747d450e87cf1a3ee84d7d037be5b",
     ),
 ];
 
-const MODEL_FILES: [(&str, &str, u64); 6] = [
+const CUSTOM_NODE_FILES: [(&str, &str); 2] = [
+    (
+        "__init__.py",
+        "d4dfbdfef123b0faa9a836c540358e94334def553e11bf208975e3284cde7cd0",
+    ),
+    (
+        "requirements.txt",
+        "7bb8ba469195ed8f3c41c8c06c1c1b53992f0798ad4882e233d7c8d21035e080",
+    ),
+];
+
+const MODEL_FILES: [(&str, &str, u64); 8] = [
     (
         "diffusion_models",
         "flux-2-klein-base-9b-fp8.safetensors",
@@ -52,6 +63,8 @@ const MODEL_FILES: [(&str, &str, u64); 6] = [
     ),
     ("upscale_models", "RealESRGAN_x2plus.pth", 67_061_725),
     ("background_removal", "birefnet.safetensors", 444_473_596),
+    ("detection", "mediapipe_face_fp32.safetensors", 5_423_900),
+    ("detection", "face_detection_yunet_2023mar.onnx", 232_589),
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -185,6 +198,19 @@ pub fn install_current_workflows(root_value: &str) -> Result<LocalPortraitInstal
             "the selected ComfyUI root is not a verified checkout or contains a link".into(),
         ));
     }
+    let destination_root = root
+        .join("user")
+        .join("default")
+        .join("workflows")
+        .join("hoi4_portraits");
+    let custom_node_destination = root.join("custom_nodes").join("adaptive_portrait_crop");
+    if path_has_link_component(&destination_root)
+        || path_has_link_component(&custom_node_destination)
+    {
+        return Err(AppError::PathSecurity(
+            "the portrait workflow destination contains a link or junction".into(),
+        ));
+    }
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::none())
@@ -192,7 +218,7 @@ pub fn install_current_workflows(root_value: &str) -> Result<LocalPortraitInstal
         .map_err(|error| {
             AppError::Source(format!("portrait workflow client could not start: {error}"))
         })?;
-    let mut downloaded = Vec::new();
+    let mut downloaded: Vec<(String, String, Vec<u8>, PathBuf)> = Vec::new();
     for (filename, expected) in WORKFLOW_FILES {
         let url = format!(
             "https://raw.githubusercontent.com/klimPaskov/comfyui-hoi4-portraits/{PORTRAIT_COMMIT}/workflows/{filename}"
@@ -217,28 +243,57 @@ pub fn install_current_workflows(root_value: &str) -> Result<LocalPortraitInstal
                 "portrait workflow {filename} failed the pinned checksum"
             )));
         }
-        downloaded.push((filename, expected, bytes));
+        downloaded.push((
+            filename.into(),
+            expected.into(),
+            bytes,
+            destination_root.join(filename),
+        ));
     }
-
-    let destination_root = root
-        .join("user")
-        .join("default")
-        .join("workflows")
-        .join("hoi4_portraits");
-    if path_has_link_component(&destination_root) {
-        return Err(AppError::PathSecurity(
-            "the portrait workflow destination contains a link or junction".into(),
+    for (filename, expected) in CUSTOM_NODE_FILES {
+        let url = format!(
+            "https://raw.githubusercontent.com/klimPaskov/comfyui-hoi4-portraits/{PORTRAIT_COMMIT}/custom_nodes/adaptive_portrait_crop/{filename}"
+        );
+        let response = client.get(&url).send().map_err(|error| {
+            AppError::Source(format!("download portrait custom node {filename}: {error}"))
+        })?;
+        if !response.status().is_success() {
+            return Err(AppError::Source(format!(
+                "portrait custom node {filename} returned HTTP {}",
+                response.status()
+            )));
+        }
+        let bytes = response
+            .bytes()
+            .map_err(|error| {
+                AppError::Source(format!("read portrait custom node {filename}: {error}"))
+            })?
+            .to_vec();
+        if bytes.len() > 8 * 1024 * 1024 || sha256_bytes(&bytes) != expected {
+            return Err(AppError::Source(format!(
+                "portrait custom node {filename} failed the pinned checksum"
+            )));
+        }
+        downloaded.push((
+            filename.into(),
+            expected.into(),
+            bytes,
+            custom_node_destination.join(filename),
         ));
     }
     let mut conflicts = Vec::new();
     let mut skipped = Vec::new();
-    for (filename, expected, _) in &downloaded {
-        let destination = destination_root.join(filename);
+    for (_, expected, _, destination) in &downloaded {
+        let label = destination
+            .strip_prefix(&root)
+            .unwrap_or(destination)
+            .display()
+            .to_string();
         if destination.is_file() {
-            if sha256_file(&destination).is_ok_and(|hash| hash == *expected) {
-                skipped.push((*filename).into());
+            if sha256_file(destination).is_ok_and(|hash| hash == expected.as_str()) {
+                skipped.push(label);
             } else {
-                conflicts.push((*filename).into());
+                conflicts.push(label);
             }
         }
     }
@@ -259,6 +314,9 @@ pub fn install_current_workflows(root_value: &str) -> Result<LocalPortraitInstal
     fs::create_dir_all(&destination_root).map_err(|error| {
         AppError::Transaction(format!("create portrait workflow destination: {error}"))
     })?;
+    fs::create_dir_all(&custom_node_destination).map_err(|error| {
+        AppError::Transaction(format!("create portrait custom node destination: {error}"))
+    })?;
     let staging = destination_root
         .parent()
         .ok_or_else(|| {
@@ -275,30 +333,35 @@ pub fn install_current_workflows(root_value: &str) -> Result<LocalPortraitInstal
     })?;
     let mut installed = Vec::new();
     let result = (|| -> Result<(), AppError> {
-        for (filename, expected, bytes) in &downloaded {
-            if skipped.iter().any(|item| item == filename) {
+        let mut staged_files = Vec::new();
+        for (index, (_, expected, bytes, destination)) in downloaded.iter().enumerate() {
+            let label = destination
+                .strip_prefix(&root)
+                .unwrap_or(destination)
+                .display()
+                .to_string();
+            if skipped.iter().any(|item| item == &label) {
                 continue;
             }
-            let staged = staging.join(filename);
+            let staged = staging.join(format!(
+                "{index:02}-{}",
+                destination.file_name().unwrap().to_string_lossy()
+            ));
             fs::write(&staged, bytes).map_err(|error| {
-                AppError::Transaction(format!("stage portrait workflow {filename}: {error}"))
+                AppError::Transaction(format!("stage portrait workflow {label}: {error}"))
             })?;
-            if !sha256_file(&staged).is_ok_and(|hash| hash == *expected) {
+            if !sha256_file(&staged).is_ok_and(|hash| hash == expected.as_str()) {
                 return Err(AppError::Transaction(format!(
-                    "staged portrait workflow could not be verified: {filename}"
+                    "staged portrait workflow could not be verified: {label}"
                 )));
             }
+            staged_files.push((staged, destination.clone(), label));
         }
-        for (filename, _, _) in &downloaded {
-            if skipped.iter().any(|item| item == filename) {
-                continue;
-            }
-            fs::rename(staging.join(filename), destination_root.join(filename)).map_err(
-                |error| {
-                    AppError::Transaction(format!("apply portrait workflow {filename}: {error}"))
-                },
-            )?;
-            installed.push((*filename).into());
+        for (staged, destination, label) in staged_files {
+            fs::rename(staged, destination).map_err(|error| {
+                AppError::Transaction(format!("apply portrait workflow {label}: {error}"))
+            })?;
+            installed.push(label);
         }
         Ok(())
     })();
@@ -309,7 +372,7 @@ pub fn install_current_workflows(root_value: &str) -> Result<LocalPortraitInstal
         installed,
         skipped,
         conflicts: Vec::new(),
-        message: "The pinned portrait UI workflows were installed. Model downloads remain a separate Hugging Face-gated setup step.".into(),
+        message: "The pinned portrait UI workflows and adaptive crop node were installed. Model downloads and Python dependencies remain separate Hugging Face-gated setup steps.".into(),
         canonical_commit: PORTRAIT_COMMIT.into(),
     })
 }
@@ -400,10 +463,16 @@ fn workflow_status(root: &Path) -> String {
         .join("default")
         .join("workflows")
         .join("hoi4_portraits");
-    if WORKFLOW_FILES.iter().all(|(filename, expected)| {
+    let workflows_ready = WORKFLOW_FILES.iter().all(|(filename, expected)| {
         let path = workflow_root.join(filename);
         path.is_file() && sha256_file(&path).is_ok_and(|hash| hash == *expected)
-    }) {
+    });
+    let custom_node_root = root.join("custom_nodes").join("adaptive_portrait_crop");
+    let custom_node_ready = CUSTOM_NODE_FILES.iter().all(|(filename, expected)| {
+        let path = custom_node_root.join(filename);
+        path.is_file() && sha256_file(&path).is_ok_and(|hash| hash == *expected)
+    });
+    if workflows_ready && custom_node_ready {
         "ready".into()
     } else {
         "missing".into()

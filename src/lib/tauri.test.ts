@@ -154,7 +154,7 @@ describe("typed scanner bridge", () => {
       providerStatus: "needs_authorization",
       workflowRepository: "https://github.com/klimPaskov/comfyui-hoi4-portraits",
       workflowBranch: "codex/portrait-pipeline",
-      workflowCommit: "92c8118f9ab61a0a658af24bc6868ed7f93cdebd",
+      workflowCommit: "b47222a77f2f6454704530865aa1441fad48bdd3",
       preferredWorkflow: "source",
       localComfyuiRoot: "",
       localServerUrl: "http://127.0.0.1:8188",
@@ -196,7 +196,7 @@ describe("typed scanner bridge", () => {
       huggingfaceAccessHint: true,
       message: "workflow missing",
       canonicalRepository: "https://github.com/klimPaskov/comfyui-hoi4-portraits",
-      canonicalCommit: "92c8118f9ab61a0a658af24bc6868ed7f93cdebd",
+      canonicalCommit: "b47222a77f2f6454704530865aa1441fad48bdd3",
       installCommand: "python scripts/install_workflows.py --comfyui-root <COMFYUI_ROOT>",
     });
 

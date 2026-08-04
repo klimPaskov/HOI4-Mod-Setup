@@ -108,9 +108,11 @@ session, cancellation, credential-health, or analysis assertions.
   suppresses ambient Git behavior, and never recurses into submodules
 - Portrait workflow tests cover Cloud, Local, RunPod, and Disabled selection,
   non-secret persistence, disabled marker/file cleanup, Cloud MCP registration,
-  bounded local discovery and workflow hashes, RunPod guidance, source/prompt
-  pairing, fallback status, readiness separation, and no-spend/no-secret
-  behavior. Use fakes and fixtures; do not start paid provider resources.
+  bounded local discovery, the two authorized workflow hashes and adaptive
+  crop-node hashes, RunPod guidance, source/prompt pairing, fallback status,
+  readiness separation, the 16 GB VRAM/25 GB storage recommendation, and
+  no-spend/no-secret behavior. Use fakes and fixtures; do not start paid
+  provider resources.
 - an approved process receives only `MESHY_API_KEY`, while known secret values are absent from both output streams and serialized artifacts
 - an MCP health probe accepts only the manifest-declared Windows wrapper,
   completes initialize and read-only `tools/list` validation within its bound,

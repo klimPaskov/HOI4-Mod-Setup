@@ -55,6 +55,7 @@ Optional checks use `blocking: false` for the core readiness gate. A selected wo
 - core ready for the selected AI provider
 - 3D workflow state
 - Super Events workflow state
+- portrait provider state
 
 This prevents a missing optional workflow key from blocking normal provider use and prevents an incomplete workflow from looking ready. A missing selected-provider configuration still blocks semantic planning; Codex-only controls remain hidden for other providers.
 
@@ -103,7 +104,7 @@ recorded as source evidence rather than copied as unpinned instructions.
 - state persists across update and repair
 - removal respects reverse dependencies
 - core and optional readiness remain distinct
-- the optional title order remains **3D models workflow**, then **Super Events workflow**
+- the optional title order remains **3D models workflow**, **Super Events workflow**, then **ComfyUI portrait production**
 - adding Super Events during Repair is allowed only when the locked manifest at
   the same immutable revision declares the component; otherwise Update is the
   required route

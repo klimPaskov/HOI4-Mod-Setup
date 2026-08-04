@@ -1,4 +1,4 @@
-# HOI4 Mod Setup 0.2.2
+# HOI4 Mod Setup 0.2.3
 
 Download the installer for your computer:
 
@@ -6,9 +6,11 @@ Download the installer for your computer:
 - Mac (Apple silicon): `HOI4-Mod-Setup-macos-arm64.dmg`
 - Mac (Intel): `HOI4-Mod-Setup-macos-x64.dmg`
 
-This build includes the ComfyUI HOI4 portrait workflow with selected-provider
-instructions, native ImageGen
+This build includes the current ComfyUI HOI4 portrait workflow with
+selected-provider instructions, adaptive source framing, native ImageGen
 handling for non-sourced portraits, and current Windows and macOS packaging.
+The optional workflow panel shows the minimum requirement: 16 GB VRAM and
+25 GB storage.
 
 Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app
 to Applications.
