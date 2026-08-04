@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { Components, DryRun, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, recoveryProgress } from "./App";
+import App, { Components, DryRun, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
 import type { CodexAnalysisResult, FolderSelection, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
@@ -415,6 +415,65 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.queryByText(/LoRA/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     expect(screen.getByRole("heading", { name: "MCP and credentials" })).toBeInTheDocument();
+  });
+
+  it("reveals the portrait workflow resource minimum when enabled", () => {
+    const portraitPipeline = {
+      enabled: false,
+      provider: "disabled",
+      providerStatus: "not_selected",
+      workflowRepository: "https://github.com/klimPaskov/comfyui-hoi4-portraits",
+      workflowBranch: "codex/portrait-pipeline",
+      workflowCommit: "a".repeat(40),
+      preferredWorkflow: "source",
+      localComfyuiRoot: "",
+      localServerUrl: "http://127.0.0.1:8188",
+      runpodUrl: "",
+      runpodWorkspace: "/workspace/comfyui-hoi4-portraits",
+      mcpRegistered: false,
+    } as const;
+    const state = {
+      ...readyState(),
+      manifestPreview: {
+        components: [
+          { id: "workflow.3d" },
+          { id: "workflow.super_events" },
+          { id: "workflow.portraits.cloud" },
+          { id: "workflow.portraits.local" },
+          { id: "workflow.portraits.runpod" },
+        ],
+      },
+      portraitPipeline,
+      meshSelected: false,
+      superEventsSelected: false,
+      selectedComponents: [],
+    } as unknown as WizardState;
+
+    function ControlledWorkflows() {
+      const [current, setCurrent] = useState(state);
+      return <Workflows state={current} update={(patch) => setCurrent((value) => ({ ...value, ...patch }))} />;
+    }
+
+    render(<ControlledWorkflows />);
+    expect(screen.queryByText(/Minimum recommended to run this workflow/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: /ComfyUI portrait production/ }));
+    expect(screen.getByText("Minimum recommended to run this workflow: 16 GB VRAM and 25 GB storage.")).toBeInTheDocument();
+
+    cleanup();
+    render(<Update
+      state={{
+        ...state,
+        existingInstallationDetected: true,
+        portraitPipeline: { ...portraitPipeline, enabled: true, provider: "runpod", providerStatus: "needs_runpod" },
+      } as unknown as WizardState}
+      update={vi.fn()}
+      findings={[]}
+      setFindings={vi.fn()}
+      onMaintenance={vi.fn()}
+      onStartMaintenance={vi.fn()}
+      onReanalyze={vi.fn().mockResolvedValue(true)}
+    />);
+    expect(screen.getByText("Minimum recommended to run this workflow: 16 GB VRAM and 25 GB storage.")).toBeInTheDocument();
   });
 
   it("advances from Meshy configuration without changing an existing stored key", () => {

@@ -14,6 +14,11 @@ Chaos Redux is the required-workflow exception: its persisted provider is RunPod
 
 Generic projects can select Cloud, Local, RunPod, or Disabled. Disabled is a real persisted choice, not an error state. When disabled, the generic package keeps source-based portrait handling and removes portrait provider components, marker sections, Cloud MCP configuration, and ComfyUI-specific instructions. When a provider is enabled, the generated project receives the provider-neutral portrait contract, only the selected provider skill, the bounded portrait subagent, the non-secret provider configuration, and the exact upstream lock evidence. Non-selected provider skills are not installed and are removed during provider changes when their managed files are unmodified.
 
+When the optional workflow is enabled in HOI4 Mod Setup, its expanded panel
+shows the minimum recommendation: **16 GB VRAM and 25 GB storage**. This is a
+planning requirement for the workflow and does not make the optional provider
+workflow a blocker for core project readiness.
+
 The persisted shape is the `portrait_pipeline` object in project state, installation plans, and installation locks. It contains `enabled`, `provider`, `provider_status`, `workflow_repository`, `workflow_branch`, `workflow_commit`, `preferred_workflow`, local route fields, RunPod route fields, and `mcp_registered`. It never contains an API key, access token, password, cookie, or account metadata. Provider credentials remain in the OS vault or a scoped process environment.
 
 Cloud registers the official Comfy Cloud MCP endpoint `https://cloud.comfy.org/mcp` and can remain in `needs_authorization` or `needs_subscription` while project creation completes. A Cloud status is not `ready` until authentication, plan/model access, and a no-spend workflow check pass. Automated tests never spend Cloud credits.
