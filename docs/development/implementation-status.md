@@ -35,7 +35,7 @@ This document is the concise developer status. User guidance stays in the root
 - `workflow.super_events` is a provider-neutral optional workflow resolved from
   the verified manifest and selectively installed at
   `.agents/skills/hoi4-super-events/`. Its no-credential, non-blocking state,
-  lock/scan memory, ordered Optional workflows question, unselected AGENTS
+  lock/scan memory, ordered optional workflow titles, unselected AGENTS
   guidance rule, and Update/Repair source boundary are documented across the
   product surfaces.
 - Every Tauri desktop command is required to dispatch filesystem, network, Git,
@@ -48,11 +48,11 @@ desktop command dispatch away from the UI event loop.
 
 ## Current source and release boundary
 
-The Agentic HOI4 Modding default branch, one-skill Super Events workflow, and
-current published manifest are at commit
-`6d4a84cf31004a3ba899535be433b42f962e7dee`. The manifest declares selected-file
-evidence generated from immutable Git blobs at revision
-`de725e52ec2cb8d2d5796e86a93bf14bf1bb5c6b`.
+The Agentic HOI4 Modding default branch, provider-specific portrait workflows,
+one-skill Super Events workflow, and current published manifest are at commit
+`a20eabbf044c62ade24128c72859e5dc9ed42007`. The 24-component manifest declares
+959 selected-file records generated from immutable Git blobs at revision
+`42a99f60b6818cf20ad572ccf0e835f7a430e0f1`.
 
 The release route produces a ChaosX Authenticode-signed Windows installer and
 ad-hoc signed macOS disk images when official credentials are absent. The same
@@ -61,5 +61,15 @@ those credentials are configured. The app does not invent a macOS route for
 the source repository's Windows-oriented 3D or MCP steps. A missing Meshy key
 remains optional and non-blocking.
 
-LoRA and ComfyUI are not setup state. A successful Ready screen links to the
-separate portrait workflow repository.
+The ComfyUI HOI4 portrait workflow is integrated as an optional
+Cloud, Local, RunPod, or Disabled project capability. Provider selection and
+exact upstream revision are persisted without secrets; Cloud MCP registration,
+bounded local discovery/workflow installation, RunPod guidance, source-based
+fallback, and disabled cleanup are covered by the portrait pipeline contract
+in `docs/32_comfyui_portrait_pipeline.md`.
+
+The working tree carries the next application version, `0.2.2`, with current
+Windows x64 and macOS arm64/x64 packaging metadata and screenshot evidence.
+The public stable release remains `v0.2.1` until the protected release workflow
+builds, signs, verifies, and publishes the `0.2.2` installers and updater
+metadata.

@@ -56,8 +56,8 @@ Implement the bounded screen states inside a seven-phase wizard: Project,
 Review, Components, Integrations, Git, Install, and Ready. Collect a
 normal-language brief, review suggestions, confirm identity and paths, preview
 both descriptors on demand, propose editable folders, select source and
-components, ask the exact 3D question followed immediately by the exact Super
-Events question, configure MCP and Git, show dry run, transact, and show
+components, show the **3D models workflow** title followed immediately by the
+**Super Events workflow** title, configure MCP and Git, show dry run, transact, and show
 readiness.
 
 Create no project file before approval. After approval, generate and validate the internal `descriptor.mod`, the external launcher `<project_id>.mod`, a deterministic replaceable `thumbnail.png`, and the selected folder profile. Preview external destinations. Track every generated artifact and external path in the plan, lock, backup, and rollback record. Never fabricate a Workshop ID or overwrite a user-replaced thumbnail silently.
@@ -104,9 +104,9 @@ Install the selected repository tree under `<mod_project>/paradox_wiki/`. Valida
 
 ## 3D
 
-Ask exactly:
+Show the title:
 
-**Do you want to set up the 3D models workflow?**
+**3D models workflow**
 
 When yes, explain Meshy.ai and possible cost, store the key in Windows Credential Manager or macOS Keychain, save only an opaque reference, inject only as `MESHY_API_KEY`, and never log or serialize it.
 
@@ -116,13 +116,17 @@ The current repository route is Windows-oriented. Mark it unsupported on macOS u
 
 Missing key leaves 3D incomplete without blocking core readiness. Add Configure key to Update and Repair.
 
-## Portrait workflow handoff
+## ComfyUI HOI4 portrait workflow
 
-Do not create a LoRA or ComfyUI setup option, component, preference,
-transaction action, maintenance state, or readiness check. After successful
-setup, show one concise fixed HTTPS Ready-screen link to
-`https://github.com/klimPaskov/comfyui-hoi4-portraits`; open it only through
-the typed browser action and never claim the external workflow is installed.
+Implement the optional ComfyUI portrait workflow described in
+`docs/32_comfyui_portrait_pipeline.md`. Generic projects support Cloud, Local,
+RunPod, and Disabled; persist the provider and exact upstream revision without
+secrets; register Cloud MCP; expose bounded local discovery/setup and RunPod
+browser guidance; preserve durable source/prompt packages; and keep
+source-based fallback honest. Disabled output must remove provider components,
+marker sections, Cloud MCP configuration, and ComfyUI-specific instructions.
+Portrait state remains non-blocking to core AI readiness but must not claim
+final provider completion before its own checks pass.
 
 ## Conflicts
 
@@ -172,6 +176,6 @@ Use the supplied `.codex/agents/` only for bounded audits, including the Codex i
 
 ## Completion
 
-Before completion, satisfy every criterion, provide a requirement-to-code matrix, validate every example and repository template, prove new and existing flows on both platforms, prove missing 3D key is non-blocking, prove the portrait workflow is only the fixed Ready-screen link, prove recovery, prove secret absence, review living-skill alignment, and report every unsupported source route or unresolved metadata issue.
+Before completion, satisfy every criterion, provide a requirement-to-code matrix, validate every example and repository template, prove new and existing flows on both platforms, prove missing 3D key is non-blocking, prove portrait provider persistence/readiness and the conditional Ready-screen link, prove recovery, prove secret absence, review living-skill alignment, and report every unsupported source route or unresolved metadata issue.
 
 Do not reduce the product to a file copier. The scanner, reviewed plan, conflict engine, transaction, lock, optional states, maintenance, and readiness gate are core product features.

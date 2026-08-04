@@ -9,9 +9,9 @@ providers. Codex is selected by default.
 
 ## Download
 
-- Windows: [Download the `.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.1/HOI4-Mod-Setup-windows-x64-setup.exe)
-- Mac with Apple silicon: [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.1/HOI4-Mod-Setup-macos-arm64.dmg)
-- Mac with Intel: [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.2.1/HOI4-Mod-Setup-macos-x64.dmg)
+- Windows: [Download the `.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-windows-x64-setup.exe)
+- Mac with Apple silicon: [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-arm64.dmg)
+- Mac with Intel: [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-x64.dmg)
 
 [View the latest release](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
 
@@ -50,7 +50,7 @@ For a new mod, enter its name and a short description.
 The app fills the project ID, script prefix, namespace, valid descriptor tags,
 starter folders, standard HOI4 mod location, and launcher file. Every generated
 value remains editable. It also prepares `descriptor.mod`, the launcher
-descriptor, and a replaceable 600×600 black `thumbnail.png`.
+descriptor, and a replaceable 600x600 black `thumbnail.png`.
 
 ![Review the generated project identity and locations](docs/screenshots/03-identity.png)
 
@@ -111,18 +111,22 @@ wiki, Git state, and optional workflows. **Open in Codex** becomes available
 when the required checks pass.
 
 If flattened ChatGPT files were selected, the Ready screen links directly to
-[ChatGPT Chat](https://chatgpt.com). It also links to the separate
-[ComfyUI HOI4 Portraits](https://github.com/klimPaskov/comfyui-hoi4-portraits)
-project for users who want an optional portrait workflow.
+[ChatGPT Chat](https://chatgpt.com). When the optional portrait workflow is
+enabled, it also shows its persisted Cloud, Local, or RunPod readiness and
+canonical source guidance. Chaos Redux uses RunPod API-first; computer control
+is used only when explicitly requested. Non-sourced fictional or impossible
+portraits use native ImageGen. Disabled generic projects keep source-based
+portrait handling without ComfyUI-specific project files. See
+[`docs/32_comfyui_portrait_pipeline.md`](docs/32_comfyui_portrait_pipeline.md).
 
 ### Update, repair, or add a workflow later
 
 ![Update and repair a prepared project](docs/screenshots/12-maintenance.png)
 
 Open **Manage an existing project** to check for setup updates, repair missing
-or damaged files, add the 3D or Super Events workflow later, remove installed
-components, or recover an interrupted setup. Changes are shown for review
-before they are applied.
+or damaged files, change the portrait provider, add the 3D or Super Events
+workflow later, remove installed components, or recover an interrupted setup.
+Changes are shown for review before they are applied.
 
 HOI4 Mod Setup also checks for app updates when it opens. When a new version is
 available, choose **Update now**.

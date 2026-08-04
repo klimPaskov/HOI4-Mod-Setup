@@ -265,6 +265,10 @@ pub struct ReadinessInput {
     pub workflow_3d_state: String,
     #[serde(default)]
     pub workflow_super_events_state: String,
+    #[serde(default)]
+    pub portrait_provider: String,
+    #[serde(default)]
+    pub portrait_provider_status: String,
     /// Provenance is copied from the exact locked manifest. Readiness does
     /// not substitute a newer bundled manifest for an installed revision.
     #[serde(default = "crate::models::default_unknown_status")]
@@ -313,6 +317,8 @@ impl Default for ReadinessInput {
             dependency_status: "pass".into(),
             workflow_3d_state: "not_selected".into(),
             workflow_super_events_state: "not_selected".into(),
+            portrait_provider: "disabled".into(),
+            portrait_provider_status: "not_selected".into(),
             source_license_status: "unknown".into(),
             wiki_source_status: "unknown".into(),
             wiki_license_status: "unknown".into(),
@@ -635,6 +641,11 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
     );
     add_workflow_3d_check(&mut checks, &input.workflow_3d_state);
     add_super_events_check(&mut checks, &input.workflow_super_events_state);
+    add_portrait_check(
+        &mut checks,
+        &input.portrait_provider,
+        &input.portrait_provider_status,
+    );
 
     let mut summary = ReadinessSummary::default();
     let mut blocking_ids = Vec::new();
@@ -1066,6 +1077,40 @@ fn add_super_events_check(checks: &mut Vec<ReadinessCheck>, status: &str) {
     });
 }
 
+fn add_portrait_check(checks: &mut Vec<ReadinessCheck>, provider: &str, status: &str) {
+    let normalized = match status {
+        "ready" | "healthy" | "installed" => "pass",
+        "not_selected" | "" => "not_selected",
+        "unsupported_platform" => "unsupported_platform",
+        _ => "warn",
+    };
+    let provider_label = match provider {
+        "cloud" => "Cloud",
+        "local" => "Local",
+        "runpod" => "RunPod",
+        _ => "Disabled",
+    };
+    let message = match normalized {
+        "pass" => format!("{provider_label} portrait provider configuration is ready."),
+        "not_selected" => "Portrait production is disabled.".into(),
+        "unsupported_platform" => "Not available on this computer.".into(),
+        _ => format!("{provider_label} portrait production is incomplete; source fallback remains available."),
+    };
+    checks.push(ReadinessCheck {
+        id: "workflow.portraits".into(),
+        category: "workflow".into(),
+        label: "Portrait provider".into(),
+        status: normalized.into(),
+        blocking: false,
+        message: Some(message),
+        evidence: vec![ReadinessEvidence {
+            kind: "provider_state".into(),
+            value: json!({"provider": provider, "status": status}),
+            path: Some(".codex/portrait_pipeline.toml".into()),
+        }],
+    });
+}
+
 pub fn core_ready(report: &ReadinessReport) -> bool {
     report.core_ready
 }
@@ -1255,6 +1300,21 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         .and_then(|lock| lock.optional_workflows.get("workflow.super_events"))
         .map(|workflow| workflow.state.clone())
         .unwrap_or_else(|| "not_selected".into());
+    let portrait_provider = lock
+        .as_ref()
+        .and_then(|lock| lock.portrait_pipeline.as_ref())
+        .map(|pipeline| pipeline.provider.clone())
+        .unwrap_or_else(|| "disabled".into());
+    let portrait_provider_status = lock
+        .as_ref()
+        .and_then(|lock| lock.portrait_pipeline.as_ref())
+        .map(|pipeline| pipeline.provider_status.clone())
+        .or_else(|| {
+            lock.as_ref()
+                .and_then(|lock| lock.optional_workflows.get("workflow.portraits"))
+                .map(|workflow| workflow.state.clone())
+        })
+        .unwrap_or_else(|| "not_selected".into());
     let codex_analysis = lock.as_ref().and_then(|lock| lock.codex_analysis.as_ref());
     let ai_provider = lock
         .as_ref()
@@ -1336,6 +1396,8 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         dependency_status: dependency_status.into(),
         workflow_3d_state,
         workflow_super_events_state,
+        portrait_provider,
+        portrait_provider_status,
         source_license_status,
         wiki_source_status,
         wiki_license_status,

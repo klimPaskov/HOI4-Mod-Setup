@@ -3113,6 +3113,16 @@ fn build_transaction_readiness(
         .get("workflow.super_events")
         .cloned()
         .unwrap_or_else(|| "not_selected".into());
+    let portrait_provider = plan
+        .portrait_pipeline
+        .as_ref()
+        .map(|portrait| portrait.provider.clone())
+        .unwrap_or_else(|| "disabled".into());
+    let portrait_provider_status = plan
+        .portrait_pipeline
+        .as_ref()
+        .map(|portrait| portrait.provider_status.clone())
+        .unwrap_or_else(|| "not_selected".into());
     let ai_provider = if plan.ai_provider.trim().is_empty() {
         "codex".to_string()
     } else {
@@ -3232,6 +3242,8 @@ fn build_transaction_readiness(
         dependency_status: "pass".into(),
         workflow_3d_state,
         workflow_super_events_state,
+        portrait_provider,
+        portrait_provider_status,
         source_license_status: plan
             .wiki_metadata
             .as_ref()
@@ -3614,6 +3626,10 @@ fn build_lock(
         files,
         merge_choices,
         optional_workflows,
+        portrait_pipeline: plan
+            .portrait_pipeline
+            .clone()
+            .or_else(|| previous_lock.and_then(|lock| lock.portrait_pipeline.clone())),
         local_modifications,
         rollback_records,
     })
@@ -5759,6 +5775,7 @@ mod tests {
             git_setup: None,
             credential_references: vec![],
             optional_workflows: Default::default(),
+            portrait_pipeline: None,
             operations: vec![PlanOperation {
                 id: "op-1".into(),
                 component_id: "core.agents".into(),
@@ -8025,6 +8042,7 @@ mod tests {
             }],
             merge_choices: vec![],
             optional_workflows: std::collections::BTreeMap::new(),
+            portrait_pipeline: None,
             local_modifications: vec![],
             rollback_records: vec![],
         };
@@ -8087,6 +8105,7 @@ mod tests {
             }],
             merge_choices: vec![],
             optional_workflows: Default::default(),
+            portrait_pipeline: None,
             local_modifications: vec![],
             rollback_records: vec![],
         };

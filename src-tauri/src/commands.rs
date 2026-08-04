@@ -624,6 +624,8 @@ pub fn run() {
             meshy_credential_status,
             remove_meshy_credential,
             run_3d_health_check,
+            inspect_local_portrait_provider,
+            install_local_portrait_workflows,
             run_mcp_health_check,
             evaluate_readiness,
             preview_descriptors,
@@ -1577,6 +1579,28 @@ async fn run_3d_health_check(project_root: String) -> Result<WorkflowHealthResul
     })
 }
 
+#[tauri::command(async)]
+fn inspect_local_portrait_provider(
+    configured_root: Option<String>,
+    server_url: String,
+) -> Result<crate::portraits::LocalPortraitDiscovery, String> {
+    run_blocking_command("portrait-local-discovery", move || {
+        Ok(crate::portraits::discover_local(
+            configured_root.as_deref(),
+            &server_url,
+        ))
+    })
+}
+
+#[tauri::command(async)]
+fn install_local_portrait_workflows(
+    comfyui_root: String,
+) -> Result<crate::portraits::LocalPortraitInstallResult, String> {
+    run_blocking_command("portrait-local-install", move || {
+        crate::portraits::install_current_workflows(&comfyui_root).map_err(command_error)
+    })
+}
+
 fn three_d_failure(error: String) -> WorkflowHealthResult {
     WorkflowHealthResult {
         status: "incomplete".into(),
@@ -2186,6 +2210,33 @@ fn preview_source_manifest_blocking(
     })
 }
 
+fn portrait_component_ids(provider: &str) -> Option<[&'static str; 5]> {
+    match provider {
+        "cloud" => Some([
+            "workflow.portraits.core",
+            "workflow.portraits.cloud",
+            "workflow.portraits.subagent",
+            "workflow.portraits.config",
+            "workflow.portraits.docs",
+        ]),
+        "local" => Some([
+            "workflow.portraits.core",
+            "workflow.portraits.local",
+            "workflow.portraits.subagent",
+            "workflow.portraits.config",
+            "workflow.portraits.docs",
+        ]),
+        "runpod" => Some([
+            "workflow.portraits.core",
+            "workflow.portraits.runpod",
+            "workflow.portraits.subagent",
+            "workflow.portraits.config",
+            "workflow.portraits.docs",
+        ]),
+        _ => None,
+    }
+}
+
 fn selected_ids(state: &Value, provider: &str) -> Vec<String> {
     let mut selected = state
         .get("selectedComponents")
@@ -2213,6 +2264,25 @@ fn selected_ids(state: &Value, provider: &str) -> Vec<String> {
         && !selected.iter().any(|id| id == "workflow.super_events")
     {
         selected.push("workflow.super_events".into());
+    }
+    let portrait_provider = state
+        .pointer("/portraitPipeline/provider")
+        .and_then(Value::as_str)
+        .unwrap_or("disabled");
+    let portrait_enabled = state
+        .pointer("/portraitPipeline/enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && portrait_provider != "disabled"
+        && portrait_component_ids(portrait_provider).is_some();
+    if portrait_enabled {
+        for id in portrait_component_ids(portrait_provider).unwrap_or_default() {
+            if !selected.iter().any(|selected_id| selected_id == id) {
+                selected.push(id.into());
+            }
+        }
+    } else {
+        selected.retain(|id| !id.starts_with("workflow.portraits"));
     }
     if provider != "codex" {
         selected.retain(|id| id != "codex.config");
@@ -2378,11 +2448,13 @@ fn path_file_kind(path: &str) -> FileKind {
     }
 }
 
-fn adapt_codex_config_for_selection(bytes: &[u8], mcp_selected: bool) -> Result<Vec<u8>, AppError> {
-    if mcp_selected {
-        return Ok(bytes.to_vec());
-    }
-    let text = std::str::from_utf8(bytes)
+fn adapt_codex_config_for_selection(
+    bytes: &[u8],
+    mcp_selected: bool,
+    portrait: &PortraitPipelineConfig,
+) -> Result<Vec<u8>, AppError> {
+    let bytes = adapt_optional_portrait_section(bytes, portrait.enabled)?;
+    let text = std::str::from_utf8(&bytes)
         .map_err(|error| AppError::Source(format!("Codex configuration is not UTF-8: {error}")))?;
     let mut config = text.parse::<toml::Value>().map_err(|error| {
         AppError::Source(format!("Codex configuration is not valid TOML: {error}"))
@@ -2392,15 +2464,40 @@ fn adapt_codex_config_for_selection(bytes: &[u8], mcp_selected: bool) -> Result<
             .get_mut("mcp_servers")
             .and_then(toml::Value::as_table_mut)
             .map(|mcp| {
-                mcp.remove("hoi4_agent_tools");
+                if !mcp_selected {
+                    mcp.remove("hoi4_agent_tools");
+                }
                 mcp.is_empty()
             })
             .unwrap_or(false);
         if empty {
             table.remove("mcp_servers");
         }
+        if portrait.provider != "cloud" {
+            let empty = table
+                .get_mut("mcp_servers")
+                .and_then(toml::Value::as_table_mut)
+                .map(|mcp| {
+                    mcp.remove("comfy_cloud_portraits");
+                    mcp.is_empty()
+                })
+                .unwrap_or(false);
+            if empty {
+                table.remove("mcp_servers");
+            }
+            if let Some(portrait_table) = table
+                .get_mut("portrait_pipeline")
+                .and_then(toml::Value::as_table_mut)
+            {
+                portrait_table.remove("mcp_server");
+            }
+        }
     }
-    let rendered = config.to_string();
+    let rendered = toml::to_string_pretty(&config).map_err(|error| {
+        AppError::Source(format!(
+            "adapted Codex configuration could not be written: {error}"
+        ))
+    })?;
     rendered.parse::<toml::Value>().map_err(|error| {
         AppError::Source(format!("adapted Codex configuration is invalid: {error}"))
     })?;
@@ -2480,12 +2577,49 @@ fn adapt_optional_super_events_skill(
     }
 }
 
+fn adapt_optional_portrait_section(
+    bytes: &[u8],
+    portrait_enabled: bool,
+) -> Result<Vec<u8>, AppError> {
+    const START: &str = "<!-- HOI4_MOD_SETUP_PORTRAITS_START -->";
+    const END: &str = "<!-- HOI4_MOD_SETUP_PORTRAITS_END -->";
+    let text = std::str::from_utf8(bytes).map_err(|error| {
+        AppError::Source(format!("portrait conditional source is not UTF-8: {error}"))
+    })?;
+    let Some(start) = text.find(START) else {
+        if text.contains(END) {
+            return Err(AppError::Source(
+                "portrait section has an end marker without a start marker".into(),
+            ));
+        }
+        return Ok(bytes.to_vec());
+    };
+    let end = text
+        .find(END)
+        .ok_or_else(|| AppError::Source("portrait section has an incomplete marker pair".into()))?;
+    if start >= end {
+        return Err(AppError::Source(
+            "portrait section markers are out of order".into(),
+        ));
+    }
+    let block_end = end + END.len();
+    let mut adapted = text.to_string();
+    if portrait_enabled {
+        adapted.replace_range(end..block_end, "");
+        adapted.replace_range(start..start + START.len(), "");
+    } else {
+        adapted.replace_range(start..block_end, "");
+    }
+    Ok(adapted.into_bytes())
+}
+
 fn adapt_agents_for_selection(
     bytes: &[u8],
     identity: &ProjectIdentity,
     provider: &str,
     model: &str,
     super_events_selected: bool,
+    portrait_enabled: bool,
 ) -> Result<Vec<u8>, AppError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|error| AppError::Source(format!("AGENTS template is not UTF-8: {error}")))?;
@@ -2498,6 +2632,13 @@ fn adapt_agents_for_selection(
         .replace("[MOD_NAME]", &identity.display_name)
         .replace("[MOD_PREFIX]", prefix);
     adapted = strip_agents_placeholder_guide(&adapted);
+    adapted = String::from_utf8(adapt_optional_portrait_section(
+        adapted.as_bytes(),
+        portrait_enabled,
+    )?)
+    .map_err(|error| {
+        AppError::Source(format!("adapted portrait guidance is not UTF-8: {error}"))
+    })?;
     if adapted.contains("[MOD_") || adapted.contains("{{PROJECT_") || adapted.contains("<PROJECT_")
     {
         return Err(AppError::Source(
@@ -2603,6 +2744,251 @@ fn is_super_events_runtime_component(component_id: &str) -> bool {
     )
 }
 
+fn portrait_pipeline_from_state(state: &Value) -> Result<PortraitPipelineConfig, AppError> {
+    const REPOSITORY: &str = "https://github.com/klimPaskov/comfyui-hoi4-portraits";
+    const BRANCH: &str = "codex/portrait-pipeline";
+    const COMMIT: &str = "92c8118f9ab61a0a658af24bc6868ed7f93cdebd";
+    let draft = state.get("portraitPipeline");
+    let enabled = draft
+        .and_then(|value| value.get("enabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let provider = draft
+        .and_then(|value| value.get("provider"))
+        .and_then(Value::as_str)
+        .unwrap_or(if enabled { "cloud" } else { "disabled" })
+        .trim()
+        .to_ascii_lowercase();
+    if !matches!(provider.as_str(), "cloud" | "local" | "runpod" | "disabled") {
+        return Err(AppError::InvalidInput(
+            "portrait provider must be Cloud, Local, RunPod, or Disabled".into(),
+        ));
+    }
+    if provider == "disabled" && enabled {
+        return Err(AppError::InvalidInput(
+            "a Disabled portrait provider cannot be enabled".into(),
+        ));
+    }
+    if provider != "disabled" && !enabled {
+        return Err(AppError::InvalidInput(
+            "an enabled portrait workflow must select a provider".into(),
+        ));
+    }
+    let status = draft
+        .and_then(|value| value.get("providerStatus"))
+        .and_then(Value::as_str)
+        .unwrap_or(if provider == "disabled" {
+            "not_selected"
+        } else if provider == "cloud" {
+            "needs_authorization"
+        } else if provider == "local" {
+            "needs_hardware"
+        } else {
+            "needs_runpod"
+        })
+        .trim()
+        .to_ascii_lowercase();
+    const VALID_STATUSES: &[&str] = &[
+        "not_selected",
+        "ready",
+        "needs_authorization",
+        "needs_subscription",
+        "needs_huggingface_access",
+        "needs_models",
+        "needs_workflow_install",
+        "needs_hardware",
+        "needs_runpod",
+        "unreachable",
+        "temporarily_unavailable",
+    ];
+    if !VALID_STATUSES.contains(&status.as_str()) {
+        return Err(AppError::InvalidInput(
+            "portrait provider status is unsupported".into(),
+        ));
+    }
+    let preferred_workflow = draft
+        .and_then(|value| value.get("preferredWorkflow"))
+        .and_then(Value::as_str)
+        .unwrap_or("source")
+        .trim()
+        .to_ascii_lowercase();
+    if !matches!(preferred_workflow.as_str(), "source" | "processing_only") {
+        return Err(AppError::InvalidInput(
+            "portrait workflow must be source or processing_only; non-sourced portraits use native ImageGen".into(),
+        ));
+    }
+    let workflow_commit = draft
+        .and_then(|value| value.get("workflowCommit"))
+        .and_then(Value::as_str)
+        .unwrap_or(COMMIT)
+        .trim()
+        .to_ascii_lowercase();
+    if !Regex::new(r"^[0-9a-f]{40}$")
+        .expect("static portrait commit regex")
+        .is_match(&workflow_commit)
+    {
+        return Err(AppError::InvalidInput(
+            "portrait workflow commit must be one exact lowercase 40-character commit".into(),
+        ));
+    }
+    if workflow_commit != COMMIT {
+        return Err(AppError::Source(
+            "portrait workflow commit is not the current verified upstream revision".into(),
+        ));
+    }
+    let local_server_url = string_field(draft.unwrap_or(&Value::Null), "localServerUrl")
+        .unwrap_or_else(|| "http://127.0.0.1:8188".into());
+    if provider == "local" {
+        crate::portraits::validate_loopback_url(&local_server_url)
+            .map_err(AppError::InvalidInput)?;
+    }
+    let runpod_url = string_field(draft.unwrap_or(&Value::Null), "runpodUrl").unwrap_or_default();
+    if provider == "runpod" && !runpod_url.is_empty() {
+        let url = reqwest::Url::parse(&runpod_url).map_err(|_| {
+            AppError::InvalidInput("RunPod portrait URLs must be valid HTTPS URLs".into())
+        })?;
+        if url.scheme() != "https"
+            || url.username() != ""
+            || url.password().is_some()
+            || url.host_str().is_none()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(AppError::InvalidInput(
+                "RunPod portrait URLs must use HTTPS without credentials or query data".into(),
+            ));
+        }
+    }
+    Ok(PortraitPipelineConfig {
+        enabled,
+        provider: provider.clone(),
+        provider_status: if provider == "disabled" {
+            "not_selected".into()
+        } else {
+            status
+        },
+        workflow_repository: REPOSITORY.into(),
+        workflow_branch: BRANCH.into(),
+        workflow_commit,
+        preferred_workflow,
+        local_comfyui_root: string_field(draft.unwrap_or(&Value::Null), "localComfyuiRoot")
+            .unwrap_or_default(),
+        local_server_url,
+        runpod_url,
+        runpod_workspace: string_field(draft.unwrap_or(&Value::Null), "runpodWorkspace")
+            .unwrap_or_else(|| "/workspace/comfyui-hoi4-portraits".into()),
+        mcp_registered: provider == "cloud" && enabled,
+    })
+}
+
+fn adapt_portrait_config_source(
+    bytes: &[u8],
+    portrait: &PortraitPipelineConfig,
+) -> Result<Vec<u8>, AppError> {
+    let text = std::str::from_utf8(bytes).map_err(|error| {
+        AppError::Source(format!(
+            "portrait provider configuration is not UTF-8: {error}"
+        ))
+    })?;
+    let mut config = text.parse::<toml::Value>().map_err(|error| {
+        AppError::Source(format!(
+            "portrait provider configuration is not valid TOML: {error}"
+        ))
+    })?;
+    let keep_cloud_mcp = portrait.enabled && portrait.provider == "cloud";
+    if !keep_cloud_mcp {
+        if let Some(root) = config.as_table_mut() {
+            root.remove("mcp_servers");
+        }
+    }
+    let table = config
+        .get_mut("portrait_pipeline")
+        .and_then(toml::Value::as_table_mut)
+        .ok_or_else(|| {
+            AppError::Source("portrait provider configuration is missing its table".into())
+        })?;
+    table.insert("enabled".into(), toml::Value::Boolean(portrait.enabled));
+    table.insert(
+        "provider".into(),
+        toml::Value::String(portrait.provider.clone()),
+    );
+    table.insert(
+        "provider_status".into(),
+        toml::Value::String(portrait.provider_status.clone()),
+    );
+    table.insert(
+        "workflow_repository".into(),
+        toml::Value::String(portrait.workflow_repository.clone()),
+    );
+    table.insert(
+        "workflow_branch".into(),
+        toml::Value::String(portrait.workflow_branch.clone()),
+    );
+    table.insert(
+        "workflow_commit".into(),
+        toml::Value::String(portrait.workflow_commit.clone()),
+    );
+    table.insert(
+        "preferred_workflow".into(),
+        toml::Value::String(portrait.preferred_workflow.clone()),
+    );
+    if portrait.enabled && portrait.provider != "disabled" {
+        table.insert(
+            "provider_skill".into(),
+            toml::Value::String(format!("hoi4-comfyui-{}", portrait.provider)),
+        );
+    } else {
+        table.remove("provider_skill");
+    }
+    table.remove("local_comfyui_root");
+    table.remove("local_server_url");
+    table.remove("runpod_url");
+    table.remove("runpod_workspace");
+    if keep_cloud_mcp {
+        table.insert(
+            "mcp_server".into(),
+            toml::Value::String("comfy_cloud_portraits".into()),
+        );
+    } else {
+        table.remove("mcp_server");
+    }
+    match portrait.provider.as_str() {
+        "local" => {
+            table.insert(
+                "local_comfyui_root".into(),
+                toml::Value::String(portrait.local_comfyui_root.clone()),
+            );
+            table.insert(
+                "local_server_url".into(),
+                toml::Value::String(portrait.local_server_url.clone()),
+            );
+        }
+        "runpod" => {
+            table.insert(
+                "runpod_url".into(),
+                toml::Value::String(portrait.runpod_url.clone()),
+            );
+            table.insert(
+                "runpod_workspace".into(),
+                toml::Value::String(portrait.runpod_workspace.clone()),
+            );
+        }
+        _ => {}
+    }
+    let rendered = toml::to_string_pretty(&config).map_err(|error| {
+        AppError::Source(format!(
+            "adapted portrait provider configuration could not be written: {error}"
+        ))
+    })?;
+    rendered.parse::<toml::Value>().map_err(|error| {
+        AppError::Source(format!(
+            "adapted portrait provider configuration is invalid: {error}"
+        ))
+    })?;
+    Ok(rendered.into_bytes())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn adapt_selected_source(
     component_id: &str,
     bytes: &[u8],
@@ -2611,8 +2997,10 @@ fn adapt_selected_source(
     ai_model: &str,
     super_events_selected: bool,
     mcp_selected: bool,
+    portrait: &PortraitPipelineConfig,
 ) -> Result<Vec<u8>, AppError> {
     let conditional = adapt_optional_super_events_skill(bytes, super_events_selected)?;
+    let conditional = adapt_optional_portrait_section(&conditional, portrait.enabled)?;
     let bytes = conditional.as_slice();
     if component_id == "core.agents" {
         adapt_agents_for_selection(
@@ -2621,11 +3009,17 @@ fn adapt_selected_source(
             ai_provider,
             ai_model,
             super_events_selected,
+            portrait.enabled,
         )
     } else if component_id == "codex.config" {
-        adapt_codex_config_for_selection(bytes, mcp_selected)
-    } else if component_id == "core.subagents" || component_id.ends_with(".subagents") {
+        adapt_codex_config_for_selection(bytes, mcp_selected, portrait)
+    } else if component_id == "core.subagents"
+        || component_id.ends_with(".subagents")
+        || component_id == "workflow.portraits.subagent"
+    {
         adapt_subagent_for_spawn(bytes)
+    } else if component_id == "workflow.portraits.config" {
+        adapt_portrait_config_source(bytes, portrait)
     } else if is_super_events_runtime_component(component_id) {
         adapt_super_events_source(bytes, identity)
     } else {
@@ -2841,6 +3235,30 @@ fn generated_state(state: &Value) -> BTreeMap<String, String> {
             "ready".into()
         } else {
             "not_selected".into()
+        },
+    );
+    let portrait_enabled = state
+        .pointer("/portraitPipeline/enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && state
+            .pointer("/portraitPipeline/provider")
+            .and_then(Value::as_str)
+            .is_some_and(|provider| provider != "disabled");
+    let portrait_status = state
+        .pointer("/portraitPipeline/providerStatus")
+        .and_then(Value::as_str)
+        .unwrap_or("not_selected");
+    result.insert(
+        "workflow.portraits".into(),
+        if !portrait_enabled {
+            "not_selected".into()
+        } else if portrait_status == "ready" {
+            "ready".into()
+        } else if portrait_status == "unsupported_platform" {
+            "unsupported_platform".into()
+        } else {
+            "incomplete".into()
         },
     );
     result
@@ -3106,6 +3524,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     let codex_analysis = codex_analysis_from_state(state, &root)?;
     let ai_provider = ai_provider_from_state(state)?;
     let ai_model = ai_model_from_state(state);
+    let portrait_pipeline = portrait_pipeline_from_state(state)?;
     let mesh_selected = state
         .get("meshSelected")
         .and_then(Value::as_bool)
@@ -3201,6 +3620,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             &ai_model,
             super_events_selected,
             mcp_selected,
+            &portrait_pipeline,
         )?;
         let incoming_sha256 = sha256_bytes(&bytes);
         let source_destination = safe_join(&root, &selection.destination)?;
@@ -3390,7 +3810,8 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                 "analysis_status": "confirmed",
                 "account_values_persisted": false
             },
-            "credential_references": credential_references.clone()
+            "credential_references": credential_references.clone(),
+            "portrait_pipeline": portrait_pipeline.clone()
         }))?;
         generated.push(GeneratedArtifact {
             component_id: "project.state".into(),
@@ -3576,6 +3997,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         git_setup,
         credential_references,
         optional_workflows,
+        portrait_pipeline: Some(portrait_pipeline),
         operations,
         conflicts,
         external_actions,
@@ -4207,6 +4629,7 @@ fn build_maintenance_plan(
     project_root: String,
     analysis_override: Option<CodexAnalysisRecord>,
     add_optional_components: Option<Vec<String>>,
+    portrait_pipeline: Option<Value>,
 ) -> Result<InstallationPlan, String> {
     run_blocking_command("maintenance-plan", move || {
         build_maintenance_plan_blocking(
@@ -4214,6 +4637,7 @@ fn build_maintenance_plan(
             project_root,
             analysis_override,
             add_optional_components,
+            portrait_pipeline,
         )
     })
 }
@@ -4223,21 +4647,53 @@ fn build_maintenance_plan_blocking(
     project_root: String,
     analysis_override: Option<CodexAnalysisRecord>,
     add_optional_components: Option<Vec<String>>,
+    portrait_pipeline_value: Option<Value>,
 ) -> Result<InstallationPlan, String> {
     let root = validate_project_root_or_destination(Path::new(&project_root))
         .map(|(root, _)| root)
         .map_err(command_error)?;
     let lock = read_project_lock(&root).map_err(command_error)?;
+    let portrait_pipeline = if let Some(value) = portrait_pipeline_value {
+        portrait_pipeline_from_state(&serde_json::json!({"portraitPipeline": value}))
+            .map_err(command_error)?
+    } else {
+        lock.portrait_pipeline
+            .clone()
+            .unwrap_or_else(|| PortraitPipelineConfig {
+                enabled: false,
+                provider: "disabled".into(),
+                provider_status: "not_selected".into(),
+                workflow_repository: "https://github.com/klimPaskov/comfyui-hoi4-portraits".into(),
+                workflow_branch: "codex/portrait-pipeline".into(),
+                workflow_commit: "92c8118f9ab61a0a658af24bc6868ed7f93cdebd".into(),
+                preferred_workflow: "source".into(),
+                local_comfyui_root: String::new(),
+                local_server_url: "http://127.0.0.1:8188".into(),
+                runpod_url: String::new(),
+                runpod_workspace: "/workspace/comfyui-hoi4-portraits".into(),
+                mcp_registered: false,
+            })
+    };
     let add_optional_components = add_optional_components.unwrap_or_default();
     let mut seen_optional_components = std::collections::HashSet::new();
     if !add_optional_components.iter().all(|id| {
-        matches!(id.as_str(), "workflow.3d" | "workflow.super_events")
+        (matches!(id.as_str(), "workflow.3d" | "workflow.super_events")
+            || id.starts_with("workflow.portraits"))
             && seen_optional_components.insert(id.as_str())
     }) {
         return Err("an optional workflow selection is invalid or duplicated".into());
     }
     if !add_optional_components.is_empty() && !matches!(mode.as_str(), "update" | "repair") {
         return Err("optional workflows can be added only during update or repair".into());
+    }
+    if !portrait_pipeline.enabled
+        && add_optional_components
+            .iter()
+            .any(|id| id.starts_with("workflow.portraits"))
+    {
+        return Err(
+            "portrait components cannot be added while portrait production is disabled".into(),
+        );
     }
     if mode != "remove" {
         if lock.ai_provider == "codex" {
@@ -4324,6 +4780,9 @@ fn build_maintenance_plan_blocking(
     let mut wiki_required_pages = lock.wiki_required_pages.clone();
     let mut wiki_metadata = lock.wiki_metadata.clone();
     let mut maintenance_mcp_manifest: Option<RemoteManifest> = None;
+    if !portrait_pipeline.enabled {
+        maintenance_components.retain(|id| !id.starts_with("workflow.portraits"));
+    }
     let (mut operations, mut plan_source, mut source_revision) = if mode == "update" {
         let resolution = resolve_source(
             &client,
@@ -4357,6 +4816,16 @@ fn build_maintenance_plan_blocking(
             })
             .map(|component| component.id.clone())
             .collect::<Vec<_>>();
+        requested.retain(|id| !id.starts_with("workflow.portraits"));
+        if portrait_pipeline.enabled {
+            if let Some(ids) = portrait_component_ids(&portrait_pipeline.provider) {
+                for component_id in ids {
+                    if !requested.iter().any(|id| id == component_id) {
+                        requested.push(component_id.into());
+                    }
+                }
+            }
+        }
         for component_id in &add_optional_components {
             if !requested.iter().any(|id| id == component_id) {
                 requested.push(component_id.clone());
@@ -4423,6 +4892,7 @@ fn build_maintenance_plan_blocking(
                         .iter()
                         .any(|id| id == "workflow.super_events"),
                     mcp_selected,
+                    &portrait_pipeline,
                 )?;
                 Ok(LockedFile {
                     path: selection.destination.clone(),
@@ -4474,7 +4944,32 @@ fn build_maintenance_plan_blocking(
                 Some(resolve_installed_manifest(&lock).map_err(command_error)?);
         }
         let operations = match mode.as_str() {
-            "repair" => crate::transaction::repair_operations(&lock, &root),
+            "repair" => {
+                let mut operations =
+                    crate::transaction::repair_operations(&lock, &root).map_err(command_error)?;
+                if !portrait_pipeline.enabled {
+                    let portrait_lock = InstallationLock {
+                        files: lock
+                            .files
+                            .iter()
+                            .filter(|file| file.component_id.starts_with("workflow.portraits"))
+                            .cloned()
+                            .collect(),
+                        ..lock.clone()
+                    };
+                    let mut portrait_removals =
+                        crate::transaction::managed_removal_operations(&portrait_lock, &root)
+                            .map_err(command_error)?;
+                    for (index, operation) in portrait_removals.iter_mut().enumerate() {
+                        operation.id = format!("repair-portrait-remove-{index:05}");
+                    }
+                    operations.retain(|operation| {
+                        !operation.component_id.starts_with("workflow.portraits")
+                    });
+                    operations.extend(portrait_removals);
+                }
+                Ok(operations)
+            }
             "reinstall" => crate::transaction::reinstall_operations(&lock, &root),
             "remove" => crate::transaction::managed_removal_operations(&lock, &root),
             other => return Err(format!("unsupported maintenance mode: {other}")),
@@ -4527,6 +5022,38 @@ fn build_maintenance_plan_blocking(
         let expanded =
             expand_components(&resolution.manifest, &requested).map_err(command_error)?;
         reject_codex_only_dependencies(&lock.ai_provider, &expanded).map_err(command_error)?;
+        if portrait_pipeline.enabled {
+            let keep_portrait = expanded
+                .iter()
+                .filter(|id| id.starts_with("workflow.portraits"))
+                .cloned()
+                .collect::<std::collections::HashSet<_>>();
+            let obsolete_portrait_lock = InstallationLock {
+                files: lock
+                    .files
+                    .iter()
+                    .filter(|file| {
+                        file.component_id.starts_with("workflow.portraits")
+                            && !keep_portrait.contains(&file.component_id)
+                    })
+                    .cloned()
+                    .collect(),
+                ..lock.clone()
+            };
+            if !obsolete_portrait_lock.files.is_empty() {
+                let mut removals =
+                    crate::transaction::managed_removal_operations(&obsolete_portrait_lock, &root)
+                        .map_err(command_error)?;
+                for (index, operation) in removals.iter_mut().enumerate() {
+                    operation.id = format!("repair-portrait-provider-remove-{index:05}");
+                }
+                operations.retain(|operation| {
+                    !operation.component_id.starts_with("workflow.portraits")
+                        || keep_portrait.contains(&operation.component_id)
+                });
+                operations.extend(removals);
+            }
+        }
         let support = crate::source::resolve_platform_support(
             &resolution.manifest,
             &expanded,
@@ -4677,6 +5204,7 @@ fn build_maintenance_plan_blocking(
                     .iter()
                     .any(|id| id == "workflow.super_events"),
                 mcp_selected,
+                &portrait_pipeline,
             )
             .map_err(command_error)?
         };
@@ -4749,8 +5277,12 @@ fn build_maintenance_plan_blocking(
                         )
                         .map_err(command_error)?;
                     let base = if current_file.component_id == "codex.config" {
-                        adapt_codex_config_for_selection(&base_source, mcp_selected)
-                            .map_err(command_error)?
+                        adapt_codex_config_for_selection(
+                            &base_source,
+                            mcp_selected,
+                            &portrait_pipeline,
+                        )
+                        .map_err(command_error)?
                     } else if current_file.component_id == "core.agents" {
                         adapt_agents_for_selection(
                             &base_source,
@@ -4758,6 +5290,7 @@ fn build_maintenance_plan_blocking(
                             &lock.ai_provider,
                             &lock.ai_model,
                             lock_workflow_selected(&lock, "workflow.super_events"),
+                            portrait_pipeline.enabled,
                         )
                         .map_err(command_error)?
                     } else {
@@ -4952,6 +5485,16 @@ fn build_maintenance_plan_blocking(
     {
         optional_workflows.insert("workflow.super_events".into(), "ready".into());
     }
+    optional_workflows.insert(
+        "workflow.portraits".into(),
+        if !portrait_pipeline.enabled {
+            "not_selected".into()
+        } else if portrait_pipeline.provider_status == "ready" {
+            "ready".into()
+        } else {
+            "incomplete".into()
+        },
+    );
     let external_actions = if mode != "remove" && lock_mcp_selected(&lock) {
         let manifest = maintenance_mcp_manifest.as_ref().ok_or_else(|| {
             "the maintenance plan could not retain the locked MCP manifest evidence".to_string()
@@ -4990,6 +5533,7 @@ fn build_maintenance_plan_blocking(
         git_setup: None,
         credential_references,
         optional_workflows,
+        portrait_pipeline: Some(portrait_pipeline),
         operations,
         conflicts,
         external_actions,
@@ -5558,6 +6102,42 @@ mod tests {
     }
 
     #[test]
+    fn portrait_provider_routes_reject_unverified_revisions_and_non_loopback_urls() {
+        let error = portrait_pipeline_from_state(&serde_json::json!({
+            "portraitPipeline": {
+                "enabled": true,
+                "provider": "local",
+                "workflowCommit": "a".repeat(40),
+                "localServerUrl": "http://127.0.0.1:8188"
+            }
+        }))
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("current verified upstream revision"));
+
+        let error = portrait_pipeline_from_state(&serde_json::json!({
+            "portraitPipeline": {
+                "enabled": true,
+                "provider": "local",
+                "localServerUrl": "http://127.0.0.1.evil:8188"
+            }
+        }))
+        .unwrap_err();
+        assert!(error.to_string().contains("loopback"));
+
+        let error = portrait_pipeline_from_state(&serde_json::json!({
+            "portraitPipeline": {
+                "enabled": true,
+                "provider": "runpod",
+                "runpodUrl": "https://pod.example/?token=secret"
+            }
+        }))
+        .unwrap_err();
+        assert!(error.to_string().contains("query data"));
+    }
+
+    #[test]
     fn explicitly_empty_model_is_not_replaced_with_a_default_model() {
         assert_eq!(ai_model_from_state(&serde_json::json!({"aiModel": ""})), "");
         assert_eq!(ai_model_from_state(&serde_json::json!({})), "default");
@@ -5629,9 +6209,11 @@ mod tests {
 - Optional Super Events workflow\n\
 <!-- HOI4_MOD_SETUP:SUPER_EVENTS:END -->\n";
         let selected =
-            adapt_agents_for_selection(template, &identity, "codex", "default", true).unwrap();
+            adapt_agents_for_selection(template, &identity, "codex", "default", true, false)
+                .unwrap();
         let unselected =
-            adapt_agents_for_selection(template, &identity, "codex", "default", false).unwrap();
+            adapt_agents_for_selection(template, &identity, "codex", "default", false, false)
+                .unwrap();
         assert!(String::from_utf8(selected)
             .unwrap()
             .contains("Optional Super Events workflow"));
@@ -5647,7 +6229,7 @@ mod tests {
         });
         assert_eq!(
             transaction_directories(&new_state, "new").unwrap(),
-            vec!["common".to_string(), ".tmp".to_string()]
+            vec![".tmp".to_string(), "common".to_string()]
         );
         assert_eq!(
             transaction_directories(&serde_json::json!({}), "existing").unwrap(),
@@ -5668,6 +6250,112 @@ mod tests {
         assert!(unselected.contains("Always present."));
         assert!(!unselected.contains("Super Events integration"));
         assert!(!unselected.contains("Selected only."));
+    }
+
+    fn test_portrait_config(provider: &str, enabled: bool) -> PortraitPipelineConfig {
+        PortraitPipelineConfig {
+            enabled,
+            provider: provider.into(),
+            provider_status: if enabled {
+                "needs_authorization".into()
+            } else {
+                "not_selected".into()
+            },
+            workflow_repository: crate::portraits::PORTRAIT_REPOSITORY.into(),
+            workflow_branch: crate::portraits::PORTRAIT_BRANCH.into(),
+            workflow_commit: crate::portraits::PORTRAIT_COMMIT.into(),
+            preferred_workflow: "source".into(),
+            local_comfyui_root: String::new(),
+            local_server_url: "http://127.0.0.1:8188".into(),
+            runpod_url: String::new(),
+            runpod_workspace: "/workspace/comfyui-hoi4-portraits".into(),
+            mcp_registered: enabled && provider == "cloud",
+        }
+    }
+
+    #[test]
+    fn disabled_portrait_markers_and_cloud_mcp_are_removed() {
+        let source = b"# Shared guidance\n<!-- HOI4_MOD_SETUP_PORTRAITS_START -->\nComfyUI provider guidance\n<!-- HOI4_MOD_SETUP_PORTRAITS_END -->\n";
+        let disabled =
+            String::from_utf8(adapt_optional_portrait_section(source, false).unwrap()).unwrap();
+        assert!(disabled.contains("Shared guidance"));
+        assert!(!disabled.to_ascii_lowercase().contains("comfyui"));
+        assert!(!disabled.contains("HOI4_MOD_SETUP_PORTRAITS"));
+
+        let config = br#"[mcp_servers.comfy_cloud_portraits]
+url = "https://cloud.comfy.org/mcp"
+
+[portrait_pipeline]
+enabled = true
+provider = "cloud"
+mcp_server = "comfy_cloud_portraits"
+"#;
+        let local = String::from_utf8(
+            adapt_codex_config_for_selection(config, false, &test_portrait_config("local", true))
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(!local.contains("comfy_cloud_portraits"));
+        assert!(!local.contains("cloud.comfy.org"));
+    }
+
+    #[test]
+    fn enabled_portrait_selection_adds_the_complete_component_closure() {
+        let enabled = selected_ids(
+            &serde_json::json!({
+                "selectedComponents": ["core.skills"],
+                "portraitPipeline": {
+                    "enabled": true,
+                    "provider": "cloud"
+                }
+            }),
+            "codex",
+        );
+        for component in [
+            "workflow.portraits.core",
+            "workflow.portraits.cloud",
+            "workflow.portraits.subagent",
+            "workflow.portraits.config",
+            "workflow.portraits.docs",
+        ] {
+            assert!(enabled.iter().any(|id| id == component));
+        }
+        assert!(!enabled.iter().any(|id| id == "workflow.portraits.local"));
+        assert!(!enabled.iter().any(|id| id == "workflow.portraits.runpod"));
+
+        for provider in ["local", "runpod"] {
+            let selected = selected_ids(
+                &serde_json::json!({
+                    "selectedComponents": [],
+                    "portraitPipeline": {"enabled": true, "provider": provider}
+                }),
+                "codex",
+            );
+            assert!(selected
+                .iter()
+                .any(|id| id == &format!("workflow.portraits.{provider}")));
+            for other in ["cloud", "local", "runpod"] {
+                if other != provider {
+                    assert!(!selected
+                        .iter()
+                        .any(|id| id == &format!("workflow.portraits.{other}")));
+                }
+            }
+        }
+
+        let disabled = selected_ids(
+            &serde_json::json!({
+                "selectedComponents": ["workflow.portraits.core", "workflow.portraits.config"],
+                "portraitPipeline": {
+                    "enabled": false,
+                    "provider": "disabled"
+                }
+            }),
+            "codex",
+        );
+        assert!(disabled
+            .iter()
+            .all(|id| !id.starts_with("workflow.portraits")));
     }
 
     #[test]
@@ -5707,7 +6395,8 @@ Use this guide once before turning the template into a real `AGENTS.md` file.\r\
 Use `[MOD_PREFIX]` for identifiers.\r\n";
 
         let adapted =
-            adapt_agents_for_selection(template, &identity, "codex", "default", false).unwrap();
+            adapt_agents_for_selection(template, &identity, "codex", "default", false, false)
+                .unwrap();
         let text = String::from_utf8(adapted).unwrap();
         assert!(text.starts_with("# Cold War: Southeast Asia"));
         assert!(text.contains("## 0. Required Reading Before Any Change"));
@@ -6513,6 +7202,7 @@ developer_instructions = "Work on the named files."
                 git_setup: None,
                 credential_references: Vec::new(),
                 optional_workflows: BTreeMap::new(),
+                portrait_pipeline: None,
                 operations: vec![agents, readme, skill, subagent],
                 conflicts: vec![
                     PlanConflict {

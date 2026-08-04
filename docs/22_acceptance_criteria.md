@@ -123,7 +123,7 @@
 
 ## 3D
 
-- 3D-01: The exact 3D question appears.
+- 3D-01: The **3D models workflow** title appears.
 - 3D-02: Meshy.ai and possible cost are explained.
 - 3D-03: Key is stored outside the project.
 - 3D-04: Project stores only an opaque reference.
@@ -138,7 +138,7 @@
 
 ## Super Events
 
-- SE-01: The Optional workflows screen asks **Do you want to set up the Super Events workflow?** immediately after the exact 3D question.
+- SE-01: The Optional workflows screen shows **Super Events workflow** immediately after **3D models workflow**.
 - SE-02: Selecting it adds `workflow.super_events` and selectively downloads only the verified manifest-declared `.agents/skills/hoi4-super-events/` tree at the one bound source revision.
 - SE-03: The component is provider-neutral, depends only on `core.skills`, and requires no credential, environment variable, external command, or provider-specific health route.
 - SE-04: A declined install downloads neither the Super Events tree nor Super Events-specific `AGENTS.md` guidance.
@@ -146,18 +146,16 @@
 - SE-06: Update can add it from a target manifest; Repair can add it only when the same immutable locked source declares it, otherwise Repair directs the user to Update.
 - SE-07: Existing or modified Super Events files use normal ownership and conflict rules and are never silently overwritten.
 
-## Portrait workflow handoff
+## ComfyUI HOI4 portrait workflow
 
-- POR-01: No LoRA or ComfyUI setup choice or dedicated screen appears.
-- POR-02: No portrait preference, component, transaction action, lock state,
-  maintenance option, or readiness check exists.
-- POR-03: Successful readiness shows one concise external link to
-  `https://github.com/klimPaskov/comfyui-hoi4-portraits`.
-- POR-04: The link is a fixed HTTPS destination opened through the typed
-  browser action and is not built from provider, manifest, project, or scan
-  content.
-- POR-05: The app does not install, configure, inspect, or report the external
-  portrait workflow.
+- POR-01: Generic setup offers Cloud, Local, RunPod, and Disabled; Chaos Redux never persists Disabled.
+- POR-02: Provider choice, exact canonical repository/commit, sourced workflow alias (`source` or `processing_only`), route fields, and honest status persist through create, import, settings, Update, Repair, readiness, and rollback without secrets.
+- POR-03: Enabled projects receive the provider-neutral portrait contract, only the selected provider skill, bounded portrait subagent, non-secret config, and exact upstream lock; Cloud registers `https://cloud.comfy.org/mcp`.
+- POR-04: Cloud can remain `needs_authorization` or `needs_subscription`, Local reports bounded root/server/hardware/workflow/model/Hugging Face state, and RunPod does not claim ready before its URL and workflow are found.
+- POR-05: Disabled output removes portrait components, marker sections, Cloud MCP configuration, and ComfyUI-specific instructions; source-based portrait handling remains available.
+- POR-06: ComfyUI applies only to sourced or grounded portraits; non-sourced fictional or impossible portraits use native ImageGen and never use this workflow. Durable source PNG/TXT pairs share the runtime basename, prompts begin with `hoi4_portrait,` and describe only the person, and runtime files never reference the source archive.
+- POR-07: Temporary provider failure creates a source-based DDS placeholder and pending replacement state; it is not reported as final styled art.
+- POR-08: Current workflow hashes, output dimensions, DDS conversion, no-spend checks, and no-secret persistence are covered by automated or manual validation without paid Cloud or RunPod resources.
 
 ## MCP
 
@@ -266,14 +264,17 @@
 - UI-12: Project identity shows compact descriptor rows and thumbnail preview on demand.
 - UI-13: Selected-provider analysis shows the approved request manifest and separates detected, suggested, and confirmed values without adding a permanent explanatory panel.
 - UI-14: The flatten checkbox is native, keyboard accessible, Codex-only, appears under **Choose what to install** with its file list and sizes, remains read-only during Install review, and is followed on Ready by the ChatGPT “Chat” recommendation.
-- UI-15: The Ready-screen portrait workflow link is keyboard accessible, has a
-  clear name, and is not presented as setup or readiness state.
+- UI-15: Portrait provider state, local fields, RunPod fields, Cloud MCP
+  guidance, and the canonical source link are keyboard accessible, have clear
+  names, and keep secondary evidence behind progressive disclosure.
 - UI-16: New-project identity fields are populated from the name and brief; optional metadata stays secondary and generated values remain keyboard-editable.
 - UI-17: New-project root and launcher paths are visibly marked as auto-filled or overridden and remain editable.
 - UI-18: Existing-project launcher descriptor candidates are visibly confirmed before scan and unconfirmed paths are not read.
 - UI-19: The Ready-screen external link has a clear name and fixed safe destination.
-- UI-20: The Optional workflows screen places the exact Super Events question directly after the exact 3D question and shows no Super Events credential control.
-- UI-21: Ready and maintenance screens expose Super Events state and add/repair actions without adding a separate workflow phase or a LoRA/ComfyUI setup surface.
+- UI-20: The Optional workflows screen places **Super Events workflow** directly after **3D models workflow** and shows no Super Events credential control.
+- UI-21: Ready and maintenance screens expose Super Events and portrait state,
+  provider changes, and add/repair actions without adding a separate workflow
+  phase.
 - UI-22: A newer application version appears as one keyboard-accessible, non-blocking update action; current and offline checks add no persistent banner.
 
 ## Application updates

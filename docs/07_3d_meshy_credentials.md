@@ -15,9 +15,9 @@ The workflow requires a non-empty `MESHY_API_KEY` before provider work. It speci
 
 HOI4 Mod Setup installs and verifies this route. It does not replace the production pipeline.
 
-## User question
+## Workflow title
 
-**Do you want to set up the 3D models workflow?**
+**3D models workflow**
 
 When yes, explain:
 

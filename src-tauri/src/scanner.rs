@@ -1651,6 +1651,15 @@ fn detect_managed_installation(
         .get("workflow.super_events")
         .map(|workflow| workflow.state.as_str())
         .unwrap_or("not_selected");
+    let portrait_pipeline = lock.portrait_pipeline.as_ref();
+    let portrait_provider = portrait_pipeline
+        .map(|portrait| portrait.provider.as_str())
+        .unwrap_or("disabled");
+    let portrait_enabled = portrait_pipeline
+        .is_some_and(|portrait| portrait.enabled && portrait.provider != "disabled");
+    let portrait_provider_status = portrait_pipeline
+        .map(|portrait| portrait.provider_status.as_str())
+        .unwrap_or("not_selected");
     findings.push(finding(
         "installation.managed",
         "installation",
@@ -1663,6 +1672,16 @@ fn detect_managed_installation(
             "workflow_3d_state": workflow_3d_state,
             "workflow_3d_key_configured": workflow_3d_key_configured,
             "workflow_super_events_state": workflow_super_events_state,
+            "portrait_enabled": portrait_enabled,
+            "portrait_provider": portrait_provider,
+            "portrait_provider_status": portrait_provider_status,
+            "portrait_workflow_commit": portrait_pipeline.map(|portrait| portrait.workflow_commit.clone()),
+            "portrait_preferred_workflow": portrait_pipeline.map(|portrait| portrait.preferred_workflow.clone()),
+            "portrait_mcp_registered": portrait_pipeline.is_some_and(|portrait| portrait.mcp_registered),
+            "portrait_local_root": portrait_pipeline.map(|portrait| portrait.local_comfyui_root.clone()),
+            "portrait_local_server_url": portrait_pipeline.map(|portrait| portrait.local_server_url.clone()),
+            "portrait_runpod_url": portrait_pipeline.map(|portrait| portrait.runpod_url.clone()),
+            "portrait_runpod_workspace": portrait_pipeline.map(|portrait| portrait.runpod_workspace.clone()),
         }),
         "accepted",
         evidence(

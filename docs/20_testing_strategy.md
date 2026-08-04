@@ -108,8 +108,8 @@ Select 3D, omit key, complete core, verify incomplete optional status, configure
 
 ### Super Events workflow
 
-On the Optional workflows screen, verify that the exact Super Events question
-is immediately after the exact 3D question. Test selected installation from one
+On the Optional workflows screen, verify that the **Super Events workflow** title
+is immediately after the **3D models workflow** title. Test selected installation from one
 verified manifest revision, the managed skill destination, readiness and lock
 state, and the read-only scan summary. Test a declined install for absence of
 the skill tree and Super Events-specific `AGENTS.md` guidance. Test Update adding
@@ -117,12 +117,20 @@ the component from a target manifest and Repair adding it only when the locked
 manifest at the same immutable revision declares it; otherwise Repair must
 direct the user to Update.
 
-### Portrait workflow handoff
+### ComfyUI HOI4 portrait workflow
 
-Verify no setup switch, component, preference, operation, lock state,
-maintenance option, or readiness check exists. The completed Ready screen
-contains exactly the fixed HTTPS external portrait-workflow link and opens it
-through the safe typed browser action.
+Verify non-sourced fictional/impossible portrait routing uses native ImageGen
+and never selects a ComfyUI text-to-image graph. Verify generic Disabled output contains no portrait provider components,
+marker sections, Cloud MCP entry, or ComfyUI-specific guidance. Verify Cloud,
+Local, and RunPod selections persist through creation, import, settings, Update,
+and Repair, while provider credentials remain absent from project state, plans,
+locks, logs, and previews. Verify Cloud deferred authorization/subscription,
+local bounded discovery/loopback rejection/hardware rejection/current workflow
+hashes, RunPod canonical commands and browser guidance, source/prompt basename
+pairing, exact prompt prefix and person-only validation, output sizes, DDS
+conversion, source-based fallback, final versus pending status, and durable
+source archive preservation. Use fakes and fixtures only; do not spend Cloud
+credits or start paid RunPod resources.
 
 ### Interrupted install
 
@@ -176,8 +184,8 @@ Test supported Windows and macOS versions, x64 and Apple Silicon where applicabl
 - 3D states are honest
 - Super Events selection, integrity, maintenance, and non-blocking readiness are
   honest
-- no LoRA or ComfyUI setup state exists; the Ready-screen link is fixed and
-  external
+- portrait provider state, disabled cleanup, local discovery, Cloud MCP
+  registration, RunPod guidance, fallback, and no-secret persistence pass
 - accessibility audit passes
 - artifacts are signed or checksummed
 

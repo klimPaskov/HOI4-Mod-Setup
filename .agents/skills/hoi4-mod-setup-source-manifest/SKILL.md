@@ -118,11 +118,8 @@ MCP servers and external dependencies are components. Their command, arguments, 
   Preserve the following real H2 instruction section and continue to reject
   unresolved project placeholders.
 - Dependency resolution exposes a deterministic reverse-dependency map for update/removal impact review; provider constraints are applied after forward dependency expansion.
-- The published component graph has no LoRA/ComfyUI interest component. Do not
-  synthesize one from older manifests or project state; legacy lock values are
-  ignored and removed by the next verified transaction.
-- The optional Super Events parent installs one additional `hoi4-super-events`
-  skill, three narrow research subagents, and six hidden runtime components.
+- The published component graph includes the optional provider-neutral portrait contract and one provider-specific skill component for each supported route. Select exactly one provider skill when the persisted portrait provider is enabled; Disabled adaptation removes the portrait component closure and marked ComfyUI guidance. Never synthesize components from the retired `workflow.lora_comfyui_interest` value; legacy lock values are ignored and removed by the next verified transaction.
+- The optional Super Events parent installs one additional `hoi4-super-events` skill, three narrow research subagents, and six hidden runtime components.
   The verified ordinary planning, events, assets, text/audio, and subagent
   skills contain bounded marked sections that deterministic adaptation retains
   only when the workflow is selected; unselected installs strip those sections.

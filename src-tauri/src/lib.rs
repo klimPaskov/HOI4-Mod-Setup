@@ -14,6 +14,7 @@ pub mod merge;
 pub mod migrations;
 pub mod models;
 pub mod paths;
+pub mod portraits;
 pub mod process;
 pub mod readiness;
 pub mod scanner;

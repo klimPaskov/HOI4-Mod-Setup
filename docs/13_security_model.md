@@ -62,15 +62,28 @@ evidence checks pass.
 
 Normalize Unicode and separators, reject absolute managed destinations and parent traversal, resolve links, verify final parent containment, detect case collisions, reject Windows device names and alternate data streams, and block archive-link escapes.
 
-## External link security
+## Portrait provider security
 
-Application-generated browser links are not provider or project content. The
-version 1 Ready screen may expose only the fixed HTTPS URL
-`https://github.com/klimPaskov/comfyui-hoi4-portraits`. Validate the exact
-scheme, host, owner, and repository path before invoking the typed
-system-browser action. Do not construct it from a provider response, manifest,
-scan result, project file, or user text; do not pass it through a shell. The
-link is informational and cannot satisfy installation, health, or readiness.
+The portrait workflow is optional for generic projects and mandatory only in
+Chaos Redux. The project stores provider, route, status, exact upstream
+repository, branch, commit, and workflow metadata, but never an API key,
+access token, password, cookie, RunPod credential, account identity, or usage
+metadata. Cloud MCP registration is a fixed product-reviewed endpoint;
+provider authentication remains in the provider's secure flow. Local health
+checks accept only HTTP loopback URLs and bounded ComfyUI roots. RunPod URLs
+must be HTTPS and are never treated as ready until the page and workflow are
+observed.
+
+The local workflow installer downloads only the three current UI workflow
+files at the pinned commit, disables redirects, verifies SHA-256 before
+staging, refuses modified existing files, and applies through an exact
+transaction staging directory. Model downloads remain a separate
+Hugging-Face-gated action; `HF_TOKEN` is only a presence hint and is never
+read into project state, logs, previews, plans, locks, or React state.
+
+The fixed canonical repository link may still be opened through the typed
+system-browser bridge, but it is supplemental guidance and never evidence of
+provider readiness.
 
 ## ChatGPT, Codex, and provider credential boundary
 

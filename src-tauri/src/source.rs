@@ -1706,7 +1706,7 @@ mod tests {
     #[test]
     fn checked_in_manifest_matches_the_supported_source_contract() {
         let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
-        let source_snapshot = "de725e52ec2cb8d2d5796e86a93bf14bf1bb5c6b";
+        let source_snapshot = "42a99f60b6818cf20ad572ccf0e835f7a430e0f1";
         let manifest = parse_manifest(bytes, Some(source_snapshot)).unwrap();
         assert_eq!(manifest.repository.owner, SOURCE_OWNER);
         assert_eq!(
@@ -1715,7 +1715,7 @@ mod tests {
         );
         assert!(manifest.profiles.iter().any(|profile| profile.default));
         assert_eq!(manifest.wiki.destination, "paradox_wiki/");
-        assert_eq!(manifest.components.len(), 17);
+        assert_eq!(manifest.components.len(), 24);
         assert!(manifest
             .components
             .iter()
@@ -1728,6 +1728,26 @@ mod tests {
             .components
             .iter()
             .any(|component| { component.id == "workflow.super_events.runtime.gfx" }));
+        assert!(manifest
+            .components
+            .iter()
+            .any(|component| { component.id == "workflow.portraits.core" }));
+        assert!(manifest
+            .components
+            .iter()
+            .any(|component| { component.id == "workflow.portraits.cloud" }));
+        assert!(manifest
+            .components
+            .iter()
+            .any(|component| { component.id == "workflow.portraits.local" }));
+        assert!(manifest
+            .components
+            .iter()
+            .any(|component| { component.id == "workflow.portraits.runpod" }));
+        assert!(manifest
+            .components
+            .iter()
+            .any(|component| { component.id == "workflow.portraits.subagent" }));
         assert!(manifest
             .components
             .iter()
@@ -1785,7 +1805,7 @@ mod tests {
     #[test]
     fn super_events_package_is_complete_and_opt_in() {
         let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
-        let source_snapshot = "de725e52ec2cb8d2d5796e86a93bf14bf1bb5c6b";
+        let source_snapshot = "42a99f60b6818cf20ad572ccf0e835f7a430e0f1";
         let manifest = parse_manifest(bytes, Some(source_snapshot)).unwrap();
         let core_profile = manifest
             .profiles
@@ -1910,7 +1930,7 @@ mod tests {
         assert_eq!(selected_bytes, remote_bytes);
         assert_eq!(
             manifest.generated_for_revision.as_deref(),
-            Some("de725e52ec2cb8d2d5796e86a93bf14bf1bb5c6b")
+            Some("42a99f60b6818cf20ad572ccf0e835f7a430e0f1")
         );
     }
 

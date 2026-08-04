@@ -175,13 +175,19 @@ The Tauri command returns a typed non-error result for this opener-unavailable c
 
 When the verified Codex executable is available, the desktop opener runs `codex app <project-root>` so the project opens in the Codex desktop application rather than an interactive terminal session.
 
-## Safe external GitHub links
+## Portrait provider routes
 
-The version 1 Ready-screen portrait link is a fixed HTTPS URL:
-`https://github.com/klimPaskov/comfyui-hoi4-portraits`. It is opened through
-the typed system-browser action, never through a shell or a URL supplied by a
-provider, manifest, project file, or scan result. The link is informational and
-does not claim that the external workflow is installed or ready.
+Portrait provider configuration is platform-neutral and is persisted as
+non-secret state. Local discovery is implemented behind a platform adapter:
+Windows uses bounded ComfyUI candidates and the verified NVIDIA probe; macOS
+uses bounded application candidates and reports unsupported hardware or route
+states without inventing a setup command. Both platforms accept only an HTTP
+loopback health URL. Cloud uses the fixed Comfy Cloud MCP endpoint, and RunPod
+uses an explicitly entered HTTPS URL plus visible browser guidance.
+
+The canonical repository link is a fixed HTTPS destination opened through the
+typed system-browser action, never through a shell or provider/project content.
+It does not claim that the selected provider is installed or ready.
 
 ## Provider and Codex prerequisite resolution
 

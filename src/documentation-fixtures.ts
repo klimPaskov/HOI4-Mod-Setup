@@ -66,6 +66,29 @@ const manifestComponents = [
   component("wiki.snapshot", "Offline Paradox wiki", "A local reference installed under paradox_wiki/", "documentation", 942),
   component("workflow.3d", "3D models workflow", "Optional Meshy and Blender workflow", "workflow", 12, true),
   component("workflow.super_events", "Super Events workflow", "Reusable event popup, templates, examples, and assets", "workflow", 23, true),
+  component("workflow.portraits.core", "Portrait production contract", "Provider-neutral source, prompt, archive, validation, and runtime handoff contract.", "skill", 1, true),
+  component("workflow.portraits.cloud", "Comfy Cloud portrait production", "Selected provider route", "workflow", 1, true),
+  component("workflow.portraits.local", "Loopback ComfyUI portrait production", "Selected provider route", "workflow", 1, true),
+  component("workflow.portraits.runpod", "RunPod ComfyUI portrait production", "Selected provider route", "workflow", 1, true),
+  component("workflow.portraits.subagent", "Portrait production subagent", "Bounded provider execution and portrait QA", "subagent", 1, true),
+  component("workflow.portraits.config", "Portrait provider configuration", "Non-secret provider and pinned upstream configuration", "configuration", 1, true),
+  component("workflow.portraits.docs", "Portrait upstream lock", "Canonical portrait repository and workflow hash evidence", "documentation", 1, true),
+];
+const portraitComponentIds = [
+  "workflow.portraits.core",
+  "workflow.portraits.runpod",
+  "workflow.portraits.subagent",
+  "workflow.portraits.config",
+  "workflow.portraits.docs",
+];
+const allPortraitComponentIds = [
+  "workflow.portraits.core",
+  "workflow.portraits.cloud",
+  "workflow.portraits.local",
+  "workflow.portraits.runpod",
+  "workflow.portraits.subagent",
+  "workflow.portraits.config",
+  "workflow.portraits.docs",
 ];
 
 const source = {
@@ -115,7 +138,7 @@ const plan: InstallationPlan = {
   ai_provider: "codex",
   ai_model: "default",
   flatten_chat_sources: true,
-  selected_components: ["core.agents", "core.skills", "core.subagents", "codex.config", "mcp.hoi4_agent_tools", "wiki.snapshot", "workflow.super_events"],
+  selected_components: ["core.agents", "core.skills", "core.subagents", "codex.config", "mcp.hoi4_agent_tools", "wiki.snapshot", "workflow.super_events", ...portraitComponentIds],
   wiki_required_pages: ["Hearts of Iron 4 Wiki", "Modding"],
   generated_artifacts: [
     { component_id: "chat.flattened", destination: "chatgpt_project_sources/AGENTS.md", content: "Project instructions", expected_sha256: "documentation-preview" },
@@ -123,7 +146,18 @@ const plan: InstallationPlan = {
     { component_id: "chat.flattened", destination: "chatgpt_project_sources/hoi4-events.md", content: "Events skill", expected_sha256: "documentation-preview" },
   ],
   git_setup: { mode: "initialize", branch: "main", initial_commit: true, remote_name: "origin", push_approved: false },
-  optional_workflows: { "workflow.3d": "not_selected", "workflow.super_events": "selected_pending" },
+    optional_workflows: { "workflow.3d": "not_selected", "workflow.super_events": "selected_pending", "workflow.portraits": "selected_pending" },
+    portrait_pipeline: {
+      enabled: true,
+      provider: "runpod",
+      provider_status: "needs_runpod",
+      workflow_repository: "https://github.com/klimPaskov/comfyui-hoi4-portraits",
+      workflow_branch: "codex/portrait-pipeline",
+      workflow_commit: "92c8118f9ab61a0a658af24bc6868ed7f93cdebd",
+      preferred_workflow: "source",
+      runpod_workspace: "/workspace/comfyui-hoi4-portraits",
+      mcp_registered: false,
+    },
   operations,
   conflicts: [],
   external_actions: [],
@@ -158,7 +192,8 @@ const readiness: ReadinessReport = {
     ["dependencies.core", "Required tools", "pass"],
     ["workflow.3d", "3D model workflow", "not_selected"],
     ["workflow.super_events", "Super Events workflow", "pass"],
-  ].map(([id, label, status]) => ({ id, label, status, blocking: false, message: status === "pass" ? "Ready" : "Not selected" })),
+    ["workflow.portraits", "Portrait production", "warn"],
+  ].map(([id, label, status]) => ({ id, label, status, blocking: false, message: status === "pass" ? "Ready" : status === "warn" ? "RunPod setup still required" : "Not selected" })),
   codex: { authenticated_during_setup: true, analysis_status: "confirmed", confirmed_field_count: 9 },
 };
 
@@ -189,12 +224,18 @@ export function documentationFixture(base: WizardState): WizardState {
       title: item.display_name,
       detail: item.description ?? "Setup component",
       size: item.expected_files.length === 1 ? "1 file" : `${item.expected_files.length} files`,
-      selected: !["workflow.3d", "workflow.super_events"].includes(item.id),
+      selected: !["workflow.3d", "workflow.super_events", ...allPortraitComponentIds].includes(item.id),
       required: !item.optional,
     })),
     selectedComponents: ["core.agents", "core.skills", "core.subagents", "codex.config", "mcp.hoi4_agent_tools", "wiki.snapshot"],
     folderProfile: ["common", "events", "gfx", "interface", "localisation/english"],
     draftSaved: true,
+  };
+  const runpodPortrait: WizardState["portraitPipeline"] = {
+    ...common.portraitPipeline,
+    enabled: true,
+    provider: "runpod",
+    providerStatus: "needs_runpod",
   };
 
   if (scenario === "provider") {
@@ -209,11 +250,11 @@ export function documentationFixture(base: WizardState): WizardState {
   }
   if (scenario === "existing") return { ...common, screen: "identity", mode: "existing", recoveryEntry: true };
   if (scenario === "components") return { ...common, screen: "components", flattenForChat: true };
-  if (scenario === "workflows") return { ...common, screen: "workflows", meshSelected: true, superEventsSelected: true, selectedComponents: [...common.selectedComponents, "workflow.3d", "workflow.super_events"] };
+  if (scenario === "workflows") return { ...common, screen: "workflows", meshSelected: true, superEventsSelected: true, portraitPipeline: runpodPortrait, selectedComponents: [...common.selectedComponents, "workflow.3d", "workflow.super_events", ...portraitComponentIds] };
   if (scenario === "mcp") return { ...common, screen: "mcp", meshSelected: true, meshKeyStatus: "present", selectedComponents: [...common.selectedComponents, "workflow.3d"] };
   if (scenario === "git") return { ...common, screen: "git", gitOnlineAction: "create_public_github", gitHubRepository: "atlantis-rising" };
   if (scenario === "dry-run") return { ...common, screen: "dry-run", plan, flattenForChat: true, superEventsSelected: true };
-  if (scenario === "ready") return { ...common, screen: "ready", plan, readiness, flattenForChat: true, superEventsSelected: true, installedSuperEventsState: "ready" };
+  if (scenario === "ready") return { ...common, screen: "ready", plan, readiness, flattenForChat: true, superEventsSelected: true, portraitPipeline: runpodPortrait, installedSuperEventsState: "ready", selectedComponents: [...common.selectedComponents, ...portraitComponentIds] };
   if (scenario === "maintenance") return { ...common, screen: "update", mode: "existing", plan, readiness, existingInstallationDetected: true, installedWorkflow3dState: "not_selected", installedSuperEventsState: "ready", superEventsSelected: true };
   return { ...common, screen: scenario };
 }

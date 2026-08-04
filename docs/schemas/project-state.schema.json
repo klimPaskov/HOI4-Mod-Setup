@@ -172,6 +172,38 @@
           "minLength": 1
         }
       }
+    },
+    "portrait_pipeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "provider",
+        "provider_status",
+        "workflow_repository",
+        "workflow_branch",
+        "workflow_commit",
+        "preferred_workflow",
+        "local_comfyui_root",
+        "local_server_url",
+        "runpod_url",
+        "runpod_workspace",
+        "mcp_registered"
+      ],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "provider": { "enum": ["cloud", "local", "runpod", "disabled"] },
+        "provider_status": { "type": "string", "minLength": 1 },
+        "workflow_repository": { "type": "string", "format": "uri" },
+        "workflow_branch": { "type": "string", "minLength": 1 },
+        "workflow_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "preferred_workflow": { "enum": ["source", "processing_only"] },
+        "local_comfyui_root": { "type": "string" },
+        "local_server_url": { "type": "string" },
+        "runpod_url": { "type": "string" },
+        "runpod_workspace": { "type": "string" },
+        "mcp_registered": { "type": "boolean" }
+      }
     }
   }
 }

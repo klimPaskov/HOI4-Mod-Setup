@@ -1,6 +1,6 @@
 {
   "name": "hoi4-mod-setup",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "license": "Apache-2.0",
   "description": "Windows and macOS desktop wizard for preparing HOI4 mods for agentic development.",
@@ -22,6 +22,7 @@
     "validate": "python scripts/validate_repository.py",
     "validate:secrets": "python scripts/check_committed_secrets.py",
     "release:build": "node scripts/release_build.mjs",
+    "version:set": "node scripts/set_version.mjs",
     "release:rehash": "node scripts/refresh_release_manifest.mjs",
     "release:sbom": "node scripts/generate_sbom.mjs",
     "release:prepare": "node scripts/prepare_release_assets.mjs",

@@ -53,9 +53,12 @@ Read:
   recommendation uses the checked-in `codex-analysis` component ID/schema
   contract, unselected installs add no Super Events guidance to `AGENTS.md`,
   and its readiness check is non-blocking.
-- LoRA/ComfyUI is not an optional workflow in the app; successful Ready may
-  show only the fixed external portrait-workflow link, with no persisted or
-  transactional state.
+- The app's generic portrait workflow supports Cloud, Local, RunPod, and
+  Disabled. Provider state and exact upstream revision are non-secret persisted
+  state; enabled output installs the provider-neutral portrait contract and
+  only the selected provider skill; disabled output strips portrait provider
+  components and ComfyUI guidance. See `docs/32_comfyui_portrait_pipeline.md`
+  for the current contract and acceptance rules.
 - The optional flattened ChatGPT project-sources export is selectable only for Codex on Components, maps skill `SKILL.md` files to `<skill>.md`, includes the adapted AGENTS/README/subagents, shows its files and sizes, and recommends Chat without starting an upload or planning action.
 - Adapted project instructions remove the source template's complete
   `## Placeholder Guide` section before staging, merge review, or flattened

@@ -82,9 +82,10 @@ provider has write access.
 11. **Managed setup state:** inspect only the fixed
     `.hoi4-mod-setup/install.lock.json` path. A valid lock is reported as
     `installation.managed` with a safe component and optional-workflow summary,
-    including the remembered `workflow.super_events` state. The summary does
-    not expose lock contents or credential references as scan evidence; the
-    credential-free Super Events entry has no credential value to expose. A
+    including the remembered `workflow.super_events` and
+    `workflow.portraits` provider states. The summary does not expose lock
+    contents or credential references as scan evidence; portrait provider
+    state is non-secret and credentials remain outside the project. A
     missing lock is a non-blocking absent state. A linked, unreadable,
     oversized, malformed, or schema-invalid lock is a blocking finding rather
     than a reason to guess that the project is unconfigured.

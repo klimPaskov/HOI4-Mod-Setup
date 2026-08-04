@@ -112,13 +112,15 @@ Conflict review is the exception. It may show a three-way comparison and more co
   not leave completed rows labeled Next or show Awaiting transaction after the
   journal exists.
 - Existing-project scans show the current stage, bounded relative path, file/directory/byte counters, and an accessible Cancel scan action. Use an indeterminate progress bar until a total is known; partial and cancelled results must remain visibly incomplete and announce that no provider evidence was approved.
-- On the optional-workflow screen, keep the exact first question **Do you want to set up the 3D models workflow?** and place the **Do you want to set up the Super Events workflow?** checkbox/toggle immediately after it. Preserve that order in maintenance when both workflows are offered; do not paraphrase the 3D question.
+- On the optional-workflow screen, show **3D models workflow** first and place
+  the **Super Events workflow** checkbox/toggle immediately after it. Preserve
+  that order in maintenance when both workflows are offered.
 - When scan evidence identifies a valid managed installation, show a concise
   existing-setup callout with a keyboard-accessible **Repair or add workflows**
-  action. The maintenance screen must show the exact 3D question again only
+  action. The maintenance screen must show the **3D models workflow** title again only
   for a previously unselected workflow; an already installed workflow is a
   non-duplicating state. If the lock reports a selected workflow without a
-  stored key, keep the exact question visible as a disabled installed state
+  stored key, keep the exact workflow title visible as a disabled installed state
   and expose the vault-only key field for repair.
 - Readiness leads with core status. Open in Codex is shown only for Codex; other providers receive an honest provider-specific handoff or no opener.
 - Open in Codex enters a disabled `Opening Codex…` state immediately, blocks
@@ -156,10 +158,11 @@ Conflict review is the exception. It may show a three-way comparison and more co
 - In the desktop runtime, reviewed source and Ready-screen links use the typed
   system-browser bridge and its fixed allowlist; browser preview may use a
   normal anchor. Do not add arbitrary URL navigation to React.
-- LoRA and ComfyUI are not setup choices or readiness rows. After core setup
-  completes, Ready may show one concise keyboard-accessible link to the fixed
-  `klimPaskov/comfyui-hoi4-portraits` repository; do not present it as an
-  install, maintenance, or health action.
+- Portrait setup is one concise optional-workflow row. Show Cloud, Local, or
+  RunPod only when enabled, keep provider details behind progressive disclosure,
+  and show honest provider status without making it a core readiness gate.
+  Disabled projects show source-based portrait handling and no ComfyUI-specific
+  guidance. Persist the choice through import, settings, Update, and Repair.
 - Keep a local recovery/removal entry reachable from Welcome when signed out; rollback, backup inspection, and managed removal do not depend on Codex.
 - Preserve account and analysis state when logout or usage-limit errors occur, and announce the actionable error without losing focus.
 - The Components option `Prepare a flattened ChatGPT project-sources folder` is a native keyboard-accessible checkbox shown only when Codex is selected. Present it with the same visual structure as the other component choices: title, concise contents, file count, and an expandable per-file size list. Source-declared sizes may appear immediately; generated-file and exact total sizes appear after the plan is prepared. Install review is read-only, there is no additional-files control, the no-automatic-upload Chat recommendation appears on Ready, and the choice never appears for another provider.
