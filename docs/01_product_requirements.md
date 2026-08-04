@@ -229,9 +229,9 @@ Install under `<mod_project>/paradox_wiki/`. Verify path containment, every decl
 
 ### Optional 3D workflow
 
-Ask exactly:
+Show the title:
 
-**Do you want to set up the 3D models workflow?**
+**3D models workflow**
 
 When yes:
 
@@ -248,10 +248,9 @@ A missing key leaves the optional workflow incomplete and does not block core se
 
 ### Optional Super Events workflow
 
-On the same Optional workflows screen, ask immediately after the exact 3D
-question:
+On the same Optional workflows screen, show immediately after the 3D title:
 
-**Do you want to set up the Super Events workflow?**
+**Super Events workflow**
 
 Super Events is a provider-neutral optional component with no credential,
 environment variable, external command, or provider-specific readiness gate.
@@ -268,14 +267,13 @@ it only when the same immutable locked source revision declares it; otherwise
 the maintenance action is Update. Missing or incomplete Super Events content
 never blocks core readiness.
 
-### Portrait workflow handoff
+### ComfyUI HOI4 portrait workflow
 
-LoRA and ComfyUI are not setup options. Do not create a component, preference,
-operation, lock state, or readiness check for them. After successful setup, the
-Ready screen shows one concise fixed HTTPS link to
-`https://github.com/klimPaskov/comfyui-hoi4-portraits`, opened through the typed
-system-browser action. It is informational and never claims external workflow
-installation or readiness.
+Generic projects may select Cloud, Local, RunPod, or Disabled on the Optional workflows screen. The selection is persisted in project state, the installation plan and lock, the scan summary, readiness, settings, Update, and Repair. Enabled projects receive the provider-neutral portrait contract, only the selected provider skill, a bounded subagent, non-secret configuration, and the exact upstream revision recorded in `docs/32_comfyui_portrait_pipeline.md`. Disabled projects receive source-based portrait handling and no ComfyUI-specific files, marker sections, MCP configuration, or instructions.
+
+Cloud registers the official Comfy Cloud MCP route and may remain incomplete while authorization or subscription is deferred. Local discovery is bounded, loopback-only, and reports hardware, workflow, model, and Hugging Face state. RunPod records its URL/workspace and shows canonical setup and browser-control guidance without claiming readiness until the page and workflow are found. All provider credentials remain outside project files and locks.
+
+Portrait sourcing remains separate from production. ComfyUI production applies only to sourced or grounded portraits. Non-sourced fictional or impossible portraits use native ImageGen and never enter the ComfyUI workflow. Durable source PNG/TXT pairs use the runtime basename, person-only prompts begin with `hoi4_portrait,`, and temporary provider failures produce an honest source-based DDS placeholder with a pending replacement state. See `docs/32_comfyui_portrait_pipeline.md` for the complete contract.
 
 ### MCP setup
 
@@ -359,7 +357,6 @@ Full keyboard operation, visible focus, WCAG 2.2 AA contrast, screen-reader sema
 - whole-computer mod discovery
 - Steam Workshop publishing
 - automatic online Git repository creation or push
-- LoRA or ComfyUI setup, detection, or installation
 - invented macOS MCP or 3D commands
 
 ## Open-source application repository

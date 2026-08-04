@@ -54,8 +54,9 @@ README pinned wording differs from latest-at-bootstrap resolution. Choose and en
 - exact commit recorded in every mode
 - no project secret
 - missing 3D key is optional and non-blocking
-- LoRA and ComfyUI are outside the setup flow; Ready links to the separate
-  portrait workflow repository
+- the bounded portrait-production workflow supports Cloud, Local, RunPod, and
+  Disabled; LoRA is not a separate setup option and disabled projects retain
+  source-based portrait handling without ComfyUI-specific instructions
 - no silent overwrite
 - transaction and rollback are mandatory
 - Git push and online creation require separate approval

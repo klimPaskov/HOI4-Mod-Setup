@@ -33,8 +33,7 @@ credential or external-action step.
 Repair defaults to the locked revision. Check missing, corrupted, modified, parse-invalid, incomplete generated, MCP health, wiki coverage, and external dependency evidence. Healthy files are explicit no-op operations; missing files can be recreated, and a changed file becomes a reviewable replace/keep decision rather than an inferred repair. Modified files require review.
 
 If the lock shows that `workflow.3d` was previously `not_selected`, the repair
-screen offers the exact question **Do you want to set up the 3D models
-workflow?** again. Selecting it expands the locked manifest's declared
+screen offers the **3D models workflow** title again. Selecting it expands the locked manifest's declared
 dependencies, fetches the same exact locked revision, and plans only the new
 component files through the normal transaction. A stored Meshy reference may be
 carried forward only for that workflow; a missing key leaves 3D incomplete and
@@ -44,7 +43,7 @@ missing, repair exposes the vault-only key field without writing the value to
 the project.
 
 If the lock shows `workflow.super_events` as `not_selected`, Repair shows the
-exact question **Do you want to set up the Super Events workflow?** only after
+**Super Events workflow** title only after
 resolving the manifest at the locked immutable revision. Repair may add the
 component and its `core.skills` dependency when that revision declares it. If
 the locked source does not declare it, Repair remains unchanged and directs the

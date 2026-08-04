@@ -713,6 +713,29 @@ pub struct PlanApprovals {
     pub push_approved: bool,
 }
 
+/// Non-secret provider routing persisted with a plan and installation lock.
+/// Credentials and provider account identity are intentionally absent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PortraitPipelineConfig {
+    pub enabled: bool,
+    pub provider: String,
+    pub provider_status: String,
+    pub workflow_repository: String,
+    pub workflow_branch: String,
+    pub workflow_commit: String,
+    pub preferred_workflow: String,
+    #[serde(default)]
+    pub local_comfyui_root: String,
+    #[serde(default)]
+    pub local_server_url: String,
+    #[serde(default)]
+    pub runpod_url: String,
+    #[serde(default)]
+    pub runpod_workspace: String,
+    #[serde(default)]
+    pub mcp_registered: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstallationPlan {
     pub schema_version: String,
@@ -767,6 +790,8 @@ pub struct InstallationPlan {
     pub credential_references: Vec<CredentialReference>,
     #[serde(default)]
     pub optional_workflows: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portrait_pipeline: Option<PortraitPipelineConfig>,
     pub operations: Vec<PlanOperation>,
     pub conflicts: Vec<PlanConflict>,
     #[serde(default)]
@@ -881,6 +906,8 @@ pub struct InstallationLock {
     pub files: Vec<LockedFile>,
     pub merge_choices: Vec<MergeChoice>,
     pub optional_workflows: BTreeMap<String, OptionalWorkflowLock>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portrait_pipeline: Option<PortraitPipelineConfig>,
     pub local_modifications: Vec<LocalModification>,
     #[serde(default)]
     pub rollback_records: Vec<String>,

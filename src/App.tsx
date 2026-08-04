@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlan, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlan, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
-import type { AiProviderId, AiProviderProfile, AppUpdateStatus, CodexAnalysisRequest, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, ManifestComponentPreview, PhaseId, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
+import type { AiProviderId, AiProviderProfile, AppUpdateStatus, CodexAnalysisRequest, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
 
 const PHASES: Array<{ id: PhaseId; label: string }> = [
@@ -56,6 +56,36 @@ const DEFAULT_COMPONENTS: ComponentRow[] = [
   { id: "wiki.snapshot", title: "Offline wiki", detail: "Installed under paradox_wiki/", size: "—", selected: true, required: true },
 ];
 
+const PORTRAIT_REPOSITORY = "https://github.com/klimPaskov/comfyui-hoi4-portraits";
+const PORTRAIT_BRANCH = "codex/portrait-pipeline";
+const PORTRAIT_COMMIT = "92c8118f9ab61a0a658af24bc6868ed7f93cdebd";
+
+const DEFAULT_PORTRAIT_PIPELINE: PortraitPipelineState = {
+  enabled: false,
+  provider: "disabled",
+  providerStatus: "not_selected",
+  workflowRepository: PORTRAIT_REPOSITORY,
+  workflowBranch: PORTRAIT_BRANCH,
+  workflowCommit: PORTRAIT_COMMIT,
+  preferredWorkflow: "source",
+  localComfyuiRoot: "",
+  localServerUrl: "http://127.0.0.1:8188",
+  runpodUrl: "",
+  runpodWorkspace: "/workspace/comfyui-hoi4-portraits",
+  mcpRegistered: false,
+};
+
+function portraitComponentIdsFor(provider: PortraitProviderId): string[] {
+  if (provider === "disabled") return [];
+  return [
+    "workflow.portraits.core",
+    `workflow.portraits.${provider}`,
+    "workflow.portraits.subagent",
+    "workflow.portraits.config",
+    "workflow.portraits.docs",
+  ];
+}
+
 const FALLBACK_AI_PROFILES: AiProviderProfile[] = [
   { id: "codex", display_name: "Codex", protocol: "codex_app_server", requires_credential: false, optimization_profile: "Codex project and ChatGPT Chat" },
   { id: "claude", display_name: "Claude", protocol: "anthropic_messages", requires_credential: true, optimization_profile: "Claude Code / Anthropic conventions", default_model: "claude-sonnet-5", default_endpoint: "https://api.anthropic.com/v1/messages", account_url: "https://platform.claude.com/settings/keys" },
@@ -102,6 +132,7 @@ export const initialState: WizardState = {
   folderProfile: DEFAULT_GENERATED_IDENTITY.folderProfile,
   meshSelected: false,
   superEventsSelected: false,
+  portraitPipeline: DEFAULT_PORTRAIT_PIPELINE,
   meshKeyDraft: "",
   meshKeyStatus: "missing",
   meshCredentialReference: undefined,
@@ -116,6 +147,8 @@ export const initialState: WizardState = {
   existingInstallationDetected: false,
   installedWorkflow3dState: "not_selected",
   installedSuperEventsState: "not_selected",
+  installedPortraitState: "not_selected",
+  installedPortraitProvider: undefined,
   installProgress: 0,
   installStage: "Preflight",
   conflictChoice: undefined,
@@ -172,17 +205,29 @@ function phaseIndex(screen: ScreenId): number {
 
 const GENERATED_IDENTITY_FIELDS = ["projectId", "scriptPrefix", "primaryNamespace", "descriptorTags", "folderProfile"] as const;
 
-function managedInstallationDetails(findings: ScanFinding[]): { present: boolean; valid: boolean; workflow3d: WorkflowState; superEvents: WorkflowState; meshKeyConfigured: boolean } {
+function managedInstallationDetails(findings: ScanFinding[]): { present: boolean; valid: boolean; workflow3d: WorkflowState; superEvents: WorkflowState; meshKeyConfigured: boolean; portraitPipeline?: Partial<PortraitPipelineState> & { provider_status?: PortraitProviderStatus } } {
   const finding = findings.find((candidate) => candidate.id === "installation.managed");
   if (!finding) return { present: false, valid: false, workflow3d: "not_selected", superEvents: "not_selected", meshKeyConfigured: false };
   try {
-    const value = JSON.parse(finding.value) as { present?: boolean; valid?: boolean; workflow_3d_state?: WorkflowState; workflow_super_events_state?: WorkflowState; workflow_3d_key_configured?: boolean };
+    const value = JSON.parse(finding.value) as { present?: boolean; valid?: boolean; workflow_3d_state?: WorkflowState; workflow_super_events_state?: WorkflowState; workflow_3d_key_configured?: boolean; portrait_provider?: PortraitProviderId; portrait_provider_status?: PortraitProviderStatus; portrait_enabled?: boolean; portrait_workflow_commit?: string; portrait_preferred_workflow?: PortraitPipelineState["preferredWorkflow"]; portrait_mcp_registered?: boolean; portrait_local_root?: string; portrait_local_server_url?: string; portrait_runpod_url?: string; portrait_runpod_workspace?: string };
     return {
       present: value.present === true,
       valid: value.valid === true,
       workflow3d: value.workflow_3d_state ?? "not_selected",
       superEvents: value.workflow_super_events_state ?? "not_selected",
       meshKeyConfigured: value.workflow_3d_key_configured === true,
+      portraitPipeline: value.portrait_provider ? {
+        enabled: value.portrait_enabled !== false,
+        provider: value.portrait_provider,
+        providerStatus: value.portrait_provider_status ?? "not_selected",
+        workflowCommit: value.portrait_workflow_commit ?? PORTRAIT_COMMIT,
+        preferredWorkflow: value.portrait_preferred_workflow ?? "source",
+        mcpRegistered: value.portrait_mcp_registered === true,
+        localComfyuiRoot: value.portrait_local_root ?? "",
+        localServerUrl: value.portrait_local_server_url ?? "http://127.0.0.1:8188",
+        runpodUrl: value.portrait_runpod_url ?? "",
+        runpodWorkspace: value.portrait_runpod_workspace ?? "/workspace/comfyui-hoi4-portraits",
+      } : undefined,
     };
   } catch {
     return { present: false, valid: false, workflow3d: "not_selected", superEvents: "not_selected", meshKeyConfigured: false };
@@ -441,8 +486,15 @@ export default function App() {
           existingInstallationDetected: managed.present && managed.valid,
           installedWorkflow3dState: managed.workflow3d,
           installedSuperEventsState: managed.superEvents,
+          installedPortraitState: managed.portraitPipeline?.enabled && managed.portraitPipeline.provider !== "disabled"
+            ? managed.portraitPipeline.providerStatus === "ready" ? "ready" : "incomplete"
+            : "not_selected",
+          installedPortraitProvider: managed.portraitPipeline?.provider,
           meshSelected: managed.workflow3d !== "not_selected" && managed.workflow3d !== "unsupported_platform",
           superEventsSelected: managed.superEvents !== "not_selected" && managed.superEvents !== "unsupported_platform",
+          portraitPipeline: managed.portraitPipeline
+            ? { ...current.portraitPipeline, ...managed.portraitPipeline, workflowRepository: current.portraitPipeline.workflowRepository, workflowBranch: current.portraitPipeline.workflowBranch }
+            : current.portraitPipeline,
           meshKeyStatus: managed.meshKeyConfigured ? "present" : "missing",
           scanContext: {
             scanId: result.scanId,
@@ -512,11 +564,11 @@ export default function App() {
 
   useEffect(() => {
     if (state.screen === "ready" && !state.readiness) {
-      void evaluateReadiness(state.identity.projectRoot || "<selected project>", state.identity.projectId, state.meshSelected ? state.meshKeyStatus === "verified" ? "ready" : "incomplete" : "not_selected").then((result) => {
+      void evaluateReadiness(state.identity.projectRoot || "<selected project>", state.identity.projectId, state.meshSelected ? state.meshKeyStatus === "verified" ? "ready" : "incomplete" : "not_selected", state.portraitPipeline).then((result) => {
         if (result) setState((current) => ({ ...current, readiness: result }));
       });
     }
-  }, [state.screen, state.readiness, state.identity.projectId, state.identity.projectRoot, state.meshSelected, state.meshKeyStatus]);
+  }, [state.screen, state.readiness, state.identity.projectId, state.identity.projectRoot, state.meshSelected, state.meshKeyStatus, state.portraitPipeline]);
 
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
@@ -731,7 +783,14 @@ export default function App() {
     update({
       existingInstallationDetected: managed.present && managed.valid,
       installedWorkflow3dState: managed.workflow3d,
+      installedPortraitState: managed.portraitPipeline?.enabled && managed.portraitPipeline.provider !== "disabled"
+        ? managed.portraitPipeline.providerStatus === "ready" ? "ready" : "incomplete"
+        : "not_selected",
+      installedPortraitProvider: managed.portraitPipeline?.provider,
       meshSelected: managed.workflow3d !== "not_selected" && managed.workflow3d !== "unsupported_platform",
+      portraitPipeline: managed.portraitPipeline
+        ? { ...state.portraitPipeline, ...managed.portraitPipeline, workflowRepository: state.portraitPipeline.workflowRepository, workflowBranch: state.portraitPipeline.workflowBranch }
+        : state.portraitPipeline,
       meshKeyStatus: managed.meshKeyConfigured ? "present" : "missing",
       scanContext: {
         scanId: scanned.scanId,
@@ -967,9 +1026,12 @@ export default function App() {
       ? [
         ...(state.meshSelected && state.installedWorkflow3dState === "not_selected" ? ["workflow.3d"] : []),
         ...(state.superEventsSelected && state.installedSuperEventsState === "not_selected" ? ["workflow.super_events"] : []),
+        ...(state.portraitPipeline.enabled && state.portraitPipeline.provider !== "disabled" && (state.installedPortraitState === "not_selected" || state.installedPortraitProvider !== state.portraitPipeline.provider)
+          ? portraitComponentIdsFor(state.portraitPipeline.provider)
+          : []),
       ]
       : [];
-    const plan = await buildMaintenancePlan(mode, state.identity.projectRoot, state.maintenanceCodexAnalysisRecord, addOptionalComponents);
+    const plan = await buildMaintenancePlan(mode, state.identity.projectRoot, state.maintenanceCodexAnalysisRecord, addOptionalComponents, state.portraitPipeline);
     if (!plan) {
       update({ transactionError: "The maintenance plan is unavailable. Nothing was changed." });
       return;
@@ -1978,6 +2040,10 @@ export function Components({ state, update }: { state: WizardState; update: (pat
 }
 
 function Workflows({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
+  const [localDiscovery, setLocalDiscovery] = useState<LocalPortraitDiscovery>();
+  const [localDiscoveryPending, setLocalDiscoveryPending] = useState(false);
+  const [localInstallPending, setLocalInstallPending] = useState(false);
+  const [localInstallMessage, setLocalInstallMessage] = useState<string>();
   const meshComponent = state.manifestPreview?.components.find((component) => component.id === "workflow.3d");
   const meshUnavailable = state.aiProvider !== "codex" && meshComponent && !providerSupportsComponent(meshComponent, state.manifestPreview?.components ?? [], state.aiProvider);
   const superEventsComponent = state.manifestPreview?.components.find((component) => component.id === "workflow.super_events");
@@ -1988,7 +2054,143 @@ function Workflows({ state, update }: { state: WizardState; update: (patch: Part
       : state.selectedComponents.filter((componentId) => componentId !== id);
     update({ ...patch, selectedComponents });
   };
-  return <div className="stack narrow"><section className="panel"><ToggleRow label="Do you want to set up the 3D models workflow?" detail={meshUnavailable ? "This workflow currently requires Codex" : "Adds the available 3D workflow files and checks"} checked={state.meshSelected} disabled={Boolean(meshUnavailable)} onChange={(checked) => setWorkflow("workflow.3d", checked, { meshSelected: checked })} /><ToggleRow label="Do you want to set up the Super Events workflow?" detail={superEventsUnavailable ? "Unavailable in the selected source version" : "Adds a ready-to-use popup, templates, example, and reusable registration workflow"} checked={state.superEventsSelected} disabled={superEventsUnavailable} onChange={(checked) => setWorkflow("workflow.super_events", checked, { superEventsSelected: checked })} /></section></div>;
+  const portrait = state.portraitPipeline ?? DEFAULT_PORTRAIT_PIPELINE;
+  const portraitAvailable = Boolean(state.manifestPreview?.components.some((component) => ["workflow.portraits.cloud", "workflow.portraits.local", "workflow.portraits.runpod"].includes(component.id)));
+  const choosePortraitProvider = (provider: PortraitProviderId) => {
+    const enabled = provider !== "disabled";
+    const providerStatus: PortraitProviderStatus = provider === "disabled"
+      ? "not_selected"
+      : provider === "cloud"
+        ? "needs_authorization"
+        : provider === "local"
+          ? "needs_hardware"
+          : "needs_runpod";
+    const selectedComponents = enabled
+      ? Array.from(new Set([...state.selectedComponents.filter((id) => !id.startsWith("workflow.portraits")), ...portraitComponentIdsFor(provider)]))
+      : state.selectedComponents.filter((id) => !id.startsWith("workflow.portraits"));
+    update({
+      portraitPipeline: { ...portrait, enabled, provider, providerStatus, mcpRegistered: provider === "cloud" && enabled },
+      selectedComponents,
+      transactionError: undefined,
+    });
+  };
+  const inspectLocal = async () => {
+    if (localDiscoveryPending) return;
+    setLocalDiscoveryPending(true);
+    const result = await inspectLocalPortraitProvider(portrait.localComfyuiRoot, portrait.localServerUrl);
+    setLocalDiscoveryPending(false);
+    if (!result) {
+      update({ portraitPipeline: { ...portrait, providerStatus: "temporarily_unavailable" }, transactionError: "The local ComfyUI check could not be started." });
+      return;
+    }
+    setLocalDiscovery(result);
+    const knownStatuses: PortraitProviderStatus[] = ["not_selected", "ready", "needs_authorization", "needs_subscription", "needs_huggingface_access", "needs_models", "needs_workflow_install", "needs_hardware", "needs_runpod", "unreachable", "temporarily_unavailable"];
+    const providerStatus = knownStatuses.includes(result.status as PortraitProviderStatus) ? result.status as PortraitProviderStatus : "temporarily_unavailable";
+    update({
+      portraitPipeline: {
+        ...portrait,
+        providerStatus,
+        localComfyuiRoot: result.detectedRoot || portrait.localComfyuiRoot,
+      },
+      transactionError: undefined,
+    });
+  };
+  const installLocal = async () => {
+    if (localInstallPending) return;
+    const root = localDiscovery?.detectedRoot || portrait.localComfyuiRoot;
+    if (!root) {
+      setLocalInstallMessage("Choose or discover a verified ComfyUI root first.");
+      return;
+    }
+    setLocalInstallPending(true);
+    const result = await installLocalPortraitWorkflows(root);
+    setLocalInstallPending(false);
+    if (result.error || !result.value) {
+      setLocalInstallMessage(result.error ?? "The pinned portrait workflows could not be installed.");
+      return;
+    }
+    setLocalInstallMessage(result.value.message);
+    if (result.value.status === "ready") {
+      update({ portraitPipeline: { ...portrait, localComfyuiRoot: root, providerStatus: "needs_models" }, transactionError: undefined });
+    }
+  };
+  /*
+  return <div className="stack narrow"><section className="panel"><ToggleRow label="3D models workflow" detail={meshUnavailable ? "This workflow currently requires Codex" : "Adds the available 3D workflow files and checks"} checked={state.meshSelected} disabled={Boolean(meshUnavailable)} onChange={(checked) => setWorkflow("workflow.3d", checked, { meshSelected: checked })} /><ToggleRow label="Super Events workflow" detail={superEventsUnavailable ? "Unavailable in the selected source version" : "Adds a ready-to-use popup, templates, example, and reusable registration workflow"} checked={state.superEventsSelected} disabled={superEventsUnavailable} onChange={(checked) => setWorkflow("workflow.super_events", checked, { superEventsSelected: checked })} /><ToggleRow label="ComfyUI portrait production" detail={!portraitAvailable ? "Unavailable in the selected source version" : "Optional provider-backed portraits with a source-based fallback"} checked={portrait.enabled} disabled={!portraitAvailable} onChange={(checked) => choosePortraitProvider(checked ? "cloud" : "disabled")} />{portraitAvailable && portrait.enabled && <div className="workflow-provider-panel"><span className="field-label" id="portrait-provider-label">Portrait provider</span><div className="radio-row" role="radiogroup" aria-labelledby="portrait-provider-label">{(["cloud", "local", "runpod"] as PortraitProviderId[]).map((provider) => <label className="radio-option" key={provider}><input type="radio" name="portrait-provider" checked={portrait.provider === provider} onChange={() => choosePortraitProvider(provider)} /><span><strong>{provider === "cloud" ? "Comfy Cloud" : provider === "local" ? "Local ComfyUI" : "RunPod"}</strong><small>{provider === "cloud" ? "MCP registration and provider-owned authorization" : provider === "local" ? "Configured loopback server and local models" : "Existing pod, URL, and browser guidance"}</small></span></label>)}</div>}{portrait.enabled && portrait.provider === "local" && <div className="workflow-provider-fields"><Field label="Local ComfyUI folder" value={portrait.localComfyuiRoot} onChange={(value) => update({ portraitPipeline: { ...portrait, localComfyuiRoot: value } })} placeholder="Optional configured folder" mono /><Field label="Local server" value={portrait.localServerUrl} onChange={(value) => update({ portraitPipeline: { ...portrait, localServerUrl: value } })} mono /><button type="button" className="button secondary" disabled={localDiscoveryPending} onClick={() => void inspectLocal()}>{localDiscoveryPending ? "Checking local setup…" : "Check local setup"}</button>{localDiscovery && <div className="workflow-provider-summary"><Status label={localDiscovery.status === "ready" ? "Local provider ready" : "Local setup needs review"} tone={localDiscovery.status === "ready" ? "pass" : "review"} /><span>{localDiscovery.detectedRoot ? `Detected root: ${localDiscovery.detectedRoot}` : "No ComfyUI root detected"}</span><span>GPU: {localDiscovery.gpuName ? `${localDiscovery.gpuName}${localDiscovery.vramGb ? ` (${localDiscovery.vramGb.toFixed(1)} GiB)` : ""}` : "Not verified"}</span><span>Workflows: {localDiscovery.workflowStatus}; models: {localDiscovery.modelStatus}; server: {localDiscovery.serverStatus}</span><small>{localDiscovery.message}</small><small>Workflow install: <code>{localDiscovery.installCommand}</code></small></div>}</div>}{portrait.enabled && portrait.provider === "runpod" && <div className="workflow-provider-fields"><Field label="RunPod URL" value={portrait.runpodUrl} onChange={(value) => update({ portraitPipeline: { ...portrait, runpodUrl: value } })} placeholder="Optional HTTPS URL" mono /><div className="workflow-provider-summary"><Status label="RunPod setup deferred" tone="review" /><span>Open the pod URL only after the current workflow package is installed and the ComfyUI workflow is visible.</span><small>Canonical install: <code>export HF_TOKEN="hf_…"; P=/workspace/comfyui-hoi4-portraits; test -d "$P/.git" || git clone --depth 1 {PORTRAIT_REPOSITORY} "$P"; "$P/scripts/install_runpod.sh" /workspace/ComfyUI</code></small></div></div>}{portrait.enabled && portrait.provider === "cloud" && <div className="workflow-provider-summary"><Status label="Cloud MCP registered" tone="pass" /><span>{providerName} uses the official Comfy Cloud MCP endpoint; authorization and Builder subscription remain provider-owned setup.</span><code>https://cloud.comfy.org/mcp</code></div>}<div className="workflow-provider-summary"><Status label={portrait.providerStatus === "ready" ? "Provider ready" : portrait.providerStatus === "not_selected" ? "Disabled" : "Setup deferred"} tone={portrait.providerStatus === "ready" ? "pass" : "review"} /><span>Current portrait workflow commit: <code>{portrait.workflowCommit.slice(0, 12)}</code></span></div></div>}</section></div>;
+  */
+  return <PortraitProviderSetup state={state} portrait={portrait} portraitAvailable={portraitAvailable} update={update} localDiscovery={localDiscovery} localDiscoveryPending={localDiscoveryPending} localInstallPending={localInstallPending} localInstallMessage={localInstallMessage} inspectLocal={inspectLocal} installLocal={installLocal} choosePortraitProvider={choosePortraitProvider} meshUnavailable={Boolean(meshUnavailable)} superEventsUnavailable={superEventsUnavailable} setWorkflow={setWorkflow} />;
+}
+
+function PortraitProviderSetup({
+  state,
+  portrait,
+  portraitAvailable,
+  update,
+  localDiscovery,
+  localDiscoveryPending,
+  localInstallPending,
+  localInstallMessage,
+  inspectLocal,
+  installLocal,
+  choosePortraitProvider,
+  meshUnavailable,
+  superEventsUnavailable,
+  setWorkflow,
+}: {
+  state: WizardState;
+  portrait: PortraitPipelineState;
+  portraitAvailable: boolean;
+  update: (patch: Partial<WizardState>) => void;
+  localDiscovery?: LocalPortraitDiscovery;
+  localDiscoveryPending: boolean;
+  localInstallPending: boolean;
+  localInstallMessage?: string;
+  inspectLocal: () => Promise<void>;
+  installLocal: () => Promise<void>;
+  choosePortraitProvider: (provider: PortraitProviderId) => void;
+  meshUnavailable?: boolean;
+  superEventsUnavailable: boolean;
+  setWorkflow: (id: string, checked: boolean, patch: Partial<WizardState>) => void;
+}) {
+  const localStatus = localDiscovery?.status === "ready" ? "Local provider ready" : "Local setup needs review";
+  const localTone: StatusTone = localDiscovery?.status === "ready" ? "pass" : "review";
+  const runpodInstall = "scripts/install_runpod.sh /workspace/ComfyUI";
+  return <div className="stack narrow">
+    <section className="panel">
+      <ToggleRow label="3D models workflow" detail={meshUnavailable ? "This workflow currently requires Codex" : "Adds the available 3D workflow files and checks"} checked={state.meshSelected} disabled={Boolean(meshUnavailable)} onChange={(checked) => setWorkflow("workflow.3d", checked, { meshSelected: checked })} />
+      <ToggleRow label="Super Events workflow" detail={superEventsUnavailable ? "Unavailable in the selected source version" : "Adds a ready-to-use popup, templates, example, and reusable registration workflow"} checked={state.superEventsSelected} disabled={superEventsUnavailable} onChange={(checked) => setWorkflow("workflow.super_events", checked, { superEventsSelected: checked })} />
+      <ToggleRow label="ComfyUI portrait production" detail={!portraitAvailable ? "Unavailable in the selected source version" : "Optional provider-backed portraits with a source-based fallback"} checked={portrait.enabled} disabled={!portraitAvailable} onChange={(checked) => choosePortraitProvider(checked ? "cloud" : "disabled")} />
+      {portraitAvailable && portrait.enabled && <div className="workflow-provider-panel">
+        <span className="field-label" id="portrait-provider-label">Portrait provider</span>
+        <div className="radio-row" role="radiogroup" aria-labelledby="portrait-provider-label">
+          {(["cloud", "local", "runpod"] as PortraitProviderId[]).map((provider) => <label className="radio-option" key={provider}>
+            <input type="radio" name="portrait-provider" checked={portrait.provider === provider} onChange={() => choosePortraitProvider(provider)} />
+            <span><strong>{provider === "cloud" ? "Comfy Cloud" : provider === "local" ? "Local ComfyUI" : "RunPod"}</strong><small>{provider === "cloud" ? "MCP registration and provider-owned authorization" : provider === "local" ? "Configured loopback server and local models" : "Existing pod, URL, and browser guidance"}</small></span>
+          </label>)}
+        </div>
+        {portrait.provider === "local" && <div className="workflow-provider-fields">
+          <Field label="Local ComfyUI folder" value={portrait.localComfyuiRoot} onChange={(value) => update({ portraitPipeline: { ...portrait, localComfyuiRoot: value } })} placeholder="Optional configured folder" mono />
+          <Field label="Local server" value={portrait.localServerUrl} onChange={(value) => update({ portraitPipeline: { ...portrait, localServerUrl: value } })} mono />
+          <button type="button" className="button secondary" disabled={localDiscoveryPending} onClick={() => void inspectLocal()}>{localDiscoveryPending ? "Checking local setup…" : "Check local setup"}</button>
+          <button type="button" className="button secondary" disabled={localInstallPending || !(localDiscovery?.detectedRoot || portrait.localComfyuiRoot)} onClick={() => void installLocal()}>{localInstallPending ? "Installing pinned workflows…" : "Install pinned workflows"}</button>
+          {localInstallMessage && <small className="muted" role="status">{localInstallMessage}</small>}
+          {localDiscovery && <div className="workflow-provider-summary">
+            <Status label={localStatus} tone={localTone} />
+            <span>{localDiscovery.detectedRoot ? `Detected root: ${localDiscovery.detectedRoot}` : "No ComfyUI root detected"}</span>
+            <span>GPU: {localDiscovery.gpuName ? `${localDiscovery.gpuName}${localDiscovery.vramGb ? ` (${localDiscovery.vramGb.toFixed(1)} GiB)` : ""}` : "Not verified"}</span>
+            <span>Workflows: {localDiscovery.workflowStatus}; models: {localDiscovery.modelStatus}; server: {localDiscovery.serverStatus}</span>
+            <small>{localDiscovery.message}</small>
+            <small>Workflow install: <code>{localDiscovery.installCommand}</code></small>
+          </div>}
+        </div>}
+        {portrait.provider === "runpod" && <div className="workflow-provider-fields">
+          <Field label="RunPod URL" value={portrait.runpodUrl} onChange={(value) => update({ portraitPipeline: { ...portrait, runpodUrl: value } })} placeholder="Optional HTTPS URL" mono />
+          <div className="workflow-provider-summary"><Status label="RunPod setup deferred" tone="review" /><span>Open the pod URL after the pinned workflow package is installed and visible.</span><small>Run the pinned install script: <code>{runpodInstall}</code></small></div>
+        </div>}
+        {portrait.provider === "cloud" && <div className="workflow-provider-summary"><Status label="Cloud MCP registered" tone="pass" /><span>Authorization and Builder subscription remain provider-owned setup.</span><code>https://cloud.comfy.org/mcp</code></div>}
+        {portrait.provider !== "runpod" && <div className="workflow-provider-summary"><Status label={portrait.providerStatus === "ready" ? "Provider ready" : "Setup deferred"} tone={portrait.providerStatus === "ready" ? "pass" : "review"} /><span>Current portrait workflow commit: <code>{portrait.workflowCommit.slice(0, 12)}</code></span></div>}
+      </div>}
+    </section>
+  </div>;
 }
 
 function WorkflowDeclaration({ state }: { state: WizardState }) {
@@ -2211,6 +2413,7 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
   const coreReady = report?.coreReady === true;
   const open = selectedProvider === "codex" && report?.openInCodex === true;
   const readinessPending = report === null;
+  const portraitPipeline = state.portraitPipeline ?? DEFAULT_PORTRAIT_PIPELINE;
   const project = readinessRow(report, ["descriptor.project", "structure.core"]);
   const codex = readinessRow(report, ["codex.agents", "skills.core", "subagents.core", "codex.config"]);
   const mcpWiki = readinessRow(report, ["mcp.hoi4", "wiki.coverage"]);
@@ -2219,6 +2422,8 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
   const gitHashes = readinessRow(report, ["git.project", "hashes.managed", "conflicts.resolved", "dependencies.core"]);
   const mesh = readinessRow(report, ["workflow.3d"]);
   const superEvents = readinessRow(report, ["workflow.super_events"]);
+  const portraits = readinessRow(report, ["workflow.portraits"]);
+  const portraitProviderLabel = portraitPipeline.provider === "cloud" ? "Comfy Cloud" : portraitPipeline.provider === "local" ? "Local ComfyUI" : portraitPipeline.provider === "runpod" ? "RunPod" : "Disabled";
   const runMcpCheck = async () => {
     const result = await runMcpHealthCheck(state.identity.projectRoot);
     if (!result) {
@@ -2275,9 +2480,10 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
           <div className="ready-check-list">
             <CheckRow label="3D model workflow" status={mesh.status} tone={mesh.tone} />
             <CheckRow label="Super Events workflow" status={superEvents.status} tone={superEvents.tone} />
+            <CheckRow label="Portrait production" status={portraitPipeline.enabled ? `${portraitProviderLabel}: ${portraits.status}` : "Disabled"} tone={portraitPipeline.enabled ? portraits.tone : "muted"} />
           </div>
           {state.flattenForChat && selectedProvider === "codex" && <div className="callout info chatgpt-ready-callout"><ExternalLink href="https://chatgpt.com"><strong>ChatGPT Chat sources prepared</strong><span>Start planning in ChatGPT Chat <span aria-hidden="true">↗</span></span></ExternalLink></div>}
-          {coreReady && <div className="portrait-workflow-note"><ExternalLink href="https://github.com/klimPaskov/comfyui-hoi4-portraits">Optional portrait workflow: Explore ComfyUI HOI4 Portraits on GitHub <span aria-hidden="true">↗</span></ExternalLink></div>}
+          {coreReady && portraitPipeline.enabled && <div className="portrait-workflow-note"><ExternalLink href={PORTRAIT_REPOSITORY}>Portrait production source and setup guidance <span aria-hidden="true">↗</span></ExternalLink></div>}
           <details>
             <summary>Readiness details</summary>
             {report ? <div className="manifest-details">{report.checks.map((check) => <div key={check.id}><strong>{check.label}</strong><span>{check.status === "configured" || check.status === "pass" ? "Ready" : check.status === "unsupported_platform" ? "Not available on this computer" : check.status === "planned_unavailable" ? "Optional tool not installed" : check.status === "not_selected" ? "Not selected" : check.blocking ? "Action needed" : "Optional setup incomplete"}</span></div>)}</div> : <p className="muted">Details appear after the checks finish.</p>}
@@ -2312,6 +2518,9 @@ function MaintenanceWorkflowOptions({ state, update }: { state: WizardState; upd
   const superEventsInstalled = state.installedSuperEventsState !== undefined
     && state.installedSuperEventsState !== "not_selected"
     && state.installedSuperEventsState !== "unsupported_platform";
+  const portraitInstalled = state.installedPortraitState !== undefined
+    && state.installedPortraitState !== "not_selected"
+    && state.installedPortraitState !== "unsupported_platform";
   const keyNeedsConfiguration = meshInstalled && state.meshKeyStatus === "missing";
   const storeKey = async () => {
     const credential = state.meshKeyDraft;
@@ -2323,16 +2532,84 @@ function MaintenanceWorkflowOptions({ state, update }: { state: WizardState; upd
       update({ transactionError: "The Meshy key could not be stored. Nothing in the project was changed." });
     }
   };
-  return <section className="panel maintenance-workflow-panel"><PanelTitle title="Optional workflows" /><ToggleRow label="Do you want to set up the 3D models workflow?" detail={meshInstalled ? "Already part of this project" : "Add it during the next update or repair"} checked={meshInstalled || state.meshSelected} disabled={meshInstalled} onChange={(checked) => update({ meshSelected: checked })} /><ToggleRow label="Do you want to set up the Super Events workflow?" detail={superEventsInstalled ? "Already part of this project" : "Add it during the next update or repair"} checked={superEventsInstalled || state.superEventsSelected} disabled={superEventsInstalled} onChange={(checked) => update({ superEventsSelected: checked })} />{state.meshSelected && (!meshInstalled || keyNeedsConfiguration) && <div className="maintenance-key"><p className="muted">A Meshy key is optional for the file repair. Store it now if you want the workflow ready to run.</p><label className="field-label" htmlFor="maintenance-meshy-key">Meshy API key</label><div className="input-with-action"><input id="maintenance-meshy-key" className="text-input" type="password" autoComplete="off" value={state.meshKeyDraft} onChange={(event) => update({ meshKeyDraft: event.target.value })} /><button type="button" className="input-action" onClick={() => void storeKey()} disabled={!state.meshKeyDraft}>Store</button></div><span className="muted">Stored in the operating-system credential vault.</span></div>}</section>;
+  const choosePortraitProvider = (provider: PortraitProviderId) => {
+    const portrait = state.portraitPipeline ?? DEFAULT_PORTRAIT_PIPELINE;
+    const enabled = provider !== "disabled";
+    const providerStatus: PortraitProviderStatus = provider === "disabled"
+      ? "not_selected"
+      : provider === "cloud"
+        ? "needs_authorization"
+        : provider === "local"
+          ? "needs_hardware"
+          : "needs_runpod";
+    const selectedComponents = enabled
+      ? Array.from(new Set([...state.selectedComponents.filter((id) => !id.startsWith("workflow.portraits")), ...portraitComponentIdsFor(provider)]))
+      : state.selectedComponents.filter((id) => !id.startsWith("workflow.portraits"));
+    update({ portraitPipeline: { ...portrait, enabled, provider, providerStatus, mcpRegistered: provider === "cloud" && enabled }, selectedComponents });
+  };
+  /*
+  const portraitLabel = state.portraitPipeline.provider === "cloud" ? "Comfy Cloud" : state.portraitPipeline.provider === "local" ? "Local ComfyUI" : state.portraitPipeline.provider === "runpod" ? "RunPod" : "Disabled";
+  return <section className="panel maintenance-workflow-panel"><PanelTitle title="Optional workflows" /><ToggleRow label="3D models workflow" detail={meshInstalled ? "Already part of this project" : "Add it during the next update or repair"} checked={meshInstalled || state.meshSelected} disabled={meshInstalled} onChange={(checked) => update({ meshSelected: checked })} /><ToggleRow label="Super Events workflow" detail={superEventsInstalled ? "Already part of this project" : "Add it during the next update or repair"} checked={superEventsInstalled || state.superEventsSelected} disabled={superEventsInstalled} onChange={(checked) => update({ superEventsSelected: checked })} /><ToggleRow label="ComfyUI portrait production" detail={portraitInstalled ? `Installed with ${portraitLabel}; change the provider below or disable it for the next update` : "Add it during the next update or repair"} checked={state.portraitPipeline.enabled} onChange={(checked) => choosePortraitProvider(checked ? "cloud" : "disabled")} />{state.portraitPipeline.enabled && <div className="workflow-provider-panel"><span className="field-label" id="maintenance-portrait-provider-label">Portrait provider</span><div className="radio-row" role="radiogroup" aria-labelledby="maintenance-portrait-provider-label">{(["cloud", "local", "runpod"] as PortraitProviderId[]).map((provider) => <label className="radio-option" key={provider}><input type="radio" name="maintenance-portrait-provider" checked={state.portraitPipeline.provider === provider} onChange={() => choosePortraitProvider(provider)} /><span><strong>{provider === "cloud" ? "Comfy Cloud" : provider === "local" ? "Local ComfyUI" : "RunPod"}</strong><small>{provider === "cloud" ? "Official MCP route" : provider === "local" ? "Loopback ComfyUI route" : "Existing pod and browser route"}</small></span></label>)}</div>}{state.portraitPipeline.provider === "local" && state.portraitPipeline.enabled && <div className="workflow-provider-fields"><Field label="Local ComfyUI folder" value={state.portraitPipeline.localComfyuiRoot} onChange={(value) => update({ portraitPipeline: { ...state.portraitPipeline, localComfyuiRoot: value } })} placeholder="Optional configured folder" mono /><Field label="Local server" value={state.portraitPipeline.localServerUrl} onChange={(value) => update({ portraitPipeline: { ...state.portraitPipeline, localServerUrl: value } })} mono /></div>}{state.portraitPipeline.provider === "runpod" && state.portraitPipeline.enabled && <div className="workflow-provider-fields"><Field label="RunPod URL" value={state.portraitPipeline.runpodUrl} onChange={(value) => update({ portraitPipeline: { ...state.portraitPipeline, runpodUrl: value } })} placeholder="Optional HTTPS URL" mono /></div>}<div className="workflow-provider-summary"><Status label={state.portraitPipeline.providerStatus === "ready" ? "Provider ready" : "Setup deferred"} tone={state.portraitPipeline.providerStatus === "ready" ? "pass" : "review"} /><span>Changes are persisted by the next reviewed update or repair plan.</span></div></div>}{state.meshSelected && (!meshInstalled || keyNeedsConfiguration) && <div className="maintenance-key"><p className="muted">A Meshy key is optional for the file repair. Store it now if you want the workflow ready to run.</p><label className="field-label" htmlFor="maintenance-meshy-key">Meshy API key</label><div className="input-with-action"><input id="maintenance-meshy-key" className="text-input" type="password" autoComplete="off" value={state.meshKeyDraft} onChange={(event) => update({ meshKeyDraft: event.target.value })} /><button type="button" className="input-action" onClick={() => void storeKey()} disabled={!state.meshKeyDraft}>Store</button></div><span className="muted">Stored in the operating-system credential vault.</span></div>}</section>;
+}
+
+  */
+  return <PortraitMaintenanceSetup state={state} update={update} portraitInstalled={portraitInstalled} choosePortraitProvider={choosePortraitProvider} meshInstalled={meshInstalled} superEventsInstalled={superEventsInstalled} keyNeedsConfiguration={keyNeedsConfiguration} storeKey={storeKey} />;
+}
+
+function PortraitMaintenanceSetup({
+  state,
+  update,
+  portraitInstalled,
+  choosePortraitProvider,
+  meshInstalled,
+  superEventsInstalled,
+  keyNeedsConfiguration,
+  storeKey,
+}: {
+  state: WizardState;
+  update: (patch: Partial<WizardState>) => void;
+  portraitInstalled: boolean;
+  choosePortraitProvider: (provider: PortraitProviderId) => void;
+  meshInstalled: boolean;
+  superEventsInstalled: boolean;
+  keyNeedsConfiguration: boolean;
+  storeKey: () => Promise<void>;
+}) {
+  const portrait = state.portraitPipeline ?? DEFAULT_PORTRAIT_PIPELINE;
+  const portraitLabel = portrait.provider === "cloud" ? "Comfy Cloud" : portrait.provider === "local" ? "Local ComfyUI" : portrait.provider === "runpod" ? "RunPod" : "Disabled";
+  return <section className="panel maintenance-workflow-panel">
+    <PanelTitle title="Optional workflows" />
+    <ToggleRow label="3D models workflow" detail={meshInstalled ? "Already part of this project" : "Add it during the next update or repair"} checked={meshInstalled || state.meshSelected} disabled={meshInstalled} onChange={(checked) => update({ meshSelected: checked })} />
+    <ToggleRow label="Super Events workflow" detail={superEventsInstalled ? "Already part of this project" : "Add it during the next update or repair"} checked={superEventsInstalled || state.superEventsSelected} disabled={superEventsInstalled} onChange={(checked) => update({ superEventsSelected: checked })} />
+    <ToggleRow label="ComfyUI portrait production" detail={portraitInstalled ? `Installed with ${portraitLabel}; change the provider below or disable it for the next update` : "Add it during the next update or repair"} checked={portrait.enabled} onChange={(checked) => choosePortraitProvider(checked ? "cloud" : "disabled")} />
+    {portrait.enabled && <div className="workflow-provider-panel">
+      <span className="field-label" id="maintenance-portrait-provider-label">Portrait provider</span>
+      <div className="radio-row" role="radiogroup" aria-labelledby="maintenance-portrait-provider-label">
+        {(["cloud", "local", "runpod"] as PortraitProviderId[]).map((provider) => <label className="radio-option" key={provider}>
+          <input type="radio" name="maintenance-portrait-provider" checked={portrait.provider === provider} onChange={() => choosePortraitProvider(provider)} />
+          <span><strong>{provider === "cloud" ? "Comfy Cloud" : provider === "local" ? "Local ComfyUI" : "RunPod"}</strong><small>{provider === "cloud" ? "Official MCP route" : provider === "local" ? "Loopback ComfyUI route" : "Existing pod and browser route"}</small></span>
+        </label>)}
+      </div>
+      {portrait.provider === "local" && <div className="workflow-provider-fields">
+        <Field label="Local ComfyUI folder" value={portrait.localComfyuiRoot} onChange={(value) => update({ portraitPipeline: { ...portrait, localComfyuiRoot: value } })} placeholder="Optional configured folder" mono />
+        <Field label="Local server" value={portrait.localServerUrl} onChange={(value) => update({ portraitPipeline: { ...portrait, localServerUrl: value } })} mono />
+      </div>}
+      {portrait.provider === "runpod" && <div className="workflow-provider-fields"><Field label="RunPod URL" value={portrait.runpodUrl} onChange={(value) => update({ portraitPipeline: { ...portrait, runpodUrl: value } })} placeholder="Optional HTTPS URL" mono /></div>}
+      <div className="workflow-provider-summary"><Status label={portrait.providerStatus === "ready" ? "Provider ready" : "Setup deferred"} tone={portrait.providerStatus === "ready" ? "pass" : "review"} /><span>Changes are persisted by the next reviewed update or repair plan.</span></div>
+    </div>}
+    {state.meshSelected && (!meshInstalled || keyNeedsConfiguration) && <div className="maintenance-key"><p className="muted">A Meshy key is optional for the file repair. Store it now if you want the workflow ready to run.</p><label className="field-label" htmlFor="maintenance-meshy-key">Meshy API key</label><div className="input-with-action"><input id="maintenance-meshy-key" className="text-input" type="password" autoComplete="off" value={state.meshKeyDraft} onChange={(event) => update({ meshKeyDraft: event.target.value })} /><button type="button" className="input-action" onClick={() => void storeKey()} disabled={!state.meshKeyDraft}>Store</button></div><span className="muted">Stored in the operating-system credential vault.</span></div>}
+  </section>;
 }
 
 export function Update({ state, update, findings, setFindings, onMaintenance, onStartMaintenance, onReanalyze, pending = false }: { state: WizardState; update: (patch: Partial<WizardState>) => void; findings: ScanFinding[]; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void; onReanalyze: () => Promise<boolean>; pending?: boolean }) {
   const plan = state.plan;
   const optional3d = state.meshSelected ? state.meshKeyStatus === "present" ? "Stored; health check pending" : "Selected; key not stored" : "Not selected";
   const superEvents = state.superEventsSelected ? state.installedSuperEventsState === "not_selected" ? "Selected for the next change" : "Installed" : "Not selected";
+  const portraitPipeline = state.portraitPipeline ?? DEFAULT_PORTRAIT_PIPELINE;
+  const portraits = portraitPipeline.enabled ? `${portraitPipeline.provider} · ${portraitPipeline.providerStatus}` : "Disabled";
   const providerLabel = aiProviderLabel(state.aiProvider, state.aiProfiles);
   const reanalysisLabel = state.maintenanceEvidenceReady ? state.maintenanceCodexAnalysisRecord ? "Run again" : `Run ${providerLabel} reanalysis` : "Prepare read-only evidence";
-  return <div className="stack"><div className="action-grid"><ActionTile title="Check for updates" detail="Compare this project with a newer setup." onClick={() => onStartMaintenance("update")} /><ActionTile title="Repair installation" detail="Restore missing or damaged setup files." onClick={() => onStartMaintenance("repair")} /><ActionTile title="Remove components" detail="Review the files before removing app-managed setup." onClick={() => onStartMaintenance("remove")} /><ActionTile title="Recover interrupted setup" detail="Continue or undo an interrupted change." onClick={() => onMaintenance("recovery")} /></div><MaintenanceWorkflowOptions state={state} update={update} /><section className="panel"><PanelTitle title={`${providerLabel} review`} /><p className="muted">Review the project before updating its setup.</p><button type="button" className="button secondary" onClick={() => void onReanalyze()}>{reanalysisLabel}</button>{state.maintenanceEvidenceReady && <details open><summary>{findings.filter((finding) => finding.status !== "rejected").length} approved findings</summary><div className="manifest-details">{findings.filter((finding) => finding.status !== "rejected").map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small><button type="button" className="text-button" aria-pressed="true" onClick={() => setFindings((current) => current.map((candidate) => candidate.id === finding.id ? { ...candidate, status: "rejected" } : candidate))}>Exclude</button></div>)}</div></details>}{state.maintenanceCodexAnalysisRecord && <p className="muted" role="status">Review returned. Confirm the {providerLabel} suggestions before checking for updates.</p>}</section><section className="panel"><PanelTitle title="Installed state" /><CheckRow label="Core setup" status={plan ? `${plan.operations.length} planned changes` : "No plan loaded"} tone={plan ? "info" : "muted"} /><CheckRow label="Optional 3D workflow" status={optional3d} tone={state.meshSelected ? "review" : "muted"} /><CheckRow label="Super Events workflow" status={superEvents} tone={state.superEventsSelected ? "review" : "muted"} /><CheckRow label="Modified files" status={plan ? String(plan.conflicts.length) : "Not evaluated"} tone={plan?.conflicts.length ? "review" : "muted"} />{plan && <details open><summary>Reviewed changes</summary><p className="muted">Modified files remain visible until resolved.</p></details>}</section></div>;
+  return <div className="stack"><div className="action-grid"><ActionTile title="Check for updates" detail="Compare this project with a newer setup." onClick={() => onStartMaintenance("update")} /><ActionTile title="Repair installation" detail="Restore missing or damaged setup files." onClick={() => onStartMaintenance("repair")} /><ActionTile title="Remove components" detail="Review the files before removing app-managed setup." onClick={() => onStartMaintenance("remove")} /><ActionTile title="Recover interrupted setup" detail="Continue or undo an interrupted change." onClick={() => onMaintenance("recovery")} /></div><MaintenanceWorkflowOptions state={state} update={update} /><section className="panel"><PanelTitle title={`${providerLabel} review`} /><p className="muted">Review the project before updating its setup.</p><button type="button" className="button secondary" onClick={() => void onReanalyze()}>{reanalysisLabel}</button>{state.maintenanceEvidenceReady && <details open><summary>{findings.filter((finding) => finding.status !== "rejected").length} approved findings</summary><div className="manifest-details">{findings.filter((finding) => finding.status !== "rejected").map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small><button type="button" className="text-button" aria-pressed="true" onClick={() => setFindings((current) => current.map((candidate) => candidate.id === finding.id ? { ...candidate, status: "rejected" } : candidate))}>Exclude</button></div>)}</div></details>}{state.maintenanceCodexAnalysisRecord && <p className="muted" role="status">Review returned. Confirm the {providerLabel} suggestions before checking for updates.</p>}</section><section className="panel"><PanelTitle title="Installed state" /><CheckRow label="Core setup" status={plan ? `${plan.operations.length} planned changes` : "No plan loaded"} tone={plan ? "info" : "muted"} /><CheckRow label="Optional 3D workflow" status={optional3d} tone={state.meshSelected ? "review" : "muted"} /><CheckRow label="Super Events workflow" status={superEvents} tone={state.superEventsSelected ? "review" : "muted"} /><CheckRow label="Portrait production" status={portraits} tone={portraitPipeline.enabled ? "review" : "muted"} /><CheckRow label="Modified files" status={plan ? String(plan.conflicts.length) : "Not evaluated"} tone={plan?.conflicts.length ? "review" : "muted"} />{plan && <details open><summary>Reviewed changes</summary><p className="muted">Modified files remain visible until resolved.</p></details>}</section></div>;
 }
 
 function Conflict({ state, update, onChoice }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onChoice: (choice: ConflictChoice) => void }) {

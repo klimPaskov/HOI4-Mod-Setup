@@ -106,9 +106,11 @@ session, cancellation, credential-health, or analysis assertions.
   `workflow.super_events`
 - read-only Git inspection rejects hostile local configuration before spawn,
   suppresses ambient Git behavior, and never recurses into submodules
-- LoRA/ComfyUI has no setup screen, state, component, operation, lock entry,
-  maintenance option, or readiness check; Ready exposes only the fixed external
-  portrait-workflow link
+- Portrait workflow tests cover Cloud, Local, RunPod, and Disabled selection,
+  non-secret persistence, disabled marker/file cleanup, Cloud MCP registration,
+  bounded local discovery and workflow hashes, RunPod guidance, source/prompt
+  pairing, fallback status, readiness separation, and no-spend/no-secret
+  behavior. Use fakes and fixtures; do not start paid provider resources.
 - an approved process receives only `MESHY_API_KEY`, while known secret values are absent from both output streams and serialized artifacts
 - an MCP health probe accepts only the manifest-declared Windows wrapper,
   completes initialize and read-only `tools/list` validation within its bound,
@@ -135,7 +137,7 @@ state without account identity or secret values, unknown routes are ignored,
 and production builds cannot activate the fixture. Capture at 1280 by 960 from
 the top of the page so comparison evidence is consistent.
 
-Test all 16 required screen states and seven phases. Include density assertions, keyboard traversal, scaling, reduced motion, long values, errors, conflict comparison, staged scanner progress, correlated event filtering, indeterminate progress semantics, and cancellation evidence messaging. Assert the exact 3D question and the immediately following Super Events checkbox order.
+Test all 16 required screen states and seven phases. Include density assertions, keyboard traversal, scaling, reduced motion, long values, errors, conflict comparison, staged scanner progress, correlated event filtering, indeterminate progress semantics, and cancellation evidence messaging. Assert the **3D models workflow** title and the immediately following **Super Events workflow** order.
 
 Keep a desktop responsiveness regression test that verifies every Tauri command
 uses `#[tauri::command(async)]` so blocking Rust core work cannot run on the UI

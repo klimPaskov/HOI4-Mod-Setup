@@ -77,10 +77,10 @@ Choose latest, pinned commit, or pinned release. Select components and review au
 
 ### Optional workflows
 
-On one Optional workflows screen, ask these questions in order:
+On one Optional workflows screen, show these titles in order:
 
-1. **Do you want to set up the 3D models workflow?**
-2. **Do you want to set up the Super Events workflow?**
+1. **3D models workflow**
+2. **Super Events workflow**
 
 The second row selects provider-neutral `workflow.super_events`. When selected,
 resolve the verified manifest at the one source revision and install its skill
@@ -92,8 +92,12 @@ variable, external command, or provider-specific route. Its state is optional
 and non-blocking, appears in readiness, and is remembered by the managed lock
 and the existing-project scan. If it is declined, do not install any part of
 the dependency closure or add Super Events-specific guidance to `AGENTS.md`.
-Keep LoRA and ComfyUI out of setup and readiness; the only portrait behavior
-remains the fixed Ready link described below.
+
+Then ask whether the user wants the HOI4 portrait workflow. When enabled,
+show the provider choice **Comfy Cloud**, **Local ComfyUI**, or **RunPod**;
+Disabled is the explicit generic-project default. Persist the choice and show
+only the provider-specific setup state needed for the selected route. Do not
+restore the selected provider after import or reopening an installed project.
 
 ### MCP, credentials, and Git
 
@@ -196,13 +200,14 @@ Resolve each path with keep, replace, merge, rename, or skip. Binary files do no
 
 Declined produces no 3D-only operations. Unsupported platform state is shown before dry run. The app never translates commands by guesswork. Neither state blocks core AI readiness.
 
-## Portrait workflow handoff
+## Portrait workflow
 
-After successful setup, show one concise Ready-screen link to
-`https://github.com/klimPaskov/comfyui-hoi4-portraits`. It is a fixed HTTPS
-link opened through the typed system-browser action, not a wizard step,
-component, preference, transaction action, maintenance option, or readiness
-result.
+Use the persisted provider state, local discovery/setup, Cloud MCP registration,
+RunPod browser guidance, source/prompt archive, provider readiness, and
+source-based fallback described in `docs/32_comfyui_portrait_pipeline.md`.
+Portrait readiness is optional for core AI readiness but a selected provider
+must not be reported as final until its own requirements pass. Settings,
+Update, Repair, import, and rollback retain the same non-secret state.
 
 ## Update flow
 
@@ -228,8 +233,8 @@ dependency, conflict, selective-download, and rollback rules still apply.
 
 Verify the selected provider before creating a repair plan. Classify managed files as healthy, missing, corrupted, or modified. Restore only missing or corrupted unmodified files automatically after review. Modified files enter conflict review. Re-run component health and readiness.
 
-For `workflow.super_events`, Repair may offer the exact Super Events question
-again when the lock records `not_selected`, but only after reading the
+For `workflow.super_events`, Repair may offer the **Super Events workflow**
+title again when the lock records `not_selected`, but only after reading the
 manifest at the lock's immutable revision. If that revision declares the
 component, Repair expands its exact locked dependency closure and installs the
 skill and runtime through the normal transaction. If it does not, Repair must

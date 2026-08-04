@@ -246,17 +246,23 @@ Use `hoi4-mod-setup-security` for this surface.
 
 ## 10. Optional workflow rules
 
-The 3D setup question must be exactly:
+The optional-workflow titles are declarative:
 
-**Do you want to set up the 3D models workflow?**
+**3D models workflow**
+
+**Super Events workflow**
 
 A missing or invalid `MESHY_API_KEY` leaves the optional workflow incomplete and keeps core setup usable. Derive packages, commands, versions, adapters, Blender integration, and health checks from verified repository files. Do not invent a macOS route for a Windows-only repository workflow.
 
-LoRA and ComfyUI are not setup options, components, project preferences, or
-readiness states. After successful setup, the Ready screen may show one concise
-external link to
-`https://github.com/klimPaskov/comfyui-hoi4-portraits`. The app does not
-install, configure, inspect, or report that separate portrait workflow.
+The HOI4 portrait-production workflow is a bounded optional
+workflow with Cloud, Local, RunPod, and Disabled choices. Its non-secret
+provider state is persisted through project setup, import, settings, repair,
+and readiness; provider credentials stay outside the project. LoRA is not a
+separate setup option, component, project preference, or readiness state, and
+the app does not invent a general ComfyUI route beyond this portrait contract.
+When enabled, the Ready screen may show one concise external link to
+`https://github.com/klimPaskov/comfyui-hoi4-portraits`; disabled projects retain
+source-based portrait handling without ComfyUI-specific project instructions.
 
 ## 11. UI rules
 

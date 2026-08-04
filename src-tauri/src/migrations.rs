@@ -42,6 +42,7 @@ fn migrate_value(mut value: Value, expected_kind: &str, current: &str) -> Result
 
 pub fn migrate_state(value: Value) -> Result<Value, AppError> {
     let mut value = migrate_value(value, "project state", CURRENT_STATE_SCHEMA)?;
+    normalize_legacy_portrait_workflow(&mut value);
     let object = value
         .as_object_mut()
         .ok_or_else(|| AppError::Serialization("project state must be a JSON object".into()))?;
@@ -159,7 +160,92 @@ pub fn migrate_state(value: Value) -> Result<Value, AppError> {
         .entry("credential_references")
         .or_insert_with(|| Value::Array(Vec::new()));
     validate_credential_references(references)?;
+    if let Some(portrait_pipeline) = object.get("portrait_pipeline") {
+        if !portrait_pipeline.is_null() {
+            validate_portrait_pipeline(portrait_pipeline)?;
+        }
+    }
     Ok(value)
+}
+
+fn validate_portrait_pipeline(value: &Value) -> Result<(), AppError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| AppError::Serialization("portrait_pipeline must be an object".into()))?;
+    if object.keys().any(|key| {
+        matches!(
+            key.as_str(),
+            "api_key"
+                | "apiKey"
+                | "secret"
+                | "secret_value"
+                | "secretValue"
+                | "token"
+                | "password"
+                | "cookie"
+        )
+    }) {
+        return Err(AppError::Credential(
+            "portrait_pipeline contains a secret-shaped field".into(),
+        ));
+    }
+    let provider = object
+        .get("provider")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::Serialization("portrait_pipeline provider is missing".into()))?;
+    if !matches!(provider, "cloud" | "local" | "runpod" | "disabled") {
+        return Err(AppError::InvalidInput(
+            "portrait_pipeline uses an unsupported provider".into(),
+        ));
+    }
+    let enabled = object
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| AppError::Serialization("portrait_pipeline enabled is missing".into()))?;
+    if enabled == (provider == "disabled") {
+        return Err(AppError::InvalidInput(
+            "portrait_pipeline enabled/provider state is inconsistent".into(),
+        ));
+    }
+    let repository = object
+        .get("workflow_repository")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::Serialization("portrait_pipeline repository is missing".into()))?;
+    if repository != crate::portraits::PORTRAIT_REPOSITORY {
+        return Err(AppError::Source(
+            "portrait_pipeline is bound to an unverified repository".into(),
+        ));
+    }
+    let preferred_workflow = object
+        .get("preferred_workflow")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            AppError::Serialization("portrait_pipeline preferred workflow is missing".into())
+        })?;
+    if !matches!(preferred_workflow, "source" | "processing_only") {
+        return Err(AppError::InvalidInput(
+            "portrait_pipeline supports only sourced workflows; non-sourced portraits use native ImageGen".into(),
+        ));
+    }
+    let commit = object
+        .get("workflow_commit")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::Serialization("portrait_pipeline commit is missing".into()))?;
+    if commit != crate::portraits::PORTRAIT_COMMIT {
+        return Err(AppError::Source(
+            "portrait_pipeline is bound to an unverified workflow revision".into(),
+        ));
+    }
+    let mcp_registered = object
+        .get("mcp_registered")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| AppError::Serialization("portrait_pipeline MCP state is missing".into()))?;
+    if mcp_registered != (enabled && provider == "cloud") {
+        return Err(AppError::InvalidInput(
+            "portrait_pipeline MCP state does not match its provider".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_credential_references(value: &Value) -> Result<(), AppError> {
@@ -269,6 +355,7 @@ fn reject_persisted_codex_identity(object: &Map<String, Value>) -> Result<(), Ap
 
 pub fn migrate_lock(value: Value) -> Result<InstallationLock, AppError> {
     let mut value = migrate_value(value, "installation lock", CURRENT_LOCK_SCHEMA)?;
+    normalize_legacy_portrait_workflow(&mut value);
     strip_legacy_core_only_codex_bindings(&mut value);
     // Locks written before exact manifest wiki coverage was carried forward
     // remain readable, but readiness must not silently borrow the current
@@ -297,6 +384,11 @@ pub fn migrate_lock(value: Value) -> Result<InstallationLock, AppError> {
         object
             .entry("wiki_required_pages")
             .or_insert_with(|| Value::Array(Vec::new()));
+        if let Some(portrait_pipeline) = object.get("portrait_pipeline") {
+            if !portrait_pipeline.is_null() {
+                validate_portrait_pipeline(portrait_pipeline)?;
+            }
+        }
     }
     serde_json::from_value(value).map_err(AppError::from)
 }
@@ -309,6 +401,30 @@ fn strip_legacy_core_only_codex_bindings(value: &mut Value) {
     {
         record.remove("project_root");
         record.remove("scan_id");
+    }
+}
+
+fn normalize_legacy_portrait_workflow(value: &mut Value) {
+    let Some(pipeline) = value
+        .as_object_mut()
+        .and_then(|object| object.get_mut("portrait_pipeline"))
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    if pipeline.get("preferred_workflow").and_then(Value::as_str) == Some("text_to_image") {
+        // The old route generated non-sourced portraits through ComfyUI. It
+        // cannot be mapped to a sourced workflow without changing the asset
+        // classification, so disable the optional provider and leave native
+        // ImageGen to the parent portrait workflow.
+        pipeline.insert("enabled".into(), Value::Bool(false));
+        pipeline.insert("provider".into(), Value::String("disabled".into()));
+        pipeline.insert(
+            "provider_status".into(),
+            Value::String("not_selected".into()),
+        );
+        pipeline.insert("preferred_workflow".into(), Value::String("source".into()));
+        pipeline.insert("mcp_registered".into(), Value::Bool(false));
     }
 }
 
@@ -433,6 +549,88 @@ mod tests {
             }
         }))
         .is_err());
+    }
+
+    fn portrait_state(provider: &str, enabled: bool, mcp_registered: bool) -> Value {
+        json!({
+            "enabled": enabled,
+            "provider": provider,
+            "provider_status": if enabled { "needs_authorization" } else { "not_selected" },
+            "workflow_repository": crate::portraits::PORTRAIT_REPOSITORY,
+            "workflow_branch": crate::portraits::PORTRAIT_BRANCH,
+            "workflow_commit": crate::portraits::PORTRAIT_COMMIT,
+            "preferred_workflow": "source",
+            "local_comfyui_root": "",
+            "local_server_url": "http://127.0.0.1:8188",
+            "runpod_url": "",
+            "runpod_workspace": "/workspace/comfyui-hoi4-portraits",
+            "mcp_registered": mcp_registered
+        })
+    }
+
+    #[test]
+    fn portrait_state_migration_accepts_verified_disabled_configuration() {
+        let migrated = migrate_state(json!({
+            "schema_version": "1.0.0",
+            "portrait_pipeline": portrait_state("disabled", false, false)
+        }))
+        .unwrap();
+        assert_eq!(migrated["portrait_pipeline"]["provider"], "disabled");
+        assert_eq!(
+            migrated["portrait_pipeline"]["workflow_commit"],
+            crate::portraits::PORTRAIT_COMMIT
+        );
+    }
+
+    #[test]
+    fn portrait_state_migration_rejects_secrets_and_unverified_revision() {
+        let mut secret = portrait_state("cloud", true, true);
+        secret["api_key"] = json!("never-persist");
+        assert!(migrate_state(json!({
+            "schema_version": "1.0.0",
+            "portrait_pipeline": secret
+        }))
+        .is_err());
+
+        let mut unverified = portrait_state("cloud", true, true);
+        unverified["workflow_commit"] = json!("a".repeat(40));
+        assert!(migrate_state(json!({
+            "schema_version": "1.0.0",
+            "portrait_pipeline": unverified
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn portrait_state_migration_rejects_inconsistent_cloud_mcp_state() {
+        assert!(migrate_state(json!({
+            "schema_version": "1.0.0",
+            "portrait_pipeline": portrait_state("local", true, true)
+        }))
+        .is_err());
+        assert!(migrate_state(json!({
+            "schema_version": "1.0.0",
+            "portrait_pipeline": Value::Null
+        }))
+        .is_ok());
+    }
+
+    #[test]
+    fn legacy_text_to_image_portrait_state_is_disabled_instead_of_rerouted() {
+        let mut state = portrait_state("cloud", true, true);
+        state["preferred_workflow"] = json!("text_to_image");
+        let migrated = migrate_state(json!({
+            "schema_version": "1.0.0",
+            "portrait_pipeline": state
+        }))
+        .unwrap();
+        assert_eq!(migrated["portrait_pipeline"]["enabled"], false);
+        assert_eq!(migrated["portrait_pipeline"]["provider"], "disabled");
+        assert_eq!(
+            migrated["portrait_pipeline"]["preferred_workflow"],
+            "source"
+        );
+        assert_eq!(migrated["portrait_pipeline"]["mcp_registered"], false);
     }
 
     #[test]

@@ -1,10 +1,14 @@
-# HOI4 Mod Setup 0.1.1
+# HOI4 Mod Setup 0.2.2
 
 Download the installer for your computer:
 
 - Windows: `HOI4-Mod-Setup-windows-x64-setup.exe`
 - Mac (Apple silicon): `HOI4-Mod-Setup-macos-arm64.dmg`
 - Mac (Intel): `HOI4-Mod-Setup-macos-x64.dmg`
+
+This build includes the ComfyUI HOI4 portrait workflow with selected-provider
+instructions, native ImageGen
+handling for non-sourced portraits, and current Windows and macOS packaging.
 
 Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app
 to Applications.

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildMaintenancePlan, cancelCodexLogin, cancelScan, confirmCodexAnalysis, evaluateReadiness, openExternalUrlResult, previewDescriptors, readMeshyCredential, runAiAnalysis, runCodexAnalysis, scanProject } from "./tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildMaintenancePlan, cancelCodexLogin, cancelScan, confirmCodexAnalysis, evaluateReadiness, inspectLocalPortraitProvider, installLocalPortraitWorkflows, openExternalUrlResult, previewDescriptors, readMeshyCredential, runAiAnalysis, runCodexAnalysis, scanProject } from "./tauri";
 import type { AiAnalysisRequest, CodexAnalysisRequest, ScanProgress, WizardState } from "../types";
 
 const { invoke, listen, unlisten } = vi.hoisted(() => ({
@@ -139,6 +139,76 @@ describe("typed scanner bridge", () => {
       projectRoot: "C:/mods/example",
       codexAnalysis: null,
       addOptionalComponents: ["workflow.3d", "workflow.super_events"],
+    });
+  });
+
+  it("persists the selected portrait provider through readiness and maintenance commands", async () => {
+    invoke.mockResolvedValue({
+      checks: [],
+      open_in_codex: { enabled: true, blocking_check_ids: [] },
+      core_ready: true,
+    });
+    const portrait = {
+      enabled: true,
+      provider: "cloud",
+      providerStatus: "needs_authorization",
+      workflowRepository: "https://github.com/klimPaskov/comfyui-hoi4-portraits",
+      workflowBranch: "codex/portrait-pipeline",
+      workflowCommit: "92c8118f9ab61a0a658af24bc6868ed7f93cdebd",
+      preferredWorkflow: "source",
+      localComfyuiRoot: "",
+      localServerUrl: "http://127.0.0.1:8188",
+      runpodUrl: "",
+      runpodWorkspace: "/workspace/comfyui-hoi4-portraits",
+      mcpRegistered: true,
+    } as NonNullable<WizardState["portraitPipeline"]>;
+
+    await evaluateReadiness("C:/mods/example", "example", "not_selected", portrait);
+    await buildMaintenancePlan("repair", "C:/mods/example", undefined, [], portrait);
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "evaluate_readiness", {
+      input: expect.objectContaining({
+        portrait_provider: "cloud",
+        portrait_provider_status: "needs_authorization",
+      }),
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "build_maintenance_plan", {
+      mode: "repair",
+      projectRoot: "C:/mods/example",
+      codexAnalysis: null,
+      addOptionalComponents: [],
+      portraitPipeline: portrait,
+    });
+  });
+
+  it("uses typed local portrait discovery and workflow installation commands", async () => {
+    invoke.mockResolvedValue({
+      status: "needs_workflow_install",
+      configuredRoot: "C:/ComfyUI",
+      detectedRoot: "C:/ComfyUI",
+      serverUrl: "http://127.0.0.1:8188",
+      serverStatus: "ready",
+      hardwareStatus: "ready",
+      gpuName: "NVIDIA test",
+      vramGb: 24,
+      workflowStatus: "missing",
+      modelStatus: "ready",
+      huggingfaceAccessHint: true,
+      message: "workflow missing",
+      canonicalRepository: "https://github.com/klimPaskov/comfyui-hoi4-portraits",
+      canonicalCommit: "92c8118f9ab61a0a658af24bc6868ed7f93cdebd",
+      installCommand: "python scripts/install_workflows.py --comfyui-root <COMFYUI_ROOT>",
+    });
+
+    await inspectLocalPortraitProvider("C:/ComfyUI", "http://127.0.0.1:8188");
+    await installLocalPortraitWorkflows("C:/ComfyUI");
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "inspect_local_portrait_provider", {
+      configuredRoot: "C:/ComfyUI",
+      serverUrl: "http://127.0.0.1:8188",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "install_local_portrait_workflows", {
+      comfyuiRoot: "C:/ComfyUI",
     });
   });
 

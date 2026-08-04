@@ -1,4 +1,4 @@
-import type { AiAccountStatus, AiAnalysisRequest, AiProviderProfile, AppUpdateStatus, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
+import type { AiAccountStatus, AiAnalysisRequest, AiProviderProfile, AppUpdateStatus, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
   id: string;
@@ -41,6 +41,8 @@ interface ReadinessInput {
   project_id: string;
   project_root: string;
   workflow_3d_state: string;
+  portrait_provider?: string;
+  portrait_provider_status?: string;
 }
 
 interface TauriCommandMap {
@@ -72,11 +74,13 @@ interface TauriCommandMap {
   cancel_scan: { args: { requestId: string }; result: void };
   evaluate_readiness: { args: { input: ReadinessInput }; result: RawReadinessReport };
   run_3d_health_check: { args: { projectRoot: string }; result: WorkflowHealthResult };
+  inspect_local_portrait_provider: { args: { configuredRoot?: string | null; serverUrl: string }; result: LocalPortraitDiscovery };
+  install_local_portrait_workflows: { args: { comfyuiRoot: string }; result: LocalPortraitInstallResult };
   run_mcp_health_check: { args: { projectRoot: string }; result: WorkflowHealthResult };
   preview_descriptors: { args: { state: WizardState }; result: GeneratedArtifactPreview[] };
   preview_installation_conflict: { args: { planId: string; path: string }; result: ConflictPreview };
   build_installation_plan: { args: { state: WizardState }; result: InstallationPlan };
-  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; codexAnalysis?: CodexAnalysisRecord | null; addOptionalComponents?: string[] }; result: InstallationPlan };
+  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; codexAnalysis?: CodexAnalysisRecord | null; addOptionalComponents?: string[]; portraitPipeline?: WizardState["portraitPipeline"] }; result: InstallationPlan };
   approve_installation: { args: { planId: string }; result: void };
   resolve_installation_conflict: { args: { planId: string; path: string; choice: string }; result: InstallationPlan };
   apply_installation: { args: { planId: string; projectRoot: string }; result: TransactionJournal };
@@ -336,13 +340,18 @@ export async function cancelScan(requestId: string): Promise<CommandResult<void>
   return invokeCommandResult("cancel_scan", { requestId });
 }
 
-export async function evaluateReadiness(projectRoot: string, projectId: string, optional3d: string): Promise<ReadinessReport | null> {
+export async function evaluateReadiness(projectRoot: string, projectId: string, optional3d: string, portraitPipeline?: WizardState["portraitPipeline"]): Promise<ReadinessReport | null> {
+  const input: ReadinessInput = {
+    project_id: projectId,
+    project_root: projectRoot,
+    workflow_3d_state: optional3d,
+  };
+  if (portraitPipeline) {
+    input.portrait_provider = portraitPipeline.provider;
+    input.portrait_provider_status = portraitPipeline.providerStatus;
+  }
   const raw = await invokeCommand("evaluate_readiness", {
-    input: {
-      project_id: projectId,
-      project_root: projectRoot,
-      workflow_3d_state: optional3d,
-    },
+    input,
   });
   if (!raw) return null;
   return {
@@ -362,6 +371,17 @@ export async function evaluateReadiness(projectRoot: string, projectId: string, 
 
 export async function run3DHealthCheck(projectRoot: string): Promise<WorkflowHealthResult | null> {
   return invokeCommand("run_3d_health_check", { projectRoot });
+}
+
+export async function inspectLocalPortraitProvider(configuredRoot: string, serverUrl: string): Promise<LocalPortraitDiscovery | null> {
+  return invokeCommand("inspect_local_portrait_provider", {
+    configuredRoot: configuredRoot.trim() || null,
+    serverUrl,
+  });
+}
+
+export async function installLocalPortraitWorkflows(comfyuiRoot: string): Promise<CommandResult<LocalPortraitInstallResult>> {
+  return invokeCommandResult("install_local_portrait_workflows", { comfyuiRoot });
 }
 
 export async function runMcpHealthCheck(projectRoot: string): Promise<WorkflowHealthResult | null> {
@@ -402,8 +422,10 @@ export async function resolveInstallationConflict(planId: string, path: string, 
   return invokeCommand("resolve_installation_conflict", { planId, path, choice });
 }
 
-export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord, addOptionalComponents: string[] = []): Promise<InstallationPlan | null> {
-  return invokeCommand("build_maintenance_plan", { mode, projectRoot, codexAnalysis: codexAnalysis ?? null, addOptionalComponents });
+export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord, addOptionalComponents: string[] = [], portraitPipeline?: WizardState["portraitPipeline"]): Promise<InstallationPlan | null> {
+  const args: TauriCommandMap["build_maintenance_plan"]["args"] = { mode, projectRoot, codexAnalysis: codexAnalysis ?? null, addOptionalComponents };
+  if (portraitPipeline) args.portraitPipeline = portraitPipeline;
+  return invokeCommand("build_maintenance_plan", args);
 }
 
 export async function rollbackInstallation(projectRoot: string, transactionId: string): Promise<TransactionJournal | null> {

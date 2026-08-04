@@ -31,20 +31,19 @@ dependencies, commands, packages, servers, or support.
 When Codex is selected, offer an optional Components checkbox for
 `<mod_project>/chatgpt_project_sources/`. Flatten each skill to `<skill>.md`;
 include selected subagents, adapted AGENTS, and README.
-Use normal transaction/recovery; recommend ChatGPT "Chat" only, never upload or
+Use transaction/recovery; recommend ChatGPT "Chat" only, never upload or
 start planning.
 
-Ask exactly **Do you want to set up the 3D models workflow?**, then immediately
-**Do you want to set up the Super Events workflow?** The optional
-`workflow.super_events` selects only the verified manifest tree at
-`.agents/skills/hoi4-super-events/`; it has no credential, is non-blocking, and
-its state is remembered in the lock and scan. Unselected installs receive no
-Super Events `AGENTS.md` guidance. Update may add it; Repair
-may add it only from the same locked revision, otherwise use Update. Store Meshy
-in Windows Credential Manager or macOS Keychain, inject only `MESHY_API_KEY`,
-keep a missing key non-blocking, and do not invent a macOS route. LoRA/ComfyUI
-is not setup state; after success, link to
-`https://github.com/klimPaskov/comfyui-hoi4-portraits`.
+Show **3D models workflow**, then immediately **Super Events workflow**. The optional
+`workflow.super_events` selects only `.agents/skills/hoi4-super-events/`; it is
+credential-free, non-blocking, and remembered in the lock and scan. Unselected
+installs receive no Super Events guidance. Update may add it; Repair may add it
+only from the locked revision. Store Meshy in Windows Credential Manager or
+macOS Keychain, inject only `MESHY_API_KEY`, keep a missing key non-blocking,
+and do not invent a macOS route. Then offer optional ComfyUI portrait production
+(Cloud, Local, RunPod, or Disabled), persist the choice, register Cloud MCP
+when enabled, and strip ComfyUI guidance when disabled. See
+`docs/32_comfyui_portrait_pipeline.md`.
 
 Never silently overwrite modified files: compare base/local/incoming and offer
 keep/replace/merge/rename/skip. Use the 12 stages (preflight, exact source,

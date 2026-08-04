@@ -6,10 +6,11 @@ Optional workflows use the same component, transaction, update, and readiness ar
 
 The current optional registry includes:
 
-| Component | Question order | Destination | Credentials and actions | Core blocking |
+| Component | Order and title | Destination | Credentials and actions | Core blocking |
 | --- | --- | --- | --- | --- |
-| `workflow.3d` | first | manifest-declared 3D files | Meshy reference and repository-declared actions when selected | no |
-| `workflow.super_events` | immediately after the 3D question | skill plus manifest-declared `interface/`, `common/`, `events/`, `localisation/`, `gfx/`, and guide files | none | no |
+| `workflow.3d` | first: **3D models workflow** | manifest-declared 3D files | Meshy reference and repository-declared actions when selected | no |
+| `workflow.super_events` | second: **Super Events workflow** | skill plus manifest-declared `interface/`, `common/`, `events/`, `localisation/`, `gfx/`, and guide files | none | no |
+| `workflow.portraits.<provider>` | third: **ComfyUI portrait production** | provider-neutral contract plus the selected provider skill, subagent, config, and upstream lock | provider-specific setup guidance | no |
 
 `workflow.super_events` is provider-neutral. Provider configuration is still
 required for a planning session, but this component does not change provider
@@ -22,7 +23,7 @@ templates. Declining it installs none of those dependencies.
 
 Every optional workflow provides:
 
-- metadata and question text
+- metadata and title text
 - explanation
 - platform support resolver
 - dependencies
@@ -57,6 +58,17 @@ Optional checks use `blocking: false` for the core readiness gate. A selected wo
 
 This prevents a missing optional workflow key from blocking normal provider use and prevents an incomplete workflow from looking ready. A missing selected-provider configuration still blocks semantic planning; Codex-only controls remain hidden for other providers.
 
+Portraits use the same non-blocking core gate. Generic projects support Cloud,
+Local, RunPod, and Disabled. A selected portrait provider has its own honest
+state and cannot be reported as final while it is unauthorized, unsubscribed,
+missing models/workflows, unreachable, or waiting for a RunPod URL/workflow.
+Disabled removes the provider components and all ComfyUI-specific marker
+content while retaining source-based portrait handling. Non-sourced fictional
+or impossible portraits always use native ImageGen and never use the ComfyUI
+workflow. See
+`docs/32_comfyui_portrait_pipeline.md` for the provider contract and current
+upstream evidence.
+
 ## Dependencies
 
 Selecting a workflow expands its dependency DAG. Automatically selected dependencies remain visible with an explanation. Deselecting a required dependency either deselects the workflow or explains the reverse dependency.
@@ -76,13 +88,12 @@ Super Events-specific `AGENTS.md` guidance.
 
 ## Future workflows
 
-A new workflow should require no wizard redesign. The manifest adds a component and the UI renders question, explanation, dependencies, credentials, readiness, and maintenance actions.
+A new workflow should require no wizard redesign. The manifest adds a component and the UI renders its title, explanation, dependencies, credentials, readiness, and maintenance actions.
 
-External workflow links shown after completion do not implement this interface
-and do not enter project state, plans, locks, maintenance, or readiness. In
-version 1 the only such link is the fixed HTTPS GitHub destination
-`https://github.com/klimPaskov/comfyui-hoi4-portraits`, opened through the typed
-browser action rather than a shell or dynamic URL.
+The portrait workflow implements this interface. Its provider choice enters
+project state, plans, locks, maintenance, and readiness as non-secret state;
+provider credentials do not. The canonical repository and exact revision are
+recorded as source evidence rather than copied as unpinned instructions.
 
 ## Acceptance rules
 
@@ -92,8 +103,13 @@ browser action rather than a shell or dynamic URL.
 - state persists across update and repair
 - removal respects reverse dependencies
 - core and optional readiness remain distinct
-- the optional question order remains 3D first and Super Events immediately
-  after it
+- the optional title order remains **3D models workflow**, then **Super Events workflow**
 - adding Super Events during Repair is allowed only when the locked manifest at
   the same immutable revision declares the component; otherwise Update is the
   required route
+- portrait provider selection persists across import, settings, Update, and
+  Repair
+- disabled portrait projects contain no provider components, Cloud MCP entry,
+  marker section, or ComfyUI-specific guidance
+- selected portrait providers remain non-blocking to core AI readiness but do
+  not claim final portrait completion before their provider checks pass

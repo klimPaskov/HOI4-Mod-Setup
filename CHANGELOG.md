@@ -4,6 +4,10 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+No unreleased changes.
+
+## 0.2.2 - 2026-08-04
+
 - Show live percentage and estimated time while preparing the installation review.
 - Open maintenance plans in visible review, fix the Codex desktop opener, simplify Ready-screen optional states, and link the product repository and ChatGPT handoff correctly.
 

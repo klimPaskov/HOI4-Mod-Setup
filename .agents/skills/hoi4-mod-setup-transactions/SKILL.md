@@ -241,7 +241,10 @@ pass.
 
 Legacy locks may contain `workflow.lora_comfyui_interest`. Keep them readable
 for recovery, but ignore that preference during scanning and readiness and
-remove it from every newly verified lock; it is no longer a product workflow.
+remove it from every newly verified lock. Current portrait provider state is a
+separate non-secret lock object. Disabling it during Update or Repair removes
+only unchanged managed portrait files; modified files remain explicit review
+operations, and rollback restores the predecessor lock normally.
 
 Opaque OS-vault credential references are carried separately from secret values. A lock refresh may preserve the non-secret Meshy reference only in the selected `workflow.3d` entry; provider-key references remain core-owned and outside project state, plans, and locks. Managed removal clears optional-workflow references without deleting an OS credential implicitly. A flatten preference is copied only when the selected provider is Codex.
 

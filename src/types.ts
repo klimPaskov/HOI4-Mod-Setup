@@ -24,6 +24,24 @@ export type AiProviderId = "codex" | "claude" | "kimi" | "glm" | "deepseek" | "l
 
 export type WorkflowState = "not_selected" | "selected_pending" | "ready" | "incomplete" | "planned_unavailable" | "unsupported_platform";
 
+export type PortraitProviderId = "cloud" | "local" | "runpod" | "disabled";
+export type PortraitProviderStatus = "not_selected" | "ready" | "needs_authorization" | "needs_subscription" | "needs_huggingface_access" | "needs_models" | "needs_workflow_install" | "needs_hardware" | "needs_runpod" | "unreachable" | "temporarily_unavailable";
+
+export interface PortraitPipelineState {
+  enabled: boolean;
+  provider: PortraitProviderId;
+  providerStatus: PortraitProviderStatus;
+  workflowRepository: string;
+  workflowBranch: string;
+  workflowCommit: string;
+  preferredWorkflow: "source" | "processing_only";
+  localComfyuiRoot: string;
+  localServerUrl: string;
+  runpodUrl: string;
+  runpodWorkspace: string;
+  mcpRegistered: boolean;
+}
+
 export type StatusTone = "pass" | "review" | "block" | "info" | "muted";
 
 export interface AppUpdateStatus {
@@ -246,6 +264,33 @@ export interface WorkflowHealthResult {
   stderr: string;
 }
 
+export interface LocalPortraitDiscovery {
+  status: PortraitProviderStatus | string;
+  configuredRoot?: string | null;
+  detectedRoot?: string | null;
+  serverUrl: string;
+  serverStatus: string;
+  hardwareStatus: string;
+  gpuName?: string | null;
+  vramGb?: number | null;
+  workflowStatus: string;
+  modelStatus: string;
+  huggingfaceAccessHint: boolean;
+  message: string;
+  canonicalRepository: string;
+  canonicalCommit: string;
+  installCommand: string;
+}
+
+export interface LocalPortraitInstallResult {
+  status: string;
+  installed: string[];
+  skipped: string[];
+  conflicts: string[];
+  message: string;
+  canonicalCommit: string;
+}
+
 export interface GeneratedArtifactPreview {
   component_id: string;
   destination: string;
@@ -390,6 +435,20 @@ export interface InstallationPlan {
   git_setup?: { mode: "initialize" | "preserve" | "skip"; branch: string; initial_commit: boolean; remote_name?: string | null; remote_url?: string | null; push_approved: boolean } | null;
   credential_references?: CredentialReference[];
   optional_workflows?: Record<string, string>;
+  portrait_pipeline?: {
+    enabled: boolean;
+    provider: PortraitProviderId;
+    provider_status: PortraitProviderStatus | string;
+    workflow_repository: string;
+    workflow_branch: string;
+    workflow_commit: string;
+    preferred_workflow: string;
+    local_comfyui_root?: string;
+    local_server_url?: string;
+    runpod_url?: string;
+    runpod_workspace?: string;
+    mcp_registered: boolean;
+  } | null;
   operations: InstallationPlanOperation[];
   conflicts: InstallationPlanConflict[];
   external_actions?: InstallationExternalAction[];
@@ -472,6 +531,7 @@ export interface WizardState {
   components: ComponentRow[];
   meshSelected: boolean;
   superEventsSelected: boolean;
+  portraitPipeline: PortraitPipelineState;
   meshKeyDraft: string;
   meshKeyStatus: "missing" | "present" | "verified" | "unsupported";
   meshCredentialReference?: CredentialReference;
@@ -493,6 +553,8 @@ export interface WizardState {
   existingInstallationDetected?: boolean;
   installedWorkflow3dState?: WorkflowState;
   installedSuperEventsState?: WorkflowState;
+  installedPortraitState?: WorkflowState;
+  installedPortraitProvider?: PortraitProviderId;
   scanContext?: { scanId: string; projectRoot: string; completedAt?: string | null; partial?: boolean; limitsHit?: string[] };
   conflictChoice?: ConflictChoice;
   recoveryChoice: RecoveryChoice;

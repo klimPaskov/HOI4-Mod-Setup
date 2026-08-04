@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const read = (relativePath) => readFileSync(resolve(root, relativePath), "utf8");
 const app = read("src/App.tsx");
+const activeApp = app.replace(/\/\*[\s\S]*?\*\//g, "");
 const css = read("src/styles.css");
 const types = read("src/types.ts");
 const tauri = read("src/lib/tauri.ts");
@@ -30,9 +31,10 @@ const requiredAppTokens = [
 
 const requiredPhaseLabels = ["Project", "Review", "Components", "Integrations", "Git", "Install", "Ready", "Overview", "Update", "Conflicts", "Recovery"];
 const requiredScreens = ["welcome", "description", "identity", "scan", "findings", "components", "workflows", "mesh", "mcp", "git", "dry-run", "install", "ready", "update", "conflict", "recovery"];
-const optionalQuestions = [
-  "Do you want to set up the 3D models workflow?",
-  "Do you want to set up the Super Events workflow?",
+const optionalWorkflowTitles = [
+  "3D models workflow",
+  "Super Events workflow",
+  "ComfyUI portrait production",
 ];
 const requiredCssTokens = [":focus-visible", "prefers-reduced-motion", "@media (min-width: 1920px)", "@media (max-width: 560px)", "overflow: auto", ".visually-hidden", ".button.primary:disabled", ".toggle-row > span:last-child", ".path-preview", "overflow-wrap: anywhere", "min-width: 0", ".provider-panel", ".provider-help"];
 const requiredTypeTokens = ["conflictChoice?: ConflictChoice", "recoveryChoice: RecoveryChoice", "interface InstallationPlan", "interface TransactionJournal"];
@@ -45,7 +47,10 @@ for (const screen of requiredScreens) {
   const screenToken = screen === "dry-run" ? '"dry-run":' : `${screen}:`;
   if (!app.includes(screenToken)) throw new Error(`missing screen definition: ${screen}`);
 }
-for (const question of optionalQuestions) if (!app.includes(question)) throw new Error(`optional question is not exact: ${question}`);
+for (const title of optionalWorkflowTitles) if (!activeApp.includes(title)) throw new Error(`optional workflow title is missing: ${title}`);
+for (const question of ["Do you want to set up the 3D models workflow?", "Do you want to set up the Super Events workflow?", "Do you want to set up the portrait production workflow?"]) {
+  if (activeApp.includes(question)) throw new Error(`question-form workflow title remains: ${question}`);
+}
 if (app.includes("Do you want to set up LoRAs and ComfyUI for portrait generation?")) throw new Error("removed portrait setup question is still present");
 const portraitLinkCount = app.split(portraitRepositoryUrl).length - 1;
 if (portraitLinkCount !== 1) throw new Error(`expected one Ready-screen portrait link, found ${portraitLinkCount}`);
@@ -69,4 +74,4 @@ for (const token of requiredTypeTokens) if (!types.includes(token)) throw new Er
 for (const token of requiredTauriTokens) if (!tauri.includes(token)) throw new Error(`missing typed Tauri boundary hook: ${token}`);
 if (app.includes("import(\"./lib/tauri\")") || app.includes("invokeCommand")) throw new Error("App.tsx must use named typed Tauri wrappers, not the low-level invoker");
 
-console.log("Accessibility contract covers seven setup phases, four maintenance phases, 16 screens, keyboard/focus hooks, disclosure escape handling, reduced motion, scaling, both ordered workflow questions, one completed-Ready portrait link, and the typed Tauri boundary.");
+console.log("Accessibility contract covers seven setup phases, four maintenance phases, 16 screens, keyboard/focus hooks, disclosure escape handling, reduced motion, scaling, ordered declarative workflow titles, one completed-Ready portrait link, and the typed Tauri boundary.");

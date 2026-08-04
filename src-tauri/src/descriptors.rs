@@ -2,6 +2,7 @@
 
 use crate::models::GeneratedArtifact;
 use crate::models::ProjectIdentity;
+use crate::paths::user_facing_path;
 use crate::security::{sha256_bytes, validate_external_destination};
 use crate::AppError;
 use regex::Regex;
@@ -235,14 +236,15 @@ pub fn render_launcher_descriptor(
     project_root: &Path,
 ) -> Result<String, AppError> {
     let descriptor = render_descriptor_mod(identity)?;
-    let path = project_root
+    let raw_path = project_root
         .to_str()
         .ok_or_else(|| AppError::InvalidInput("project path is not valid Unicode".into()))?;
-    if path.contains('\0') || path.contains('\n') || path.contains('\r') {
+    if raw_path.contains('\0') || raw_path.contains('\n') || raw_path.contains('\r') {
         return Err(AppError::InvalidInput(
             "project path contains a descriptor-breaking control character".into(),
         ));
     }
+    let path = user_facing_path(project_root);
     Ok(format!(
         "{descriptor}path=\"{}\"\n",
         quote(&path.replace('\\', "/"))
@@ -386,6 +388,19 @@ mod tests {
         assert!(text.contains("path=\"C:/mods/cold_war_curtain\""));
         assert!(!text.contains("script_prefix="));
         assert!(!text.contains("namespace="));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn launcher_descriptor_removes_windows_verbatim_path_prefix() {
+        let identity = identity();
+        let text =
+            render_launcher_descriptor(&identity, Path::new(r"\\?\C:\mods\cold_war_curtain"))
+                .unwrap();
+
+        assert!(text.contains("path=\"C:/mods/cold_war_curtain\""));
+        assert!(!text.contains("/?/"));
+        assert!(!text.contains("//?/"));
     }
 
     #[test]

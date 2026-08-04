@@ -370,9 +370,9 @@ describe("HOI4 Mod Setup wizard", () => {
       onReanalyze={vi.fn().mockResolvedValue(true)}
     />);
 
-    expect(screen.getByText("Do you want to set up the 3D models workflow?")).toBeInTheDocument();
-    expect(screen.getByText("Do you want to set up the Super Events workflow?")).toBeInTheDocument();
-    expect(screen.getAllByText("Add it during the next update or repair")).toHaveLength(2);
+    expect(screen.getByText("3D models workflow")).toBeInTheDocument();
+    expect(screen.getAllByText("Super Events workflow")).toHaveLength(2);
+    expect(screen.getAllByText("Add it during the next update or repair")).toHaveLength(3);
     fireEvent.click(screen.getByRole("button", { name: /Repair installation/ }));
     expect(onStartMaintenance).toHaveBeenCalledWith("repair");
 
@@ -400,19 +400,19 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByLabelText("Meshy API key")).toBeInTheDocument();
   });
 
-  it("keeps the 3D question exact and places Super Events immediately after it", async () => {
+  it("uses declarative workflow titles and places Super Events immediately after 3D", async () => {
     await renderAuthenticatedApp();
     fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
-    const modelsWorkflow = screen.getByRole("switch", { name: /Do you want to set up the 3D models workflow\?/ });
-    const superEventsWorkflow = screen.getByRole("switch", { name: /Do you want to set up the Super Events workflow\?/ });
+    const modelsWorkflow = screen.getByRole("switch", { name: /3D models workflow/ });
+    const superEventsWorkflow = screen.getByRole("switch", { name: /Super Events workflow/ });
     expect(modelsWorkflow.compareDocumentPosition(superEventsWorkflow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(superEventsWorkflow);
     expect(superEventsWorkflow).toHaveAttribute("aria-checked", "true");
-    expect(screen.queryByText(/LoRA|ComfyUI/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/LoRA/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     expect(screen.getByRole("heading", { name: "MCP and credentials" })).toBeInTheDocument();
   });
@@ -438,18 +438,18 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.queryByRole("button", { name: /check 3d setup/i })).not.toBeInTheDocument();
   });
 
-  it("links to the separate portrait workflow only after core setup succeeds", () => {
+  it("shows selected portrait provider guidance only after core setup succeeds", () => {
     const { rerender } = render(<Ready state={{ ...readyState(), readiness: null }} update={vi.fn()} onMaintenance={vi.fn()} />);
     expect(screen.queryByRole("link", { name: /portrait workflow/i })).not.toBeInTheDocument();
 
     rerender(<Ready state={{ ...readyState(), readiness: { openInCodex: false, coreReady: false, blockingCheckIds: ["descriptor.project"], checks: [] } }} update={vi.fn()} onMaintenance={vi.fn()} />);
     expect(screen.queryByRole("link", { name: /portrait workflow/i })).not.toBeInTheDocument();
 
-    rerender(<Ready state={readyState()} update={vi.fn()} onMaintenance={vi.fn()} />);
-    const links = screen.getAllByRole("link", { name: "Optional portrait workflow: Explore ComfyUI HOI4 Portraits on GitHub" });
+    rerender(<Ready state={{ ...readyState(), portraitPipeline: { enabled: true, provider: "cloud" } } as unknown as WizardState} update={vi.fn()} onMaintenance={vi.fn()} />);
+    const links = screen.getAllByRole("link", { name: "Portrait production source and setup guidance" });
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", "https://github.com/klimPaskov/comfyui-hoi4-portraits");
-    expect(screen.queryByRole("switch", { name: /LoRA|ComfyUI|portrait/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/Comfy Cloud: Not reported/i)).toBeInTheDocument();
   });
 
   it("links prepared ChatGPT sources directly to ChatGPT Chat", () => {

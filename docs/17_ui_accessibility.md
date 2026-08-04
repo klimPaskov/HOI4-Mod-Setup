@@ -106,16 +106,17 @@ Do not display permanent keyboard shortcut hints in the footer. Keyboard support
 4. **Existing project scan**: visible bounded launcher-candidate confirmation before one progress surface with current scan stage, detected count, and cancel or pause.
 5. **Finding review**: compact finding list and one selected finding. Show evidence only for the selected item.
 6. **Component selection**: recommended component rows, sizes, one collapsed dependency and file-list control.
-7. **Optional workflows**: two concise rows in order—the exact 3D question,
-   immediately followed by **Do you want to set up the Super Events workflow?**
+7. **Optional workflows**: two concise rows in order—**3D models workflow**,
+   immediately followed by **Super Events workflow**.
    The Super Events row shows no credential control or provider-specific
-   status.
+   status. The portrait row shows a provider choice only when enabled, and
+   provider-specific setup evidence uses progressive disclosure.
 8. **3D and Meshy key**: credential field, secure-storage choice, test action, compact status, requirements open by default. Keep credential actions visibly separated from the field; Configure later advances without deleting an existing stored key.
 9. **MCP and credentials**: compact server rows and credential names. Expand capabilities and environment details on demand.
 10. **Git setup**: three choices, branch and commit fields for the selected choice, remote and advanced options collapsed.
 11. **Install review**: change counts, a read-only summary of selected ChatGPT project files, short plan summary, preflight state, and a lazily rendered full file-and-folder plan on demand. Show starter directories as **Create folder** entries and never as `.gitkeep` files. Keep the preparation panel aligned to the same maximum width as the review below it.
 12. **Installation progress**: one progress bar with the current `x of y files` count, percentage, and time estimate; six grouped stages; transaction log collapsed.
-13. **Final readiness**: one success state, an Open in Codex action only for Codex, four grouped core checks, compact 3D state without a duplicate health button, a direct `https://chatgpt.com` handoff when flattened Chat sources were prepared, and one concise fixed HTTPS external portrait-workflow link.
+13. **Final readiness**: one success state, an Open in Codex action only for Codex, grouped core checks, compact 3D/Super Events state, portrait provider state when selected, and a direct `https://chatgpt.com` handoff when flattened Chat sources were prepared.
 14. **Update and repair**: four primary maintenance actions and a short installed-state list.
 15. **Merge conflict review**: local and incoming comparison, resolution choices, result preview after selection.
 16. **Interrupted recovery**: one checkpoint summary and three recovery choices.
@@ -124,7 +125,8 @@ The final readiness area also shows the non-blocking `workflow.super_events`
 state beside 3D, without adding a separate screen.
 
 When scan evidence identifies a managed installation, the maintenance screen
-offers **Repair or add workflows**. Show the exact 3D or Super Events question
+offers **Repair or add workflows**. Show the **3D models workflow** or
+**Super Events workflow** title
 again only for its previously unselected workflow; an installed workflow is a
 non-duplicating state. The Super Events state never exposes a credential field.
 

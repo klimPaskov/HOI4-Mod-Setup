@@ -80,6 +80,20 @@
     "workflow.3d": "ready",
     "workflow.super_events": "ready"
   },
+  "portrait_pipeline": {
+    "enabled": false,
+    "provider": "disabled",
+    "provider_status": "not_selected",
+    "workflow_repository": "https://github.com/klimPaskov/comfyui-hoi4-portraits",
+    "workflow_branch": "codex/portrait-pipeline",
+    "workflow_commit": "92c8118f9ab61a0a658af24bc6868ed7f93cdebd",
+    "preferred_workflow": "source",
+    "local_comfyui_root": "",
+    "local_server_url": "http://127.0.0.1:8188",
+    "runpod_url": "",
+    "runpod_workspace": "/workspace/comfyui-hoi4-portraits",
+    "mcp_registered": false
+  },
   "operations": [
     {
       "id": "op-launcher-001",
