@@ -152,9 +152,15 @@ the checkbox and Open in Codex action are absent.
 
 Descriptors, provider-adapted AGENTS and README, flattened Chat sources, TOML merge, scan, plan, lock, readiness, journal, and conflict preview. Golden updates require review.
 
+ChatGPT source-export tests cover eligibility from the three core component IDs,
+the Downloads default, required/default selection, optional root Markdown
+selection, stale selection rejection, UTF-8 and secret-shaped content
+rejection, links/traversal, archive collisions and size limits, no-overwrite,
+atomic output, and unchanged project contents.
+
 ## UI tests
 
-Keyboard traversal, focus order, screen reader labels, contrast, scaling, long paths, long translations, error states, reduced motion, and visual regression for all 16 screen states. Add density assertions for the seven-phase rail, one primary task per screen, maximum visible content regions, collapsed secondary details, absence of permanent keyboard hints, and no repeated explanatory copy.
+Keyboard traversal, focus order, screen reader labels, contrast, scaling, long paths, long translations, error states, reduced motion, and visual regression for all 17 screen states. Add density assertions for the seven-phase rail, one primary task per screen, maximum visible content regions, collapsed secondary details, absence of permanent keyboard hints, and no repeated explanatory copy.
 
 ## Security tests
 
@@ -208,6 +214,8 @@ Validate the public repository layer:
 - committed-secret pattern checks pass
 - updater metadata contains all three supported targets, exact release URLs,
   and non-empty signatures for the final platform packages
+- startup update tests show an available version and begin one automatic signed
+  installation, while failure leaves the app usable and exposes retry
 
 ## Skill drift tests
 

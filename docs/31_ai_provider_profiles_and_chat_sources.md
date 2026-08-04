@@ -89,6 +89,25 @@ The final screen recommends:
 This is only a recommendation. Version 1 does not upload the folder, open a
 ChatGPT conversation, or start planning automatically.
 
+## Existing-project ChatGPT source package
+
+The initial-install flatten option remains Codex-only. Separately, once an
+existing managed project contains `core.agents`, `core.skills`, and
+`core.subagents`, **Manage an existing project** can package its installed
+ChatGPT sources regardless of the current planning-provider screen. The page
+defaults to the native Downloads folder and shows:
+
+- `AGENTS.md` and `README.md`;
+- every direct `.agents/skills/<skill>/SKILL.md` as `<skill>.md`;
+- every direct `.codex/agents/*.toml`; and
+- every other immediate root `*.md` file as an unchecked optional entry.
+
+Required entries are selected and disabled. Optional root Markdown can be
+selected before packaging. Rust re-discovers and revalidates the files, writes
+a new ZIP outside the project, refuses overwrite, and reports the archive path,
+included files, byte count, and SHA-256. This export does not upload to ChatGPT,
+change provider state, or modify the project.
+
 ## Migration and readiness
 
 Older state defaults to the Codex profile and its existing App Server behavior.

@@ -12,6 +12,22 @@ key-configured bit, and `workflow.super_events` state. It does not treat a
 guessed file list as an
 installation record.
 
+If the component IDs include `core.agents`, `core.skills`, and
+`core.subagents`, also show **Package ChatGPT project sources**. This is an
+export action, not an update or repair transaction. The page defaults to the
+validated Downloads directory and reads the installed project files only.
+
+## ChatGPT source package
+
+The preview includes `AGENTS.md`, `README.md`, every direct
+`.agents/skills/<skill>/SKILL.md` flattened to `<skill>.md`, and every direct
+`.codex/agents/*.toml`, selected by default. Immediate root Markdown files
+other than the two required files are shown as optional unchecked entries.
+The user may choose another existing external directory. Packaging revalidates
+the project and selection, rejects links, traversal, collisions, oversized or
+secret-shaped files, refuses overwrite, and atomically writes a new ZIP. It
+does not create a project journal, backup, lock update, or project mutation.
+
 ## Update
 
 Latest mode resolves the current default branch. Pinned mode stays fixed until the user selects another commit or release.

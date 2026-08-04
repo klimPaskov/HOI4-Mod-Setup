@@ -96,6 +96,11 @@ session, cancellation, credential-health, or analysis assertions.
   and secret-shaped content while preserving the source transaction boundary;
   large selected wiki trees and other ineligible component files neither enter
   the flat output nor consume its file and size limits
+- existing-project ChatGPT export discovers only root AGENTS/README, direct
+  skill SKILL.md files, direct TOML subagents, and immediate root Markdown;
+  required/default selection, optional Markdown, Downloads defaults, stale
+  selections, archive limits/collisions, atomic no-overwrite output, no-secret
+  behavior, and unchanged project contents are tested
 - App Server account data and tokens never survive serialization
 - login cancellation targets one validated App Server `loginId`, calls the
   managed cancel method, and cannot clear or cancel another active attempt
@@ -126,6 +131,9 @@ session, cancellation, credential-health, or analysis assertions.
 - the managed lock, completed scan context, and readiness result remain the
   remembered state across review/maintenance until an explicit refresh or
   transaction changes them
+- an available signed app update starts once on startup, a duplicate startup
+  check cannot start a second install, and a failed install preserves setup and
+  exposes a retry
 
 ## Fault injection
 
@@ -139,7 +147,7 @@ state without account identity or secret values, unknown routes are ignored,
 and production builds cannot activate the fixture. Capture at 1280 by 960 from
 the top of the page so comparison evidence is consistent.
 
-Test all 16 required screen states and seven phases. Include density assertions, keyboard traversal, scaling, reduced motion, long values, errors, conflict comparison, staged scanner progress, correlated event filtering, indeterminate progress semantics, and cancellation evidence messaging. Assert the **3D models workflow** title and the immediately following **Super Events workflow** order.
+Test all 17 required screen states and seven phases. Include density assertions, keyboard traversal, scaling, reduced motion, long values, errors, conflict comparison, staged scanner progress, correlated event filtering, indeterminate progress semantics, and cancellation evidence messaging. Assert the **3D models workflow** title and the immediately following **Super Events workflow** order.
 
 Keep a desktop responsiveness regression test that verifies every Tauri command
 uses `#[tauri::command(async)]` so blocking Rust core work cannot run on the UI

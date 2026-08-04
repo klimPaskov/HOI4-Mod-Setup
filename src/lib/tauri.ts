@@ -1,4 +1,4 @@
-import type { AiAccountStatus, AiAnalysisRequest, AiProviderProfile, AppUpdateStatus, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
+import type { AiAccountStatus, AiAnalysisRequest, AiProviderProfile, AppUpdateStatus, ChatSourcesPackageResult, ChatSourcesPreview, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
   id: string;
@@ -65,6 +65,7 @@ interface TauriCommandMap {
   confirm_codex_analysis: { args: { record: CodexAnalysisRecord; confirmedFields: string[]; confirmedValues: unknown }; result: CodexAnalysisRecord };
   pick_project_folder: { args: Record<string, never>; result: FolderSelection };
   pick_launcher_folder: { args: Record<string, never>; result: FolderSelection };
+  pick_chat_sources_folder: { args: Record<string, never>; result: FolderSelection };
   suggest_project_paths: { args: { projectId: string }; result: SuggestedProjectPaths };
   preview_source_manifest: { args: { sourceMode: WizardState["sourceMode"]; pinnedRef: string }; result: SourceManifestPreview };
   store_meshy_credential: { args: { value: string }; result: CredentialReference };
@@ -72,6 +73,8 @@ interface TauriCommandMap {
   remove_meshy_credential: { args: { reference: CredentialReference }; result: void };
   scan_project: { args: { root: string; requestId: string; launcherDescriptorPath?: string | null }; result: RawScanResult };
   cancel_scan: { args: { requestId: string }; result: void };
+  preview_chat_sources: { args: { projectRoot: string }; result: ChatSourcesPreview };
+  package_chat_sources: { args: { projectRoot: string; destinationDirectory: string; selectedFileIds: string[] }; result: ChatSourcesPackageResult };
   evaluate_readiness: { args: { input: ReadinessInput }; result: RawReadinessReport };
   run_3d_health_check: { args: { projectRoot: string }; result: WorkflowHealthResult };
   inspect_local_portrait_provider: { args: { configuredRoot?: string | null; serverUrl: string }; result: LocalPortraitDiscovery };
@@ -260,6 +263,10 @@ export async function pickLauncherFolder(): Promise<FolderSelection | null> {
   return invokeCommand("pick_launcher_folder", {});
 }
 
+export async function pickChatSourcesFolder(): Promise<FolderSelection | null> {
+  return invokeCommand("pick_chat_sources_folder", {});
+}
+
 export async function suggestProjectPaths(projectId: string): Promise<SuggestedProjectPaths | null> {
   return invokeCommand("suggest_project_paths", { projectId });
 }
@@ -338,6 +345,22 @@ export async function scanProject(
 
 export async function cancelScan(requestId: string): Promise<CommandResult<void>> {
   return invokeCommandResult("cancel_scan", { requestId });
+}
+
+export async function previewChatSources(projectRoot: string): Promise<CommandResult<ChatSourcesPreview>> {
+  return invokeCommandResult("preview_chat_sources", { projectRoot });
+}
+
+export async function packageChatSources(
+  projectRoot: string,
+  destinationDirectory: string,
+  selectedFileIds: string[],
+): Promise<CommandResult<ChatSourcesPackageResult>> {
+  return invokeCommandResult("package_chat_sources", {
+    projectRoot,
+    destinationDirectory,
+    selectedFileIds,
+  });
 }
 
 export async function evaluateReadiness(projectRoot: string, projectId: string, optional3d: string, portraitPipeline?: WizardState["portraitPipeline"]): Promise<ReadinessReport | null> {

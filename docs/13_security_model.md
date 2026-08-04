@@ -173,7 +173,20 @@ Tauri updater public key embedded in the app. The private updater key exists
 only in the protected release environment and signs final package bytes after
 platform signing. A metadata, platform, version, URL, download, or signature
 failure leaves the running version unchanged and does not block mod setup.
-Installation requires an explicit user action.
+When a newer signed version is found on startup, the app begins the verified
+download, replacement, and restart automatically. A failure leaves the running
+version usable and permits a retry; signature verification cannot be bypassed.
 Release curation stream-verifies every final update artifact with the embedded
 public key before metadata is published, catching stale or mismatched signing
 keys before users can receive an unusable update.
+
+## ChatGPT source package export
+
+The export command accepts only a validated existing project root, a validated
+existing external directory, and a fresh file-ID selection returned by Rust.
+It re-reads each regular file without following links, checks UTF-8, size,
+secret-shaped content, archive-relative names, and collisions, then writes a
+new uncompressed ZIP through a create-new temporary file and atomic rename.
+The destination is never the project root, an existing archive is never
+overwritten, no credentials are read, and a failed export removes only its
+temporary output.

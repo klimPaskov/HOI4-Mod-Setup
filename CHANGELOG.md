@@ -6,6 +6,12 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.2.4 - 2026-08-04
+
+- Automatically install and restart into a newer signed app version found at startup, with a retry path when installation fails.
+- Add an existing-project ChatGPT source-package page with a Downloads default, required flattened source selection, optional root Markdown, safe atomic ZIP output, and no project mutation.
+- Refresh the source-package documentation, sanitized screenshot fixture, and accessibility, security, transaction, testing, and release guidance.
+
 ## 0.2.3 - 2026-08-04
 
 - Update the ComfyUI portrait integration to the current upstream 2.4.1 workflow package, including adaptive source framing, eight pinned model files, current workflow hashes, and the RunPod slim ComfyUI path.

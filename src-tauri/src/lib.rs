@@ -4,6 +4,7 @@
 //! It never receives filesystem or credential authority directly.
 
 pub mod ai;
+pub mod chat_sources;
 pub mod codex;
 pub mod credentials;
 pub mod descriptors;

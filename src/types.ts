@@ -14,7 +14,8 @@ export type ScreenId =
   | "ready"
   | "update"
   | "conflict"
-  | "recovery";
+  | "recovery"
+  | "chat-sources";
 
 export type PhaseId = "project" | "review" | "components" | "integrations" | "git" | "install" | "ready";
 
@@ -48,6 +49,32 @@ export interface AppUpdateStatus {
   currentVersion: string;
   availableVersion?: string | null;
   available: boolean;
+}
+
+export interface ChatSourceFile {
+  id: string;
+  sourcePath: string;
+  archivePath: string;
+  category: "instructions" | "readme" | "skill" | "subagent" | "root_markdown" | string;
+  size: number;
+  required: boolean;
+  selectedByDefault: boolean;
+}
+
+export interface ChatSourcesPreview {
+  eligible: boolean;
+  message?: string | null;
+  projectRoot: string;
+  destinationDirectory: string;
+  archiveName: string;
+  files: ChatSourceFile[];
+}
+
+export interface ChatSourcesPackageResult {
+  archivePath: string;
+  includedFiles: string[];
+  bytes: number;
+  sha256: string;
 }
 
 export type ConflictChoice = "keep" | "replace" | "merge" | "rename" | "skip";
@@ -551,6 +578,11 @@ export interface WizardState {
   maintenanceCodexAnalysisRecord?: CodexAnalysisRecord;
   maintenanceEvidenceReady?: boolean;
   existingInstallationDetected?: boolean;
+  chatSourcesAvailable?: boolean;
+  chatSourcesPreview?: ChatSourcesPreview;
+  chatSourcesDestination?: string;
+  chatSourcesSelectedIds?: string[];
+  chatSourcesResult?: ChatSourcesPackageResult;
   installedWorkflow3dState?: WorkflowState;
   installedSuperEventsState?: WorkflowState;
   installedPortraitState?: WorkflowState;

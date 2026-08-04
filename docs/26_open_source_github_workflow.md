@@ -356,8 +356,9 @@ smoke tests, internal hash validation, curation, and the protected release
 environment gate pass.
 
 Version 0.2.0 introduces the signed application update channel. The app checks
-the fixed latest-release metadata endpoint without blocking setup, shows only
-a verified newer version, and installs only after explicit user action. The
+the fixed latest-release metadata endpoint without blocking setup, shows a
+verified newer version immediately, and automatically installs and restarts
+into it. A failed install leaves the running version usable and retryable. The
 release environment signs the final Windows installer and final macOS app
 archives with the dedicated updater key after platform signing.
 

@@ -118,9 +118,10 @@ Do not display permanent keyboard shortcut hints in the footer. Keyboard support
 11. **Install review**: change counts, a read-only summary of selected ChatGPT project files, short plan summary, preflight state, and a lazily rendered full file-and-folder plan on demand. Show starter directories as **Create folder** entries and never as `.gitkeep` files. Keep the preparation panel aligned to the same maximum width as the review below it.
 12. **Installation progress**: one progress bar with the current `x of y files` count, percentage, and time estimate; six grouped stages; transaction log collapsed.
 13. **Final readiness**: one success state, an Open in Codex action only for Codex, grouped core checks, compact 3D/Super Events state, portrait provider state when selected, and a direct `https://chatgpt.com` handoff when flattened Chat sources were prepared.
-14. **Update and repair**: four primary maintenance actions and a short installed-state list.
-15. **Merge conflict review**: local and incoming comparison, resolution choices, result preview after selection.
-16. **Interrupted recovery**: one checkpoint summary and three recovery choices.
+14. **Update and repair**: four primary maintenance actions, the ChatGPT project-source package action when eligible, and a short installed-state list.
+15. **ChatGPT project-source package**: destination folder, selected source files, required-file lock state, optional root Markdown toggles, and one package action.
+16. **Merge conflict review**: local and incoming comparison, resolution choices, result preview after selection.
+17. **Interrupted recovery**: one checkpoint summary and three recovery choices.
 
 The final readiness area also shows the non-blocking `workflow.super_events`
 state beside 3D, without adding a separate screen.
@@ -246,7 +247,15 @@ healthy, or ready.
 
 ## Application update action
 
-An available application update appears as one compact title-bar action. No
-banner appears when the app is current or the background check is offline. The
-action names the version, is keyboard reachable, disables during install, and
-never blocks the wizard.
+Show a newer application version immediately in one compact, keyboard-accessible
+title-bar status. Start the signed update automatically; announce the version
+being installed without blocking the wizard. On failure, keep one keyboard-
+accessible **Retry update** action. Keep current and offline checks silent.
+
+The existing-project **Package ChatGPT project sources** action appears only
+when the three core Agentic components are detected. Its page has one download-
+folder field, a native folder picker, and one scrollable checkbox list. Required
+files are checked and disabled; optional root Markdown files are unchecked by
+default. The page exposes the package path and included-file result after the
+atomic export, keeps long paths readable at 200 percent scaling, and supports
+keyboard focus and screen-reader labels for every checkbox and action.

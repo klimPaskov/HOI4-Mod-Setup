@@ -1,4 +1,4 @@
-import type { InstallationPlan, ManifestComponentPreview, ReadinessReport, WizardState } from "./types";
+import type { ChatSourcesPreview, InstallationPlan, ManifestComponentPreview, ReadinessReport, WizardState } from "./types";
 
 export const DOCUMENTATION_SCENARIOS = [
   "welcome",
@@ -13,6 +13,7 @@ export const DOCUMENTATION_SCENARIOS = [
   "dry-run",
   "ready",
   "maintenance",
+  "chat-sources",
 ] as const;
 
 export type DocumentationScenario = typeof DOCUMENTATION_SCENARIOS[number];
@@ -256,5 +257,22 @@ export function documentationFixture(base: WizardState): WizardState {
   if (scenario === "dry-run") return { ...common, screen: "dry-run", plan, flattenForChat: true, superEventsSelected: true };
   if (scenario === "ready") return { ...common, screen: "ready", plan, readiness, flattenForChat: true, superEventsSelected: true, portraitPipeline: runpodPortrait, installedSuperEventsState: "ready", selectedComponents: [...common.selectedComponents, ...portraitComponentIds] };
   if (scenario === "maintenance") return { ...common, screen: "update", mode: "existing", plan, readiness, existingInstallationDetected: true, installedWorkflow3dState: "not_selected", installedSuperEventsState: "ready", superEventsSelected: true };
+  if (scenario === "chat-sources") {
+    const chatSourcesPreview: ChatSourcesPreview = {
+      eligible: true,
+      projectRoot: identity.projectRoot,
+      destinationDirectory: "C:\\Users\\Player\\Downloads",
+      archiveName: "atlantis_rising-chatgpt-project-sources.zip",
+      files: [
+        { id: "AGENTS.md", sourcePath: "AGENTS.md", archivePath: "AGENTS.md", category: "instructions", size: 18432, required: true, selectedByDefault: true },
+        { id: "README.md", sourcePath: "README.md", archivePath: "README.md", category: "readme", size: 9216, required: true, selectedByDefault: true },
+        { id: ".agents/skills/hoi4-art/SKILL.md", sourcePath: ".agents/skills/hoi4-art/SKILL.md", archivePath: "hoi4-art.md", category: "skill", size: 14336, required: true, selectedByDefault: true },
+        { id: ".codex/agents/hoi4_researcher.toml", sourcePath: ".codex/agents/hoi4_researcher.toml", archivePath: "hoi4_researcher.toml", category: "subagent", size: 5632, required: true, selectedByDefault: true },
+        { id: "DESIGN_NOTES.md", sourcePath: "DESIGN_NOTES.md", archivePath: "DESIGN_NOTES.md", category: "root_markdown", size: 4096, required: false, selectedByDefault: false },
+        { id: "TODO.md", sourcePath: "TODO.md", archivePath: "TODO.md", category: "root_markdown", size: 3072, required: false, selectedByDefault: false },
+      ],
+    };
+    return { ...common, screen: "chat-sources", mode: "existing", existingInstallationDetected: true, chatSourcesAvailable: true, chatSourcesPreview, chatSourcesDestination: chatSourcesPreview.destinationDirectory, chatSourcesSelectedIds: chatSourcesPreview.files.filter((file) => file.selectedByDefault).map((file) => file.id) };
+  }
   return { ...common, screen: scenario };
 }

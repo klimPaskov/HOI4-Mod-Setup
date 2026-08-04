@@ -306,6 +306,18 @@ All installs and updates use:
 
 Support update, repair, reinstall, rollback, managed removal, optional-workflow changes, later Meshy credential configuration, and later Super Events addition.
 
+### ChatGPT source package export
+
+When an existing managed project has `core.agents`, `core.skills`, and
+`core.subagents`, the maintenance view offers a ChatGPT project-source export.
+The export page defaults to the platform Downloads folder and selects the
+installed `AGENTS.md`, `README.md`, every direct skill flattened to
+`<skill>.md`, and every direct TOML subagent. Other Markdown files immediately
+under the mod root are listed as optional unchecked entries. The package is a
+ZIP written outside the project; it uses validated absolute paths, rejects
+links, traversal, collisions, oversized or secret-shaped content, refuses
+overwrite, and leaves the project unchanged.
+
 ### Readiness
 
 Check the internal descriptor, external launcher descriptor, external destination, descriptor agreement, thumbnail existence and decoding, selected structure, AGENTS, skills, subagents, selected provider instructions, MCP, wiki integrity and page coverage, Git, environment variables, hashes, conflicts, external dependencies, and optional `workflow.3d`, `workflow.super_events`, and portrait-provider states. Codex authentication or selected-provider configuration and confirmed analysis are blocking core checks; optional workflow states are not.

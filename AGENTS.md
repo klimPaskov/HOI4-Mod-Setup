@@ -264,6 +264,16 @@ When enabled, the Ready screen may show one concise external link to
 `https://github.com/klimPaskov/comfyui-hoi4-portraits`; disabled projects retain
 source-based portrait handling without ComfyUI-specific project instructions.
 
+The startup updater always surfaces a newer signed app version, downloads and
+verifies it, replaces the current installation, and restarts. A failed update
+leaves the running version usable and exposes retry.
+
+Manage Existing Project exposes ChatGPT source packaging only when the lock has
+`core.agents`, `core.skills`, and `core.subagents`. Rust discovers the required
+root files, flattened skills, subagents, and optional root Markdown files;
+package output goes to a validated external folder, defaults to Downloads, is
+written atomically without overwriting, and never changes the project.
+
 ## 11. UI rules
 
 Use the seven grouped phases:
