@@ -2840,7 +2840,7 @@ fn portrait_pipeline_from_state(state: &Value) -> Result<PortraitPipelineConfig,
         .unwrap_or_else(|| "http://127.0.0.1:8188".into());
     if provider == "local" {
         crate::portraits::validate_loopback_url(&local_server_url)
-            .map_err(|message| AppError::InvalidInput(message))?;
+            .map_err(AppError::InvalidInput)?;
     }
     let runpod_url = string_field(draft.unwrap_or(&Value::Null), "runpodUrl").unwrap_or_default();
     if provider == "runpod" && !runpod_url.is_empty() {
@@ -2988,6 +2988,7 @@ fn adapt_portrait_config_source(
     Ok(rendered.into_bytes())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn adapt_selected_source(
     component_id: &str,
     bytes: &[u8],
