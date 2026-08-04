@@ -162,7 +162,7 @@ pub fn downloads_directory() -> Result<PathBuf, AppError> {
             .ok_or_else(|| {
                 AppError::PathSecurity("macOS could not resolve the Downloads folder".into())
             })?;
-        return validate_export_directory(&path);
+        validate_export_directory(&path)
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
