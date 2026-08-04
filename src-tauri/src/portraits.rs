@@ -365,7 +365,10 @@ fn find_local_root(configured_root: Option<&str>) -> LocalRoot {
 }
 
 fn candidate_roots() -> Vec<PathBuf> {
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     let mut candidates = Vec::new();
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let candidates = Vec::new();
     #[cfg(target_os = "windows")]
     {
         if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
