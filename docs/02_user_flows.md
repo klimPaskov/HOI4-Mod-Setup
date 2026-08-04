@@ -98,6 +98,8 @@ show the provider choice **Comfy Cloud**, **Local ComfyUI**, or **RunPod**;
 Disabled is the explicit generic-project default. Persist the choice and show
 only the provider-specific setup state needed for the selected route. Do not
 restore the selected provider after import or reopening an installed project.
+The expanded portrait workflow row also shows the minimum recommendation:
+16 GB VRAM and 25 GB storage.
 
 ### MCP, credentials, and Git
 

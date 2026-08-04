@@ -109,7 +109,8 @@ Do not display permanent keyboard shortcut hints in the footer. Keyboard support
 7. **Optional workflows**: two concise rows in order—**3D models workflow**,
    immediately followed by **Super Events workflow**.
    The Super Events row shows no credential control or provider-specific
-   status. The portrait row shows a provider choice only when enabled, and
+   status. The portrait row shows a provider choice and the minimum resource
+   recommendation (16 GB VRAM and 25 GB storage) only when enabled, and
    provider-specific setup evidence uses progressive disclosure.
 8. **3D and Meshy key**: credential field, secure-storage choice, test action, compact status, requirements open by default. Keep credential actions visibly separated from the field; Configure later advances without deleting an existing stored key.
 9. **MCP and credentials**: compact server rows and credential names. Expand capabilities and environment details on demand.
