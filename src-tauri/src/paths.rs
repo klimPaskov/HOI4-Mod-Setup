@@ -140,9 +140,9 @@ pub fn downloads_directory() -> Result<PathBuf, AppError> {
             Some(unsafe { OsString::from_wide(std::slice::from_raw_parts(raw, length)) })
         };
         unsafe { CoTaskMemFree(raw.cast()) };
-        return validate_export_directory(&PathBuf::from(value.ok_or_else(|| {
+        validate_export_directory(&PathBuf::from(value.ok_or_else(|| {
             AppError::PathSecurity("Windows returned an invalid Downloads folder".into())
-        })?));
+        })?))
     }
 
     #[cfg(target_os = "macos")]
