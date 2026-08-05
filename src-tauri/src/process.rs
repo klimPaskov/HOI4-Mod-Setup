@@ -319,6 +319,9 @@ pub(crate) fn configure_child_no_console_window(command: &mut Command) {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = command;
 }
 
 #[cfg(not(unix))]
