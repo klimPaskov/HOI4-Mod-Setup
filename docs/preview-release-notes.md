@@ -1,4 +1,4 @@
-# HOI4 Mod Setup 0.2.4
+# HOI4 Mod Setup 0.2.5
 
 Download the installer for your computer:
 
@@ -12,7 +12,9 @@ handling for non-sourced portraits, and current Windows and macOS packaging.
 The optional workflow panel shows the minimum requirement: 16 GB VRAM and
 25 GB storage. Existing managed projects can package their installed ChatGPT
 sources into a safe ZIP, and newer signed app versions now install
-automatically on startup.
+automatically on startup. The optional Super Events workflow installs runtime
+files using the confirmed mod script prefix rather than the upstream
+`hoi4ms_*` source names.
 
 Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app
 to Applications.

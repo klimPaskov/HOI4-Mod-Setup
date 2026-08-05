@@ -6,6 +6,14 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.2.5 - 2026-08-05
+
+- Adapt Super Events runtime filenames to the confirmed mod script prefix while
+  retaining `hoi4ms_*` only as stable upstream source names; updates and repair
+  remove unchanged legacy filenames and preserve modified ones for review.
+- Remove the retired portrait upstream-lock component and refresh the bundled
+  Agentic HOI4 Modding manifest evidence to the published `main` revision.
+
 ## 0.2.4 - 2026-08-04
 
 - Automatically install and restart into a newer signed app version found at startup, with a retry path when installation fails.

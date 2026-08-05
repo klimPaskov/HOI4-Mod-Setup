@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "manifest_id": "agentic-hoi4-modding",
-  "generated_for_revision": "d37c26c8565269d4aac5ade5ec4f0c7790964909",
+  "generated_for_revision": "59bf7f23c25951ec613b0f36a6921277d16f1354",
   "repository": {
     "provider": "github",
     "owner": "klimPaskov",
@@ -2749,8 +2749,8 @@
       "expected_files": [
         {
           "path": "README.md",
-          "sha256": "85247d16c6c790fd427aa4eeceb84b86259066abb3546ad3768c468aeb9b3236",
-          "size": 13807
+          "sha256": "a7b74a6071c171ca9af632aa762ca612ad154f6ee6186163883e0316e11c1782",
+          "size": 14726
         }
       ]
     },
@@ -5881,8 +5881,8 @@
       "expected_files": [
         {
           "path": ".agents/skills/hoi4-comfyui-cloud/SKILL.md",
-          "sha256": "07786ec50ed324c594af8a4c22e6a727f8efcbce9d74a5569bed25713208c0a3",
-          "size": 1732
+          "sha256": "9e7f86979a8e1644251048c037546d5f7d75b34858ac5736a7c38482d7cd1f55",
+          "size": 2026
         }
       ]
     },
@@ -5928,8 +5928,8 @@
       "expected_files": [
         {
           "path": ".agents/skills/hoi4-comfyui-local/SKILL.md",
-          "sha256": "ce9d8ce7ce2f3e5dca16270d0b89e423c3acc148546bb20f7c1a269f28ea1aeb",
-          "size": 1471
+          "sha256": "e8634ce07c64ba800c5d37ec0cdcf3630e6b44d81be10954843ccf2098423f83",
+          "size": 1907
         }
       ]
     },
@@ -5975,8 +5975,8 @@
       "expected_files": [
         {
           "path": ".agents/skills/hoi4-comfyui-runpod/SKILL.md",
-          "sha256": "7ed538de28d7c621be6803a83f7851fd9e8bad28710980595047a7a4a543e8d9",
-          "size": 1735
+          "sha256": "e8442c9673fff1e42b5e6a36205816db420e35a541d67ace7ee0d2e3759e3c9b",
+          "size": 2267
         }
       ]
     },
@@ -6062,7 +6062,7 @@
       "expected_files": [
         {
           "path": ".codex/portrait_pipeline.toml",
-          "sha256": "a624d3c8127cf950befc525b3eeddfaf01198f342e0a5f52c34808731e9a4913",
+          "sha256": "dc07b67ea5c540732ce616212c87217a2a3aa65455d95f7b0b3e3301a15cac9d",
           "size": 611
         }
       ]
