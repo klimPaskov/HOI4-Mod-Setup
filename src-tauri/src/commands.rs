@@ -27,8 +27,8 @@ use crate::scanner::{
     ScanProgress,
 };
 use crate::security::{
-    path_has_link_component, redact_secrets, safe_join, sha256_bytes, sha256_file,
-    validate_external_destination,
+    canonical_relative_key, path_has_link_component, redact_secrets, safe_join, sha256_bytes,
+    sha256_file, validate_external_destination,
 };
 use crate::source::{
     expand_components, resolve_source, select_component_files, verify_download, HttpSourceClient,
@@ -2289,28 +2289,25 @@ fn preview_source_manifest_blocking(
     })
 }
 
-fn portrait_component_ids(provider: &str) -> Option<[&'static str; 5]> {
+fn portrait_component_ids(provider: &str) -> Option<[&'static str; 4]> {
     match provider {
         "cloud" => Some([
             "workflow.portraits.core",
             "workflow.portraits.cloud",
             "workflow.portraits.subagent",
             "workflow.portraits.config",
-            "workflow.portraits.docs",
         ]),
         "local" => Some([
             "workflow.portraits.core",
             "workflow.portraits.local",
             "workflow.portraits.subagent",
             "workflow.portraits.config",
-            "workflow.portraits.docs",
         ]),
         "runpod" => Some([
             "workflow.portraits.core",
             "workflow.portraits.runpod",
             "workflow.portraits.subagent",
             "workflow.portraits.config",
-            "workflow.portraits.docs",
         ]),
         _ => None,
     }
@@ -2775,16 +2772,11 @@ fn strip_agents_placeholder_guide(text: &str) -> String {
     stripped
 }
 
-fn adapt_super_events_source(
-    bytes: &[u8],
-    identity: &ProjectIdentity,
-) -> Result<Vec<u8>, AppError> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|error| AppError::Source(format!("Super Events source is not UTF-8: {error}")))?;
+fn super_events_prefix(identity: &ProjectIdentity) -> Result<&str, AppError> {
     let prefix = identity
-        .primary_namespace
+        .script_prefix
         .as_deref()
-        .or(identity.script_prefix.as_deref())
+        .or(identity.primary_namespace.as_deref())
         .ok_or_else(|| {
             AppError::InvalidInput(
                 "a confirmed script prefix or primary namespace is required for Super Events"
@@ -2798,6 +2790,16 @@ fn adapt_super_events_source(
             "the Super Events namespace contains unsupported characters".into(),
         ));
     }
+    Ok(prefix)
+}
+
+fn adapt_super_events_source(
+    bytes: &[u8],
+    identity: &ProjectIdentity,
+) -> Result<Vec<u8>, AppError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| AppError::Source(format!("Super Events source is not UTF-8: {error}")))?;
+    let prefix = super_events_prefix(identity)?;
     let escaped_name = identity
         .display_name
         .replace('\\', "\\\\")
@@ -2821,6 +2823,25 @@ fn is_super_events_runtime_component(component_id: &str) -> bool {
             | "workflow.super_events.runtime.events"
             | "workflow.super_events.runtime.localisation"
     )
+}
+
+fn adapt_super_events_destination(
+    component_id: &str,
+    destination: &str,
+    identity: &ProjectIdentity,
+) -> Result<String, AppError> {
+    if !is_super_events_runtime_component(component_id) {
+        return Ok(destination.to_string());
+    }
+    let normalized = destination.replace('\\', "/");
+    let Some((parent, filename)) = normalized.rsplit_once('/') else {
+        return Ok(normalized);
+    };
+    let Some(suffix) = filename.strip_prefix("hoi4ms_") else {
+        return Ok(normalized);
+    };
+    let prefix = super_events_prefix(identity)?;
+    Ok(format!("{parent}/{prefix}_{suffix}"))
 }
 
 fn portrait_pipeline_from_state(state: &Value) -> Result<PortraitPipelineConfig, AppError> {
@@ -3673,7 +3694,20 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     let mut conflicts = Vec::new();
     let mut prepared = Vec::new();
     let mut download_ledger = Vec::new();
+    let mut adapted_destinations = BTreeSet::new();
     for (index, selection) in selections.iter().enumerate() {
+        let adapted_destination = adapt_super_events_destination(
+            &selection.component_id,
+            &selection.destination,
+            &identity,
+        )?;
+        let destination_key = canonical_relative_key(&adapted_destination)
+            .map_err(|error| AppError::Source(error.to_string()))?;
+        if !adapted_destinations.insert(destination_key) {
+            return Err(AppError::Source(format!(
+                "duplicate adapted selected destination: {adapted_destination}"
+            )));
+        }
         let expected_sha256 = selection.expected_sha256.as_deref().ok_or_else(|| {
             AppError::Source(format!(
                 "selected source file lacks SHA-256 evidence: {}",
@@ -3702,7 +3736,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             &portrait_pipeline,
         )?;
         let incoming_sha256 = sha256_bytes(&bytes);
-        let source_destination = safe_join(&root, &selection.destination)?;
+        let source_destination = safe_join(&root, &adapted_destination)?;
         let mut local_sha = if source_destination.is_file() {
             Some(sha256_file(&source_destination)?)
         } else {
@@ -3716,7 +3750,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             Some(hash) if hash == incoming_sha256 => LocalState::Unmodified,
             Some(_) => LocalState::Modified,
         };
-        let mut destination = selection.destination.clone();
+        let mut destination = adapted_destination.clone();
         let mut operation_local_state = local_state;
         let mut action = if local_state == LocalState::Absent {
             OperationAction::Create
@@ -3727,7 +3761,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         };
         let mut selected_choice = None;
         if local_state == LocalState::Modified {
-            let kind = component_kind(component, &selection.destination);
+            let kind = component_kind(component, &adapted_destination);
             let options =
                 allowed_choices(kind, crate::merge::MergeClassification::UserOwnedConflict);
             let choice = choice_from_state(state)
@@ -3740,7 +3774,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                     _ => return Err(AppError::Transaction("invalid conflict choice".into())),
                 };
                 if action == OperationAction::Rename {
-                    destination = renamed_destination(&root, &selection.destination, false)?;
+                    destination = renamed_destination(&root, &adapted_destination, false)?;
                     local_sha = None;
                     operation_local_state = LocalState::Absent;
                 }
@@ -3754,7 +3788,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             }
             conflicts.push(PlanConflict {
                 id: format!("conflict-{index}"),
-                path: selection.destination.clone(),
+                path: adapted_destination.clone(),
                 options,
                 selected: selected_choice.clone(),
                 apply_to_identical: false,
@@ -4605,6 +4639,7 @@ fn append_additional_component_operations(
     selections: &[crate::source::SelectedSourceFile],
     lock: &InstallationLock,
     root: &Path,
+    identity: &ProjectIdentity,
     refresh_agents: bool,
 ) -> Result<(), AppError> {
     let managed_components = lock
@@ -4625,11 +4660,15 @@ fn append_additional_component_operations(
         .collect::<std::collections::HashSet<_>>();
     for (index, selection) in selections.iter().enumerate() {
         let refresh_managed_agents = refresh_agents && selection.component_id == "core.agents";
+        let adapted_destination = adapt_super_events_destination(
+            &selection.component_id,
+            &selection.destination,
+            identity,
+        )?;
         if managed_components.contains(selection.component_id.as_str()) && !refresh_managed_agents {
             continue;
         }
-        if managed_paths.contains(&(selection.destination.as_str(), false))
-            && !refresh_managed_agents
+        if managed_paths.contains(&(adapted_destination.as_str(), false)) && !refresh_managed_agents
         {
             continue;
         }
@@ -4639,7 +4678,7 @@ fn append_additional_component_operations(
                 selection.source_path
             ))
         })?;
-        let destination = safe_join(root, &selection.destination)?;
+        let destination = safe_join(root, &adapted_destination)?;
         let local_sha256 = if destination.is_file() {
             Some(sha256_file(&destination)?)
         } else {
@@ -4649,7 +4688,7 @@ fn append_additional_component_operations(
             .then(|| {
                 lock.files.iter().find(|file| {
                     file.component_id == "core.agents"
-                        && file.path == selection.destination
+                        && file.path == adapted_destination
                         && !file.external
                 })
             })
@@ -4681,7 +4720,7 @@ fn append_additional_component_operations(
             location_scope: Some("project".into()),
             action,
             source_path: Some(selection.source_path.clone()),
-            destination: selection.destination.clone(),
+            destination: adapted_destination,
             source_sha256: Some(expected_sha256.into()),
             source_size: selection.expected_size,
             platform: Some(selection.platform),
@@ -4938,12 +4977,18 @@ fn build_maintenance_plan_blocking(
         let selections = select_component_files(&resolution.manifest, &supported, &tree)
             .map_err(command_error)?;
         let mcp_selected = lock_mcp_selected(&lock);
+        let project_identity = maintenance_identity(&lock, &root);
         if mcp_selected {
             maintenance_mcp_manifest = Some(resolution.manifest.clone());
         }
         let incoming = selections
             .iter()
             .map(|selection| {
+                let destination = adapt_super_events_destination(
+                    &selection.component_id,
+                    &selection.destination,
+                    &project_identity,
+                )?;
                 let expected = selection.expected_sha256.as_deref().ok_or_else(|| {
                     AppError::Source(format!(
                         "selected source file lacks SHA-256 evidence: {}",
@@ -4964,7 +5009,7 @@ fn build_maintenance_plan_blocking(
                 let desired_bytes = adapt_selected_source(
                     &selection.component_id,
                     &source_bytes,
-                    &maintenance_identity(&lock, &root),
+                    &project_identity,
                     &lock.ai_provider,
                     &lock.ai_model,
                     maintenance_components
@@ -4974,7 +5019,7 @@ fn build_maintenance_plan_blocking(
                     &portrait_pipeline,
                 )?;
                 Ok(LockedFile {
-                    path: selection.destination.clone(),
+                    path: destination,
                     location_scope: Some("project".into()),
                     component_id: selection.component_id.clone(),
                     source_path: selection.source_path.clone(),
@@ -5162,6 +5207,7 @@ fn build_maintenance_plan_blocking(
             &selections,
             &lock,
             &root,
+            &maintenance_identity(&lock, &root),
             requested.iter().any(|id| id == "workflow.super_events"),
         )
         .map_err(command_error)?;
@@ -6047,6 +6093,22 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    fn super_events_test_identity() -> ProjectIdentity {
+        ProjectIdentity {
+            display_name: "Example Mod".into(),
+            project_id: "example_mod".into(),
+            author: String::new(),
+            version: "0.1.0".into(),
+            supported_game_version: "1.17.*".into(),
+            project_root: PathBuf::from("C:/mods/example_mod"),
+            default_branch: "main".into(),
+            script_prefix: Some("example".into()),
+            primary_namespace: Some("example".into()),
+            descriptor_tags: Vec::new(),
+            launcher_descriptor_path: None,
+        }
+    }
+
     #[test]
     fn three_d_failures_return_a_redacted_non_blocking_result() {
         let result = three_d_failure("Bearer private-health-token timed out".into());
@@ -6395,7 +6457,6 @@ mcp_server = "comfy_cloud_portraits"
             "workflow.portraits.cloud",
             "workflow.portraits.subagent",
             "workflow.portraits.config",
-            "workflow.portraits.docs",
         ] {
             assert!(enabled.iter().any(|id| id == component));
         }
@@ -6495,8 +6556,8 @@ Use `[MOD_PREFIX]` for identifiers.\r\n";
             supported_game_version: "1.17.*".into(),
             project_root: PathBuf::from("C:/mods/example_mod"),
             default_branch: "main".into(),
-            script_prefix: Some("example".into()),
-            primary_namespace: Some("example".into()),
+            script_prefix: Some("example_script".into()),
+            primary_namespace: Some("example_namespace".into()),
             descriptor_tags: Vec::new(),
             launcher_descriptor_path: None,
         };
@@ -6506,9 +6567,36 @@ Use `[MOD_PREFIX]` for identifiers.\r\n";
         )
         .unwrap();
         let text = String::from_utf8(adapted).unwrap();
-        assert!(text.contains("name = example_super_events"));
+        assert!(text.contains("name = example_script_super_events"));
         assert!(text.contains("text = \"Example \\\"Mod\\\"\""));
         assert!(!text.contains("[MOD_"));
+        assert_eq!(
+            adapt_super_events_destination(
+                "workflow.super_events.runtime.interface",
+                "interface/hoi4ms_super_events.gui",
+                &identity,
+            )
+            .unwrap(),
+            "interface/example_script_super_events.gui"
+        );
+        assert_eq!(
+            adapt_super_events_destination(
+                "workflow.super_events.runtime.events",
+                "events/hoi4ms_super_event_examples.txt",
+                &identity,
+            )
+            .unwrap(),
+            "events/example_script_super_event_examples.txt"
+        );
+        assert_eq!(
+            adapt_super_events_destination(
+                "workflow.super_events.runtime.gfx",
+                "gfx/super_events/super_event_bg.dds",
+                &identity,
+            )
+            .unwrap(),
+            "gfx/super_events/super_event_bg.dds"
+        );
     }
 
     #[test]
@@ -6930,6 +7018,7 @@ developer_instructions = "Work on the named files."
             &[selected],
             &lock,
             project.path(),
+            &super_events_test_identity(),
             false,
         )
         .unwrap();
@@ -6990,6 +7079,7 @@ developer_instructions = "Work on the named files."
             &selections,
             &lock,
             project.path(),
+            &super_events_test_identity(),
             true,
         )
         .unwrap();

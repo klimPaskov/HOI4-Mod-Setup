@@ -86,6 +86,8 @@ Credential Manager or macOS Keychain and is never written into the mod.
 
 The optional Super Events workflow adds the reusable popup, templates,
 examples, images, and supporting guidance needed to add more Super Events.
+Installed runtime filenames use the confirmed mod script prefix; `hoi4ms_*`
+remains only as the upstream source-package naming.
 
 The optional ComfyUI portrait production workflow supports Comfy Cloud, Local
 ComfyUI, RunPod, or Disabled for generic projects. Its expanded panel shows the

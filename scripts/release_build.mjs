@@ -94,6 +94,17 @@ if (releaseBuild) {
     throw new Error("release build requires a clean checked-out worktree");
   }
 }
+if (tauriBuild && requestedBundle) {
+  // Tauri can leave packages from an earlier local build in the target tree.
+  // Clear only the requested generated bundle before rebuilding so stale
+  // installers cannot be copied into the current release evidence.
+  for (const bundlePath of [
+    resolve(root, "target", "release", "bundle", requestedBundle),
+    resolve(root, "src-tauri", "target", "release", "bundle", requestedBundle),
+  ]) {
+    await rm(bundlePath, { recursive: true, force: true });
+  }
+}
 const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });
 if (result.error) throw result.error;
 if (result.status !== 0) process.exit(result.status ?? 1);

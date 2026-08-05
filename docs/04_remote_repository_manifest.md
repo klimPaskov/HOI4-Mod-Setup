@@ -82,8 +82,11 @@ selectors, one console-test example, default localisation, DDS assets, and
 editable Photoshop templates.
 
 All runtime text is deterministically adapted to the confirmed project
-namespace after its source bytes are verified. Binary assets are copied without
-text adaptation. The package declares no tool, environment variable,
+namespace after its source bytes are verified. The upstream `hoi4ms_*` runtime
+basenames are also renamed to the confirmed project prefix in the installed
+text/interface destinations; source paths and checksums remain unchanged for
+manifest evidence. Binary assets are copied without text or filename
+adaptation. The package declares no tool, environment variable,
 credential, external command, or health action, and audio remains an optional
 later project addition with separate source and rights evidence. Every managed
 component uses `replace_if_unmodified`, with obsolete-file removal and local

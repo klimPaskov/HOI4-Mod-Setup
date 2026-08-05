@@ -5,9 +5,9 @@
 This planning package uses two evidence sets:
 
 1. The project files supplied with the request, including all Markdown skills, all supplied subagent TOML files, the project instruction file, the mechanics guide, and the current event, cluster, and scenario catalog CSV snapshots.
-2. The initial audit resolved the live `klimPaskov/Agentic-HOI4-Modding` repository to commit `27128a7b311d728a959afff7238a9aeeb9987f2b` on `main` on 26 July 2026. The current public default branch and portrait/Super Events package are published at commit `3f0c61d9891344197cab38ab5e760821134f6daf` on 4 August 2026. The portrait integration adds a provider-neutral portrait contract, one selected-provider skill component, a bounded subagent, non-secret config, and exact upstream lock evidence alongside `workflow.super_events`. The application resolves the remote manifest at runtime and retains the bundled copy only as offline bootstrap evidence.
+2. The initial audit resolved the live `klimPaskov/Agentic-HOI4-Modding` repository to commit `27128a7b311d728a959afff7238a9aeeb9987f2b` on `main` on 26 July 2026. The published Agentic `main` revision used for this update is `a0fdfff1f50d3e5794021e06bfa8bb97f70e0370`; it contains the portrait lock removal and Super Events filename adaptation contract. The portrait integration adds a provider-neutral portrait contract, one selected-provider skill component, a bounded subagent, and non-secret config containing the exact upstream revision alongside `workflow.super_events`. The application resolves the remote manifest at runtime and retains the bundled copy only as offline bootstrap evidence.
 
-Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. The checked-in app manifest portrait component evidence is generated from the public Agentic source revision `8f01184fbf6c4ebce6d850e17d752925b76d6182`.
+Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. The checked-in app manifest matches the published Agentic manifest and its evidence is generated from immutable source revision `59bf7f23c25951ec613b0f36a6921277d16f1354`.
 
 ## Fully read and processed
 
@@ -26,7 +26,7 @@ The live repository inspection covered every current generic skill and every cur
 - the offline wiki directory structure and observed page names
 - the wiki snapshot marker filename
 - `.gitignore`
-- the remaining cronjob documentation
+- the source-declared Codex and provider configuration
 
 ## Verification limits
 
@@ -34,12 +34,12 @@ The body of every offline wiki article was not fully read. The installer design 
 
 No formal root `LICENSE` file or `paradox_wiki/LICENSE` file was found at the tested paths. The repository README contains permissive wording, but this package does not treat that wording as a verified formal license. The proposed manifest records repository license evidence as `declared_unverified` and wiki license status as `not_found`.
 
-The public root manifest at commit
-`3f0c61d9891344197cab38ab5e760821134f6daf` has raw SHA-256
-`ba108d4b6d8782befdc3eeb760a74ef24f795ead73b52168b7d2fb9be9a3ac5`
+The updated root manifest at commit
+`a0fdfff1f50d3e5794021e06bfa8bb97f70e0370` has raw SHA-256
+`bcc83e26c7d04136b191f66060be3c52afe89392b95f2a7332505794c2a88b17`
 and declares `generated_for_revision`
-`8f01184fbf6c4ebce6d850e17d752925b76d6182`. Its declared file records
-cover 24 components and were generated from immutable Git blob bytes before
+`59bf7f23c25951ec613b0f36a6921277d16f1354`. Its declared file records
+cover 23 components and were generated from immutable Git blob bytes before
 publication.
 
 The manifest is now published upstream infrastructure. Runtime resolution

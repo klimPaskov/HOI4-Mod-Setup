@@ -1,6 +1,6 @@
 {
   "name": "hoi4-mod-setup",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "private": true,
   "license": "Apache-2.0",
   "description": "Windows and macOS desktop wizard for preparing HOI4 mods for agentic development.",

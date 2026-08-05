@@ -52,7 +52,9 @@ Read:
 - `workflow.super_events` is a provider-neutral optional component. Its
   recommendation uses the checked-in `codex-analysis` component ID/schema
   contract, unselected installs add no Super Events guidance to `AGENTS.md`,
-  and its readiness check is non-blocking.
+  its verified runtime text/interface destinations use the confirmed mod
+  prefix instead of the upstream `hoi4ms_*` template basenames, and its
+  readiness check is non-blocking.
 - The app's generic portrait workflow supports Cloud, Local, RunPod, and
   Disabled. Provider state and exact upstream revision are non-secret persisted
   state; enabled output installs the provider-neutral portrait contract and

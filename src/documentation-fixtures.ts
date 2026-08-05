@@ -73,14 +73,12 @@ const manifestComponents = [
   component("workflow.portraits.runpod", "RunPod ComfyUI portrait production", "Selected provider route", "workflow", 1, true),
   component("workflow.portraits.subagent", "Portrait production subagent", "Bounded provider execution and portrait QA", "subagent", 1, true),
   component("workflow.portraits.config", "Portrait provider configuration", "Non-secret provider and pinned upstream configuration", "configuration", 1, true),
-  component("workflow.portraits.docs", "Portrait upstream lock", "Canonical portrait repository and workflow hash evidence", "documentation", 1, true),
 ];
 const portraitComponentIds = [
   "workflow.portraits.core",
   "workflow.portraits.runpod",
   "workflow.portraits.subagent",
   "workflow.portraits.config",
-  "workflow.portraits.docs",
 ];
 const allPortraitComponentIds = [
   "workflow.portraits.core",
@@ -89,7 +87,6 @@ const allPortraitComponentIds = [
   "workflow.portraits.runpod",
   "workflow.portraits.subagent",
   "workflow.portraits.config",
-  "workflow.portraits.docs",
 ];
 
 const source = {

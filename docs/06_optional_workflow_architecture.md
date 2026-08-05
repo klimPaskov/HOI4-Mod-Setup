@@ -10,7 +10,7 @@ The current optional registry includes:
 | --- | --- | --- | --- | --- |
 | `workflow.3d` | first: **3D models workflow** | manifest-declared 3D files | Meshy reference and repository-declared actions when selected | no |
 | `workflow.super_events` | second: **Super Events workflow** | skill plus manifest-declared `interface/`, `common/`, `events/`, `localisation/`, `gfx/`, and guide files | none | no |
-| `workflow.portraits.<provider>` | third: **ComfyUI portrait production** | provider-neutral contract plus the selected provider skill, subagent, config, and upstream lock | provider-specific setup guidance | no |
+| `workflow.portraits.<provider>` | third: **ComfyUI portrait production** | provider-neutral contract plus the selected provider skill, subagent, and pinned config | provider-specific setup guidance | no |
 
 `workflow.super_events` is provider-neutral. Provider configuration is still
 required for a planning session, but this component does not change provider

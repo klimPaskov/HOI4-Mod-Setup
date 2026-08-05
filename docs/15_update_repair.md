@@ -44,6 +44,11 @@ component, its `core.skills` dependency, the exact managed destination, and the
 file/conflict impact. The addition remains provider-neutral and has no
 credential or external-action step.
 
+Super Events source files use stable `hoi4ms_*` names for manifest evidence,
+but installation and maintenance write the confirmed project-prefix names.
+Update removes an unchanged legacy `hoi4ms_*` destination as obsolete; a
+modified legacy file remains a reviewable conflict.
+
 ## Repair
 
 Repair defaults to the locked revision. Check missing, corrupted, modified, parse-invalid, incomplete generated, MCP health, wiki coverage, and external dependency evidence. Healthy files are explicit no-op operations; missing files can be recreated, and a changed file becomes a reviewable replace/keep decision rather than an inferred repair. Modified files require review.

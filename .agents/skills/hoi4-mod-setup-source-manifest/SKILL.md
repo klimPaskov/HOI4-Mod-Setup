@@ -95,6 +95,7 @@ MCP servers and external dependencies are components. Their command, arguments, 
   or destination collisions before any selected blob is fetched. This is
   selective manifest isolation, not a filtered full-repository clone.
 - Multiple tree components may target the same managed directory only so disjoint selected-only packages can share standard `.agents/skills/` or `.codex/agents/` roots. The selected-file pass still canonicalizes every concrete destination and rejects any overlap before download or staging.
+- A selected component may have a deterministic project adaptation layer after source verification. Keep the upstream source path and checksum evidence unchanged, adapt only the reviewed destination/result bytes, and reject collisions among adapted destinations. For Super Events, the verified `hoi4ms_*` runtime source basenames are written as the confirmed project-prefix basenames; binary GFX/PSD assets keep their manifest destinations.
 - An immutable install requires `generated_for_revision` in the manifest; the runtime schema and validator reject a manifest that cannot prove which commit produced its evidence.
 - Verified blobs are cached under the application data cache by `<revision>/<sha256>` and are accepted only after size (when declared) and SHA-256 revalidation. A corrupt cache entry is discarded and fetched again.
 - Cache reads bind the path to one no-follow file handle, read a bounded byte
@@ -125,7 +126,9 @@ MCP servers and external dependencies are components. Their command, arguments, 
   only when the workflow is selected; unselected installs strip those sections.
   Verify source bytes first, then deterministically replace `[MOD_PREFIX]` and
   `[MOD_NAME]` only in its interface, common-script, event, and localisation
-  text components. Reject invalid namespaces and unresolved placeholders.
+  text components, and rename those runtime text/interface destinations from
+  `hoi4ms_*` to the confirmed project prefix. Reject invalid namespaces,
+  unresolved placeholders, and adapted destination collisions.
   Never text-adapt its binary GFX/PSD component.
 - External-action dry runs carry reviewed arguments, cwd, environment names, manifest-declared expected writes, network/privilege evidence, and rollback boundary. Missing manifest declarations remain `not_declared`; they are not inferred from a repository script.
 

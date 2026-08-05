@@ -83,7 +83,6 @@ function portraitComponentIdsFor(provider: PortraitProviderId): string[] {
     `workflow.portraits.${provider}`,
     "workflow.portraits.subagent",
     "workflow.portraits.config",
-    "workflow.portraits.docs",
   ];
 }
 

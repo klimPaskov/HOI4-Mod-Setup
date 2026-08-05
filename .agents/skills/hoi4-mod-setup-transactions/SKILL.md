@@ -97,6 +97,11 @@ operations are not accepted; mode belongs to the reviewed file operation.
 - Persist an `applying` operation intent before replacing or deleting a live destination. Use the platform atomic replace route where available and verify the expected incoming hash, not only an observed self-hash.
 - Bind UI apply to a core-owned reviewed plan session and prepared bytes. The renderer sends only the approved plan ID and project root when installation starts; never reserialize or accept a renderer-edited plan as authoritative.
 - Track source hash separately from result hash: generated files, structured merges, and optional MCP TOML adaptation may have a verified incoming source hash and a different deterministic installed hash.
+- The Super Events source package uses stable `hoi4ms_*` names for manifest
+  evidence, but its reviewed project destinations use the confirmed mod
+  prefix. Update planning compares those adapted paths and removes an old
+  unchanged managed `hoi4ms_*` path as obsolete; a modified legacy path stays
+  an explicit review conflict.
 - Every remote prepared file has one plan `download_ledger` entry bound to its
   operation ID, component, source path, destination, exact source revision,
   manifest hash, source hash, size, ownership, platform, and executable
