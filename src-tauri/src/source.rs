@@ -1706,7 +1706,7 @@ mod tests {
     #[test]
     fn checked_in_manifest_matches_the_supported_source_contract() {
         let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
-        let source_snapshot = "d37c26c8565269d4aac5ade5ec4f0c7790964909";
+        let source_snapshot = "59bf7f23c25951ec613b0f36a6921277d16f1354";
         let manifest = parse_manifest(bytes, Some(source_snapshot)).unwrap();
         assert_eq!(manifest.repository.owner, SOURCE_OWNER);
         assert_eq!(
@@ -1805,7 +1805,7 @@ mod tests {
     #[test]
     fn super_events_package_is_complete_and_opt_in() {
         let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
-        let source_snapshot = "d37c26c8565269d4aac5ade5ec4f0c7790964909";
+        let source_snapshot = "59bf7f23c25951ec613b0f36a6921277d16f1354";
         let manifest = parse_manifest(bytes, Some(source_snapshot)).unwrap();
         let core_profile = manifest
             .profiles
@@ -1930,7 +1930,7 @@ mod tests {
         assert_eq!(selected_bytes, remote_bytes);
         assert_eq!(
             manifest.generated_for_revision.as_deref(),
-            Some("d37c26c8565269d4aac5ade5ec4f0c7790964909")
+            Some("59bf7f23c25951ec613b0f36a6921277d16f1354")
         );
     }
 
