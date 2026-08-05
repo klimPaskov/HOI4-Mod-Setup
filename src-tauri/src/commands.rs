@@ -2774,9 +2774,9 @@ fn strip_agents_placeholder_guide(text: &str) -> String {
 
 fn super_events_prefix(identity: &ProjectIdentity) -> Result<&str, AppError> {
     let prefix = identity
-        .primary_namespace
+        .script_prefix
         .as_deref()
-        .or(identity.script_prefix.as_deref())
+        .or(identity.primary_namespace.as_deref())
         .ok_or_else(|| {
             AppError::InvalidInput(
                 "a confirmed script prefix or primary namespace is required for Super Events"
@@ -6556,8 +6556,8 @@ Use `[MOD_PREFIX]` for identifiers.\r\n";
             supported_game_version: "1.17.*".into(),
             project_root: PathBuf::from("C:/mods/example_mod"),
             default_branch: "main".into(),
-            script_prefix: Some("example".into()),
-            primary_namespace: Some("example".into()),
+            script_prefix: Some("example_script".into()),
+            primary_namespace: Some("example_namespace".into()),
             descriptor_tags: Vec::new(),
             launcher_descriptor_path: None,
         };
@@ -6567,7 +6567,7 @@ Use `[MOD_PREFIX]` for identifiers.\r\n";
         )
         .unwrap();
         let text = String::from_utf8(adapted).unwrap();
-        assert!(text.contains("name = example_super_events"));
+        assert!(text.contains("name = example_script_super_events"));
         assert!(text.contains("text = \"Example \\\"Mod\\\"\""));
         assert!(!text.contains("[MOD_"));
         assert_eq!(
@@ -6577,7 +6577,7 @@ Use `[MOD_PREFIX]` for identifiers.\r\n";
                 &identity,
             )
             .unwrap(),
-            "interface/example_super_events.gui"
+            "interface/example_script_super_events.gui"
         );
         assert_eq!(
             adapt_super_events_destination(
@@ -6586,7 +6586,7 @@ Use `[MOD_PREFIX]` for identifiers.\r\n";
                 &identity,
             )
             .unwrap(),
-            "events/example_super_event_examples.txt"
+            "events/example_script_super_event_examples.txt"
         );
         assert_eq!(
             adapt_super_events_destination(
