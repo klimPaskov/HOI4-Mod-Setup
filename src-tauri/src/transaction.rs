@@ -5880,6 +5880,47 @@ mod tests {
     }
 
     #[test]
+    fn update_removes_an_unchanged_legacy_super_events_filename() {
+        let project = tempdir().unwrap();
+        let legacy_path = "interface/hoi4ms_super_events.gui";
+        let adapted_path = "interface/example_super_events.gui";
+        let legacy_bytes = b"legacy super events";
+        fs::create_dir_all(project.path().join("interface")).unwrap();
+        fs::write(project.path().join(legacy_path), legacy_bytes).unwrap();
+
+        let mut current_lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let mut legacy_file = current_lock.files[0].clone();
+        legacy_file.path = legacy_path.into();
+        legacy_file.component_id = "workflow.super_events.runtime.interface".into();
+        legacy_file.source_path = legacy_path.into();
+        legacy_file.installed_sha256 = sha256_bytes(legacy_bytes);
+        legacy_file.installed_size = Some(legacy_bytes.len() as u64);
+        legacy_file.source_sha256 = sha256_bytes(legacy_bytes);
+        current_lock.files = vec![legacy_file.clone()];
+
+        let mut incoming_file = legacy_file;
+        incoming_file.path = adapted_path.into();
+        incoming_file.source_path = legacy_path.into();
+        incoming_file.source_sha256 = sha256_bytes(b"adapted source");
+        incoming_file.installed_sha256 = sha256_bytes(b"adapted source");
+        incoming_file.installed_size = Some(b"adapted source".len() as u64);
+
+        let operations =
+            update_operations(&current_lock, &[incoming_file], project.path()).unwrap();
+        assert!(operations.iter().any(|operation| {
+            operation.destination == adapted_path && operation.action == OperationAction::Create
+        }));
+        assert!(operations.iter().any(|operation| {
+            operation.destination == legacy_path
+                && operation.action == OperationAction::DeleteManaged
+                && operation.resolution.as_deref() == Some("obsolete_managed_remove")
+        }));
+    }
+
+    #[test]
     fn operation_checkpoint_replays_and_compacts_into_the_full_journal() {
         let root = tempdir().unwrap();
         let plan = plan();
