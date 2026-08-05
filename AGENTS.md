@@ -268,11 +268,12 @@ The startup updater always surfaces a newer signed app version, downloads and
 verifies it, replaces the current installation, and restarts. A failed update
 leaves the running version usable and exposes retry.
 
-Manage Existing Project exposes ChatGPT source packaging only when the lock has
-`core.agents`, `core.skills`, and `core.subagents`. Rust discovers the required
-root files, flattened skills, subagents, and optional root Markdown files;
-package output goes to a validated external folder, defaults to Downloads, is
-written atomically without overwriting, and never changes the project.
+Manage Existing Project exposes ChatGPT source packaging when the scan finds an
+`AGENTS.md`, flattened skill, or subagent source; an installation lock is not
+required. Rust discovers the bounded root files, flattened skills, subagents,
+and optional root Markdown files; package output goes to a validated external
+folder, defaults to Downloads, is written atomically without overwriting, and
+never changes the project.
 
 ## 11. UI rules
 

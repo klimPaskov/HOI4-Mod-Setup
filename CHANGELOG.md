@@ -6,6 +6,16 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.2.6 - 2026-08-05
+
+- Keep Codex and other supervised desktop children inside the app on Windows so
+  launching from a shortcut or Start menu does not open a terminal window.
+- Allow Manage an existing project to package detected ChatGPT instructions,
+  skills, subagents, and optional root Markdown without requiring an
+  installation lock or a complete app-managed component set.
+- Prevent long UI copy, statuses, paths, and action labels from being clipped
+  or bleeding outside their buttons and panels, including narrow screens.
+
 ## 0.2.5 - 2026-08-05
 
 - Adapt Super Events runtime filenames to the confirmed mod script prefix while

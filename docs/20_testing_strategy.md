@@ -152,11 +152,12 @@ the checkbox and Open in Codex action are absent.
 
 Descriptors, provider-adapted AGENTS and README, flattened Chat sources, TOML merge, scan, plan, lock, readiness, journal, and conflict preview. Golden updates require review.
 
-ChatGPT source-export tests cover eligibility from the three core component IDs,
-the Downloads default, required/default selection, optional root Markdown
-selection, stale selection rejection, UTF-8 and secret-shaped content
-rejection, links/traversal, archive collisions and size limits, no-overwrite,
-atomic output, and unchanged project contents.
+ChatGPT source-export tests cover eligibility from scan-detected AGENTS, skills,
+or subagents without an installation lock, the Downloads default,
+required/default selection, optional root Markdown selection, stale selection
+rejection, UTF-8 and secret-shaped content rejection, links/traversal, archive
+collisions and size limits, no-overwrite, atomic output, and unchanged project
+contents.
 
 ## UI tests
 

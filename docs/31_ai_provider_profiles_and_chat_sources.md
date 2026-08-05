@@ -91,11 +91,11 @@ ChatGPT conversation, or start planning automatically.
 
 ## Existing-project ChatGPT source package
 
-The initial-install flatten option remains Codex-only. Separately, once an
-existing managed project contains `core.agents`, `core.skills`, and
-`core.subagents`, **Manage an existing project** can package its installed
-ChatGPT sources regardless of the current planning-provider screen. The page
-defaults to the native Downloads folder and shows:
+The initial-install flatten option remains Codex-only. Separately, when an
+existing-project scan finds an `AGENTS.md`, flattened skill, or subagent,
+**Manage an existing project** can package its detected ChatGPT sources
+regardless of the current planning-provider screen or installation lock. The
+page defaults to the native Downloads folder and shows:
 
 - `AGENTS.md` and `README.md`;
 - every direct `.agents/skills/<skill>/SKILL.md` as `<skill>.md`;

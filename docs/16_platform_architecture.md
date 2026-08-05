@@ -37,7 +37,7 @@ the regression even when its eventual result is correct.
 
 The shared Rust core owns a `CodexBridge` adapter that starts `codex app-server`, frames stdio JSONL messages, performs initialize, tracks request IDs, consumes notifications, supervises the process, and exposes typed application events to Tauri.
 
-The bridge owns capability detection, account state, browser and device-code login, logout, rate-limit checks, thread and turn lifecycle, read-only sandbox policy, output schema attachment, response validation, cancellation, and process restart.
+The bridge owns capability detection, account state, browser and device-code login, logout, rate-limit checks, thread and turn lifecycle, read-only sandbox policy, output schema attachment, response validation, cancellation, and process restart. On Windows, supervised Codex children request `CREATE_NO_WINDOW`, so launching the app from a shortcut or Start menu does not open a console or depend on an active terminal.
 
 The React layer never talks to the Codex process directly. It receives redacted typed state through Tauri commands and events. The target project is never a writable root for semantic analysis.
 
@@ -156,8 +156,9 @@ signed application for the current architecture.
 
 The existing-project ChatGPT source export also stays in Rust. Native Windows
 and macOS folder APIs resolve the Downloads default; the user-selected folder
-must already exist and contain no link component. The export writes a new ZIP
-outside the project and does not use the project transaction journal.
+must already exist and contain no link component. The export does not require
+an installation lock, writes a new ZIP outside the project, and does not use
+the project transaction journal.
 
 ## Local data
 

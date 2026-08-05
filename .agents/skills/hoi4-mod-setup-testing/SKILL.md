@@ -98,9 +98,11 @@ session, cancellation, credential-health, or analysis assertions.
   the flat output nor consume its file and size limits
 - existing-project ChatGPT export discovers only root AGENTS/README, direct
   skill SKILL.md files, direct TOML subagents, and immediate root Markdown;
-  required/default selection, optional Markdown, Downloads defaults, stale
-  selections, archive limits/collisions, atomic no-overwrite output, no-secret
-  behavior, and unchanged project contents are tested
+  it is eligible without an installation lock when an AGENTS, skill, or
+  subagent source exists. Required/default selection, optional Markdown,
+  Downloads defaults, stale selections, archive limits/collisions, atomic
+  no-overwrite output, no-secret behavior, and unchanged project contents are
+  tested
 - App Server account data and tokens never survive serialization
 - login cancellation targets one validated App Server `loginId`, calls the
   managed cancel method, and cannot clear or cancel another active attempt

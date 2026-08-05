@@ -1,9 +1,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { ChatSources, Components, DryRun, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, recoveryProgress } from "./App";
+import App, { ChatSources, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, detectedChatSourcesAvailable, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
-import type { ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanProgress, SourceManifestPreview, WizardState } from "./types";
+import type { ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
 vi.mock("./lib/tauri", async () => {
@@ -98,6 +98,41 @@ describe("HOI4 Mod Setup wizard", () => {
     window.history.replaceState({}, "", "/?screenshot=unknown");
     expect(isDocumentationScreenshot()).toBe(false);
     expect(documentationFixture(base)).toBe(base);
+  });
+
+  it("detects ChatGPT source packaging inputs without an installation lock", () => {
+    expect(detectedChatSourcesAvailable([
+      { id: "skill.inventory", value: JSON.stringify({ count: 1 }) } as ScanFinding,
+    ])).toBe(true);
+    expect(detectedChatSourcesAvailable([
+      { id: "subagent.inventory", value: JSON.stringify({ count: 1 }) } as ScanFinding,
+    ])).toBe(true);
+    expect(detectedChatSourcesAvailable([])).toBe(false);
+  });
+
+  it("offers source packaging from findings for an unmanaged project", () => {
+    const onPackageChatSources = vi.fn().mockResolvedValue(undefined);
+    const finding = {
+      id: "skill.inventory",
+      label: "Skills",
+      value: JSON.stringify({ count: 1 }),
+      confidence: 1,
+      status: "accepted",
+      evidence: "A direct project skill was detected.",
+    } as ScanFinding;
+    render(<Findings
+      state={readyState()}
+      findings={[finding]}
+      selected={finding.id}
+      setSelected={vi.fn()}
+      setFindings={vi.fn()}
+      onConfirmAnalysis={vi.fn().mockResolvedValue(undefined)}
+      onManageExisting={vi.fn()}
+      onPackageChatSources={onPackageChatSources}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Package ChatGPT project sources/ }));
+    expect(onPackageChatSources).toHaveBeenCalledTimes(1);
   });
 
   it("keeps semantic planning estimates bounded within each real stage", () => {
@@ -420,7 +455,7 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByLabelText("Meshy API key")).toBeInTheDocument();
   });
 
-  it("offers ChatGPT source packaging only when the managed core components are present", () => {
+  it("offers ChatGPT source packaging when the scan finds source files", () => {
     const onPackageChatSources = vi.fn().mockResolvedValue(undefined);
     render(<Update
       state={{ ...readyState(), aiProvider: "codex", chatSourcesAvailable: true } as unknown as WizardState}
@@ -859,14 +894,13 @@ describe("HOI4 Mod Setup wizard", () => {
     await waitFor(() => expect(openExternalUrlResult).toHaveBeenCalledWith("https://github.com/klimPaskov/HOI4-Mod-Setup"));
   });
 
-  it("keeps signed-out local recovery reachable from the welcome screen", () => {
+  it("keeps signed-out project management reachable from the welcome screen", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: /manage an existing project/i }));
-    expect(screen.getByText("Choose an installed project")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Project identity" })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\installed" } });
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
-    expect(screen.getByRole("heading", { name: "Installation was interrupted" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /remove managed components/i })).toBeEnabled();
+    expect(screen.getByRole("heading", { name: "Scanning project" })).toBeInTheDocument();
   });
 
   it("shows only Undo after project apply has started", async () => {

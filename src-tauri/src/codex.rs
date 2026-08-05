@@ -1801,6 +1801,7 @@ impl ProcessJsonlTransport {
             }
             command.env("PATH", safe_path);
         }
+        crate::process::configure_child_no_console_window(&mut command);
         crate::process::configure_child_process_group(&mut command);
         let mut child = command.spawn().map_err(|error| {
             AppError::Process(format!("could not start JSONL process: {error}"))

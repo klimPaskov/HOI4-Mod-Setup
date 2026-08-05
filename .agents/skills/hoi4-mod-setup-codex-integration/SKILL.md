@@ -40,7 +40,8 @@ Recovery, rollback, backup inspection, and managed removal remain locally usable
 
 - persist the selected provider, model, and optimization profile in typed state; never infer them from a display label
 - derive endpoint, protocol, credential environment, limits, and supported platform from a checked-in provider profile
-- launch `codex app-server` as a child process for Codex
+- launch `codex app-server` as a child process for Codex; on Windows apply
+  `CREATE_NO_WINDOW` so shortcut and Start-menu launches do not open a console
 - use stdio JSONL transport
 - complete the initialize handshake before other requests
 - enforce initialization in the protocol object so account, login,

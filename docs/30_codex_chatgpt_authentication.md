@@ -13,7 +13,7 @@ defaults. The
 bounded non-Codex registry uses Claude, Kimi, GLM, DeepSeek, local, and
 `custom` profiles.
 
-The integration boundary is the official local `codex app-server` process. The desktop application launches it as a child process and communicates over its default stdio JSONL transport. This is the Codex interface intended for product integrations that need authentication, threads, approvals, and streamed events.
+The integration boundary is the official local `codex app-server` process. The desktop application launches it as a child process and communicates over its default stdio JSONL transport. On Windows, Codex children are created with `CREATE_NO_WINDOW`, so the packaged app works from a shortcut or Start menu without a visible terminal. This is the Codex interface intended for product integrations that need authentication, threads, approvals, and streamed events.
 
 The core supervises the child transport before reusing a session and starts a
 fresh App Server when the prior child has exited. Logout always drops the local

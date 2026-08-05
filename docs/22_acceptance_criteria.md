@@ -280,7 +280,7 @@
 
 ## ChatGPT source package export
 
-- EXP-01: Existing-project management shows **Package ChatGPT project sources** only when the lock includes `core.agents`, `core.skills`, and `core.subagents`; incomplete projects do not receive the action.
+- EXP-01: Existing-project management shows **Package ChatGPT project sources** when the scan finds an `AGENTS.md`, flattened skill, or subagent source; an installation lock and complete core component set are not required.
 - EXP-02: The export page defaults to the native Downloads folder, lists `AGENTS.md`, `README.md`, every flattened skill, every subagent, and immediate root Markdown files, with required entries selected and root Markdown entries unchecked.
 - EXP-03: The user can choose another existing external folder and package only the selected entries into a new ZIP; the project remains unchanged, existing archives are not overwritten, and the result reports the path and included files.
 - EXP-04: Rust rejects stale IDs, links, traversal, archive collisions, non-UTF-8 content, secret-shaped content, and per-file or aggregate limits before output is committed.

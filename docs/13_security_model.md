@@ -121,7 +121,7 @@ Secret values do not enter logs through debug formatting, are not copied automat
 
 ## Command execution
 
-Represent commands as executable plus argument array. Do not build a shell string for ordinary execution. A checked repository wrapper is an executable artifact with a verified hash. A wrapper route is executable only when the manifest also supplies size and SHA-256 evidence for each core-resolved interpreter and runtime dependency; verify those identities immediately before spawn. Display arguments in a safely escaped form with secrets removed.
+Represent commands as executable plus argument array. Do not build a shell string for ordinary execution. A checked repository wrapper is an executable artifact with a verified hash. A wrapper route is executable only when the manifest also supplies size and SHA-256 evidence for each core-resolved interpreter and runtime dependency; verify those identities immediately before spawn. Display arguments in a safely escaped form with secrets removed. Desktop-supervised children do not request an interactive terminal; Windows launches use `CREATE_NO_WINDOW` so the app remains independent of a visible console.
 
 Read-only Git inspection runs with system and global configuration disabled,
 optional locks and prompts off, an empty credential helper, inert hook and
@@ -189,4 +189,5 @@ secret-shaped content, archive-relative names, and collisions, then writes a
 new uncompressed ZIP through a create-new temporary file and atomic rename.
 The destination is never the project root, an existing archive is never
 overwritten, no credentials are read, and a failed export removes only its
-temporary output.
+temporary output. It does not require an installation lock; eligibility comes
+from the bounded source scan, while credentials remain outside the project.

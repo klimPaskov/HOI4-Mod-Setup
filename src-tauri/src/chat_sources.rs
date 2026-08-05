@@ -52,6 +52,18 @@ pub struct ChatSourcesPackageResult {
     pub sha256: String,
 }
 
+/// Use the selected mod directory name for archives when the project was not
+/// created by HOI4 Mod Setup and therefore has no installation lock.
+pub fn project_id_from_root(project_root: &Path) -> Result<String, AppError> {
+    let name = project_root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            AppError::InvalidInput("the project folder has no usable archive name".into())
+        })?;
+    crate::security::normalize_relative_path(name)
+}
+
 #[derive(Debug, Clone)]
 struct Candidate {
     file: ChatSourceFile,
@@ -69,30 +81,17 @@ pub fn preview(
     destination_directory: String,
 ) -> Result<ChatSourcesPreview, AppError> {
     let candidates = discover_candidates(project_root)?;
-    let has_agents = candidates
-        .iter()
-        .any(|candidate| candidate.file.category == "instructions");
-    let has_readme = candidates
-        .iter()
-        .any(|candidate| candidate.file.category == "readme");
-    let has_skill = candidates
-        .iter()
-        .any(|candidate| candidate.file.category == "skill");
-    let has_subagent = candidates
-        .iter()
-        .any(|candidate| candidate.file.category == "subagent");
-    let eligible = has_agents && has_readme && has_skill && has_subagent;
+    let has_primary_source = candidates.iter().any(|candidate| {
+        matches!(
+            candidate.file.category.as_str(),
+            "instructions" | "readme" | "skill" | "subagent"
+        )
+    });
+    let eligible = has_primary_source;
     let message = if eligible {
         None
-    } else if !has_agents || !has_readme {
-        Some("AGENTS.md and README.md are required before ChatGPT sources can be packaged.".into())
-    } else if !has_skill || !has_subagent {
-        Some(
-            "This project does not have the complete installed skills and subagent components."
-                .into(),
-        )
     } else {
-        Some("ChatGPT sources are not ready to package.".into())
+        Some("No AGENTS.md, README.md, skill, or subagent source was found in this project.".into())
     };
     Ok(ChatSourcesPreview {
         eligible,
@@ -114,9 +113,9 @@ pub fn package(
     selected_file_ids: &[String],
 ) -> Result<ChatSourcesPackageResult, AppError> {
     let candidates = discover_candidates(project_root)?;
-    if !has_required_candidates(&candidates) {
+    if !has_primary_candidates(&candidates) {
         return Err(AppError::InvalidInput(
-            "ChatGPT source packaging requires AGENTS.md, README.md, at least one skill, and at least one subagent".into(),
+            "ChatGPT source packaging requires at least one AGENTS.md, README.md, skill, or subagent source".into(),
         ));
     }
     let required = candidates
@@ -188,14 +187,13 @@ pub fn package(
     })
 }
 
-fn has_required_candidates(candidates: &[Candidate]) -> bool {
-    ["instructions", "readme", "skill", "subagent"]
-        .iter()
-        .all(|category| {
-            candidates
-                .iter()
-                .any(|candidate| candidate.file.category == *category)
-        })
+fn has_primary_candidates(candidates: &[Candidate]) -> bool {
+    candidates.iter().any(|candidate| {
+        matches!(
+            candidate.file.category.as_str(),
+            "instructions" | "readme" | "skill" | "subagent"
+        )
+    })
 }
 
 fn discover_candidates(project_root: &Path) -> Result<Vec<Candidate>, AppError> {
@@ -635,6 +633,68 @@ mod tests {
             &result.sha256,
             &sha256_bytes(&fs::read(&result.archive_path).unwrap())
         );
+    }
+
+    #[test]
+    fn partial_existing_project_without_lock_can_package_available_sources() {
+        let project = tempdir().unwrap();
+        fs::create_dir_all(project.path().join(".agents/skills/events")).unwrap();
+        fs::create_dir_all(project.path().join(".codex/agents")).unwrap();
+        fs::write(
+            project.path().join(".agents/skills/events/SKILL.md"),
+            "events skill",
+        )
+        .unwrap();
+        fs::write(
+            project.path().join(".codex/agents/researcher.toml"),
+            "name = 'researcher'",
+        )
+        .unwrap();
+        fs::write(project.path().join("NOTES.md"), "optional notes").unwrap();
+        let destination = tempdir().unwrap();
+
+        let preview = preview(
+            project.path(),
+            &project_id_from_root(project.path()).unwrap(),
+            destination.path().to_string_lossy().into(),
+        )
+        .unwrap();
+        assert!(preview.eligible);
+        assert_eq!(
+            preview
+                .files
+                .iter()
+                .filter(|file| file.selected_by_default)
+                .count(),
+            2
+        );
+        let selected = preview
+            .files
+            .iter()
+            .filter(|file| file.selected_by_default)
+            .map(|file| file.id.clone())
+            .collect::<Vec<_>>();
+        let result = package(
+            project.path(),
+            &project_id_from_root(project.path()).unwrap(),
+            destination.path(),
+            &selected,
+        )
+        .unwrap();
+        assert!(result
+            .archive_path
+            .ends_with("-chatgpt-project-sources.zip"));
+        assert!(result.included_files.contains(&"events.md".into()));
+        assert!(result.included_files.contains(&"researcher.toml".into()));
+        assert!(project
+            .path()
+            .join(".agents/skills/events/SKILL.md")
+            .is_file());
+    }
+
+    #[test]
+    fn project_id_from_root_rejects_roots_without_a_leaf_name() {
+        assert!(project_id_from_root(Path::new("C:\\")).is_err());
     }
 
     #[test]

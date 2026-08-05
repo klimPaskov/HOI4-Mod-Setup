@@ -167,12 +167,13 @@ Conflict review is the exception. It may show a three-way comparison and more co
 - Keep a local recovery/removal entry reachable from Welcome when signed out; rollback, backup inspection, and managed removal do not depend on Codex.
 - Preserve account and analysis state when logout or usage-limit errors occur, and announce the actionable error without losing focus.
 - The Components option `Prepare a flattened ChatGPT project-sources folder` is a native keyboard-accessible checkbox shown only when Codex is selected. Present it with the same visual structure as the other component choices: title, concise contents, file count, and an expandable per-file size list. Source-declared sizes may appear immediately; generated-file and exact total sizes appear after the plan is prepared. Install review is read-only, there is no additional-files control, the no-automatic-upload Chat recommendation appears on Ready, and the choice never appears for another provider.
-- Existing managed projects with `core.agents`, `core.skills`, and
-  `core.subagents` expose **Package ChatGPT project sources** from maintenance.
-  The page defaults to Downloads, shows required AGENTS/README/flattened
-  skills/subagents checked and disabled, and shows immediate root Markdown as
-  optional unchecked entries. Keep the folder picker and checkbox list
-  keyboard-accessible, readable at 200 percent, and concise.
+- Existing managed projects expose **Package ChatGPT project sources** from
+  maintenance when the scan finds an AGENTS.md, flattened skill, or subagent;
+  no installation lock is required. The page defaults to Downloads, shows
+  detected AGENTS/README/flattened skills/subagents checked and disabled, and
+  shows immediate root Markdown as optional unchecked entries. Keep the folder
+  picker and checkbox list keyboard-accessible, readable at 200 percent, and
+  concise.
 - Public wizard screenshots use the sanitized development-only states in `src/documentation-fixtures.ts`. Capture the named `?screenshot=` routes at 1280 by 960 from the top of the page; never use a real account, credential, project path, or private mod as documentation evidence.
 - Keep each status symbol and its label in one inline row. Do not let generic child selectors turn the `Status` component into a grid or stack the symbol above the text.
 - The new-project description screen asks for the mod name and brief. The identity screen opens with generated project ID, prefix, namespace, tags, and starter folders; advanced metadata and external paths remain the only secondary/manual controls.

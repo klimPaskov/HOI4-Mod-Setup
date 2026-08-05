@@ -31,9 +31,9 @@ When Codex is selected, offer an optional Components checkbox for
 `<mod_project>/chatgpt_project_sources/`, flattening skills to `<skill>.md` and
 including selected subagents, adapted AGENTS, and README.
 Use transaction/recovery; recommend ChatGPT "Chat" only, never upload or
-start planning. Existing managed projects with all three core components
-offer a source ZIP page: Downloads is default, required flattened files stay
-selected, root Markdown is optional, and export never mutates the mod.
+start planning. Existing scans finding AGENTS, a skill, or subagent offer a
+source ZIP: Downloads is default, detected primary files are selected, root
+Markdown is optional, and export never mutates the mod.
 
 Show **3D models workflow**, then **Super Events workflow**. The optional
 `workflow.super_events` installs only `.agents/skills/hoi4-super-events/`; it is

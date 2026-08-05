@@ -120,11 +120,12 @@ operations are not accepted; mode belongs to the reviewed file operation.
   rename decision only when its incoming hash and local precondition still
   match; otherwise recreate the conflict and require review again.
 - Existing-project ChatGPT source packaging is a separate read-only export, not
-  a project transaction. It requires the three core component IDs, defaults to
-  the validated Downloads folder, re-reads selected root/skill/subagent files,
-  rejects stale IDs, links, traversal, collisions, limits, and secrets, then
-  writes a new external ZIP atomically without overwriting or changing the
-  project. Do not create a project journal, lock update, or backup for it.
+  a project transaction. A scan-detected AGENTS, skill, or subagent makes it
+  eligible without an installation lock. It defaults to the validated
+  Downloads folder, re-reads selected root/skill/subagent files, rejects stale
+  IDs, links, traversal, collisions, limits, and secrets, then writes a new
+  external ZIP atomically without overwriting or changing the project. Do not
+  create a project journal, lock update, or backup for it.
 - Carry the resolved manifest's exact `wiki.required_pages` list and its
   snapshot/media/provenance/license metadata in both plan and lock. Readiness
   must use that exact evidence; if a legacy lock lacks either the page list or

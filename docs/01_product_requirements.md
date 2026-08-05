@@ -308,10 +308,12 @@ Support update, repair, reinstall, rollback, managed removal, optional-workflow 
 
 ### ChatGPT source package export
 
-When an existing managed project has `core.agents`, `core.skills`, and
-`core.subagents`, the maintenance view offers a ChatGPT project-source export.
-The export page defaults to the platform Downloads folder and selects the
-installed `AGENTS.md`, `README.md`, every direct skill flattened to
+When an existing project scan finds an `AGENTS.md`, flattened skill, or
+subagent source, the scan results and maintenance view offer a ChatGPT
+project-source export;
+an installation lock and complete core component set are not required. The
+export page defaults to the platform Downloads folder and selects the detected
+`AGENTS.md`, `README.md`, every direct skill flattened to
 `<skill>.md`, and every direct TOML subagent. Other Markdown files immediately
 under the mod root are listed as optional unchecked entries. The package is a
 ZIP written outside the project; it uses validated absolute paths, rejects

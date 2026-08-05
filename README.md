@@ -35,12 +35,13 @@ models let you enter the address supplied by that model service.
 
 ![Choose and connect another AI provider](docs/screenshots/10-provider-selection.png)
 
-If the app has prepared the project before, **Manage an existing project** lets
-you repair it, update it, add an optional workflow, or remove installed setup
-files. Choose the project folder; the app finds its launcher file.
+**Manage an existing project** scans any selected mod before changing it. If the
+scan finds app-managed setup, the view also offers repair, update, optional
+workflow, and removal actions. Choose the project folder; the app finds its
+launcher file.
 
-When the scan confirms the installed Agentic HOI4 Modding instructions, skills,
-and subagents, the maintenance view also offers **Package ChatGPT project
+When the scan finds an `AGENTS.md`, flattened skill, or subagent, the scan
+results and maintenance view offer **Package ChatGPT project
 sources**. The package page defaults to the Downloads folder, keeps `AGENTS.md`,
 `README.md`, every flattened skill, and every subagent selected, and lists root
 Markdown files as optional unchecked entries. The ZIP is written outside the

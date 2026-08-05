@@ -1398,33 +1398,17 @@ async fn pick_chat_sources_folder(app: tauri::AppHandle) -> Result<FolderSelecti
     })
 }
 
-fn validate_chat_sources_installation(lock: &InstallationLock) -> Result<(), AppError> {
-    let required = ["core.agents", "core.skills", "core.subagents"];
-    if required.iter().any(|required_id| {
-        !lock
-            .components
-            .iter()
-            .any(|component| component.id == *required_id)
-    }) {
-        return Err(AppError::InvalidInput(
-            "ChatGPT source packaging requires the installed instructions, skills, and subagent components".into(),
-        ));
-    }
-    Ok(())
-}
-
 #[tauri::command(async)]
 fn preview_chat_sources(
     project_root: String,
 ) -> Result<crate::chat_sources::ChatSourcesPreview, String> {
     run_blocking_command("chat-sources-preview", move || {
         let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
-        let lock = read_project_lock(&root).map_err(command_error)?;
-        validate_chat_sources_installation(&lock).map_err(command_error)?;
         let destination = crate::paths::downloads_directory()
             .map(|path| crate::paths::user_facing_path(&path))
             .unwrap_or_default();
-        crate::chat_sources::preview(&root, &lock.project_id, destination).map_err(command_error)
+        let project_id = crate::chat_sources::project_id_from_root(&root).map_err(command_error)?;
+        crate::chat_sources::preview(&root, &project_id, destination).map_err(command_error)
     })
 }
 
@@ -1436,11 +1420,10 @@ fn package_chat_sources(
 ) -> Result<crate::chat_sources::ChatSourcesPackageResult, String> {
     run_blocking_command("chat-sources-package", move || {
         let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
-        let lock = read_project_lock(&root).map_err(command_error)?;
-        validate_chat_sources_installation(&lock).map_err(command_error)?;
         let destination =
             validate_export_directory(Path::new(&destination_directory)).map_err(command_error)?;
-        crate::chat_sources::package(&root, &lock.project_id, &destination, &selected_file_ids)
+        let project_id = crate::chat_sources::project_id_from_root(&root).map_err(command_error)?;
+        crate::chat_sources::package(&root, &project_id, &destination, &selected_file_ids)
             .map_err(command_error)
     })
 }

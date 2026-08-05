@@ -175,6 +175,7 @@ impl ProcessSpec {
         if let Some(environment) = environment {
             command.envs(environment.values());
         }
+        configure_child_no_console_window(&mut command);
         configure_child_process_group(&mut command);
         let mut child = command
             .spawn()
@@ -249,6 +250,7 @@ impl ProcessSpec {
         if let Some(cwd) = &self.cwd {
             command.current_dir(cwd);
         }
+        configure_child_no_console_window(&mut command);
         command
             .spawn()
             .map(|_| ())
@@ -269,8 +271,10 @@ pub(crate) fn terminate_process_tree(child: &mut Child) {
         let taskkill = system_root.join("System32").join("taskkill.exe");
         if taskkill.is_file() && !crate::security::path_has_link_component(&taskkill) {
             let pid = child.id().to_string();
-            let failed = Command::new(taskkill)
-                .args(["/PID", pid.as_str(), "/T", "/F"])
+            let mut command = Command::new(taskkill);
+            command.args(["/PID", pid.as_str(), "/T", "/F"]);
+            configure_child_no_console_window(&mut command);
+            let failed = command
                 .status()
                 .map(|status| !status.success())
                 .unwrap_or(true);
@@ -301,6 +305,19 @@ pub(crate) fn configure_child_process_group(command: &mut Command) {
                 Err(std::io::Error::last_os_error())
             }
         });
+    }
+}
+
+/// Keep supervised console tools inside the desktop application. Windows
+/// otherwise gives a console-subsystem child its own visible terminal when
+/// the app itself was launched from a shortcut or the Start menu.
+pub(crate) fn configure_child_no_console_window(command: &mut Command) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
     }
 }
 
@@ -434,7 +451,8 @@ pub fn validate_executable_publisher(
             .ok_or_else(|| AppError::Process("Windows signature verifier is unavailable".into()))?;
         let before_sha256 = crate::security::sha256_file(executable)?;
         let script = "$candidate = [Environment]::GetEnvironmentVariable('HOI4_SETUP_EXECUTABLE'); $signature = Get-AuthenticodeSignature -LiteralPath $candidate; if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) { exit 3 }; [Console]::Out.Write($signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false))";
-        let output = Command::new(verifier)
+        let mut command = Command::new(verifier);
+        command
             .args([
                 "-NoLogo",
                 "-NoProfile",
@@ -449,11 +467,11 @@ pub fn validate_executable_publisher(
                     AppError::Process("Windows system root is unavailable".into())
                 })?,
             )
-            .env("HOI4_SETUP_EXECUTABLE", executable)
-            .output()
-            .map_err(|error| {
-                AppError::Process(format!("Windows publisher verification failed: {error}"))
-            })?;
+            .env("HOI4_SETUP_EXECUTABLE", executable);
+        configure_child_no_console_window(&mut command);
+        let output = command.output().map_err(|error| {
+            AppError::Process(format!("Windows publisher verification failed: {error}"))
+        })?;
         if !output.status.success() || output.stdout.len() > 4096 {
             return Err(AppError::Process(
                 "executable does not have a valid reviewed Windows signature".into(),
@@ -483,27 +501,29 @@ pub fn validate_executable_publisher(
     {
         let verifier = reviewed_system_executable(PathBuf::from("/usr/bin/codesign"))
             .ok_or_else(|| AppError::Process("macOS signature verifier is unavailable".into()))?;
-        let verification = Command::new(&verifier)
+        let mut verification_command = Command::new(&verifier);
+        verification_command
             .args(["--verify", "--strict", "--verbose=2"])
             .arg(executable)
-            .env_clear()
-            .output()
-            .map_err(|error| {
-                AppError::Process(format!("macOS publisher verification failed: {error}"))
-            })?;
+            .env_clear();
+        configure_child_no_console_window(&mut verification_command);
+        let verification = verification_command.output().map_err(|error| {
+            AppError::Process(format!("macOS publisher verification failed: {error}"))
+        })?;
         if !verification.status.success() {
             return Err(AppError::Process(
                 "executable does not have a valid reviewed macOS signature".into(),
             ));
         }
-        let details = Command::new(verifier)
+        let mut details_command = Command::new(verifier);
+        details_command
             .args(["-dv", "--verbose=4"])
             .arg(executable)
-            .env_clear()
-            .output()
-            .map_err(|error| {
-                AppError::Process(format!("macOS publisher inspection failed: {error}"))
-            })?;
+            .env_clear();
+        configure_child_no_console_window(&mut details_command);
+        let details = details_command.output().map_err(|error| {
+            AppError::Process(format!("macOS publisher inspection failed: {error}"))
+        })?;
         let detail = format!(
             "{}\n{}",
             String::from_utf8_lossy(&details.stdout),

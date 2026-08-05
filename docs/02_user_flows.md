@@ -234,11 +234,12 @@ dependency, conflict, selective-download, and rollback rules still apply.
 
 ## Existing-project ChatGPT source export
 
-1. Open **Manage an existing project** and select a project with the three core
-   Agentic HOI4 Modding components.
+1. Open **Manage an existing project** and select a project whose scan finds an
+   `AGENTS.md`, flattened skill, or subagent source. A complete installation
+   lock is not required.
 2. Choose **Package ChatGPT project sources**.
 3. Review the validated external download folder, which defaults to Downloads.
-4. Keep the required root instructions, README, flattened skills, and
+4. Keep the detected root instructions, README, flattened skills, and
    subagents selected; optionally enable root Markdown files.
 5. Choose **Package sources**. Rust creates a new ZIP atomically outside the
    project and reports its path and included files. No project transaction or

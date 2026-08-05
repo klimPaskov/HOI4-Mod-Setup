@@ -12,10 +12,11 @@ key-configured bit, and `workflow.super_events` state. It does not treat a
 guessed file list as an
 installation record.
 
-If the component IDs include `core.agents`, `core.skills`, and
-`core.subagents`, also show **Package ChatGPT project sources**. This is an
-export action, not an update or repair transaction. The page defaults to the
-validated Downloads directory and reads the installed project files only.
+If the scan finds an `AGENTS.md`, flattened skill, or subagent source, also show
+**Package ChatGPT project sources**. This is an export action, not an update or
+repair transaction, and does not require an installation lock. The page
+defaults to the validated Downloads directory and reads the project files
+only.
 
 ## ChatGPT source package
 
