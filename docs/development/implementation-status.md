@@ -52,11 +52,10 @@ desktop command dispatch away from the UI event loop.
 
 ## Current source and release boundary
 
-The Agentic HOI4 Modding default branch, provider-specific portrait workflows,
-one-skill Super Events workflow, and current published manifest are at commit
-`3f0c61d9891344197cab38ab5e760821134f6daf`. The 24-component manifest declares
-the selected-file records generated from immutable Git blobs at revision
-`8f01184fbf6c4ebce6d850e17d752925b76d6182`.
+The Agentic HOI4 Modding source branch used for this update is
+`agent/portrait-manifest-public-revision` at commit
+`d37c26c8565269d4aac5ade5ec4f0c7790964909`. Its manifest declares the
+selected-file records generated from immutable Git blobs at that revision.
 
 The release route produces a ChaosX Authenticode-signed Windows installer and
 ad-hoc signed macOS disk images when official credentials are absent. The same

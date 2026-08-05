@@ -1706,7 +1706,7 @@ mod tests {
     #[test]
     fn checked_in_manifest_matches_the_supported_source_contract() {
         let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
-        let source_snapshot = "8f01184fbf6c4ebce6d850e17d752925b76d6182";
+        let source_snapshot = "d37c26c8565269d4aac5ade5ec4f0c7790964909";
         let manifest = parse_manifest(bytes, Some(source_snapshot)).unwrap();
         assert_eq!(manifest.repository.owner, SOURCE_OWNER);
         assert_eq!(
@@ -1715,7 +1715,7 @@ mod tests {
         );
         assert!(manifest.profiles.iter().any(|profile| profile.default));
         assert_eq!(manifest.wiki.destination, "paradox_wiki/");
-        assert_eq!(manifest.components.len(), 24);
+        assert_eq!(manifest.components.len(), 23);
         assert!(manifest
             .components
             .iter()
@@ -1805,7 +1805,7 @@ mod tests {
     #[test]
     fn super_events_package_is_complete_and_opt_in() {
         let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
-        let source_snapshot = "8f01184fbf6c4ebce6d850e17d752925b76d6182";
+        let source_snapshot = "d37c26c8565269d4aac5ade5ec4f0c7790964909";
         let manifest = parse_manifest(bytes, Some(source_snapshot)).unwrap();
         let core_profile = manifest
             .profiles
@@ -1930,7 +1930,7 @@ mod tests {
         assert_eq!(selected_bytes, remote_bytes);
         assert_eq!(
             manifest.generated_for_revision.as_deref(),
-            Some("8f01184fbf6c4ebce6d850e17d752925b76d6182")
+            Some("d37c26c8565269d4aac5ade5ec4f0c7790964909")
         );
     }
 

@@ -26,9 +26,9 @@ documents that define them.
 
 The workflow source is
 [`klimPaskov/Agentic-HOI4-Modding`](https://github.com/klimPaskov/Agentic-HOI4-Modding).
-The bundled manifest matches the manifest published on source revision
-`3f0c61d9891344197cab38ab5e760821134f6daf`; its selected-file evidence was
-generated for revision `8f01184fbf6c4ebce6d850e17d752925b76d6182`. The app still
+The bundled manifest matches the Agentic source update at revision
+`d37c26c8565269d4aac5ade5ec4f0c7790964909`; its selected-file evidence was
+generated for that revision. The app still
 resolves the remote default branch to one exact commit at runtime.
 
 The application code is under `src/` and `src-tauri/`; living implementation
