@@ -6,6 +6,11 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.2.7 - 2026-08-05
+
+- Republish the desktop launch and ChatGPT source-export fixes with the
+  portable console-helper correction required by the Linux release gate.
+
 ## 0.2.6 - 2026-08-05
 
 - Keep Codex and other supervised desktop children inside the app on Windows so
