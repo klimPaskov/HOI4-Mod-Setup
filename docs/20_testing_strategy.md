@@ -25,6 +25,8 @@ Run a controlled manual release test against a real ChatGPT account. Never place
 - journal transitions
 - provider profile and model binding
 - flattened Chat-source mapping and size/collision policy
+- read-only scan exclusion of virtual environments, dependency trees, editor
+  metadata, caches, and generated artifacts while retaining valid HOI4 files
 
 ## Property tests
 
@@ -97,6 +99,10 @@ open the project.
 ### Existing Windows project
 
 Scan local AGENTS and Codex files, review, merge, install, update, repair, and roll back.
+
+Verify that the packaged Windows native executable launches as a GUI-subsystem
+application without opening a console window, including when started from its
+installed shortcut rather than an active terminal.
 
 ### New macOS project
 

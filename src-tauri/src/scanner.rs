@@ -22,6 +22,34 @@ const MAX_TEXT_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_LAUNCHER_CANDIDATES: usize = 512;
 const MAX_LAUNCHER_DESCRIPTOR_BYTES: u64 = 256 * 1024;
 
+const IGNORED_SCAN_DIRECTORIES: &[&str] = &[
+    ".git",
+    ".hoi4-mod-setup",
+    ".venv",
+    "venv",
+    "env",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    ".nox",
+    ".idea",
+    ".vscode",
+    ".vs",
+    ".cache",
+    "cache",
+    "coverage",
+    "htmlcov",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "out",
+];
+
+const IGNORED_SCAN_FILES: &[&str] = &[".ds_store", "thumbs.db", "desktop.ini"];
+
 #[derive(Debug, Clone)]
 pub struct ScanOptions {
     pub max_files: usize,
@@ -507,8 +535,7 @@ fn collect_files(
         };
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == ".git" || name == "target" || name == "node_modules" || name == ".hoi4-mod-setup"
-        {
+        if is_unrelated_scan_directory(&name) || is_unrelated_scan_file(&name) {
             continue;
         }
         let relative = relative_path(root, &path);
@@ -714,6 +741,22 @@ fn sensitive_scan_path(relative: &str) -> bool {
         || name.ends_with(".key")
         || name.ends_with(".p12")
         || name.ends_with(".pfx")
+}
+
+fn is_unrelated_scan_directory(name: &str) -> bool {
+    IGNORED_SCAN_DIRECTORIES
+        .iter()
+        .any(|candidate| name.eq_ignore_ascii_case(candidate))
+}
+
+fn is_unrelated_scan_file(name: &str) -> bool {
+    let normalized = name.to_ascii_lowercase();
+    IGNORED_SCAN_FILES
+        .iter()
+        .any(|candidate| normalized == *candidate)
+        || [".pyc", ".pyo", ".log", ".tmp", ".bak", ".swp"]
+            .iter()
+            .any(|suffix| normalized.ends_with(suffix))
 }
 
 fn detect_descriptors(
@@ -1880,6 +1923,69 @@ mod tests {
             .findings
             .iter()
             .any(|finding| finding.value.to_string().contains("secret-value")));
+    }
+
+    #[test]
+    fn unrelated_tooling_directories_and_artifacts_are_not_scanned() {
+        let directory = tempdir().unwrap();
+        fs::write(
+            directory.path().join("descriptor.mod"),
+            "name=\"Example\"\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join("events.txt"),
+            "namespace_example = yes\n",
+        )
+        .unwrap();
+        for name in [
+            ".venv",
+            "venv",
+            "__pycache__",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".ruff_cache",
+            ".idea",
+            ".vscode",
+            ".cache",
+            "coverage",
+            "node_modules",
+            "target",
+            "dist",
+            "build",
+        ] {
+            fs::create_dir_all(directory.path().join(name)).unwrap();
+            fs::write(
+                directory.path().join(name).join("unrelated.txt"),
+                format!("unrelated content from {name}"),
+            )
+            .unwrap();
+        }
+        for name in [
+            ".DS_Store",
+            "Thumbs.db",
+            "debug.log",
+            "cache.pyc",
+            "editor.tmp",
+        ] {
+            fs::write(directory.path().join(name), "unrelated artifact").unwrap();
+        }
+
+        let mut progress = Vec::new();
+        let result =
+            scan_project_with_progress(directory.path(), &ScanOptions::default(), |update| {
+                progress.push(update)
+            })
+            .unwrap();
+        let serialized = serde_json::to_string(&result).unwrap();
+
+        assert!(!serialized.contains("unrelated.txt"));
+        assert!(!serialized.contains(".venv"));
+        assert!(!serialized.contains("debug.log"));
+        assert!(progress
+            .iter()
+            .all(|update| !update.current_path.contains(".venv")));
+        assert!(result.files_scanned >= 2);
     }
 
     #[test]

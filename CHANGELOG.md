@@ -6,6 +6,14 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.2.8 - 2026-08-05
+
+- Build the Windows desktop executable as a GUI application so launching the
+  installed app does not open a terminal window.
+- Keep read-only existing-project scans focused on mod content by excluding
+  known virtual environments, tooling caches, editor metadata, and generated
+  artifacts.
+
 ## 0.2.7 - 2026-08-05
 
 - Republish the desktop launch and ChatGPT source-export fixes with the

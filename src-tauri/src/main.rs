@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 #[cfg(feature = "desktop")]
 fn main() {
     hoi4_mod_setup::run_desktop();

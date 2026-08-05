@@ -85,6 +85,9 @@
 - EXT-01: The user selects one root.
 - EXT-02: Scan performs no project writes.
 - EXT-03: Structure, descriptors, launcher registration, thumbnail, Git, IDs, namespaces, naming, localisation, docs, skills, subagents, Codex, MCP, and conflicts are covered.
+- EXT-03A: Read-only scanning excludes bounded virtual environments,
+  dependency trees, editor metadata, caches, and generated artifacts without
+  excluding valid HOI4 content.
 - EXT-04: Findings have evidence and confidence.
 - EXT-05: Findings appear in small review groups.
 - EXT-06: The user can accept, edit, reject, or defer values.

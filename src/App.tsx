@@ -1989,7 +1989,7 @@ function pngDataUrl(bytes: number[]): string {
 }
 
 const SCAN_STAGE_LABELS: Record<string, string> = {
-  discovering_files: "Reading selected project metadata",
+  discovering_files: "Reading selected mod metadata",
   detecting_descriptors: "Checking descriptors",
   detecting_thumbnail: "Checking thumbnail",
   detecting_structure: "Checking project structure",
@@ -2011,7 +2011,7 @@ function formatScanBytes(bytes: number): string {
 }
 
 export function Scan({ state, complete, error, progress, partial, limitsHit, canCancel, cancellationRequested, onCancel }: { state: WizardState; complete: boolean; error?: string; progress: ScanProgress; partial: boolean; limitsHit: string[]; canCancel: boolean; cancellationRequested: boolean; onCancel: () => Promise<void> }) {
-  const currentCheck = cancellationRequested ? "Cancellation requested" : error ? "Scan needs attention" : complete && partial ? "Read-only scan reached a safety limit" : SCAN_STAGE_LABELS[progress.stage] ?? "Reading selected project metadata";
+  const currentCheck = cancellationRequested ? "Cancellation requested" : error ? "Scan needs attention" : complete && partial ? "Read-only scan reached a safety limit" : SCAN_STAGE_LABELS[progress.stage] ?? "Reading selected mod metadata";
   const statusText = complete ? partial ? "Partial scan complete" : "100% complete" : cancellationRequested ? "Stopping scan" : "Scan in progress";
   return (
     <div className="scan-wrap"><section className="panel scan-panel">

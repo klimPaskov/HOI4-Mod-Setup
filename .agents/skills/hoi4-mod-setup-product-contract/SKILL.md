@@ -69,6 +69,10 @@ Read:
   installation lock is required. It defaults to Downloads, keeps detected
   AGENTS/README/flattened skills/subagents selected, leaves root Markdown
   unchecked, and writes a safe external ZIP without mutating the mod.
+- The Windows desktop entry point uses the GUI subsystem, and the read-only
+  scanner skips bounded Python environments, dependency trees, editor
+  metadata, caches, and generated build artifacts without excluding valid HOI4
+  content.
 - A newer signed app version shown at startup is installed and restarted
   automatically; a failed update leaves the current app usable and retryable.
 - Adapted project instructions remove the source template's complete

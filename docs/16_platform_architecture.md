@@ -37,7 +37,7 @@ the regression even when its eventual result is correct.
 
 The shared Rust core owns a `CodexBridge` adapter that starts `codex app-server`, frames stdio JSONL messages, performs initialize, tracks request IDs, consumes notifications, supervises the process, and exposes typed application events to Tauri.
 
-The bridge owns capability detection, account state, browser and device-code login, logout, rate-limit checks, thread and turn lifecycle, read-only sandbox policy, output schema attachment, response validation, cancellation, and process restart. On Windows, supervised Codex children request `CREATE_NO_WINDOW`, so launching the app from a shortcut or Start menu does not open a console or depend on an active terminal.
+The bridge owns capability detection, account state, browser and device-code login, logout, rate-limit checks, thread and turn lifecycle, read-only sandbox policy, output schema attachment, response validation, cancellation, and process restart. On Windows, the desktop entry point is compiled with the GUI subsystem and supervised Codex children request `CREATE_NO_WINDOW`, so launching the installed app from a shortcut or Start menu does not open a console or depend on an active terminal.
 
 The React layer never talks to the Codex process directly. It receives redacted typed state through Tauri commands and events. The target project is never a writable root for semantic analysis.
 
@@ -159,6 +159,11 @@ and macOS folder APIs resolve the Downloads default; the user-selected folder
 must already exist and contain no link component. The export does not require
 an installation lock, writes a new ZIP outside the project, and does not use
 the project transaction journal.
+
+The read-only scanner skips bounded, known tooling and build artifacts such as
+Python virtual environments, dependency trees, editor metadata, caches, and
+generated output. It still scans valid HOI4 content and preserves explicit
+credential-shaped exclusions as visible security findings.
 
 ## Local data
 

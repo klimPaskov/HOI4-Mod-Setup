@@ -141,11 +141,18 @@ confidence.
 ## Incremental and large-repository behavior
 
 Cache metadata and hashes in application data only. Recompute every touched
-local hash before installation; cache is advisory. Use bounded concurrency,
-exclude `.git/objects` and known caches, stream phase/path/counters, support
-backpressure, keep temporary evidence outside the project, and cancel
-promptly. Events carry an opaque request ID and the UI ignores another
-request's events. Never invent a percentage when no total is known.
+local hash before installation; cache is advisory. Use bounded concurrency and
+exclude known tooling, build, and cache trees such as `.git`, `.hoi4-mod-setup`,
+`.venv`, `venv`, `env`, `__pycache__`, `.pytest_cache`, `.mypy_cache`,
+`.ruff_cache`, `.tox`, `.nox`, `.idea`, `.vscode`, `.vs`, `.cache`, `cache`,
+`coverage`, `htmlcov`, `node_modules`, `target`, `dist`, `build`, and `out`.
+Ignore common editor and generated artifact files such as `.DS_Store`,
+`Thumbs.db`, `desktop.ini`, `*.pyc`, `*.pyo`, `*.log`, `*.tmp`, `*.bak`, and
+`*.swp`; do not use this list to exclude valid HOI4 content. Stream
+phase/path/counters, support backpressure, keep temporary evidence outside the
+project, and cancel promptly. Events carry an opaque request ID and the UI
+ignores another request's events. Never invent a percentage when no total is
+known.
 
 Cancellation returns `partial: true` and `cancelled: true`, emits a terminal
 event, and clears approved evidence. Any partial result blocks semantic

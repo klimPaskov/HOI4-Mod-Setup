@@ -169,6 +169,20 @@ function verifyPlatformArchitecture(packageRoot, packageFiles, platform, archite
       const machine = bytes.readUInt16LE(peOffset + 4);
       const acceptedMachine = candidate.native ? [expectedMachine] : [expectedMachine, 0x014c];
       if (!acceptedMachine.includes(machine)) throw new Error(`Windows package architecture mismatch for ${candidate.label}`);
+      if (candidate.native) {
+        const optionalHeaderOffset = peOffset + 24;
+        if (optionalHeaderOffset + 70 > bytes.length) {
+          throw new Error(`Windows native executable has no complete PE optional header: ${candidate.label}`);
+        }
+        const optionalMagic = bytes.readUInt16LE(optionalHeaderOffset);
+        if (![0x010b, 0x020b].includes(optionalMagic)) {
+          throw new Error(`Windows native executable has an unsupported PE optional header: ${candidate.label}`);
+        }
+        const subsystem = bytes.readUInt16LE(optionalHeaderOffset + 68);
+        if (subsystem !== 2) {
+          throw new Error(`Windows native executable is not a GUI-subsystem application: ${candidate.label}`);
+        }
+      }
     }
     return;
   }

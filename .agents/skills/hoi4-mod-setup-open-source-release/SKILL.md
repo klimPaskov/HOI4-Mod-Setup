@@ -44,7 +44,7 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - Check names remain stable once rulesets depend on them.
 - Platform build jobs run on real Windows and macOS runners.
 - Current GitHub-hosted macOS packaging labels are `macos-15` for arm64 and `macos-15-intel` for x64; do not restore retired `macos-13` or `macos-14` labels.
-- Native desktop jobs run the repository-owned UI gates, Tauri package verification, and bounded launch smoke after the package is built.
+- Native desktop jobs run the repository-owned UI gates, Tauri package verification, GUI-subsystem verification for the Windows native executable, and bounded launch smoke after the package is built.
 - Windows architecture verification requires the native Tauri executable to match the target machine type; the packaged NSIS bootstrap may be 32-bit, but it must still be a valid PE image.
 - On macOS, Tauri's DMG bundling removes the temporary `.app` bundle after packaging; `scripts/run_desktop_e2e.mjs` therefore accepts the still-present `target/release/hoi4-mod-setup` binary as a packaging smoke fallback.
 - Pull-request package verification accepts GitHub merge refs; semantic tag and tag-target checks are enforced only when the release workflow enables `HOI4_MOD_SETUP_REQUIRE_RELEASE_IDENTITY=1`.
