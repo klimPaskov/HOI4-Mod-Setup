@@ -566,7 +566,11 @@ export default function App() {
   }, [state.screen, state.mode, state.identity.projectRoot]);
 
   useEffect(() => {
-    if (!state.identity.projectRoot || installationPending || state.screen === "install") return;
+    // A new-project destination is often filled automatically before the user
+    // has chosen to create anything. Do not treat that suggested path as an
+    // existing-project recovery target; the apply boundary still performs the
+    // exact transaction check when the user starts installation.
+    if (state.mode !== "existing" || !state.identity.projectRoot || installationPending || state.screen === "install" || state.screen === "recovery") return;
     let active = true;
     void findInterruptedTransaction(state.identity.projectRoot).then((journal) => {
       if (!active || !journal) return;
@@ -1796,11 +1800,23 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
       : providerNeedsManualDetails
         ? `Enter the ${selectedLabel} details and connect.`
         : `Paste your ${selectedLabel} API key to connect.`;
+  const chooseMode = (mode: "new" | "existing") => {
+    if (state.mode === mode) return;
+    update({
+      mode,
+      recoveryEntry: false,
+      identity: { ...DEFAULT_IDENTITY },
+      transaction: undefined,
+      transactionError: undefined,
+      projectPathsOverridden: false,
+      projectPathStatus: mode === "new" ? "resolving" : "manual",
+    });
+  };
   return <div className="stack wide welcome-screen"><div className="choice-grid">
-    <button type="button" className={`choice-card ${state.mode === "new" ? "selected" : ""}`} aria-pressed={state.mode === "new"} onClick={() => update({ mode: "new" })}>
+    <button type="button" className={`choice-card ${state.mode === "new" ? "selected" : ""}`} aria-pressed={state.mode === "new"} onClick={() => chooseMode("new")}>
       <ChoiceIcon kind="plus" /><span className="choice-radio" aria-hidden="true" /><h2>Create new mod</h2><p>Start from a short description.</p>
     </button>
-    <button type="button" className={`choice-card ${state.mode === "existing" ? "selected" : ""}`} aria-pressed={state.mode === "existing"} onClick={() => update({ mode: "existing" })}>
+    <button type="button" className={`choice-card ${state.mode === "existing" ? "selected" : ""}`} aria-pressed={state.mode === "existing"} onClick={() => chooseMode("existing")}>
       <ChoiceIcon kind="search" /><span className="choice-radio" aria-hidden="true" /><h2>Import existing mod</h2><p>Scan the project without changing it.</p>
     </button>
   </div><section><div className="section-label">Planning provider</div><div className="panel recent-list provider-panel"><label className="field"><span className="field-label">AI provider</span><select className="text-input" value={state.aiProvider} onChange={(event) => selectProvider(event.target.value as AiProviderId)}>{profiles.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>)}</select></label><p className="muted provider-help">Codex is the default. The project follows the provider you choose.</p>{state.aiProvider !== "codex" && <>

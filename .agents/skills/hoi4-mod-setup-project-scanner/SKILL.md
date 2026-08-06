@@ -116,6 +116,10 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
   absent/non-blocking; link, size, read, parse, or schema failures are blocking
   and must not be guessed into an installed state.
 - Bound file size, depth, count, and parse work.
+- Skip app-managed tooling, temporary output, and offline-wiki trees
+  (`.tools/`, `.tmp/`, and `paradox_wiki/`) during the recursive walk. Detect
+  the exact `paradox_wiki/` root entry separately for component inventory and
+  report links without following them.
 - Support cancellation and partial result reporting.
 - Stream progress through an opaque request ID with stage, relative path, file count, directory count, and bytes read. Do not emit or render a percentage when a total is unknown.
 - Cancellation is cooperative, returns explicit `partial` and `cancelled` metadata, emits a terminal cancellation event, and clears the approved-evidence binding before any Codex analysis can use it. Any non-cancelled partial result also clears that binding and blocks semantic analysis until a complete scan is available.

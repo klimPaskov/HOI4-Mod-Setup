@@ -26,7 +26,8 @@ Run a controlled manual release test against a real ChatGPT account. Never place
 - provider profile and model binding
 - flattened Chat-source mapping and size/collision policy
 - read-only scan exclusion of virtual environments, dependency trees, editor
-  metadata, caches, and generated artifacts while retaining valid HOI4 files
+  metadata, caches, generated artifacts, app-managed `.tools/`, `.tmp/`, and
+  offline-wiki pages while retaining valid HOI4 files
 
 ## Property tests
 

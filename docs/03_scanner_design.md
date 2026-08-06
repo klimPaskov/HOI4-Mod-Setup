@@ -144,8 +144,11 @@ Cache metadata and hashes in application data only. Recompute every touched
 local hash before installation; cache is advisory. Use bounded concurrency and
 exclude known tooling, build, and cache trees such as `.git`, `.hoi4-mod-setup`,
 `.venv`, `venv`, `env`, `__pycache__`, `.pytest_cache`, `.mypy_cache`,
-`.ruff_cache`, `.tox`, `.nox`, `.idea`, `.vscode`, `.vs`, `.cache`, `cache`,
-`coverage`, `htmlcov`, `node_modules`, `target`, `dist`, `build`, and `out`.
+   `.ruff_cache`, `.tox`, `.nox`, `.idea`, `.vscode`, `.vs`, `.cache`, `cache`,
+   `coverage`, `htmlcov`, `node_modules`, `target`, `dist`, `build`, `out`,
+   `.tools`, `.tmp`, and `paradox_wiki`.
+   The managed offline wiki is detected from its exact root entry but its pages
+   are not part of the project scan.
 Ignore common editor and generated artifact files such as `.DS_Store`,
 `Thumbs.db`, `desktop.ini`, `*.pyc`, `*.pyo`, `*.log`, `*.tmp`, `*.bak`, and
 `*.swp`; do not use this list to exclude valid HOI4 content. Stream
