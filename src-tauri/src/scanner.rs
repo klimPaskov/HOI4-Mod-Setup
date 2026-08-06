@@ -25,6 +25,9 @@ const MAX_LAUNCHER_DESCRIPTOR_BYTES: u64 = 256 * 1024;
 const IGNORED_SCAN_DIRECTORIES: &[&str] = &[
     ".git",
     ".hoi4-mod-setup",
+    ".tools",
+    ".tmp",
+    "paradox_wiki",
     ".venv",
     "venv",
     "env",
@@ -341,7 +344,7 @@ where
             directories,
             total_bytes,
         );
-        detect_existing_components(&observations, &mut conflicts);
+        detect_existing_components(&root, &observations, &mut conflicts);
         detect_managed_installation(&root, &mut findings, &mut conflicts);
 
         if let Some(external) = options.approved_external_descriptor.as_deref() {
@@ -536,6 +539,25 @@ fn collect_files(
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         if is_unrelated_scan_directory(&name) || is_unrelated_scan_file(&name) {
+            // Managed tooling and the offline wiki are intentionally outside
+            // the semantic scan. Inspect only their entry metadata so a link
+            // is never followed silently.
+            if is_unrelated_scan_directory(&name)
+                && fs::symlink_metadata(&path)
+                    .ok()
+                    .is_some_and(|metadata| is_link_metadata(&metadata))
+            {
+                link_conflicts.push(ScanConflict {
+                    id: format!(
+                        "scan.link.{}",
+                        &sha256_bytes(relative_path(root, &path).as_bytes())[..12]
+                    ),
+                    path: relative_path(root, &path),
+                    kind: "other".into(),
+                    severity: "block".into(),
+                    details: Some("Symlink or junction was not followed during scan.".into()),
+                });
+            }
             continue;
         }
         let relative = relative_path(root, &path);
@@ -1495,12 +1517,35 @@ fn detect_absolute_paths(observations: &[FileObservation], findings: &mut Vec<Sc
     ));
 }
 
-fn detect_existing_components(observations: &[FileObservation], conflicts: &mut Vec<ScanConflict>) {
+fn detect_existing_components(
+    root: &Path,
+    observations: &[FileObservation],
+    conflicts: &mut Vec<ScanConflict>,
+) {
     for path in ["paradox_wiki", ".agents/skills", ".codex/agents"] {
-        if observations
-            .iter()
-            .any(|file| file.relative == path || file.relative.starts_with(&format!("{path}/")))
-        {
+        let present = if path == "paradox_wiki" {
+            fs::symlink_metadata(root.join(path))
+                .ok()
+                .is_some_and(|metadata| {
+                    if is_link_metadata(&metadata) {
+                        conflicts.push(ScanConflict {
+                            id: "conflict.paradox_wiki.link".into(),
+                            path: path.into(),
+                            kind: "other".into(),
+                            severity: "block".into(),
+                            details: Some(
+                                "The offline wiki directory is a link and was not followed.".into(),
+                            ),
+                        });
+                    }
+                    metadata.is_dir() || metadata.is_file()
+                })
+        } else {
+            observations
+                .iter()
+                .any(|file| file.relative == path || file.relative.starts_with(&format!("{path}/")))
+        };
+        if present {
             conflicts.push(ScanConflict {
                 id: format!("conflict.{}", path.replace('/', ".")),
                 path: path.into(),
@@ -1953,6 +1998,9 @@ mod tests {
             "target",
             "dist",
             "build",
+            ".tools",
+            ".tmp",
+            "paradox_wiki",
         ] {
             fs::create_dir_all(directory.path().join(name)).unwrap();
             fs::write(
@@ -1985,7 +2033,35 @@ mod tests {
         assert!(progress
             .iter()
             .all(|update| !update.current_path.contains(".venv")));
+        assert!(progress
+            .iter()
+            .all(|update| !update.current_path.contains(".tools")));
         assert!(result.files_scanned >= 2);
+    }
+
+    #[test]
+    fn skipped_managed_wiki_is_detected_without_reading_its_pages() {
+        let directory = tempdir().unwrap();
+        fs::write(
+            directory.path().join("descriptor.mod"),
+            "name=\"Example\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(directory.path().join("paradox_wiki/pages")).unwrap();
+        fs::write(
+            directory.path().join("paradox_wiki/pages/large-page.md"),
+            "wiki content that is not part of the project scan",
+        )
+        .unwrap();
+
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+        let serialized = serde_json::to_string(&result).unwrap();
+
+        assert!(!serialized.contains("large-page.md"));
+        assert!(result
+            .conflicts
+            .iter()
+            .any(|conflict| conflict.path == "paradox_wiki"));
     }
 
     #[test]

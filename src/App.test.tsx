@@ -809,6 +809,64 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByLabelText("Launcher descriptor path")).toHaveValue("C:\\mods\\cold_war_curtain.mod");
   });
 
+  it("does not open recovery for an automatically suggested new-project destination", async () => {
+    enableTauriRuntime();
+    vi.mocked(suggestProjectPaths).mockResolvedValue({
+      mod_directory: "C:\\mods",
+      project_root: "C:\\mods\\new_mod",
+      launcher_descriptor_path: "C:\\mods\\new_mod.mod",
+      project_exists: false,
+      launcher_descriptor_exists: false,
+    });
+    vi.mocked(findInterruptedTransaction).mockResolvedValue({
+      transaction_id: "stale-transaction",
+      state: "staging",
+      last_checkpoint: "stage-file-op-1",
+      recovery: {
+        resume_allowed: true,
+        rollback_allowed: false,
+        discard_staging_allowed: true,
+        project_apply_started: false,
+        recommended_action: "resume",
+      },
+    } as never);
+    vi.mocked(runCodexAnalysisResult).mockResolvedValue({
+      value: {
+        analysis: {
+          schema_version: "1.0.0",
+          analysis_id: "analysis-new-project-recovery",
+          mode: "new_project_identity",
+          input_sha256: "a".repeat(64),
+          project_summary: "A test project",
+          proposals: [],
+          component_recommendations: [],
+          warnings: [],
+        },
+        record: {
+          engine: "codex",
+          auth_mode: "chatgpt",
+          provider: "codex",
+          model: "default",
+          analysis_id: "analysis-new-project-recovery",
+          schema_version: "1.0.0",
+          input_sha256: "a".repeat(64),
+          output_sha256: "b".repeat(64),
+          confirmed_fields: ["display_name"],
+          confirmed_at: "2026-07-29T00:00:00Z",
+        },
+      } as CodexAnalysisResult,
+    });
+
+    await renderAuthenticatedApp();
+    fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(screen.getByLabelText("Project folder")).toHaveValue("C:\\mods\\new_mod"));
+
+    expect(findInterruptedTransaction).not.toHaveBeenCalled();
+    expect(screen.queryByRole("heading", { name: "Installation was interrupted" })).not.toBeInTheDocument();
+  });
+
   it("presents provider proposals with readable labels and separated values", async () => {
     enableTauriRuntime();
     vi.mocked(runCodexAnalysisResult).mockResolvedValue({

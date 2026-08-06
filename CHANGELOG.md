@@ -6,6 +6,13 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.2.10 - 2026-08-06
+
+- Keep automatic new-project suggestions separate from recovery for an
+  existing project.
+- Keep managed tools, temporary setup files, and offline wiki pages out of the
+  existing-project scan while still detecting an installed wiki.
+
 ## 0.2.9 - 2026-08-06
 
 - Fix preparation failures when binary portrait assets are selected alongside
