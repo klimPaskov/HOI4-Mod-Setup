@@ -296,6 +296,7 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .workflow-provider-summary > :where(span, small, code) { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .flatten-package-row { cursor: pointer; }
 .flatten-package-row:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: -3px; }
+.component-row.flatten-package-row > .checkbox { flex: 0 0 22px; min-width: 22px; max-width: 22px; }
 .flatten-package-row > .checkbox + span { min-width: 0; display: grid; flex: 1 1 auto; gap: 4px; overflow-wrap: anywhere; }
 .flatten-package-row .size { min-width: 5.5rem; flex: 0 0 auto; text-align: right; white-space: normal; }
 .flattened-file-list > div { grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 12px; }

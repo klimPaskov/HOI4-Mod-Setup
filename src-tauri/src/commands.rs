@@ -2642,6 +2642,15 @@ fn adapt_optional_portrait_section(
 ) -> Result<Vec<u8>, AppError> {
     const START: &str = "<!-- HOI4_MOD_SETUP_PORTRAITS_START -->";
     const END: &str = "<!-- HOI4_MOD_SETUP_PORTRAITS_END -->";
+    if !bytes
+        .windows(START.len())
+        .any(|window| window == START.as_bytes())
+        && !bytes
+            .windows(END.len())
+            .any(|window| window == END.as_bytes())
+    {
+        return Ok(bytes.to_vec());
+    }
     let text = std::str::from_utf8(bytes).map_err(|error| {
         AppError::Source(format!("portrait conditional source is not UTF-8: {error}"))
     })?;
@@ -6421,6 +6430,27 @@ mcp_server = "comfy_cloud_portraits"
         .unwrap();
         assert!(!local.contains("comfy_cloud_portraits"));
         assert!(!local.contains("cloud.comfy.org"));
+    }
+
+    #[test]
+    fn binary_sources_without_portrait_markers_are_kept_unchanged() {
+        let identity = super_events_test_identity();
+        let portrait = test_portrait_config("disabled", false);
+        let source = [0_u8, 0xff, 0xfe, 0_u8, 0x80];
+
+        let adapted = adapt_selected_source(
+            "workflow.portraits.core",
+            &source,
+            &identity,
+            "codex",
+            "default",
+            false,
+            false,
+            &portrait,
+        )
+        .unwrap();
+
+        assert_eq!(adapted, source);
     }
 
     #[test]

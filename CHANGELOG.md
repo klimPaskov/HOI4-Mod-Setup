@@ -6,6 +6,13 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.2.9 - 2026-08-06
+
+- Fix preparation failures when binary portrait assets are selected alongside
+  conditional portrait guidance.
+- Keep the flattened ChatGPT source checkbox at the same fixed size as other
+  component checkboxes.
+
 ## 0.2.8 - 2026-08-05
 
 - Build the Windows desktop executable as a GUI application so launching the
