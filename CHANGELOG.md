@@ -16,6 +16,8 @@ No unreleased changes.
   failure details when an interrupted installation needs recovery.
 - Keep development-preview release commands bound to the intended GitHub
   repository even though the publication job does not check out source.
+- Pin the transitive Nano ID dependency to its patched release so the public
+  security audit remains green.
 
 ## 0.2.10 - 2026-08-06
 
