@@ -6,6 +6,20 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.2.11 - 2026-08-09
+
+- Use the Atlantis Rising title and description as the new-project example.
+- Accept the renderer's valid Windows launcher path during staging and final
+  readiness instead of mistaking the internal `\\?\` filesystem prefix for a
+  different project root, and render macOS system path aliases from the same
+  canonical root used by validation.
+- Show the durable stage, checkpoint, staged-file count, and bounded, redacted
+  failure details when an interrupted installation needs recovery.
+- Keep development-preview release commands bound to the intended GitHub
+  repository even though the publication job does not check out source.
+- Pin the transitive Nano ID dependency to its patched release so the public
+  security audit remains green.
+
 ## 0.2.10 - 2026-08-06
 
 - Keep automatic new-project suggestions separate from recovery for an

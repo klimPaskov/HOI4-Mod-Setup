@@ -75,6 +75,13 @@ session, cancellation, credential-health, or analysis assertions.
 - no launcher artifact is generated before confirmed Codex proposals
 - standard Documents/mod resolution and launcher discovery reject links,
   malformed candidates, collisions, and ambiguous sibling registrations
+- launcher scaffold coverage asserts that Windows launcher descriptors use the
+  canonical user-facing project path without an internal `\\?\` prefix,
+  reject a different complete path in the full transaction before live apply,
+  and that a validation-stage interruption
+  resumes through final readiness and the success lock; macOS coverage keeps a
+  literal backslash in a filename component while matching the canonical root
+  when a temporary directory uses the `/var` system alias
 - the UI and Rust plan builder both block missing, unauthenticated, or
   usage-limited provider capability while signed-out recovery remains usable
 - reviewed external-link commands accept only the fixed URLs and use the
@@ -149,7 +156,7 @@ state without account identity or secret values, unknown routes are ignored,
 and production builds cannot activate the fixture. Capture at 1280 by 960 from
 the top of the page so comparison evidence is consistent.
 
-Test all 17 required screen states and seven phases. Include density assertions, keyboard traversal, scaling, reduced motion, long values, errors, conflict comparison, staged scanner progress, correlated event filtering, indeterminate progress semantics, and cancellation evidence messaging. Assert the **3D models workflow** title and the immediately following **Super Events workflow** order.
+Test all 17 required screen states and seven phases. Include density assertions, keyboard traversal, scaling, reduced motion, long values, errors, conflict comparison, staged scanner progress, correlated event filtering, indeterminate progress semantics, and cancellation evidence messaging. Assert the **3D models workflow** title and the immediately following **Super Events workflow** order. Recovery coverage must render a validation-stage checkpoint with its sanitized Details disclosure and only the core-permitted Continue/Discard actions before apply; feed prefixed, quoted-field, and unquoted-assignment secret shapes plus multibyte overflow through that path and prove the raw values are absent and the result remains within 2 KiB. Direct transaction and rollback command errors use quoted-field fixtures too. Never show Undo as an unavailable card.
 
 Keep a desktop responsiveness regression test that verifies every Tauri command
 uses `#[tauri::command(async)]` so blocking Rust core work cannot run on the UI
@@ -189,6 +196,8 @@ A release is blocked by:
 - missing license for public release
 - updater metadata missing a platform, using a wrong release URL, carrying an
   empty signature, or referencing bytes changed after updater signing
+- checkout-free publication jobs that run `gh release` without an explicit
+  `--repo "$GITHUB_REPOSITORY"` on every read and write
 - failing ChatGPT authentication, provider adapter, or common analysis contract tests
 - launcher scaffold failure on either supported platform
 

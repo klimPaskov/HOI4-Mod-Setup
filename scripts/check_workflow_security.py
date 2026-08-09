@@ -40,12 +40,39 @@ def assert_write_jobs_execute_no_repository_code(workflow_name: str, workflow: d
                 )
 
 
+def assert_release_commands_name_repository(workflow_name: str, workflow: dict) -> None:
+    for job_name, job in workflow["jobs"].items():
+        if permission(job, "contents") != "write":
+            continue
+        for step in job.get("steps", []):
+            logical_commands: list[str] = []
+            pending: list[str] = []
+            for raw_line in str(step.get("run", "")).splitlines():
+                line = raw_line.strip()
+                if not line:
+                    continue
+                continued = line.endswith("\\")
+                pending.append(line[:-1].rstrip() if continued else line)
+                if not continued:
+                    logical_commands.append(" ".join(pending))
+                    pending = []
+            if pending:
+                logical_commands.append(" ".join(pending))
+            for command in logical_commands:
+                if "gh release " in command and '--repo "$GITHUB_REPOSITORY"' not in command:
+                    raise SystemExit(
+                        f"{workflow_name}:{job_name} runs gh release without an explicit repository"
+                    )
+
+
 def main() -> None:
     preview = load_workflow("development-preview.yml")
     release = load_workflow("release.yml")
 
     assert_write_jobs_execute_no_repository_code("development-preview.yml", preview)
     assert_write_jobs_execute_no_repository_code("release.yml", release)
+    assert_release_commands_name_repository("development-preview.yml", preview)
+    assert_release_commands_name_repository("release.yml", release)
 
     preview_jobs = preview["jobs"]
     if preview_jobs["build"].get("needs") != "preflight":

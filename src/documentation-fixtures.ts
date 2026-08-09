@@ -14,6 +14,7 @@ export const DOCUMENTATION_SCENARIOS = [
   "ready",
   "maintenance",
   "chat-sources",
+  "recovery",
 ] as const;
 
 export type DocumentationScenario = typeof DOCUMENTATION_SCENARIOS[number];
@@ -254,6 +255,30 @@ export function documentationFixture(base: WizardState): WizardState {
   if (scenario === "dry-run") return { ...common, screen: "dry-run", plan, flattenForChat: true, superEventsSelected: true };
   if (scenario === "ready") return { ...common, screen: "ready", plan, readiness, flattenForChat: true, superEventsSelected: true, portraitPipeline: runpodPortrait, installedSuperEventsState: "ready", selectedComponents: [...common.selectedComponents, ...portraitComponentIds] };
   if (scenario === "maintenance") return { ...common, screen: "update", mode: "existing", plan, readiness, existingInstallationDetected: true, installedWorkflow3dState: "not_selected", installedSuperEventsState: "ready", superEventsSelected: true };
+  if (scenario === "recovery") {
+    const stageIds = ["preflight", "repository source resolution", "selective download", "checksum verification", "dry-run review", "backup", "staging", "validation", "apply", "post-install checks", "readiness report", "rollback record"];
+    return {
+      ...common,
+      screen: "recovery",
+      mode: "existing",
+      recoveryChoice: "resume",
+      transaction: {
+        schema_version: "1.0.0",
+        transaction_id: "00000000-0000-4000-8000-000000000011",
+        transaction_kind: "installation",
+        project_id: identity.projectId,
+        project_root: identity.projectRoot,
+        state: "validating",
+        created_at: "2026-08-09T12:00:00Z",
+        updated_at: "2026-08-09T12:03:00Z",
+        last_checkpoint: "validation",
+        stages: stageIds.map((id, index) => ({ id, status: index < 7 ? "complete" : index === 7 ? "active" : "pending" })),
+        operations: Array.from({ length: 1146 }, (_, index) => ({ id: `op-${index + 1}`, status: "staged", destination: index === 1145 ? identity.launcherDescriptorPath : `prepared/file-${index + 1}.txt`, external: index === 1145 })),
+        recovery: { resume_allowed: true, rollback_allowed: false, discard_staging_allowed: true, project_apply_started: false, recommended_action: "resume" },
+        error: { code: "transaction_error", message: "Launcher descriptor path did not match the selected project root.", stage: "validation" },
+      },
+    };
+  }
   if (scenario === "chat-sources") {
     const chatSourcesPreview: ChatSourcesPreview = {
       eligible: true,

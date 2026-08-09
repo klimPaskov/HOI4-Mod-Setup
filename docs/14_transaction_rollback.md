@@ -103,6 +103,15 @@ collision/secret/size checks, and component validators against staging. Invalid
 descriptor, TOML, JSON, AGENTS, PNG, flattened source, or wiki output cannot
 reach the live project.
 
+Launcher validation compares the descriptor's complete `path=` value with the
+same canonical user-facing project path that the renderer writes. On Windows,
+the core keeps the `\\?\` verbatim prefix for filesystem operations but removes
+that internal prefix before the exact case-insensitive launcher comparison;
+UNC identity remains preserved. macOS keeps a literal backslash as part of a
+path component rather than converting it into a directory separator, and the
+renderer canonicalizes system aliases such as `/var` before writing the path so
+validation observes the same `/private/var` root.
+
 ### 9. Apply
 
 Use same-volume atomic replacement where possible. Apply in deterministic order and checkpoint every operation.
@@ -177,6 +186,15 @@ offers this action only for that completed child; the same root and recorded
 live-state hashes are checked before any file apply, and later edits fail
 closed. Git initialization, remote changes, and other external side effects
 are not recreated by this inverse action.
+
+Journal failure messages are diagnostic evidence, not trusted output. Redact
+credential-shaped values, including quoted secret fields and unquoted secret
+assignments, and bound the message to 2 KiB on a UTF-8 boundary before every
+journal write.
+Sanitize again after migration and checkpoint replay so a legacy journal cannot
+expose a previously stored value through Recovery; the interface applies the
+same bounded redaction to Recovery Details and direct transaction or rollback
+command errors as a final display boundary.
 
 ## Interrupted states
 

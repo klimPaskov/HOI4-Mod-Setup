@@ -22,11 +22,11 @@ const MAINTENANCE_PHASES = [
   { id: "recovery", label: "Recovery" },
 ] as const;
 
-const DEFAULT_DESCRIPTION = "A Cold War total conversion focused on Southeast Asia, with new countries, political routes, decisions, events, custom doctrines, and long campaigns that can diverge from history.";
-const DEFAULT_GENERATED_IDENTITY = deriveGeneratedIdentity("Cold War Curtain", DEFAULT_DESCRIPTION);
+const DEFAULT_DESCRIPTION = "An Atlantis total conversion with a new Atlantic island, naval expansion, custom units, national focuses, and original mechanics.";
+const DEFAULT_GENERATED_IDENTITY = deriveGeneratedIdentity("Atlantis Rising", DEFAULT_DESCRIPTION);
 
 const DEFAULT_IDENTITY: ProjectIdentity = {
-  displayName: "Cold War Curtain",
+  displayName: "Atlantis Rising",
   projectId: DEFAULT_GENERATED_IDENTITY.projectId,
   author: "",
   version: "0.1.0",
@@ -1009,7 +1009,7 @@ export default function App() {
             screen: "recovery",
           });
         } else {
-          update({ screen: originScreen, installProgress: 0, transactionError: installation.error ? `Installation could not start: ${installation.error}` : "Installation could not start. Prepare the changes again." });
+          update({ screen: originScreen, installProgress: 0, transactionError: installation.error ? `Installation could not start: ${safeRecoveryFailureMessage(installation.error)}` : "Installation could not start. Prepare the changes again." });
         }
         return;
       }
@@ -1145,7 +1145,7 @@ export default function App() {
         update({
           ...(refreshed ? { transaction: refreshed, recoveryChoice: preferredRecoveryChoice(refreshed) } : {}),
           transactionError: result.error
-            ? `Undo could not continue: ${result.error}`
+            ? `Undo could not continue: ${safeRecoveryFailureMessage(result.error)}`
             : "Undo changes was refused because the project needs review.",
         });
         return;
@@ -1354,6 +1354,9 @@ export default function App() {
     update({ chatSourcesResult: result.value, transactionError: undefined });
   };
 
+  const recoveryStage = state.screen === "recovery" && state.transaction
+    ? recoveryStagePosition(state.transaction)
+    : undefined;
   const copy = state.screen === "ready" && state.finished
     ? {
       title: "Congratulations, you are all set!",
@@ -1374,6 +1377,12 @@ export default function App() {
           : state.transaction.recovery.resume_allowed
             ? "Continue from the last safe checkpoint."
             : "Clear the prepared files before installing again.",
+        status: recoveryStage
+          ? {
+            label: `Stage ${recoveryStage.index + 1} of ${recoveryStage.total}`,
+            tone: "review" as const,
+          }
+          : undefined,
       }
       : screenCopy[state.screen];
   const appUpdateMessage = appUpdateState === "error"
@@ -2837,6 +2846,53 @@ export function recoveryProgress(journal: TransactionJournal | null | undefined)
   };
 }
 
+function recoveryStagePosition(journal: TransactionJournal) {
+  const stages = journal.stages ?? [];
+  if (stages.length === 0) return undefined;
+  const errorStage = journal.error?.stage;
+  let index = errorStage ? stages.findIndex((stage) => stage.id === errorStage) : -1;
+  if (index < 0) index = stages.findIndex((stage) => stage.status === "active");
+  if (index < 0) {
+    const lastComplete = stages.reduce((last, stage, stageIndex) => stage.status === "complete" || stage.status === "completed" ? stageIndex : last, -1);
+    index = Math.min(stages.length - 1, lastComplete + 1);
+  }
+  return { index, total: stages.length, id: stages[index]?.id ?? errorStage ?? journal.state };
+}
+
+function readableRecoveryStage(value: string) {
+  const words = value.replace(/[-_]+/g, " ").trim();
+  return words ? `${words.charAt(0).toUpperCase()}${words.slice(1)}` : "Not recorded";
+}
+
+function readableRecoveryAction(value: string) {
+  return ({
+    resume: "Continue setup",
+    rollback: "Undo changes",
+    discard_staging: "Discard prepared files",
+    inspect: "Inspect project",
+  } as Record<string, string>)[value] ?? "Review recovery options";
+}
+
+function safeRecoveryFailureMessage(value: string) {
+  const redacted = value
+    .replace(/(bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[REDACTED]")
+    .replace(/(["']?(?:authorization|api[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?token|refresh[_-]?token|device[_-]?code|user[_-]?code|login[_-]?token)["']?\s*:\s*["'])[^"']+(["'])/gi, "$1[REDACTED]$2")
+    .replace(/((?:authorization|api[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?token|refresh[_-]?token|device[_-]?code|user[_-]?code|login[_-]?token)\s*[:=]\s*)[^\s,;&]+/gi, "$1[REDACTED]")
+    .replace(/([?&](?:code|token|access_token|refresh_token|device_code|user_code)=)[^&#\s]+/gi, "$1[REDACTED]")
+    .replace(/\b(?:msy_|sk-ant-|sk-(?:proj-)?|AIza|xai-)[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]");
+  const encoder = new TextEncoder();
+  if (encoder.encode(redacted).length <= 2048) return redacted;
+  const characters: string[] = [];
+  let bytes = encoder.encode("...").length;
+  for (const character of redacted) {
+    const characterBytes = encoder.encode(character).length;
+    if (bytes + characterBytes > 2048) break;
+    characters.push(character);
+    bytes += characterBytes;
+  }
+  return `${characters.join("")}...`;
+}
+
 function Recovery({ state, update, onPickProjectFolder, onStartMaintenance, pending }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onPickProjectFolder: () => Promise<FolderSelection | null>; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => Promise<void> | void; pending: boolean }) {
   const transaction = state.transaction;
   const [progressJournal, setProgressJournal] = useState<TransactionJournal | null>(null);
@@ -2890,7 +2946,15 @@ function Recovery({ state, update, onPickProjectFolder, onStartMaintenance, pend
       : transaction.recovery.project_apply_started
         ? "Some project files were already changed, so continuing automatically is unavailable."
     : "Setup stopped before any project files were changed.";
-  return <div className="stack"><div className="callout review">{checkpoint}</div><div className={`recovery-grid recovery-grid-${availableOptions.length}`}>{availableOptions.map((item) => <button type="button" key={item.id} className={`recovery-card ${state.recoveryChoice === item.id ? "selected" : ""}`} aria-pressed={state.recoveryChoice === item.id} onClick={() => update({ recoveryChoice: item.id })}><span className="choice-radio" aria-hidden="true" /><strong>{item.title}</strong><p>{item.detail}</p></button>)}</div><section className="panel recovery-actions"><button type="button" className="text-button" onClick={() => void onStartMaintenance("remove")}>Manage installed components</button></section></div>;
+  const stages = transaction.stages ?? [];
+  const stagedFiles = (transaction.operations ?? []).filter((operation) => ["staged", "applying", "applied", "verified"].includes(operation.status)).length;
+  const checkpointFacts = [
+    stages.some((stage) => stage.id === "backup" && ["complete", "completed"].includes(stage.status)) ? "Backup verified" : undefined,
+    transaction.recovery.project_apply_started ? "Project apply started" : "Project apply had not started",
+    stagedFiles > 0 ? `${stagedFiles.toLocaleString("en-US")} ${stagedFiles === 1 ? "file" : "files"} staged` : undefined,
+  ].filter((fact): fact is string => Boolean(fact));
+  const stage = recoveryStagePosition(transaction);
+  return <div className="stack"><section className="panel recovery-overview" aria-labelledby="recovery-checkpoint-title"><div className="recovery-state" role="status"><strong>{checkpoint}</strong><span>{checkpointFacts.join(" \u00b7 ")}</span></div><div className="recovery-checkpoint"><div><strong id="recovery-checkpoint-title">Last checkpoint</strong><code>{transaction.last_checkpoint || "Not recorded"}</code></div><details><summary>Details</summary><div className="recovery-checkpoint-details"><span><small>Current stage</small><strong>{readableRecoveryStage(stage?.id ?? transaction.error?.stage ?? transaction.state)}</strong></span><span><small>Recommended action</small><strong>{readableRecoveryAction(transaction.recovery.recommended_action)}</strong></span>{transaction.error?.message && <span><small>Why setup stopped</small><strong>{safeRecoveryFailureMessage(transaction.error.message)}</strong></span>}</div></details></div></section><div className={`recovery-grid recovery-grid-${availableOptions.length}`}>{availableOptions.map((item) => <button type="button" key={item.id} className={`recovery-card ${state.recoveryChoice === item.id ? "selected" : ""}`} aria-pressed={state.recoveryChoice === item.id} onClick={() => update({ recoveryChoice: item.id })}><span className="choice-radio" aria-hidden="true" /><strong>{item.title}</strong><p>{item.detail}</p></button>)}</div></div>;
 }
 
 function Field({ label, value, onChange, placeholder, action, onAction, mono }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; action?: string; onAction?: () => void; mono?: boolean }) {

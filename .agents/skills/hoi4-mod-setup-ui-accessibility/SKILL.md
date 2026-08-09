@@ -102,6 +102,10 @@ Conflict review is the exception. It may show a three-way comparison and more co
   allowed recommended action; a stale or disabled choice must never retain the
   selected appearance.
 - Render only recovery actions that the normalized journal currently permits. Do not show Undo when no project files changed, or show Continue/Discard after apply began, as disabled cards that look broken.
+- Before a recovery action begins, show the journal-backed current-stage badge,
+  last durable checkpoint, project-apply state, and staged-file count in one
+  compact summary. Put the sanitized failure reason and recommended action
+  behind a keyboard-operable Details disclosure; do not expose the full log.
 - Give the live recovery progress panel explicit internal padding and contain
   long relative paths at 200 percent scaling so labels, progress bars, and
   filenames never touch or cross its border.
