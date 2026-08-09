@@ -108,7 +108,9 @@ same canonical user-facing project path that the renderer writes. On Windows,
 the core keeps the `\\?\` verbatim prefix for filesystem operations but removes
 that internal prefix before the exact case-insensitive launcher comparison;
 UNC identity remains preserved. macOS keeps a literal backslash as part of a
-path component rather than converting it into a directory separator.
+path component rather than converting it into a directory separator, and the
+renderer canonicalizes system aliases such as `/var` before writing the path so
+validation observes the same `/private/var` root.
 
 ### 9. Apply
 

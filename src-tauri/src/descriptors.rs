@@ -236,7 +236,8 @@ pub fn render_launcher_descriptor(
     project_root: &Path,
 ) -> Result<String, AppError> {
     let descriptor = render_descriptor_mod(identity)?;
-    let raw_path = project_root
+    let canonical_root = crate::paths::validate_project_root_or_destination(project_root)?.0;
+    let raw_path = canonical_root
         .to_str()
         .ok_or_else(|| AppError::InvalidInput("project path is not valid Unicode".into()))?;
     if raw_path.contains('\0') || raw_path.contains('\n') || raw_path.contains('\r') {
@@ -244,7 +245,7 @@ pub fn render_launcher_descriptor(
             "project path contains a descriptor-breaking control character".into(),
         ));
     }
-    let path = launcher_path_text(project_root);
+    let path = launcher_path_text(&canonical_root);
     Ok(format!("{descriptor}path=\"{}\"\n", quote(&path)))
 }
 
@@ -408,9 +409,14 @@ mod tests {
         let mut identity = identity();
         identity.script_prefix = Some("cwsea".into());
         identity.primary_namespace = Some("cwsea".into());
-        let text =
-            render_launcher_descriptor(&identity, Path::new("C:/mods/cold_war_curtain")).unwrap();
-        assert!(text.contains("path=\"C:/mods/cold_war_curtain\""));
+        let parent = tempfile::tempdir().unwrap();
+        let project_root = parent.path().join("cold_war_curtain");
+        std::fs::create_dir(&project_root).unwrap();
+        let canonical_root = crate::paths::validate_project_root(&project_root).unwrap();
+        let expected = launcher_path_text(&canonical_root);
+
+        let text = render_launcher_descriptor(&identity, &project_root).unwrap();
+        assert!(text.contains(&format!("path=\"{expected}\"")));
         assert!(!text.contains("script_prefix="));
         assert!(!text.contains("namespace="));
     }
@@ -495,12 +501,13 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn launcher_descriptor_removes_windows_verbatim_path_prefix() {
+        let parent = tempfile::tempdir().unwrap();
+        let project_root = parent.path().join("cold_war_curtain");
+        std::fs::create_dir(&project_root).unwrap();
         let identity = identity();
-        let text =
-            render_launcher_descriptor(&identity, Path::new(r"\\?\C:\mods\cold_war_curtain"))
-                .unwrap();
+        let text = render_launcher_descriptor(&identity, &project_root).unwrap();
 
-        assert!(text.contains("path=\"C:/mods/cold_war_curtain\""));
+        assert!(text.contains("/cold_war_curtain\""));
         assert!(!text.contains("/?/"));
         assert!(!text.contains("//?/"));
     }

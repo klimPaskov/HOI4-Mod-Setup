@@ -80,7 +80,8 @@ session, cancellation, credential-health, or analysis assertions.
   reject a different complete path in the full transaction before live apply,
   and that a validation-stage interruption
   resumes through final readiness and the success lock; macOS coverage keeps a
-  literal backslash in a filename component
+  literal backslash in a filename component while matching the canonical root
+  when a temporary directory uses the `/var` system alias
 - the UI and Rust plan builder both block missing, unauthenticated, or
   usage-limited provider capability while signed-out recovery remains usable
 - reviewed external-link commands accept only the fixed URLs and use the
