@@ -147,7 +147,7 @@ jobs:
         run: |
           set -euo pipefail
           preview_tag="${PREVIEW_TAG}"
-          if gh release view "$preview_tag" >/dev/null 2>&1; then
+          if gh release view "$preview_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "A preview already exists for ${preview_tag}; refusing to replace it" >&2
             exit 1
           fi
@@ -162,6 +162,7 @@ jobs:
           [[ "$(find publication-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" == "4" ]]
           gh release create "$preview_tag" \
             "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
             --target "$SOURCE_SHA" \
             --prerelease \
             --title "HOI4 Mod Setup ${preview_tag}" \

@@ -152,7 +152,7 @@ Incoming values such as `danger-full-access` and `approval_policy = "never"` are
 
 ## Logging
 
-Structured logs contain transaction, stage, component, operation, approved relative path, hashes, duration, status, and sanitized error. They exclude secrets, raw environments, full user documents, and provider responses that may contain credentials.
+Structured logs contain transaction, stage, component, operation, approved relative path, hashes, duration, status, and sanitized error. They exclude secrets, raw environments, full user documents, and provider responses that may contain credentials. Transaction failure messages are credential-shape redacted, including quoted JSON fields and unquoted key assignments such as `client_secret=...`, and bounded to 2 KiB on a UTF-8 boundary before journal persistence. They are sanitized again when a current or legacy journal is read and defensively redacted before Recovery Details or a transaction/rollback command error displays them.
 
 ## Privacy
 
@@ -160,7 +160,7 @@ No telemetry in version 1. Update checks contact only the selected source after 
 
 ## Security tests
 
-Traversal, symlink races, Windows junction escape, case collision, reserved names, huge files, malformed TOML, command injection, environment injection, secret redaction, crash reporting, interrupted apply, compromised manifest fixtures, and hostile local Git configuration rejected before process start.
+Traversal, symlink races, Windows junction escape, case collision, reserved names, huge files, malformed TOML, command injection, environment injection, secret redaction, crash reporting, interrupted apply, compromised manifest fixtures, and hostile local Git configuration rejected before process start. Recovery tests persist quoted, unquoted-assignment, prefixed, and multibyte credential-shaped transaction errors, read an unsanitized legacy equivalent, and assert that neither the journal API nor any transaction error surface exposes the raw value.
 
 ## Provider input disclosure
 

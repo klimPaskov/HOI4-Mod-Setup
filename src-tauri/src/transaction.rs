@@ -5,8 +5,8 @@ use crate::paths::{
 };
 use crate::security::{
     atomic_write, atomic_write_json, canonical_relative_key, is_link_metadata,
-    normalize_relative_path, path_has_link_component, safe_join, sha256_bytes, sha256_file,
-    validate_external_destination,
+    normalize_relative_path, path_has_link_component, redact_secrets, safe_join, sha256_bytes,
+    sha256_file, validate_external_destination,
 };
 use crate::AppError;
 use chrono::Utc;
@@ -21,6 +21,7 @@ const OPERATION_INTENT_BATCH: usize = 64;
 const OPERATION_CHECKPOINT_BATCH: usize = 1_024;
 const OPERATION_CHECKPOINT_MAX_RECORDS: usize = 2_048;
 const OPERATION_CHECKPOINT_MAX_BYTES: usize = 32 * 1024 * 1024;
+const JOURNAL_ERROR_MESSAGE_MAX_BYTES: usize = 2 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OperationCheckpoint {
@@ -1262,7 +1263,24 @@ pub fn run_transaction(
 
 fn persist_journal(path: &Path, journal: &mut TransactionJournal) -> Result<(), AppError> {
     journal.updated_at = Utc::now().to_rfc3339();
+    sanitize_journal_error(journal);
     atomic_write_json(path, journal)
+}
+
+fn sanitize_journal_error(journal: &mut TransactionJournal) {
+    let Some(error) = journal.error.as_mut() else {
+        return;
+    };
+    let redacted = redact_secrets(&error.message, &[]);
+    if redacted.len() <= JOURNAL_ERROR_MESSAGE_MAX_BYTES {
+        error.message = redacted;
+        return;
+    }
+    let mut end = JOURNAL_ERROR_MESSAGE_MAX_BYTES.saturating_sub(3);
+    while end > 0 && !redacted.is_char_boundary(end) {
+        end -= 1;
+    }
+    error.message = format!("{}...", &redacted[..end]);
 }
 
 fn operation_checkpoint_root(journal_path: &Path) -> Result<PathBuf, AppError> {
@@ -2233,17 +2251,7 @@ fn validate_managed_bytes(
         let declared_path = descriptor.fields.get("path").ok_or_else(|| {
             AppError::Transaction("launcher descriptor validation failed: path is missing".into())
         })?;
-        let expected = validate_project_root_or_destination(project_root)?
-            .0
-            .to_string_lossy()
-            .replace('\\', "/");
-        let declared = declared_path.replace('\\', "/");
-        let matches = if cfg!(target_os = "windows") {
-            declared.eq_ignore_ascii_case(&expected)
-        } else {
-            declared == expected
-        };
-        if !matches {
+        if !crate::descriptors::launcher_path_matches_project_root(declared_path, project_root)? {
             return Err(AppError::Transaction(
                 "launcher descriptor path does not match the selected project root".into(),
             ));
@@ -4925,6 +4933,7 @@ pub fn read_journal(path: &Path) -> Result<TransactionJournal, AppError> {
         .map_err(|error| AppError::Transaction(format!("invalid transaction journal: {error}")))?;
     let mut journal = crate::migrations::migrate_journal(value)?;
     replay_operation_checkpoints(path, &mut journal)?;
+    sanitize_journal_error(&mut journal);
     Ok(journal)
 }
 
@@ -5948,6 +5957,50 @@ mod tests {
     }
 
     #[test]
+    fn journal_error_messages_are_redacted_bounded_and_sanitized_on_read() {
+        let root = tempdir().unwrap();
+        let plan = plan();
+        let transaction_dir = root.path().join(plan.plan_id.to_string());
+        fs::create_dir_all(&transaction_dir).unwrap();
+        let journal_path = transaction_dir.join("journal.json");
+        let mut journal = new_journal(&plan, &plan.project_id, root.path());
+        let secret = ["msy", "secretRecoveryValue123456789"].join("_");
+        let secondary_secret = ["synthetic", "client", "credential"].join("-");
+        let secondary_name = ["client", "secret"].join("_");
+        let quoted_secret = ["synthetic", "private", "credential"].join("-");
+        let quoted_name = ["private", "key"].join("_");
+        let unsafe_message = format!(
+            "validation failed; MESHY_API_KEY={secret}; {secondary_name}={secondary_secret}; \"{quoted_name}\":\"{quoted_secret}\"; {}",
+            "🧪".repeat(JOURNAL_ERROR_MESSAGE_MAX_BYTES)
+        );
+        journal.error = Some(JournalError {
+            code: "TRANSACTION_FAILED".into(),
+            message: unsafe_message.clone(),
+            stage: "validation".into(),
+        });
+
+        persist_journal(&journal_path, &mut journal).unwrap();
+        let persisted = fs::read_to_string(&journal_path).unwrap();
+        assert!(!persisted.contains(&secret));
+        assert!(!persisted.contains(&secondary_secret));
+        assert!(!persisted.contains(&quoted_secret));
+        assert!(persisted.contains("[REDACTED]"));
+        let persisted_error = read_journal(&journal_path).unwrap().error.unwrap();
+        assert!(persisted_error.message.len() <= JOURNAL_ERROR_MESSAGE_MAX_BYTES);
+        assert!(persisted_error.message.ends_with("..."));
+
+        journal.error.as_mut().unwrap().message = unsafe_message;
+        fs::write(&journal_path, serde_json::to_vec_pretty(&journal).unwrap()).unwrap();
+        let migrated_error = read_journal(&journal_path).unwrap().error.unwrap();
+        assert!(!migrated_error.message.contains(&secret));
+        assert!(!migrated_error.message.contains(&secondary_secret));
+        assert!(!migrated_error.message.contains(&quoted_secret));
+        assert!(migrated_error.message.contains("[REDACTED]"));
+        assert!(migrated_error.message.len() <= JOURNAL_ERROR_MESSAGE_MAX_BYTES);
+        assert!(migrated_error.message.ends_with("..."));
+    }
+
+    #[test]
     fn profile_directories_are_created_without_markers_and_rollback_removes_only_empty_ones() {
         let project = tempdir().unwrap();
         let transaction = tempdir().unwrap();
@@ -6497,7 +6550,8 @@ mod tests {
     }
 
     #[test]
-    fn first_install_kept_thumbnail_is_locked_and_never_managed_removed() {
+    fn first_install_resumes_after_validation_with_user_facing_launcher_path_and_keeps_user_thumbnail(
+    ) {
         let project = tempdir().unwrap();
         let app = tempdir().unwrap();
         let canonical_app = fs::canonicalize(app.path()).unwrap();
@@ -6506,11 +6560,23 @@ mod tests {
         let mut plan = ready_plan(project.path());
         let launcher_path = canonical_app.join("example.mod");
         let canonical_project = validate_project_root(project.path()).unwrap();
-        let launcher_bytes = format!(
-            "name=\"Example\"\nversion=\"0.1.0\"\nsupported_version=\"1.17.*\"\npicture=\"thumbnail.png\"\npath=\"{}\"\n",
-            canonical_project.display().to_string().replace('\\', "/")
-        )
-        .into_bytes();
+        let identity = ProjectIdentity {
+            display_name: "Example".into(),
+            project_id: plan.project_id.clone(),
+            author: String::new(),
+            version: "0.1.0".into(),
+            supported_game_version: "1.17.*".into(),
+            project_root: canonical_project.clone(),
+            default_branch: "main".into(),
+            script_prefix: plan.script_prefix.clone(),
+            primary_namespace: plan.primary_namespace.clone(),
+            descriptor_tags: Vec::new(),
+            launcher_descriptor_path: Some(launcher_path.clone()),
+        };
+        let launcher_bytes =
+            crate::descriptors::render_launcher_descriptor(&identity, &canonical_project)
+                .unwrap()
+                .into_bytes();
         plan.operations.push(PlanOperation {
             id: "launcher".into(),
             component_id: "project.launcher_descriptor".into(),
@@ -6552,7 +6618,113 @@ mod tests {
             rollback: RollbackAction::None,
         });
 
-        let (_, lock) = run_transaction(
+        let validation_stage = TRANSACTION_STAGES
+            .iter()
+            .position(|stage| *stage == "validation")
+            .unwrap();
+        let interrupted = run_transaction(
+            project.path(),
+            &plan,
+            &[
+                PreparedFile {
+                    operation_id: "op-1".into(),
+                    destination: "AGENTS.md".into(),
+                    bytes: b"safe".to_vec(),
+                    expected_sha256: sha256_bytes(b"safe"),
+                },
+                PreparedFile {
+                    operation_id: "launcher".into(),
+                    destination: launcher_path.display().to_string(),
+                    bytes: launcher_bytes.clone(),
+                    expected_sha256: sha256_bytes(&launcher_bytes),
+                },
+            ],
+            &TransactionOptions {
+                app_data_root: Some(canonical_app.clone()),
+                fail_after_stage: Some(validation_stage),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(interrupted
+            .to_string()
+            .contains("fault injected after stage validation"));
+        assert!(!launcher_path.exists());
+        assert!(!project
+            .path()
+            .join(".hoi4-mod-setup/install.lock.json")
+            .exists());
+
+        let (_, lock) = resume_transaction(project.path(), &canonical_app, plan.plan_id).unwrap();
+        assert!(launcher_path.is_file());
+
+        let locked_thumbnail = lock
+            .files
+            .iter()
+            .find(|file| file.path == "thumbnail.png")
+            .expect("kept thumbnail should remain represented in the lock");
+        assert!(locked_thumbnail.preserved_local);
+        assert_eq!(locked_thumbnail.installed_sha256, sha256_bytes(&thumbnail));
+        let reloaded: InstallationLock = serde_json::from_slice(
+            &fs::read(project.path().join(".hoi4-mod-setup/install.lock.json")).unwrap(),
+        )
+        .unwrap();
+        let removal = managed_removal_operations(&reloaded, project.path()).unwrap();
+        let thumbnail_removal = removal
+            .iter()
+            .find(|operation| operation.destination == "thumbnail.png")
+            .unwrap();
+        assert_eq!(thumbnail_removal.action, OperationAction::Skip);
+        assert!(project.path().join("thumbnail.png").is_file());
+    }
+
+    #[test]
+    fn first_install_rejects_launcher_descriptor_for_a_different_complete_root() {
+        let project = tempdir().unwrap();
+        let other_project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let canonical_app = fs::canonicalize(app.path()).unwrap();
+        let mut plan = ready_plan(project.path());
+        let launcher_path = canonical_app.join("example.mod");
+        let wrong_root = validate_project_root(other_project.path()).unwrap();
+        let identity = ProjectIdentity {
+            display_name: "Example".into(),
+            project_id: plan.project_id.clone(),
+            author: String::new(),
+            version: "0.1.0".into(),
+            supported_game_version: "1.17.*".into(),
+            project_root: wrong_root.clone(),
+            default_branch: "main".into(),
+            script_prefix: plan.script_prefix.clone(),
+            primary_namespace: plan.primary_namespace.clone(),
+            descriptor_tags: Vec::new(),
+            launcher_descriptor_path: Some(launcher_path.clone()),
+        };
+        let launcher_bytes = crate::descriptors::render_launcher_descriptor(&identity, &wrong_root)
+            .unwrap()
+            .into_bytes();
+        plan.operations.push(PlanOperation {
+            id: "launcher".into(),
+            component_id: "project.launcher_descriptor".into(),
+            ownership: Some(Ownership::Generated),
+            location_scope: Some("external_launcher".into()),
+            action: OperationAction::Create,
+            source_path: Some("generated:example.mod".into()),
+            destination: launcher_path.display().to_string(),
+            source_sha256: Some(sha256_bytes(&launcher_bytes)),
+            source_size: Some(launcher_bytes.len() as u64),
+            platform: None,
+            executable: false,
+            result_sha256: Some(sha256_bytes(&launcher_bytes)),
+            base_sha256: None,
+            local_sha256: None,
+            local_state: LocalState::Absent,
+            resolution: None,
+            external: true,
+            rollback: RollbackAction::RemoveCreated,
+        });
+
+        let error = run_transaction(
             project.path(),
             &plan,
             &[
@@ -6574,26 +6746,17 @@ mod tests {
                 ..Default::default()
             },
         )
-        .unwrap();
+        .unwrap_err();
 
-        let locked_thumbnail = lock
-            .files
-            .iter()
-            .find(|file| file.path == "thumbnail.png")
-            .expect("kept thumbnail should remain represented in the lock");
-        assert!(locked_thumbnail.preserved_local);
-        assert_eq!(locked_thumbnail.installed_sha256, sha256_bytes(&thumbnail));
-        let reloaded: InstallationLock = serde_json::from_slice(
-            &fs::read(project.path().join(".hoi4-mod-setup/install.lock.json")).unwrap(),
-        )
-        .unwrap();
-        let removal = managed_removal_operations(&reloaded, project.path()).unwrap();
-        let thumbnail_removal = removal
-            .iter()
-            .find(|operation| operation.destination == "thumbnail.png")
-            .unwrap();
-        assert_eq!(thumbnail_removal.action, OperationAction::Skip);
-        assert!(project.path().join("thumbnail.png").is_file());
+        assert!(error
+            .to_string()
+            .contains("launcher descriptor path does not match the selected project root"));
+        assert!(!launcher_path.exists());
+        assert!(!project.path().join("AGENTS.md").exists());
+        assert!(!project
+            .path()
+            .join(".hoi4-mod-setup/install.lock.json")
+            .exists());
     }
 
     #[test]

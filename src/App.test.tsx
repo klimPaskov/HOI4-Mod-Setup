@@ -71,6 +71,12 @@ function enableTauriRuntime() {
 }
 
 describe("HOI4 Mod Setup wizard", () => {
+  it("starts new projects with the Atlantis Rising example", () => {
+    expect(initialState.identity.displayName).toBe("Atlantis Rising");
+    expect(initialState.description).toBe("An Atlantis total conversion with a new Atlantic island, naval expansion, custom units, national focuses, and original mechanics.");
+    expect(initialState.identity.projectId).toBe("atlantis_rising");
+  });
+
   it("provides sanitized development-only states for public screenshots", () => {
     const base = readyState();
     window.history.replaceState({}, "", "/?screenshot=ready");
@@ -91,6 +97,17 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(fixture.chatSourcesAvailable).toBe(true);
     expect(fixture.chatSourcesPreview?.destinationDirectory).toBe("C:\\Users\\Player\\Downloads");
     expect(fixture.chatSourcesPreview?.files.some((file) => file.category === "root_markdown" && !file.selectedByDefault)).toBe(true);
+  });
+
+  it("provides a sanitized interrupted-installation screenshot state", () => {
+    window.history.replaceState({}, "", "/?screenshot=recovery");
+    const fixture = documentationFixture(readyState());
+
+    expect(fixture.screen).toBe("recovery");
+    expect(fixture.identity.projectRoot).toContain("C:\\Users\\Player\\");
+    expect(fixture.transaction?.last_checkpoint).toBe("validation");
+    expect(fixture.transaction?.operations).toHaveLength(1146);
+    expect(fixture.transaction?.error?.message).not.toMatch(/klimp|token|secret/i);
   });
 
   it("ignores unknown documentation screenshot routes", () => {
@@ -767,8 +784,8 @@ describe("HOI4 Mod Setup wizard", () => {
     enableTauriRuntime();
     vi.mocked(suggestProjectPaths).mockResolvedValue({
       mod_directory: "C:\\mods",
-      project_root: "C:\\mods\\cold_war_curtain",
-      launcher_descriptor_path: "C:\\mods\\cold_war_curtain.mod",
+      project_root: "C:\\mods\\atlantis_rising",
+      launcher_descriptor_path: "C:\\mods\\atlantis_rising.mod",
       project_exists: false,
       launcher_descriptor_exists: false,
     });
@@ -800,13 +817,13 @@ describe("HOI4 Mod Setup wizard", () => {
     });
 
     await renderAuthenticatedApp();
-    await waitFor(() => expect(suggestProjectPaths).toHaveBeenCalledWith("cold_war_curtain"));
+    await waitFor(() => expect(suggestProjectPaths).toHaveBeenCalledWith("atlantis_rising"));
     fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await waitFor(() => expect(screen.getByLabelText("Project folder")).toHaveValue("C:\\mods\\cold_war_curtain"));
+    await waitFor(() => expect(screen.getByLabelText("Project folder")).toHaveValue("C:\\mods\\atlantis_rising"));
     fireEvent.click(screen.getByText("Launcher file location"));
-    expect(screen.getByLabelText("Launcher descriptor path")).toHaveValue("C:\\mods\\cold_war_curtain.mod");
+    expect(screen.getByLabelText("Launcher descriptor path")).toHaveValue("C:\\mods\\atlantis_rising.mod");
   });
 
   it("does not open recovery for an automatically suggested new-project destination", async () => {
@@ -1031,6 +1048,37 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByText("The partial setup was undone. You can start again.")).toBeInTheDocument();
   });
 
+  it("redacts raw rollback command errors before displaying them", async () => {
+    const secretName = ["private", "key"].join("_");
+    const secretValue = ["synthetic", "rollback", "credential"].join("-");
+    vi.mocked(findInterruptedTransaction).mockResolvedValue({
+      transaction_id: "partial-transaction",
+      state: "applying",
+      last_checkpoint: "apply-op-00007",
+      recovery: {
+        resume_allowed: false,
+        rollback_allowed: true,
+        discard_staging_allowed: false,
+        project_apply_started: true,
+        recommended_action: "rollback",
+      },
+    } as never);
+    vi.mocked(rollbackInstallationResult).mockResolvedValue({
+      value: null,
+      error: `provider failed; {"${secretName}":"${secretValue}"}`,
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /manage an existing project/i }));
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\partial" } });
+    const primary = (await screen.findAllByRole("button", { name: "Undo changes" })).find((button) => button.classList.contains("primary"));
+    fireEvent.click(primary!);
+
+    const error = await screen.findByText(/Undo could not continue:/);
+    expect(error).toHaveTextContent("[REDACTED]");
+    expect(screen.queryByText(secretValue)).not.toBeInTheDocument();
+  });
+
   it("shows only Discard when setup stopped before changing project files", async () => {
     vi.mocked(findInterruptedTransaction).mockResolvedValue({
       transaction_id: "pre-apply-transaction",
@@ -1053,6 +1101,61 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.queryByRole("button", { name: /continue setup/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /undo changes/i })).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /discard prepared files/i }).find((button) => button.classList.contains("recovery-card"))).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("shows the exact validation checkpoint and safe pre-apply recovery choices", async () => {
+    const recoverySecret = ["msy", "secretRecoveryValue123456789"].join("_");
+    const secondarySecret = ["synthetic", "client", "credential"].join("-");
+    const secondaryName = ["client", "secret"].join("_");
+    const quotedSecret = ["synthetic", "private", "credential"].join("-");
+    const quotedName = ["private", "key"].join("_");
+    const stageIds = [
+      "preflight", "repository source resolution", "selective download", "checksum verification", "dry-run review", "backup", "staging", "validation", "apply", "post-install checks", "readiness report", "rollback record",
+    ];
+    vi.mocked(findInterruptedTransaction).mockResolvedValue({
+      transaction_id: "validation-transaction",
+      state: "validating",
+      last_checkpoint: "validation",
+      stages: stageIds.map((id, index) => ({ id, status: index < 7 ? "complete" : index === 7 ? "active" : "pending" })),
+      operations: [
+        { id: "op-1", destination: "AGENTS.md", status: "staged" },
+        { id: "op-2", destination: "descriptor.mod", status: "staged" },
+        { id: "op-3", destination: "C:\\mods\\atlantis_rising.mod", status: "staged", external: true },
+      ],
+      recovery: {
+        resume_allowed: true,
+        rollback_allowed: false,
+        discard_staging_allowed: true,
+        project_apply_started: false,
+        recommended_action: "resume",
+      },
+      error: {
+        code: "transaction_error",
+        message: `Launcher descriptor path did not match the selected project root. MESHY_API_KEY=${recoverySecret}; ${secondaryName}=${secondarySecret}; {"${quotedName}":"${quotedSecret}"}; ${"🧪".repeat(2048)}`,
+        stage: "validation",
+      },
+    } as never);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /manage an existing project/i }));
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\atlantis_rising" } });
+
+    expect(await screen.findByText("Stage 8 of 12")).toBeInTheDocument();
+    expect(screen.getByText(/Backup verified.*Project apply had not started.*3 files staged/)).toBeInTheDocument();
+    expect(screen.getByText("validation", { selector: "code" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /continue setup/i }).find((button) => button.classList.contains("recovery-card"))).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /discard prepared files/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /undo changes/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /manage installed components/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Details", { selector: "summary" }));
+    expect(screen.getByText("Validation")).toBeInTheDocument();
+    const failureMessage = screen.getByText(/Launcher descriptor path did not match the selected project root/);
+    expect(failureMessage).toHaveTextContent("[REDACTED]");
+    expect(new TextEncoder().encode(failureMessage.textContent ?? "").length).toBeLessThanOrEqual(2048);
+    expect(screen.queryByText(recoverySecret)).not.toBeInTheDocument();
+    expect(screen.queryByText(secondarySecret)).not.toBeInTheDocument();
+    expect(screen.queryByText(quotedSecret)).not.toBeInTheDocument();
   });
 
   it("shows a distinct usage-limited state and preserves remote logout errors", async () => {
@@ -1290,6 +1393,31 @@ describe("HOI4 Mod Setup wizard", () => {
         recovery: { resume_allowed: false, rollback_allowed: true, discard_staging_allowed: false, project_apply_started: true, recommended_action: "none" },
       },
     }));
+  });
+
+  it("redacts raw installation command errors before displaying them", async () => {
+    const secretName = ["client", "secret"].join("_");
+    const secretValue = ["synthetic", "installation", "credential"].join("-");
+    vi.mocked(buildInstallationPlanResult).mockResolvedValue({
+      value: { plan_id: "failing-plan", operations: [], conflicts: [], generated_artifacts: [], external_actions: [] } as never,
+    });
+    vi.mocked(applyInstallationResult).mockResolvedValue({
+      value: null,
+      error: `provider failed; {"${secretName}":"${secretValue}"}`,
+    });
+    await renderAuthenticatedApp();
+    fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\failing" } });
+    for (let index = 0; index < 5; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /start installation/i }));
+
+    const error = await screen.findByText(/Installation could not start:/);
+    expect(error).toHaveTextContent("[REDACTED]");
+    expect(screen.queryByText(secretValue)).not.toBeInTheDocument();
   });
 
   it("announces a manual project-opening path when Codex has no verified opener", async () => {

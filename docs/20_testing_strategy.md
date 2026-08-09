@@ -175,7 +175,11 @@ Keyboard traversal, focus order, screen reader labels, contrast, scaling, long p
 Traversal, symlink and junction race, case collision, reserved device name,
 command injection, environment injection, secret in stderr, crash redaction,
 archive limits, compromised manifest, and rejection of dynamic/non-HTTPS
-external browser URLs.
+external browser URLs. Persist prefixed, quoted-field, and unquoted-assignment
+credential shapes in a multibyte transaction failure and prove that journal
+storage, current and legacy journal reads, Recovery Details, and direct
+transaction and rollback errors contain only 2 KiB UTF-8-safe redacted text and
+never the raw value.
 
 ## Performance
 
@@ -217,6 +221,8 @@ Validate the public repository layer:
 - Dependabot monitors npm, Cargo, and GitHub Actions
 - default GitHub Actions permissions remain read-only outside the release job
 - fork pull requests receive no release credentials
+- checkout-free publication jobs pass `--repo "$GITHUB_REPOSITORY"` to every
+  `gh release` read and write
 - release builds use the exact tag commit
 - public release is blocked when `LICENSE` is missing
 - committed-secret pattern checks pass
@@ -224,6 +230,11 @@ Validate the public repository layer:
   and non-empty signatures for the final platform packages
 - startup update tests show an available version and begin one automatic signed
   installation, while failure leaves the app usable and exposes retry
+- a stage-8 validation interruption shows the exact stage/checkpoint and
+  sanitized failure details, offers only Continue and Discard before apply,
+  and never renders Undo as an unavailable card; the fixture includes
+  prefixed, quoted-field, and unquoted-assignment credential shapes plus
+  multibyte overflow and proves the raw values are absent from Details
 
 ## Skill drift tests
 
@@ -232,3 +243,8 @@ For broad changes, compare touched product surfaces with the skill ownership tab
 ## Launcher-ready scaffold tests
 
 Create clean temporary projects on both platforms and verify the internal descriptor, external launcher descriptor, thumbnail decode, picture reference, folder profile, backup, rollback, repair, and modified-thumbnail preservation. Prove that rendering uses confirmed provider proposals and deterministic validators.
+On Windows, the full transaction test must render the launcher path without the
+internal `\\?\` verbatim prefix, validate it against the canonical root used for
+filesystem operations, still reject a different complete path, and resume a
+verified pre-apply validation checkpoint through final readiness and the
+success lock.

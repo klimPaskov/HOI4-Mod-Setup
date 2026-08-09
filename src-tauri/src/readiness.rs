@@ -1429,17 +1429,7 @@ pub(crate) fn launcher_descriptor_matches_project(project_root: &Path, bytes: &[
 }
 
 fn path_matches_project(value: &str, project_root: &Path) -> bool {
-    let expected = crate::paths::validate_project_root(project_root)
-        .ok()
-        .map(|path| path.to_string_lossy().replace('\\', "/"));
-    let value = value.replace('\\', "/");
-    expected.is_some_and(|expected| {
-        if cfg!(target_os = "windows") {
-            value.eq_ignore_ascii_case(&expected)
-        } else {
-            value == expected
-        }
-    })
+    crate::descriptors::launcher_path_matches_project_root(value, project_root).unwrap_or(false)
 }
 
 pub fn check_project_files(

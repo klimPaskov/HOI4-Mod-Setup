@@ -66,6 +66,11 @@ non-destructive no-op until the project is re-planned.
 
 Persist the journal before and after irreversible boundaries. Use atomic file replacement for journal writes.
 
+Before journal persistence, redact credential-shaped failure text, including
+quoted fields and unquoted secret assignments, and truncate it to a 2 KiB
+UTF-8 boundary. Apply the same sanitizer after journal migration/replay so
+legacy failures cannot escape through Recovery.
+
 For large operation sets, append bounded per-operation records to one checkpoint log so durability does not require serializing the complete journal for every file. Backup, staging, apply, rollback-child backup, and rollback-apply records are compacted into an atomic full-journal snapshot every 1,024 completed operations and at each stage boundary. Before apply or rollback mutates a live file, persist durable intent records for a group of at most 64 operations; completed records then supply per-file recovery and progress evidence. Journal reads replay only records newer than the snapshot and reject links, wrong transaction or operation bindings, oversized records, oversized logs, and torn records except for an incomplete final append. Recovery resolves a crash inside a group from the durable intents, verified backups, and observed live hashes.
 
 For Unix destinations, the manifest/lock executable declaration is durable
@@ -132,6 +137,12 @@ operations are not accepted; mode belongs to the reviewed file operation.
   metadata, keep the lock readable but report source/wiki evidence incomplete
   until update or repair refreshes the lock.
 - External launcher descriptors are represented by an explicit absolute destination plus `external=true`; lock and readiness code must validate that path separately from project-relative destinations.
+- Validate a launcher descriptor's complete `path=` value against the same
+  canonical user-facing root emitted by the renderer. Windows filesystem work
+  keeps the internal `\\?\` verbatim prefix, but launcher validation removes
+  that prefix before exact case-insensitive equality and preserves UNC
+  identity. macOS preserves a literal backslash as a filename character; never
+  weaken either platform to a prefix or suffix match.
 - Manifest-declared repository scripts remain approval-bound external actions in the core plan. The dry run presents them as concise **Setup checks** with technical command details behind a second disclosure; do not expose internal risk labels or developer-facing component IDs in the normal summary. Their command source and platform are copied from the verified manifest; a successful project transaction must not imply that an optional external action or provider health check passed.
 - When the MCP component is selected and the reviewed manifest supplies
   immutable executable, command-interpreter, and runtime identity evidence,

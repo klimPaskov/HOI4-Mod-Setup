@@ -43,6 +43,15 @@ blank the Meshy field as a second boundary.
 
 Inject a secret only into an allowlisted process environment for the lifetime of that process. Redact known values and credential-shaped output before storage or display.
 
+Treat transaction failure messages as untrusted output. Apply the shared
+credential-shape redactor and a 2 KiB UTF-8-safe bound before journal
+persistence, sanitize again when current or legacy journals are read, and keep
+a bounded renderer redactor at the Recovery Details and direct transaction or
+rollback error display boundaries. Cover unquoted key assignments such as
+`client_secret=...`, quoted JSON-style secret fields, and prefixed provider
+values. Tests must persist and read multibyte secret-shaped failures and prove
+that the raw values are absent from the journal API and interface.
+
 On Windows, resolve OS-owned verifier and browser executables from native
 Windows directory APIs rather than `SystemRoot`. Authenticode checks compare
 an exact reviewed certificate simple name, never a subject substring, and
@@ -226,6 +235,10 @@ Use read-only default permissions. Grant write permission only to a release job 
 - scoped Meshy injection into an approved child with secret-free stdout/stderr
 - exact documented Meshy placeholder accepted while real and extended `msy_`
   values remain rejected from every persisted JSON boundary
+- transaction failure redaction and 2 KiB UTF-8-safe bounds at journal
+  persistence, legacy journal read, Recovery Details, and direct
+  transaction/rollback error display boundaries, including quoted fields and
+  unquoted secret assignments
 - provider-keyed AI credential isolation, endpoint validation, bounded response
   handling, and no-secret flatten output
 

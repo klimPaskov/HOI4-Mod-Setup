@@ -244,11 +244,36 @@ pub fn render_launcher_descriptor(
             "project path contains a descriptor-breaking control character".into(),
         ));
     }
+    let path = launcher_path_text(project_root);
+    Ok(format!("{descriptor}path=\"{}\"\n", quote(&path)))
+}
+
+fn launcher_path_text(project_root: &Path) -> String {
     let path = user_facing_path(project_root);
-    Ok(format!(
-        "{descriptor}path=\"{}\"\n",
-        quote(&path.replace('\\', "/"))
-    ))
+    if cfg!(target_os = "windows") {
+        path.replace('\\', "/")
+    } else {
+        path
+    }
+}
+
+/// Compare the parsed launcher `path=` value with the same canonical project
+/// root representation used by the renderer. Windows filesystem APIs retain
+/// a verbatim `\\?\` prefix internally, but that implementation detail is not
+/// valid user-facing launcher content.
+pub(crate) fn launcher_path_matches_project_root(
+    declared_path: &str,
+    project_root: &Path,
+) -> Result<bool, AppError> {
+    let canonical_root = crate::paths::validate_project_root_or_destination(project_root)?.0;
+    let expected = launcher_path_text(&canonical_root);
+    Ok(if cfg!(target_os = "windows") {
+        declared_path
+            .replace('\\', "/")
+            .eq_ignore_ascii_case(&expected)
+    } else {
+        declared_path == expected
+    })
 }
 
 pub fn validate_launcher_destination(identity: &ProjectIdentity) -> Result<(), AppError> {
@@ -388,6 +413,83 @@ mod tests {
         assert!(text.contains("path=\"C:/mods/cold_war_curtain\""));
         assert!(!text.contains("script_prefix="));
         assert!(!text.contains("namespace="));
+    }
+
+    #[test]
+    fn launcher_path_comparison_uses_the_exact_user_facing_canonical_root() {
+        let parent = tempfile::tempdir().unwrap();
+        let project_root = parent.path().join("atlantis_rising");
+        let canonical = crate::paths::validate_project_root_or_destination(&project_root)
+            .unwrap()
+            .0;
+        let declared = user_facing_path(&canonical).replace('\\', "/");
+
+        assert!(launcher_path_matches_project_root(&declared, &project_root).unwrap());
+        assert!(
+            !launcher_path_matches_project_root(&format!("{declared}_other"), &project_root)
+                .unwrap()
+        );
+        let sibling = parent.path().join("atlantis_sibling");
+        let sibling_declared = user_facing_path(
+            &crate::paths::validate_project_root_or_destination(&sibling)
+                .unwrap()
+                .0,
+        )
+        .replace('\\', "/");
+        assert!(!launcher_path_matches_project_root(&sibling_declared, &project_root).unwrap());
+        for mismatched in [
+            format!("{declared}/"),
+            format!("{declared}/../atlantis_rising"),
+            format!("{declared}:stream"),
+            format!("//?/{declared}"),
+        ] {
+            assert!(!launcher_path_matches_project_root(&mismatched, &project_root).unwrap());
+        }
+        let different_case = declared.to_ascii_uppercase();
+        assert_eq!(
+            launcher_path_matches_project_root(&different_case, &project_root).unwrap(),
+            cfg!(target_os = "windows")
+        );
+        let mixed_separators = declared.replace('/', "\\");
+        assert_eq!(
+            launcher_path_matches_project_root(&mixed_separators, &project_root).unwrap(),
+            cfg!(target_os = "windows")
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn launcher_paths_preserve_literal_backslashes_on_unix() {
+        let mut identity = identity();
+        let parent = tempfile::tempdir().unwrap();
+        let project_root = parent.path().join("atlantis\\rising");
+        std::fs::create_dir(&project_root).unwrap();
+        identity.project_root = project_root.clone();
+
+        let rendered = render_launcher_descriptor(&identity, &project_root).unwrap();
+        let parsed = parse_descriptor(rendered.as_bytes()).unwrap();
+        let declared = parsed.fields.get("path").unwrap();
+
+        assert!(declared.contains("atlantis\\rising"));
+        assert!(launcher_path_matches_project_root(declared, &project_root).unwrap());
+        assert!(
+            !launcher_path_matches_project_root(&declared.replace('\\', "/"), &project_root)
+                .unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn launcher_path_comparison_rejects_a_linked_project_root() {
+        use std::os::unix::fs::symlink;
+
+        let parent = tempfile::tempdir().unwrap();
+        let target = parent.path().join("target");
+        let linked = parent.path().join("linked");
+        std::fs::create_dir(&target).unwrap();
+        symlink(&target, &linked).unwrap();
+
+        assert!(launcher_path_matches_project_root("/unused", &linked).is_err());
     }
 
     #[cfg(target_os = "windows")]

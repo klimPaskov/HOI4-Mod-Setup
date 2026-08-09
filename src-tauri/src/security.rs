@@ -430,10 +430,10 @@ pub fn redact_secrets(value: &str, known_secrets: &[String]) -> String {
     let patterns = [
         Regex::new(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+"),
         Regex::new(
-            r"(?i)((?:authorization|access[_-]?token|refresh[_-]?token|device[_-]?code|user[_-]?code|login[_-]?token)\s*[:=]\s*)[^\s,;&]+",
+            r#"(?i)(["']?(?:authorization|api[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?token|refresh[_-]?token|device[_-]?code|user[_-]?code|login[_-]?token)["']?\s*:\s*["'])[^"']+(["'])"#,
         ),
         Regex::new(
-            r#"(?i)(["']?(?:authorization|api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|device[_-]?code|user[_-]?code)["']?\s*:\s*["'])[^"']+(["'])"#,
+            r"(?i)((?:authorization|api[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?token|refresh[_-]?token|device[_-]?code|user[_-]?code|login[_-]?token)\s*[:=]\s*)[^\s,;&]+",
         ),
         Regex::new(
             r"(?i)([?&](?:code|token|access_token|refresh_token|device_code|user_code)=)[^&#\s]+",
@@ -641,11 +641,29 @@ mod tests {
 
     #[test]
     fn redacts_quoted_json_secret_values() {
-        let input = r#"{"apiKey":"example-secret","clientSecret":"another-secret"}"#;
-        let output = redact_secrets(input, &[]);
-        assert!(!output.contains("example-secret"));
-        assert!(!output.contains("another-secret"));
-        assert_eq!(output.matches("[REDACTED]").count(), 2);
+        let field_names = ["apiKey", "clientSecret", "private_key"];
+        let values = ["example-secret", "another-secret", "third-secret"];
+        let input = format!(
+            r#"{{"{}":"{}","{}":"{}","{}":"{}"}}"#,
+            field_names[0], values[0], field_names[1], values[1], field_names[2], values[2]
+        );
+        let output = redact_secrets(&input, &[]);
+        for value in values {
+            assert!(!output.contains(value));
+        }
+        assert_eq!(output.matches("[REDACTED]").count(), 3);
+    }
+
+    #[test]
+    fn redacts_unquoted_client_secret_assignments() {
+        let secret_name = ["client", "secret"].join("_");
+        let secret_value = ["synthetic", "credential", "value"].join("-");
+        let input = format!("provider failed; {secret_name}={secret_value}");
+        let output = redact_secrets(&input, &[]);
+
+        assert!(!output.contains(&secret_value));
+        assert!(output.contains(&format!("{secret_name}=[REDACTED]")));
+        assert!(contains_credential_shaped_content(&input));
     }
 
     #[test]

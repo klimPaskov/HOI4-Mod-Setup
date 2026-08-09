@@ -266,7 +266,9 @@ a user-facing semantic-version GitHub prerelease such as `0.1.1`. The
 workflow refuses to reuse a published version. `scripts/prepare_preview_assets.mjs`
 rechecks the exact source commit, platform/architecture metadata, package
 hashes, and shared third-party notice inventory before the write-capable
-release operation. The preview path is separate from the stable release path:
+release operation. Because the publication job intentionally has no source
+checkout, every `gh release` read or write names `$GITHUB_REPOSITORY`
+explicitly. The preview path is separate from the stable release path:
 it does not receive stable signing credentials and its assets remain labelled
 as a GitHub prerelease. The stable `Release` workflow uses verified community
 signing when protected official credentials are unavailable and upgrades the

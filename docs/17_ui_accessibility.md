@@ -184,6 +184,12 @@ The app detects the current computer internally. Do not display operating-system
 
 Recovery uses the selected action as the primary-button label. While Continue, Undo, or Discard is running, disable duplicate actions and replace the choice cards with one live progress surface. Rollback backup and restore percentages come only from the child rollback journal's actionable-file records; use an indeterminate state until that journal exists. After a standalone undo, return to project selection so setup can start again; if a newly prepared plan encountered the older transaction, invalidate that stale plan and return to review for a fresh preparation.
 
+Before an action begins, Recovery shows the journal-backed current-stage badge,
+last durable checkpoint, project-apply state, and staged-file count in one
+compact summary. Keep the sanitized failure reason and recommended action
+behind a keyboard-operable Details disclosure. Render only the actions the
+normalized journal permits; when apply has not started, do not show Undo.
+
 Recovery progress panels use their own internal padding and contain long
 project-relative paths at 200 percent scaling; text, bars, and filenames must
 not touch or cross the panel border.

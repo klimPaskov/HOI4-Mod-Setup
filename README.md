@@ -121,6 +121,8 @@ Installation shows live progress, completed file counts, percentages, and an
 estimated time. If setup is interrupted, reopening the project offers the safe
 recovery choices that still apply.
 
+![Recover an interrupted installation](docs/screenshots/14-recovery.png)
+
 ### 7. Open the prepared project
 
 ![Completed setup and readiness checks](docs/screenshots/08-ready.png)

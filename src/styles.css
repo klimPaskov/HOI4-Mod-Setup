@@ -378,6 +378,20 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .diff-pane { min-width: 0; min-height: 360px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: #090f19; }.diff-title { min-width: 0; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; margin: 0; padding: 13px; border-bottom: 1px solid var(--line); color: #b8c4d7; font-size: 12px; }.diff-title > * { min-width: 0; overflow-wrap: anywhere; }.diff-title span { color: var(--muted); }.diff-code { margin: 0; min-height: 310px; padding: 18px; color: #aab8ca; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 12px; line-height: 1.65; }.diff-code.minus { background: linear-gradient(90deg, rgba(207, 83, 102, .08), transparent 55%); }.diff-code.plus { background: linear-gradient(90deg, rgba(63, 189, 135, .08), transparent 55%); }.diff-code.neutral { background: linear-gradient(90deg, rgba(130, 150, 180, .08), transparent 55%); }.conflict-actions { padding: 16px; }
 .recovery-card { position: relative; min-height: 150px; padding: 23px 17px; text-align: left; }.recovery-card:hover, .recovery-card.selected { border-color: #6588f7; }.recovery-card .choice-radio { top: 17px; right: 17px; }.recovery-card strong { display: block; margin: 29px 0 6px; }.recovery-card p { line-height: 1.5; }
 .recovery-grid-1 { grid-template-columns: minmax(0, 1fr); }
+.recovery-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.recovery-overview { display: grid; }
+.recovery-state { display: grid; gap: 4px; padding: 12px 14px; border-bottom: 1px solid #806321; color: #e9c268; background: rgba(226, 171, 60, .07); font-size: 12px; line-height: 1.5; }
+.recovery-state span { color: #c9aa61; }
+.recovery-checkpoint { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 12px 16px; }
+.recovery-checkpoint > div { min-width: 0; display: grid; gap: 4px; }
+.recovery-checkpoint code { min-width: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+.recovery-checkpoint > details { position: static; border: 0; }
+.recovery-checkpoint > details > summary { min-height: 32px; padding: 6px 4px; color: #9db5ff; font-size: 12px; }
+.recovery-checkpoint > details[open] { grid-column: 1 / -1; }
+.recovery-checkpoint-details { display: grid; gap: 10px; padding: 14px 0 2px; border-top: 1px solid var(--line); }
+.recovery-checkpoint-details > span { min-width: 0; display: grid; gap: 3px; }
+.recovery-checkpoint-details small { color: var(--muted); }
+.recovery-checkpoint-details strong { overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; }
 .file-plan-list { max-height: 320px; overflow: auto; }
 .file-plan-list > div { gap: 7px; }
 .recovery-progress { display: grid; gap: 14px; padding: 22px 24px; overflow: hidden; }
