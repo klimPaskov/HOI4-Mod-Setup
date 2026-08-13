@@ -99,6 +99,10 @@ Stable release evidence includes:
 - internal SHA-256, third-party-notice, CycloneDX SBOM, source-binding, and
   signing evidence that is not uploaded as public release clutter
 - clean-machine install, launch, uninstall or app-removal results
+- a Windows installer smoke profile with no pre-existing product registration,
+  a fail-closed registry preflight that also refuses matching legacy
+  machine-wide installs, plus post-test proof that the temporary install path
+  is absent from both filesystem and product/uninstall registry keys
 
 Never move a published tag. Withdraw a bad release and publish a new version.
 

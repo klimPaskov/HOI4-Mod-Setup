@@ -6,7 +6,7 @@ use crate::security::{redact_secrets, validate_env_name};
 use crate::AppError;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -109,7 +109,14 @@ impl ProcessSpec {
         allowlisted_executables: &[PathBuf],
         environment: Option<&ScopedSecretEnvironment>,
     ) -> Result<ProcessResult, AppError> {
-        self.run_with_profile(allowlisted_executables, environment, false)
+        self.run_with_profile(
+            allowlisted_executables,
+            environment,
+            false,
+            None,
+            false,
+            None,
+        )
     }
 
     /// Run a Git metadata probe with system/global configuration, interactive
@@ -135,7 +142,105 @@ impl ProcessSpec {
                     .into(),
             ));
         }
-        self.run_with_profile(allowlisted_executables, None, true)
+        self.run_with_profile(allowlisted_executables, None, true, None, false, None)
+    }
+
+    /// Run an isolated Git probe from the exact directory represented by a
+    /// retained handle. Unix changes directory with `fchdir` in the child
+    /// immediately before exec; Windows relies on the handle denying delete
+    /// sharing while the canonical working directory is used.
+    pub(crate) fn run_git_read_only_bound(
+        &self,
+        allowlisted_executables: &[PathBuf],
+        directory: &std::fs::File,
+    ) -> Result<ProcessResult, AppError> {
+        let executable_name = self
+            .executable
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if !matches!(
+            executable_name.to_ascii_lowercase().as_str(),
+            "git" | "git.exe"
+        ) || !self.environment_names.is_empty()
+        {
+            return Err(AppError::Process(
+                "the isolated Git profile accepts only a reviewed Git executable without credentials"
+                    .into(),
+            ));
+        }
+        self.run_with_profile(
+            allowlisted_executables,
+            None,
+            true,
+            None,
+            false,
+            Some(directory),
+        )
+    }
+
+    /// Run a reviewed Git plumbing command from a retained repository handle
+    /// with bounded bytes supplied through standard input. This keeps Git from
+    /// reopening either the project path or a user-controlled managed file.
+    pub(crate) fn run_git_read_only_with_stdin_bound(
+        &self,
+        allowlisted_executables: &[PathBuf],
+        stdin_bytes: &[u8],
+        directory: &std::fs::File,
+    ) -> Result<ProcessResult, AppError> {
+        if stdin_bytes.len() > 32 * 1024 * 1024 {
+            return Err(AppError::Process(
+                "Git standard input exceeds the 32 MiB process limit".into(),
+            ));
+        }
+        let executable_name = self
+            .executable
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if !matches!(
+            executable_name.to_ascii_lowercase().as_str(),
+            "git" | "git.exe"
+        ) || !self.environment_names.is_empty()
+        {
+            return Err(AppError::Process(
+                "the isolated Git input profile accepts only a reviewed Git executable without credentials"
+                    .into(),
+            ));
+        }
+        self.run_with_profile(
+            allowlisted_executables,
+            None,
+            true,
+            Some(stdin_bytes),
+            false,
+            Some(directory),
+        )
+    }
+
+    /// Run a reviewed Git command with repository-local configuration disabled.
+    /// Callers must provide every setting and destination that affects the
+    /// reviewed operation on the command line.
+    pub(crate) fn run_git_without_local_config(
+        &self,
+        allowlisted_executables: &[PathBuf],
+    ) -> Result<ProcessResult, AppError> {
+        let executable_name = self
+            .executable
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if !matches!(
+            executable_name.to_ascii_lowercase().as_str(),
+            "git" | "git.exe"
+        ) || !self.environment_names.is_empty()
+        {
+            return Err(AppError::Process(
+                "the config-free Git profile accepts only a reviewed Git executable without credentials"
+                    .into(),
+            ));
+        }
+        self.run_with_profile(allowlisted_executables, None, true, None, true, None)
     }
 
     fn run_with_profile(
@@ -143,6 +248,9 @@ impl ProcessSpec {
         allowlisted_executables: &[PathBuf],
         environment: Option<&ScopedSecretEnvironment>,
         isolated_git_read_only: bool,
+        stdin_bytes: Option<&[u8]>,
+        disable_local_git_config: bool,
+        bound_directory: Option<&std::fs::File>,
     ) -> Result<ProcessResult, AppError> {
         self.validate(allowlisted_executables)?;
         if let Some(environment) = environment {
@@ -162,16 +270,43 @@ impl ProcessSpec {
         command
             .args(&self.args)
             .env_clear()
-            .stdin(Stdio::null())
+            .stdin(if stdin_bytes.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         add_safe_environment(&mut command);
         if isolated_git_read_only {
             add_isolated_git_environment(&mut command);
         }
+        if disable_local_git_config {
+            command.env("GIT_CONFIG", null_git_config_path());
+        }
         if let Some(cwd) = &self.cwd {
             command.current_dir(cwd);
         }
+        #[cfg(unix)]
+        if let Some(directory) = bound_directory {
+            use std::os::fd::AsRawFd;
+            use std::os::unix::process::CommandExt;
+
+            let directory_fd = directory.as_raw_fd();
+            // SAFETY: `fchdir` is async-signal-safe and the retained file stays
+            // alive until `spawn` returns. The closure performs no allocation.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::fchdir(directory_fd) == 0 {
+                        Ok(())
+                    } else {
+                        Err(std::io::Error::last_os_error())
+                    }
+                });
+            }
+        }
+        #[cfg(not(unix))]
+        let _ = bound_directory;
         if let Some(environment) = environment {
             command.envs(environment.values());
         }
@@ -191,6 +326,21 @@ impl ProcessSpec {
         let output_limit = self.max_output_bytes;
         let stdout_thread = std::thread::spawn(move || read_bounded(stdout_pipe, output_limit));
         let stderr_thread = std::thread::spawn(move || read_bounded(stderr_pipe, output_limit));
+        if let Some(stdin_bytes) = stdin_bytes {
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| AppError::Process("stdin pipe was not created".into()))?;
+            if let Err(error) = stdin.write_all(stdin_bytes) {
+                terminate_process_tree(&mut child);
+                let _ = child.wait();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(AppError::Process(format!(
+                    "write to reviewed process failed: {error}"
+                )));
+            }
+        }
         let started = Instant::now();
         let mut timed_out = false;
         loop {
@@ -352,11 +502,7 @@ fn add_safe_environment(command: &mut Command) {
 }
 
 fn add_isolated_git_environment(command: &mut Command) {
-    let null_config = if cfg!(target_os = "windows") {
-        "NUL"
-    } else {
-        "/dev/null"
-    };
+    let null_config = null_git_config_path();
     command
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", null_config)
@@ -367,6 +513,14 @@ fn add_isolated_git_environment(command: &mut Command) {
         .env("GCM_INTERACTIVE", "Never")
         .env("GCM_GUI_PROMPT", "0")
         .env("GIT_NO_REPLACE_OBJECTS", "1");
+}
+
+fn null_git_config_path() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "NUL"
+    } else {
+        "/dev/null"
+    }
 }
 
 /// Resolve a manifest-declared executable without accepting a linked PATH
@@ -691,6 +845,59 @@ mod tests {
                 "/dev/null"
             })
         );
+    }
+
+    #[test]
+    fn config_free_git_environment_disables_repository_local_configuration() {
+        let mut command = Command::new("git");
+        command.env("GIT_CONFIG", null_git_config_path());
+        let local = command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("GIT_CONFIG"))
+            .and_then(|(_, value)| value)
+            .map(|value| value.to_string_lossy().into_owned());
+
+        assert_eq!(local.as_deref(), Some(null_git_config_path()));
+    }
+
+    #[test]
+    fn config_free_git_child_cannot_observe_a_repository_local_sentinel() {
+        let project = tempfile::tempdir().unwrap();
+        let git = find_path_executable(&["git.exe", "git"]).unwrap();
+        let init = ProcessSpec {
+            executable: git.clone(),
+            executable_sha256: Some(crate::security::sha256_file(&git).unwrap()),
+            args: vec!["init".into()],
+            cwd: Some(project.path().to_path_buf()),
+            platform: Platform::current(),
+            environment_names: vec![],
+            timeout_seconds: 30,
+            max_output_bytes: 1024 * 1024,
+        };
+        assert_eq!(
+            init.run_git_read_only(&[git.clone()]).unwrap().status_code,
+            Some(0)
+        );
+        fs::write(
+            project.path().join(".git/config"),
+            "[core]\nrepositoryformatversion = 0\n[hoi4setup]\nsentinel = visible-only-locally\n",
+        )
+        .unwrap();
+        let probe = ProcessSpec {
+            executable: git.clone(),
+            executable_sha256: Some(crate::security::sha256_file(&git).unwrap()),
+            args: vec!["config".into(), "--get".into(), "hoi4setup.sentinel".into()],
+            cwd: Some(project.path().to_path_buf()),
+            platform: Platform::current(),
+            environment_names: vec![],
+            timeout_seconds: 30,
+            max_output_bytes: 1024 * 1024,
+        };
+
+        let output = probe.run_git_without_local_config(&[git]).unwrap();
+
+        assert_ne!(output.status_code, Some(0));
+        assert!(!output.stdout.contains("visible-only-locally"));
     }
 
     #[cfg(any(unix, windows))]

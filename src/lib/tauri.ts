@@ -2,10 +2,21 @@ import type { AiAccountStatus, AiAnalysisRequest, AiProviderProfile, AppUpdateSt
 
 interface RawScanFinding {
   id: string;
+  category?: string;
   key: string;
   value: unknown;
   status: string;
+  origin?: "deterministic" | "provider_suggested" | "user_confirmed";
+  recommendation?: string | null;
   evidence?: Array<{ path: string; confidence: number; note?: string }>;
+}
+
+interface RawScanConflict {
+  id: string;
+  path: string;
+  kind: string;
+  severity: string;
+  details?: string | null;
 }
 
 interface RawScanResult {
@@ -19,6 +30,7 @@ interface RawScanResult {
   directories_scanned?: number;
   bytes_read?: number;
   findings?: RawScanFinding[];
+  conflicts?: RawScanConflict[];
 }
 
 interface RawScanProgress {
@@ -318,16 +330,31 @@ export async function scanProject(
     });
     if (!result) return null;
     return {
-      findings: (result.findings ?? []).map((finding) => ({
+      findings: [...(result.findings ?? []).map((finding) => ({
         id: finding.id,
-        label: finding.key,
+        category: finding.category,
+        label: `${finding.origin === "provider_suggested" ? "Suggested" : finding.origin === "user_confirmed" ? "Confirmed" : "Detected"} · ${finding.key}`,
         value: typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? "",
         evidenceExcerpt: typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? "",
         confidence: Math.max(0, ...(finding.evidence ?? []).map((evidence) => evidence.confidence)),
         evidencePath: finding.evidence?.[0]?.path,
-        status: finding.status === "blocking" ? "blocking" : finding.status === "needs_review" ? "needs_review" : "accepted",
+        status: finding.status === "blocking" ? "blocking" as const : finding.status === "needs_review" ? "needs_review" as const : "accepted" as const,
         evidence: (finding.evidence ?? []).map((evidence) => `${evidence.path}${evidence.note ? ` - ${evidence.note}` : ""}`).join("; "),
-      })),
+        origin: finding.origin ?? "deterministic",
+        recommendation: finding.recommendation ?? undefined,
+      })), ...(result.conflicts ?? []).map((conflict) => ({
+        id: conflict.id,
+        category: "conflict",
+        label: `${conflict.severity === "block" ? "Blocking conflict" : "Conflict"} · ${conflict.kind.replaceAll("_", " ")}`,
+        value: conflict.details ?? conflict.kind,
+        evidenceExcerpt: conflict.details ?? conflict.kind,
+        confidence: 1,
+        evidencePath: conflict.path,
+        status: conflict.severity === "block" ? "blocking" as const : "needs_review" as const,
+        evidence: `${conflict.path} - ${conflict.details ?? conflict.kind}`,
+        origin: "deterministic" as const,
+        recommendation: conflict.severity === "block" ? "Resolve this blocking conflict before planning." : "Review this conflict before planning.",
+      }))],
       scanId: result.scan_id,
       projectRoot: result.project_root,
       completedAt: result.completed_at,

@@ -157,7 +157,7 @@
         "value": "Cold War Curtain",
         "status": "accepted",
         "user_value": null,
-        "origin": "codex_suggested",
+        "origin": "provider_suggested",
         "evidence": [
           {
             "detector": "codex_app_server",
@@ -178,7 +178,7 @@
         "value": "cold_war_curtain",
         "status": "accepted",
         "user_value": null,
-        "origin": "codex_suggested",
+        "origin": "provider_suggested",
         "evidence": [
           {
             "detector": "codex_app_server",
@@ -199,7 +199,7 @@
         "value": "cwc",
         "status": "accepted",
         "user_value": null,
-        "origin": "codex_suggested",
+        "origin": "provider_suggested",
         "evidence": [
           {
             "detector": "codex_app_server",

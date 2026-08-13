@@ -25,7 +25,7 @@ Persist only the integration type, auth state needed by the current application 
 | `transaction-journal.schema.json` | Durable stage and operation checkpoints for recovery and rollback |
 | `git-online-record.schema.json` | Secret-free record of a separately approved online Git action |
 
-`scan-result.schema.json` requires bounded-scan completion metadata (`partial`, `cancelled`, `limits_hit`, and file/directory/byte counters). Live stage/path progress is delivered only through correlated Tauri events and is not persisted as project content.
+`scan-result.schema.json` requires bounded-scan completion metadata (`partial`, `cancelled`, `limits_hit`, and file/directory/byte counters). Live stage/path progress is delivered only through correlated Tauri events and is not persisted as project content. The desktop bridge preserves deterministic finding origins and maps core conflicts into the review surface; provider input uses bounded normalized finding/conflict summaries and their core-bound hashes, not raw inventoried file text.
 
 ## Separation
 

@@ -77,6 +77,13 @@ pub struct GitApplyResult {
     pub remote_configured: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagedGitPath {
+    pub relative: String,
+    pub expected_sha256: String,
+    pub expected_size: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OnlineGitAction {
@@ -121,6 +128,8 @@ struct PendingGitOnlinePlan {
 static PENDING_GIT_ONLINE_PLANS: OnceLock<Mutex<HashMap<Uuid, PendingGitOnlinePlan>>> =
     OnceLock::new();
 const MAX_GIT_METADATA_TEXT_BYTES: u64 = 1024 * 1024;
+const MAX_GIT_MANAGED_FILE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_GIT_HOOK_ENTRIES: usize = 1_024;
 const APP_GIT_USER_NAME: &str = "HOI4 Mod Setup";
 const APP_GIT_USER_EMAIL: &str = "hoi4-mod-setup@localhost";
 
@@ -470,7 +479,38 @@ fn run_online_action(
         OnlineGitAction::PushRemote => {
             validate_online_git_configuration(root)?;
             let remote_url = configured_push_url(root, remote_name)?;
-            let output = run_git_online(root, &["push", "--set-upstream", remote_name, branch])?;
+            if !remote_url.starts_with("https://github.com/") {
+                return Err(AppError::UnsupportedPlatform(
+                    "reviewed push currently supports only an exact HTTPS GitHub destination"
+                        .into(),
+                ));
+            }
+            let read_root = crate::flatten::BoundedReadRoot::open(root)?;
+            let git_root = read_root.open_child_directory(".git")?;
+            let output = git_root.with_stable_path(|git_dir| {
+                validate_local_git_config_in_git_root(&git_root)?;
+                let instead_of_key = format!("url.{remote_url}.insteadOf");
+                let push_instead_of_key = format!("url.{remote_url}.pushInsteadOf");
+                let (mut spec, executable) = prepare_hardened_git_process(
+                    git_dir,
+                    HardenedGitProfile::Online,
+                    &["push", "--set-upstream", &remote_url, branch],
+                    &[
+                        (instead_of_key.as_str(), remote_url.as_str()),
+                        (push_instead_of_key.as_str(), remote_url.as_str()),
+                        ("core.sshCommand", ""),
+                        ("core.askPass", ""),
+                        ("http.proxy", ""),
+                    ],
+                    true,
+                    find_git_executable,
+                )?;
+                spec.args.insert(2, "--work-tree=..".into());
+                spec.args.insert(2, "--git-dir=.".into());
+                let result = spec.run_git_without_local_config(&[executable]);
+                validate_local_git_config_in_git_root(&git_root)?;
+                result
+            })??;
             require_success(output, "Git push")?;
             Ok(GitOnlineResult {
                 action,
@@ -814,7 +854,7 @@ pub fn valid_branch_name(value: &str) -> bool {
 pub fn apply_git_setup(
     root: &Path,
     setup: &GitSetup,
-    managed_paths: &[String],
+    managed_paths: &[ManagedGitPath],
 ) -> Result<GitApplyResult, AppError> {
     validate_git_setup(setup)?;
     let mut result = GitApplyResult::default();
@@ -841,9 +881,7 @@ pub fn apply_git_setup(
             run_git_initialize(root, &initial_branch)?;
             result.initialized = true;
             if !managed_paths.is_empty() {
-                let mut args = vec!["add", "--"];
-                args.extend(managed_paths.iter().map(String::as_str));
-                run_git(root, &args)?;
+                stage_managed_paths_without_filters(root, managed_paths)?;
             }
             if setup.initial_commit {
                 run_git_initial_commit(root)?;
@@ -883,6 +921,126 @@ fn run_git(root: &Path, args: &[&str]) -> Result<(), AppError> {
             output.stderr.trim()
         )))
     }
+}
+
+fn stage_managed_paths_without_filters(
+    root: &Path,
+    managed_paths: &[ManagedGitPath],
+) -> Result<(), AppError> {
+    stage_managed_paths_without_filters_with_hook(root, managed_paths, || {})
+}
+
+fn stage_managed_paths_without_filters_with_hook(
+    root: &Path,
+    managed_paths: &[ManagedGitPath],
+    before_hash: impl FnOnce(),
+) -> Result<(), AppError> {
+    let read_root = crate::flatten::BoundedReadRoot::open(root)?;
+    let git_root = read_root.open_child_directory(".git")?;
+    validate_local_git_config_in_git_root(&git_root)?;
+    before_hash();
+    for path in managed_paths {
+        crate::source::validate_sha256(&path.expected_sha256)?;
+        let normalized = normalize_relative_path(&path.relative)?;
+        let source = safe_join(read_root.canonical(), &normalized)?;
+        let metadata = fs::symlink_metadata(&source)?;
+        if !metadata.is_file() || is_link_metadata(&metadata) || path_has_link_component(&source) {
+            return Err(AppError::PathSecurity(format!(
+                "managed Git path is not a regular contained file: {normalized}"
+            )));
+        }
+        let bytes =
+            read_root.read_bounded_with_check(&normalized, MAX_GIT_MANAGED_FILE_BYTES, || false)?;
+        if bytes.len() as u64 != path.expected_size
+            || crate::security::sha256_bytes(&bytes) != path.expected_sha256
+        {
+            return Err(AppError::Transaction(format!(
+                "managed Git path changed after transaction validation: {normalized}"
+            )));
+        }
+        let hash = run_bound_git_mutation_with_stdin(
+            &git_root,
+            &["hash-object", "-w", "--stdin"],
+            &bytes,
+        )?;
+        let object = hash.stdout.trim();
+        if hash.status_code != Some(0) || hash.timed_out || !valid_commit_id(object) {
+            return Err(AppError::Process(
+                "Git could not hash a managed file without content filters".into(),
+            ));
+        }
+        #[cfg(unix)]
+        let mode = {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o111 == 0 {
+                "100644"
+            } else {
+                "100755"
+            }
+        };
+        #[cfg(not(unix))]
+        let mode = "100644";
+        let cacheinfo = format!("{mode},{object},{normalized}");
+        let update = run_bound_git_mutation(
+            &git_root,
+            &["update-index", "--add", "--cacheinfo", &cacheinfo],
+        )?;
+        if update.status_code != Some(0) || update.timed_out {
+            return Err(AppError::Process(
+                "Git could not stage the filter-free managed object".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn run_bound_git_mutation(
+    git_root: &crate::flatten::BoundedReadRoot,
+    args: &[&str],
+) -> Result<ProcessResult, AppError> {
+    git_root.with_stable_path(|git_dir| {
+        validate_local_git_config_in_git_root(git_root)?;
+        let (mut spec, executable) = prepare_hardened_git_process(
+            git_dir,
+            HardenedGitProfile::Mutation,
+            args,
+            &[],
+            true,
+            find_git_executable,
+        )?;
+        spec.args.insert(2, "--work-tree=..".into());
+        spec.args.insert(2, "--git-dir=.".into());
+        let output = spec.run_git_read_only_bound(&[executable], git_root.directory_handle());
+        validate_local_git_config_in_git_root(git_root)?;
+        output
+    })?
+}
+
+fn run_bound_git_mutation_with_stdin(
+    git_root: &crate::flatten::BoundedReadRoot,
+    args: &[&str],
+    stdin_bytes: &[u8],
+) -> Result<ProcessResult, AppError> {
+    git_root.with_stable_path(|git_dir| {
+        validate_local_git_config_in_git_root(git_root)?;
+        let (mut spec, executable) = prepare_hardened_git_process(
+            git_dir,
+            HardenedGitProfile::Mutation,
+            args,
+            &[],
+            true,
+            find_git_executable,
+        )?;
+        spec.args.insert(2, "--work-tree=..".into());
+        spec.args.insert(2, "--git-dir=.".into());
+        let output = spec.run_git_read_only_with_stdin_bound(
+            &[executable],
+            stdin_bytes,
+            git_root.directory_handle(),
+        );
+        validate_local_git_config_in_git_root(git_root)?;
+        output
+    })?
 }
 
 fn run_git_read_only(root: &Path, args: &[&str]) -> Result<ProcessResult, AppError> {
@@ -927,10 +1085,6 @@ fn run_git_initial_commit(root: &Path) -> Result<(), AppError> {
     }
 }
 
-fn run_git_online(root: &Path, args: &[&str]) -> Result<ProcessResult, AppError> {
-    run_hardened_git(root, HardenedGitProfile::Online, args, &[])
-}
-
 fn run_git_rollback(root: &Path, args: &[&str]) -> Result<ProcessResult, AppError> {
     run_hardened_git(root, HardenedGitProfile::Rollback, args, &[])
 }
@@ -941,9 +1095,35 @@ fn run_hardened_git(
     args: &[&str],
     command_config: &[(&str, &str)],
 ) -> Result<ProcessResult, AppError> {
-    let (spec, executable) =
-        prepare_hardened_git_process(root, profile, args, command_config, find_git_executable)?;
+    let (spec, executable) = prepare_hardened_git_process(
+        root,
+        profile,
+        args,
+        command_config,
+        false,
+        find_git_executable,
+    )?;
     spec.run_git_read_only(&[executable])
+}
+
+fn run_hardened_git_with_validated_config(
+    git_root: &crate::flatten::BoundedReadRoot,
+    git_process_root: &Path,
+    args: &[&str],
+) -> Result<ProcessResult, AppError> {
+    let (mut spec, executable) = prepare_hardened_git_process(
+        git_process_root,
+        HardenedGitProfile::ReadOnly,
+        args,
+        &[],
+        true,
+        find_git_executable,
+    )?;
+    spec.args.insert(2, "--work-tree=..".into());
+    spec.args.insert(2, "--git-dir=.".into());
+    let result = spec.run_git_read_only_bound(&[executable], git_root.directory_handle());
+    validate_local_git_config_in_git_root(git_root)?;
+    result
 }
 
 fn prepare_hardened_git_process<F>(
@@ -951,6 +1131,7 @@ fn prepare_hardened_git_process<F>(
     profile: HardenedGitProfile,
     args: &[&str],
     command_config: &[(&str, &str)],
+    local_config_prevalidated: bool,
     resolve_executable: F,
 ) -> Result<(ProcessSpec, PathBuf), AppError>
 where
@@ -986,7 +1167,7 @@ where
                 )))
             }
         }
-    } else if profile.requires_local_config() {
+    } else if profile.requires_local_config() && !local_config_prevalidated {
         validate_local_git_config_for_execution(root)?;
     }
 
@@ -1059,7 +1240,15 @@ fn git_null_path() -> &'static str {
 }
 
 fn validate_local_git_config_for_execution(root: &Path) -> Result<(), AppError> {
-    let config_path = root.join(".git").join("config");
+    let read_root = crate::flatten::BoundedReadRoot::open(root)?;
+    let git_root = read_root.open_child_directory(".git")?;
+    validate_local_git_config_in_git_root(&git_root)
+}
+
+fn validate_local_git_config_in_git_root(
+    git_root: &crate::flatten::BoundedReadRoot,
+) -> Result<(), AppError> {
+    let config_path = git_root.canonical().join("config");
     let metadata = fs::symlink_metadata(&config_path).map_err(|error| {
         AppError::PathSecurity(format!(
             "Git metadata cannot be inspected safely at {}: {error}",
@@ -1069,13 +1258,17 @@ fn validate_local_git_config_for_execution(root: &Path) -> Result<(), AppError> 
     if !metadata.is_file()
         || is_link_metadata(&metadata)
         || metadata.len() > MAX_GIT_METADATA_TEXT_BYTES
-        || path_has_link_component(&config_path)
     {
         return Err(AppError::PathSecurity(
             "Git config is linked, oversized, or not a regular file".into(),
         ));
     }
-    let config = fs::read_to_string(&config_path)
+    let config = git_root
+        .read_bounded_with_check("config", MAX_GIT_METADATA_TEXT_BYTES, || false)
+        .and_then(|bytes| {
+            String::from_utf8(bytes)
+                .map_err(|_| AppError::PathSecurity("Git config is not valid UTF-8".into()))
+        })
         .map_err(|error| AppError::PathSecurity(format!("read Git config safely: {error}")))?;
     match unsafe_git_config_entry(&config) {
         Ok(Some(entry)) => {
@@ -1366,19 +1559,13 @@ pub fn rollback_initialized_git(root: &Path) -> Result<(), AppError> {
     if !metadata.is_ok_and(|metadata| metadata.is_dir()) {
         return Ok(());
     }
-    let hooks = inspect_hook_names(&git.join("hooks"))?;
-    if !hooks.is_empty() {
-        return Err(AppError::Transaction(
-            "Git hooks were added after initialization; refusing to remove Git metadata".into(),
-        ));
-    }
-    let output = run_git_rollback(root, &["status", "--porcelain"])?;
-    if output.status_code != Some(0) {
+    let inspection = inspect_read_only(root);
+    if inspection.status_probe != "complete" {
         return Err(AppError::Process(
             "cannot verify Git state before rollback".into(),
         ));
     }
-    if !output.stdout.trim().is_empty() {
+    if inspection.status.dirty != Some(false) {
         return Err(AppError::Transaction(
             "Git contains user changes; refusing to remove initialized metadata".into(),
         ));
@@ -1485,6 +1672,14 @@ fn valid_remote_path(path: &str) -> bool {
 }
 
 pub fn read_git_head(root: &Path) -> GitStatus {
+    let Ok(read_root) = crate::flatten::BoundedReadRoot::open(root) else {
+        return GitStatus::default();
+    };
+    read_git_head_bound(&read_root)
+}
+
+fn read_git_head_bound(read_root: &crate::flatten::BoundedReadRoot) -> GitStatus {
+    let root = read_root.canonical();
     let git = root.join(".git");
     let git_metadata = std::fs::symlink_metadata(&git).ok();
     let linked =
@@ -1499,8 +1694,10 @@ pub fn read_git_head(root: &Path) -> GitStatus {
             .is_some_and(|metadata| metadata.is_dir())
         && !path_has_link_component(&git.join("HEAD"))
     {
-        std::fs::read_to_string(git.join("HEAD"))
+        read_root
+            .read_bounded_with_check(".git/HEAD", MAX_GIT_METADATA_TEXT_BYTES, || false)
             .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
             .map(|value| value.trim().to_string())
     } else {
         None
@@ -1525,7 +1722,20 @@ pub fn read_git_head(root: &Path) -> GitStatus {
 /// linked worktree's external gitdir. Git commands are fixed, bounded, and
 /// passed through the same executable allowlist as installation operations.
 pub fn inspect_read_only(root: &Path) -> GitInspection {
-    let base = read_git_head(root);
+    let Ok(read_root) = crate::flatten::BoundedReadRoot::open(root) else {
+        return GitInspection {
+            status_probe: "unsafe_root".into(),
+            ..GitInspection::default()
+        };
+    };
+    inspect_read_only_bound(&read_root)
+}
+
+pub(crate) fn inspect_read_only_bound(
+    read_root: &crate::flatten::BoundedReadRoot,
+) -> GitInspection {
+    let root = read_root.canonical();
+    let base = read_git_head_bound(read_root);
     let mut inspection = GitInspection {
         status: base.clone(),
         status_probe: if !base.repository_present {
@@ -1550,30 +1760,55 @@ pub fn inspect_read_only(root: &Path) -> GitInspection {
         inspection.status_probe = "linked_worktree_not_followed".into();
         return inspection;
     }
-    if validate_local_git_config_for_execution(root).is_err() {
+    let Ok(git_root) = read_root.open_child_directory(".git") else {
+        inspection.status_probe = "filesystem_boundary_changed".into();
+        return inspection;
+    };
+    if validate_local_git_config_in_git_root(&git_root).is_err() {
         inspection.status_probe = "unsafe_configuration".into();
         return inspection;
     }
-
     let mut complete = true;
-    match run_git_read_only(
-        root,
-        &[
-            "status",
-            "--porcelain=v1",
-            "--branch",
-            "--untracked-files=normal",
-            "--ignore-submodules=all",
-        ],
-    ) {
-        Ok(result) if result.status_code == Some(0) && !result.timed_out => {
-            parse_status_output(&result.stdout, &mut inspection);
+    let unstaged_result = git_root.with_stable_path(|git_dir| {
+        validate_local_git_config_in_git_root(&git_root)?;
+        run_hardened_git_with_validated_config(
+            &git_root,
+            git_dir,
+            &["ls-files", "--modified", "--deleted", "-z", "--"],
+        )
+    });
+    match unstaged_result {
+        Ok(Ok(result)) if result.status_code == Some(0) && !result.timed_out => {
+            inspection.unstaged_files = count_nul_paths(&result.stdout);
         }
         _ => complete = false,
     }
 
-    match run_git_read_only(root, &["rev-parse", "--verify", "HEAD"]) {
-        Ok(result) if result.status_code == Some(0) && !result.timed_out => {
+    let untracked_result = git_root.with_stable_path(|git_dir| {
+        validate_local_git_config_in_git_root(&git_root)?;
+        run_hardened_git_with_validated_config(
+            &git_root,
+            git_dir,
+            &["ls-files", "--others", "--exclude-standard", "-z", "--"],
+        )
+    });
+    match untracked_result {
+        Ok(Ok(result)) if result.status_code == Some(0) && !result.timed_out => {
+            inspection.untracked_files = count_nul_paths(&result.stdout);
+        }
+        _ => complete = false,
+    }
+
+    let head_result = git_root.with_stable_path(|git_dir| {
+        validate_local_git_config_in_git_root(&git_root)?;
+        run_hardened_git_with_validated_config(
+            &git_root,
+            git_dir,
+            &["rev-parse", "--verify", "HEAD"],
+        )
+    });
+    match head_result {
+        Ok(Ok(result)) if result.status_code == Some(0) && !result.timed_out => {
             inspection.commit = result
                 .stdout
                 .lines()
@@ -1584,8 +1819,51 @@ pub fn inspect_read_only(root: &Path) -> GitInspection {
         _ => complete = false,
     }
 
-    match run_git_read_only(root, &["remote"]) {
-        Ok(result) if result.status_code == Some(0) && !result.timed_out => {
+    let staged_result = git_root.with_stable_path(|git_dir| {
+        validate_local_git_config_in_git_root(&git_root)?;
+        run_hardened_git_with_validated_config(
+            &git_root,
+            git_dir,
+            &[
+                "diff-index",
+                "--cached",
+                "--name-only",
+                "--no-renames",
+                "-z",
+                "HEAD",
+                "--",
+            ],
+        )
+    });
+    match staged_result {
+        Ok(Ok(result)) if result.status_code == Some(0) && !result.timed_out => {
+            inspection.staged_files = count_nul_paths(&result.stdout);
+        }
+        _ if inspection.commit.is_none() => {
+            let initial_result = git_root.with_stable_path(|git_dir| {
+                validate_local_git_config_in_git_root(&git_root)?;
+                run_hardened_git_with_validated_config(
+                    &git_root,
+                    git_dir,
+                    &["ls-files", "--cached", "-z", "--"],
+                )
+            });
+            match initial_result {
+                Ok(Ok(result)) if result.status_code == Some(0) && !result.timed_out => {
+                    inspection.staged_files = count_nul_paths(&result.stdout);
+                }
+                _ => complete = false,
+            }
+        }
+        _ => complete = false,
+    }
+
+    let remote_result = git_root.with_stable_path(|git_dir| {
+        validate_local_git_config_in_git_root(&git_root)?;
+        run_hardened_git_with_validated_config(&git_root, git_dir, &["remote"])
+    });
+    match remote_result {
+        Ok(Ok(result)) if result.status_code == Some(0) && !result.timed_out => {
             inspection.status.remotes = result
                 .stdout
                 .lines()
@@ -1600,26 +1878,47 @@ pub fn inspect_read_only(root: &Path) -> GitInspection {
         _ => complete = false,
     }
 
-    match read_submodule_paths(root) {
+    match read_submodule_paths_bound(read_root) {
         Ok(paths) => inspection.submodules = paths,
         Err(_) => complete = false,
     }
 
-    let hooks_safe = match inspect_hook_names(&git_path.join("hooks")) {
-        Ok(hooks) => {
-            inspection.hooks = hooks;
-            true
-        }
+    let hooks_safe = match fs::symlink_metadata(git_root.canonical().join("hooks")) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
         Err(_) => {
             complete = false;
             false
         }
+        Ok(_) => match git_root.open_child_directory("hooks") {
+            Ok(hooks_root) => match inspect_hook_names(&hooks_root.stable_process_path(), true) {
+                Ok(hooks) => {
+                    inspection.hooks = hooks;
+                    true
+                }
+                Err(_) => {
+                    complete = false;
+                    false
+                }
+            },
+            Err(_) => {
+                complete = false;
+                false
+            }
+        },
     };
-    inspection.ignore_files = safe_ignore_files(root, &git_path);
+    inspection.ignore_files = safe_ignore_files(read_root, &git_root);
 
     let mut tracked_scan_complete = false;
-    match run_git_read_only(root, &["ls-files", "--cached", "-z", "--"]) {
-        Ok(result) if result.status_code == Some(0) && !result.timed_out => {
+    let tracked_result = git_root.with_stable_path(|git_dir| {
+        validate_local_git_config_in_git_root(&git_root)?;
+        run_hardened_git_with_validated_config(
+            &git_root,
+            git_dir,
+            &["ls-files", "--cached", "-z", "--"],
+        )
+    });
+    match tracked_result {
+        Ok(Ok(result)) if result.status_code == Some(0) && !result.timed_out => {
             tracked_scan_complete = result.stdout.len() < 4 * 1024 * 1024;
             inspection.status.tracked_secret_like_paths = result
                 .stdout
@@ -1637,6 +1936,13 @@ pub fn inspect_read_only(root: &Path) -> GitInspection {
     if !tracked_scan_complete {
         complete = false;
     }
+    inspection.status.branch = base.branch;
+    inspection.status.detached = base.detached;
+    inspection.status.dirty = complete.then_some(
+        inspection.staged_files > 0
+            || inspection.unstaged_files > 0
+            || inspection.untracked_files > 0,
+    );
     inspection.status_probe = if !hooks_safe {
         "unsafe_hooks".into()
     } else if complete {
@@ -1647,7 +1953,10 @@ pub fn inspect_read_only(root: &Path) -> GitInspection {
     inspection
 }
 
-fn read_submodule_paths(root: &Path) -> Result<Vec<String>, AppError> {
+fn read_submodule_paths_bound(
+    read_root: &crate::flatten::BoundedReadRoot,
+) -> Result<Vec<String>, AppError> {
+    let root = read_root.canonical();
     let path = root.join(".gitmodules");
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
@@ -1667,7 +1976,12 @@ fn read_submodule_paths(root: &Path) -> Result<Vec<String>, AppError> {
             ".gitmodules is linked, oversized, or not a regular file".into(),
         ));
     }
-    let contents = fs::read_to_string(&path)
+    let contents = read_root
+        .read_bounded_with_check(".gitmodules", MAX_GIT_METADATA_TEXT_BYTES, || false)
+        .and_then(|bytes| {
+            String::from_utf8(bytes)
+                .map_err(|_| AppError::PathSecurity(".gitmodules is not valid UTF-8".into()))
+        })
         .map_err(|error| AppError::PathSecurity(format!("read .gitmodules safely: {error}")))?;
     let mut paths = contents
         .lines()
@@ -1686,57 +2000,25 @@ fn read_submodule_paths(root: &Path) -> Result<Vec<String>, AppError> {
     Ok(paths)
 }
 
-fn parse_status_output(output: &str, inspection: &mut GitInspection) {
-    for line in output.lines() {
-        if let Some(header) = line.strip_prefix("## ") {
-            let header = header.trim();
-            if header == "HEAD (no branch)" {
-                inspection.status.branch = None;
-                inspection.status.detached = true;
-            } else {
-                let branch = header
-                    .strip_prefix("No commits yet on ")
-                    .unwrap_or(header)
-                    .split("...")
-                    .next()
-                    .unwrap_or_default()
-                    .trim();
-                if !branch.is_empty() && branch != "(no branch)" {
-                    inspection.status.branch = Some(branch.to_string());
-                    inspection.status.detached = false;
-                }
-            }
-            continue;
-        }
-        let bytes = line.as_bytes();
-        if bytes.len() < 3 {
-            continue;
-        }
-        let staged = bytes[0] != b' ' && bytes[0] != b'?';
-        let unstaged = bytes[1] != b' ' && bytes[1] != b'?';
-        if bytes[0] == b'?' && bytes[1] == b'?' {
-            inspection.untracked_files = inspection.untracked_files.saturating_add(1);
-        } else {
-            if staged {
-                inspection.staged_files = inspection.staged_files.saturating_add(1);
-            }
-            if unstaged {
-                inspection.unstaged_files = inspection.unstaged_files.saturating_add(1);
-            }
-        }
-    }
-    inspection.status.dirty = Some(
-        inspection.staged_files > 0
-            || inspection.unstaged_files > 0
-            || inspection.untracked_files > 0,
-    );
+#[cfg(test)]
+fn read_submodule_paths(root: &Path) -> Result<Vec<String>, AppError> {
+    let read_root = crate::flatten::BoundedReadRoot::open(root)?;
+    read_submodule_paths_bound(&read_root)
 }
 
 fn valid_commit_id(value: &str) -> bool {
     matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn inspect_hook_names(hooks: &Path) -> Result<Vec<String>, AppError> {
+fn count_nul_paths(value: &str) -> u32 {
+    value
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .count()
+        .min(u32::MAX as usize) as u32
+}
+
+fn inspect_hook_names(hooks: &Path, trusted_root: bool) -> Result<Vec<String>, AppError> {
     let metadata = match fs::symlink_metadata(hooks) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -1746,7 +2028,10 @@ fn inspect_hook_names(hooks: &Path) -> Result<Vec<String>, AppError> {
             )))
         }
     };
-    if !metadata.is_dir() || is_link_metadata(&metadata) || path_has_link_component(hooks) {
+    if !metadata.is_dir()
+        || is_link_metadata(&metadata)
+        || (!trusted_root && path_has_link_component(hooks))
+    {
         return Err(AppError::PathSecurity(
             "Git hooks path is linked or not a readable directory".into(),
         ));
@@ -1758,7 +2043,12 @@ fn inspect_hook_names(hooks: &Path) -> Result<Vec<String>, AppError> {
         ))
     })?;
     let mut names = Vec::new();
-    for entry in entries {
+    for (index, entry) in entries.enumerate() {
+        if index >= MAX_GIT_HOOK_ENTRIES {
+            return Err(AppError::PathSecurity(
+                "Git hooks directory exceeds the bounded entry limit".into(),
+            ));
+        }
         let entry = entry.map_err(|error| {
             AppError::PathSecurity(format!("Git hook entry cannot be read safely: {error}"))
         })?;
@@ -1766,7 +2056,7 @@ fn inspect_hook_names(hooks: &Path) -> Result<Vec<String>, AppError> {
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
             AppError::PathSecurity(format!("Git hook metadata cannot be read safely: {error}"))
         })?;
-        if is_link_metadata(&metadata) || path_has_link_component(&path) {
+        if is_link_metadata(&metadata) || (!trusted_root && path_has_link_component(&path)) {
             return Err(AppError::PathSecurity(
                 "Git hook entry contains a link or junction".into(),
             ));
@@ -1791,16 +2081,22 @@ fn inspect_hook_names(hooks: &Path) -> Result<Vec<String>, AppError> {
     Ok(names)
 }
 
-fn safe_ignore_files(root: &Path, git_path: &Path) -> Vec<String> {
+fn safe_ignore_files(
+    read_root: &crate::flatten::BoundedReadRoot,
+    git_root: &crate::flatten::BoundedReadRoot,
+) -> Vec<String> {
     let mut files = Vec::new();
-    for (relative, path) in [
-        (".gitignore", root.join(".gitignore")),
-        (".git/info/exclude", git_path.join("info").join("exclude")),
-    ] {
-        let metadata = fs::symlink_metadata(path).ok();
-        if metadata.is_some_and(|metadata| metadata.is_file() && !is_link_metadata(&metadata)) {
-            files.push(relative.to_string());
-        }
+    if read_root
+        .read_bounded_with_check(".gitignore", MAX_GIT_METADATA_TEXT_BYTES, || false)
+        .is_ok()
+    {
+        files.push(".gitignore".into());
+    }
+    if git_root
+        .read_bounded_with_check("info/exclude", MAX_GIT_METADATA_TEXT_BYTES, || false)
+        .is_ok()
+    {
+        files.push(".git/info/exclude".into());
     }
     files
 }
@@ -1892,27 +2188,171 @@ mod tests {
     }
 
     #[test]
-    fn read_only_status_parser_reports_branch_and_worktree_buckets() {
-        let mut inspection = GitInspection::default();
-        parse_status_output(
-            "## feature/example...origin/feature/example [ahead 1]\nM  staged.txt\n M changed.txt\n?? new.txt\n",
-            &mut inspection,
-        );
-        assert_eq!(inspection.status.branch.as_deref(), Some("feature/example"));
-        assert!(!inspection.status.detached);
-        assert_eq!(inspection.staged_files, 1);
-        assert_eq!(inspection.unstaged_files, 1);
-        assert_eq!(inspection.untracked_files, 1);
-        assert_eq!(inspection.status.dirty, Some(true));
+    fn read_only_inspection_uses_the_retained_git_directory() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        fs::write(project.path().join("tracked.txt"), "stable\n").unwrap();
+        run_git(project.path(), &["add", "tracked.txt"]).unwrap();
+        run_git(project.path(), &["config", "user.name", "Test"]).unwrap();
+        run_git(
+            project.path(),
+            &["config", "user.email", "test@example.invalid"],
+        )
+        .unwrap();
+        run_git(project.path(), &["commit", "-m", "fixture"]).unwrap();
+
+        let inspection = inspect_read_only(project.path());
+
+        assert_eq!(inspection.status_probe, "complete");
+        assert!(inspection.commit.is_some());
+        assert_eq!(inspection.status.branch.as_deref(), Some("main"));
+        assert_eq!(inspection.status.dirty, Some(false));
+        assert!(inspection.tracked_path_scan_complete);
     }
 
     #[test]
-    fn read_only_status_parser_reports_detached_head() {
-        let mut inspection = GitInspection::default();
-        parse_status_output("## HEAD (no branch)\n", &mut inspection);
-        assert!(inspection.status.detached);
-        assert!(inspection.status.branch.is_none());
-        assert_eq!(inspection.status.dirty, Some(false));
+    fn read_only_dirty_probe_does_not_execute_a_race_replaced_filter() {
+        use std::io::Write;
+
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        run_git(project.path(), &["config", "user.name", "Test"]).unwrap();
+        run_git(
+            project.path(),
+            &["config", "user.email", "test@example.invalid"],
+        )
+        .unwrap();
+        fs::write(project.path().join(".gitattributes"), "*.txt filter=evil\n").unwrap();
+        fs::write(project.path().join("tracked.txt"), "stable\n").unwrap();
+        run_git(project.path(), &["add", ".gitattributes", "tracked.txt"]).unwrap();
+        run_git(project.path(), &["commit", "-m", "fixture"]).unwrap();
+        fs::write(project.path().join("tracked.txt"), "changed\n").unwrap();
+
+        let read_root = crate::flatten::BoundedReadRoot::open(project.path()).unwrap();
+        let git_root = read_root.open_child_directory(".git").unwrap();
+        validate_local_git_config_in_git_root(&git_root).unwrap();
+        let marker = project.path().join("git-filter-marker.txt");
+        let command = if cfg!(windows) {
+            "cmd.exe /d /c echo executed>git-filter-marker.txt"
+        } else {
+            "/bin/sh -c 'echo executed > git-filter-marker.txt; cat'"
+        };
+        let mut config = fs::OpenOptions::new()
+            .append(true)
+            .open(project.path().join(".git/config"))
+            .unwrap();
+        writeln!(config, "[filter \"evil\"]\n\tclean = {command}").unwrap();
+        drop(config);
+
+        let result = git_root.with_stable_path(|git_dir| {
+            run_hardened_git_with_validated_config(
+                &git_root,
+                git_dir,
+                &["ls-files", "--modified", "--deleted", "-z", "--"],
+            )
+        });
+
+        assert!(
+            matches!(result, Err(_) | Ok(Err(_))),
+            "the replaced config must fail closed"
+        );
+        assert!(!marker.exists(), "the filter process must never start");
+        assert!(!project.path().join(".git/git-filter-marker.txt").exists());
+    }
+
+    #[test]
+    fn production_add_suppresses_repository_content_filters() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        fs::write(project.path().join(".gitattributes"), "*.txt filter=evil\n").unwrap();
+        fs::write(project.path().join("managed.txt"), "managed\n").unwrap();
+        let marker = project.path().join("git-filter-marker.txt");
+        let command = if cfg!(windows) {
+            "cmd.exe /d /c echo executed>git-filter-marker.txt"
+        } else {
+            "/bin/sh -c 'echo executed > git-filter-marker.txt; cat'"
+        };
+        let paths = vec![ManagedGitPath {
+            relative: "managed.txt".into(),
+            expected_sha256: crate::security::sha256_bytes(b"managed\n"),
+            expected_size: b"managed\n".len() as u64,
+        }];
+        let config_path = project.path().join(".git/config");
+        let result = stage_managed_paths_without_filters_with_hook(project.path(), &paths, || {
+            fs::write(
+                    &config_path,
+                    format!(
+                        "[core]\n\trepositoryformatversion = 0\n\tbare = false\n[filter \"evil\"]\n\tclean = {command}\n"
+                    ),
+                )
+                .unwrap();
+        });
+
+        assert!(result.is_err(), "the transient config must fail closed");
+        assert!(!marker.exists(), "the filter process must never start");
+        assert!(!project.path().join(".git/git-filter-marker.txt").exists());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn production_staging_rejects_a_link_swapped_managed_leaf() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        fs::write(project.path().join("managed.txt"), "managed\n").unwrap();
+        let outside = project.path().parent().unwrap().join("outside-secret.txt");
+        fs::write(&outside, "outside secret\n").unwrap();
+        let managed = project.path().join("managed.txt");
+        let paths = vec![ManagedGitPath {
+            relative: "managed.txt".into(),
+            expected_sha256: crate::security::sha256_bytes(b"managed\n"),
+            expected_size: b"managed\n".len() as u64,
+        }];
+
+        let result = stage_managed_paths_without_filters_with_hook(project.path(), &paths, || {
+            fs::remove_file(&managed).unwrap();
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&outside, &managed).unwrap();
+            #[cfg(windows)]
+            if let Err(error) = std::os::windows::fs::symlink_file(&outside, &managed) {
+                if error.kind() == std::io::ErrorKind::PermissionDenied
+                    || error.raw_os_error() == Some(1314)
+                {
+                    fs::write(&managed, "replacement\n").unwrap();
+                    return;
+                }
+                panic!("create swapped managed link fixture: {error}");
+            }
+        });
+
+        #[cfg(unix)]
+        assert!(result.is_err());
+        #[cfg(windows)]
+        if fs::symlink_metadata(&managed)
+            .ok()
+            .is_some_and(|metadata| is_link_metadata(&metadata))
+        {
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn production_staging_rejects_regular_bytes_changed_after_validation() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        fs::write(project.path().join("managed.txt"), "validated\n").unwrap();
+        let paths = vec![ManagedGitPath {
+            relative: "managed.txt".into(),
+            expected_sha256: crate::security::sha256_bytes(b"validated\n"),
+            expected_size: b"validated\n".len() as u64,
+        }];
+
+        let result = stage_managed_paths_without_filters_with_hook(project.path(), &paths, || {
+            fs::write(project.path().join("managed.txt"), "changed!!\n").unwrap();
+        });
+
+        assert!(result.is_err());
+        let index = run_git_read_only(project.path(), &["ls-files", "--cached", "--"]).unwrap();
+        assert!(!index.stdout.lines().any(|line| line == "managed.txt"));
     }
 
     #[test]
@@ -2002,6 +2442,7 @@ mod tests {
             HardenedGitProfile::ReadOnly,
             &["status"],
             &[],
+            false,
             || {
                 resolver_called.set(true);
                 Err(AppError::Process(
@@ -2037,9 +2478,15 @@ mod tests {
             } else {
                 project.path()
             };
-            let (spec, _) =
-                prepare_hardened_git_process(root, profile, &[command], &[], find_git_executable)
-                    .unwrap();
+            let (spec, _) = prepare_hardened_git_process(
+                root,
+                profile,
+                &[command],
+                &[],
+                false,
+                find_git_executable,
+            )
+            .unwrap();
             for setting in [
                 format!("core.hooksPath={}", git_null_path()),
                 format!("init.templateDir={}", git_null_path()),
@@ -2125,7 +2572,7 @@ mod tests {
         let inspection = inspect_read_only(project.path());
 
         assert_eq!(inspection.status_probe, "unsafe_hooks");
-        assert!(inspect_hook_names(&hooks).is_err());
+        assert!(inspect_hook_names(&hooks, false).is_err());
     }
 
     #[test]
@@ -2176,7 +2623,16 @@ mod tests {
             push_approved: false,
         };
 
-        let result = apply_git_setup(project.path(), &setup, &["README.md".to_string()]).unwrap();
+        let result = apply_git_setup(
+            project.path(),
+            &setup,
+            &[ManagedGitPath {
+                relative: "README.md".into(),
+                expected_sha256: crate::security::sha256_bytes(b"content\n"),
+                expected_size: b"content\n".len() as u64,
+            }],
+        )
+        .unwrap();
         let identity = run_git_read_only(
             project.path(),
             &["show", "-s", "--format=%an <%ae>", "HEAD"],
@@ -2220,6 +2676,44 @@ mod tests {
         ] {
             assert!(validate_remote_url(value).is_err(), "accepted {value}");
         }
+    }
+
+    #[test]
+    fn reviewed_push_command_uses_exact_url_and_disables_local_config() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        let read_root = crate::flatten::BoundedReadRoot::open(project.path()).unwrap();
+        let git_root = read_root.open_child_directory(".git").unwrap();
+        let remote_url = "https://github.com/example/mod.git";
+
+        git_root
+            .with_stable_path(|git_dir| {
+                let instead_of_key = format!("url.{remote_url}.insteadOf");
+                let push_instead_of_key = format!("url.{remote_url}.pushInsteadOf");
+                let (mut spec, _) = prepare_hardened_git_process(
+                    git_dir,
+                    HardenedGitProfile::Online,
+                    &["push", "--set-upstream", remote_url, "main"],
+                    &[
+                        (instead_of_key.as_str(), remote_url),
+                        (push_instead_of_key.as_str(), remote_url),
+                        ("core.sshCommand", ""),
+                        ("core.askPass", ""),
+                        ("http.proxy", ""),
+                    ],
+                    true,
+                    find_git_executable,
+                )
+                .unwrap();
+                spec.args.insert(2, "--work-tree=..".into());
+                spec.args.insert(2, "--git-dir=.".into());
+                assert!(spec.args.contains(&remote_url.to_string()));
+                assert!(spec.args.contains(&"core.sshCommand=".to_string()));
+                assert!(spec
+                    .args
+                    .contains(&format!("url.{remote_url}.insteadOf={remote_url}")));
+            })
+            .unwrap();
     }
 
     #[test]

@@ -1,6 +1,6 @@
 ---
 name: hoi4-mod-setup-project-scanner
-description: Use for existing HOI4 project scanning, descriptor discovery, identifier and convention detection, evidence and confidence models, finding review, or scan performance changes.
+description: Use for targeted agentic HOI4 setup scanning, descriptor discovery, evidence and confidence models, finding review, or scan performance changes.
 ---
 
 # Existing project scanner
@@ -43,12 +43,7 @@ Detect only with evidence:
 
 - mod root and descriptor relationships
 - launcher descriptor
-- folder structure
 - Git root, branch, remotes, ignore rules, and dirty state
-- namespaces and event IDs
-- country tags and other identifiers
-- naming patterns
-- localisation files, language conventions, encoding, and key prefixes
 - documentation
 - `.agents/skills`
 - `.codex/agents`
@@ -91,6 +86,10 @@ Every finding needs:
 - blocking class
 - editable review state
 
+Preserve origin, recommendation, and core conflicts through the typed desktop
+bridge. Provider approval binds normalized redacted finding/conflict summaries
+to their core hashes; inventory alone never approves raw project file text.
+
 Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the schema-approved equivalents. Low confidence is not an error. It is a review requirement.
 
 ## Detection rules
@@ -108,14 +107,47 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
 - Inspect a prior managed setup only through the fixed lock path. Skip the
   metadata tree during the normal walk, and emit a bounded summary containing
   project ID, component IDs, `workflow.3d` state, `workflow.super_events`
-  state, and the non-secret 3D key-configured bit. This lock summary is the
+  state, and the non-secret 3D key-configured bit. Use the schema-approved
+  `installation` category for the `installation.managed` finding. This lock summary is the
   remembered installed state used to repopulate scan/maintenance choices;
   readiness later re-reads the lock rather than trusting transient UI state.
   Ignore the retired portrait-interest field in a legacy lock; it is not an
   installed feature or current scan finding. A missing lock is
   absent/non-blocking; link, size, read, parse, or schema failures are blocking
   and must not be guessed into an installed state.
-- Bound file size, depth, count, and parse work.
+- The default targeted inventory covers 150,000 setup-relevant files, 200,000
+  directories, depth 64, and ten minutes. Prune ordinary gameplay,
+  localisation, binary/media, root data dumps, and generated `docs/assets/`
+  or `docs/formables/` corpora before file inventory; those intentional
+  exclusions do not make a scan partial. Read only bounded detector inputs:
+  project and launcher descriptors, thumbnail, root AGENTS/README and
+  `.gitignore`, approved docs, skills, subagent/Codex TOML, and the separately
+  bounded managed lock. Detector text is capped at 16 MiB per
+  file and 256 MiB per scan; retained parser evidence is capped at 128 MiB.
+- Bind reads and read-only Git probes to one retained, identity-checked root
+  handle and retain a separate identity-checked `.git` handle while invoking
+  Git. Unix Git children enter that retained directory with `fchdir` before
+  exec; Windows holds the non-delete-sharing handle while using its canonical
+  path. Use fixed `ls-files`/cached-index dirty probes that do not invoke
+  attribute-selected content filters, and reject repository configuration that
+  changes before or after a child. Bound relative paths to 4 KiB, individual segments to 255 bytes,
+  aggregate retained inventory paths to 64 MiB, conflicts to 4,096 entries,
+  and each directory sort to 50,000 entries / 8 MiB of entry names. Bound
+  malformed agentic samples to 512, Git-ignore samples to 1,024, and launcher
+  discovery to 10,000 parent entries / 512 descriptor
+  candidates.
+- Treat launcher discovery as a separate bounded gate: selecting the project
+  root permits parsing direct-parent `.mod` candidates only to compare their
+  declared `path=` text with that root. Never open a candidate-declared target.
+  Continuing confirms the displayed match; **Scan without launcher file**
+  excludes it from the scan and semantic evidence. At scan invocation, bind
+  any renderer-supplied path back to the current unique core-discovered
+  candidate; a forged absolute path is never approval.
+- Feed the absolute-path accumulator while reading approved text, then discard
+  bytes that no later parser needs. Keep retained parser evidence bounded and
+  open detector files with the shared no-follow contained reader. A file,
+  directory, depth, time, read, detector-byte, or retained-evidence limit is an
+  honest partial result; never label skipped required evidence complete.
 - Skip app-managed tooling, temporary output, and offline-wiki trees
   (`.tools/`, `.tmp/`, and `paradox_wiki/`) during the recursive walk. Detect
   the exact `paradox_wiki/` root entry separately for component inventory and
@@ -129,12 +161,10 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
 Present findings in small groups:
 
 1. project identity and descriptors
-2. structure and paths
-3. IDs and naming
-4. localisation and docs
-5. Codex, skills, subagents, and MCP
-6. Git
-7. conflicts and unresolved findings
+2. instructions and paths
+3. Codex, skills, subagents, and MCP
+4. Git
+5. conflicts and unresolved findings
 
 Do not show a giant scan report as the default screen.
 
@@ -151,8 +181,6 @@ Use `codex app-server` over stdio JSONL after deterministic scan completion. Req
 - case collisions
 - unreadable files
 - huge files and deep trees
-- mixed encodings
-- conflicting namespaces
 - Git status probe failure, linked worktree metadata, remotes, submodules,
   hooks, ignore files, and tracked secret-like paths
 - pre-existing managed files
@@ -161,6 +189,9 @@ Use `codex app-server` over stdio JSONL after deterministic scan completion. Req
   unselected `workflow.super_events`
 - malformed, linked, oversized, and unreadable managed-lock states
 - cancellation and timeout
+- proof that large gameplay/media/root-data/generated-doc trees are pruned,
+  targeted detector-text and retained-memory budgets, and a real approved
+  very-large mod fixture whose targeted scan leaves app-owned metadata unchanged
 - progress event correlation, indeterminate progress, and cancelled-evidence invalidation
 - confidence downgrade when evidence conflicts
 - standard HOI4 mod-directory resolution, collision reporting, malformed/link

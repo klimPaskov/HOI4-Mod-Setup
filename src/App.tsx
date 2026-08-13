@@ -1877,32 +1877,44 @@ function CodexReview({ state, onConfirmAnalysis }: { state: WizardState; onConfi
 
 function RecoveryProjectPicker({ state, updateIdentity, onPickProjectFolder }: { state: WizardState; updateIdentity: (patch: Partial<ProjectIdentity>) => void; onPickProjectFolder: () => Promise<FolderSelection | null> }) {
   const [message, setMessage] = useState<string>();
+  const [pendingSelection, setPendingSelection] = useState<FolderSelection>();
   const choose = async () => {
     setMessage(undefined);
+    setPendingSelection(undefined);
     const selected = await onPickProjectFolder();
-    if (selected?.path) updateIdentity({
-      projectRoot: selected.path,
-      launcherDescriptorPath: selected.launcher_descriptor_path ?? undefined,
-    });
+    if (selected?.path && selected.error) {
+      setPendingSelection(selected);
+      setMessage(`Launcher discovery needs review: ${selected.error}`);
+    } else if (selected?.path) updateIdentity({
+        projectRoot: selected.path,
+        launcherDescriptorPath: selected.launcher_descriptor_path ?? undefined,
+      });
     else if (selected?.error) setMessage(`The selected folder could not be used: ${selected.error}`);
     else setMessage("No folder selected.");
   };
-  return <div className="stack narrow"><section className="panel form-panel"><PanelTitle title="Choose an installed project" /><p className="muted">Check an existing setup, repair missing files, add workflows, or remove managed files without connecting an AI provider.</p><Field label="Project folder" value={state.identity.projectRoot} placeholder="Choose an installed project folder" onChange={(value) => updateIdentity({ projectRoot: value })} action="Browse" onAction={() => void choose()} />{message && <p className="muted" role="status">{message}</p>}</section></div>;
+  return <div className="stack narrow"><section className="panel form-panel"><PanelTitle title="Choose an installed project" /><p className="muted">Check an existing setup, repair missing files, add workflows, or remove managed files without connecting an AI provider.</p><Field label="Project folder" value={state.identity.projectRoot} placeholder="Choose an installed project folder" onChange={(value) => { setPendingSelection(undefined); updateIdentity({ projectRoot: value, launcherDescriptorPath: undefined }); }} action="Browse" onAction={() => void choose()} />{pendingSelection?.path && <button type="button" className="button secondary" onClick={() => { updateIdentity({ projectRoot: pendingSelection.path ?? "", launcherDescriptorPath: undefined }); setPendingSelection(undefined); setMessage("Maintenance will continue without an external launcher file."); }}>Continue without launcher file</button>}{state.identity.launcherDescriptorPath && <div className="path-preview" role="status"><p className="muted"><strong>Launcher candidate:</strong> <code>{state.identity.launcherDescriptorPath}</code></p><p className="muted">Its declared path matches the selected project. Continue to use it, or exclude it from maintenance scans.</p><button type="button" className="button secondary" onClick={() => { updateIdentity({ launcherDescriptorPath: undefined }); setMessage("Maintenance will continue without an external launcher file."); }}>Continue without launcher file</button></div>}{message && <p className="muted" role="status">{message}</p>}</section></div>;
 }
 
 function ExistingProjectPicker({ state, updateIdentity, onPickProjectFolder }: { state: WizardState; updateIdentity: (patch: Partial<ProjectIdentity>) => void; onPickProjectFolder: () => Promise<FolderSelection | null> }) {
   const [message, setMessage] = useState<string>();
+  const [pendingSelection, setPendingSelection] = useState<FolderSelection>();
   const choose = async () => {
     setMessage(undefined);
+    setPendingSelection(undefined);
     const selected = await onPickProjectFolder();
-    if (selected?.path) updateIdentity({
-      projectRoot: selected.path,
-      launcherDescriptorPath: selected.launcher_descriptor_path ?? undefined,
-    });
+    if (selected?.path && selected.error) {
+      setPendingSelection(selected);
+      setMessage(`Launcher discovery needs review: ${selected.error}`);
+    } else if (selected?.path) {
+      updateIdentity({
+        projectRoot: selected.path,
+        launcherDescriptorPath: selected.launcher_descriptor_path ?? undefined,
+      });
+    }
     else if (selected?.error) setMessage(`The selected folder could not be used: ${selected.error}`);
     else setMessage("No folder selected.");
   };
-  return <div className="stack narrow"><section className="panel form-panel"><p className="muted">Choose the mod project. Its descriptors, identity, structure, and existing setup will be detected during the read-only scan.</p><Field label="Project folder" value={state.identity.projectRoot} placeholder="Choose an existing mod project" onChange={(value) => updateIdentity({ projectRoot: value, launcherDescriptorPath: undefined })} action="Browse" onAction={() => void choose()} />{state.identity.launcherDescriptorPath && <p className="muted path-preview" role="status"><strong>Launcher file:</strong> <code>{state.identity.launcherDescriptorPath}</code></p>}{message && <p className="muted" role="status">{message}</p>}</section></div>;
+  return <div className="stack narrow"><section className="panel form-panel"><p className="muted">Choose the mod project. Its descriptors, agentic setup, and existing managed state will be detected during the read-only scan.</p><Field label="Project folder" value={state.identity.projectRoot} placeholder="Choose an existing mod project" onChange={(value) => { setPendingSelection(undefined); updateIdentity({ projectRoot: value, launcherDescriptorPath: undefined }); }} action="Browse" onAction={() => void choose()} />{pendingSelection?.path && <button type="button" className="button secondary" onClick={() => { updateIdentity({ projectRoot: pendingSelection.path ?? "", launcherDescriptorPath: undefined }); setPendingSelection(undefined); setMessage("The scan will continue without an external launcher file."); }}>Scan without launcher file</button>}{state.identity.launcherDescriptorPath && <div className="path-preview" role="status"><p className="muted"><strong>Launcher candidate:</strong> <code>{state.identity.launcherDescriptorPath}</code></p><p className="muted">Its declared path matches the selected project. Continue to use it, or exclude it from the scan.</p><button type="button" className="button secondary" onClick={() => { updateIdentity({ launcherDescriptorPath: undefined }); setMessage("The scan will continue without an external launcher file."); }}>Scan without launcher file</button></div>}{message && <p className="muted" role="status">{message}</p>}</section></div>;
 }
 
 export function Identity({ state, update, updateIdentity, onPickProjectFolder, onPickLauncherFolder, onConfirmAnalysis }: { state: WizardState; update: (patch: Partial<WizardState>) => void; updateIdentity: (patch: Partial<ProjectIdentity>) => void; onPickProjectFolder: () => Promise<FolderSelection | null>; onPickLauncherFolder: () => Promise<FolderSelection | null>; onConfirmAnalysis: () => Promise<void> }) {

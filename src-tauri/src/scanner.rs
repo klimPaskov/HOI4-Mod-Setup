@@ -5,22 +5,35 @@ use chrono::Utc;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, OnceLock,
 };
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
-const MAX_FILES: usize = 20_000;
-const MAX_DEPTH: usize = 16;
-const MAX_DIRECTORIES: usize = 10_000;
-const MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
-const MAX_TEXT_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_FILES: usize = 150_000;
+const MAX_DEPTH: usize = 64;
+const MAX_DIRECTORIES: usize = 200_000;
+const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_TEXT_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_RETAINED_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_THUMBNAIL_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_INSTALLATION_LOCK_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_DIRECTORY_ENTRIES: usize = 50_000;
+const MAX_DIRECTORY_ENTRY_NAME_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_RELATIVE_PATH_BYTES: usize = 4 * 1024;
+const MAX_INVENTORY_PATH_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_SCAN_CONFLICTS: usize = 4_096;
+const MAX_MALFORMED_AGENTIC_SAMPLES: usize = 512;
+const MAX_GITIGNORE_SAMPLES: usize = 1_024;
+const DEFAULT_SCAN_DURATION: Duration = Duration::from_secs(10 * 60);
 const MAX_LAUNCHER_CANDIDATES: usize = 512;
+const MAX_LAUNCHER_PARENT_ENTRIES: usize = 10_000;
 const MAX_LAUNCHER_DESCRIPTOR_BYTES: u64 = 256 * 1024;
+const MAX_GIT_HEAD_BYTES: u64 = 1024 * 1024;
 
 const IGNORED_SCAN_DIRECTORIES: &[&str] = &[
     ".git",
@@ -60,6 +73,7 @@ pub struct ScanOptions {
     pub approved_external_descriptor: Option<PathBuf>,
     pub cancel_after_files: Option<usize>,
     pub cancel_flag: Option<Arc<AtomicBool>>,
+    pub max_duration: Duration,
 }
 
 impl Default for ScanOptions {
@@ -70,29 +84,33 @@ impl Default for ScanOptions {
             approved_external_descriptor: None,
             cancel_after_files: None,
             cancel_flag: None,
+            max_duration: DEFAULT_SCAN_DURATION,
         }
     }
 }
 
 pub fn discover_launcher_descriptor(root: &Path) -> Result<Option<PathBuf>, AppError> {
-    let root = fs::canonicalize(root)
+    let root_handle = crate::flatten::BoundedReadRoot::open(root)
         .map_err(|error| AppError::Scan(format!("cannot resolve project root: {error}")))?;
+    let root = root_handle.canonical().to_path_buf();
     let parent = root
         .parent()
         .ok_or_else(|| AppError::Scan("project root has no parent directory".into()))?;
-    if path_has_link_component(parent) {
-        return Err(AppError::Scan(
-            "project parent contains a symlink or junction".into(),
-        ));
-    }
+    let parent_handle = crate::flatten::BoundedReadRoot::open(parent)
+        .map_err(|error| AppError::Scan(format!("cannot inspect project parent: {error}")))?;
     let expected_name = root
         .file_name()
         .map(|name| format!("{}.mod", name.to_string_lossy()).to_ascii_lowercase());
-    let mut matches = Vec::new();
-    let mut inspected = 0usize;
-    for entry in fs::read_dir(parent)
+    let mut candidates = Vec::new();
+    for (index, entry) in fs::read_dir(parent_handle.canonical())
         .map_err(|error| AppError::Scan(format!("cannot inspect project parent: {error}")))?
+        .enumerate()
     {
+        if index >= MAX_LAUNCHER_PARENT_ENTRIES {
+            return Err(AppError::Scan(
+                "project parent exceeds the bounded launcher discovery entry limit".into(),
+            ));
+        }
         let entry = entry?;
         let path = entry.path();
         let is_mod = path
@@ -102,10 +120,28 @@ pub fn discover_launcher_descriptor(root: &Path) -> Result<Option<PathBuf>, AppE
         if !is_mod {
             continue;
         }
-        inspected += 1;
-        if inspected > MAX_LAUNCHER_CANDIDATES {
-            break;
-        }
+        candidates.push(path);
+    }
+    candidates.sort_by(|left, right| {
+        let left_exact = expected_name.as_deref().is_some_and(|expected| {
+            left.file_name()
+                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(expected))
+        });
+        let right_exact = expected_name.as_deref().is_some_and(|expected| {
+            right
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(expected))
+        });
+        right_exact.cmp(&left_exact).then_with(|| left.cmp(right))
+    });
+    if candidates.len() > MAX_LAUNCHER_CANDIDATES {
+        return Err(AppError::Scan(format!(
+            "project parent contains more than {MAX_LAUNCHER_CANDIDATES} launcher descriptor candidates"
+        )));
+    }
+    let mut matches = Vec::new();
+    let mut canonical_mismatch = None;
+    for path in candidates {
         let metadata = fs::symlink_metadata(&path)?;
         if is_link_metadata(&metadata)
             || !metadata.is_file()
@@ -113,39 +149,51 @@ pub fn discover_launcher_descriptor(root: &Path) -> Result<Option<PathBuf>, AppE
         {
             continue;
         }
-        let bytes = fs::read(&path)?;
+        let Some(relative_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let bytes = match parent_handle.read_bounded_with_check(
+            relative_name,
+            MAX_LAUNCHER_DESCRIPTOR_BYTES,
+            || false,
+        ) {
+            Ok(bytes) => bytes,
+            Err(_) => continue,
+        };
         let Ok(descriptor) = crate::descriptors::parse_descriptor(&bytes) else {
             continue;
         };
         let Some(declared) = descriptor.fields.get("path") else {
             continue;
         };
-        let declared_path = PathBuf::from(declared);
-        if !declared_path.is_absolute() || path_has_link_component(&declared_path) {
-            continue;
-        }
-        let Ok(declared_root) = fs::canonicalize(&declared_path) else {
-            continue;
-        };
-        let same_root = if cfg!(target_os = "windows") {
-            declared_root
-                .to_string_lossy()
-                .eq_ignore_ascii_case(&root.to_string_lossy())
-        } else {
-            declared_root == root
-        };
-        if same_root {
-            let exact_name = expected_name.as_deref().is_some_and(|expected| {
-                path.file_name()
-                    .map(|name| name.to_string_lossy().to_ascii_lowercase() == expected)
-                    .unwrap_or(false)
-            });
+        let exact_name = expected_name.as_deref().is_some_and(|expected| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().to_ascii_lowercase() == expected)
+                .unwrap_or(false)
+        });
+        if crate::descriptors::launcher_path_matches_project_root(declared, &root).unwrap_or(false)
+        {
             matches.push((exact_name, path));
+        } else if exact_name {
+            canonical_mismatch = Some(path);
         }
     }
     matches.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
-    if matches.len() > 1 && !matches[0].0 {
-        return Ok(None);
+    if matches.len() > 1 {
+        let paths = matches
+            .iter()
+            .map(|(_, path)| crate::paths::user_facing_path(path))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(AppError::Scan(format!(
+            "multiple launcher descriptors register this project: {paths}"
+        )));
+    }
+    if let Some(path) = canonical_mismatch {
+        return Err(AppError::Scan(format!(
+            "the expected launcher descriptor points to a different project: {}",
+            crate::paths::user_facing_path(&path)
+        )));
     }
     Ok(matches.into_iter().next().map(|(_, path)| path))
 }
@@ -166,6 +214,101 @@ struct FileObservation {
     is_symlink: bool,
 }
 
+#[derive(Default)]
+struct ScanEvidenceState {
+    absolute_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ScanFileIdentity {
+    volume: u64,
+    file: u64,
+}
+
+#[cfg(windows)]
+fn scan_path_identity(path: &Path) -> Option<ScanFileIdentity> {
+    use std::fs::OpenOptions;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+
+    let file = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .ok()?;
+    let mut information = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
+    let success = unsafe {
+        GetFileInformationByHandle(file.as_raw_handle() as _, &mut information as *mut _)
+    };
+    if success == 0 {
+        return None;
+    }
+    Some(ScanFileIdentity {
+        volume: information.dwVolumeSerialNumber as u64,
+        file: ((information.nFileIndexHigh as u64) << 32) | information.nFileIndexLow as u64,
+    })
+}
+
+#[cfg(unix)]
+fn scan_path_identity(path: &Path) -> Option<ScanFileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = fs::symlink_metadata(path).ok()?;
+    Some(ScanFileIdentity {
+        volume: metadata.dev(),
+        file: metadata.ino(),
+    })
+}
+
+#[cfg(not(any(windows, unix)))]
+fn scan_path_identity(_path: &Path) -> Option<ScanFileIdentity> {
+    None
+}
+
+fn scan_path_identity_matches(path: &Path, expected: ScanFileIdentity) -> bool {
+    fs::symlink_metadata(path)
+        .ok()
+        .filter(|metadata| !is_link_metadata(metadata))
+        .and_then(|_| scan_path_identity(path))
+        .is_some_and(|identity| identity == expected)
+}
+
+fn mark_scan_boundary_changed(root: &Path, path: &Path, conflicts: &mut Vec<ScanConflict>) {
+    if conflicts
+        .iter()
+        .any(|conflict| conflict.id == "scan.filesystem_boundary_changed")
+    {
+        return;
+    }
+    conflicts.push(ScanConflict {
+        id: "scan.filesystem_boundary_changed".into(),
+        path: relative_path(root, path),
+        kind: "other".into(),
+        severity: "block".into(),
+        details: Some(
+            "The selected project or an inspected directory changed identity during the scan; no further content was inspected."
+                .into(),
+        ),
+    });
+}
+
+#[derive(Clone, Copy)]
+struct ScanContentPolicy {
+    max_bytes: u64,
+    retain: bool,
+    absolute_paths: bool,
+}
+
 pub fn scan_project(root: &Path, options: &ScanOptions) -> Result<ScanResult, AppError> {
     scan_project_with_progress(root, options, |_| {})
 }
@@ -179,24 +322,23 @@ where
     F: FnMut(ScanProgress),
 {
     let started_at = Utc::now().to_rfc3339();
-    let root_metadata = fs::symlink_metadata(root)
-        .map_err(|error| AppError::Scan(format!("cannot inspect project root: {error}")))?;
-    if is_link_metadata(&root_metadata) {
-        return Err(AppError::Scan(
-            "project root is a symlink or junction; choose its resolved directory explicitly"
-                .into(),
-        ));
-    }
-    let root = fs::canonicalize(root)
-        .map_err(|error| AppError::Scan(format!("cannot open project root: {error}")))?;
+    let read_root = crate::flatten::BoundedReadRoot::open(root)
+        .map_err(|error| AppError::Scan(format!("cannot open project root safely: {error}")))?;
+    let root = read_root.canonical().to_path_buf();
     if !root.is_dir() {
         return Err(AppError::Scan("project root is not a directory".into()));
     }
+    let root_identity = scan_path_identity(&root)
+        .ok_or_else(|| AppError::Scan("project root identity could not be verified".into()))?;
 
     let mut observations = Vec::new();
     let mut link_conflicts = Vec::new();
     let mut total_bytes = 0_u64;
+    let mut retained_bytes = 0_u64;
+    let mut inventory_path_bytes = 0_u64;
     let mut directories = 0_usize;
+    let mut detector_evidence = ScanEvidenceState::default();
+    let deadline = Instant::now() + options.max_duration;
     emit_progress(
         &mut progress,
         "discovering_files",
@@ -207,6 +349,7 @@ where
         total_bytes,
     );
     collect_files(
+        &read_root,
         &root,
         &root,
         0,
@@ -214,11 +357,15 @@ where
         &mut observations,
         &mut link_conflicts,
         &mut total_bytes,
+        &mut retained_bytes,
+        &mut inventory_path_bytes,
         &mut directories,
+        &mut detector_evidence,
+        root_identity,
+        deadline,
         &mut progress,
     )?;
     observations.sort_by(|left, right| left.relative.cmp(&right.relative));
-
     let mut findings = Vec::new();
     let mut conflicts = link_conflicts;
     if scan_stopped(options, observations.len()) {
@@ -230,146 +377,155 @@ where
             directories,
             total_bytes,
         );
+    } else if Instant::now() >= deadline {
+        mark_timed_out(&root, &root, &mut conflicts);
     } else {
-        emit_progress(
-            &mut progress,
-            "detecting_descriptors",
-            Path::new("descriptor.mod"),
-            &root,
-            &observations,
-            directories,
-            total_bytes,
-        );
-        detect_descriptors(
-            &root,
-            observations
-                .iter()
-                .find(|file| file.relative == "descriptor.mod"),
-            options.approved_external_descriptor.as_deref(),
-            &mut findings,
-            &mut conflicts,
-        );
-        emit_progress(
-            &mut progress,
-            "detecting_thumbnail",
-            Path::new("thumbnail.png"),
-            &root,
-            &observations,
-            directories,
-            total_bytes,
-        );
-        detect_thumbnail(
-            observations
-                .iter()
-                .find(|file| file.relative == "thumbnail.png"),
-            &mut findings,
-            &mut conflicts,
-        );
-        emit_progress(
-            &mut progress,
-            "detecting_structure",
-            Path::new("<project tree>"),
-            &root,
-            &observations,
-            directories,
-            total_bytes,
-        );
-        detect_structure(&observations, &mut findings);
-        emit_progress(
-            &mut progress,
-            "detecting_git",
-            Path::new(".git"),
-            &root,
-            &observations,
-            directories,
-            total_bytes,
-        );
-        detect_git(&root, &observations, &mut findings, &mut conflicts);
-        emit_progress(
-            &mut progress,
-            "detecting_identifiers",
-            Path::new("events/ and common/"),
-            &root,
-            &observations,
-            directories,
-            total_bytes,
-        );
-        detect_identifiers(&observations, &mut findings);
-        emit_progress(
-            &mut progress,
-            "detecting_localisation",
-            Path::new("localisation/"),
-            &root,
-            &observations,
-            directories,
-            total_bytes,
-        );
-        detect_localisation(&observations, &mut findings, &mut conflicts);
-        emit_progress(
-            &mut progress,
+        macro_rules! detect_phase {
+            ($stage:literal, $path:expr, $body:block) => {
+                if !scan_path_identity_matches(&root, root_identity) {
+                    mark_scan_boundary_changed(&root, &root, &mut conflicts);
+                }
+                if !scan_phase_stopped(
+                    options,
+                    deadline,
+                    &root,
+                    &mut conflicts,
+                    &mut progress,
+                    &observations,
+                    directories,
+                    total_bytes,
+                ) {
+                    emit_progress(
+                        &mut progress,
+                        $stage,
+                        $path,
+                        &root,
+                        &observations,
+                        directories,
+                        total_bytes,
+                    );
+                    $body
+                    if !scan_path_identity_matches(&root, root_identity) {
+                        mark_scan_boundary_changed(&root, &root, &mut conflicts);
+                    }
+                }
+            };
+        }
+        detect_phase!("detecting_descriptors", Path::new("descriptor.mod"), {
+            detect_descriptors(
+                &root,
+                observations
+                    .iter()
+                    .find(|file| file.relative == "descriptor.mod"),
+                options.approved_external_descriptor.as_deref(),
+                &mut findings,
+                &mut conflicts,
+            );
+        });
+        detect_phase!("detecting_thumbnail", Path::new("thumbnail.png"), {
+            detect_thumbnail(
+                observations
+                    .iter()
+                    .find(|file| file.relative == "thumbnail.png"),
+                &mut findings,
+                &mut conflicts,
+            );
+        });
+        detect_phase!("detecting_git", Path::new(".git"), {
+            detect_git(
+                &read_root,
+                &root,
+                &observations,
+                &mut findings,
+                &mut conflicts,
+            );
+        });
+        detect_phase!(
             "detecting_documentation",
             Path::new("README.md and docs/"),
-            &root,
-            &observations,
-            directories,
-            total_bytes,
+            {
+                detect_documentation(&observations, &mut findings);
+            }
         );
-        detect_documentation(&observations, &mut findings);
-        emit_progress(
-            &mut progress,
+        detect_phase!(
             "detecting_agentic_files",
             Path::new(".agents/ and .codex/"),
-            &root,
-            &observations,
-            directories,
-            total_bytes,
+            {
+                detect_agentic_files(&observations, &mut findings, &mut conflicts);
+            }
         );
-        detect_agentic_files(&observations, &mut findings, &mut conflicts);
-        emit_progress(
-            &mut progress,
-            "detecting_paths",
-            Path::new("absolute paths"),
-            &root,
-            &observations,
-            directories,
-            total_bytes,
-        );
-        detect_absolute_paths(&observations, &mut findings);
-        emit_progress(
-            &mut progress,
+        detect_phase!("detecting_paths", Path::new("absolute paths"), {
+            detect_absolute_paths(&detector_evidence, &mut findings);
+        });
+        detect_phase!(
             "detecting_components",
             Path::new("managed component files"),
+            {
+                detect_existing_components(&root, &observations, &mut conflicts);
+                detect_managed_installation(
+                    &read_root,
+                    &root,
+                    &mut findings,
+                    &mut conflicts,
+                    || {
+                        scan_stopped(options, observations.len())
+                            || Instant::now() >= deadline
+                            || !scan_path_identity_matches(&root, root_identity)
+                    },
+                );
+            }
+        );
+
+        if !scan_phase_stopped(
+            options,
+            deadline,
             &root,
+            &mut conflicts,
+            &mut progress,
             &observations,
             directories,
             total_bytes,
-        );
-        detect_existing_components(&root, &observations, &mut conflicts);
-        detect_managed_installation(&root, &mut findings, &mut conflicts);
-
-        if let Some(external) = options.approved_external_descriptor.as_deref() {
-            let exists = fs::symlink_metadata(external)
-                .ok()
-                .is_some_and(|metadata| metadata.is_file() && !is_link_metadata(&metadata));
-            if !exists {
-                findings.push(finding(
-                    "descriptor.launcher.missing",
-                    "descriptor",
-                    "launcher_descriptor",
-                    json!(null),
-                    "needs_review",
-                    evidence(
-                        "approved_external_descriptor",
-                        &external.display().to_string(),
-                        0.5,
-                        Some("Approved launcher descriptor was not found."),
-                    ),
-                    Some("Choose a launcher descriptor destination during review."),
-                ));
+        ) {
+            if let Some(external) = options.approved_external_descriptor.as_deref() {
+                let exists = fs::symlink_metadata(external)
+                    .ok()
+                    .is_some_and(|metadata| metadata.is_file() && !is_link_metadata(&metadata));
+                if !exists {
+                    findings.push(finding(
+                        "descriptor.launcher.missing",
+                        "descriptor",
+                        "launcher_descriptor",
+                        json!(null),
+                        "needs_review",
+                        evidence(
+                            "approved_external_descriptor",
+                            &external.display().to_string(),
+                            0.5,
+                            Some("Approved launcher descriptor was not found."),
+                        ),
+                        Some("Choose a launcher descriptor destination during review."),
+                    ));
+                }
             }
         }
     }
 
+    for finding in &mut findings {
+        for evidence in &mut finding.evidence {
+            evidence.path = safe_scan_display_path(&evidence.path);
+            evidence.note = evidence
+                .note
+                .as_deref()
+                .map(|note| crate::security::redact_secrets(note, &[]));
+        }
+    }
+    for conflict in &mut conflicts {
+        conflict.path = safe_scan_display_path(&conflict.path);
+        conflict.details = conflict
+            .details
+            .as_deref()
+            .map(|details| crate::security::redact_secrets(details, &[]));
+    }
     findings.sort_by(|left, right| left.id.cmp(&right.id));
     conflicts.sort_by(|left, right| {
         left.id
@@ -386,9 +542,16 @@ where
         .map(|conflict| conflict.id.clone())
         .collect::<Vec<_>>();
     let cancelled = limits_hit.iter().any(|id| id == "scan.cancelled");
+    let timed_out = limits_hit.iter().any(|id| id == "scan.timeout");
     emit_progress(
         &mut progress,
-        if cancelled { "cancelled" } else { "complete" },
+        if cancelled {
+            "cancelled"
+        } else if timed_out {
+            "timeout"
+        } else {
+            "complete"
+        },
         &root,
         &root,
         &observations,
@@ -433,6 +596,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn collect_files(
+    read_root: &crate::flatten::BoundedReadRoot,
     root: &Path,
     current: &Path,
     depth: usize,
@@ -440,9 +604,24 @@ fn collect_files(
     observations: &mut Vec<FileObservation>,
     link_conflicts: &mut Vec<ScanConflict>,
     total_bytes: &mut u64,
+    retained_bytes: &mut u64,
+    inventory_path_bytes: &mut u64,
     directories: &mut usize,
+    detector_evidence: &mut ScanEvidenceState,
+    root_identity: ScanFileIdentity,
+    deadline: Instant,
     progress: &mut impl FnMut(ScanProgress),
 ) -> Result<(), AppError> {
+    if conflict_budget_hit(link_conflicts) {
+        return Ok(());
+    }
+    if inventory_limit_hit(link_conflicts) {
+        return Ok(());
+    }
+    if Instant::now() >= deadline {
+        mark_timed_out(root, current, link_conflicts);
+        return Ok(());
+    }
     if scan_stopped(options, observations.len()) {
         mark_cancelled(
             root,
@@ -452,6 +631,10 @@ fn collect_files(
             *directories,
             *total_bytes,
         );
+        return Ok(());
+    }
+    if !scan_path_identity_matches(root, root_identity) {
+        mark_scan_boundary_changed(root, root, link_conflicts);
         return Ok(());
     }
     if depth > options.max_depth.min(MAX_DEPTH) {
@@ -467,8 +650,35 @@ fn collect_files(
         });
         return Ok(());
     }
-    *directories += 1;
-    if *directories > MAX_DIRECTORIES {
+    if path_has_link_component(current) {
+        link_conflicts.push(ScanConflict {
+            id: format!(
+                "scan.directory_link.{}",
+                &sha256_bytes(relative_path(root, current).as_bytes())[..12]
+            ),
+            path: relative_path(root, current),
+            kind: "other".into(),
+            severity: "block".into(),
+            details: Some("A linked directory was not followed during scan.".into()),
+        });
+        return Ok(());
+    }
+    let directory_identity = match fs::symlink_metadata(current) {
+        Ok(metadata) if metadata.is_dir() && !is_link_metadata(&metadata) => {
+            match scan_path_identity(current) {
+                Some(identity) => identity,
+                None => {
+                    mark_scan_boundary_changed(root, current, link_conflicts);
+                    return Ok(());
+                }
+            }
+        }
+        _ => {
+            mark_scan_boundary_changed(root, current, link_conflicts);
+            return Ok(());
+        }
+    };
+    if *directories >= MAX_DIRECTORIES {
         link_conflicts.push(ScanConflict {
             id: "scan.directory_limit".into(),
             path: relative_path(root, current),
@@ -480,7 +690,8 @@ fn collect_files(
         });
         return Ok(());
     }
-    let entries = match fs::read_dir(current) {
+    *directories += 1;
+    let directory_entries = match fs::read_dir(current) {
         Ok(entries) => entries,
         Err(error) => {
             link_conflicts.push(ScanConflict {
@@ -496,7 +707,109 @@ fn collect_files(
             return Ok(());
         }
     };
-    for entry in entries {
+    let mut entries = Vec::new();
+    let mut entry_name_bytes = 0_u64;
+    for entry in directory_entries.take(MAX_DIRECTORY_ENTRIES + 1) {
+        if scan_stopped(options, observations.len()) {
+            mark_cancelled(
+                root,
+                link_conflicts,
+                progress,
+                observations,
+                *directories,
+                *total_bytes,
+            );
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            mark_timed_out(root, current, link_conflicts);
+            return Ok(());
+        }
+        match entry {
+            Ok(entry) if entries.len() < MAX_DIRECTORY_ENTRIES => {
+                let name_bytes = entry.file_name().to_string_lossy().len() as u64;
+                if entry_name_bytes.saturating_add(name_bytes) > MAX_DIRECTORY_ENTRY_NAME_BYTES {
+                    link_conflicts.push(ScanConflict {
+                        id: "scan.directory_entry_bytes_limit".into(),
+                        path: relative_path(root, current),
+                        kind: "other".into(),
+                        severity: "warn".into(),
+                        details: Some(
+                            "One directory exceeded the bounded entry-name inventory; remaining entries were not inspected."
+                                .into(),
+                        ),
+                    });
+                    break;
+                }
+                entry_name_bytes = entry_name_bytes.saturating_add(name_bytes);
+                entries.push(entry);
+            }
+            Ok(_) => {
+                link_conflicts.push(ScanConflict {
+                    id: "scan.directory_entry_limit".into(),
+                    path: relative_path(root, current),
+                    kind: "other".into(),
+                    severity: "warn".into(),
+                    details: Some(
+                        "One directory exceeded the bounded entry inventory; remaining entries were not inspected."
+                            .into(),
+                    ),
+                });
+                break;
+            }
+            Err(error) => link_conflicts.push(ScanConflict {
+                id: format!(
+                    "scan.entry_error.{}",
+                    &sha256_bytes(relative_path(root, current).as_bytes())[..12]
+                ),
+                path: relative_path(root, current),
+                kind: "other".into(),
+                severity: "warn".into(),
+                details: Some(format!("Directory entry could not be inspected: {error}")),
+            }),
+        }
+    }
+    entries.sort_by_key(|entry| entry.file_name());
+    if !scan_path_identity_matches(root, root_identity)
+        || !scan_path_identity_matches(current, directory_identity)
+    {
+        mark_scan_boundary_changed(root, current, link_conflicts);
+        return Ok(());
+    }
+    if scan_stopped(options, observations.len()) {
+        mark_cancelled(
+            root,
+            link_conflicts,
+            progress,
+            observations,
+            *directories,
+            *total_bytes,
+        );
+        return Ok(());
+    }
+    if Instant::now() >= deadline {
+        mark_timed_out(root, current, link_conflicts);
+        return Ok(());
+    }
+
+    for (entry_index, entry) in entries.into_iter().enumerate() {
+        if conflict_budget_hit(link_conflicts) {
+            return Ok(());
+        }
+        if inventory_limit_hit(link_conflicts) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            mark_timed_out(root, current, link_conflicts);
+            return Ok(());
+        }
+        if entry_index % 128 == 0
+            && (!scan_path_identity_matches(root, root_identity)
+                || !scan_path_identity_matches(current, directory_identity))
+        {
+            mark_scan_boundary_changed(root, current, link_conflicts);
+            return Ok(());
+        }
         if observations.len() >= options.max_files.min(MAX_FILES) {
             link_conflicts.push(ScanConflict {
                 id: "scan.file_limit".into(),
@@ -520,22 +833,6 @@ fn collect_files(
             );
             return Ok(());
         }
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) => {
-                link_conflicts.push(ScanConflict {
-                    id: format!(
-                        "scan.entry_error.{}",
-                        &sha256_bytes(relative_path(root, current).as_bytes())[..12]
-                    ),
-                    path: relative_path(root, current),
-                    kind: "other".into(),
-                    severity: "warn".into(),
-                    details: Some(format!("Directory entry could not be inspected: {error}")),
-                });
-                continue;
-            }
-        };
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         if is_unrelated_scan_directory(&name) || is_unrelated_scan_file(&name) {
@@ -561,6 +858,37 @@ fn collect_files(
             continue;
         }
         let relative = relative_path(root, &path);
+        if relative.len() > MAX_RELATIVE_PATH_BYTES
+            || relative.split('/').any(|segment| segment.len() > 255)
+        {
+            link_conflicts.push(ScanConflict {
+                id: format!(
+                    "scan.path_length.{}",
+                    &sha256_bytes(relative.as_bytes())[..12]
+                ),
+                path: "<oversized relative path>".into(),
+                kind: "other".into(),
+                severity: "warn".into(),
+                details: Some(
+                    "A project path exceeded the bounded scan path length and was not inspected."
+                        .into(),
+                ),
+            });
+            continue;
+        }
+        if inventory_path_bytes.saturating_add(relative.len() as u64) > MAX_INVENTORY_PATH_BYTES {
+            link_conflicts.push(ScanConflict {
+                id: "scan.path_budget".into(),
+                path: "<project tree>".into(),
+                kind: "other".into(),
+                severity: "warn".into(),
+                details: Some(
+                    "The aggregate project-path evidence budget was reached; remaining entries were not inspected."
+                        .into(),
+                ),
+            });
+            return Ok(());
+        }
         if sensitive_scan_path(&relative) {
             link_conflicts.push(ScanConflict {
                 id: format!(
@@ -575,6 +903,9 @@ fn collect_files(
                         .into(),
                 ),
             });
+            continue;
+        }
+        if !targeted_scan_path_candidate(&relative) {
             continue;
         }
         let metadata = match fs::symlink_metadata(&path) {
@@ -606,8 +937,14 @@ fn collect_files(
                 bytes: Vec::new(),
                 is_symlink: true,
             });
-        } else if metadata.is_dir() {
+            *inventory_path_bytes = inventory_path_bytes.saturating_add(
+                observations
+                    .last()
+                    .map_or(0, |file| file.relative.len() as u64),
+            );
+        } else if metadata.is_dir() && targeted_scan_directory(&relative) {
             collect_files(
+                read_root,
                 root,
                 &path,
                 depth + 1,
@@ -615,64 +952,324 @@ fn collect_files(
                 observations,
                 link_conflicts,
                 total_bytes,
+                retained_bytes,
+                inventory_path_bytes,
                 directories,
+                detector_evidence,
+                root_identity,
+                deadline,
                 progress,
             )?;
         } else if metadata.is_file() {
-            let bytes = if metadata.len() > MAX_TEXT_BYTES
-                || total_bytes.saturating_add(metadata.len()) > MAX_TOTAL_BYTES
-            {
+            let Some(policy) = scan_content_policy(&relative) else {
+                continue;
+            };
+            let mut bytes = match policy {
+                policy
+                    if metadata.len() > policy.max_bytes
+                        || total_bytes.saturating_add(metadata.len()) > MAX_TOTAL_BYTES =>
+                {
+                    link_conflicts.push(ScanConflict {
+                        id: format!(
+                            "scan.bytes_limit.{}",
+                            &sha256_bytes(relative.as_bytes())[..12]
+                        ),
+                        path: relative.clone(),
+                        kind: "other".into(),
+                        severity: "warn".into(),
+                        details: Some(
+                            "Detector-relevant content was not read because its bounded scan byte limit was reached."
+                                .into(),
+                        ),
+                    });
+                    Vec::new()
+                }
+                policy => {
+                    let remaining_budget = MAX_TOTAL_BYTES.saturating_sub(*total_bytes);
+                    let read = read_root.read_bounded_with_check(
+                        &relative,
+                        policy.max_bytes.min(remaining_budget),
+                        || {
+                            scan_stopped(options, observations.len())
+                                || Instant::now() >= deadline
+                                || !scan_path_identity_matches(root, root_identity)
+                                || !scan_path_identity_matches(current, directory_identity)
+                        },
+                    );
+                    if scan_stopped(options, observations.len()) {
+                        mark_cancelled(
+                            root,
+                            link_conflicts,
+                            progress,
+                            observations,
+                            *directories,
+                            *total_bytes,
+                        );
+                        return Ok(());
+                    }
+                    if Instant::now() >= deadline {
+                        mark_timed_out(root, &path, link_conflicts);
+                        return Ok(());
+                    }
+                    if !scan_path_identity_matches(root, root_identity)
+                        || !scan_path_identity_matches(current, directory_identity)
+                    {
+                        mark_scan_boundary_changed(root, current, link_conflicts);
+                        return Ok(());
+                    }
+                    match read {
+                        Ok(bytes) => bytes,
+                        Err(error) => {
+                            link_conflicts.push(ScanConflict {
+                                id: format!(
+                                    "scan.read_error.{}",
+                                    &sha256_bytes(relative.as_bytes())[..12]
+                                ),
+                                path: relative.clone(),
+                                kind: "other".into(),
+                                severity: "warn".into(),
+                                details: Some(format!("File could not be read: {error}")),
+                            });
+                            Vec::new()
+                        }
+                    }
+                }
+            };
+            if total_bytes.saturating_add(bytes.len() as u64) > MAX_TOTAL_BYTES {
                 link_conflicts.push(ScanConflict {
-                    id: format!(
-                        "scan.bytes_limit.{}",
-                        &sha256_bytes(relative.as_bytes())[..12]
-                    ),
+                    id: "scan.total_bytes_limit".into(),
                     path: relative.clone(),
                     kind: "other".into(),
                     severity: "warn".into(),
                     details: Some(
-                        "File was not read because the scan byte budget was reached.".into(),
+                        "Detector content grew beyond the remaining aggregate scan byte budget."
+                            .into(),
                     ),
                 });
-                Vec::new()
-            } else {
-                match fs::read(&path) {
-                    Ok(bytes) => bytes,
-                    Err(error) => {
-                        link_conflicts.push(ScanConflict {
-                            id: format!(
-                                "scan.read_error.{}",
-                                &sha256_bytes(relative.as_bytes())[..12]
-                            ),
-                            path: relative.clone(),
-                            kind: "other".into(),
-                            severity: "warn".into(),
-                            details: Some(format!("File could not be read: {error}")),
-                        });
-                        Vec::new()
-                    }
-                }
-            };
-            if !bytes.is_empty() {
+                bytes = Vec::new();
+            } else if !bytes.is_empty() {
                 *total_bytes = total_bytes.saturating_add(bytes.len() as u64);
+            }
+            observe_detector_content(&relative, &bytes, policy, detector_evidence);
+            if policy.retain && !bytes.is_empty() {
+                if retained_bytes.saturating_add(bytes.len() as u64) > MAX_RETAINED_BYTES {
+                    link_conflicts.push(ScanConflict {
+                        id: "scan.retained_text_limit".into(),
+                        path: relative.clone(),
+                        kind: "other".into(),
+                        severity: "warn".into(),
+                        details: Some(
+                            "Required parser content exceeded the bounded in-memory evidence budget."
+                                .into(),
+                        ),
+                    });
+                    bytes = Vec::new();
+                } else {
+                    *retained_bytes = retained_bytes.saturating_add(bytes.len() as u64);
+                }
+            } else {
+                bytes = Vec::new();
             }
             observations.push(FileObservation {
                 relative,
                 bytes,
                 is_symlink: false,
             });
-            emit_progress(
-                progress,
-                "discovering_files",
-                &path,
-                root,
-                observations,
-                *directories,
-                *total_bytes,
+            *inventory_path_bytes = inventory_path_bytes.saturating_add(
+                observations
+                    .last()
+                    .map_or(0, |file| file.relative.len() as u64),
             );
+            if observations.len() == 1 || observations.len() % 128 == 0 {
+                emit_progress(
+                    progress,
+                    "discovering_files",
+                    &path,
+                    root,
+                    observations,
+                    *directories,
+                    *total_bytes,
+                );
+            }
         }
     }
     Ok(())
+}
+
+fn inventory_limit_hit(conflicts: &[ScanConflict]) -> bool {
+    conflicts.iter().any(|conflict| {
+        matches!(
+            conflict.id.as_str(),
+            "scan.file_limit"
+                | "scan.directory_limit"
+                | "scan.directory_entry_limit"
+                | "scan.directory_entry_bytes_limit"
+                | "scan.timeout"
+                | "scan.filesystem_boundary_changed"
+                | "scan.conflict_limit"
+                | "scan.path_budget"
+        )
+    })
+}
+
+fn conflict_budget_hit(conflicts: &mut Vec<ScanConflict>) -> bool {
+    if conflicts.len() < MAX_SCAN_CONFLICTS.saturating_sub(1) {
+        return false;
+    }
+    if !conflicts
+        .iter()
+        .any(|conflict| conflict.id == "scan.conflict_limit")
+    {
+        conflicts.push(ScanConflict {
+            id: "scan.conflict_limit".into(),
+            path: "<project tree>".into(),
+            kind: "other".into(),
+            severity: "warn".into(),
+            details: Some(
+                "The bounded scan conflict budget was reached; remaining entries were not inspected."
+                    .into(),
+            ),
+        });
+    }
+    true
+}
+
+fn scan_content_policy(relative: &str) -> Option<ScanContentPolicy> {
+    let normalized = relative.replace('\\', "/").to_ascii_lowercase();
+    if normalized == "thumbnail.png" {
+        return Some(ScanContentPolicy {
+            max_bytes: MAX_THUMBNAIL_BYTES,
+            retain: true,
+            absolute_paths: false,
+        });
+    }
+    if normalized == "descriptor.mod" {
+        return Some(ScanContentPolicy {
+            max_bytes: MAX_LAUNCHER_DESCRIPTOR_BYTES,
+            retain: true,
+            absolute_paths: true,
+        });
+    }
+    let name = normalized.rsplit('/').next().unwrap_or_default();
+    let extension = name.rsplit_once('.').map(|(_, extension)| extension)?;
+    let skill = normalized.starts_with(".agents/skills/") && name == "skill.md";
+    let subagent = normalized.starts_with(".codex/agents/") && extension == "toml";
+    let codex_config = normalized == ".codex/config.toml";
+    let documentation = normalized == "agents.md"
+        || normalized == "readme.md"
+        || (normalized.starts_with("docs/")
+            && !normalized.starts_with("docs/assets/")
+            && !normalized.starts_with("docs/formables/"));
+    let root_text = matches!(
+        normalized.as_str(),
+        "agents.md" | "readme.md" | ".gitignore"
+    );
+    let documentation_text = documentation
+        && matches!(
+            extension,
+            "cfg" | "json" | "md" | "ps1" | "py" | "sh" | "toml" | "txt" | "yaml" | "yml"
+        );
+    if !(skill || subagent || codex_config || root_text || documentation_text) {
+        return None;
+    }
+    Some(ScanContentPolicy {
+        max_bytes: MAX_TEXT_BYTES,
+        retain: skill || subagent || codex_config,
+        absolute_paths: documentation_text || skill || subagent || codex_config || root_text,
+    })
+}
+
+fn targeted_scan_directory(relative: &str) -> bool {
+    let normalized = relative.replace('\\', "/").to_ascii_lowercase();
+    (normalized == ".agents" || normalized.starts_with(".agents/"))
+        || (normalized == ".codex" || normalized.starts_with(".codex/"))
+        || ((normalized == "docs" || normalized.starts_with("docs/"))
+            && normalized != "docs/assets"
+            && !normalized.starts_with("docs/assets/")
+            && normalized != "docs/formables"
+            && !normalized.starts_with("docs/formables/"))
+}
+
+fn targeted_scan_path_candidate(relative: &str) -> bool {
+    targeted_scan_directory(relative) || scan_content_policy(relative).is_some()
+}
+
+fn absolute_path_regex() -> &'static Regex {
+    static ABSOLUTE: OnceLock<Regex> = OnceLock::new();
+    ABSOLUTE.get_or_init(|| {
+        Regex::new(r"(?i)(?:[a-z]:\\|/users/|/home/|/mnt/)").expect("static absolute path regex")
+    })
+}
+
+fn observe_detector_content(
+    relative: &str,
+    bytes: &[u8],
+    policy: ScanContentPolicy,
+    evidence: &mut ScanEvidenceState,
+) {
+    if bytes.is_empty() {
+        return;
+    }
+    let text = String::from_utf8_lossy(bytes);
+    if policy.absolute_paths
+        && evidence.absolute_paths.len() < 20
+        && absolute_path_regex().is_match(&text)
+    {
+        evidence.absolute_paths.push(relative.to_string());
+    }
+}
+
+fn mark_timed_out(root: &Path, current: &Path, conflicts: &mut Vec<ScanConflict>) {
+    if conflicts
+        .iter()
+        .any(|conflict| conflict.id == "scan.timeout")
+    {
+        return;
+    }
+    conflicts.push(ScanConflict {
+        id: "scan.timeout".into(),
+        path: relative_path(root, current),
+        kind: "other".into(),
+        severity: "warn".into(),
+        details: Some("Scan time limit reached; remaining files were not inspected.".into()),
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_phase_stopped(
+    options: &ScanOptions,
+    deadline: Instant,
+    root: &Path,
+    conflicts: &mut Vec<ScanConflict>,
+    progress: &mut impl FnMut(ScanProgress),
+    observations: &[FileObservation],
+    directories: usize,
+    bytes_read: u64,
+) -> bool {
+    if conflicts.iter().any(|conflict| {
+        matches!(
+            conflict.id.as_str(),
+            "scan.cancelled" | "scan.timeout" | "scan.filesystem_boundary_changed"
+        )
+    }) {
+        return true;
+    }
+    if scan_stopped(options, observations.len()) {
+        mark_cancelled(
+            root,
+            conflicts,
+            progress,
+            observations,
+            directories,
+            bytes_read,
+        );
+        return true;
+    }
+    if Instant::now() >= deadline {
+        mark_timed_out(root, root, conflicts);
+        return true;
+    }
+    false
 }
 
 fn scan_stopped(options: &ScanOptions, files_scanned: usize) -> bool {
@@ -730,12 +1327,21 @@ fn emit_progress(
         current_path: if current == root {
             ".".into()
         } else {
-            relative_path(root, current)
+            safe_scan_display_path(&relative_path(root, current))
         },
         files_scanned: observations.len() as u32,
         directories_scanned: directories as u32,
         bytes_read,
     });
+}
+
+fn safe_scan_display_path(path: &str) -> String {
+    let redacted = crate::security::redact_secrets(path, &[]);
+    if redacted.len() <= MAX_RELATIVE_PATH_BYTES {
+        redacted
+    } else {
+        format!("<oversized path:{}>", &sha256_bytes(path.as_bytes())[..12])
+    }
 }
 
 fn sensitive_scan_path(relative: &str) -> bool {
@@ -845,7 +1451,21 @@ fn detect_descriptors(
 
     if let Some(external) = approved_external {
         let external_value = external.display().to_string();
-        let metadata = fs::symlink_metadata(external).ok();
+        let metadata = match fs::symlink_metadata(external) {
+            Ok(metadata) => Some(metadata),
+            Err(error) => {
+                conflicts.push(ScanConflict {
+                    id: "scan.external_descriptor_metadata".into(),
+                    path: external_value.clone(),
+                    kind: "descriptor_mismatch".into(),
+                    severity: "warn".into(),
+                    details: Some(format!(
+                        "Approved launcher descriptor metadata could not be inspected: {error}"
+                    )),
+                });
+                None
+            }
+        };
         let is_link = metadata.as_ref().is_some_and(is_link_metadata);
         let exists = metadata.as_ref().is_some_and(|metadata| metadata.is_file());
         findings.push(finding(
@@ -862,23 +1482,72 @@ fn detect_descriptors(
             ),
             None,
         ));
-        if exists && !is_link {
-            match fs::read(external).ok().and_then(|bytes| {
-                crate::descriptors::parse_descriptor(&bytes).ok()
-            }) {
-                Some(parsed) if parsed.fields.contains_key("name") && parsed.fields.contains_key("path") => {}
-                _ => conflicts.push(ScanConflict {
-                    id: "conflict.launcher.malformed".into(),
+        let within_descriptor_bound = metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.len() <= MAX_LAUNCHER_DESCRIPTOR_BYTES);
+        if exists && !is_link && within_descriptor_bound {
+            let bounded_bytes = external
+                .parent()
+                .zip(external.file_name().and_then(|name| name.to_str()))
+                .map(|(parent, name)| {
+                    crate::flatten::read_bounded_regular_file_no_follow_under_root(
+                        parent,
+                        name,
+                        MAX_LAUNCHER_DESCRIPTOR_BYTES,
+                    )
+                });
+            match bounded_bytes {
+                Some(Ok(bytes)) => match crate::descriptors::parse_descriptor(&bytes) {
+                    Ok(parsed)
+                        if parsed.fields.contains_key("name")
+                            && parsed.fields.get("path").is_some_and(|declared| {
+                                crate::descriptors::launcher_path_matches_project_root(
+                                    declared, root,
+                                )
+                                .unwrap_or(false)
+                            }) => {}
+                    _ => conflicts.push(ScanConflict {
+                        id: "conflict.launcher.malformed".into(),
+                        path: external_value.clone(),
+                        kind: "descriptor_mismatch".into(),
+                        severity: "block".into(),
+                        details: Some("Approved launcher descriptor is not a valid descriptor with name and path fields.".into()),
+                    }),
+                },
+                Some(Err(error)) => conflicts.push(ScanConflict {
+                    id: "scan.external_descriptor_read".into(),
                     path: external_value.clone(),
                     kind: "descriptor_mismatch".into(),
                     severity: "block".into(),
-                    details: Some("Approved launcher descriptor is not a valid descriptor with name and path fields.".into()),
+                    details: Some(format!(
+                        "Approved launcher descriptor could not be read safely: {error}"
+                    )),
+                }),
+                None => conflicts.push(ScanConflict {
+                    id: "scan.external_descriptor_path".into(),
+                    path: external_value.clone(),
+                    kind: "descriptor_mismatch".into(),
+                    severity: "block".into(),
+                    details: Some(
+                        "Approved launcher descriptor path could not be represented safely."
+                            .into(),
+                    ),
                 }),
             }
+        } else if exists && !is_link && !within_descriptor_bound {
+            conflicts.push(ScanConflict {
+                id: "scan.external_descriptor_bytes_limit".into(),
+                path: external_value.clone(),
+                kind: "descriptor_mismatch".into(),
+                severity: "block".into(),
+                details: Some(
+                    "Approved launcher descriptor exceeds the bounded descriptor size.".into(),
+                ),
+            });
         }
         if is_link {
             conflicts.push(ScanConflict {
-                id: "conflict.launcher.symlink".into(),
+                id: "scan.external_descriptor_link".into(),
                 path: external_value.clone(),
                 kind: "descriptor_mismatch".into(),
                 severity: "block".into(),
@@ -892,7 +1561,7 @@ fn detect_descriptors(
             && path_has_link_component(external)
         {
             conflicts.push(ScanConflict {
-                id: "conflict.launcher.link".into(),
+                id: "scan.external_descriptor_link_component".into(),
                 path: external.display().to_string(),
                 kind: "descriptor_mismatch".into(),
                 severity: "block".into(),
@@ -900,29 +1569,6 @@ fn detect_descriptors(
             });
         }
     }
-}
-
-fn detect_structure(observations: &[FileObservation], findings: &mut Vec<ScanFinding>) {
-    let mut top_level = std::collections::BTreeSet::new();
-    for file in observations {
-        if let Some(first) = file.relative.split('/').next() {
-            top_level.insert(first.to_string());
-        }
-    }
-    findings.push(finding(
-        "structure.top_level",
-        "structure",
-        "top_level_entries",
-        json!(top_level),
-        "accepted",
-        evidence(
-            "bounded_tree_scan",
-            ".",
-            1.0,
-            Some("Top-level project entries observed without following links."),
-        ),
-        None,
-    ));
 }
 
 fn detect_thumbnail(
@@ -999,6 +1645,7 @@ fn detect_thumbnail(
 }
 
 fn detect_git(
+    read_root: &crate::flatten::BoundedReadRoot,
     root: &Path,
     observations: &[FileObservation],
     findings: &mut Vec<ScanFinding>,
@@ -1014,23 +1661,27 @@ fn detect_git(
     let head_is_link = fs::symlink_metadata(&head_path)
         .ok()
         .is_some_and(|metadata| is_link_metadata(&metadata));
-    let head = if git_is_link {
-        None
+    let (head, head_read_error) = if git_is_link {
+        (None, false)
     } else if git_metadata
         .as_ref()
         .is_some_and(|metadata| metadata.is_dir())
     {
         if head_is_link {
-            None
+            (None, false)
         } else {
-            fs::read_to_string(head_path)
-                .ok()
-                .map(|value| value.trim().to_string())
+            match read_root.read_bounded_with_check(".git/HEAD", MAX_GIT_HEAD_BYTES, || false) {
+                Ok(bytes) => match String::from_utf8(bytes) {
+                    Ok(value) => (Some(value.trim().to_string()), false),
+                    Err(_) => (None, true),
+                },
+                Err(_) => (None, true),
+            }
         }
     } else {
-        None
+        (None, false)
     };
-    let inspection = crate::git::inspect_read_only(root);
+    let inspection = crate::git::inspect_read_only_bound(read_root);
     let mut ignore_files = inspection.ignore_files.clone();
     ignore_files.extend(
         observations
@@ -1039,7 +1690,8 @@ fn detect_git(
                 !file.is_symlink
                     && (file.relative == ".gitignore" || file.relative.ends_with("/.gitignore"))
             })
-            .map(|file| file.relative.clone()),
+            .map(|file| file.relative.clone())
+            .take(MAX_GITIGNORE_SAMPLES),
     );
     ignore_files.sort();
     ignore_files.dedup();
@@ -1095,7 +1747,7 @@ fn detect_git(
         )
     {
         conflicts.push(ScanConflict {
-            id: "conflict.git.inspection".into(),
+            id: "scan.git.inspection".into(),
             path: ".git".into(),
             kind: "other".into(),
             severity: "warn".into(),
@@ -1107,7 +1759,7 @@ fn detect_git(
     }
     if git_is_link {
         conflicts.push(ScanConflict {
-            id: "conflict.git.link".into(),
+            id: "scan.git.link".into(),
             path: ".git".into(),
             kind: "other".into(),
             severity: "block".into(),
@@ -1115,11 +1767,19 @@ fn detect_git(
         });
     } else if head_is_link {
         conflicts.push(ScanConflict {
-            id: "conflict.git.head_link".into(),
+            id: "scan.git.head_link".into(),
             path: ".git/HEAD".into(),
             kind: "other".into(),
             severity: "block".into(),
             details: Some("Git HEAD is a link; metadata was not followed.".into()),
+        });
+    } else if head_read_error {
+        conflicts.push(ScanConflict {
+            id: "scan.git.head_read".into(),
+            path: ".git/HEAD".into(),
+            kind: "other".into(),
+            severity: "warn".into(),
+            details: Some("Git HEAD could not be read as bounded UTF-8 text.".into()),
         });
     } else if git_metadata
         .as_ref()
@@ -1135,143 +1795,6 @@ fn detect_git(
             ),
         });
     }
-}
-
-fn detect_identifiers(observations: &[FileObservation], findings: &mut Vec<ScanFinding>) {
-    let identifier = Regex::new(r"\b([a-z][a-z0-9]{1,15})_[a-z0-9][a-z0-9_]*\b")
-        .expect("static identifier regex");
-    let mut counts: HashMap<String, u32> = HashMap::new();
-    let mut paths: HashMap<String, String> = HashMap::new();
-    for file in observations
-        .iter()
-        .filter(|file| !file.is_symlink && !file.bytes.is_empty())
-    {
-        let text = String::from_utf8_lossy(&file.bytes);
-        for capture in identifier.captures_iter(&text) {
-            let prefix = capture[1].to_string();
-            *counts.entry(prefix.clone()).or_default() += 1;
-            paths.entry(prefix).or_insert_with(|| file.relative.clone());
-        }
-    }
-    if let Some((prefix, count)) = counts.iter().max_by_key(|(_, count)| *count) {
-        let confidence = (*count as f32 / counts.values().sum::<u32>() as f32).clamp(0.5, 0.99);
-        let path = paths
-            .get(prefix)
-            .cloned()
-            .unwrap_or_else(|| "project files".into());
-        findings.push(finding(
-            "namespace.primary",
-            "namespace",
-            "primary_namespace",
-            json!(prefix),
-            if confidence >= 0.9 {
-                "accepted"
-            } else {
-                "needs_review"
-            },
-            evidence(
-                "identifier_frequency",
-                &path,
-                confidence,
-                Some(&format!(
-                    "{:.0}% of observed identifiers use {prefix}",
-                    confidence * 100.0
-                )),
-            ),
-            Some("Confirm the namespace before adapting project instructions."),
-        ));
-    } else {
-        findings.push(finding(
-            "namespace.primary.missing",
-            "namespace",
-            "primary_namespace",
-            json!(null),
-            "needs_review",
-            evidence(
-                "identifier_frequency",
-                ".",
-                0.4,
-                Some("No repeated namespaced identifiers were found."),
-            ),
-            Some("Enter a project namespace during review."),
-        ));
-    }
-}
-
-fn detect_localisation(
-    observations: &[FileObservation],
-    findings: &mut Vec<ScanFinding>,
-    conflicts: &mut Vec<ScanConflict>,
-) {
-    let localisation: Vec<&FileObservation> = observations
-        .iter()
-        .filter(|file| {
-            let lower = file.relative.to_ascii_lowercase();
-            lower.contains("localisation/") || lower.contains("localization/")
-        })
-        .filter(|file| file.relative.ends_with(".yml") || file.relative.ends_with(".yaml"))
-        .collect();
-    if localisation.is_empty() {
-        findings.push(finding(
-            "localisation.missing",
-            "localisation",
-            "files",
-            json!(0),
-            "needs_review",
-            evidence(
-                "localisation_detector",
-                "localisation/",
-                0.9,
-                Some("No localisation files were found under the conventional folders."),
-            ),
-            Some("Add localisation folders only when the selected mod profile needs them."),
-        ));
-        return;
-    }
-    let bom_count = localisation
-        .iter()
-        .filter(|file| file.bytes.starts_with(&[0xEF, 0xBB, 0xBF]))
-        .count();
-    let prefixes =
-        Regex::new(r"(?m)^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)_").expect("static localisation regex");
-    let mut prefix_counts: HashMap<String, u32> = HashMap::new();
-    for file in &localisation {
-        let text = String::from_utf8_lossy(&file.bytes);
-        for capture in prefixes.captures_iter(&text) {
-            *prefix_counts.entry(capture[1].to_string()).or_default() += 1;
-        }
-    }
-    let mixed = bom_count > 0 && bom_count < localisation.len();
-    if mixed {
-        conflicts.push(ScanConflict {
-            id: "conflict.localisation.encoding".into(),
-            path: "localisation/".into(),
-            kind: "encoding_mixed".into(),
-            severity: "warn".into(),
-            details: Some(format!(
-                "{bom_count} of {} localisation files have a UTF-8 BOM.",
-                localisation.len()
-            )),
-        });
-    }
-    let prefix = prefix_counts
-        .into_iter()
-        .max_by_key(|(_, count)| *count)
-        .map(|(prefix, _)| prefix);
-    findings.push(finding(
-        "localisation.encoding",
-        "localisation",
-        "encoding_policy",
-        json!({"files": localisation.len(), "utf8_bom": bom_count, "prefix": prefix}),
-        if mixed { "needs_review" } else { "accepted" },
-        evidence(
-            "bom_scanner",
-            "localisation/",
-            if mixed { 0.85 } else { 1.0 },
-            Some("Encoding is reported; files are not normalized during scan."),
-        ),
-        Some("Preserve existing files and review encoding before content changes."),
-    ));
 }
 
 fn detect_documentation(observations: &[FileObservation], findings: &mut Vec<ScanFinding>) {
@@ -1318,6 +1841,7 @@ fn detect_agentic_files(
                 && text.contains("\ndescription:"))
         })
         .map(|file| file.relative.clone())
+        .take(MAX_MALFORMED_AGENTIC_SAMPLES + 1)
         .collect::<Vec<_>>();
     let subagent_files: Vec<&FileObservation> = observations
         .iter()
@@ -1332,13 +1856,35 @@ fn detect_agentic_files(
             let Ok(value) = text.parse::<toml::Value>() else {
                 return true;
             };
-            match value.get("fork_context").and_then(toml::Value::as_bool) {
-                Some(value) => value,
-                None => !text.contains("fork_context=false"),
-            }
+            value
+                .get("fork_context")
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(true)
         })
         .map(|file| file.relative.clone())
+        .take(MAX_MALFORMED_AGENTIC_SAMPLES + 1)
         .collect::<Vec<_>>();
+    let agentic_samples_truncated = malformed_skills.len() > MAX_MALFORMED_AGENTIC_SAMPLES
+        || malformed_subagents.len() > MAX_MALFORMED_AGENTIC_SAMPLES;
+    let malformed_skills = malformed_skills
+        .into_iter()
+        .take(MAX_MALFORMED_AGENTIC_SAMPLES)
+        .collect::<Vec<_>>();
+    let malformed_subagents = malformed_subagents
+        .into_iter()
+        .take(MAX_MALFORMED_AGENTIC_SAMPLES)
+        .collect::<Vec<_>>();
+    if agentic_samples_truncated {
+        conflicts.push(ScanConflict {
+            id: "scan.agentic_cardinality_limit".into(),
+            path: ".agents/ and .codex/agents/".into(),
+            kind: "other".into(),
+            severity: "warn".into(),
+            details: Some(
+                "Malformed agentic-file evidence exceeded the bounded sample limit.".into(),
+            ),
+        });
+    }
     let codex_observation = observations
         .iter()
         .find(|file| file.relative == ".codex/config.toml");
@@ -1485,18 +2031,8 @@ fn detect_agentic_files(
     }
 }
 
-fn detect_absolute_paths(observations: &[FileObservation], findings: &mut Vec<ScanFinding>) {
-    let absolute =
-        Regex::new(r"(?i)(?:[a-z]:\\|/users/|/home/|/mnt/)").expect("static absolute path regex");
-    let matches: Vec<String> = observations
-        .iter()
-        .filter(|file| !file.is_symlink && !file.bytes.is_empty())
-        .filter_map(|file| {
-            let text = String::from_utf8_lossy(&file.bytes);
-            absolute.is_match(&text).then_some(file.relative.clone())
-        })
-        .take(20)
-        .collect();
+fn detect_absolute_paths(evidence_state: &ScanEvidenceState, findings: &mut Vec<ScanFinding>) {
+    let matches = &evidence_state.absolute_paths;
     findings.push(finding(
         "paths.absolute",
         "codex",
@@ -1564,9 +2100,11 @@ fn detect_existing_components(
 /// regular file lets an existing-project scan recognize a prior setup without
 /// exposing the rest of the metadata directory to semantic analysis.
 fn detect_managed_installation(
+    read_root: &crate::flatten::BoundedReadRoot,
     root: &Path,
     findings: &mut Vec<ScanFinding>,
     conflicts: &mut Vec<ScanConflict>,
+    mut should_stop: impl FnMut() -> bool,
 ) {
     const LOCK_RELATIVE: &str = ".hoi4-mod-setup/install.lock.json";
     let lock_path = root.join(LOCK_RELATIVE);
@@ -1586,7 +2124,7 @@ fn detect_managed_installation(
             Some("Choose a project whose setup metadata is a regular, contained path."),
         ));
         conflicts.push(ScanConflict {
-            id: "conflict.installation.lock_path".into(),
+            id: "scan.managed_lock_link".into(),
             path: LOCK_RELATIVE.into(),
             kind: "other".into(),
             severity: "block".into(),
@@ -1628,6 +2166,13 @@ fn detect_managed_installation(
                 ),
                 Some("Review the setup metadata before attempting repair."),
             ));
+            conflicts.push(ScanConflict {
+                id: "scan.managed_lock_metadata".into(),
+                path: LOCK_RELATIVE.into(),
+                kind: "other".into(),
+                severity: "block".into(),
+                details: Some("The existing setup lock metadata could not be inspected.".into()),
+            });
             return;
         }
     };
@@ -1647,7 +2192,7 @@ fn detect_managed_installation(
             Some("Review the setup metadata before attempting repair."),
         ));
         conflicts.push(ScanConflict {
-            id: "conflict.installation.lock_file".into(),
+            id: "scan.managed_lock_type".into(),
             path: LOCK_RELATIVE.into(),
             kind: "other".into(),
             severity: "block".into(),
@@ -1655,7 +2200,7 @@ fn detect_managed_installation(
         });
         return;
     }
-    if metadata.len() > MAX_TEXT_BYTES {
+    if metadata.len() > MAX_INSTALLATION_LOCK_BYTES {
         findings.push(finding(
             "installation.managed",
             "installation",
@@ -1670,9 +2215,20 @@ fn detect_managed_installation(
             ),
             Some("Review the setup metadata before attempting repair."),
         ));
+        conflicts.push(ScanConflict {
+            id: "scan.managed_lock_bytes_limit".into(),
+            path: LOCK_RELATIVE.into(),
+            kind: "other".into(),
+            severity: "block".into(),
+            details: Some("The existing setup lock exceeded the bounded read limit.".into()),
+        });
         return;
     }
-    let bytes = match fs::read(&lock_path) {
+    let bytes = match read_root.read_bounded_with_check(
+        LOCK_RELATIVE,
+        MAX_INSTALLATION_LOCK_BYTES,
+        &mut should_stop,
+    ) {
         Ok(bytes) => bytes,
         Err(_) => {
             findings.push(finding(
@@ -1689,6 +2245,13 @@ fn detect_managed_installation(
                 ),
                 Some("Review the setup metadata before attempting repair."),
             ));
+            conflicts.push(ScanConflict {
+                id: "scan.managed_lock_read".into(),
+                path: LOCK_RELATIVE.into(),
+                kind: "other".into(),
+                severity: "block".into(),
+                details: Some("The existing setup lock could not be read safely.".into()),
+            });
             return;
         }
     };
@@ -1805,11 +2368,12 @@ fn finding(
     id: &str,
     category: &str,
     key: &str,
-    value: Value,
+    mut value: Value,
     status: &str,
     mut evidence: ScanEvidence,
     recommendation: Option<&str>,
 ) -> ScanFinding {
+    redact_scan_value(&mut value);
     if evidence.excerpt_sha256.is_none() {
         evidence.excerpt_sha256 = serde_json::to_vec(&value)
             .ok()
@@ -1825,6 +2389,15 @@ fn finding(
         user_value: None,
         evidence: vec![evidence],
         recommendation: recommendation.map(str::to_string),
+    }
+}
+
+fn redact_scan_value(value: &mut Value) {
+    match value {
+        Value::String(text) => *text = crate::security::redact_secrets(text, &[]),
+        Value::Array(values) => values.iter_mut().for_each(redact_scan_value),
+        Value::Object(values) => values.values_mut().for_each(redact_scan_value),
+        _ => {}
     }
 }
 
@@ -1856,34 +2429,79 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn launcher_discovery_prefers_the_descriptor_named_for_the_project_folder() {
+    fn launcher_discovery_reports_duplicate_matching_registrations() {
         let parent = tempdir().unwrap();
         let project = parent.path().join("example");
         fs::create_dir(&project).unwrap();
-        let project_path = project.display().to_string().replace('\\', "\\\\");
+        let canonical_project = crate::paths::validate_project_root_or_destination(&project)
+            .unwrap()
+            .0;
+        let project_path = crate::paths::user_facing_path(&canonical_project).replace('\\', "\\\\");
         let descriptor = format!("name=\"Example\"\npath=\"{project_path}\"\n");
         fs::write(parent.path().join("other.mod"), &descriptor).unwrap();
         fs::write(parent.path().join("example.mod"), &descriptor).unwrap();
 
-        let discovered = discover_launcher_descriptor(&project).unwrap().unwrap();
-
-        assert_eq!(
-            discovered.canonicalize().unwrap(),
-            parent.path().join("example.mod").canonicalize().unwrap()
-        );
+        let error = discover_launcher_descriptor(&project).unwrap_err();
+        assert!(error.to_string().contains("multiple launcher descriptors"));
+        assert!(error.to_string().contains("example.mod"));
+        assert!(error.to_string().contains("other.mod"));
     }
 
     #[test]
-    fn launcher_discovery_returns_none_for_ambiguous_noncanonical_names() {
+    fn launcher_discovery_reports_ambiguous_noncanonical_names() {
         let parent = tempdir().unwrap();
         let project = parent.path().join("example");
         fs::create_dir(&project).unwrap();
-        let project_path = project.display().to_string().replace('\\', "\\\\");
+        let canonical_project = crate::paths::validate_project_root_or_destination(&project)
+            .unwrap()
+            .0;
+        let project_path = crate::paths::user_facing_path(&canonical_project).replace('\\', "\\\\");
         let descriptor = format!("name=\"Example\"\npath=\"{project_path}\"\n");
         fs::write(parent.path().join("first.mod"), &descriptor).unwrap();
         fs::write(parent.path().join("second.mod"), &descriptor).unwrap();
 
-        assert!(discover_launcher_descriptor(&project).unwrap().is_none());
+        assert!(discover_launcher_descriptor(&project)
+            .unwrap_err()
+            .to_string()
+            .contains("multiple launcher descriptors"));
+    }
+
+    #[test]
+    fn launcher_discovery_reports_a_mismatched_canonical_registration() {
+        let parent = tempdir().unwrap();
+        let project = parent.path().join("example");
+        fs::create_dir(&project).unwrap();
+        let other = parent.path().join("other");
+        let other_path = other.display().to_string().replace('\\', "\\\\");
+        fs::write(
+            parent.path().join("example.mod"),
+            format!("name=\"Example\"\npath=\"{other_path}\"\n"),
+        )
+        .unwrap();
+
+        let error = discover_launcher_descriptor(&project).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("expected launcher descriptor points to a different project"));
+    }
+
+    #[test]
+    fn launcher_discovery_reports_candidate_count_truncation() {
+        let parent = tempdir().unwrap();
+        let project = parent.path().join("example");
+        fs::create_dir(&project).unwrap();
+        for index in 0..=MAX_LAUNCHER_CANDIDATES {
+            fs::write(
+                parent.path().join(format!("candidate-{index:04}.mod")),
+                "name=\"Candidate\"\npath=\"/not-the-selected-project\"\n",
+            )
+            .unwrap();
+        }
+
+        let error = discover_launcher_descriptor(&project).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("more than 512 launcher descriptor candidates"));
     }
 
     #[test]
@@ -1894,10 +2512,10 @@ mod tests {
             "name=\"Example\"\n",
         )
         .unwrap();
-        fs::create_dir_all(directory.path().join("events")).unwrap();
+        fs::create_dir_all(directory.path().join(".agents/skills/example")).unwrap();
         fs::write(
-            directory.path().join("events/example.txt"),
-            "namespace_example = yes\n",
+            directory.path().join(".agents/skills/example/SKILL.md"),
+            "---\nname: example\ndescription: Example skill.\n---\n",
         )
         .unwrap();
         let before = fs::read_dir(directory.path()).unwrap().count();
@@ -1912,13 +2530,51 @@ mod tests {
         assert!(result
             .findings
             .iter()
-            .any(|finding| finding.id == "namespace.primary"));
+            .any(|finding| finding.id == "skill.inventory"));
         assert!(result
             .findings
             .iter()
             .flat_map(|finding| &finding.evidence)
             .all(|evidence| evidence.excerpt_sha256.is_some()));
         assert!(!result.partial);
+    }
+
+    #[test]
+    fn subagent_requires_a_parsed_top_level_fork_context_false() {
+        let directory = tempdir().unwrap();
+        fs::create_dir_all(directory.path().join(".codex/agents")).unwrap();
+        fs::write(
+            directory.path().join(".codex/agents/reviewer.toml"),
+            "name = \"reviewer\"\n# fork_context=false\n",
+        )
+        .unwrap();
+
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+
+        assert!(result.conflicts.iter().any(|conflict| {
+            conflict.id.starts_with("conflict.subagent.")
+                && conflict.path == ".codex/agents/reviewer.toml"
+                && conflict.severity == "block"
+        }));
+    }
+
+    #[test]
+    fn secret_shaped_finding_values_are_redacted_before_leaving_the_scanner() {
+        let directory = tempdir().unwrap();
+        let secret = ["msy", "_scannerSecretValue123456789"].concat();
+        fs::write(
+            directory.path().join("descriptor.mod"),
+            format!("name=\"MESHY_API_KEY={secret}\"\n"),
+        )
+        .unwrap();
+
+        let serialized = serde_json::to_string(
+            &scan_project(directory.path(), &ScanOptions::default()).unwrap(),
+        )
+        .unwrap();
+
+        assert!(!serialized.contains(&secret));
+        assert!(serialized.contains("[REDACTED]"));
     }
 
     #[test]
@@ -1979,8 +2635,8 @@ mod tests {
         )
         .unwrap();
         fs::write(
-            directory.path().join("events.txt"),
-            "namespace_example = yes\n",
+            directory.path().join("AGENTS.md"),
+            "# Project instructions\n",
         )
         .unwrap();
         for name in [
@@ -2072,10 +2728,10 @@ mod tests {
             "name=\"Example\"\n",
         )
         .unwrap();
-        fs::create_dir_all(directory.path().join("events")).unwrap();
+        fs::create_dir_all(directory.path().join(".codex/agents")).unwrap();
         fs::write(
-            directory.path().join("events/example.txt"),
-            "namespace_example = yes\n",
+            directory.path().join(".codex/agents/example.toml"),
+            "name = \"example\"\ndescription = \"Example subagent\"\n",
         )
         .unwrap();
         let mut progress = Vec::new();
@@ -2169,6 +2825,348 @@ mod tests {
     }
 
     #[test]
+    fn default_inventory_budget_covers_the_documented_very_large_profile() {
+        let options = ScanOptions::default();
+        assert_eq!(options.max_files, 150_000);
+        assert_eq!(options.max_depth, 64);
+        assert_eq!(MAX_DIRECTORIES, 200_000);
+    }
+
+    #[test]
+    fn filesystem_identity_fence_detects_directory_replacement() {
+        let parent = tempdir().unwrap();
+        let project = parent.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let identity = scan_path_identity(&project).unwrap();
+
+        fs::rename(&project, parent.path().join("original-project")).unwrap();
+        fs::create_dir(&project).unwrap();
+
+        assert!(!scan_path_identity_matches(&project, identity));
+    }
+
+    #[test]
+    fn binary_art_is_outside_the_targeted_inventory() {
+        let directory = tempdir().unwrap();
+        let descriptor = b"name=\"Example\"\n";
+        fs::write(directory.path().join("descriptor.mod"), descriptor).unwrap();
+        let texture = fs::File::create(directory.path().join("large-texture.dds")).unwrap();
+        texture.set_len(MAX_TOTAL_BYTES + 1).unwrap();
+
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+
+        assert_eq!(result.files_scanned, 1);
+        assert_eq!(result.bytes_read, descriptor.len() as u64);
+        assert!(!result.partial);
+        assert!(!result
+            .limits_hit
+            .iter()
+            .any(|limit| limit.starts_with("scan.bytes_limit")));
+    }
+
+    #[test]
+    fn unrelated_root_data_files_are_outside_the_targeted_inventory() {
+        let directory = tempdir().unwrap();
+        let descriptor = b"name=\"Example\"\n";
+        fs::write(directory.path().join("descriptor.mod"), descriptor).unwrap();
+        fs::File::create(directory.path().join("content-dump.json"))
+            .unwrap()
+            .set_len(MAX_TOTAL_BYTES + 1)
+            .unwrap();
+        fs::File::create(directory.path().join("gameplay-dump.txt"))
+            .unwrap()
+            .set_len(MAX_TOTAL_BYTES + 1)
+            .unwrap();
+
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+
+        assert_eq!(result.files_scanned, 1);
+        assert_eq!(result.bytes_read, descriptor.len() as u64);
+        assert!(!result.partial);
+    }
+
+    #[test]
+    fn detector_relevant_oversized_text_still_returns_an_honest_partial_result() {
+        let directory = tempdir().unwrap();
+        fs::create_dir_all(directory.path().join(".agents/skills/oversized")).unwrap();
+        let script =
+            fs::File::create(directory.path().join(".agents/skills/oversized/SKILL.md")).unwrap();
+        script.set_len(MAX_TEXT_BYTES + 1).unwrap();
+
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+
+        assert!(result.partial);
+        assert!(result
+            .limits_hit
+            .iter()
+            .any(|limit| limit.starts_with("scan.bytes_limit")));
+    }
+
+    #[test]
+    fn oversized_approved_launcher_descriptor_returns_an_honest_partial_result() {
+        let parent = tempdir().unwrap();
+        let project = parent.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let launcher = parent.path().join("project.mod");
+        fs::File::create(&launcher)
+            .unwrap()
+            .set_len(MAX_LAUNCHER_DESCRIPTOR_BYTES + 1)
+            .unwrap();
+
+        let result = scan_project(
+            &project,
+            &ScanOptions {
+                approved_external_descriptor: Some(launcher),
+                ..ScanOptions::default()
+            },
+        )
+        .unwrap();
+
+        assert!(result.partial);
+        assert!(result
+            .limits_hit
+            .iter()
+            .any(|limit| limit == "scan.external_descriptor_bytes_limit"));
+    }
+
+    #[test]
+    fn approved_launcher_descriptor_must_still_point_to_the_selected_project() {
+        let parent = tempdir().unwrap();
+        let project = parent.path().join("project");
+        let other = parent.path().join("other");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(&other).unwrap();
+        let launcher = parent.path().join("project.mod");
+        fs::write(
+            &launcher,
+            format!(
+                "name=\"Project\"\npath=\"{}\"\n",
+                other.display().to_string().replace('\\', "\\\\")
+            ),
+        )
+        .unwrap();
+
+        let result = scan_project(
+            &project,
+            &ScanOptions {
+                approved_external_descriptor: Some(launcher),
+                ..ScanOptions::default()
+            },
+        )
+        .unwrap();
+
+        assert!(result.conflicts.iter().any(|conflict| {
+            conflict.id == "conflict.launcher.malformed" && conflict.severity == "block"
+        }));
+    }
+
+    #[test]
+    fn oversized_managed_lock_returns_an_honest_partial_result() {
+        let directory = tempdir().unwrap();
+        let metadata = directory.path().join(".hoi4-mod-setup");
+        fs::create_dir(&metadata).unwrap();
+        fs::File::create(metadata.join("install.lock.json"))
+            .unwrap()
+            .set_len(MAX_INSTALLATION_LOCK_BYTES + 1)
+            .unwrap();
+
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+
+        assert!(result.partial);
+        assert!(result
+            .limits_hit
+            .iter()
+            .any(|limit| limit == "scan.managed_lock_bytes_limit"));
+    }
+
+    #[test]
+    fn generated_documentation_assets_are_not_inventoried_or_read() {
+        let directory = tempdir().unwrap();
+        let descriptor = b"name=\"Example\"\n";
+        fs::write(directory.path().join("descriptor.mod"), descriptor).unwrap();
+        fs::create_dir_all(directory.path().join("docs/assets")).unwrap();
+        let generated =
+            fs::File::create(directory.path().join("docs/assets/catalog.json")).unwrap();
+        generated.set_len(MAX_TOTAL_BYTES + 1).unwrap();
+
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+
+        assert_eq!(result.files_scanned, 1);
+        assert_eq!(result.bytes_read, descriptor.len() as u64);
+        assert!(!result.partial);
+    }
+
+    #[test]
+    fn elapsed_scan_deadline_returns_a_terminal_partial_result() {
+        let directory = tempdir().unwrap();
+        fs::write(
+            directory.path().join("descriptor.mod"),
+            "name=\"Example\"\n",
+        )
+        .unwrap();
+        let mut progress = Vec::new();
+
+        let result = scan_project_with_progress(
+            directory.path(),
+            &ScanOptions {
+                max_duration: Duration::ZERO,
+                ..ScanOptions::default()
+            },
+            |update| progress.push(update),
+        )
+        .unwrap();
+
+        assert!(result.partial);
+        assert!(!result.cancelled);
+        assert!(result
+            .limits_hit
+            .iter()
+            .any(|limit| limit == "scan.timeout"));
+        assert_eq!(
+            progress.last().map(|update| update.stage.as_str()),
+            Some("timeout")
+        );
+    }
+
+    #[test]
+    fn detector_policy_is_limited_to_agentic_setup_surfaces() {
+        let thumbnail = scan_content_policy("thumbnail.png").unwrap();
+        let descriptor = scan_content_policy("descriptor.mod").unwrap();
+        let skill = scan_content_policy(".agents/skills/example/SKILL.md").unwrap();
+        let subagent = scan_content_policy(".codex/agents/example.toml").unwrap();
+
+        assert_eq!(thumbnail.max_bytes, MAX_THUMBNAIL_BYTES);
+        assert!(thumbnail.retain);
+        assert_eq!(descriptor.max_bytes, MAX_LAUNCHER_DESCRIPTOR_BYTES);
+        assert!(skill.retain);
+        assert!(subagent.retain);
+        assert!(scan_content_policy("events/example.txt").is_none());
+        assert!(scan_content_policy("localisation/english/example_l_english.yml").is_none());
+        assert!(scan_content_policy("gfx/models/tank.dds").is_none());
+        assert!(scan_content_policy("docs/assets/generated.json").is_none());
+        assert!(scan_content_policy("docs/formables/generated.json").is_none());
+    }
+
+    #[test]
+    fn unrelated_gameplay_assets_are_not_inventoried() {
+        let directory = tempdir().unwrap();
+        for index in 0..20_100 {
+            fs::File::create(directory.path().join(format!("texture-{index:05}.dds"))).unwrap();
+        }
+
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+
+        assert_eq!(result.files_scanned, 0);
+        assert_eq!(result.bytes_read, 0);
+        assert!(!result.partial);
+        assert!(!result
+            .limits_hit
+            .iter()
+            .any(|limit| limit == "scan.file_limit"));
+    }
+
+    #[test]
+    #[ignore = "requires HOI4_MOD_SETUP_SCAN_FIXTURE to point at an approved external mod"]
+    fn external_very_large_mod_fixture_completes_without_mutation() {
+        let root = std::env::var_os("HOI4_MOD_SETUP_SCAN_FIXTURE")
+            .map(PathBuf::from)
+            .expect("HOI4_MOD_SETUP_SCAN_FIXTURE is required");
+
+        let before_entries = metadata_tree_entries(&root);
+        let before_guard = scanner_mutation_guard_entries(&before_entries);
+        let result = scan_project(&root, &ScanOptions::default()).unwrap();
+        let after_entries = metadata_tree_entries(&root);
+        let after_guard = scanner_mutation_guard_entries(&after_entries);
+
+        eprintln!(
+            "files={} directories={} detector_bytes={} partial={} limits={:?}",
+            result.files_scanned,
+            result.directories_scanned,
+            result.bytes_read,
+            result.partial,
+            result.limits_hit
+        );
+        assert!(result.files_scanned < 20_000);
+        assert!(result.files_scanned > 0);
+        assert!(
+            !result.partial,
+            "large fixture hit limits: {:?}",
+            result.limits_hit
+        );
+        assert!(!result.cancelled);
+        assert!(result.read_only);
+        if before_entries != after_entries {
+            let before = before_entries
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>();
+            let after = after_entries
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>();
+            eprintln!(
+                "metadata removed or changed: {:?}",
+                before.difference(&after).take(10).collect::<Vec<_>>()
+            );
+            eprintln!(
+                "metadata added or changed: {:?}",
+                after.difference(&before).take(10).collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(
+            before_guard, after_guard,
+            "scan changed app-owned project metadata"
+        );
+    }
+
+    fn scanner_mutation_guard_entries(entries: &[String]) -> Vec<&str> {
+        entries
+            .iter()
+            .map(String::as_str)
+            .filter(|entry| {
+                let relative = entry.split(':').next().unwrap_or_default();
+                let normalized = relative.replace('\\', "/").to_ascii_lowercase();
+                normalized == ".hoi4-mod-setup"
+                    || normalized.starts_with(".hoi4-mod-setup/")
+                    || normalized.contains("hoi4-mod-setup-scan")
+            })
+            .collect()
+    }
+
+    fn metadata_tree_entries(root: &Path) -> Vec<String> {
+        let mut pending = vec![root.to_path_buf()];
+        let mut entries = Vec::new();
+        while let Some(directory) = pending.pop() {
+            let Ok(children) = fs::read_dir(&directory) else {
+                continue;
+            };
+            for child in children.flatten() {
+                let path = child.path();
+                let Ok(metadata) = fs::symlink_metadata(&path) else {
+                    continue;
+                };
+                let relative = relative_path(root, &path);
+                let modified = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|duration| duration.as_nanos())
+                    .unwrap_or_default();
+                entries.push(format!(
+                    "{}:{}:{}:{}",
+                    relative,
+                    metadata.len(),
+                    modified,
+                    is_link_metadata(&metadata)
+                ));
+                if metadata.is_dir() && !is_link_metadata(&metadata) {
+                    pending.push(path);
+                }
+            }
+        }
+        entries.sort();
+        entries
+    }
+
+    #[test]
     fn scan_recognizes_a_valid_managed_setup_without_walking_metadata() {
         let directory = tempdir().unwrap();
         let metadata = directory.path().join(".hoi4-mod-setup");
@@ -2192,6 +3190,17 @@ mod tests {
         .unwrap();
 
         let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+        let schema: Value =
+            serde_json::from_str(include_str!("../../docs/schemas/scan-result.schema.json"))
+                .unwrap();
+        let validator = jsonschema::draft202012::new(&schema).unwrap();
+        let mut encoded = serde_json::to_value(&result).unwrap();
+        if encoded["platform"] == "unsupported" {
+            encoded["platform"] = Value::String("macos".into());
+        }
+        validator
+            .validate(&encoded)
+            .expect("managed scan result must satisfy the authoritative schema");
         let managed = result
             .findings
             .iter()

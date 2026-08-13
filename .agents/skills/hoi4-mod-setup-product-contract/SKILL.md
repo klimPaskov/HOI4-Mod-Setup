@@ -70,9 +70,11 @@ Read:
   AGENTS/README/flattened skills/subagents selected, leaves root Markdown
   unchecked, and writes a safe external ZIP without mutating the mod.
 - The Windows desktop entry point uses the GUI subsystem, and the read-only
-  scanner skips bounded Python environments, dependency trees, editor
-  metadata, caches, and generated build artifacts without excluding valid HOI4
-  content.
+  scanner inventories only agentic setup surfaces: descriptors, approved
+  instructions, skills, subagents, Codex/MCP configuration, managed setup
+  state, and bounded Git evidence. Ordinary HOI4 gameplay, localisation,
+  media, generated corpora, and unrelated root data files are not opened or
+  counted.
 - A newer signed app version shown at startup is installed and restarted
   automatically; a failed update leaves the current app usable and retryable.
 - Adapted project instructions remove the source template's complete

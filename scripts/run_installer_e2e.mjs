@@ -4,6 +4,11 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import {
+  assertWindowsInstallerRegistryIsClean,
+  cleanupWindowsInstallerRegistry,
+  resolveNativeSystemExecutable,
+} from "./windows_installer_registry.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const packagesRoot = resolve(root, "dist", "release", "packages");
@@ -38,6 +43,20 @@ async function waitUntilMissing(path, timeoutMs) {
   return !existsSync(path);
 }
 
+async function waitForExit(child, timeoutMs) {
+  if (child.exitCode !== null) return;
+  await new Promise((resolvePromise, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error("installed application did not exit within the bounded timeout")),
+      timeoutMs,
+    );
+    child.once("exit", () => {
+      clearTimeout(timeout);
+      resolvePromise();
+    });
+  });
+}
+
 async function launchAndStop(executable) {
   if (!statSync(executable).isFile()) throw new Error(`installed executable is missing: ${executable}`);
   const child = spawn(executable, [], {
@@ -51,18 +70,20 @@ async function launchAndStop(executable) {
     setTimeout(resolvePromise, startupObservationMs);
   });
   if (child.exitCode !== null) throw new Error(`installed application exited during startup with code ${child.exitCode}`);
-  const exited = new Promise((resolvePromise) => child.once("exit", resolvePromise));
   if (process.platform === "win32") {
-    await execFileAsync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
+    await execFileAsync(
+      resolveNativeSystemExecutable("taskkill.exe"),
+      ["/PID", String(child.pid), "/T", "/F"],
+      { windowsHide: true, timeout: 10_000 },
+    );
   } else {
     child.kill("SIGTERM");
   }
-  await exited;
+  await waitForExit(child, 10_000);
 }
 
-async function testWindowsInstaller(workRoot) {
+async function testWindowsInstaller(workRoot, installRoot) {
   const installer = requireOne(".exe");
-  const installRoot = resolve(workRoot, "installed");
   await execFileAsync(installer, ["/S", `/D=${installRoot}`], { windowsHide: true, timeout: 120_000 });
   const executable = walk(installRoot).find((path) => path.toLowerCase().endsWith("hoi4-mod-setup.exe"));
   if (!executable) throw new Error("NSIS installation did not produce the application executable");
@@ -81,13 +102,13 @@ async function testMacInstaller(workRoot) {
   const installedRoot = resolve(workRoot, "Applications");
   await mkdir(mountRoot, { recursive: true });
   await mkdir(installedRoot, { recursive: true });
-  await execFileAsync("hdiutil", ["attach", "-nobrowse", "-readonly", "-mountpoint", mountRoot, packagePath], { timeout: 120_000 });
+  await execFileAsync("/usr/bin/hdiutil", ["attach", "-nobrowse", "-readonly", "-mountpoint", mountRoot, packagePath], { timeout: 120_000 });
   try {
     const app = readdirSync(mountRoot, { withFileTypes: true })
       .find((entry) => entry.isDirectory() && entry.name.endsWith(".app"));
     if (!app) throw new Error("DMG did not contain an application bundle");
     const installedApp = resolve(installedRoot, app.name);
-    await execFileAsync("ditto", [resolve(mountRoot, app.name), installedApp]);
+    await execFileAsync("/usr/bin/ditto", [resolve(mountRoot, app.name), installedApp], { timeout: 120_000 });
     const executable = walk(resolve(installedApp, "Contents", "MacOS"))
       .find((path) => /hoi4[- ]mod[- ]setup$/i.test(path));
     if (!executable) throw new Error("installed macOS application executable was not found");
@@ -95,7 +116,7 @@ async function testMacInstaller(workRoot) {
     await rm(installedApp, { recursive: true, force: true });
     if (existsSync(installedApp)) throw new Error("macOS application removal did not complete");
   } finally {
-    await execFileAsync("hdiutil", ["detach", mountRoot], { timeout: 120_000 });
+    await execFileAsync("/usr/bin/hdiutil", ["detach", mountRoot], { timeout: 120_000 });
   }
 }
 
@@ -104,10 +125,35 @@ if (!["win32", "darwin"].includes(process.platform)) {
 }
 
 const workRoot = await mkdtemp(join(tmpdir(), "hoi4-mod-setup-installer-e2e-"));
+const installRoot = resolve(workRoot, "installed");
+let ownsWindowsRegistry = false;
+let testError = null;
 try {
-  if (process.platform === "win32") await testWindowsInstaller(workRoot);
+  if (process.platform === "win32") {
+    await assertWindowsInstallerRegistryIsClean();
+    ownsWindowsRegistry = true;
+    await testWindowsInstaller(workRoot, installRoot);
+  }
   else await testMacInstaller(workRoot);
   console.log(`Installer install, launch, and removal smoke passed for ${process.platform}`);
+} catch (error) {
+  testError = error;
 } finally {
-  await rm(workRoot, { recursive: true, force: true });
+  try {
+    if (ownsWindowsRegistry) await cleanupWindowsInstallerRegistry({ workRoot, installRoot });
+  } catch (cleanupError) {
+    testError = testError
+      ? new AggregateError([testError, cleanupError], "installer E2E and registry cleanup both failed")
+      : cleanupError;
+  }
+  try {
+    await rm(workRoot, { recursive: true, force: true });
+    if (existsSync(workRoot)) throw new Error("installer E2E temporary directory cleanup did not complete");
+  } catch (cleanupError) {
+    testError = testError
+      ? new AggregateError([testError, cleanupError], "installer E2E and temporary-directory cleanup both failed")
+      : cleanupError;
+  }
 }
+
+if (testError) throw testError;

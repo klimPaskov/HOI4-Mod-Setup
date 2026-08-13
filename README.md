@@ -62,9 +62,11 @@ descriptor, and a replaceable 600x600 black `thumbnail.png`.
 
 ![Review the generated project identity and locations](docs/screenshots/03-identity.png)
 
-For an existing mod, a read-only scan checks the descriptors, structure,
-naming, localisation, current tools, and possible file conflicts before any
-changes are offered.
+For an existing mod, a read-only scan checks the descriptors, project
+instructions, skills, subagents, Codex/MCP configuration, managed setup state,
+bounded Git evidence, and possible setup conflicts before any changes are
+offered. It does not open or count ordinary gameplay, localisation, media, or
+unrelated data dumps, so even very large mods stay within the setup scan.
 
 ### 3. Choose what to install
 

@@ -181,6 +181,16 @@ required; never replace it with an allow-all setting.
 
 Unsupported external workflows must be tested as honest non-blocking states.
 
+Large scanner regressions prove gameplay/media/generated corpora are pruned
+before inventory and exercise bounded targeted detector text separately.
+Exercise the 150,000-targeted-file, 200,000-directory,
+64-level, 64-MiB aggregate path, 50,000-entry/8-MiB directory-sort, 256-MiB
+detector-byte, and ten-minute boundaries with small override fixtures where
+practical. A real Git inspection fixture must remain complete while its project
+root and `.git` directory are retained by identity-checked handles; linked,
+replaced, or executable local configuration must return partial/unsafe evidence
+without starting a helper process.
+
 ## Release gates
 
 A release is blocked by:
@@ -212,12 +222,20 @@ scripts for validation and release gates: `pnpm validate`,
 The platform signing jobs verify changed package bytes and regenerate their
 complete internal artifact manifest before curation. Use
 `pnpm release:prepare` only for final publication-asset curation.
-The native smoke harness uses `taskkill.exe` with an argument array on Windows
-so the Tauri process tree cannot survive the test timeout; keep cleanup bounded
-and verify that no test process remains after a failed run.
+The native smoke harness resolves `taskkill.exe` through the native Windows
+system-directory alias, never `PATH`, and uses an argument array plus a bounded
+exit wait so the Tauri process tree cannot survive the test timeout. macOS DMG
+tools use their fixed `/usr/bin` paths. Keep cleanup bounded and verify that no
+test process remains after a failed run.
 The installer harness operates only inside a fresh runner-temporary directory:
 it silently installs and uninstalls the NSIS package on Windows, and mounts,
 copies, launches, removes, and detaches the DMG application on macOS.
+On Windows it must refuse a pre-existing current-user product registration,
+fail closed when registry inspection cannot be completed, refuse a matching
+legacy per-machine installation, remove only registry values whose install
+paths exactly match the current E2E root, and assert that neither product
+registry key retains a test-owned path. Cleanup runs after success and ordinary
+failure; never delete or replace unrelated installation metadata.
 
 ## Update this skill when
 

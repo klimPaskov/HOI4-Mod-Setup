@@ -8,8 +8,8 @@ root are allowed only when the user approves them, such as a launcher
 descriptor or vanilla game directory.
 
 The scanner is deterministic Rust code and is the sole authority for
-observable structural facts: file existence, descriptor validity, paths,
-hashes, encodings, Git state, identifiers, namespaces, and conflicts. A
+observable setup facts: descriptor validity, approved paths, hashes, Git
+state, project instructions, agentic configuration, and conflicts. A
 read-only scan creates no project cache, Git lock, transaction folder, package
 installation, launcher change, or other project write.
 
@@ -20,23 +20,28 @@ enumerate only direct `*.mod` files in the root's immediate parent, with the
 same bounded, link-safe reads used by the scanner. It parses candidates only to
 compare their normalized `path=` value with the selected root and to expose
 the evidence needed for review. It never recurses into siblings, searches
-Documents or other drives, or chooses a descriptor implicitly.
+Documents or other drives, or chooses a descriptor implicitly. Multiple
+matching registrations and a canonical `<project>.mod` file that declares a
+different root are explicit discovery conflicts, never silently selected. A
+candidate count beyond the 512-file bound is also an explicit review state,
+not a truncated successful discovery.
 
 The UI visibly presents the candidate path and match before the scan starts.
-The user must choose **Confirm descriptor**, **Scan without external
-descriptor**, or **Cancel**. Only a confirmed path is added to the approved
+The user confirms by continuing, chooses **Scan without launcher file**, or
+cancels by going back. Selecting the root authorizes only this bounded parse of
+direct-parent candidates; declared target paths are compared as normalized
+text and are never opened. Only a confirmed candidate is added to the approved
 companion paths and scanner input. A declined or absent candidate produces an
-internal-only scan and an explicit launcher-registration finding; it does not
-grant the scanner permission to read another path.
+internal-only scan and does not grant permission to read another path.
 
 ## Two-layer analysis contract
 
 The Rust scanner produces observable facts. The selected provider adapter
-produces semantic proposals from approved facts and text excerpts.
+produces semantic proposals from approved normalized evidence summaries.
 
-The deterministic layer owns file inventory, descriptors, launcher
-registration, thumbnail decoding, Git state, identifier indexes, encoding,
-component inventory, conflicts, and platform support.
+The deterministic layer owns the targeted setup inventory, descriptors,
+launcher registration, thumbnail decoding, Git state, component inventory,
+agentic configuration, conflicts, and platform support.
 
 The provider layer owns project purpose, normalized description, display name
 and ID proposals, prefix and namespace proposals, folder profile, `AGENTS.md`
@@ -57,29 +62,29 @@ provider has write access.
 2. **Descriptors and thumbnail:** internal and launcher descriptor fields,
    duplicate keys, quoting, supported versions, path agreement, thumbnail
    existence, decoding, dimensions, color mode, hash, and replacement state.
-3. **Folder structure:** normalized tree summary, standard HOI4 surfaces,
-   counts, and representative files. Missing optional folders are not defects.
+3. **Targeted setup inventory:** root `AGENTS.md` and `README.md`, `.agents/skills`,
+   `.codex/agents`, `.codex/config.toml`, approved documentation, descriptors,
+   thumbnail, Git metadata, and the managed setup lock. Ordinary HOI4 gameplay,
+   localisation, media, content dumps, and generated documentation corpora are
+   outside this setup scan and are neither opened nor counted.
 4. **Git:** repository root, branch, detached state, commit, dirty buckets,
    remotes, submodules, hooks, ignore files, linked worktrees, and tracked
    secret-like paths using bounded read-only commands.
-5. **Identifiers and namespaces:** event, focus, decision, scripted effect,
-   trigger, idea, character, country, technology, localisation, sprite, and
-   file-prefix indexes with frequency and confidence.
-6. **Naming and localisation:** slug and prefix patterns, filenames, line
-   endings, BOM, language headers, duplicate keys, encoding, and parse errors.
-7. **Documentation and instructions:** AGENTS, READMEs, source-of-truth
-   statements, specs, plans, manifests, absolute paths, foreign project names,
-   and missing skill or agent references.
-8. **Skills and subagents:** skill frontmatter, helpers, scripts, assets,
-   commands, project tokens, MCP references, subagent TOML, model settings,
-   sandbox, `fork_context=false`, references, duplicates, and paths.
-9. **Codex and MCP:** TOML approval policy, sandbox, feature flags, server IDs,
-   command, arguments, cwd, environment, timeout, duplicate IDs, and platform
-   executable suffixes.
-10. **Conflict synthesis:** path, namespace, platform, dependency, ownership,
+5. **Documentation and instructions:** bounded AGENTS, README, and approved-doc
+   inventory plus machine-local absolute-path locations; the scan does not
+   turn arbitrary project prose into a deterministic fact.
+6. **Skills and subagents:** skill count and frontmatter validity, subagent TOML
+   count and parse validity, and an exact top-level `fork_context=false` gate.
+   Helpers, assets, and model choices are reviewed later through selected
+   component and merge previews rather than executed or inferred by the scan.
+7. **Codex and MCP:** structural TOML validity, configuration presence, and MCP
+   server IDs. Commands, arguments, cwd, environment names, timeouts, sandbox,
+   approval policy, and feature flags remain visible in the later structured
+   merge preview; the scanner never executes or semantically interprets them.
+8. **Conflict synthesis:** path, platform, dependency, ownership,
     generated-destination, launcher, thumbnail, and Git risks against the
     selected remote manifest.
-11. **Managed setup state:** inspect only the fixed
+9. **Managed setup state:** inspect only the fixed
     `.hoi4-mod-setup/install.lock.json` path. A valid lock is reported as
     `installation.managed` with a safe component and optional-workflow summary,
     including the remembered `workflow.super_events` and
@@ -95,9 +100,10 @@ provider has write access.
 The selected-provider pass runs only after a completed deterministic scan or a
 new-project brief. It is a separate analysis layer, never a scanner phase.
 Before invocation, show the request manifest and allow removal or cancellation.
-Allowed inputs include normalized scan JSON, the mod description, selected
-descriptor and README excerpts, AGENTS and skill frontmatter, TOML excerpts,
-localisation headers, naming samples, and incoming component metadata.
+Allowed inputs include normalized scan JSON, the mod description, bounded
+redacted finding summaries and hashes, and incoming component metadata. Raw
+project file excerpts are not sent merely because a file was inventoried; a
+future excerpt requires a separate user-visible approval and exact core hash.
 
 Exclude binaries, secrets, credential stores, `.git/objects`, files outside
 approved roots, ignored secret files, and deselected content. The result must
@@ -131,8 +137,8 @@ inspection, and managed removal remain available.
 
 ## Evidence and confidence
 
-Evidence excerpts are hashed. Large result sets store counts plus a separate
-evidence file. Confidence is visible: 1.00 for explicit user selection or an
+Evidence summaries are hashed. Large result sets store bounded counts and
+samples. Confidence is visible: 1.00 for explicit user selection or an
 exact descriptor field; 0.90-0.99 for a strong repeated deterministic pattern;
 0.70-0.89 for a plausible pattern requiring review; and below 0.70 for a
 provider suggestion only. Provider confidence never increases deterministic
@@ -151,11 +157,40 @@ exclude known tooling, build, and cache trees such as `.git`, `.hoi4-mod-setup`,
    are not part of the project scan.
 Ignore common editor and generated artifact files such as `.DS_Store`,
 `Thumbs.db`, `desktop.ini`, `*.pyc`, `*.pyo`, `*.log`, `*.tmp`, `*.bak`, and
-`*.swp`; do not use this list to exclude valid HOI4 content. Stream
+`*.swp`. Ordinary HOI4 content is pruned by the explicit targeted-inventory
+policy, not by filename guessing. Stream
 phase/path/counters, support backpressure, keep temporary evidence outside the
 project, and cancel promptly. Events carry an opaque request ID and the UI
 ignores another request's events. Never invent a percentage when no total is
 known.
+
+The targeted inventory covers up to 150,000 setup-relevant files, 200,000
+directories, and 64 levels with a ten-minute deadline. It prunes ordinary
+gameplay, localisation, binary/media, root data dumps, and generated
+`docs/assets/` and `docs/formables/` corpora before file inventory. Read at most
+16 MiB from a detector-relevant text file and 256 MiB across the scan; launcher
+and project descriptors remain capped at 256 KiB, thumbnails at 16 MiB, the
+managed lock at 2 MiB, and retained parser evidence at 128 MiB. Feed a bounded
+absolute-path accumulator as each approved text file is read, then discard
+content that no later parser needs. File reads do not follow links, traversal
+fences the stable filesystem identity of the selected root and each directory,
+and a retained root handle binds bounded reads and read-only Git probes to that
+identity. Relative paths are capped at 4 KiB, segments at 255 bytes, conflicts
+at 4,096 entries, aggregate retained inventory paths at 64 MiB, and each
+directory sort at 50,000 entries / 8 MiB of entry names. Malformed agentic
+samples are capped at 512, structure and Git-ignore samples at 1,024 each, and
+launcher discovery at 10,000 parent entries / 512 descriptor candidates.
+The retained root and `.git` directory handles also bind every Git probe to the
+approved directories. Unix children enter the retained `.git` handle with
+`fchdir` before exec; Windows retains the non-delete-sharing handle while using
+its canonical path. Dirty-state probes use fixed `ls-files` and cached-index
+operations that do not invoke attribute-selected content filters; repository
+configuration is checked immediately before and after each child.
+The `files_scanned` and `directories_scanned` counters describe only this
+targeted setup inventory. Intentional out-of-scope content remains complete by
+definition. An unreadable,
+oversized, timed-out, linked, identity-changed, or count-truncated detector
+surface is partial.
 
 Cancellation returns `partial: true` and `cancelled: true`, emits a terminal
 event, and clears approved evidence. Any partial result blocks semantic
@@ -164,8 +199,10 @@ analysis until an untruncated scan completes; limits remain visible.
 ## Required fixtures and tests
 
 - empty new project and normal existing mod;
-- local AGENTS rules, mixed localisation encodings, namespaces, nested
+- local AGENTS rules, skills, subagents, Codex/MCP configuration, nested
   worktree, cloud-synced root, and link escape;
+- very large gameplay/media/content-dump trees proving they are not inventoried
+  or read and do not make the targeted scan partial;
 - locally modified wiki, skill collision, MCP collision, and a Windows-only
   incoming component on macOS;
 - valid descriptors with missing or modified thumbnails and duplicate launcher

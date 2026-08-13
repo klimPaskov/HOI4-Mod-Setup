@@ -212,7 +212,8 @@
             "mcp",
             "conflict",
             "tool",
-            "wiki"
+            "wiki",
+            "installation"
           ]
         },
         "key": {
@@ -239,7 +240,7 @@
         "origin": {
           "enum": [
             "deterministic",
-            "codex_suggested",
+            "provider_suggested",
             "user_confirmed"
           ]
         },

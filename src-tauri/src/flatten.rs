@@ -11,9 +11,11 @@ use crate::security::{
 };
 use crate::AppError;
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
+#[cfg(any(unix, test))]
+use std::fs;
+use std::fs::OpenOptions;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
 use std::ffi::CString;
@@ -180,59 +182,381 @@ pub(crate) fn read_regular_file_no_follow_under_root(
     root: &Path,
     relative: &str,
 ) -> Result<Vec<u8>, AppError> {
-    let normalized = normalize_relative_path(relative)?;
-    let path = safe_join(root, &normalized)?;
-    let root_canonical = fs::canonicalize(root).map_err(|error| {
-        AppError::PathSecurity(format!("flattened project root is not accessible: {error}"))
-    })?;
-    let mut file = open_regular_file_under_root(&root_canonical, &normalized).map_err(|error| {
-        AppError::InvalidInput(format!(
-            "flattened file is not readable: {relative}: {error}"
-        ))
-    })?;
-    verify_open_file_contained(&file, &root_canonical, relative)?;
-    let metadata = file.metadata()?;
-    if !metadata.is_file() || is_link_metadata(&metadata) {
-        return Err(AppError::PathSecurity(format!(
-            "flattened file is not a regular file: {relative}"
-        )));
+    read_bounded_regular_file_no_follow_under_root(root, relative, MAX_FLAT_FILE_BYTES)
+}
+
+pub(crate) fn read_bounded_regular_file_no_follow_under_root(
+    root: &Path,
+    relative: &str,
+    max_bytes: u64,
+) -> Result<Vec<u8>, AppError> {
+    read_bounded_regular_file_no_follow_under_root_with_check(root, relative, max_bytes, || false)
+}
+
+pub(crate) fn read_bounded_regular_file_no_follow_under_root_with_check<F>(
+    root: &Path,
+    relative: &str,
+    max_bytes: u64,
+    should_stop: F,
+) -> Result<Vec<u8>, AppError>
+where
+    F: FnMut() -> bool,
+{
+    let root = BoundedReadRoot::open(root)?;
+    root.read_bounded_with_check(relative, max_bytes, should_stop)
+}
+
+/// An opened, no-follow root used to bind every bounded read to the directory
+/// that was approved at the start of an operation. On Unix, descendants are
+/// opened relative to this retained descriptor. On Windows, the retained
+/// handle deliberately denies delete sharing, preventing rename/replacement of
+/// the root while path-based descendant handles are opened.
+#[derive(Debug)]
+pub(crate) struct BoundedReadRoot {
+    canonical: PathBuf,
+    #[cfg_attr(windows, allow(dead_code))]
+    handle: std::fs::File,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileSystemIdentity {
+    volume: u64,
+    file: u64,
+}
+
+impl BoundedReadRoot {
+    pub(crate) fn open(root: &Path) -> Result<Self, AppError> {
+        let expected_identity = path_identity_no_follow(root).ok_or_else(|| {
+            AppError::PathSecurity("selected directory identity could not be captured".into())
+        })?;
+        Self::open_with_expected_identity(root, expected_identity)
     }
-    if metadata.len() > MAX_FLAT_FILE_BYTES {
-        return Err(AppError::InvalidInput(format!(
-            "flattened file exceeds the {} MiB limit: {relative}",
-            MAX_FLAT_FILE_BYTES / 1024 / 1024
-        )));
+
+    fn open_with_expected_identity(
+        root: &Path,
+        expected_identity: FileSystemIdentity,
+    ) -> Result<Self, AppError> {
+        if crate::security::path_has_link_component(root) {
+            return Err(AppError::PathSecurity(
+                "selected directory contains a symlink or junction".into(),
+            ));
+        }
+        let handle = open_directory_no_follow(root).map_err(|error| {
+            AppError::PathSecurity(format!("selected directory is not accessible: {error}"))
+        })?;
+        let metadata = handle.metadata()?;
+        if !metadata.is_dir() || is_link_metadata(&metadata) {
+            return Err(AppError::PathSecurity(
+                "selected directory is not a regular directory".into(),
+            ));
+        }
+        if handle_identity(&handle) != Some(expected_identity) {
+            return Err(AppError::PathSecurity(
+                "selected directory changed identity while it was opened".into(),
+            ));
+        }
+        let canonical = open_directory_path(&handle, root)?;
+        if crate::security::path_has_link_component(&canonical) {
+            return Err(AppError::PathSecurity(
+                "selected directory resolved through a symlink or junction".into(),
+            ));
+        }
+        Ok(Self { canonical, handle })
     }
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).map_err(|error| {
-        AppError::InvalidInput(format!(
-            "flattened file could not be read: {relative}: {error}"
-        ))
-    })?;
-    let after = file.metadata()?;
-    verify_open_file_contained(&file, &root_canonical, relative)?;
-    if !after.is_file()
-        || is_link_metadata(&after)
-        || after.len() != bytes.len() as u64
-        || path_has_link_component_for_flatten(&path)
+
+    pub(crate) fn canonical(&self) -> &Path {
+        &self.canonical
+    }
+
+    pub(crate) fn directory_handle(&self) -> &std::fs::File {
+        &self.handle
+    }
+
+    /// A process working-directory path tied to the retained directory handle.
+    /// Unix resolves the descriptor before exec; Windows relies on the retained
+    /// non-delete-sharing handle to keep the canonical directory in place.
+    pub(crate) fn stable_process_path(&self) -> PathBuf {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            PathBuf::from(format!("/proc/self/fd/{}", self.handle.as_raw_fd()))
+        }
+        #[cfg(target_os = "macos")]
+        {
+            self.canonical.clone()
+        }
+        #[cfg(not(unix))]
+        {
+            self.canonical.clone()
+        }
+    }
+
+    pub(crate) fn open_child_directory(&self, relative: &str) -> Result<Self, AppError> {
+        let normalized = normalize_relative_path(relative)?;
+        let canonical = safe_join(&self.canonical, &normalized)?;
+        let handle = open_directory_under_root(self, &normalized).map_err(|error| {
+            AppError::PathSecurity(format!(
+                "contained directory is not accessible: {relative}: {error}"
+            ))
+        })?;
+        let metadata = handle.metadata()?;
+        if !metadata.is_dir() || is_link_metadata(&metadata) {
+            return Err(AppError::PathSecurity(format!(
+                "contained directory is not a regular directory: {relative}"
+            )));
+        }
+        verify_open_file_contained(&handle, &self.canonical, relative)?;
+        Ok(Self { canonical, handle })
+    }
+
+    /// Keep the retained directory open while running `operation` and confirm
+    /// that the approved path still names the same directory immediately
+    /// before and after it. The retained handle prevents replacement on
+    /// Windows; the identity fence detects Unix rename/replacement races.
+    pub(crate) fn with_stable_path<T>(
+        &self,
+        operation: impl FnOnce(&Path) -> T,
+    ) -> Result<T, AppError> {
+        let expected = handle_identity(&self.handle).ok_or_else(|| {
+            AppError::PathSecurity("contained directory identity is unavailable".into())
+        })?;
+        if path_identity_no_follow(&self.canonical) != Some(expected) {
+            return Err(AppError::PathSecurity(
+                "contained directory changed identity before use".into(),
+            ));
+        }
+        let process_path = self.stable_process_path();
+        let output = operation(&process_path);
+        if path_identity_no_follow(&self.canonical) != Some(expected) {
+            return Err(AppError::PathSecurity(
+                "contained directory changed identity during use".into(),
+            ));
+        }
+        Ok(output)
+    }
+
+    pub(crate) fn read_bounded_with_check<F>(
+        &self,
+        relative: &str,
+        max_bytes: u64,
+        mut should_stop: F,
+    ) -> Result<Vec<u8>, AppError>
+    where
+        F: FnMut() -> bool,
     {
+        let normalized = normalize_relative_path(relative)?;
+        let path = safe_join(&self.canonical, &normalized)?;
+        let mut file = open_regular_file_under_root(self, &normalized).map_err(|error| {
+            AppError::InvalidInput(format!(
+                "flattened file is not readable: {relative}: {error}"
+            ))
+        })?;
+        verify_open_file_contained(&file, &self.canonical, relative)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || is_link_metadata(&metadata) {
+            return Err(AppError::PathSecurity(format!(
+                "flattened file is not a regular file: {relative}"
+            )));
+        }
+        if metadata.len() > max_bytes {
+            return Err(AppError::InvalidInput(format!(
+                "flattened file exceeds the {} MiB limit: {relative}",
+                max_bytes / 1024 / 1024
+            )));
+        }
+        let mut bytes = Vec::with_capacity((metadata.len().min(max_bytes)) as usize);
+        let mut chunk = [0_u8; 64 * 1024];
+        while bytes.len() as u64 <= max_bytes {
+            if should_stop() {
+                return Err(AppError::Scan(
+                    "bounded file read stopped by the caller".into(),
+                ));
+            }
+            let remaining = max_bytes
+                .saturating_add(1)
+                .saturating_sub(bytes.len() as u64) as usize;
+            let chunk_len = chunk.len().min(remaining);
+            let read = file.read(&mut chunk[..chunk_len]).map_err(|error| {
+                AppError::InvalidInput(format!(
+                    "flattened file could not be read: {relative}: {error}"
+                ))
+            })?;
+            if read == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..read]);
+        }
+        if bytes.len() as u64 > max_bytes {
+            return Err(AppError::InvalidInput(format!(
+                "flattened file grew beyond the {} MiB limit while it was read: {relative}",
+                max_bytes / 1024 / 1024
+            )));
+        }
+        let after = file.metadata()?;
+        verify_open_file_contained(&file, &self.canonical, relative)?;
+        if !after.is_file()
+            || is_link_metadata(&after)
+            || after.len() != bytes.len() as u64
+            || path_has_link_component_for_flatten(&path)
+        {
+            return Err(AppError::PathSecurity(format!(
+                "flattened file changed or became a link during read: {relative}"
+            )));
+        }
+        Ok(bytes)
+    }
+}
+
+#[cfg(unix)]
+fn identity_from_metadata(metadata: &std::fs::Metadata) -> FileSystemIdentity {
+    use std::os::unix::fs::MetadataExt;
+    FileSystemIdentity {
+        volume: metadata.dev(),
+        file: metadata.ino(),
+    }
+}
+
+#[cfg(unix)]
+fn path_identity_no_follow(path: &Path) -> Option<FileSystemIdentity> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    (!is_link_metadata(&metadata) && metadata.is_dir()).then(|| identity_from_metadata(&metadata))
+}
+
+#[cfg(unix)]
+fn handle_identity(file: &std::fs::File) -> Option<FileSystemIdentity> {
+    file.metadata()
+        .ok()
+        .map(|metadata| identity_from_metadata(&metadata))
+}
+
+#[cfg(windows)]
+fn identity_from_handle(file: &std::fs::File) -> Option<FileSystemIdentity> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+    let mut information = unsafe { std::mem::zeroed::<BY_HANDLE_FILE_INFORMATION>() };
+    let success = unsafe {
+        GetFileInformationByHandle(file.as_raw_handle() as _, &mut information as *mut _)
+    };
+    (success != 0).then_some(FileSystemIdentity {
+        volume: information.dwVolumeSerialNumber as u64,
+        file: ((information.nFileIndexHigh as u64) << 32) | information.nFileIndexLow as u64,
+    })
+}
+
+#[cfg(windows)]
+fn path_identity_no_follow(path: &Path) -> Option<FileSystemIdentity> {
+    let file = open_directory_no_follow(path).ok()?;
+    identity_from_handle(&file)
+}
+
+#[cfg(windows)]
+fn handle_identity(file: &std::fs::File) -> Option<FileSystemIdentity> {
+    identity_from_handle(file)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn path_identity_no_follow(path: &Path) -> Option<FileSystemIdentity> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    (!is_link_metadata(&metadata) && metadata.is_dir()).then_some(FileSystemIdentity {
+        volume: 0,
+        file: metadata.len(),
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn handle_identity(file: &std::fs::File) -> Option<FileSystemIdentity> {
+    let metadata = file.metadata().ok()?;
+    Some(FileSystemIdentity {
+        volume: 0,
+        file: metadata.len(),
+    })
+}
+
+#[cfg(unix)]
+fn open_directory_no_follow(path: &Path) -> Result<std::fs::File, std::io::Error> {
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+}
+
+#[cfg(windows)]
+fn open_directory_no_follow(path: &Path) -> Result<std::fs::File, std::io::Error> {
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+    options.custom_flags(0x0200_0000 | 0x0020_0000);
+    options.open(path)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_directory_path(file: &std::fs::File, _display: &Path) -> Result<PathBuf, AppError> {
+    let descriptor_path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+    fs::read_link(&descriptor_path).map_err(|error| {
+        AppError::PathSecurity(format!(
+            "selected directory handle could not be resolved through {}: {error}",
+            descriptor_path.display()
+        ))
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn open_directory_path(file: &std::fs::File, _display: &Path) -> Result<PathBuf, AppError> {
+    use std::ffi::CStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut buffer = vec![0_i8; libc::PATH_MAX as usize + 1];
+    let result = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, buffer.as_mut_ptr()) };
+    if result == -1 {
         return Err(AppError::PathSecurity(format!(
-            "flattened file changed or became a link during read: {relative}"
+            "selected directory handle could not be resolved: {}",
+            std::io::Error::last_os_error()
         )));
     }
-    Ok(bytes)
+    let bytes = unsafe { CStr::from_ptr(buffer.as_ptr()) }.to_bytes();
+    Ok(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+}
+
+#[cfg(windows)]
+fn open_directory_path(file: &std::fs::File, _display: &Path) -> Result<PathBuf, AppError> {
+    Ok(PathBuf::from(windows_final_path(file)?))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_directory_no_follow(path: &Path) -> Result<std::fs::File, std::io::Error> {
+    OpenOptions::new().read(true).open(path)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_directory_path(_file: &std::fs::File, display: &Path) -> Result<PathBuf, AppError> {
+    fs::canonicalize(display).map_err(AppError::from)
 }
 
 #[cfg(unix)]
 fn open_regular_file_under_root(
-    root: &Path,
+    root: &BoundedReadRoot,
     relative: &str,
 ) -> Result<std::fs::File, std::io::Error> {
-    let root_file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(root)?;
-    let mut directory = root_file;
+    open_relative_under_root(root, relative, false)
+}
+
+#[cfg(unix)]
+fn open_directory_under_root(
+    root: &BoundedReadRoot,
+    relative: &str,
+) -> Result<std::fs::File, std::io::Error> {
+    open_relative_under_root(root, relative, true)
+}
+
+#[cfg(unix)]
+fn open_relative_under_root(
+    root: &BoundedReadRoot,
+    relative: &str,
+    final_directory: bool,
+) -> Result<std::fs::File, std::io::Error> {
+    let mut directory = root.handle.try_clone()?;
     let parts = relative.split('/').collect::<Vec<_>>();
     for (index, part) in parts.iter().enumerate() {
         let name = CString::new(part.as_bytes()).map_err(|_| {
@@ -241,8 +565,9 @@ fn open_regular_file_under_root(
                 "path segment contains NUL",
             )
         })?;
+        let is_final = index + 1 == parts.len();
         let mut flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
-        if index + 1 != parts.len() {
+        if !is_final || final_directory {
             flags |= libc::O_DIRECTORY;
         }
         let descriptor = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), flags) };
@@ -250,7 +575,7 @@ fn open_regular_file_under_root(
             return Err(std::io::Error::last_os_error());
         }
         let next = unsafe { std::fs::File::from_raw_fd(descriptor) };
-        if index + 1 == parts.len() {
+        if is_final {
             return Ok(next);
         }
         directory = next;
@@ -263,16 +588,38 @@ fn open_regular_file_under_root(
 
 #[cfg(windows)]
 fn open_regular_file_under_root(
-    _root: &Path,
+    root: &BoundedReadRoot,
     relative: &str,
 ) -> Result<std::fs::File, std::io::Error> {
-    let path = safe_join(_root, relative).map_err(|error| {
+    let path = safe_join(&root.canonical, relative).map_err(|error| {
         std::io::Error::new(std::io::ErrorKind::PermissionDenied, error.to_string())
     })?;
     let mut options = OpenOptions::new();
     options.read(true);
     options.custom_flags(0x0020_0000);
     options.open(path)
+}
+
+#[cfg(windows)]
+fn open_directory_under_root(
+    root: &BoundedReadRoot,
+    relative: &str,
+) -> Result<std::fs::File, std::io::Error> {
+    let path = safe_join(&root.canonical, relative).map_err(|error| {
+        std::io::Error::new(std::io::ErrorKind::PermissionDenied, error.to_string())
+    })?;
+    open_directory_no_follow(&path)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_directory_under_root(
+    root: &BoundedReadRoot,
+    relative: &str,
+) -> Result<std::fs::File, std::io::Error> {
+    let path = safe_join(&root.canonical, relative).map_err(|error| {
+        std::io::Error::new(std::io::ErrorKind::PermissionDenied, error.to_string())
+    })?;
+    open_directory_no_follow(&path)
 }
 
 fn verify_open_file_contained(
@@ -701,6 +1048,75 @@ mod tests {
             read_regular_file_no_follow_under_root(project.path(), "nested/file.txt").unwrap();
 
         assert_eq!(bytes, b"inside");
+    }
+
+    #[test]
+    fn root_open_rejects_a_directory_replaced_after_identity_capture() {
+        let container = tempfile::tempdir().unwrap();
+        let root = container.path().join("project");
+        let original = container.path().join("original");
+        fs::create_dir(&root).unwrap();
+        let expected = path_identity_no_follow(&root).unwrap();
+        fs::rename(&root, &original).unwrap();
+        fs::create_dir(&root).unwrap();
+
+        let error = BoundedReadRoot::open_with_expected_identity(&root, expected).unwrap_err();
+        assert!(error.to_string().contains("changed identity"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retained_root_handle_reads_the_original_directory_after_path_replacement() {
+        let container = tempfile::tempdir().unwrap();
+        let root = container.path().join("project");
+        let original = container.path().join("original");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("file.txt"), "original").unwrap();
+        let bounded_root = BoundedReadRoot::open(&root).unwrap();
+
+        fs::rename(&root, &original).unwrap();
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("file.txt"), "replacement").unwrap();
+
+        let bytes = bounded_root
+            .read_bounded_with_check("file.txt", 1024, || false)
+            .unwrap();
+        assert_eq!(bytes, b"original");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn retained_root_handle_blocks_windows_directory_replacement() {
+        let container = tempfile::tempdir().unwrap();
+        let root = container.path().join("project");
+        let moved = container.path().join("moved");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("file.txt"), "original").unwrap();
+        let bounded_root = BoundedReadRoot::open(&root).unwrap();
+
+        assert!(fs::rename(&root, &moved).is_err());
+        let bytes = bounded_root
+            .read_bounded_with_check("file.txt", 1024, || false)
+            .unwrap();
+        assert_eq!(bytes, b"original");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn retained_child_directory_blocks_windows_git_replacement() {
+        let container = tempfile::tempdir().unwrap();
+        let root = container.path().join("project");
+        let moved = container.path().join("moved-git");
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        let bounded_root = BoundedReadRoot::open(&root).unwrap();
+        let git_root = bounded_root.open_child_directory(".git").unwrap();
+
+        assert!(fs::rename(root.join(".git"), &moved).is_err());
+        let bytes = git_root
+            .read_bounded_with_check("HEAD", 1024, || false)
+            .unwrap();
+        assert_eq!(bytes, b"ref: refs/heads/main\n");
     }
 
     #[cfg(unix)]

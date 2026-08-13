@@ -19,8 +19,8 @@ editable root/launcher paths and generate `descriptor.mod`, launcher
 descriptor, replaceable `thumbnail.png`, profile, README, and workflows; never
 fabricate Workshop IDs or overwrite thumbnails. Existing projects confirm a
 bounded launcher candidate,
-then receive a read-only evidence/conflict scan of descriptors, structure, Git,
-identifiers, docs, skills, subagents, Codex/MCP, and paths.
+then receive a targeted read-only scan of descriptors, agentic setup files,
+Git, and conflicts; gameplay, localisation, media, and data dumps are excluded.
 
 Use the live source only through its versioned manifest: never clone, search, or
 require a checkout. Latest resolves one commit; pinned uses a commit/release.

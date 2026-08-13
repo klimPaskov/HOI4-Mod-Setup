@@ -152,6 +152,35 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(onPackageChatSources).toHaveBeenCalledTimes(1);
   });
 
+  it("shows blocking core scan conflicts in the review surface", () => {
+    const conflict = {
+      id: "conflict.git.inspection",
+      category: "conflict",
+      label: "Blocking conflict · unsafe git configuration",
+      value: "Git configuration changed during inspection.",
+      evidenceExcerpt: "Git configuration changed during inspection.",
+      confidence: 1,
+      status: "blocking",
+      evidence: ".git - Git configuration changed during inspection.",
+      evidencePath: ".git",
+      origin: "deterministic",
+      recommendation: "Resolve this blocking conflict before planning.",
+    } as ScanFinding;
+    render(<Findings
+      state={readyState()}
+      findings={[conflict]}
+      selected={conflict.id}
+      setSelected={vi.fn()}
+      setFindings={vi.fn()}
+      onConfirmAnalysis={vi.fn().mockResolvedValue(undefined)}
+      onManageExisting={vi.fn()}
+      onPackageChatSources={vi.fn().mockResolvedValue(undefined)}
+    />);
+
+    expect(screen.getByText("Blocking conflict · unsafe git configuration")).toBeInTheDocument();
+    expect(screen.getAllByText("Git configuration changed during inspection.").length).toBeGreaterThan(0);
+  });
+
   it("keeps semantic planning estimates bounded within each real stage", () => {
     const startedAt = Date.parse("2026-08-02T12:00:00Z");
     expect(estimateSemanticPlanningProgress("preparing", startedAt, startedAt)).toEqual({ percent: 5, remaining: "About 2 minutes remaining" });
@@ -945,7 +974,7 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(within(review).queryByText("descriptor_tags")).not.toBeInTheDocument();
   });
 
-  it("confirms the existing launcher descriptor returned with the selected project", async () => {
+  it("shows the bounded launcher candidate and allows scanning without it", async () => {
     vi.mocked(pickProjectFolder).mockResolvedValue({
       path: "C:\\mods\\existing",
       launcher_descriptor_path: "C:\\mods\\existing.mod",
@@ -956,8 +985,31 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(screen.getByRole("button", { name: "Browse project folder" }));
     await waitFor(() => expect(screen.getByText("C:\\mods\\existing.mod")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Scan without launcher file" }));
+    expect(screen.queryByText("C:\\mods\\existing.mod")).not.toBeInTheDocument();
+    expect(screen.getByText("The scan will continue without an external launcher file.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Browse project folder" }));
+    await waitFor(() => expect(screen.getByText("C:\\mods\\existing.mod")).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\other" } });
     expect(screen.queryByText("C:\\mods\\existing.mod")).not.toBeInTheDocument();
+  });
+
+  it("reports an ambiguous launcher registration while keeping internal-only scan available", async () => {
+    vi.mocked(pickProjectFolder).mockResolvedValue({
+      path: "C:\\mods\\existing",
+      launcher_descriptor_path: null,
+      error: "multiple launcher descriptors register this project: C:\\mods\\existing.mod, C:\\mods\\legacy.mod",
+      cancelled: false,
+    });
+    await renderAuthenticatedApp();
+    fireEvent.click(screen.getByRole("button", { name: /import existing mod/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Browse project folder" }));
+
+    expect(await screen.findByText(/Launcher discovery needs review: multiple launcher descriptors/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Project folder")).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "Scan without launcher file" }));
+    expect(screen.getByLabelText("Project folder")).toHaveValue("C:\\mods\\existing");
   });
 
   it("opens the source repository through the desktop browser bridge", async () => {
@@ -976,6 +1028,22 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\installed" } });
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     expect(screen.getByRole("heading", { name: "Scanning project" })).toBeInTheDocument();
+  });
+
+  it("allows project-management scans to exclude a discovered launcher candidate", async () => {
+    vi.mocked(pickProjectFolder).mockResolvedValue({
+      path: "C:\\mods\\installed",
+      launcher_descriptor_path: "C:\\mods\\installed.mod",
+      cancelled: false,
+    } as FolderSelection);
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /manage an existing project/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Browse project folder" }));
+
+    expect(await screen.findByText("C:\\mods\\installed.mod")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Scan without launcher file" }));
+    expect(screen.queryByText("C:\\mods\\installed.mod")).not.toBeInTheDocument();
+    expect(screen.getByText("The scan will continue without an external launcher file.")).toBeInTheDocument();
   });
 
   it("shows only Undo after project apply has started", async () => {

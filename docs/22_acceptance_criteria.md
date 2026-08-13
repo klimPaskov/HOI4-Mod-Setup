@@ -84,10 +84,12 @@
 
 - EXT-01: The user selects one root.
 - EXT-02: Scan performs no project writes.
-- EXT-03: Structure, descriptors, launcher registration, thumbnail, Git, IDs, namespaces, naming, localisation, docs, skills, subagents, Codex, MCP, and conflicts are covered.
+- EXT-03: Descriptors, launcher registration, thumbnail, Git, instructions,
+  approved docs, skills, subagents, Codex, MCP, managed setup state, and
+  conflicts are covered without inventorying unrelated gameplay or media.
 - EXT-03A: Read-only scanning excludes bounded virtual environments,
-  dependency trees, editor metadata, caches, and generated artifacts without
-  excluding valid HOI4 content.
+  dependency trees, editor metadata, caches, generated artifacts, gameplay,
+  localisation, media, and root data dumps that are unrelated to agentic setup.
 - EXT-04: Findings have evidence and confidence.
 - EXT-05: Findings appear in small review groups.
 - EXT-06: The user can accept, edit, reject, or defer values.
@@ -103,8 +105,9 @@
 - EXT-12: Before an existing-project scan, discovery inspects only direct
   launcher descriptor candidates in the selected root's immediate parent.
 - EXT-13: The candidate path and matching evidence are visibly shown and the
-  user explicitly confirms, declines, or cancels before any external
-  descriptor is read.
+  user explicitly confirms, declines, or cancels. Root selection authorizes
+  only bounded parsing of direct-parent candidates; an unconfirmed candidate
+  is excluded from scan evidence and its declared target path is never opened.
 - EXT-14: Discovery never searches sibling trees, other drives, or the whole
   computer.
 
@@ -273,7 +276,8 @@
   names, and keep secondary evidence behind progressive disclosure.
 - UI-16: New-project identity fields are populated from the name and brief; optional metadata stays secondary and generated values remain keyboard-editable.
 - UI-17: New-project root and launcher paths are visibly marked as auto-filled or overridden and remain editable.
-- UI-18: Existing-project launcher descriptor candidates are visibly confirmed before scan and unconfirmed paths are not read.
+- UI-18: Existing-project launcher descriptor candidates are visibly confirmed
+  before scan; declined candidates are excluded from scan evidence.
 - UI-19: The Ready-screen external link has a clear name and fixed safe destination.
 - UI-20: The Optional workflows screen places **Super Events workflow** directly after **3D models workflow**, places **ComfyUI portrait production** after it, and shows no Super Events credential control.
 - UI-21: Ready and maintenance screens expose Super Events and portrait state,
@@ -314,3 +318,4 @@
 - OSS-14: Pull requests require documentation and living-skill review.
 - OSS-15: Planning validation checks schemas, examples, YAML, TOML, skills, subagents, README boundary, and goal prompt length.
 - OSS-16: The canonical goal prompt is included at `docs/GOAL_PROMPT.md` and remains no more than 4000 characters.
+- OSS-17: Windows installer lifecycle tests refuse existing current-user and matching legacy machine-wide installations, fail closed when registry inspection is unavailable, and leave neither a temporary product registration nor its temporary install root behind.

@@ -2,6 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { join, resolve } from "node:path";
+import { resolveNativeSystemExecutable } from "./windows_installer_registry.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const releaseRoots = [
@@ -57,8 +58,9 @@ async function terminateChild(child) {
   if (child.exitCode !== null) return;
   if (process.platform === "win32" && child.pid) {
     try {
-      await execFileAsync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+      await execFileAsync(resolveNativeSystemExecutable("taskkill.exe"), ["/PID", String(child.pid), "/T", "/F"], {
         windowsHide: true,
+        timeout: shutdownTimeoutMs,
       });
     } catch (error) {
       if (child.exitCode === null) {
