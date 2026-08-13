@@ -130,17 +130,23 @@ open a conversation, or start planning automatically.
 
 The user selects one explicit root. Before scanning, the app checks only direct
 `*.mod` descriptor candidates in that root's immediate parent. It displays each
-candidate and its normalized `path=` match, then requires an explicit visible
-choice: confirm the candidate, scan without an external descriptor, or cancel.
+unique matching candidate and its normalized `path=` evidence, or reports a
+duplicate/mismatched registration for review. The user then confirms the
+candidate, scans without an external descriptor, or cancels.
+Selecting the root authorizes this bounded candidate parse only; it does not
+authorize the declared target path or make candidate content scan evidence.
 The scanner does not search sibling trees, sibling drives, or unrelated
-folders, and it reads no unconfirmed external descriptor.
+folders, and it reads only the candidate the user confirms.
 
 ### Read-only scan
 
 Run staged detectors with progress and current-path evidence. The scan reads a
 parent-level launcher descriptor only when the user confirmed it in the
 pre-scan choice. Cancellation stops reads and discards unapproved profile
-state.
+state. The targeted inventory covers descriptors, approved setup instructions,
+skills, subagents, Codex/MCP configuration, managed setup state, and bounded
+Git evidence. It does not open or count ordinary gameplay, localisation,
+media, generated documentation corpora, or unrelated root data dumps.
 
 When the bounded scan finds a valid managed lock, it reports the stored states
 of `workflow.3d` and `workflow.super_events` in its concise optional-workflow
@@ -151,15 +157,17 @@ decline until Update or Repair changes it.
 ### Review sequence
 
 1. identity and descriptors
-2. folder structure
-3. IDs, namespaces, and naming
-4. localisation conventions
-5. documentation and project rules
-6. skills and helpers
-7. subagents
-8. Codex and MCP
-9. Git
-10. conflicts and platform limits
+2. documentation and project rules
+3. skills and helpers
+4. subagents
+5. Codex and MCP
+6. Git
+7. managed setup state
+8. conflicts and platform limits
+
+Namespace, prefix, naming, localisation, and folder-profile proposals belong
+to the separate selected-provider review. They are not deterministic scan
+findings and do not justify reading unrelated mod content.
 
 Every deterministic finding shows value, confidence, evidence path, line or file set, impact, and recommendation. Required provider suggestions show the approved input manifest, selected provider/model/profile, linked deterministic evidence, and separate confidence. The user can accept, edit, reject, or defer non-required proposals. Every field required for planning must be confirmed.
 

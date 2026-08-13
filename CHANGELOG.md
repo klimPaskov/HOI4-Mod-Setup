@@ -6,6 +6,39 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.2.12 - 2026-08-13
+
+- Complete read-only scans of very large HOI4 mods by inventorying only
+  agentic setup surfaces: descriptors, instructions, skills, subagents,
+  Codex/MCP configuration, approved docs, Git evidence, and managed setup
+  metadata. Gameplay, localisation, media, root data dumps, and generated
+  documentation assets are pruned before file inventory.
+- Run project scanning on a dedicated blocking worker, throttle discovery
+  progress, keep traversal deterministic, and preserve honest partial results
+  for unreadable, oversized, timed-out, or truncated detector evidence.
+- Bind file and Git evidence reads to identity-checked project and `.git`
+  directory handles, use filter-free dirty-state probes, bound path,
+  directory-sort, and conflict evidence, and redact secret-shaped finding
+  values before they can reach the interface or semantic-review boundary.
+- Prevent the Windows installer smoke test from leaving its temporary install
+  directory in the current-user product registry or overwriting a registered
+  current-user installation's metadata. Registry inspection fails closed,
+  legacy machine-wide installs are refused, and test-owned cleanup is
+  exact-path checked and asserted.
+- Resolve Windows and macOS installer-smoke utilities from fixed native system
+  paths with bounded termination waits instead of trusting `PATH`.
+- Keep managed-install scan findings and provider-neutral suggestion origins
+  valid against the authoritative scan-result schema.
+- Show a launcher candidate's path match before import, allow excluding it,
+  and never probe the arbitrary target declared by an unconfirmed candidate.
+- Report duplicate, mismatched, or over-limit launcher registrations instead
+  of silently choosing or truncating them, including during maintenance.
+- Rebind a confirmed launcher path to the current unique core-discovered
+  candidate before scanning, so a forged desktop command cannot approve an
+  arbitrary external file.
+- Preserve finding origins and core scan conflicts through the desktop review
+  bridge, and bind conflict summaries into provider evidence approval.
+
 ## 0.2.11 - 2026-08-09
 
 - Use the Atlantis Rising title and description as the new-project example.

@@ -151,13 +151,9 @@ revalidated.
 
 The user selects one root. The scanner detects:
 
-- folder structure
 - both descriptors
 - Git state
-- IDs and namespaces
-- file and folder naming patterns
-- localisation naming and encoding
-- documentation
+- agentic setup structure and approved documentation
 - skills and helper tools
 - subagent TOMLs
 - `AGENTS.md`
@@ -166,6 +162,12 @@ The user selects one root. The scanner detects:
 - absolute paths and project-specific examples
 - conflicts with incoming components
 - launcher descriptor registrations and thumbnail state
+
+The scanner does not inventory ordinary HOI4 gameplay, localisation, media,
+generated documentation corpora, or root data dumps. Namespace, prefix,
+naming, localisation, and folder-profile ideas are provider suggestions derived
+only from the approved agentic evidence and remain subject to deterministic
+validation and user confirmation.
 
 Before the scan starts, the app performs a bounded, read-only discovery of
 direct `*.mod` candidates in the selected root's immediate parent. It shows the

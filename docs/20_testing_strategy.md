@@ -183,7 +183,18 @@ never the raw value.
 
 ## Performance
 
-Test 500, 20,000, and 150,000 file projects plus a large wiki media set. Measure first finding, total scan, memory, UI responsiveness, hash throughput, and cancellation latency.
+Test targeted setup inventories containing 500, 20,000, and 150,000 approved
+agentic files, plus mods with very large gameplay, media, wiki, and generated
+data trees that must be pruned. Measure first finding, total scan, memory, UI
+responsiveness, and cancellation latency. Large-mod evidence must prove that
+out-of-scope content is neither opened nor counted and that detector text stays
+within its retained-content bound. An isolated fixture keeps its complete
+path/size/modified-time signature unchanged; an approved live fixture also
+snapshots app-owned metadata and reports unrelated concurrent changes instead
+of attributing them to the scanner. Windows installer lifecycle evidence must
+start without current-user or matching legacy machine-wide product
+registration, fail closed on registry inspection errors, and end with no
+E2E-owned install path in either product registry key.
 
 Add a Tauri command responsiveness regression test with blocking fake
 filesystem, network, Git, and provider waits. Hold each representative wait

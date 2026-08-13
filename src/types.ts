@@ -228,6 +228,7 @@ export interface AiAnalysisRequest extends CodexAnalysisRequest {
 
 export interface ScanFinding {
   id: string;
+  category?: string;
   label: string;
   value: string;
   /** Immutable value returned by the completed core scan; edits stay review-only. */
@@ -236,6 +237,8 @@ export interface ScanFinding {
   status: "accepted" | "needs_review" | "edited" | "rejected" | "blocking";
   evidence: string;
   evidencePath?: string;
+  origin?: "deterministic" | "provider_suggested" | "user_confirmed";
+  recommendation?: string;
 }
 
 export interface ScanProgress {

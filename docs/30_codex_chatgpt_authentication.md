@@ -147,7 +147,7 @@ Use a dedicated App Server thread for each Codex setup session. Start every sema
 - `sandbox: read-only` on `thread/start`
 - `sandboxPolicy: { type: readOnly, networkAccess: false }` on `turn/start`
 - an empty temporary working directory, with no target-project path supplied
-- explicit approved input excerpts
+- explicit approved normalized evidence summaries and hashes
 - a task-specific `outputSchema`
 - a bounded prompt that asks for proposals and short rationale, not hidden reasoning
 
@@ -185,7 +185,8 @@ Codex proposes identity. The renderer owns final bytes.
 ## Existing-project analysis sequence
 
 1. Run the bounded deterministic scan.
-2. Build an input manifest of approved text excerpts and computed findings.
+2. Build an input manifest of approved normalized finding/conflict summaries
+   and their core-bound hashes. Inventory does not approve raw file text.
 3. Show the manifest before transmission.
 4. Verify the selected provider and available usage.
 5. Send the approved evidence to a read-only provider turn with the output schema.

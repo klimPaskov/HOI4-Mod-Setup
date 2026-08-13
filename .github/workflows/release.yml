@@ -338,12 +338,12 @@ jobs:
           mount="${signing_root}/mount"
           app_root="${signing_root}/contents"
           mkdir -p "$mount" "$app_root"
-          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$package"
-          trap 'hdiutil detach "$mount" >/dev/null 2>&1 || true' EXIT
+          /usr/bin/hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$package"
+          trap '/usr/bin/hdiutil detach "$mount" >/dev/null 2>&1 || true' EXIT
           [[ "$(find "$mount" -maxdepth 2 -type d -name '*.app' | wc -l | tr -d ' ')" == "1" ]]
           app="$(find "$mount" -maxdepth 2 -type d -name '*.app')"
-          ditto "$app" "${app_root}/HOI4 Mod Setup.app"
-          hdiutil detach "$mount"
+          /usr/bin/ditto "$app" "${app_root}/HOI4 Mod Setup.app"
+          /usr/bin/hdiutil detach "$mount"
           trap - EXIT
           echo "MACOS_PACKAGE=$package" >> "$GITHUB_ENV"
           echo "MACOS_APP=${app_root}/HOI4 Mod Setup.app" >> "$GITHUB_ENV"
@@ -378,7 +378,7 @@ jobs:
           grep -Fqx "Authority=${SIGNING_IDENTITY}" <<<"$signature_details"
           codesign --verify --deep --strict --verbose=2 "$MACOS_APP"
           rm -f "$MACOS_PACKAGE"
-          hdiutil create -volname "HOI4 Mod Setup" -srcfolder "$(dirname "$MACOS_APP")" -ov -format UDZO "$MACOS_PACKAGE"
+          /usr/bin/hdiutil create -volname "HOI4 Mod Setup" -srcfolder "$(dirname "$MACOS_APP")" -ov -format UDZO "$MACOS_PACKAGE"
           xcrun notarytool submit "$MACOS_PACKAGE" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
           xcrun stapler staple "$MACOS_PACKAGE"
           xcrun stapler validate "$MACOS_PACKAGE"
@@ -394,7 +394,7 @@ jobs:
           codesign --force --deep --sign - "$MACOS_APP"
           codesign --verify --deep --strict --verbose=2 "$MACOS_APP"
           rm -f "$MACOS_PACKAGE"
-          hdiutil create -volname "HOI4 Mod Setup" -srcfolder "$(dirname "$MACOS_APP")" -ov -format UDZO "$MACOS_PACKAGE"
+          /usr/bin/hdiutil create -volname "HOI4 Mod Setup" -srcfolder "$(dirname "$MACOS_APP")" -ov -format UDZO "$MACOS_PACKAGE"
           echo "MACOS_SIGNING_LEVEL=community" >> "$GITHUB_ENV"
           echo "MACOS_SIGNATURE_METHOD=codesign-ad-hoc" >> "$GITHUB_ENV"
       - name: Package and sign macOS update

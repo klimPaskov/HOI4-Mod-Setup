@@ -1081,8 +1081,33 @@ pub fn run_transaction(
                                 | OperationAction::DeleteManaged
                         )
                 })
-                .map(|operation| operation.destination.clone())
-                .collect::<Vec<_>>();
+                .map(|operation| {
+                    let expected_sha256 = operation
+                        .result_sha256
+                        .clone()
+                        .or_else(|| operation.source_sha256.clone())
+                        .ok_or_else(|| {
+                            AppError::Transaction(format!(
+                                "managed Git path is missing expected hash evidence: {}",
+                                operation.destination
+                            ))
+                        })?;
+                    let destination = safe_join(&project_root, &operation.destination)?;
+                    let expected_size = fs::symlink_metadata(&destination)
+                        .map_err(|error| {
+                            AppError::Transaction(format!(
+                                "managed Git path metadata is unavailable: {}: {error}",
+                                operation.destination
+                            ))
+                        })?
+                        .len();
+                    Ok(crate::git::ManagedGitPath {
+                        relative: operation.destination.clone(),
+                        expected_sha256,
+                        expected_size,
+                    })
+                })
+                .collect::<Result<Vec<_>, AppError>>()?;
             let git_result =
                 crate::git::apply_git_setup(project_root.as_path(), setup, &managed_paths)?;
             if options.fail_after_git {

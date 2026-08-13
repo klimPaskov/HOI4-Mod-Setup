@@ -51,6 +51,39 @@ describe("typed scanner bridge", () => {
     expect(invoke).toHaveBeenCalledWith("cancel_scan", { requestId: "scan-request" });
   });
 
+  it("preserves finding origins and exposes core scan conflicts for review", async () => {
+    invoke.mockResolvedValue({
+      scan_id: "scan-1",
+      project_root: "C:/mods/example",
+      partial: false,
+      cancelled: false,
+      findings: [{
+        id: "agents.present",
+        category: "documentation",
+        key: "project_instructions",
+        value: "AGENTS.md",
+        status: "accepted",
+        origin: "deterministic",
+        recommendation: "Keep project instructions.",
+        evidence: [{ path: "AGENTS.md", confidence: 1, note: "Detected instructions" }],
+      }],
+      conflicts: [{
+        id: "conflict.git.inspection",
+        path: ".git",
+        kind: "unsafe_git_configuration",
+        severity: "block",
+        details: "Git configuration changed during inspection.",
+      }],
+    });
+
+    const result = await scanProject("C:/mods/example");
+
+    expect(result?.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "agents.present", label: "Detected · project_instructions", origin: "deterministic" }),
+      expect.objectContaining({ id: "conflict.git.inspection", label: "Blocking conflict · unsafe git configuration", status: "blocking" }),
+    ]));
+  });
+
   it("uses the typed external-link command for reviewed URLs", async () => {
     invoke.mockResolvedValue(undefined);
 

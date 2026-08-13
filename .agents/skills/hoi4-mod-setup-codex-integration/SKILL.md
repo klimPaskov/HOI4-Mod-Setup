@@ -100,8 +100,8 @@ Every analysis turn must:
 - require the complete ten-key proposal set before confirmation or planning
 - return concise proposal reasons, not hidden reasoning
 
-For existing-project analysis, the core accepts only evidence references and
-excerpt hashes emitted by a completed deterministic read-only scan in the
+For existing-project analysis, the core accepts only normalized redacted
+finding/conflict summaries, evidence references, and matching hashes emitted by a completed deterministic read-only scan in the
 current app session and an explicit approval of that exact evidence vector.
 Completion of a scan alone is not an approval. Reject `.git`, environment, credential, token, key, PEM,
 and other secret-bearing paths, duplicate references, and credential-shaped

@@ -146,6 +146,7 @@ static CODEX_APPROVED_EVIDENCE: OnceLock<Mutex<ApprovedScanEvidence>> = OnceLock
 static CODEX_LOGIN_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> =
     OnceLock::new();
 static SCAN_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+static SCAN_GENERATION: OnceLock<Mutex<Uuid>> = OnceLock::new();
 static MESHY_CREDENTIAL_REFERENCE: OnceLock<Mutex<Option<CredentialReference>>> = OnceLock::new();
 static THREE_D_HEALTH: OnceLock<Mutex<HashMap<String, CachedThreeDHealth>>> = OnceLock::new();
 static READY_PROJECTS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
@@ -184,6 +185,10 @@ fn codex_session() -> &'static Mutex<Option<AppServerProtocol<ProcessJsonlTransp
 
 fn scan_cancellations() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
     SCAN_CANCELLATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn scan_generation() -> &'static Mutex<Uuid> {
+    SCAN_GENERATION.get_or_init(|| Mutex::new(Uuid::nil()))
 }
 
 fn codex_login_cancellations() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
@@ -1321,13 +1326,16 @@ async fn pick_project_folder(app: tauri::AppHandle) -> Result<FolderSelection, S
     };
     match validate_project_root(&path) {
         Ok(canonical) => {
-            let launcher_descriptor_path = discover_launcher_descriptor(&canonical)
-                .map_err(command_error)?
-                .map(|path| crate::paths::user_facing_path(&path));
+            let discovery = discover_launcher_descriptor(&canonical);
+            let launcher_descriptor_path = discovery
+                .as_ref()
+                .ok()
+                .and_then(|path| path.as_ref())
+                .map(|path| crate::paths::user_facing_path(path));
             Ok(FolderSelection {
                 path: Some(crate::paths::user_facing_path(&canonical)),
                 launcher_descriptor_path,
-                error: None,
+                error: discovery.err().map(|error| error.to_string()),
                 cancelled: false,
             })
         }
@@ -1454,8 +1462,35 @@ fn scan_project(
     request_id: String,
     launcher_descriptor_path: Option<String>,
 ) -> Result<ScanResult, String> {
+    run_blocking_command("project-scan", move || {
+        scan_project_blocking(app, root, request_id, launcher_descriptor_path)
+    })
+}
+
+fn scan_project_blocking(
+    app: tauri::AppHandle,
+    root: String,
+    request_id: String,
+    launcher_descriptor_path: Option<String>,
+) -> Result<ScanResult, String> {
     validate_scan_request_id(&request_id)?;
+    // A new scan invalidates every prior evidence approval, including when
+    // validation or the worker fails before producing a result.
+    let generation = Uuid::new_v4();
+    let mut active_generation = scan_generation()
+        .lock()
+        .map_err(|_| "scan generation store is unavailable".to_string())?;
+    let mut approved = codex_approved_evidence()
+        .lock()
+        .map_err(|_| "approved scan evidence store is unavailable".to_string())?;
+    *active_generation = generation;
+    *approved = ApprovedScanEvidence::default();
+    drop(approved);
+    drop(active_generation);
     let root = validate_project_root(Path::new(&root)).map_err(command_error)?;
+    let launcher_descriptor =
+        approve_launcher_descriptor_for_scan(&root, launcher_descriptor_path.as_deref())
+            .map_err(command_error)?;
     let cancellation = Arc::new(AtomicBool::new(false));
     {
         let mut active = scan_cancellations()
@@ -1470,12 +1505,6 @@ fn scan_project(
     }
     let event_request_id = request_id.clone();
     let event_app = app.clone();
-    let launcher_descriptor = launcher_descriptor_path
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .map(validate_external_destination)
-        .transpose()
-        .map_err(command_error)?;
     let result = scan_project_files(
         &root,
         &ScanOptions {
@@ -1497,12 +1526,17 @@ fn scan_project(
         active.remove(&request_id);
     }
     let result = result.map_err(command_error)?;
+    let active_generation = scan_generation()
+        .lock()
+        .map_err(|_| "scan generation store is unavailable".to_string())?;
     let mut approved = codex_approved_evidence()
         .lock()
         .map_err(|_| "approved scan evidence store is unavailable".to_string())?;
+    if *active_generation != generation {
+        return Err("scan result was superseded by a newer project scan".into());
+    }
     if result.cancelled || result.partial {
-        drop(approved);
-        clear_approved_scan_evidence()?;
+        *approved = ApprovedScanEvidence::default();
     } else {
         let mut entries = HashMap::<String, Vec<(String, String)>>::new();
         // The approval store represents only the most recently completed scan.
@@ -1520,6 +1554,16 @@ fn scan_project(
                 finding_entries.push((evidence.path.clone(), excerpt_sha256.clone()));
             }
         }
+        for conflict in &result.conflicts {
+            let excerpt = conflict
+                .details
+                .clone()
+                .unwrap_or_else(|| conflict.kind.clone());
+            entries
+                .entry(conflict.id.clone())
+                .or_default()
+                .push((conflict.path.clone(), sha256_bytes(excerpt.as_bytes())));
+        }
         if entries.len() > 4096 {
             return Err(
                 "scan produced too many evidence references for a safe Codex review".into(),
@@ -1531,6 +1575,32 @@ fn scan_project(
         approved.evidence_sha256 = None;
     }
     Ok(result)
+}
+
+fn approve_launcher_descriptor_for_scan(
+    root: &Path,
+    requested: Option<&str>,
+) -> Result<Option<PathBuf>, AppError> {
+    let Some(requested) = requested.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let requested = validate_external_destination(requested)?
+        .canonicalize()
+        .map_err(AppError::from)?;
+    let discovered = discover_launcher_descriptor(root)?.ok_or_else(|| {
+        AppError::InvalidInput(
+            "the requested launcher descriptor is not the current bounded candidate".into(),
+        )
+    })?;
+    let discovered = validate_external_destination(&discovered.to_string_lossy())?
+        .canonicalize()
+        .map_err(AppError::from)?;
+    if requested != discovered {
+        return Err(AppError::InvalidInput(
+            "the requested launcher descriptor is not the current bounded candidate".into(),
+        ));
+    }
+    Ok(Some(requested))
 }
 
 #[tauri::command(async)]
@@ -6835,6 +6905,41 @@ developer_instructions = "Work on the named files."
         assert!(evidence.project_root.is_none());
         assert!(evidence.scan_id.is_none());
         assert!(evidence.entries.is_empty());
+    }
+
+    #[test]
+    fn renderer_cannot_authorize_an_arbitrary_external_launcher_file() {
+        let parent = tempfile::tempdir().unwrap();
+        let project = parent.path().join("example");
+        std::fs::create_dir(&project).unwrap();
+        let declared = crate::paths::user_facing_path(&project.canonicalize().unwrap());
+        let declared = if cfg!(target_os = "windows") {
+            declared.replace('\\', "/")
+        } else {
+            declared
+        };
+        let candidate = parent.path().join("example.mod");
+        std::fs::write(
+            &candidate,
+            format!("name=\"Example\"\npath=\"{declared}\"\n"),
+        )
+        .unwrap();
+        let arbitrary = parent.path().join("arbitrary.mod");
+        std::fs::write(&arbitrary, "name=\"Private\"\n").unwrap();
+
+        assert!(
+            approve_launcher_descriptor_for_scan(&project, Some(&arbitrary.to_string_lossy()),)
+                .is_err()
+        );
+        assert_eq!(
+            approve_launcher_descriptor_for_scan(&project, Some(&candidate.to_string_lossy()),)
+                .unwrap()
+                .unwrap(),
+            candidate.canonicalize().unwrap()
+        );
+        assert!(approve_launcher_descriptor_for_scan(&project, None)
+            .unwrap()
+            .is_none());
     }
 
     #[test]

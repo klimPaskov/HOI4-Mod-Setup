@@ -70,6 +70,12 @@ pnpm desktop:e2e
 pnpm installer:e2e
 ```
 
+The Windows installer smoke test is destructive only to the temporary install
+root it creates. It fails closed if its fixed current-user registry keys cannot
+be inspected, if either key already exists, or if a matching legacy
+machine-wide installation is present. Run it from a normal user session; do
+not clear a real installation to make the test pass.
+
 The Tauri CLI uses the workspace-root `target/release` directory for native
 bundles; the release and launch-smoke scripts also accept the alternate
 `src-tauri/target/release` layout used by standalone Tauri projects.

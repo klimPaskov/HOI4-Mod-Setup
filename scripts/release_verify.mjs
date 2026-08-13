@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { resolveSystemPowerShellPath } from "./windows_installer_registry.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const packageMetadata = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
@@ -193,7 +194,7 @@ function verifyPlatformArchitecture(packageRoot, packageFiles, platform, archite
       const mountPoint = mkdtempSync(resolve(tmpdir(), "hoi4-mod-setup-arch-"));
       let mounted = false;
       try {
-        const attach = spawnSync("hdiutil", ["attach", "-nobrowse", "-readonly", "-mountpoint", mountPoint, packagePath], { encoding: "utf8" });
+        const attach = spawnSync("/usr/bin/hdiutil", ["attach", "-nobrowse", "-readonly", "-mountpoint", mountPoint, packagePath], { encoding: "utf8" });
         if (attach.status !== 0) throw new Error(`DMG mount failed for architecture inspection: ${relative}`);
         mounted = true;
         const apps = findAppBundles(mountPoint);
@@ -208,7 +209,7 @@ function verifyPlatformArchitecture(packageRoot, packageFiles, platform, archite
           throw new Error(`macOS package architecture mismatch for ${relative}`);
         }
       } finally {
-        if (mounted) spawnSync("hdiutil", ["detach", mountPoint, "-force"], { stdio: "ignore" });
+        if (mounted) spawnSync("/usr/bin/hdiutil", ["detach", mountPoint, "-force"], { stdio: "ignore" });
         rmSync(mountPoint, { recursive: true, force: true });
       }
     }
@@ -224,7 +225,7 @@ function verifyPlatformSignatures(packageRoot, packageFiles, platform) {
     for (const relative of packageFiles.filter((path) => /\.exe$/i.test(path))) {
       const packagePath = resolve(packageRoot, relative);
       const script = "$signature = Get-AuthenticodeSignature -LiteralPath $env:HOI4_PACKAGE; if ($signature.Status -ne 'Valid') { exit 1 }; if ($signature.SignerCertificate.Subject -notlike ('*' + $env:HOI4_SIGNER + '*')) { exit 2 }";
-      const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
+      const result = spawnSync(resolveSystemPowerShellPath(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], {
         env: { ...process.env, HOI4_PACKAGE: packagePath, HOI4_SIGNER: expectedSubject },
         stdio: "ignore",
       });
@@ -240,7 +241,7 @@ function verifyPlatformSignatures(packageRoot, packageFiles, platform) {
       const mountPoint = mkdtempSync(resolve(tmpdir(), "hoi4-mod-setup-dmg-"));
       let mounted = false;
       try {
-        const attach = spawnSync("hdiutil", ["attach", "-nobrowse", "-readonly", "-mountpoint", mountPoint, packagePath], { encoding: "utf8" });
+        const attach = spawnSync("/usr/bin/hdiutil", ["attach", "-nobrowse", "-readonly", "-mountpoint", mountPoint, packagePath], { encoding: "utf8" });
         if (attach.status !== 0) throw new Error(`DMG mount failed for ${relative}`);
         mounted = true;
         const apps = findAppBundles(mountPoint);
@@ -256,7 +257,7 @@ function verifyPlatformSignatures(packageRoot, packageFiles, platform) {
         const notarization = spawnSync("xcrun", ["stapler", "validate", packagePath], { stdio: "ignore" });
         if (notarization.status !== 0) throw new Error(`notarization validation failed for ${relative}`);
       } finally {
-        if (mounted) spawnSync("hdiutil", ["detach", mountPoint, "-force"], { stdio: "ignore" });
+        if (mounted) spawnSync("/usr/bin/hdiutil", ["detach", mountPoint, "-force"], { stdio: "ignore" });
         rmSync(mountPoint, { recursive: true, force: true });
       }
     }

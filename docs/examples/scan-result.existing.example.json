@@ -172,7 +172,7 @@
         "value": "An event-driven Cold War alternate-history project with country routes and diplomatic crises.",
         "status": "accepted",
         "user_value": null,
-        "origin": "codex_suggested",
+        "origin": "provider_suggested",
         "evidence": [
           {
             "detector": "codex_app_server",

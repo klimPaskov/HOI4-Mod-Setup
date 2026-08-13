@@ -146,6 +146,10 @@ entry as OAuth or account login.
   replace objects, and file/ext transports. Before any Git child starts, parse
   the bounded local `.git/config` without includes and reject executable,
   transport, credential, URL-rewrite, filter, alias, or include settings.
+  Bind the child working directory to the retained `.git` handle: use `fchdir`
+  immediately before exec on Unix and the non-delete-sharing handle plus
+  canonical path on Windows. Do not pass a parent process `/proc/self/fd` or
+  `/dev/fd` pathname to the child.
   Discover submodule paths by reading the bounded `.gitmodules` file directly;
   never start recursive submodule processes during a scan.
 - Account-bearing Codex and secret-bearing optional workflow processes require
@@ -169,6 +173,15 @@ entry as OAuth or account login.
   `core.sshCommand`, `core.gitProxy`, `core.hooksPath`, submodules, active
   hooks, detached branches, and dirty trees. Public repository creation and
   the first push are separate approvals, and the result record is secret-free.
+- A reviewed push supports only the exact approved HTTPS GitHub URL. Run it
+  with repository-local configuration disabled through the effective
+  `GIT_CONFIG` null-file override and fixed command-line transport settings;
+  keep a behavioral child-process regression proving a local sentinel cannot
+  be observed. Do not substitute the unsupported `GIT_CONFIG_LOCAL` variable.
+- Initial app-owned Git staging reads every managed file through the retained
+  no-follow project handle, requires the transaction-derived expected size and
+  SHA-256, and sends those exact bytes to `git hash-object --stdin` before the
+  index is updated. Git must never reopen the project pathname for this step.
 - Readiness must parse installed skill frontmatter and subagent TOML, require
   explicit `fork_context=false`, reject link-containing agent trees, and avoid
   claiming the manifest-declared MCP wrapper is healthy when its PATH entry is
