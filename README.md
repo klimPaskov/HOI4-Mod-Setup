@@ -1,5 +1,7 @@
 # HOI4 Mod Setup
 
+[![Discord](https://img.shields.io/badge/Discord-Join%20Community-7289da?logo=discord&logoColor=white)](https://discord.gg/rAXesGcT2t)
+
 HOI4 Mod Setup is a desktop wizard for preparing a Hearts of Iron IV mod for
 AI-assisted development. Start a new mod from its name and description, or
 choose an existing mod to add, update, or repair its development setup.
