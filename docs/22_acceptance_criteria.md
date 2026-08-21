@@ -62,7 +62,7 @@
 - ANA-17: Authentication, usage, process, and malformed-response failures preserve the draft and start no transaction.
 - ANA-18: Recovery, rollback, backup inspection, and managed removal remain available while signed out or disconnected.
 - ANA-19: Codex does not hardcode a model; non-Codex users select a model and the profile is persisted as non-secret configuration.
-- ANA-20: Stored analysis metadata contains only schema version, analysis ID, provider/model/profile, input and output digests, confirmed fields, and timestamps.
+- ANA-20: Stored analysis metadata contains only schema version, analysis ID, provider/model/profile, input and output digests, confirmed fields, timestamps, and the exact non-secret source revision and manifest digest used for component recommendations. A legacy lock may copy those two values only from its own existing source identity; missing provenance remains blocked.
 - ANA-21: Provider references are keyed by provider, hosted addresses are HTTPS, local addresses are loopback HTTP, redirects are disabled, and response bodies are bounded before parsing.
 
 ## Provider profiles and flattened Chat sources

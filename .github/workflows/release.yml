@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,7 +11,6 @@ permissions:
 jobs:
   gate:
     name: Validate release source
-    if: ${{ startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -29,7 +27,7 @@ jobs:
           set -euo pipefail
           fail() { echo "::error title=Invalid release source::$1"; exit 1; }
           [[ "$GITHUB_REF" == "refs/tags/$GITHUB_REF_NAME" ]] || fail "Release must run from the pushed tag ref."
-          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || fail "Tag must use vMAJOR.MINOR.PATCH format."
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Stable release tags must use vMAJOR.MINOR.PATCH without a prerelease suffix."
           git fetch --force --no-tags origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
           [[ "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" == "tag" ]] || fail "Release tag must be annotated."
           tag_commit="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
@@ -177,7 +175,9 @@ jobs:
         run: |
           $packages = @(Get-ChildItem -LiteralPath release-artifact -Recurse -File -Filter *.exe)
           if ($packages.Count -ne 1) { throw "Expected exactly one Windows installer" }
-          if ($env:TIMESTAMP_URL -ne "http://timestamp.digicert.com") { throw "Windows timestamp URL must match the reviewed DigiCert RFC 3161 endpoint" }
+          if ($env:OFFICIAL_SIGNING_CONFIGURED -eq "true" -and $env:TIMESTAMP_URL -ne "http://timestamp.digicert.com") {
+            throw "Official Windows timestamp URL must match the reviewed DigiCert RFC 3161 endpoint"
+          }
           if ($env:OFFICIAL_SIGNING_CONFIGURED -eq "true") {
             if ($env:SIGNING_MODE -ne "artifact-signing") { throw "Official Windows signing requires Azure Artifact Signing" }
             if ([string]::IsNullOrWhiteSpace($env:SIGNER)) { throw "The official Windows signer is required" }
@@ -563,5 +563,24 @@ jobs:
             --title "HOI4 Mod Setup ${GITHUB_REF_NAME#v}" \
             --notes-file publication-assets/RELEASE_NOTES.md
           [[ "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease --jq '(.isDraft and (.isPrerelease | not))')" == "true" ]]
+          expected_names="$(printf '%s\n' \
+            HOI4-Mod-Setup-macos-arm64.app.tar.gz \
+            HOI4-Mod-Setup-macos-arm64.dmg \
+            HOI4-Mod-Setup-macos-x64.app.tar.gz \
+            HOI4-Mod-Setup-macos-x64.dmg \
+            HOI4-Mod-Setup-windows-x64-setup.exe \
+            latest.json | sort)"
+          remote_names="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort)"
+          [[ "$remote_names" == "$expected_names" ]]
+          verification_root="$(mktemp -d)"
+          trap 'rm -rf "$verification_root"' EXIT
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir "$verification_root"
+          for asset in "${assets[@]}"; do
+            name="$(basename "$asset")"
+            [[ -f "$verification_root/$name" ]]
+            [[ "$(sha256sum "$asset" | cut -d' ' -f1)" == "$(sha256sum "$verification_root/$name" | cut -d' ' -f1)" ]]
+          done
+          rm -rf "$verification_root"
+          trap - EXIT
           gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
           [[ "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease --jq '(.isDraft or .isPrerelease)')" == "false" ]]

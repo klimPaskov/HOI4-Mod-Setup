@@ -125,6 +125,15 @@ core-confirmed record from the current session may be passed to
 satisfy the update gate. Repair, reinstall, and managed removal retain their
 documented locked-analysis or signed-out recovery rules.
 
+Every analysis record is bound to the exact resolved source revision and
+manifest SHA-256 used to validate component recommendations. Changing the
+source selector invalidates the renderer proposal and requires a new reviewed
+analysis. Maintenance reanalysis ignores renderer source defaults and derives
+the immutable source request from the installed lock. Locks written before
+this binding existed may copy the fields only from valid source evidence
+already stored in that same lock; absent or malformed provenance remains
+blocked instead of being inferred from the current repository.
+
 ## Current implementation boundary
 
 The Rust implementation is in `src-tauri/src/ai.rs` and `src-tauri/src/codex.rs`. It starts only an absolute
@@ -174,7 +183,8 @@ pending typed analysis and binding in a bounded session store and binds
 confirmation to its exact analysis ID and complete proposal set; the renderer
 cannot forge the immutable record fields. A plan or maintenance plan must carry
 a confirmed `CodexAnalysisRecord`; it stores only digests, proposal keys,
-confirmation time, and `account_identity_persisted: false`.
+confirmation time, the exact non-secret source revision and manifest digest,
+and `account_identity_persisted: false`.
 
 The deterministic AGENTS adapter appends the optional Super Events guidance
 only when `workflow.super_events` is selected. An unselected workflow must not

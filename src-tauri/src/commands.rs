@@ -978,10 +978,26 @@ fn analysis_source_request(request: &CodexAnalysisRequest) -> Result<SourceReque
     })
 }
 
+fn source_request_for_analysis(request: &CodexAnalysisRequest) -> Result<SourceRequest, AppError> {
+    if request.analysis_purpose.as_deref() != Some("maintenance_reanalysis") {
+        return analysis_source_request(request);
+    }
+    let project_root = request
+        .project_root
+        .as_deref()
+        .ok_or_else(|| AppError::PathSecurity("maintenance analysis has no project root".into()))?;
+    let lock = read_project_lock(Path::new(project_root))?;
+    Ok(SourceRequest {
+        mode: lock.source.mode,
+        requested_ref: lock.source.requested_ref,
+        release: lock.source.release,
+    })
+}
+
 fn bind_analysis_component_registry(
     request: &mut CodexAnalysisRequest,
 ) -> Result<SourceIdentity, AppError> {
-    let source_request = analysis_source_request(request)?;
+    let source_request = source_request_for_analysis(request)?;
     let client = HttpSourceClient::new()?;
     let resolution = resolve_source(&client, &source_request)?;
     let mut component_ids = resolution
@@ -8119,6 +8135,35 @@ developer_instructions = "Work on the named files."
             None,
         )
         .is_err());
+    }
+
+    #[test]
+    fn maintenance_reanalysis_uses_the_installed_pinned_source() {
+        let project = tempfile::tempdir().unwrap();
+        let lock_path = project.path().join(".hoi4-mod-setup/install.lock.json");
+        std::fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+        let mut lock: Value = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        lock["source"]["mode"] = serde_json::json!("pinned_release");
+        lock["source"]["requested_ref"] = serde_json::json!("v0.2.12");
+        lock["source"]["release"] = serde_json::json!("v0.2.12");
+        std::fs::write(&lock_path, serde_json::to_vec(&lock).unwrap()).unwrap();
+        let request = CodexAnalysisRequest {
+            mode: "existing_project_semantics".into(),
+            brief: String::new(),
+            evidence: Vec::new(),
+            constraints: serde_json::json!({}),
+            analysis_purpose: Some("maintenance_reanalysis".into()),
+            project_root: Some(project.path().display().to_string()),
+            scan_id: None,
+        };
+
+        let source = source_request_for_analysis(&request).unwrap();
+        assert_eq!(source.mode, SourceMode::PinnedRelease);
+        assert_eq!(source.requested_ref.as_deref(), Some("v0.2.12"));
+        assert_eq!(source.release.as_deref(), Some("v0.2.12"));
     }
 
     #[test]

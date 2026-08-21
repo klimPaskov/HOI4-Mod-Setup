@@ -81,6 +81,9 @@ def main() -> None:
         raise SystemExit("preview publication must consume the curated artifact")
 
     release_jobs = release["jobs"]
+    release_events = release.get("on", release.get(True, {}))
+    if not isinstance(release_events, dict) or "workflow_dispatch" in release_events:
+        raise SystemExit("stable release must be tag-only; previews own manual dispatch")
     if release_jobs["build-unsigned"].get("needs") != "gate":
         raise SystemExit("unsigned release builds must depend on the unprivileged gate")
     if release_jobs["sign-windows"].get("needs") != "build-unsigned":
@@ -89,6 +92,18 @@ def main() -> None:
         raise SystemExit("macOS signing must consume unsigned build artifacts")
     if release_jobs["publish-release"].get("needs") != "curate":
         raise SystemExit("stable publication must consume the curated artifact")
+    publish_script = "\n".join(
+        str(step.get("run", ""))
+        for step in release_jobs["publish-release"].get("steps", [])
+    )
+    for token in (
+        'gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"',
+        "expected_names=",
+        "remote_names=",
+        "sha256sum",
+    ):
+        if token not in publish_script:
+            raise SystemExit(f"stable publication is missing remote draft verification: {token}")
     if "environment" in release_jobs["gate"] or permission(release_jobs["gate"], "id-token"):
         raise SystemExit("release gate must not receive a protected environment or OIDC")
 

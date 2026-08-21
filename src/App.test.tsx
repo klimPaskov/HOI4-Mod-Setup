@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { ChatSources, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, recoveryProgress } from "./App";
+import App, { ChatSources, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
 import type { ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
@@ -447,6 +447,173 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByText("120 B")).toBeInTheDocument();
     expect(screen.getByText("80 B")).toBeInTheDocument();
     expect(screen.getAllByText("Size calculated during review")).toHaveLength(2);
+  });
+
+  it("invalidates confirmed analysis when the source version changes", async () => {
+    const update = vi.fn();
+    render(<Components state={{
+      aiProvider: "codex",
+      flattenForChat: false,
+      sourceMode: "latest",
+      pinnedRef: "",
+      selectedComponents: ["core.skills"],
+      codexAnalysis: { analysis_id: "analysis" },
+      codexAnalysisRecord: { analysis_id: "analysis", confirmed_fields: ["display_name"] },
+    } as unknown as WizardState} update={update} />);
+
+    fireEvent.click(screen.getByText("Choose source version"));
+    fireEvent.change(screen.getByLabelText("Version"), { target: { value: "pinned_commit" } });
+
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      sourceMode: "pinned_commit",
+      pinnedRef: "",
+      codexAnalysis: undefined,
+      codexAnalysisRecord: undefined,
+      plan: undefined,
+    }));
+  });
+
+  it("returns a new project to analysis review after a pinned source edit", async () => {
+    enableTauriRuntime();
+    vi.mocked(suggestProjectPaths).mockResolvedValue({
+      mod_directory: "C:\\mods",
+      project_root: "C:\\mods\\atlantis_rising",
+      launcher_descriptor_path: "C:\\mods\\atlantis_rising.mod",
+      project_exists: false,
+      launcher_descriptor_exists: false,
+    });
+    vi.mocked(runCodexAnalysisResult).mockResolvedValue({ value: {
+      analysis: {
+        schema_version: "1.0.0", analysis_id: "source-bound-analysis", mode: "new_project_identity", input_sha256: "a".repeat(64),
+        project_summary: "A source-bound project", proposals: [], component_recommendations: [], warnings: [],
+      },
+      record: {
+        engine: "codex_app_server", auth_mode: "chatgpt", provider: "codex", model: "default", analysis_id: "source-bound-analysis",
+        schema_version: "1.0.0", input_sha256: "a".repeat(64), output_sha256: "b".repeat(64),
+        confirmed_fields: ["display_name", "project_id", "script_prefix", "primary_namespace", "project_description", "descriptor_tags", "folder_profile", "agents_profile", "localisation_convention", "documentation_convention"],
+        confirmed_at: "2026-08-21T00:00:00Z", source_revision: "c".repeat(40), source_manifest_sha256: "d".repeat(64),
+      },
+    } as CodexAnalysisResult });
+    vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: {
+      schema_version: "1.0.0", manifest_id: "source-bound", source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "c".repeat(40), manifest_sha256: "d".repeat(64), manifest_origin: "remote" },
+      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
+      components: [{ id: "core.skills", display_name: "Skills", category: "skill", optional: false, platforms: ["all"], source: { kind: "tree", path: ".agents/skills" }, destination: { path: ".agents/skills/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [], capabilities: [], validation: [], update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true } }],
+      profiles: [{ id: "core", display_name: "Core", components: ["core.skills"], default: true }],
+    } as unknown as SourceManifestPreview });
+
+    await renderAuthenticatedApp();
+    fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByRole("heading", { name: "Project identity" });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByRole("heading", { name: "Choose what to install" });
+    fireEvent.click(screen.getByText("Choose source version"));
+    fireEvent.change(screen.getByLabelText("Version"), { target: { value: "pinned_commit" } });
+    fireEvent.change(await screen.findByLabelText("Commit"), { target: { value: "e".repeat(40) } });
+    await screen.findByText("Components loaded.");
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(await screen.findByRole("heading", { name: "Describe the mod" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Optional workflows" })).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/exact source/i);
+  });
+
+  it("returns an existing project to Findings after its pinned source is edited", async () => {
+    enableTauriRuntime();
+    const manifest = {
+      schema_version: "1.0.0", manifest_id: "existing-source", source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
+      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
+      components: [{ id: "core.skills", display_name: "Skills", category: "skill", optional: false, platforms: ["all"], source: { kind: "tree", path: ".agents/skills" }, destination: { path: ".agents/skills/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [], capabilities: [], validation: [], update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true } }],
+      profiles: [{ id: "core", display_name: "Core", components: ["core.skills"], default: true }],
+    } as unknown as SourceManifestPreview;
+    window.__HOI4_DOCUMENTATION_STATE__ = {
+      ...initialState,
+      screen: "components",
+      mode: "existing",
+      codexAccount: { available: true, authenticated: true, auth_mode: "chatgpt", usage_limited: false },
+      codexAnalysis: { analysis_id: "existing-analysis" } as never,
+      codexAnalysisRecord: { analysis_id: "existing-analysis", confirmed_fields: ["display_name"] } as never,
+      manifestPreview: manifest,
+      selectedComponents: ["core.skills"],
+    };
+    vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: manifest });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Choose what to install" });
+    fireEvent.click(screen.getByText("Choose source version"));
+    fireEvent.change(screen.getByLabelText("Version"), { target: { value: "pinned_release" } });
+    fireEvent.change(await screen.findByLabelText("Release"), { target: { value: "v0.2.12" } });
+    await screen.findByText("Components loaded.");
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(await screen.findByRole("heading", { name: "Confirm scan findings" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Optional workflows" })).not.toBeInTheDocument();
+  });
+
+  it("classifies manifest platform support without enabling Windows workflows on macOS", () => {
+    const component = { platforms: ["windows"] } as unknown as SourceManifestPreview["components"][number];
+    expect(manifestComponentSupportsPlatform(component, "windows")).toBe(true);
+    expect(manifestComponentSupportsPlatform(component, "macos")).toBe(false);
+  });
+
+  it("keeps a missing 3D route visibly unavailable instead of opening Mesh setup", () => {
+    render(<Workflows state={{ aiProvider: "codex", meshSelected: true, superEventsSelected: false, selectedComponents: [], manifestPreview: { components: [] } } as unknown as WizardState} update={vi.fn()} />);
+
+    const mesh = screen.getByRole("switch", { name: /3D models workflow/ });
+    expect(mesh).toBeDisabled();
+    expect(mesh).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("labels an unsupported manifest workflow on macOS without offering selection", () => {
+    const originalUserAgent = navigator.userAgent;
+    Object.defineProperty(navigator, "userAgent", { configurable: true, value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)" });
+    try {
+      const workflow = {
+        id: "workflow.future_windows",
+        display_name: "Future Windows workflow",
+        description: "A source-declared optional workflow",
+        category: "workflow",
+        optional: true,
+        platforms: ["windows"],
+        source: { kind: "tree", path: ".tools/future" },
+        destination: { path: ".tools/future/", ownership: "managed" },
+        dependencies: [],
+        required_tools: [],
+        environment: [],
+        expected_files: [],
+        capabilities: [],
+        validation: [],
+        update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true },
+      };
+      render(<Workflows state={{ aiProvider: "codex", meshSelected: false, superEventsSelected: false, selectedComponents: [], manifestPreview: { components: [workflow] } } as unknown as WizardState} update={vi.fn()} />);
+
+      const future = screen.getByRole("switch", { name: /Future Windows workflow/ });
+      expect(future).toBeDisabled();
+      expect(screen.getByText("Not available on this computer")).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(navigator, "userAgent", { configurable: true, value: originalUserAgent });
+    }
+  });
+
+  it("offers a direct retry after manifest loading fails", async () => {
+    const manifest = {
+      schema_version: "1.0.0",
+      manifest_id: "retry",
+      source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
+      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
+      components: [],
+      profiles: [],
+    } as unknown as SourceManifestPreview;
+    vi.mocked(previewSourceManifestResult)
+      .mockResolvedValueOnce({ value: null, error: "temporary source failure" })
+      .mockResolvedValueOnce({ value: manifest });
+
+    render(<Components state={{ aiProvider: "codex", flattenForChat: false, sourceMode: "latest", pinnedRef: "", selectedComponents: [] } as unknown as WizardState} update={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry loading components" }));
+    expect(await screen.findByText("Components loaded.")).toBeInTheDocument();
+    expect(previewSourceManifestResult).toHaveBeenCalledTimes(2);
   });
 
   it("selects newly published default-profile components without an app allowlist", async () => {
@@ -1693,5 +1860,6 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByText("Dependencies and file list"));
     expect(screen.getByText("Requires core.agents")).toBeInTheDocument();
     expect(screen.getByText("1 file · destination: .agents/skills/")).toBeInTheDocument();
+    expect(screen.queryByText(".agents/skills/example/SKILL.md")).not.toBeInTheDocument();
   });
 });

@@ -85,6 +85,10 @@ and macOS app archives beside the three clearly named installers.
 The tagged workflow publishes only after the source gate, platform builds,
 signature checks, native launch smoke tests, artifact curation, and release
 environment gate pass. Never publish directly from an unverified local build.
+The stable workflow accepts only unsuffixed `vMAJOR.MINOR.PATCH` tags. Before a
+draft is made public, it downloads the exact six uploaded public assets and
+compares every byte to the curated publication bundle; a missing, extra, or
+changed remote asset blocks publication.
 
 ## Rollback and withdrawal
 
