@@ -164,6 +164,8 @@ The response must validate against `schemas/codex-analysis.schema.json`. Reject 
 - output digest
 - accepted proposal keys
 - confirmation time
+- exact resolved source revision
+- exact source-manifest SHA-256
 
 Do not store the App Server thread, turn history, account identity, tokens, hidden reasoning, absolute project roots, scan IDs, or raw unapproved project text in the installation lock. The core retains the root and scan binding only in its bounded in-memory pending-analysis session.
 

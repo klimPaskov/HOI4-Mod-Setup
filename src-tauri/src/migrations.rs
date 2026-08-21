@@ -357,6 +357,7 @@ pub fn migrate_lock(value: Value) -> Result<InstallationLock, AppError> {
     let mut value = migrate_value(value, "installation lock", CURRENT_LOCK_SCHEMA)?;
     normalize_legacy_portrait_workflow(&mut value);
     strip_legacy_core_only_codex_bindings(&mut value);
+    bind_legacy_analysis_to_lock_source(&mut value);
     // Locks written before exact manifest wiki coverage was carried forward
     // remain readable, but readiness must not silently borrow the current
     // bundled manifest for them. An empty marker is intentionally incomplete
@@ -391,6 +392,55 @@ pub fn migrate_lock(value: Value) -> Result<InstallationLock, AppError> {
         }
     }
     serde_json::from_value(value).map_err(AppError::from)
+}
+
+fn bind_legacy_analysis_to_lock_source(value: &mut Value) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    let source_revision = object
+        .get("source")
+        .and_then(Value::as_object)
+        .and_then(|source| source.get("revision"))
+        .and_then(Value::as_str)
+        .filter(|revision| {
+            revision.len() == 40
+                && revision
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        })
+        .map(ToOwned::to_owned);
+    let source_manifest_sha256 = object
+        .get("source")
+        .and_then(Value::as_object)
+        .and_then(|source| source.get("manifest_sha256"))
+        .and_then(Value::as_str)
+        .filter(|sha256| {
+            sha256.len() == 64
+                && sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        })
+        .map(ToOwned::to_owned);
+    let Some(record) = object
+        .get_mut("codex_analysis")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    if record.get("source_revision").is_none_or(Value::is_null) {
+        if let Some(revision) = source_revision {
+            record.insert("source_revision".into(), Value::String(revision));
+        }
+    }
+    if record
+        .get("source_manifest_sha256")
+        .is_none_or(Value::is_null)
+    {
+        if let Some(sha256) = source_manifest_sha256 {
+            record.insert("source_manifest_sha256".into(), Value::String(sha256));
+        }
+    }
 }
 
 fn strip_legacy_core_only_codex_bindings(value: &mut Value) {
@@ -716,6 +766,50 @@ mod tests {
             lock.ai_optimization_profile,
             "Claude Code / Anthropic conventions"
         );
+    }
+
+    #[test]
+    fn legacy_lock_analysis_inherits_exact_existing_lock_source_evidence() {
+        let mut value: Value = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        value["codex_analysis"]
+            .as_object_mut()
+            .unwrap()
+            .remove("source_revision");
+        value["codex_analysis"]["source_manifest_sha256"] = Value::Null;
+        value["codex_analysis"]["auth_mode"] = json!("chatgpt");
+
+        let lock = migrate_lock(value).unwrap();
+        let record = lock.codex_analysis.unwrap();
+        assert_eq!(
+            record.source_revision.as_deref(),
+            Some(lock.source.revision.as_str())
+        );
+        assert_eq!(
+            record.source_manifest_sha256.as_deref(),
+            Some(lock.source.manifest_sha256.as_str())
+        );
+        crate::codex::validate_confirmed_record(&record).unwrap();
+    }
+
+    #[test]
+    fn legacy_lock_analysis_does_not_invent_missing_source_evidence() {
+        let mut value: Value = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        value["source"]["manifest_sha256"] = json!("legacy-unknown");
+        value["codex_analysis"]
+            .as_object_mut()
+            .unwrap()
+            .remove("source_manifest_sha256");
+
+        let lock = migrate_lock(value).unwrap();
+        let record = lock.codex_analysis.unwrap();
+        assert!(record.source_manifest_sha256.is_none());
+        assert!(crate::codex::validate_confirmed_record(&record).is_err());
     }
 
     #[test]

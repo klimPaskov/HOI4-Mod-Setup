@@ -297,7 +297,9 @@
         "output_sha256",
         "confirmed_fields",
         "confirmed_at",
-        "account_identity_persisted"
+        "account_identity_persisted",
+        "source_revision",
+        "source_manifest_sha256"
       ],
       "properties": {
         "engine": {
@@ -357,6 +359,14 @@
             "string",
             "null"
           ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source_revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "source_manifest_sha256": {
+          "type": "string",
           "pattern": "^[0-9a-f]{64}$"
         }
       }

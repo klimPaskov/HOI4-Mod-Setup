@@ -52,18 +52,6 @@ pub const REQUIRED_ANALYSIS_PROPOSAL_KEYS: &[&str] = &[
     "localisation_convention",
     "documentation_convention",
 ];
-pub const ALLOWED_COMPONENT_RECOMMENDATION_IDS: &[&str] = &[
-    "core.agents",
-    "core.skills",
-    "core.subagents",
-    "codex.config",
-    "mcp.hoi4_agent_tools",
-    "docs.source",
-    "template.chaos_redux_agents",
-    "wiki.snapshot",
-    "workflow.3d",
-    "workflow.super_events",
-];
 const MAX_JSONL_LINE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_BUFFERED_NOTIFICATIONS: usize = 128;
 const MAX_BUFFERED_NOTIFICATION_BYTES: usize = 2 * 1024 * 1024;
@@ -553,8 +541,7 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
                     "Codex returned no schema-constrained analysis output".into(),
                 )
             })?;
-        let analysis =
-            validate_analysis_output(output, &request.mode, &input_sha256, &request.evidence)?;
+        let analysis = validate_analysis_output(output, request, &input_sha256, &request.evidence)?;
         let output_bytes = serde_json::to_vec(&analysis)?;
         let record = CodexAnalysisRecord {
             engine: "codex_app_server".into(),
@@ -575,6 +562,8 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
             evidence_sha256: (!request.evidence.is_empty())
                 .then(|| evidence_manifest_sha256(&request.evidence))
                 .transpose()?,
+            source_revision: None,
+            source_manifest_sha256: None,
         };
         Ok(CodexAnalysisResult { analysis, record })
     }
@@ -1069,7 +1058,16 @@ pub fn validate_analysis_payload(bytes: &[u8]) -> Result<(), AppError> {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
-    validate_analysis_output(value, &requested_mode, &input_sha256, &[]).map(|_| ())
+    let request = CodexAnalysisRequest {
+        mode: requested_mode,
+        brief: String::new(),
+        evidence: Vec::new(),
+        constraints: json!({}),
+        analysis_purpose: None,
+        project_root: None,
+        scan_id: None,
+    };
+    validate_analysis_output(value, &request, &input_sha256, &[]).map(|_| ())
 }
 
 pub(crate) fn analysis_prompt_for_provider(
@@ -1131,7 +1129,7 @@ fn analysis_prompt(request: &CodexAnalysisRequest, input_sha256: &str) -> Result
 
 pub(crate) fn validate_analysis_output(
     value: Value,
-    requested_mode: &str,
+    request: &CodexAnalysisRequest,
     input_sha256: &str,
     evidence: &[ApprovedEvidence],
 ) -> Result<CodexAnalysis, AppError> {
@@ -1160,9 +1158,9 @@ pub(crate) fn validate_analysis_output(
         || analysis.input_sha256 != input_sha256
         || analysis.proposals.is_empty()
         || (analysis.mode == AnalysisMode::NewProjectIdentity
-            && requested_mode != "new_project_identity")
+            && request.mode != "new_project_identity")
         || (analysis.mode == AnalysisMode::ExistingProjectSemantics
-            && requested_mode != "existing_project_semantics")
+            && request.mode != "existing_project_semantics")
         || analysis.project_summary.trim().is_empty()
         || analysis.project_summary.chars().count() > 1200
     {
@@ -1212,11 +1210,13 @@ pub(crate) fn validate_analysis_output(
             "Codex analysis omitted one or more required semantic proposals".into(),
         ));
     }
+    let allowed_component_ids = analysis_component_registry_ids(request)?;
     if analysis
         .component_recommendations
         .iter()
         .any(|recommendation| {
-            !ALLOWED_COMPONENT_RECOMMENDATION_IDS.contains(&recommendation.component_id.as_str())
+            !valid_component_recommendation_id(&recommendation.component_id)
+                || !allowed_component_ids.contains(&recommendation.component_id)
                 || recommendation.reason.chars().count() > 500
         })
         || analysis
@@ -1235,10 +1235,82 @@ pub(crate) fn validate_analysis_output(
         validate_user_facing_analysis_text(warning, "Codex warning")?;
     }
     for recommendation in &analysis.component_recommendations {
+        reject_sensitive_output_value(&Value::String(recommendation.component_id.clone()))?;
         validate_output_text(&recommendation.reason, "Codex recommendation reason")?;
         validate_user_facing_analysis_text(&recommendation.reason, "Codex recommendation reason")?;
     }
     Ok(analysis)
+}
+
+fn analysis_component_registry_ids(
+    request: &CodexAnalysisRequest,
+) -> Result<BTreeSet<String>, AppError> {
+    let Some(registry) = request.constraints.get("component_registry") else {
+        return Ok(BTreeSet::new());
+    };
+    let object = registry.as_object().ok_or_else(|| {
+        AppError::InvalidInput("the component recommendation registry is malformed".into())
+    })?;
+    if object.len() != 3
+        || !object.contains_key("source_revision")
+        || !object.contains_key("manifest_sha256")
+        || !object.contains_key("component_ids")
+    {
+        return Err(AppError::InvalidInput(
+            "the component recommendation registry is incomplete".into(),
+        ));
+    }
+    let revision = object
+        .get("source_revision")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let manifest_sha256 = object
+        .get("manifest_sha256")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if revision.len() != 40
+        || !revision.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || manifest_sha256.len() != 64
+        || !manifest_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(AppError::InvalidInput(
+            "the component recommendation registry identity is invalid".into(),
+        ));
+    }
+    let component_ids = object
+        .get("component_ids")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            AppError::InvalidInput("the component recommendation registry has no IDs".into())
+        })?;
+    if component_ids.len() > 4096 {
+        return Err(AppError::InvalidInput(
+            "the component recommendation registry is too large".into(),
+        ));
+    }
+    let mut allowed = BTreeSet::new();
+    for component_id in component_ids {
+        let component_id = component_id.as_str().ok_or_else(|| {
+            AppError::InvalidInput("the component recommendation registry has an invalid ID".into())
+        })?;
+        if !valid_component_recommendation_id(component_id)
+            || !allowed.insert(component_id.to_string())
+        {
+            return Err(AppError::InvalidInput(
+                "the component recommendation registry has an invalid or duplicate ID".into(),
+            ));
+        }
+    }
+    Ok(allowed)
+}
+
+fn valid_component_recommendation_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && (value.as_bytes()[0].is_ascii_lowercase() || value.as_bytes()[0].is_ascii_digit())
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+        })
 }
 
 fn validate_user_facing_analysis_text(value: &str, label: &str) -> Result<(), AppError> {
@@ -2176,6 +2248,16 @@ pub fn validate_confirmed_record(record: &CodexAnalysisRecord) -> Result<(), App
             .evidence_sha256
             .as_deref()
             .is_some_and(|hash| !is_sha256(hash))
+        || record.source_revision.as_deref().is_none_or(|revision| {
+            revision.len() != 40
+                || !revision
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        })
+        || record
+            .source_manifest_sha256
+            .as_deref()
+            .is_none_or(|hash| !is_sha256(hash))
         || (provider != "codex"
             && record
                 .optimization_profile
@@ -2466,6 +2548,24 @@ mod tests {
             ],
             "warnings": []
         })
+    }
+
+    fn analysis_request_with_component_registry(component_ids: &[&str]) -> CodexAnalysisRequest {
+        CodexAnalysisRequest {
+            mode: "new_project_identity".into(),
+            brief: "brief".into(),
+            evidence: Vec::new(),
+            constraints: json!({
+                "component_registry": {
+                    "source_revision": "a".repeat(40),
+                    "manifest_sha256": "b".repeat(64),
+                    "component_ids": component_ids,
+                }
+            }),
+            analysis_purpose: None,
+            project_root: None,
+            scan_id: None,
+        }
     }
 
     #[test]
@@ -2840,7 +2940,7 @@ mod tests {
             "warnings": [],
             "hidden_reasoning": "must not be accepted"
         });
-        assert!(validate_analysis_output(value, "new_project_identity", &input, &[]).is_err());
+        assert!(validate_analysis_output(value, &request, &input, &[]).is_err());
     }
 
     #[test]
@@ -2866,7 +2966,7 @@ mod tests {
             "warnings": []
         });
 
-        let error = validate_analysis_output(value, "new_project_identity", &input, &[])
+        let error = validate_analysis_output(value, &request, &input, &[])
             .unwrap_err()
             .to_string();
 
@@ -2874,21 +2974,44 @@ mod tests {
     }
 
     #[test]
-    fn analysis_output_rejects_unknown_components_and_account_shaped_text() {
+    fn analysis_output_accepts_forward_compatible_component_ids_and_rejects_invalid_ids() {
         let input = "a".repeat(64);
-        assert!(validate_analysis_output(
-            valid_analysis_value(&input),
-            "new_project_identity",
-            &input,
-            &[],
-        )
-        .is_ok());
-
-        let mut unknown_component = valid_analysis_value(&input);
-        unknown_component["component_recommendations"][0]["component_id"] =
-            json!("invented.component");
+        let request = analysis_request_with_component_registry(&[
+            "core.skills",
+            "workflow.future_addition",
+            "2d.future_component",
+        ]);
         assert!(
-            validate_analysis_output(unknown_component, "new_project_identity", &input, &[],)
+            validate_analysis_output(valid_analysis_value(&input), &request, &input, &[],).is_ok()
+        );
+
+        let mut future_component = valid_analysis_value(&input);
+        future_component["component_recommendations"][0]["component_id"] =
+            json!("workflow.future_addition");
+        assert!(validate_analysis_output(future_component, &request, &input, &[]).is_ok());
+
+        let mut digit_component = valid_analysis_value(&input);
+        digit_component["component_recommendations"][0]["component_id"] =
+            json!("2d.future_component");
+        assert!(validate_analysis_output(digit_component, &request, &input, &[]).is_ok());
+
+        let mut absent_component = valid_analysis_value(&input);
+        absent_component["component_recommendations"][0]["component_id"] =
+            json!("workflow.not_in_manifest");
+        assert!(validate_analysis_output(absent_component, &request, &input, &[]).is_err());
+
+        let mut invalid_component = valid_analysis_value(&input);
+        invalid_component["component_recommendations"][0]["component_id"] =
+            json!("Workflow/Future");
+        assert!(validate_analysis_output(invalid_component, &request, &input, &[]).is_err());
+
+        let mut sensitive_component = valid_analysis_value(&input);
+        sensitive_component["component_recommendations"][0]["component_id"] =
+            json!("account_id.private");
+        let sensitive_request =
+            analysis_request_with_component_registry(&["core.skills", "account_id.private"]);
+        assert!(
+            validate_analysis_output(sensitive_component, &sensitive_request, &input, &[],)
                 .is_err()
         );
 
@@ -2900,8 +3023,7 @@ mod tests {
             let mut account_shaped = valid_analysis_value(&input);
             *account_shaped.pointer_mut(pointer).unwrap() = json!(value);
             assert!(
-                validate_analysis_output(account_shaped, "new_project_identity", &input, &[],)
-                    .is_err(),
+                validate_analysis_output(account_shaped, &request, &input, &[]).is_err(),
                 "{pointer}"
             );
         }
@@ -2916,8 +3038,7 @@ mod tests {
             let mut account_shaped = valid_analysis_value(&input);
             account_shaped["proposals"][4]["value"] = json!(value);
             assert!(
-                validate_analysis_output(account_shaped, "new_project_identity", &input, &[],)
-                    .is_err(),
+                validate_analysis_output(account_shaped, &request, &input, &[]).is_err(),
                 "{value}"
             );
         }
@@ -2931,22 +3052,14 @@ mod tests {
     #[test]
     fn analysis_output_rejects_unknown_descriptor_tags_and_internal_notes() {
         let input_sha256 = "a".repeat(64);
+        let request = analysis_request_with_component_registry(&["core.skills"]);
         let mut invalid_tag = valid_analysis_value(&input_sha256);
         invalid_tag["proposals"][5]["value"] = json!(["Total Conversion"]);
-        assert!(
-            validate_analysis_output(invalid_tag, "new_project_identity", &input_sha256, &[],)
-                .is_err()
-        );
+        assert!(validate_analysis_output(invalid_tag, &request, &input_sha256, &[]).is_err());
 
         let mut internal_note = valid_analysis_value(&input_sha256);
         internal_note["warnings"] = json!(["The approved input contains no evidence_refs."]);
-        assert!(validate_analysis_output(
-            internal_note,
-            "new_project_identity",
-            &input_sha256,
-            &[],
-        )
-        .is_err());
+        assert!(validate_analysis_output(internal_note, &request, &input_sha256, &[],).is_err());
     }
 
     #[test]
@@ -3328,6 +3441,8 @@ mod tests {
             project_root: Some("C:/Users/private/mod".into()),
             scan_id: Some(scan_id),
             evidence_sha256: None,
+            source_revision: Some("a".repeat(40)),
+            source_manifest_sha256: Some("c".repeat(64)),
         };
         let value = serde_json::to_value(record).unwrap();
 
@@ -3450,6 +3565,8 @@ mod tests {
             project_root: None,
             scan_id: None,
             evidence_sha256: None,
+            source_revision: Some("a".repeat(40)),
+            source_manifest_sha256: Some("c".repeat(64)),
         };
         assert!(confirm_analysis_record(&record, &analysis, &["project_id".into()]).is_err());
         let all_fields = REQUIRED_ANALYSIS_PROPOSAL_KEYS

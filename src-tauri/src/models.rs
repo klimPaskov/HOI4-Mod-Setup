@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-pub const SUPPORTED_MANIFEST_MAJOR: u64 = 1;
+pub const SUPPORTED_MANIFEST_MAJOR: u64 = 2;
 
 pub const TRANSACTION_STAGES: [&str; 12] = [
     "preflight",
@@ -678,6 +678,23 @@ pub struct ExternalAction {
     pub verified_runtime_sha256: Option<String>,
     #[serde(default)]
     pub verified_runtime_size: Option<u64>,
+    /// Immutable public package identity used by a reviewed package-backed
+    /// integration. The values come from the exact resolved source manifest;
+    /// renderer input can never supply or override them.
+    #[serde(default)]
+    pub verified_package_name: Option<String>,
+    #[serde(default)]
+    pub verified_package_version: Option<String>,
+    #[serde(default)]
+    pub verified_package_integrity: Option<String>,
+    #[serde(default)]
+    pub verified_package_tree_sha256: Option<String>,
+    #[serde(default)]
+    pub verified_package_file_count: Option<u64>,
+    #[serde(default)]
+    pub verified_runtime_entry: Option<String>,
+    #[serde(default)]
+    pub required_tool_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1271,4 +1288,11 @@ pub struct CodexAnalysisRecord {
     pub scan_id: Option<Uuid>,
     #[serde(default)]
     pub evidence_sha256: Option<String>,
+    /// Exact resolved source registry used to validate provider component
+    /// recommendations. These non-secret fields are persisted so plan
+    /// generation cannot mix semantic output with a newer manifest.
+    #[serde(default)]
+    pub source_revision: Option<String>,
+    #[serde(default)]
+    pub source_manifest_sha256: Option<String>,
 }

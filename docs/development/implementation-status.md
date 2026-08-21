@@ -24,8 +24,8 @@ This document is the concise developer status. User guidance stays in the root
 - Rust unit/property tests, fuzz targets, transaction fault injection,
   frontend/accessibility tests, workflow authority checks, and Windows/macOS
   native build and launch-smoke workflows.
-- User-facing release curation that publishes only the Windows installer and
-  two macOS disk images.
+- User-facing release curation that publishes three installers, `latest.json`,
+  and two macOS updater archives.
 - Automatic signed startup update checks that download, verify, replace, and
   restart into the latest version, with retry after failure.
 - Existing-project ChatGPT source packaging with a Downloads default, required
@@ -53,9 +53,20 @@ desktop command dispatch away from the UI event loop.
 ## Current source and release boundary
 
 The published Agentic HOI4 Modding `main` used for this update is at commit
-`a0fdfff1f50d3e5794021e06bfa8bb97f70e0370`. Its manifest declares the
+`de7dab486e99ce926de60905e8930b20fb0eab04`. Its manifest declares the
 selected-file records generated from immutable Git blobs at revision
-`59bf7f23c25951ec613b0f36a6921277d16f1354`.
+`78da3473fa7a6260944ed1df9febdab85644083e`. The core profile now includes the
+managed HOI4 Agent Tools integration guide; enabled portrait providers expand
+through the verified portrait router; generic skills include Debug and
+Playtest; generic subagents include the AI probability auditor and event UI
+worker; and the optional 3D package includes the bounded Blender adapter.
+
+The immutable inventory is synchronized. The MCP declaration names the working
+Technology Tree Viewer tools, and the 3D component declares `uv` plus the
+reviewed bootstrap arguments and external-state boundary. The Agentic
+repository now regenerates its setup manifest when declared source trees
+change; Latest-mode setup and update consume compatible new skills, subagents,
+default-profile additions, and optional components without a new app binary.
 
 The release route produces a ChaosX Authenticode-signed Windows installer and
 ad-hoc signed macOS disk images when official credentials are absent. The same

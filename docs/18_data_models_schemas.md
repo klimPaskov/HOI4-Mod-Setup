@@ -8,7 +8,10 @@ owned by the OS credential vault. Project state, plans, locks, readiness
 reports, logs, and support bundles never contain tokens, keys, full account
 identity, plan type, usage, rate limits, thread history, or hidden reasoning.
 
-Persist only the integration type, auth state needed by the current application session, analysis ID, schema version, input and output digests, confirmed proposal keys, confirmation time, and a proof that account identity was not persisted.
+Persist only the integration type, auth state needed by the current application
+session, analysis ID, schema version, input and output digests, confirmed
+proposal keys, confirmation time, the exact non-secret source revision and
+source-manifest SHA-256, and a proof that account identity was not persisted.
 
 ## Included schemas
 
@@ -62,7 +65,9 @@ The lock records source revisions, the exact required wiki-page list and
 snapshot/media/provenance/license metadata for that revision, generated and
 downloaded files, external launcher ownership, installed hashes, merge
 decisions, optional states including `workflow.super_events`, and confirmed
-analysis digests. A legacy lock
+analysis digests bound to the same exact source revision and manifest SHA-256.
+A legacy lock may backfill those analysis fields only from valid source
+evidence already present in that lock; absent provenance remains blocked. A legacy lock
 missing either the list or metadata is readable but readiness remains
 incomplete until source evidence is refreshed. It must never be used as an
 authentication cache.
@@ -111,7 +116,8 @@ never serialized into project state, a plan, or a lock.
 Schemas use explicit versions. The 1.0 lock migration inserts an empty
 `wiki_required_pages` marker for legacy locks; missing `wiki_metadata` is also
 treated as incomplete rather than guessing from the current application
-bundle. Add migrations before changing required fields. Unknown major versions
+bundle. It also binds older confirmed analysis metadata to the lock's own
+existing source identity when both values are valid. Add migrations before changing required fields. Unknown major versions
 block.
 Unknown minor fields can be ignored only when the schema permits them.
 

@@ -5,46 +5,72 @@
 This planning package uses two evidence sets:
 
 1. The project files supplied with the request, including all Markdown skills, all supplied subagent TOML files, the project instruction file, the mechanics guide, and the current event, cluster, and scenario catalog CSV snapshots.
-2. The initial audit resolved the live `klimPaskov/Agentic-HOI4-Modding` repository to commit `27128a7b311d728a959afff7238a9aeeb9987f2b` on `main` on 26 July 2026. The published Agentic `main` revision used for this update is `a0fdfff1f50d3e5794021e06bfa8bb97f70e0370`; it contains the portrait lock removal and Super Events filename adaptation contract. The portrait integration adds a provider-neutral portrait contract, one selected-provider skill component, a bounded subagent, and non-secret config containing the exact upstream revision alongside `workflow.super_events`. The application resolves the remote manifest at runtime and retains the bundled copy only as offline bootstrap evidence.
+2. The initial audit resolved the live `klimPaskov/Agentic-HOI4-Modding` repository to commit `27128a7b311d728a959afff7238a9aeeb9987f2b` on `main` on 26 July 2026. The current audit resolved the remote default branch `main` to published commit `de7dab486e99ce926de60905e8930b20fb0eab04` on 21 August 2026. That publication binds the complete portrait contract and provider router, Debug and Playtest skill, AI probability and event UI subagents, HOI4 Agent Tools integration guide, formable-state template package, expanded decision-category references, the Technology Tree Viewer routes, and the execution-locked Blender/Meshy 3D workflow. The application resolves the remote manifest at runtime and retains the bundled copy only as offline bootstrap evidence.
 
-Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. The checked-in app manifest matches the published Agentic manifest and its evidence is generated from immutable source revision `59bf7f23c25951ec613b0f36a6921277d16f1354`.
+Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. The checked-in app manifest matches the published Agentic manifest byte-for-byte and its evidence is generated from immutable source revision `78da3473fa7a6260944ed1df9febdab85644083e`.
 
 ## Fully read and processed
 
 The supplied text sources were loaded, parsed, section-indexed, and reviewed. This covers `AGENTS(4).md`, `CHAOS_REDUX_MECHANICS(4).md`, every supplied skill Markdown file, every supplied `chaosx_*.toml` subagent file, and all three supplied catalog CSV snapshots.
 
-The live repository inspection covered every current generic skill and every current generic Codex subagent TOML resolved at the inspected commit. It also covered:
+The live repository inspection re-inventoried every manifest-declared skill and
+Codex subagent path and verified its immutable Git-blob evidence. The current
+sync inspected the added and changed contract surfaces, including:
 
 - `README.md`
 - `AGENTS_template.md`
 - `AGENTS_chaos_redux.md`
 - `.codex/config.toml`
 - the generic 3D skill and 3D subagent
+- the Debug and Playtest skill, portrait router, AI probability auditor, and
+  event UI worker
 - `.tools/3d_pipeline/bootstrap_3d_workflow.py`
-- the Meshy and Blender wrapper commands
+- the bounded `blender_hoi4` adapter, worker, profiles, and Meshy contract
+- the app-owned Meshy launcher contract plus Blender Lab and production Blender adapter wrappers
 - the checked-in 3D dependency record
+- `docs/systems/hoi4_agent_tools_mcp_integration.md`
 - the offline wiki directory structure and observed page names
 - the wiki snapshot marker filename
 - `.gitignore`
 - the source-declared Codex and provider configuration
 
+Unchanged workflow prose remains covered by its prior full-read audit plus the
+new exact path, size, and SHA-256 inventory. The current sync does not claim a
+fresh line-by-line semantic review of every unchanged wiki or workflow file.
+
 ## Verification limits
 
 The body of every offline wiki article was not fully read. The installer design inspected the distribution, observed page set, required core page names, and snapshot marker. Binary media in the wiki and visual reference libraries were not individually inspected. Their paths, containment, hashes, and component ownership belong to installation validation.
 
-No formal root `LICENSE` file or `paradox_wiki/LICENSE` file was found at the tested paths. The repository README contains permissive wording, but this package does not treat that wording as a verified formal license. The proposed manifest records repository license evidence as `declared_unverified` and wiki license status as `not_found`.
+No formal root `LICENSE` file or `paradox_wiki/LICENSE` file was found in the
+audited Agentic HOI4 Modding source checkout at the tested paths. (The HOI4 Mod
+Setup application repository has its own Apache-2.0 `LICENSE`.) The Agentic
+repository README contains permissive wording, but this package does not treat
+that wording as a verified formal license. The current source manifest records
+both Agentic repository license evidence and wiki license status as
+`not_found`.
 
 The updated root manifest at commit
-`a0fdfff1f50d3e5794021e06bfa8bb97f70e0370` has raw SHA-256
-`bcc83e26c7d04136b191f66060be3c52afe89392b95f2a7332505794c2a88b17`
+`de7dab486e99ce926de60905e8930b20fb0eab04` has raw SHA-256
+`ad40bdc6acefd990a074c63c9a27f85a79b4be750b4bb77139d5ed623acbd26e`
 and declares `generated_for_revision`
-`59bf7f23c25951ec613b0f36a6921277d16f1354`. Its declared file records
-cover 23 components and were generated from immutable Git blob bytes before
+`78da3473fa7a6260944ed1df9febdab85644083e`. Its 1,148 declared file records
+cover 26 components and were generated from immutable Git blob bytes before
 publication.
 
 The manifest is now published upstream infrastructure. Runtime resolution
 still verifies the manifest and every selected blob against one exact source
 revision before staging.
+
+### Corrected publication declarations
+
+The publication now names the implemented Technology Tree Viewer tools exactly
+as `hoi4.tech_inspect`, `hoi4.tech_render`, and `hoi4.tech_compare`. It also
+declares `uv` as a required 3D tool and binds the reviewed bootstrap arguments,
+network access, expected external writes, current-user privilege, and rollback
+boundary. The upstream workflow regenerates manifest file evidence whenever a
+declared source tree changes, so new or changed skills and subagents can be
+consumed by the app without releasing a new app binary.
 
 ## Live repository inventory
 
@@ -62,6 +88,7 @@ revision before staging.
 Generic skills reviewed:
 
 - `hoi4-3d-model-pipeline`
+- `hoi4-debug-playtest`
 - `hoi4-decisions-missions`
 - `hoi4-events`
 - `hoi4-feature-assets`
@@ -73,14 +100,25 @@ Generic skills reviewed:
 - `hoi4-subagents`
 - `hoi4-text-audio-research`
 
+Selected-only workflow skills reviewed:
+
+- `hoi4-portrait-production`
+- `hoi4-comfyui`
+- `hoi4-comfyui-cloud`
+- `hoi4-comfyui-local`
+- `hoi4-comfyui-runpod`
+- `hoi4-super-events`
+
 Generic subagents reviewed:
 
 - `hoi4_3d_model_pipeline`
+- `hoi4_ai_probability_auditor`
 - `hoi4_asset_source_researcher`
 - `hoi4_audio_researcher`
 - `hoi4_country_package_auditor`
 - `hoi4_decision_mission_auditor`
 - `hoi4_documentation_curator`
+- `hoi4_event_ui_worker`
 - `hoi4_feature_completion_auditor`
 - `hoi4_focus_tree_auditor`
 - `hoi4_generated_feature_art`
@@ -92,6 +130,13 @@ Generic subagents reviewed:
 - `hoi4_scripted_system_architect`
 - `hoi4_skill_maintainer`
 - `hoi4_spreadsheet_doc_worker`
+
+Selected-only workflow subagents reviewed:
+
+- `hoi4_portrait_creator`
+- `hoi4_super_event_art_researcher`
+- `hoi4_super_event_audio_researcher`
+- `hoi4_super_event_quote_researcher`
 
 ## Findings that shape the product
 
@@ -105,7 +150,7 @@ The inspected `.codex/config.toml` uses `hoi4-agent-tools.cmd`. The application 
 
 ### Current 3D setup is Windows-oriented
 
-The bootstrap and wrappers use `.cmd`, PowerShell guidance, `winget`, `blender.exe`, Windows Program Files, and LocalAppData. The app must not invent Homebrew packages, shell scripts, Blender paths, or macOS commands. On macOS, this optional workflow is `unsupported_platform` until the repository adds a route.
+The bootstrap, production `blender_hoi4` adapter, and wrappers use `.cmd`, PowerShell guidance, `winget`, `blender.exe`, Windows Program Files, and LocalAppData. The app must not invent Homebrew packages, shell scripts, Blender paths, or macOS commands. On macOS, this optional workflow is `unsupported_platform` until the repository adds a route.
 
 ### 3D version policy documentation has drift
 
@@ -130,14 +175,13 @@ The supplied Chaos Redux event catalog snapshot contains hundreds of mixed-state
 3. Differences are recorded and reviewed. They are never silently resolved.
 4. Repository scripts define actual executable behavior. Documentation remains guidance and evidence.
 
-## Repository work remaining before production
+## Remaining source limitations
 
-- declare platform support for command-bearing components where the source
-  provides a verified route
-- add wiki source and license metadata when available
-- define stable MCP health checks with immutable executable provenance
-- add preflight-only output to scripts that install external dependencies
-- publish a machine-readable list of runtime-generated files
+- add formal Agentic repository and wiki license evidence when available
+- publish new or changed executable routes only alongside a reviewed app-owned
+  allowlisted adapter; file-only component additions remain dynamic
+- retain the current immutable MCP package-tree and live tool-list health
+  evidence whenever the supported package is republished
 
 ## Open-source GitHub repository references
 

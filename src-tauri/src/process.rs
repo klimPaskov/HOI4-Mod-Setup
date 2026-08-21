@@ -38,6 +38,74 @@ pub struct ProcessResult {
     pub timed_out: bool,
 }
 
+#[cfg(target_os = "windows")]
+struct ChildProcessContainment {
+    job: windows_sys::Win32::Foundation::HANDLE,
+}
+
+#[cfg(target_os = "windows")]
+impl ChildProcessContainment {
+    fn attach(child: &Child) -> Result<Self, AppError> {
+        use std::mem::{size_of, zeroed};
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+
+        // SAFETY: the job receives no name, the zeroed information structure
+        // is initialized before use, and the child process handle remains
+        // valid for the duration of this call.
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return Err(AppError::Process(
+                    "Windows process containment could not create a Job Object".into(),
+                ));
+            }
+            let mut information: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = zeroed();
+            information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &information as *const _ as *const _,
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            ) == 0
+                || AssignProcessToJobObject(job, child.as_raw_handle() as _) == 0
+            {
+                windows_sys::Win32::Foundation::CloseHandle(job);
+                return Err(AppError::Process(
+                    "Windows process containment could not bind the reviewed child".into(),
+                ));
+            }
+            Ok(Self { job })
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for ChildProcessContainment {
+    fn drop(&mut self) {
+        // SAFETY: this object exclusively owns the valid job handle. Closing
+        // it terminates any surviving descendants because KILL_ON_JOB_CLOSE
+        // was set before the child was assigned.
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.job);
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+struct ChildProcessContainment;
+
+#[cfg(not(target_os = "windows"))]
+impl ChildProcessContainment {
+    fn attach(_child: &Child) -> Result<Self, AppError> {
+        Ok(Self)
+    }
+}
+
 impl ProcessSpec {
     pub fn validate(&self, allowlisted_executables: &[PathBuf]) -> Result<(), AppError> {
         if self.executable.as_os_str().is_empty() {
@@ -315,6 +383,14 @@ impl ProcessSpec {
         let mut child = command
             .spawn()
             .map_err(|error| AppError::Process(format!("spawn failed: {error}")))?;
+        let _containment = match ChildProcessContainment::attach(&child) {
+            Ok(containment) => containment,
+            Err(error) => {
+                terminate_process_tree(&mut child);
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
         let stdout_pipe = child
             .stdout
             .take()
@@ -706,6 +782,58 @@ pub fn validate_executable_publisher(
     }
 }
 
+/// Relay stdio to one already-private, hash-bound credential-bearing runtime.
+/// This is intentionally narrower than ProcessSpec: it exists for an MCP
+/// server whose JSONL stream belongs to Codex rather than the desktop UI.
+pub(crate) fn run_private_credential_stdio_proxy(
+    executable: &Path,
+    expected_sha256: &str,
+    args: &[String],
+    environment_name: &str,
+    environment_value: &str,
+) -> Result<i32, AppError> {
+    if !executable.is_absolute()
+        || environment_name != "MESHY_API_KEY"
+        || environment_value.trim().is_empty()
+        || args.is_empty()
+        || args.iter().any(|value| value.contains('\0'))
+        || crate::security::sha256_file(executable)? != expected_sha256
+    {
+        return Err(AppError::Process(
+            "the private credential-bearing runtime identity is invalid".into(),
+        ));
+    }
+    let mut command = Command::new(executable);
+    command
+        .args(args)
+        .env_clear()
+        .env(environment_name, environment_value)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    add_safe_environment(&mut command);
+    configure_child_no_console_window(&mut command);
+    configure_child_process_group(&mut command);
+    if crate::security::sha256_file(executable)? != expected_sha256 {
+        return Err(AppError::Process(
+            "the private credential-bearing runtime changed before spawn".into(),
+        ));
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| AppError::Process(format!("private runtime spawn failed: {error}")))?;
+    let _containment = match ChildProcessContainment::attach(&child) {
+        Ok(containment) => containment,
+        Err(error) => {
+            terminate_process_tree(&mut child);
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
+    let status = child.wait()?;
+    Ok(status.code().unwrap_or(1))
+}
+
 /// Resolve the platform's system browser through a fixed OS-owned executable
 /// path. Login URLs are validated by the Codex boundary before this function
 /// is used; this helper never accepts a renderer-supplied executable or PATH
@@ -956,6 +1084,37 @@ mod tests {
         assert_eq!(result.status_code, Some(0));
         assert!(result.stdout.contains("[REDACTED]"));
         assert!(!result.stdout.contains("mesh_key_process_test"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn closing_the_job_object_terminates_a_reviewed_child() {
+        let executable = std::fs::canonicalize(std::env::var_os("ComSpec").unwrap()).unwrap();
+        let mut command = Command::new(executable);
+        command
+            .args(["/D", "/C", "ping 127.0.0.1 -n 60 >NUL"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        configure_child_no_console_window(&mut command);
+        let mut child = command.spawn().unwrap();
+        let containment = ChildProcessContainment::attach(&child).unwrap();
+
+        drop(containment);
+
+        let stopped = (0..100).any(|_| match child.try_wait() {
+            Ok(Some(_)) => true,
+            Ok(None) => {
+                std::thread::sleep(Duration::from_millis(10));
+                false
+            }
+            Err(_) => false,
+        });
+        if !stopped {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        assert!(stopped, "the Job Object left the reviewed child running");
     }
 
     #[cfg(unix)]

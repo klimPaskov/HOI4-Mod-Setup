@@ -6,7 +6,41 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
-## 0.2.12 - 2026-08-13
+## 0.2.13 - 2026-08-21
+
+- Bind confirmed semantic analysis to the exact source revision and manifest
+  digest, preserve installed source pins during maintenance reanalysis, and
+  migrate older records only from valid provenance in the same lock.
+- Disable platform-incompatible manifest components, show complete dependency
+  and file evidence, and provide an announced, focus-safe Retry action when
+  source loading fails.
+- Keep stable releases tag-only, verify uploaded draft assets byte-for-byte
+  before publication, and exercise first install, repair, removal, and rollback
+  on every native release runner.
+- Pin Nano ID 3.3.18 so the high-severity dependency audit remains clear.
+- Move the expanded automatic MCP/3D contract to the versioned schema-2
+  manifest route while retaining a schema-1 compatibility manifest for
+  already installed app versions.
+
+- Consume compatible new Agentic HOI4 Modding skills, subagents,
+  default-profile additions, and optional workflow declarations from the exact
+  published manifest without requiring a new app release.
+- Advertise the working Technology Tree Viewer routes
+  `hoi4.tech_inspect`, `hoi4.tech_render`, and `hoi4.tech_compare` from verified
+  source evidence.
+- Verify the complete installed HOI4 Agent Tools package tree, use a conforming
+  MCP JSON-RPC initialize handshake, require exact protocol negotiation and
+  the `tools` capability, execute a private verified package copy, and bind the
+  one health result into the transaction journal before readiness.
+- Make selected Windows 3D setup automatic after review: prepare the bounded
+  Meshy/Blender MCP routes, verify and run the source bootstrap with OS-vault
+  credentials, declare and prepare `uv`, and persist honest optional readiness
+  without weakening core setup or rollback boundaries.
+- Isolate the verified Python bootstrap, keep Meshy credentials out of Blender
+  and dependency children, pin Meshy registry integrity and the io_pdx_mesh
+  archive digest, execute Meshy from a complete lockfile-verified private
+  runtime through the app-owned executable instead of project/PATH launchers,
+  and checkpoint each selected external action separately.
 
 - Complete read-only scans of very large HOI4 mods by inventorying only
   agentic setup surfaces: descriptors, instructions, skills, subagents,

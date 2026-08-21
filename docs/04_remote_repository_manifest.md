@@ -2,13 +2,17 @@
 
 ## Purpose
 
-The remote manifest is the installation contract between Agentic-HOI4-Modding and HOI4 Mod Setup. The proposed discovery path is:
+The remote manifest is the installation contract between Agentic-HOI4-Modding and HOI4 Mod Setup. The current discovery path is:
 
 ```text
-hoi4-mod-setup.manifest.json
+hoi4-mod-setup.v2.manifest.json
 ```
 
-A release may later provide the same manifest and a compact file index as signed assets.
+`hoi4-mod-setup.manifest.json` remains a schema-1 compatibility route for
+already released clients. It is generated from the same exact revision but
+omits schema-2 command parameters. New automation metadata is never added to a
+published schema major after clients have shipped; incompatible additions use
+a new versioned path and major.
 
 ## Latest mode
 
@@ -66,6 +70,51 @@ Each component defines:
 - validation
 - update behavior
 - capabilities and notes
+
+The Agentic repository owns a generator and publication workflow for this
+manifest. A relevant push enumerates only declared component source trees,
+computes exact path/size/SHA-256 evidence from the pushed revision, validates
+the result, verifies that `main` did not move underneath the run, and publishes
+the refreshed manifest in a follow-up commit. New files inside `core.skills`
+and `core.subagents` therefore require no app release. A genuinely new
+component still needs an explicit source-owned component/profile declaration;
+the app consumes compatible file-only declarations generically and never
+invents them. A new or changed command-bearing component additionally requires
+an app-owned allowlisted runtime adapter and therefore an app release.
+
+At runtime Latest resolves the publication commit first and uses one immutable
+revision for manifest and file downloads. New setup seeds the resolved default
+profile. Update compares the installed manifest's default profile with the
+newly resolved one and adds only newly published, provider-compatible,
+platform-supported defaults, preserving earlier optional choices.
+
+The current core profile includes `docs.mcp_integration`, a managed copy of the
+repository's HOI4 Agent Tools capability, evidence, recovery, and
+troubleshooting guide. It depends on `mcp.hoi4_agent_tools`, so the guide and
+the reviewed MCP declaration remain bound to the same source revision.
+
+The current portrait graph installs `workflow.portraits.core` plus
+`workflow.portraits.router`, exactly one of the Cloud, Local, or RunPod provider
+components, the bounded portrait subagent, and non-secret configuration. The
+router is a dependency of each provider component; it is not synthesized by
+the app or installed for Disabled projects.
+
+The current Windows-only `workflow.3d` package includes the repository-owned
+`blender_hoi4` production adapter, bounded worker, asset profiles, Meshy tool
+contract, dependency record, bootstrap, and reviewed wrappers. Unrestricted
+Blender Lab remains development-only; none of this evidence creates a macOS
+route.
+
+Its reviewed `3d.bootstrap` command runs automatically during transaction
+post-install checks only after managed files validate. The manifest must match
+the app-owned allowlisted command ID and fixed arguments; it also declares
+network access, expected external writes, current-user privilege, and rollback
+boundary. The app never executes arbitrary manifest commands, so changing the
+3D command contract requires an app release. The runner verifies the installed
+bootstrap bytes, injects `MESHY_API_KEY` only from the OS vault, and persists
+`ready` only after an exit-zero verified-config run. Missing credentials or
+prerequisites leave the optional workflow `incomplete` without blocking core
+readiness.
 
 The complete schema is `schemas/remote-manifest.schema.json`.
 
@@ -149,12 +198,21 @@ Built-in declarative validators include exists, SHA-256, JSON Schema, TOML parse
 Command-bearing validation rules are copied into the typed installation plan as
 high-risk external actions. The dry run shows the manifest target and approval
 requirement; the core does not accept a renderer-supplied executable or command
-line. After installation, an optional workflow check re-resolves the manifest at
-the lock revision and verifies the installed target's SHA-256 and size before
-starting its manifest-derived route. A wrapper route also requires immutable
-size and SHA-256 evidence for every command interpreter and runtime dependency
-that the core resolves (currently `cmd.exe` and Node on the Windows MCP route)
-and rechecks the interpreter identity immediately before spawn.
+line. The package-backed Windows MCP route is an explicit exception to static
+Node hashes because the reviewed current-user Node LTS build can vary: the
+manifest instead binds exact npm integrity, the full canonical installed
+package tree, runtime entry, and tools. Rust requires a valid OpenJS Foundation
+signature, captures the local Node hash, and rechecks it at spawn. The wrapper
+is never executed.
+
+The closed `validation.parameters` object admits the paired
+`executable_sha256`/`executable_size`, `interpreter_sha256`/`interpreter_size`,
+and `runtime_sha256`/`runtime_size` identity fields plus package name, version,
+registry integrity, canonical package-tree SHA-256/file count, runtime entry,
+required tools, bounded `arguments`, `network_access`, `expected_writes`,
+`privilege`, and `rollback_boundary` action evidence. Draft 2020-12 validation
+rejects any other parameter, while deterministic Rust validates each declared
+identity before planning or execution.
 
 If a manifest does not provide immutable executable identity evidence, the
 action remains visible in the dry run but the health route is
@@ -162,9 +220,8 @@ action remains visible in the dry run but the health route is
 Installed readiness may detect that the exact configured command exists on the
 reviewed PATH and display it as configured, but discovery alone never executes
 or authorizes the command.
-The current HOI4 MCP declaration is in this honest state because the inspected
-source provides no executable, interpreter, or runtime hash/size evidence,
-package identity, or version evidence.
+The current HOI4 MCP declaration provides the complete package-backed evidence
+above. Missing or mismatched evidence blocks the route before process start.
 
 ## Update behavior
 

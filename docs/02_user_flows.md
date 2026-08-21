@@ -83,6 +83,20 @@ On one Optional workflows screen, show these titles in order:
 2. **Super Events workflow**
 3. **ComfyUI portrait production**
 
+Compatible additional optional `workflow.*` components published by the
+resolved manifest appear after these stable product rows. They are explicit
+choices and inherit the same provider, platform, dependency, review, and
+readiness rules; the app does not need a release merely to render their
+source-declared title and description.
+
+The first row installs the exact Windows 3D package, prepares its Meshy and
+bounded Blender MCP routes, and includes one reviewed automatic bootstrap in
+the dry run. When installation reaches post-install checks, the core verifies
+the installed script, arguments, declared network/writes/privilege/rollback
+boundary, Python identity, and vault reference before running it. Exit-zero
+verified configuration persists `ready`; missing credentials or prerequisites
+persist optional `incomplete` and keep core setup usable.
+
 The second row selects provider-neutral `workflow.super_events`. When selected,
 resolve the verified manifest at the one source revision and install its skill
 plus the hidden dependency components containing the reusable GUI, GFX,

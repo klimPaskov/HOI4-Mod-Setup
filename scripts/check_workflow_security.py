@@ -81,6 +81,9 @@ def main() -> None:
         raise SystemExit("preview publication must consume the curated artifact")
 
     release_jobs = release["jobs"]
+    release_events = release.get("on", release.get(True, {}))
+    if not isinstance(release_events, dict) or "workflow_dispatch" in release_events:
+        raise SystemExit("stable release must be tag-only; previews own manual dispatch")
     if release_jobs["build-unsigned"].get("needs") != "gate":
         raise SystemExit("unsigned release builds must depend on the unprivileged gate")
     if release_jobs["sign-windows"].get("needs") != "build-unsigned":
@@ -89,6 +92,18 @@ def main() -> None:
         raise SystemExit("macOS signing must consume unsigned build artifacts")
     if release_jobs["publish-release"].get("needs") != "curate":
         raise SystemExit("stable publication must consume the curated artifact")
+    publish_script = "\n".join(
+        str(step.get("run", ""))
+        for step in release_jobs["publish-release"].get("steps", [])
+    )
+    for token in (
+        'gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"',
+        "expected_names=",
+        "remote_names=",
+        "sha256sum",
+    ):
+        if token not in publish_script:
+            raise SystemExit(f"stable publication is missing remote draft verification: {token}")
     if "environment" in release_jobs["gate"] or permission(release_jobs["gate"], "id-token"):
         raise SystemExit("release gate must not receive a protected environment or OIDC")
 
@@ -126,6 +141,20 @@ def main() -> None:
     build_steps = release_jobs["build-unsigned"].get("steps", [])
     if not any(step.get("run") == "pnpm installer:e2e" for step in build_steps):
         raise SystemExit("native release builds must run the installer lifecycle smoke test")
+    native_lifecycle = next(
+        (step for step in build_steps if step.get("name") == "Verify native project lifecycle"),
+        None,
+    )
+    if not isinstance(native_lifecycle, dict):
+        raise SystemExit("native release builds must verify project lifecycle transactions")
+    lifecycle_script = str(native_lifecycle.get("run", ""))
+    for test_name in (
+        "first_install_resumes_after_validation_with_user_facing_launcher_path_and_keeps_user_thumbnail",
+        "repair_and_removal_preserve_modified_files",
+        "apply_then_rollback_restores_original_hashes",
+    ):
+        if test_name not in lifecycle_script:
+            raise SystemExit(f"native release lifecycle is missing {test_name}")
 
     print("Release workflow authority and publication isolation checks passed.")
 

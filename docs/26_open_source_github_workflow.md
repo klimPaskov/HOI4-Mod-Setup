@@ -325,8 +325,10 @@ After platform jobs finish, the curation job runs
 source/tag/architecture identity, signed-evidence markers, package hashes, and
 the exact Windows/macOS asset set before the write-capable GitHub release
 operation. It uses deterministic platform filenames, refuses to reuse an
-existing release tag, and publishes a normal release only after every gate
-passes.
+existing release tag, and first creates a draft with the exact six public
+assets. The write-scoped job verifies the remote asset-name set, downloads each
+draft asset, compares its SHA-256 to the curated local bytes, and only then
+undrafts it as a normal release.
 
 Use semantic version tags:
 

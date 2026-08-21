@@ -77,6 +77,13 @@ unrelated data dumps, so even very large mods stay within the setup scan.
 Select the instructions, skills, helpers, tools, and offline wiki you want.
 Required items stay selected so the project remains usable.
 
+The component list comes from the exact published Agentic HOI4 Modding
+manifest. When that repository publishes changed skills, new skills, new
+subagents, or compatible new components, **Latest** mode can use them without a
+new HOI4 Mod Setup release. Update adds newly published default-profile
+components while preserving earlier optional choices and local-file conflict
+review.
+
 When Codex is selected, **Prepare a flattened ChatGPT project-sources folder**
 creates a separate folder with the adapted project guidance, README, selected
 skills, and selected subagents. The offline wiki is not copied into this
@@ -86,8 +93,16 @@ folder. Its file list and sizes are shown before installation.
 
 ![Choose the optional workflows](docs/screenshots/05-integrations.png)
 
-The 3D workflow is optional. If selected, a Meshy key can be stored in Windows
-Credential Manager or macOS Keychain and is never written into the mod.
+The 3D workflow is optional and currently follows the source repository's
+Windows route. If selected, a Meshy key is stored in Windows Credential Manager
+and is never written into the mod. After reviewed project files are applied,
+the app runs the verified source bootstrap to prepare `uv`, the bounded Blender
+adapter, Meshy, and the reviewed MCP routes. Missing credentials or tools leave
+only this optional workflow incomplete; they do not make core setup unusable.
+
+The HOI4 Agent Tools MCP integration includes the working Technology Tree
+Viewer routes `hoi4.tech_inspect`, `hoi4.tech_render`, and
+`hoi4.tech_compare` when advertised by the resolved source revision.
 
 The optional Super Events workflow adds the reusable popup, templates,
 examples, images, and supporting guidance needed to add more Super Events.

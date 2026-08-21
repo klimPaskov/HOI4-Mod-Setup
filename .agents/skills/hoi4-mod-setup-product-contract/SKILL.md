@@ -35,6 +35,13 @@ Read:
 - The user selects an AI provider and model at the start; Codex/ChatGPT is the default, and selected-provider authentication plus confirmed schema-valid analysis are required before Create, Import, Update, or Repair planning.
 - Provider optimization changes semantic conventions only; deterministic validation, source trust, transaction safety, and readiness rules are provider-independent.
 - New projects create both descriptors, a valid replaceable thumbnail, and the selected folder profile.
+- Latest-mode file components are dynamic source data. Compatible changed
+  skills, new skills, new subagents, new default-profile components, and
+  file-only optional-workflow declarations must be usable from the exact newly
+  published Agentic manifest without an app release. A new or changed command
+  route must match an existing audited app-owned allowlist contract or ship
+  with an app release. Preserve platform, dependency, provider, checksum,
+  conflict, and review gates; dynamic never means unvalidated.
 - Script prefixes and primary namespaces are retained as project conventions in installation metadata and adapted guidance; neither is emitted as a key in the internal or launcher descriptor.
 - Selected starter folders are real reviewed directory entries, not `.gitkeep`
   files; rollback removes only transaction-created folders that remain empty.
@@ -49,6 +56,11 @@ Read:
 - Secrets never enter target project files or locks.
 - Transactions are staged and reversible.
 - Optional workflows cannot block core readiness when unselected or incomplete.
+- Selecting the verified Windows 3D workflow prepares its MCP routes and runs
+  the reviewed source bootstrap during transaction post-install checks.
+  Persist `ready` only after the verified-config run succeeds; otherwise keep
+  the optional workflow honestly `incomplete`. Managed rollback does not claim
+  to remove source-declared external runtimes or Blender extensions.
 - `workflow.super_events` is a provider-neutral optional component. Its
   recommendation uses the checked-in `codex-analysis` component ID/schema
   contract, unselected installs add no Super Events guidance to `AGENTS.md`,
@@ -57,11 +69,12 @@ Read:
   readiness check is non-blocking.
 - The app's generic portrait workflow supports Cloud, Local, RunPod, and
   Disabled. Provider state and exact upstream revision are non-secret persisted
-  state; enabled output installs the provider-neutral portrait contract and
-  only the selected provider skill; disabled output strips portrait provider
-  components and ComfyUI guidance. The optional-workflow row shows the honest
-  minimum recommendation of 16 GB VRAM and 25 GB storage without making it a
-  core readiness gate. See `docs/32_comfyui_portrait_pipeline.md` for the
+  state; enabled output installs the complete portrait-production contract,
+  explicit provider router, exactly one selected provider skill, bounded
+  subagent, and non-secret configuration; disabled output strips the portrait
+  component closure and ComfyUI guidance. The optional-workflow row shows the
+  honest minimum recommendation of 16 GB VRAM and 25 GB storage without making
+  it a core readiness gate. See `docs/32_comfyui_portrait_pipeline.md` for the
   current contract and acceptance rules.
 - The optional flattened ChatGPT project-sources export is selectable only for Codex on Components, maps skill `SKILL.md` files to `<skill>.md`, includes the adapted AGENTS/README/subagents, shows its files and sizes, and recommends Chat without starting an upload or planning action.
 - Existing-project management separately offers ChatGPT source packaging when

@@ -35,7 +35,8 @@ use crate::source::{
     SourceRequest,
 };
 use crate::transaction::{
-    discard_staging, resume_transaction, run_transaction, TransactionOptions,
+    discard_staging, resume_transaction_with_options, run_transaction, PostInstallActionOutcome,
+    TransactionOptions,
 };
 use crate::AppError;
 use regex::Regex;
@@ -105,6 +106,7 @@ struct SourceManifestPreview {
     source: SourceIdentity,
     repository: RepositoryDescriptor,
     components: Vec<ComponentDefinition>,
+    profiles: Vec<Profile>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -314,11 +316,11 @@ fn normalized_three_d_state(
             return state.to_string();
         }
     }
-    if lock_state == "selected_pending" {
-        "incomplete".into()
-    } else {
-        lock_state.to_string()
-    }
+    // Ready is session-health evidence, not a durable assertion about a
+    // credential that may have been deleted or changed while the app was not
+    // running. Without a matching cache entry the optional workflow must be
+    // checked again and remains non-blocking but incomplete.
+    "incomplete".into()
 }
 
 fn cached_three_d_state(project_root: &Path, lock: &InstallationLock) -> String {
@@ -943,6 +945,102 @@ fn finalize_codex_logout_state<S>(
     logout_result
 }
 
+fn analysis_source_request(request: &CodexAnalysisRequest) -> Result<SourceRequest, AppError> {
+    let source = request.constraints.get("source");
+    let mode = match source
+        .and_then(|value| value.get("mode"))
+        .and_then(Value::as_str)
+        .unwrap_or("latest")
+    {
+        "latest" => SourceMode::Latest,
+        "pinned_commit" => SourceMode::PinnedCommit,
+        "pinned_release" => SourceMode::PinnedRelease,
+        _ => {
+            return Err(AppError::InvalidInput(
+                "semantic analysis declares an unsupported source mode".into(),
+            ))
+        }
+    };
+    let selected_ref = source
+        .and_then(|value| value.get("selected_ref"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    Ok(SourceRequest {
+        mode,
+        requested_ref: (mode == SourceMode::PinnedCommit)
+            .then(|| selected_ref.clone())
+            .flatten(),
+        release: (mode == SourceMode::PinnedRelease)
+            .then_some(selected_ref)
+            .flatten(),
+    })
+}
+
+fn source_request_for_analysis(request: &CodexAnalysisRequest) -> Result<SourceRequest, AppError> {
+    if request.analysis_purpose.as_deref() != Some("maintenance_reanalysis") {
+        return analysis_source_request(request);
+    }
+    let project_root = request
+        .project_root
+        .as_deref()
+        .ok_or_else(|| AppError::PathSecurity("maintenance analysis has no project root".into()))?;
+    let lock = read_project_lock(Path::new(project_root))?;
+    Ok(SourceRequest {
+        mode: lock.source.mode,
+        requested_ref: lock.source.requested_ref,
+        release: lock.source.release,
+    })
+}
+
+fn bind_analysis_component_registry(
+    request: &mut CodexAnalysisRequest,
+) -> Result<SourceIdentity, AppError> {
+    let source_request = source_request_for_analysis(request)?;
+    let client = HttpSourceClient::new()?;
+    let resolution = resolve_source(&client, &source_request)?;
+    let mut component_ids = resolution
+        .manifest
+        .components
+        .iter()
+        .map(|component| component.id.clone())
+        .collect::<Vec<_>>();
+    component_ids.sort();
+    component_ids.dedup();
+    let constraints = request.constraints.as_object_mut().ok_or_else(|| {
+        AppError::InvalidInput("semantic analysis constraints must be an object".into())
+    })?;
+    constraints.insert(
+        "component_registry".into(),
+        serde_json::json!({
+            "source_revision": resolution.identity.resolved_revision,
+            "manifest_sha256": resolution.identity.manifest_sha256,
+            "component_ids": component_ids,
+        }),
+    );
+    Ok(resolution.identity)
+}
+
+fn bind_analysis_record_to_source(record: &mut CodexAnalysisRecord, source: &SourceIdentity) {
+    record.source_revision = Some(source.resolved_revision.clone());
+    record.source_manifest_sha256 = Some(source.manifest_sha256.clone());
+}
+
+fn validate_analysis_source_binding(
+    record: &CodexAnalysisRecord,
+    source: &SourceIdentity,
+) -> Result<(), AppError> {
+    if record.source_revision.as_deref() != Some(source.resolved_revision.as_str())
+        || record.source_manifest_sha256.as_deref() != Some(source.manifest_sha256.as_str())
+    {
+        return Err(AppError::Credential(
+            "the confirmed semantic analysis belongs to a different source manifest; rerun analysis for the resolved source revision".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command(async)]
 fn codex_analyze(request: CodexAnalysisRequest) -> Result<CodexAnalysisResult, String> {
     let mut request = request;
@@ -955,8 +1053,10 @@ fn codex_analyze(request: CodexAnalysisRequest) -> Result<CodexAnalysisResult, S
         );
     }
     validate_codex_evidence_approval(&request).map_err(command_error)?;
-    let result =
+    let source = bind_analysis_component_registry(&mut request).map_err(command_error)?;
+    let mut result =
         with_codex_session(|session| session.analyze(&request)).map_err(codex_user_error)?;
+    bind_analysis_record_to_source(&mut result.record, &source);
     let mut analyses = codex_analyses()
         .lock()
         .map_err(|_| "Codex analysis store is unavailable".to_string())?;
@@ -1003,7 +1103,8 @@ fn ai_analyze_blocking(mut request: AiAnalysisRequest) -> Result<CodexAnalysisRe
             .map_err(command_error)?;
     }
     validate_codex_evidence_approval(&request.analysis).map_err(command_error)?;
-    let result = ai::analyze(
+    let source = bind_analysis_component_registry(&mut request.analysis).map_err(command_error)?;
+    let mut result = ai::analyze(
         &OsCredentialStore,
         &AiProviderConfig {
             provider: request.provider.clone(),
@@ -1014,6 +1115,7 @@ fn ai_analyze_blocking(mut request: AiAnalysisRequest) -> Result<CodexAnalysisRe
         &request,
     )
     .map_err(command_error)?;
+    bind_analysis_record_to_source(&mut result.record, &source);
     let mut analyses = codex_analyses()
         .lock()
         .map_err(|_| "AI analysis store is unavailable".to_string())?;
@@ -1661,7 +1763,7 @@ fn remove_meshy_credential(reference: CredentialReference) -> Result<(), String>
 fn resolve_installed_manifest(lock: &InstallationLock) -> Result<RemoteManifest, AppError> {
     if lock.source.manifest_origin == "bundled_revision_bootstrap" {
         let bundled_bytes =
-            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
         if sha256_bytes(bundled_bytes) != lock.source.manifest_sha256 {
             return Err(AppError::Source(
                 "the bundled manifest no longer matches its lock evidence".into(),
@@ -1741,6 +1843,330 @@ fn three_d_failure(error: String) -> WorkflowHealthResult {
         stdout: String::new(),
         stderr: bound_process_output(redact_secrets(&error, &[])),
     }
+}
+
+fn run_reviewed_post_install_actions(
+    root: &Path,
+    plan: &InstallationPlan,
+    component_id: &str,
+) -> Result<PostInstallActionOutcome, AppError> {
+    if plan.maintenance_mode.as_deref() == Some("remove") {
+        return Err(AppError::Transaction(
+            "managed removal cannot run a post-install action".into(),
+        ));
+    }
+    if component_id == crate::mcp::COMPONENT_ID {
+        return run_reviewed_mcp_bootstrap(root, plan);
+    }
+    if component_id != "workflow.3d" {
+        return Err(AppError::Transaction(format!(
+            "unknown reviewed post-install component: {component_id}"
+        )));
+    }
+    if Platform::current() != Platform::Windows {
+        return Ok(PostInstallActionOutcome {
+            component_id: "workflow.3d".into(),
+            state: "unsupported_platform".into(),
+            evidence: "the verified source declares no non-Windows 3D bootstrap route".into(),
+        });
+    }
+    let actions = plan
+        .external_actions
+        .iter()
+        .filter(|action| action.component_id == "workflow.3d")
+        .collect::<Vec<_>>();
+    if actions.len() != 1 {
+        return Err(AppError::Transaction(
+            "the reviewed plan does not contain exactly one 3D bootstrap action".into(),
+        ));
+    }
+    let action = actions[0];
+    let expected_arguments = [
+        ".tools/3d_pipeline/bootstrap_3d_workflow.py",
+        "--project-root",
+        "<project_root>",
+        "--verify-reviewed-config",
+        "--quiet",
+    ];
+    if action.command_source != "repository_script"
+        || action.platform != Platform::Windows
+        || action.arguments
+            != expected_arguments
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        || action.network_access == "not_declared"
+        || action.expected_writes.is_empty()
+        || action.privilege != "current_user"
+        || action.rollback_boundary == "not_declared_by_source"
+    {
+        return Err(AppError::Transaction(
+            "the reviewed 3D bootstrap action is incomplete or changed".into(),
+        ));
+    }
+    let target = expected_arguments[0];
+    let operation = plan
+        .operations
+        .iter()
+        .find(|operation| {
+            !operation.external
+                && operation.component_id == "workflow.3d"
+                && operation.destination.eq_ignore_ascii_case(target)
+        })
+        .ok_or_else(|| {
+            AppError::Transaction(
+                "the reviewed 3D bootstrap has no managed operation evidence".into(),
+            )
+        })?;
+    let script_bytes = crate::flatten::read_regular_file_no_follow_under_root(root, target)?;
+    let expected_hash = operation
+        .result_sha256
+        .as_deref()
+        .or(operation.source_sha256.as_deref())
+        .ok_or_else(|| {
+            AppError::Transaction("the reviewed 3D bootstrap has no checksum evidence".into())
+        })?;
+    if sha256_bytes(&script_bytes) != expected_hash
+        || operation
+            .source_size
+            .is_some_and(|expected| expected != script_bytes.len() as u64)
+    {
+        return Err(AppError::PathSecurity(
+            "the reviewed 3D bootstrap changed before execution".into(),
+        ));
+    }
+    let Some(reference) = plan
+        .credential_references
+        .iter()
+        .find(|reference| reference.name == MESHY_ENVIRONMENT_NAME)
+    else {
+        return Ok(PostInstallActionOutcome {
+            component_id: "workflow.3d".into(),
+            state: "incomplete".into(),
+            evidence: "MESHY_API_KEY was not available in the OS credential vault".into(),
+        });
+    };
+    validate_credential_reference(reference)?;
+    let environment = match ScopedSecretEnvironment::from_credential(
+        &OsCredentialStore,
+        reference,
+        MESHY_ENVIRONMENT_NAME,
+    ) {
+        Ok(environment) => environment,
+        Err(_) => {
+            return Ok(PostInstallActionOutcome {
+                component_id: "workflow.3d".into(),
+                state: "incomplete".into(),
+                evidence: "MESHY_API_KEY could not be loaded from the OS credential vault".into(),
+            });
+        }
+    };
+    let python = match crate::process::find_path_executable(&["python.exe", "python"]) {
+        Ok(python) => python,
+        Err(_) => {
+            return Ok(PostInstallActionOutcome {
+                component_id: "workflow.3d".into(),
+                state: "incomplete".into(),
+                evidence: "Python is unavailable for the source-declared 3D bootstrap".into(),
+            });
+        }
+    };
+    if crate::process::validate_executable_publisher(&python, "Python Software Foundation").is_err()
+    {
+        return Ok(PostInstallActionOutcome {
+            component_id: "workflow.3d".into(),
+            state: "incomplete".into(),
+            evidence: "Python publisher validation did not pass".into(),
+        });
+    }
+    let private_script = create_private_verified_script(&script_bytes)?;
+    let spec = crate::process::ProcessSpec {
+        executable: python.clone(),
+        executable_sha256: Some(sha256_file(&python)?),
+        args: vec![
+            "-I".into(),
+            private_script.display().to_string(),
+            "--project-root".into(),
+            root.display().to_string(),
+            "--verify-reviewed-config".into(),
+            "--quiet".into(),
+        ],
+        cwd: Some(root.to_path_buf()),
+        platform: Platform::Windows,
+        environment_names: vec![MESHY_ENVIRONMENT_NAME.into()],
+        timeout_seconds: 30 * 60,
+        max_output_bytes: 2 * 1024 * 1024,
+    };
+    let run_result = spec.run(&[python], Some(&environment));
+    let cleanup_result = remove_private_verified_script(&private_script);
+    let result = run_result;
+    cleanup_result?;
+    let result = match result {
+        Ok(result) => result,
+        Err(_) => {
+            return Ok(PostInstallActionOutcome {
+                component_id: "workflow.3d".into(),
+                state: "incomplete".into(),
+                evidence: "the source-declared 3D bootstrap could not be started".into(),
+            });
+        }
+    };
+    let state = if result.status_code == Some(0) && !result.timed_out {
+        "ready"
+    } else {
+        "incomplete"
+    };
+    Ok(PostInstallActionOutcome {
+        component_id: "workflow.3d".into(),
+        state: state.into(),
+        evidence: format!(
+            "bootstrap exit={} timed_out={}",
+            result
+                .status_code
+                .map_or_else(|| "none".into(), |code| code.to_string()),
+            result.timed_out
+        ),
+    })
+}
+
+fn run_reviewed_mcp_bootstrap(
+    root: &Path,
+    plan: &InstallationPlan,
+) -> Result<PostInstallActionOutcome, AppError> {
+    if Platform::current() != Platform::Windows {
+        return Ok(PostInstallActionOutcome {
+            component_id: crate::mcp::COMPONENT_ID.into(),
+            state: "unsupported_platform".into(),
+            evidence: "the verified source declares no non-Windows HOI4 Agent Tools route".into(),
+        });
+    }
+    let actions = plan
+        .external_actions
+        .iter()
+        .filter(|action| action.component_id == "mcp.hoi4_agent_tools.bootstrap")
+        .collect::<Vec<_>>();
+    if actions.len() != 1 {
+        return Err(AppError::Transaction(
+            "the reviewed plan does not contain exactly one MCP bootstrap action".into(),
+        ));
+    }
+    let action = actions[0];
+    let expected_arguments = [".tools/mcp/bootstrap_hoi4_agent_tools.py", "--quiet"];
+    if action.command_source != "repository_script"
+        || action.platform != Platform::Windows
+        || action.arguments
+            != expected_arguments
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        || action.network_access == "not_declared"
+        || action.expected_writes.is_empty()
+        || action.privilege != "current_user"
+        || action.rollback_boundary == "not_declared_by_source"
+    {
+        return Err(AppError::Transaction(
+            "the reviewed MCP bootstrap action is incomplete or changed".into(),
+        ));
+    }
+    let target = expected_arguments[0];
+    let operation = plan
+        .operations
+        .iter()
+        .find(|operation| {
+            !operation.external
+                && operation.component_id == "mcp.hoi4_agent_tools.bootstrap"
+                && operation.destination.eq_ignore_ascii_case(target)
+        })
+        .ok_or_else(|| {
+            AppError::Transaction(
+                "the reviewed MCP bootstrap has no managed operation evidence".into(),
+            )
+        })?;
+    let script_bytes = crate::flatten::read_regular_file_no_follow_under_root(root, target)?;
+    let expected_hash = operation
+        .result_sha256
+        .as_deref()
+        .or(operation.source_sha256.as_deref())
+        .ok_or_else(|| {
+            AppError::Transaction("the reviewed MCP bootstrap has no checksum evidence".into())
+        })?;
+    if sha256_bytes(&script_bytes) != expected_hash
+        || operation
+            .source_size
+            .is_some_and(|expected| expected != script_bytes.len() as u64)
+    {
+        return Err(AppError::PathSecurity(
+            "the reviewed MCP bootstrap changed before execution".into(),
+        ));
+    }
+    let python = match crate::process::find_path_executable(&["python.exe", "python"]) {
+        Ok(python) => python,
+        Err(_) => {
+            return Ok(PostInstallActionOutcome {
+                component_id: crate::mcp::COMPONENT_ID.into(),
+                state: "incomplete".into(),
+                evidence: "Python is unavailable for the source-declared MCP bootstrap".into(),
+            });
+        }
+    };
+    if crate::process::validate_executable_publisher(&python, "Python Software Foundation").is_err()
+    {
+        return Ok(PostInstallActionOutcome {
+            component_id: crate::mcp::COMPONENT_ID.into(),
+            state: "incomplete".into(),
+            evidence: "Python publisher validation did not pass for the MCP bootstrap".into(),
+        });
+    }
+    let private_script = create_private_verified_script(&script_bytes)?;
+    let spec = crate::process::ProcessSpec {
+        executable: python.clone(),
+        executable_sha256: Some(sha256_file(&python)?),
+        args: vec![
+            "-I".into(),
+            private_script.display().to_string(),
+            "--quiet".into(),
+        ],
+        cwd: Some(root.to_path_buf()),
+        platform: Platform::Windows,
+        environment_names: vec![],
+        timeout_seconds: 30 * 60,
+        max_output_bytes: 2 * 1024 * 1024,
+    };
+    let run_result = spec.run(&[python], None);
+    let cleanup_result = remove_private_verified_script(&private_script);
+    cleanup_result?;
+    let result = match run_result {
+        Ok(result) if result.status_code == Some(0) && !result.timed_out => result,
+        _ => {
+            return Ok(PostInstallActionOutcome {
+                component_id: crate::mcp::COMPONENT_ID.into(),
+                state: "incomplete".into(),
+                evidence: "the exact HOI4 Agent Tools package could not be installed and verified"
+                    .into(),
+            });
+        }
+    };
+    let health = crate::mcp::reviewed_plan_target(&plan.external_actions)
+        .and_then(|target| crate::mcp::initialize_health(root, &target));
+    Ok(match health {
+        Ok(evidence) => PostInstallActionOutcome {
+            component_id: crate::mcp::COMPONENT_ID.into(),
+            state: "ready".into(),
+            evidence: format!(
+                "package bootstrap exit={} verified_tools={}",
+                result.status_code.unwrap_or_default(),
+                evidence.required_tools.len()
+            ),
+        },
+        Err(error) => PostInstallActionOutcome {
+            component_id: crate::mcp::COMPONENT_ID.into(),
+            state: "incomplete".into(),
+            evidence: format!(
+                "package installed but MCP health failed: {}",
+                redact_secrets(&error.to_string(), &[])
+            ),
+        },
+    })
 }
 
 fn run_3d_health_check_blocking(project_root: String) -> Result<WorkflowHealthResult, String> {
@@ -1845,7 +2271,13 @@ fn run_3d_health_check_blocking(project_root: String) -> Result<WorkflowHealthRe
     let spec = crate::process::ProcessSpec {
         executable: python.clone(),
         executable_sha256: Some(sha256_file(&python).map_err(command_error)?),
-        args: vec![private_script.display().to_string()],
+        args: vec![
+            private_script.display().to_string(),
+            "--project-root".into(),
+            root.display().to_string(),
+            "--verify-reviewed-config".into(),
+            "--quiet".into(),
+        ],
         cwd: Some(root.clone()),
         platform: Platform::Windows,
         environment_names: vec![MESHY_ENVIRONMENT_NAME.into()],
@@ -2339,6 +2771,7 @@ fn preview_source_manifest_blocking(
         source: resolution.identity,
         repository: resolution.manifest.repository.clone(),
         components: resolution.manifest.components,
+        profiles: resolution.manifest.profiles,
     })
 }
 
@@ -2435,6 +2868,93 @@ fn reject_codex_only_dependencies(provider: &str, selected: &[String]) -> Result
     Ok(())
 }
 
+fn add_supported_profile_components(
+    manifest: &RemoteManifest,
+    provider: &str,
+    requested: &mut Vec<String>,
+    component_ids: &[String],
+) -> Result<(), AppError> {
+    for component_id in component_ids {
+        if requested.iter().any(|selected| selected == component_id) {
+            continue;
+        }
+        let mut candidate = requested.clone();
+        candidate.push(component_id.clone());
+        let expanded = expand_components(manifest, &candidate)?;
+        if reject_codex_only_dependencies(provider, &expanded).is_err() {
+            continue;
+        }
+        let support =
+            crate::source::resolve_platform_support(manifest, &expanded, Platform::current())?;
+        if support.iter().any(|item| item.state == "blocked") {
+            continue;
+        }
+        requested.push(component_id.clone());
+    }
+    Ok(())
+}
+
+fn default_profile_component_ids(manifest: &RemoteManifest) -> Result<Vec<String>, AppError> {
+    manifest
+        .profiles
+        .iter()
+        .find(|profile| profile.default)
+        .map(|profile| profile.components.clone())
+        .ok_or_else(|| {
+            AppError::Source("the verified source manifest has no default profile".into())
+        })
+}
+
+fn newly_defaulted_component_ids(
+    previous_manifest: &RemoteManifest,
+    current_manifest: &RemoteManifest,
+    lock: &InstallationLock,
+) -> Result<Vec<String>, AppError> {
+    let previous_defaults = default_profile_component_ids(previous_manifest)?
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    let declined_optional = previous_manifest
+        .components
+        .iter()
+        .filter(|component| {
+            component.optional
+                && lock
+                    .optional_workflows
+                    .get(&component.id)
+                    .is_some_and(|workflow| workflow.state == "not_selected")
+        })
+        .map(|component| component.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+
+    Ok(default_profile_component_ids(current_manifest)?
+        .into_iter()
+        .filter(|id| !previous_defaults.contains(id) && !declined_optional.contains(id.as_str()))
+        .collect())
+}
+
+fn validate_optional_component_ids(
+    manifest: &RemoteManifest,
+    component_ids: &[String],
+) -> Result<(), AppError> {
+    for component_id in component_ids {
+        let component = manifest
+            .components
+            .iter()
+            .find(|component| component.id == *component_id)
+            .ok_or_else(|| {
+                AppError::InvalidInput(format!(
+                    "the selected optional component is not declared by the verified manifest: {component_id}"
+                ))
+            })?;
+        if !component.optional {
+            return Err(AppError::InvalidInput(format!(
+                "the selected component is not optional: {component_id}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn manifest_external_actions(
     manifest: &RemoteManifest,
     selected_components: &[String],
@@ -2477,20 +2997,54 @@ fn manifest_external_actions(
                         } else {
                             "manifest-declared executable".into()
                         }),
-                        arguments: vec![target.into()],
+                        arguments: std::iter::once(target.to_string())
+                            .chain(
+                                rule.parameters
+                                    .get("arguments")
+                                    .and_then(Value::as_array)
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(Value::as_str)
+                                    .map(ToOwned::to_owned),
+                            )
+                            .collect(),
                         working_directory: Some("<project_root>".into()),
                         environment_names: component
                             .environment
                             .iter()
                             .map(|environment| environment.name.clone())
                             .collect(),
-                        network_access: "not_declared".into(),
+                        network_access: rule
+                            .parameters
+                            .get("network_access")
+                            .and_then(Value::as_str)
+                            .unwrap_or("not_declared")
+                            .to_string(),
                         // `expected_files` describe the install payload, not
-                        // the side effects of the command itself. Do not
-                        // present them as an external process write set.
-                        expected_writes: Vec::new(),
-                        privilege: "not_declared".into(),
-                        rollback_boundary: "not_declared_by_source".into(),
+                        // the side effects of the command itself. Only the
+                        // manifest's explicit command write declaration is
+                        // presented in dry run.
+                        expected_writes: rule
+                            .parameters
+                            .get("expected_writes")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_str)
+                            .map(ToOwned::to_owned)
+                            .collect(),
+                        privilege: rule
+                            .parameters
+                            .get("privilege")
+                            .and_then(Value::as_str)
+                            .unwrap_or("not_declared")
+                            .to_string(),
+                        rollback_boundary: rule
+                            .parameters
+                            .get("rollback_boundary")
+                            .and_then(Value::as_str)
+                            .unwrap_or("not_declared_by_source")
+                            .to_string(),
                         display_command: Some(format!(
                             "Repository-declared validation target: {target}"
                         )),
@@ -2500,11 +3054,13 @@ fn manifest_external_actions(
                         verified_executable_sha256: rule
                             .parameters
                             .get("executable_sha256")
+                            .or_else(|| rule.parameters.get("runtime_entry_sha256"))
                             .and_then(Value::as_str)
                             .map(ToOwned::to_owned),
                         verified_executable_size: rule
                             .parameters
                             .get("executable_size")
+                            .or_else(|| rule.parameters.get("runtime_entry_size"))
                             .and_then(Value::as_u64),
                         verified_interpreter_sha256: rule
                             .parameters
@@ -2524,6 +3080,44 @@ fn manifest_external_actions(
                             .parameters
                             .get("runtime_size")
                             .and_then(Value::as_u64),
+                        verified_package_name: rule
+                            .parameters
+                            .get("package_name")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned),
+                        verified_package_version: rule
+                            .parameters
+                            .get("package_version")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned),
+                        verified_package_integrity: rule
+                            .parameters
+                            .get("package_integrity")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned),
+                        verified_package_tree_sha256: rule
+                            .parameters
+                            .get("package_tree_sha256")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned),
+                        verified_package_file_count: rule
+                            .parameters
+                            .get("package_file_count")
+                            .and_then(Value::as_u64),
+                        verified_runtime_entry: rule
+                            .parameters
+                            .get("runtime_entry")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned),
+                        required_tool_names: rule
+                            .parameters
+                            .get("required_tools")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_str)
+                            .map(ToOwned::to_owned)
+                            .collect(),
                     })
                 })
         })
@@ -2580,6 +3174,7 @@ fn path_file_kind(path: &str) -> FileKind {
 fn adapt_codex_config_for_selection(
     bytes: &[u8],
     mcp_selected: bool,
+    three_d_selected: bool,
     portrait: &PortraitPipelineConfig,
 ) -> Result<Vec<u8>, AppError> {
     let bytes = adapt_optional_portrait_section(bytes, portrait.enabled)?;
@@ -2589,6 +3184,90 @@ fn adapt_codex_config_for_selection(
         AppError::Source(format!("Codex configuration is not valid TOML: {error}"))
     })?;
     if let Some(table) = config.as_table_mut() {
+        if three_d_selected {
+            let mcp_servers = table
+                .entry("mcp_servers")
+                .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+                .as_table_mut()
+                .ok_or_else(|| AppError::Source("Codex mcp_servers is not a TOML table".into()))?;
+            for (id, wrapper, enabled, required, approval) in [
+                ("meshy", "run_meshy_mcp.cmd", true, true, "auto"),
+                (
+                    "blender_hoi4",
+                    "run_blender_hoi4_adapter.cmd",
+                    true,
+                    true,
+                    "auto",
+                ),
+                (
+                    "blender_lab",
+                    "run_blender_lab_mcp.cmd",
+                    false,
+                    false,
+                    "prompt",
+                ),
+            ] {
+                let mut route = toml::map::Map::new();
+                route.insert("enabled".into(), toml::Value::Boolean(enabled));
+                route.insert("required".into(), toml::Value::Boolean(required));
+                if id == "meshy" {
+                    let launcher = std::env::current_exe().map_err(|error| {
+                        AppError::Process(format!(
+                            "the app-owned Meshy launcher path is unavailable: {error}"
+                        ))
+                    })?;
+                    route.insert(
+                        "command".into(),
+                        toml::Value::String(launcher.display().to_string()),
+                    );
+                    route.insert(
+                        "args".into(),
+                        toml::Value::Array(vec![toml::Value::String(
+                            "--run-verified-meshy-mcp".into(),
+                        )]),
+                    );
+                } else {
+                    route.insert("command".into(), toml::Value::String("cmd.exe".into()));
+                    route.insert(
+                        "args".into(),
+                        toml::Value::Array(
+                            [
+                                "/d".to_string(),
+                                "/c".to_string(),
+                                "call".to_string(),
+                                format!(".tools/3d_pipeline/wrappers/{wrapper}"),
+                            ]
+                            .into_iter()
+                            .map(toml::Value::String)
+                            .collect(),
+                        ),
+                    );
+                }
+                route.insert("cwd".into(), toml::Value::String(".".into()));
+                route.insert(
+                    "env_vars".into(),
+                    toml::Value::Array(if id == "meshy" {
+                        vec![toml::Value::String("MESHY_API_KEY".into())]
+                    } else {
+                        Vec::new()
+                    }),
+                );
+                route.insert("startup_timeout_sec".into(), toml::Value::Float(120.0));
+                route.insert("tool_timeout_sec".into(), toml::Value::Float(1800.0));
+                route.insert(
+                    "default_tools_approval_mode".into(),
+                    toml::Value::String(approval.into()),
+                );
+                mcp_servers.insert(id.into(), toml::Value::Table(route));
+            }
+        } else if let Some(mcp_servers) = table
+            .get_mut("mcp_servers")
+            .and_then(toml::Value::as_table_mut)
+        {
+            for id in ["meshy", "blender_hoi4", "blender_lab"] {
+                mcp_servers.remove(id);
+            }
+        }
         let empty = table
             .get_mut("mcp_servers")
             .and_then(toml::Value::as_table_mut)
@@ -3153,12 +3832,14 @@ fn adapt_portrait_config_source(
 #[allow(clippy::too_many_arguments)]
 fn adapt_selected_source(
     component_id: &str,
+    destination: &str,
     bytes: &[u8],
     identity: &ProjectIdentity,
     ai_provider: &str,
     ai_model: &str,
     super_events_selected: bool,
     mcp_selected: bool,
+    three_d_selected: bool,
     portrait: &PortraitPipelineConfig,
 ) -> Result<Vec<u8>, AppError> {
     let conditional = adapt_optional_super_events_skill(bytes, super_events_selected)?;
@@ -3174,8 +3855,13 @@ fn adapt_selected_source(
             portrait.enabled,
         )
     } else if component_id == "codex.config" {
-        adapt_codex_config_for_selection(bytes, mcp_selected, portrait)
-    } else if component_id == "core.subagents"
+        adapt_codex_config_for_selection(bytes, mcp_selected, three_d_selected, portrait)
+    } else if destination
+        .replace('\\', "/")
+        .to_ascii_lowercase()
+        .starts_with(".codex/agents/")
+        && destination.to_ascii_lowercase().ends_with(".toml")
+        || component_id == "core.subagents"
         || component_id.ends_with(".subagents")
         || component_id == "workflow.portraits.subagent"
     {
@@ -3424,6 +4110,21 @@ fn generated_state(state: &Value) -> BTreeMap<String, String> {
         },
     );
     result
+}
+
+fn seed_manifest_optional_states(
+    optional_workflows: &mut BTreeMap<String, String>,
+    manifest: &RemoteManifest,
+) {
+    for component in manifest
+        .components
+        .iter()
+        .filter(|component| component.optional)
+    {
+        optional_workflows
+            .entry(component.id.clone())
+            .or_insert_with(|| "not_selected".into());
+    }
 }
 
 fn selected_folder_profile(state: &Value) -> Result<Vec<String>, AppError> {
@@ -3711,6 +4412,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     let request = source_request_from_state(state)?;
     let client = HttpSourceClient::new()?;
     let resolution = resolve_source(&client, &request)?;
+    validate_analysis_source_binding(&codex_analysis, &resolution.identity)?;
     let requested = selected_ids(state, &ai_provider);
     if requested.is_empty() {
         return Err(AppError::InvalidInput(
@@ -3732,6 +4434,9 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     let mcp_selected = support
         .iter()
         .any(|item| item.component_id == "mcp.hoi4_agent_tools" && item.state == "supported");
+    let three_d_selected = support
+        .iter()
+        .any(|item| item.component_id == "workflow.3d" && item.state == "supported");
     let super_events_selected = selected.iter().any(|id| id == "workflow.super_events");
     let download_selected = selected
         .iter()
@@ -3789,12 +4494,14 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         )?;
         let bytes = adapt_selected_source(
             &selection.component_id,
+            &adapted_destination,
             &source_bytes,
             &identity,
             &ai_provider,
             &ai_model,
             super_events_selected,
             mcp_selected,
+            three_d_selected,
             &portrait_pipeline,
         )?;
         let incoming_sha256 = sha256_bytes(&bytes);
@@ -4129,6 +4836,11 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         });
     }
     let mut optional_workflows = generated_state(state);
+    // Persist every manifest-declared optional state, including choices the
+    // current app version did not know by name. This lets a later compatible
+    // manifest distinguish a deliberate decline from a newly published
+    // default without a binary update.
+    seed_manifest_optional_states(&mut optional_workflows, &resolution.manifest);
     if mesh_selected && !credential_references.is_empty() {
         optional_workflows.insert("workflow.3d".into(), "selected_pending".into());
     }
@@ -4136,6 +4848,25 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         if item.state == "unsupported_platform" {
             optional_workflows.insert(item.component_id.clone(), "unsupported_platform".into());
         }
+    }
+    for component in resolution
+        .manifest
+        .components
+        .iter()
+        .filter(|component| component.optional && selected.iter().any(|id| id == &component.id))
+    {
+        let existing = optional_workflows.get(&component.id).map(String::as_str);
+        let selected_state = if existing.is_some_and(|state| state != "not_selected") {
+            existing.unwrap().to_string()
+        } else if external_actions
+            .iter()
+            .any(|action| action.component_id == component.id)
+        {
+            "selected_pending".into()
+        } else {
+            "ready".into()
+        };
+        optional_workflows.insert(component.id.clone(), selected_state);
     }
     optional_workflows.insert(
         "codex.chat_flatten".into(),
@@ -4857,8 +5588,13 @@ fn build_maintenance_plan_blocking(
     let add_optional_components = add_optional_components.unwrap_or_default();
     let mut seen_optional_components = std::collections::HashSet::new();
     if !add_optional_components.iter().all(|id| {
-        (matches!(id.as_str(), "workflow.3d" | "workflow.super_events")
-            || id.starts_with("workflow.portraits"))
+        !id.is_empty()
+            && id.len() <= 128
+            && id.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'.' | b'_' | b'-')
+            })
             && seen_optional_components.insert(id.as_str())
     }) {
         return Err("an optional workflow selection is invalid or duplicated".into());
@@ -5011,6 +5747,19 @@ fn build_maintenance_plan_blocking(
                 requested.push(component_id.clone());
             }
         }
+        validate_optional_component_ids(&resolution.manifest, &add_optional_components)
+            .map_err(command_error)?;
+        let previous_manifest = resolve_installed_manifest(&lock).map_err(command_error)?;
+        let new_defaults =
+            newly_defaulted_component_ids(&previous_manifest, &resolution.manifest, &lock)
+                .map_err(command_error)?;
+        add_supported_profile_components(
+            &resolution.manifest,
+            &lock.ai_provider,
+            &mut requested,
+            &new_defaults,
+        )
+        .map_err(command_error)?;
         let expanded =
             expand_components(&resolution.manifest, &requested).map_err(command_error)?;
         reject_codex_only_dependencies(&lock.ai_provider, &expanded).map_err(command_error)?;
@@ -5070,6 +5819,7 @@ fn build_maintenance_plan_blocking(
                 )?;
                 let desired_bytes = adapt_selected_source(
                     &selection.component_id,
+                    &destination,
                     &source_bytes,
                     &project_identity,
                     &lock.ai_provider,
@@ -5078,6 +5828,7 @@ fn build_maintenance_plan_blocking(
                         .iter()
                         .any(|id| id == "workflow.super_events"),
                     mcp_selected,
+                    maintenance_components.iter().any(|id| id == "workflow.3d"),
                     &portrait_pipeline,
                 )?;
                 Ok(LockedFile {
@@ -5192,6 +5943,8 @@ fn build_maintenance_plan_blocking(
                     .into(),
             );
         }
+        validate_optional_component_ids(&resolution.manifest, &add_optional_components)
+            .map_err(command_error)?;
         let requested = add_optional_components
             .iter()
             .filter(|id| {
@@ -5383,6 +6136,7 @@ fn build_maintenance_plan_blocking(
         } else {
             adapt_selected_source(
                 &operation.component_id,
+                &operation.destination,
                 &source_bytes,
                 &maintenance_identity(&lock, &root),
                 &lock.ai_provider,
@@ -5391,6 +6145,7 @@ fn build_maintenance_plan_blocking(
                     .iter()
                     .any(|id| id == "workflow.super_events"),
                 mcp_selected,
+                maintenance_components.iter().any(|id| id == "workflow.3d"),
                 &portrait_pipeline,
             )
             .map_err(command_error)?
@@ -5467,6 +6222,7 @@ fn build_maintenance_plan_blocking(
                         adapt_codex_config_for_selection(
                             &base_source,
                             mcp_selected,
+                            maintenance_components.iter().any(|id| id == "workflow.3d"),
                             &portrait_pipeline,
                         )
                         .map_err(command_error)?
@@ -5672,6 +6428,33 @@ fn build_maintenance_plan_blocking(
     {
         optional_workflows.insert("workflow.super_events".into(), "ready".into());
     }
+    if let Some(manifest) = maintenance_mcp_manifest.as_ref() {
+        for component in manifest.components.iter().filter(|component| {
+            component.optional && maintenance_components.iter().any(|id| id == &component.id)
+        }) {
+            let component_id = &component.id;
+            if matches!(
+                component_id.as_str(),
+                "workflow.3d" | "workflow.super_events"
+            ) || component_id.starts_with("workflow.portraits")
+            {
+                continue;
+            }
+            let has_action =
+                manifest_external_actions(manifest, std::slice::from_ref(component_id))
+                    .iter()
+                    .any(|action| action.component_id == *component_id);
+            optional_workflows.insert(
+                component_id.clone(),
+                if has_action {
+                    "selected_pending"
+                } else {
+                    "ready"
+                }
+                .into(),
+            );
+        }
+    }
     optional_workflows.insert(
         "workflow.portraits".into(),
         if !portrait_pipeline.enabled {
@@ -5686,8 +6469,11 @@ fn build_maintenance_plan_blocking(
         let manifest = maintenance_mcp_manifest.as_ref().ok_or_else(|| {
             "the maintenance plan could not retain the locked MCP manifest evidence".to_string()
         })?;
-        let actions = manifest_external_actions(manifest, &[crate::mcp::COMPONENT_ID.to_string()]);
-        if actions.len() != 1 {
+        let actions = manifest_external_actions(manifest, &maintenance_components);
+        if !actions
+            .iter()
+            .any(|action| action.component_id == crate::mcp::COMPONENT_ID)
+        {
             return Err(
                 "the locked MCP manifest does not declare one reviewed health action".into(),
             );
@@ -5697,6 +6483,9 @@ fn build_maintenance_plan_blocking(
         Vec::new()
     };
     let external_actions_reviewed = external_actions.is_empty();
+    if let Some(record) = codex_analysis.as_ref() {
+        validate_analysis_source_binding(record, &plan_source).map_err(command_error)?;
+    }
     let plan = InstallationPlan {
         schema_version: "1.0.0".into(),
         plan_id: Uuid::new_v4(),
@@ -5975,7 +6764,10 @@ fn apply_installation(plan_id: String, project_root: String) -> Result<Transacti
         &root,
         &approved_plan,
         &prepared,
-        &TransactionOptions::default(),
+        &TransactionOptions {
+            post_install_action_runner: Some(run_reviewed_post_install_actions),
+            ..Default::default()
+        },
     )
     .map_err(command_error)?;
     prepared_plans()
@@ -6048,7 +6840,13 @@ fn resume_installation(
         .map_err(command_error)?;
     let id = Uuid::parse_str(&transaction_id).map_err(|_| "invalid transaction ID".to_string())?;
     let app_root = application_data_root().map_err(command_error)?;
-    let (journal, _) = resume_transaction(&root, &app_root, id).map_err(command_error)?;
+    let (journal, _) = resume_transaction_with_options(
+        &root,
+        &app_root,
+        id,
+        Some(run_reviewed_post_install_actions),
+    )
+    .map_err(command_error)?;
     Ok(journal)
 }
 
@@ -6178,6 +6976,23 @@ mod tests {
         assert!(result.timed_out);
         assert!(result.stderr.contains("REDACTED"));
         assert!(!result.stderr.contains("private-health-token"));
+    }
+
+    #[test]
+    fn managed_removal_never_restarts_the_three_d_bootstrap() {
+        let project = tempdir().unwrap();
+        let mut plan: InstallationPlan = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-plan.example.json"
+        ))
+        .unwrap();
+        plan.maintenance_mode = Some("remove".into());
+        plan.optional_workflows
+            .insert("workflow.3d".into(), "ready".into());
+        plan.external_actions.clear();
+
+        let error =
+            run_reviewed_post_install_actions(project.path(), &plan, "workflow.3d").unwrap_err();
+        assert!(error.to_string().contains("managed removal"));
     }
 
     #[test]
@@ -6494,8 +7309,13 @@ provider = "cloud"
 mcp_server = "comfy_cloud_portraits"
 "#;
         let local = String::from_utf8(
-            adapt_codex_config_for_selection(config, false, &test_portrait_config("local", true))
-                .unwrap(),
+            adapt_codex_config_for_selection(
+                config,
+                false,
+                false,
+                &test_portrait_config("local", true),
+            )
+            .unwrap(),
         )
         .unwrap();
         assert!(!local.contains("comfy_cloud_portraits"));
@@ -6510,10 +7330,12 @@ mcp_server = "comfy_cloud_portraits"
 
         let adapted = adapt_selected_source(
             "workflow.portraits.core",
+            ".agents/skills/hoi4-portrait-production/SKILL.md",
             &source,
             &identity,
             "codex",
             "default",
+            false,
             false,
             false,
             &portrait,
@@ -6521,6 +7343,219 @@ mcp_server = "comfy_cloud_portraits"
         .unwrap();
 
         assert_eq!(adapted, source);
+    }
+
+    #[test]
+    fn default_profile_additions_are_adopted_without_hardcoded_component_ids() {
+        let mut manifest = crate::source::parse_manifest(
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"),
+            None,
+        )
+        .unwrap();
+        let mut future = manifest
+            .components
+            .iter()
+            .find(|component| component.id == "core.skills")
+            .unwrap()
+            .clone();
+        future.id = "core.future_skills".into();
+        future.display_name = "Future skills".into();
+        manifest.components.push(future);
+        manifest
+            .profiles
+            .iter_mut()
+            .find(|profile| profile.default)
+            .unwrap()
+            .components
+            .push("core.future_skills".into());
+        let mut requested = vec!["core.agents".into()];
+
+        let defaults = default_profile_component_ids(&manifest).unwrap();
+        add_supported_profile_components(&manifest, "codex", &mut requested, &defaults).unwrap();
+
+        assert!(requested.iter().any(|id| id == "core.future_skills"));
+    }
+
+    #[test]
+    fn fresh_planning_records_unknown_optional_components_as_not_selected() {
+        let mut manifest = crate::source::parse_manifest(
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"),
+            None,
+        )
+        .unwrap();
+        let mut future = manifest
+            .components
+            .iter()
+            .find(|component| component.id == "core.skills")
+            .unwrap()
+            .clone();
+        future.id = "workflow.future_tools".into();
+        future.display_name = "Future tools".into();
+        future.optional = true;
+        manifest.components.push(future);
+        let mut states = BTreeMap::new();
+
+        seed_manifest_optional_states(&mut states, &manifest);
+
+        assert_eq!(
+            states.get("workflow.future_tools").map(String::as_str),
+            Some("not_selected")
+        );
+    }
+
+    #[test]
+    fn a_declined_optional_component_is_not_silently_adopted_when_it_becomes_default() {
+        let mut previous_manifest = crate::source::parse_manifest(
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"),
+            None,
+        )
+        .unwrap();
+        let mut future = previous_manifest
+            .components
+            .iter()
+            .find(|component| component.id == "core.skills")
+            .unwrap()
+            .clone();
+        future.id = "workflow.future_tools".into();
+        future.display_name = "Future tools".into();
+        future.optional = true;
+        previous_manifest.components.push(future);
+        let mut current_manifest = previous_manifest.clone();
+        current_manifest
+            .profiles
+            .iter_mut()
+            .find(|profile| profile.default)
+            .unwrap()
+            .components
+            .push("workflow.future_tools".into());
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        lock.optional_workflows.insert(
+            "workflow.future_tools".into(),
+            OptionalWorkflowLock {
+                state: "not_selected".into(),
+                reason: None,
+                credential_reference: None,
+            },
+        );
+
+        let additions =
+            newly_defaulted_component_ids(&previous_manifest, &current_manifest, &lock).unwrap();
+
+        assert!(!additions.iter().any(|id| id == "workflow.future_tools"));
+    }
+
+    #[test]
+    fn arbitrary_manifest_subagent_destination_gets_safe_spawn_adaptation() {
+        let identity = super_events_test_identity();
+        let source = br#"developer_instructions = "Review one bounded surface."
+"#;
+        let adapted = adapt_selected_source(
+            "future.helper_profile",
+            ".codex/agents/future_helper.toml",
+            source,
+            &identity,
+            "codex",
+            "default",
+            false,
+            false,
+            false,
+            &test_portrait_config("disabled", false),
+        )
+        .unwrap();
+
+        assert!(String::from_utf8(adapted)
+            .unwrap()
+            .contains("fork_context=false"));
+    }
+
+    #[test]
+    fn selected_3d_workflow_materializes_the_reviewed_mcp_routes() {
+        let config = b"[mcp_servers.hoi4_agent_tools]\ncommand = \"hoi4-agent-tools.cmd\"\n";
+        let adapted = String::from_utf8(
+            adapt_codex_config_for_selection(
+                config,
+                true,
+                true,
+                &test_portrait_config("disabled", false),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        for route in ["meshy", "blender_hoi4", "blender_lab"] {
+            assert!(adapted.contains(&format!("[mcp_servers.{route}]")));
+        }
+        assert!(adapted.contains("run_blender_hoi4_adapter.cmd"));
+        assert!(adapted.contains("MESHY_API_KEY"));
+        assert!(adapted.contains("--run-verified-meshy-mcp"));
+        assert!(!adapted.contains("run_meshy_mcp.cmd"));
+        assert!(!adapted.contains("run_verified_meshy.py"));
+    }
+
+    #[test]
+    fn published_3d_bootstrap_action_preserves_reviewed_external_boundaries() {
+        let manifest = crate::source::parse_manifest(
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"),
+            None,
+        )
+        .unwrap();
+
+        let actions = manifest_external_actions(&manifest, &["workflow.3d".into()]);
+        let action = actions
+            .iter()
+            .find(|action| action.component_id == "workflow.3d")
+            .expect("3D bootstrap action must be plan-visible");
+
+        assert_eq!(
+            action.arguments,
+            vec![
+                ".tools/3d_pipeline/bootstrap_3d_workflow.py",
+                "--project-root",
+                "<project_root>",
+                "--verify-reviewed-config",
+                "--quiet",
+            ]
+        );
+        assert_ne!(action.network_access, "not_declared");
+        assert!(!action.expected_writes.is_empty());
+        assert_eq!(action.privilege, "current_user");
+        assert_ne!(action.rollback_boundary, "not_declared_by_source");
+    }
+
+    #[test]
+    fn published_mcp_actions_bind_the_automatic_bootstrap_and_all_technology_routes() {
+        let manifest = crate::source::parse_manifest(
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"),
+            None,
+        )
+        .unwrap();
+        let actions = manifest_external_actions(
+            &manifest,
+            &[
+                "mcp.hoi4_agent_tools.bootstrap".into(),
+                crate::mcp::COMPONENT_ID.into(),
+            ],
+        );
+        let bootstrap = actions
+            .iter()
+            .find(|action| action.component_id == "mcp.hoi4_agent_tools.bootstrap")
+            .expect("the automatic package bootstrap must be reviewable");
+        assert_eq!(
+            bootstrap.arguments,
+            vec![".tools/mcp/bootstrap_hoi4_agent_tools.py", "--quiet"]
+        );
+        assert_ne!(bootstrap.network_access, "not_declared");
+        assert!(!bootstrap.expected_writes.is_empty());
+        assert_eq!(bootstrap.privilege, "current_user");
+
+        let target = crate::mcp::reviewed_plan_target(&actions).unwrap();
+        assert_eq!(target.package_version, "2.5.2");
+        for route in ["hoi4.tech_inspect", "hoi4.tech_render", "hoi4.tech_compare"] {
+            assert!(target.required_tools.iter().any(|tool| tool == route));
+        }
     }
 
     #[test]
@@ -7093,11 +8128,55 @@ developer_instructions = "Work on the named files."
                 project_root: Some(project.path().canonicalize().unwrap().display().to_string()),
                 scan_id: Some(Uuid::new_v4()),
                 evidence_sha256: Some("c".repeat(64)),
+                source_revision: Some("a".repeat(40)),
+                source_manifest_sha256: Some("d".repeat(64)),
             }),
             project.path(),
             None,
         )
         .is_err());
+    }
+
+    #[test]
+    fn maintenance_reanalysis_uses_the_installed_pinned_source() {
+        let project = tempfile::tempdir().unwrap();
+        let lock_path = project.path().join(".hoi4-mod-setup/install.lock.json");
+        std::fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+        let mut lock: Value = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        lock["source"]["mode"] = serde_json::json!("pinned_release");
+        lock["source"]["requested_ref"] = serde_json::json!("v0.2.12");
+        lock["source"]["release"] = serde_json::json!("v0.2.12");
+        std::fs::write(&lock_path, serde_json::to_vec(&lock).unwrap()).unwrap();
+        let request = CodexAnalysisRequest {
+            mode: "existing_project_semantics".into(),
+            brief: String::new(),
+            evidence: Vec::new(),
+            constraints: serde_json::json!({}),
+            analysis_purpose: Some("maintenance_reanalysis".into()),
+            project_root: Some(project.path().display().to_string()),
+            scan_id: None,
+        };
+
+        let source = source_request_for_analysis(&request).unwrap();
+        assert_eq!(source.mode, SourceMode::PinnedRelease);
+        assert_eq!(source.requested_ref.as_deref(), Some("v0.2.12"));
+        assert_eq!(source.release.as_deref(), Some("v0.2.12"));
+
+        lock["source"]["mode"] = serde_json::json!("latest");
+        lock["source"]["requested_ref"] = Value::Null;
+        lock["source"]["release"] = Value::Null;
+        std::fs::write(&lock_path, serde_json::to_vec(&lock).unwrap()).unwrap();
+        let mut renderer_pinned = request;
+        renderer_pinned.constraints = serde_json::json!({
+            "source": { "mode": "pinned_commit", "selected_ref": "f".repeat(40) }
+        });
+        let latest = source_request_for_analysis(&renderer_pinned).unwrap();
+        assert_eq!(latest.mode, SourceMode::Latest);
+        assert!(latest.requested_ref.is_none());
+        assert!(latest.release.is_none());
     }
 
     #[test]
@@ -7257,6 +8336,8 @@ developer_instructions = "Work on the named files."
             project_root: Some(root.display().to_string()),
             scan_id: Some(scan_id),
             evidence_sha256: Some("c".repeat(64)),
+            source_revision: Some("a".repeat(40)),
+            source_manifest_sha256: Some("d".repeat(64)),
         };
         codex_analyses().lock().unwrap().insert(
             analysis_id,
@@ -7311,6 +8392,8 @@ developer_instructions = "Work on the named files."
             project_root: None,
             scan_id: None,
             evidence_sha256: None,
+            source_revision: Some("a".repeat(40)),
+            source_manifest_sha256: Some("d".repeat(64)),
         };
         let endpoint_a = "https://provider.example/a";
         let endpoint_b = "https://provider.example/b";
@@ -7702,6 +8785,7 @@ developer_instructions = "Work on the named files."
             normalized_three_d_state("selected_pending", None, false),
             "incomplete"
         );
+        assert_eq!(normalized_three_d_state("ready", None, false), "incomplete");
         assert_eq!(
             normalized_three_d_state("not_selected", Some("ready"), true),
             "not_selected"
@@ -7754,6 +8838,8 @@ developer_instructions = "Work on the named files."
                     project_root: None,
                     scan_id: None,
                     evidence_sha256: None,
+                    source_revision: Some("a".repeat(40)),
+                    source_manifest_sha256: Some("d".repeat(64)),
                 },
                 confirmed: None,
                 project_root: None,

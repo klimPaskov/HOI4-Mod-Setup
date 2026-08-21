@@ -24,7 +24,7 @@ use std::os::windows::fs::OpenOptionsExt;
 pub const SOURCE_REPOSITORY: &str = "https://github.com/klimPaskov/Agentic-HOI4-Modding";
 pub const SOURCE_OWNER: &str = "klimPaskov";
 pub const SOURCE_NAME: &str = "Agentic-HOI4-Modding";
-pub const MANIFEST_PATH: &str = "hoi4-mod-setup.manifest.json";
+pub const MANIFEST_PATH: &str = "hoi4-mod-setup.v2.manifest.json";
 const MAX_SELECTED_FILES: usize = 20_000;
 const MAX_SELECTED_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_SOURCE_FILE_BYTES: u64 = 512 * 1024 * 1024;
@@ -957,7 +957,7 @@ pub fn validate_manifest(
     let id_pattern = Regex::new(r"^[a-z0-9][a-z0-9._-]*$").expect("static component id regex");
     let mut components = HashMap::new();
     for component in &manifest.components {
-        if !id_pattern.is_match(&component.id) {
+        if component.id.len() > 128 || !id_pattern.is_match(&component.id) {
             return Err(AppError::Source(format!(
                 "invalid component id: {}",
                 component.id
@@ -1103,6 +1103,82 @@ pub fn validate_manifest(
                 }
             }
         }
+        if component.id == "workflow.3d" {
+            let actions = component
+                .validation
+                .iter()
+                .filter(|rule| rule.kind == "command" && rule.id == "3d.bootstrap")
+                .collect::<Vec<_>>();
+            if actions.len() != 1 {
+                return Err(AppError::Source(
+                    "workflow.3d must declare exactly one reviewed bootstrap action".into(),
+                ));
+            }
+            let action = actions[0];
+            let arguments = action.parameters.get("arguments").and_then(Value::as_array);
+            let expected_writes = action
+                .parameters
+                .get("expected_writes")
+                .and_then(Value::as_array);
+            let declared_text = |key: &str| {
+                action
+                    .parameters
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty())
+            };
+            if action.target.as_deref() != Some(".tools/3d_pipeline/bootstrap_3d_workflow.py")
+                || arguments.is_none_or(Vec::is_empty)
+                || expected_writes.is_none_or(Vec::is_empty)
+                || !declared_text("network_access")
+                || action.parameters.get("privilege").and_then(Value::as_str)
+                    != Some("current_user")
+                || !declared_text("rollback_boundary")
+            {
+                return Err(AppError::Source(
+                    "workflow.3d bootstrap action evidence is incomplete".into(),
+                ));
+            }
+        }
+        if component.id == "mcp.hoi4_agent_tools.bootstrap" {
+            let actions = component
+                .validation
+                .iter()
+                .filter(|rule| rule.kind == "command" && rule.id == "mcp.bootstrap")
+                .collect::<Vec<_>>();
+            if actions.len() != 1 {
+                return Err(AppError::Source(
+                    "the MCP bootstrap component must declare exactly one reviewed action".into(),
+                ));
+            }
+            let action = actions[0];
+            let arguments = action.parameters.get("arguments").and_then(Value::as_array);
+            let expected_writes = action
+                .parameters
+                .get("expected_writes")
+                .and_then(Value::as_array);
+            let declared_text = |key: &str| {
+                action
+                    .parameters
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty())
+            };
+            if component.source.path != ".tools/mcp/bootstrap_hoi4_agent_tools.py"
+                || action.target.as_deref() != Some(".tools/mcp/bootstrap_hoi4_agent_tools.py")
+                || arguments
+                    .is_none_or(|values| values.as_slice() != [Value::String("--quiet".into())])
+                || expected_writes.is_none_or(Vec::is_empty)
+                || !declared_text("network_access")
+                || action.parameters.get("privilege").and_then(Value::as_str)
+                    != Some("current_user")
+                || !declared_text("rollback_boundary")
+            {
+                return Err(AppError::Source(
+                    "the MCP bootstrap reviewed action evidence is incomplete".into(),
+                ));
+            }
+        }
         for platform in &component.platforms {
             if matches!(platform, ManifestPlatform::All)
                 && (component
@@ -1131,6 +1207,7 @@ pub fn validate_manifest(
             }
         }
     }
+    crate::mcp::manifest_target(manifest)?;
     let component_ids: HashSet<&str> = components.keys().map(|id| id.as_str()).collect();
     for profile in &manifest.profiles {
         if profile.id.trim().is_empty() || profile.components.is_empty() {
@@ -1145,9 +1222,15 @@ pub fn validate_manifest(
             }
         }
     }
-    if !manifest.profiles.iter().any(|profile| profile.default) {
+    if manifest
+        .profiles
+        .iter()
+        .filter(|profile| profile.default)
+        .count()
+        != 1
+    {
         return Err(AppError::Source(
-            "manifest must declare a default profile".into(),
+            "manifest must declare exactly one default profile".into(),
         ));
     }
     validate_dependency_cycles(&components)?;
@@ -1705,8 +1788,14 @@ mod tests {
 
     #[test]
     fn checked_in_manifest_matches_the_supported_source_contract() {
-        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
-        let source_snapshot = "59bf7f23c25951ec613b0f36a6921277d16f1354";
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
+        let inventory: Value = serde_json::from_str(include_str!(
+            "../../docs/source-audit/live_repository_inventory.json"
+        ))
+        .unwrap();
+        let source_snapshot = inventory["manifest_generated_for_revision"]
+            .as_str()
+            .unwrap();
         let manifest = parse_manifest(bytes, Some(source_snapshot)).unwrap();
         assert_eq!(manifest.repository.owner, SOURCE_OWNER);
         assert_eq!(
@@ -1715,7 +1804,16 @@ mod tests {
         );
         assert!(manifest.profiles.iter().any(|profile| profile.default));
         assert_eq!(manifest.wiki.destination, "paradox_wiki/");
-        assert_eq!(manifest.components.len(), 23);
+        assert_eq!(manifest.components.len(), 26);
+        let core_profile = manifest
+            .profiles
+            .iter()
+            .find(|profile| profile.default)
+            .expect("checked-in manifest must have a default profile");
+        assert!(core_profile
+            .components
+            .iter()
+            .any(|component| component == "docs.mcp_integration"));
         assert!(manifest
             .components
             .iter()
@@ -1735,6 +1833,10 @@ mod tests {
         assert!(manifest
             .components
             .iter()
+            .any(|component| { component.id == "workflow.portraits.router" }));
+        assert!(manifest
+            .components
+            .iter()
             .any(|component| { component.id == "workflow.portraits.cloud" }));
         assert!(manifest
             .components
@@ -1748,6 +1850,53 @@ mod tests {
             .components
             .iter()
             .any(|component| { component.id == "workflow.portraits.subagent" }));
+        for provider in ["cloud", "local", "runpod"] {
+            let component = manifest
+                .components
+                .iter()
+                .find(|component| component.id == format!("workflow.portraits.{provider}"))
+                .expect("portrait provider component must be declared");
+            assert!(component
+                .dependencies
+                .iter()
+                .any(|dependency| dependency == "workflow.portraits.router"));
+        }
+        let runpod = expand_components(&manifest, &["workflow.portraits.runpod".to_string()])
+            .expect("portrait provider dependency closure must resolve");
+        assert!(runpod.iter().any(|id| id == "workflow.portraits.router"));
+        let mcp = manifest
+            .components
+            .iter()
+            .find(|component| component.id == "mcp.hoi4_agent_tools")
+            .expect("MCP component must be declared");
+        for tool in ["hoi4.tech_inspect", "hoi4.tech_render", "hoi4.tech_compare"] {
+            assert!(mcp
+                .capabilities
+                .iter()
+                .any(|capability| capability.contains(tool)));
+        }
+        let three_d = manifest
+            .components
+            .iter()
+            .find(|component| component.id == "workflow.3d")
+            .expect("3D component must be declared");
+        assert!(three_d.required_tools.iter().any(|tool| tool.id == "uv"));
+        let bootstrap = three_d
+            .validation
+            .iter()
+            .find(|rule| rule.id == "3d.bootstrap")
+            .expect("3D bootstrap action must be declared");
+        assert_eq!(
+            bootstrap
+                .parameters
+                .get("privilege")
+                .and_then(Value::as_str),
+            Some("current_user")
+        );
+        assert!(bootstrap.parameters.contains_key("arguments"));
+        assert!(bootstrap.parameters.contains_key("network_access"));
+        assert!(bootstrap.parameters.contains_key("expected_writes"));
+        assert!(bootstrap.parameters.contains_key("rollback_boundary"));
         assert!(manifest
             .components
             .iter()
@@ -1804,8 +1953,8 @@ mod tests {
 
     #[test]
     fn super_events_package_is_complete_and_opt_in() {
-        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
-        let source_snapshot = "59bf7f23c25951ec613b0f36a6921277d16f1354";
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
+        let source_snapshot = "3562696c57905e6ed50f377a4ab46d5ac5ca8766";
         let manifest = parse_manifest(bytes, Some(source_snapshot)).unwrap();
         let core_profile = manifest
             .profiles
@@ -1919,7 +2068,7 @@ mod tests {
     #[test]
     fn published_manifest_is_consumed_at_the_resolved_revision() {
         let bundled_bytes =
-            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
         let remote_bytes = bundled_bytes.to_vec();
         let resolved_revision = "8791946cffeb98e113ebf0686c3d46f735fa3eeb";
 
@@ -1928,16 +2077,22 @@ mod tests {
 
         assert_eq!(origin, "remote");
         assert_eq!(selected_bytes, remote_bytes);
+        let inventory: Value = serde_json::from_str(include_str!(
+            "../../docs/source-audit/live_repository_inventory.json"
+        ))
+        .unwrap();
         assert_eq!(
             manifest.generated_for_revision.as_deref(),
-            Some("59bf7f23c25951ec613b0f36a6921277d16f1354")
+            inventory
+                .get("manifest_generated_for_revision")
+                .and_then(Value::as_str)
         );
     }
 
     #[test]
     fn authoritative_manifest_schema_rejects_unknown_top_level_fields() {
         let mut value: Value = serde_json::from_slice(include_bytes!(
-            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+            "../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"
         ))
         .unwrap();
         value
@@ -1959,7 +2114,7 @@ mod tests {
     #[test]
     fn authoritative_manifest_schema_rejects_unknown_nested_policy_fields() {
         let mut value: Value = serde_json::from_slice(include_bytes!(
-            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+            "../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"
         ))
         .unwrap();
         value["update_policy"]["latest"]["allow_branch_lock"] = Value::Bool(true);
@@ -1976,10 +2131,118 @@ mod tests {
     }
 
     #[test]
-    fn core_profile_keeps_windows_only_mcp_nonblocking_on_macos() {
-        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
+    fn authoritative_manifest_schema_accepts_verified_command_identity_fields() {
+        let mut value: Value = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"
+        ))
+        .unwrap();
+        let component = value["components"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|component| component["id"] == "mcp.hoi4_agent_tools")
+            .unwrap();
+        let parameters = component["validation"][0]["parameters"]
+            .as_object_mut()
+            .unwrap();
+        parameters.insert("executable_sha256".into(), Value::String("a".repeat(64)));
+        parameters.insert("executable_size".into(), Value::from(1));
+        parameters.insert("interpreter_sha256".into(), Value::String("b".repeat(64)));
+        parameters.insert("interpreter_size".into(), Value::from(2));
+        parameters.insert("runtime_sha256".into(), Value::String("c".repeat(64)));
+        parameters.insert("runtime_size".into(), Value::from(3));
+
+        parse_manifest(
+            &serde_json::to_vec(&value).unwrap(),
+            Some("27128a7b311d728a959afff7238a9aeeb9987f2b"),
+        )
+        .expect("the schema must admit every command identity field enforced by Rust");
+    }
+
+    #[test]
+    fn authoritative_manifest_schema_rejects_unknown_validation_parameters() {
+        let mut value: Value = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"
+        ))
+        .unwrap();
+        let component = value["components"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|component| component["id"] == "mcp.hoi4_agent_tools")
+            .unwrap();
+        component["validation"][0]["parameters"]["unreviewed_identity"] = Value::Bool(true);
+
+        let error = parse_manifest(
+            &serde_json::to_vec(&value).unwrap(),
+            Some("27128a7b311d728a959afff7238a9aeeb9987f2b"),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("authoritative JSON Schema"));
+        assert!(error.contains("unreviewed_identity"));
+    }
+
+    #[test]
+    fn three_d_bootstrap_requires_complete_reviewed_action_evidence() {
+        let mut value: Value = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"
+        ))
+        .unwrap();
+        let component = value["components"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|component| component["id"] == "workflow.3d")
+            .unwrap();
+        let action = component["validation"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|rule| rule["id"] == "3d.bootstrap")
+            .unwrap();
+        action["parameters"]
+            .as_object_mut()
+            .unwrap()
+            .remove("rollback_boundary");
+
+        let error = parse_manifest(
+            &serde_json::to_vec(&value).unwrap(),
+            Some("3562696c57905e6ed50f377a4ab46d5ac5ca8766"),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("workflow.3d bootstrap action evidence is incomplete"));
+    }
+
+    #[test]
+    fn manifest_requires_exactly_one_default_profile() {
+        let mut value: Value = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"
+        ))
+        .unwrap();
+        let mut second = value["profiles"][0].clone();
+        second["id"] = Value::String("second-default".into());
+        second["default"] = Value::Bool(true);
+        value["profiles"].as_array_mut().unwrap().push(second);
+
+        let error = parse_manifest(
+            &serde_json::to_vec(&value).unwrap(),
+            Some("3562696c57905e6ed50f377a4ab46d5ac5ca8766"),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("exactly one default profile"));
+    }
+
+    #[test]
+    fn core_profile_keeps_windows_only_mcp_components_nonblocking_on_macos() {
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
         let manifest =
-            parse_manifest(bytes, Some("27128a7b311d728a959afff7238a9aeeb9987f2b")).unwrap();
+            parse_manifest(bytes, Some("32a85b3db800dcf2920c65a6093caaf1b9b81c8b")).unwrap();
         let profile = manifest
             .profiles
             .iter()
@@ -1993,10 +2256,21 @@ mod tests {
             .expect("core profile must include the declared MCP component");
 
         assert_eq!(mcp.state, "unsupported_platform");
+        assert_eq!(
+            macos
+                .iter()
+                .find(|item| item.component_id == "mcp.hoi4_agent_tools.bootstrap")
+                .expect("MCP bootstrap dependency must remain visible")
+                .state,
+            "unsupported_platform"
+        );
         assert!(!macos.iter().any(|item| item.state == "blocked"));
         assert!(macos
             .iter()
-            .filter(|item| item.component_id != "mcp.hoi4_agent_tools")
+            .filter(|item| {
+                item.component_id != "mcp.hoi4_agent_tools"
+                    && item.component_id != "mcp.hoi4_agent_tools.bootstrap"
+            })
             .all(|item| item.state == "supported"));
     }
 
@@ -2186,7 +2460,7 @@ mod tests {
 
     #[test]
     fn manifest_generation_revision_may_precede_publication_revision() {
-        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
         let mut manifest: RemoteManifest = serde_json::from_slice(bytes).unwrap();
         manifest.generated_for_revision = Some("599497ea2f93612d9094461c6fde114fc87a5c0f".into());
         validate_manifest(&manifest, Some("27128a7b311d728a959afff7238a9aeeb9987f2b")).unwrap();
@@ -2194,7 +2468,7 @@ mod tests {
 
     #[test]
     fn manifest_rejects_unsupported_provenance_update_or_signing_policy() {
-        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
         let revision = "27128a7b311d728a959afff7238a9aeeb9987f2b";
 
         let mut provenance: RemoteManifest = serde_json::from_slice(bytes).unwrap();
@@ -2237,7 +2511,7 @@ mod tests {
 
     fn minimal_manifest(components: Vec<ComponentDefinition>) -> RemoteManifest {
         RemoteManifest {
-            schema_version: "1.0.0".into(),
+            schema_version: "2.0.0".into(),
             manifest_id: "test".into(),
             generated_for_revision: None,
             repository: RepositoryDescriptor {

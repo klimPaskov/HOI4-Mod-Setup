@@ -118,7 +118,20 @@ Use same-volume atomic replacement where possible. Apply in deterministic order 
 
 ### 10. Post-install checks
 
-Hash live files, parse final configuration, run approved health checks, and verify Git actions.
+Hash live files, parse final configuration, run approved health checks, and
+verify Git actions. A selected Windows 3D workflow then runs only its reviewed
+manifest action: the core rechecks the installed bootstrap hash/size, fixed
+arguments, declared network/writes/privilege/rollback evidence, Python identity,
+and OS-vault Meshy reference before spawn. The bounded sanitized outcome updates
+an effective plan used for readiness and the final lock. Only `ready`,
+`incomplete`, or `unsupported_platform` are accepted; the original reviewed
+plan remains authoritative for final managed-file verification.
+
+Persist `post-install-actions-intent` before invoking the action and bounded
+redacted evidence after it. A missing optional credential or tool returns an
+honest non-blocking `incomplete` state. A changed action/script or internal
+runner error fails after apply and therefore requires rollback or manual review;
+it is never silently replayed. Pre-apply resume uses the same production runner.
 
 ### 11. Readiness report
 
@@ -146,6 +159,11 @@ external wrapper action, persist the manifest-declared executable, interpreter,
 and runtime identity evidence in the plan and journal; missing identity keeps
 the action `planned_unavailable` and is never permission to run a same-named
 PATH command.
+
+Managed rollback restores project files and predecessor lock state. It does not
+claim to uninstall source-declared external bootstrap state such as user-level
+`uv`, downloaded runtime caches, dependencies, or Blender extensions; the dry
+run and journal retain that explicit boundary.
 
 ## Apply order
 
