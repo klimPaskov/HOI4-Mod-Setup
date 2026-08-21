@@ -161,12 +161,13 @@ MCP servers and external dependencies are components. Their command, arguments, 
 - The optional Windows 3D component includes the repository-owned
   `blender_hoi4` production adapter, worker, asset profiles, Meshy tool
   contract, and wrapper alongside the bootstrap evidence. Keep unrestricted
-  Blender Lab development-only, derive every installed path and command from
-  the verified manifest, require declared `uv`, and do not infer a macOS route.
-  Its command validation must declare fixed bootstrap arguments, network
-  access, expected external writes, current-user privilege, and the rollback
-  boundary. The app may run only that reviewed action after verifying the
-  installed script bytes.
+  Blender Lab development-only, derive every installed path from the verified
+  manifest, require declared `uv`, and do not infer a macOS route. The
+  manifest command must match the app-owned allowlisted action ID and fixed
+  arguments and must declare network access, expected external writes,
+  current-user privilege, and the rollback boundary. The app may run only that
+  recognized reviewed action after verifying the installed script bytes; a
+  changed command contract requires an app release.
 - The published component graph includes the optional complete portrait
   contract, `workflow.portraits.router`, and one provider-specific skill
   component for each supported route. Each enabled provider depends on the

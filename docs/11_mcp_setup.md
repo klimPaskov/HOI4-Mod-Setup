@@ -72,9 +72,11 @@ The current HOI4 Agent Tools documentation and manifest describe focus, event,
 weighted-logic, scripted-GUI, map, technology, and doctrine routes. The
 Technology Tree Viewer is exposed through `hoi4.tech_inspect`,
 `hoi4.tech_render`, and `hoi4.tech_compare`. Show only the capabilities declared
-by the resolved manifest and refine them with the live MCP tool list; a future
-addition or removal comes from that exact source revision rather than an app
-hardcode.
+by the resolved manifest and refine them with the live MCP tool list. Those
+three Technology Tree routes are the application's permanent readiness
+baseline for the supported HOI4 Agent Tools integration. Manifest-only file and
+documentation additions are dynamic; changing this executable route baseline
+requires a reviewed app release.
 
 ## Credentials
 

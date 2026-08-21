@@ -8,7 +8,10 @@ owned by the OS credential vault. Project state, plans, locks, readiness
 reports, logs, and support bundles never contain tokens, keys, full account
 identity, plan type, usage, rate limits, thread history, or hidden reasoning.
 
-Persist only the integration type, auth state needed by the current application session, analysis ID, schema version, input and output digests, confirmed proposal keys, confirmation time, and a proof that account identity was not persisted.
+Persist only the integration type, auth state needed by the current application
+session, analysis ID, schema version, input and output digests, confirmed
+proposal keys, confirmation time, the exact non-secret source revision and
+source-manifest SHA-256, and a proof that account identity was not persisted.
 
 ## Included schemas
 

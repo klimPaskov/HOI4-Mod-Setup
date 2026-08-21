@@ -24,8 +24,8 @@ This document is the concise developer status. User guidance stays in the root
 - Rust unit/property tests, fuzz targets, transaction fault injection,
   frontend/accessibility tests, workflow authority checks, and Windows/macOS
   native build and launch-smoke workflows.
-- User-facing release curation that publishes only the Windows installer and
-  two macOS disk images.
+- User-facing release curation that publishes three installers, `latest.json`,
+  and two macOS updater archives.
 - Automatic signed startup update checks that download, verify, replace, and
   restart into the latest version, with retry after failure.
 - Existing-project ChatGPT source packaging with a Downloads default, required

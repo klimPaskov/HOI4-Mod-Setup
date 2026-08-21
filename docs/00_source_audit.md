@@ -42,7 +42,13 @@ fresh line-by-line semantic review of every unchanged wiki or workflow file.
 
 The body of every offline wiki article was not fully read. The installer design inspected the distribution, observed page set, required core page names, and snapshot marker. Binary media in the wiki and visual reference libraries were not individually inspected. Their paths, containment, hashes, and component ownership belong to installation validation.
 
-No formal root `LICENSE` file or `paradox_wiki/LICENSE` file was found at the tested paths. The repository README contains permissive wording, but this package does not treat that wording as a verified formal license. The current manifest records both repository license evidence and wiki license status as `not_found`.
+No formal root `LICENSE` file or `paradox_wiki/LICENSE` file was found in the
+audited Agentic HOI4 Modding source checkout at the tested paths. (The HOI4 Mod
+Setup application repository has its own Apache-2.0 `LICENSE`.) The Agentic
+repository README contains permissive wording, but this package does not treat
+that wording as a verified formal license. The current source manifest records
+both Agentic repository license evidence and wiki license status as
+`not_found`.
 
 The updated root manifest at commit
 `de7dab486e99ce926de60905e8930b20fb0eab04` has raw SHA-256
@@ -169,14 +175,13 @@ The supplied Chaos Redux event catalog snapshot contains hundreds of mixed-state
 3. Differences are recorded and reviewed. They are never silently resolved.
 4. Repository scripts define actual executable behavior. Documentation remains guidance and evidence.
 
-## Repository work remaining before production
+## Remaining source limitations
 
-- declare platform support for command-bearing components where the source
-  provides a verified route
-- add wiki source and license metadata when available
-- define stable MCP health checks with immutable executable provenance
-- add preflight-only output to scripts that install external dependencies
-- publish a machine-readable list of runtime-generated files
+- add formal Agentic repository and wiki license evidence when available
+- publish new or changed executable routes only alongside a reviewed app-owned
+  allowlisted adapter; file-only component additions remain dynamic
+- retain the current immutable MCP package-tree and live tool-list health
+  evidence whenever the supported package is republished
 
 ## Open-source GitHub repository references
 

@@ -8,6 +8,16 @@ No unreleased changes.
 
 ## 0.2.13 - 2026-08-21
 
+- Bind confirmed semantic analysis to the exact source revision and manifest
+  digest, preserve installed source pins during maintenance reanalysis, and
+  migrate older records only from valid provenance in the same lock.
+- Disable platform-incompatible manifest components, show complete dependency
+  and file evidence, and provide an announced, focus-safe Retry action when
+  source loading fails.
+- Keep stable releases tag-only, verify uploaded draft assets byte-for-byte
+  before publication, and exercise first install, repair, removal, and rollback
+  on every native release runner.
+- Pin Nano ID 3.3.18 so the high-severity dependency audit remains clear.
 - Move the expanded automatic MCP/3D contract to the versioned schema-2
   manifest route while retaining a schema-1 compatibility manifest for
   already installed app versions.

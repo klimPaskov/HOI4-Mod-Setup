@@ -78,7 +78,9 @@ the result, verifies that `main` did not move underneath the run, and publishes
 the refreshed manifest in a follow-up commit. New files inside `core.skills`
 and `core.subagents` therefore require no app release. A genuinely new
 component still needs an explicit source-owned component/profile declaration;
-the app consumes compatible declarations generically and never invents them.
+the app consumes compatible file-only declarations generically and never
+invents them. A new or changed command-bearing component additionally requires
+an app-owned allowlisted runtime adapter and therefore an app release.
 
 At runtime Latest resolves the publication commit first and uses one immutable
 revision for manifest and file downloads. New setup seeds the resolved default
@@ -104,12 +106,15 @@ Blender Lab remains development-only; none of this evidence creates a macOS
 route.
 
 Its reviewed `3d.bootstrap` command runs automatically during transaction
-post-install checks only after managed files validate. The manifest declares
-its fixed arguments, network access, expected external writes, current-user
-privilege, and rollback boundary. The runner verifies the installed bootstrap
-bytes, injects `MESHY_API_KEY` only from the OS vault, and persists `ready` only
-after an exit-zero verified-config run. Missing credentials or prerequisites
-leave the optional workflow `incomplete` without blocking core readiness.
+post-install checks only after managed files validate. The manifest must match
+the app-owned allowlisted command ID and fixed arguments; it also declares
+network access, expected external writes, current-user privilege, and rollback
+boundary. The app never executes arbitrary manifest commands, so changing the
+3D command contract requires an app release. The runner verifies the installed
+bootstrap bytes, injects `MESHY_API_KEY` only from the OS vault, and persists
+`ready` only after an exit-zero verified-config run. Missing credentials or
+prerequisites leave the optional workflow `incomplete` without blocking core
+readiness.
 
 The complete schema is `schemas/remote-manifest.schema.json`.
 

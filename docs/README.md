@@ -32,8 +32,9 @@ generated from immutable source revision
 `78da3473fa7a6260944ed1df9febdab85644083e`. The app still resolves the remote
 default branch to one exact commit at runtime. The source-owned publication
 workflow refreshes selected-file evidence for changed skills, subagents, and
-declared component trees, allowing compatible additions to flow into Latest
-mode without an app release.
+declared component trees, allowing compatible file-only additions to flow into
+Latest mode without an app release. New executable command routes still require
+an existing audited app-owned adapter contract or a matching app release.
 
 The application code is under `src/` and `src-tauri/`; living implementation
 memory is under `.agents/skills/`; bounded subagents are under `.codex/agents/`.

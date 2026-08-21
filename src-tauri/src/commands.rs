@@ -8164,6 +8164,19 @@ developer_instructions = "Work on the named files."
         assert_eq!(source.mode, SourceMode::PinnedRelease);
         assert_eq!(source.requested_ref.as_deref(), Some("v0.2.12"));
         assert_eq!(source.release.as_deref(), Some("v0.2.12"));
+
+        lock["source"]["mode"] = serde_json::json!("latest");
+        lock["source"]["requested_ref"] = Value::Null;
+        lock["source"]["release"] = Value::Null;
+        std::fs::write(&lock_path, serde_json::to_vec(&lock).unwrap()).unwrap();
+        let mut renderer_pinned = request;
+        renderer_pinned.constraints = serde_json::json!({
+            "source": { "mode": "pinned_commit", "selected_ref": "f".repeat(40) }
+        });
+        let latest = source_request_for_analysis(&renderer_pinned).unwrap();
+        assert_eq!(latest.mode, SourceMode::Latest);
+        assert!(latest.requested_ref.is_none());
+        assert!(latest.release.is_none());
     }
 
     #[test]

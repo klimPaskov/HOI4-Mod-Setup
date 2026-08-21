@@ -186,9 +186,10 @@
   revision declares the working `hoi4.tech_inspect`, `hoi4.tech_render`, and
   `hoi4.tech_compare` routes; the live tool list refines readiness.
 - MCP-07: A newly published manifest profile, skill, subagent, documentation
-  component, or optional workflow can be selected and installed without a new
-  app release when it satisfies the supported schema, platform, dependency,
-  checksum, and security contracts.
+  component, or file-only optional workflow can be selected and installed
+  without a new app release when it satisfies the supported schema, platform,
+  dependency, checksum, and security contracts. New or changed executable
+  command contracts require an app-owned allowlisted adapter and app release.
 
 ## Git
 

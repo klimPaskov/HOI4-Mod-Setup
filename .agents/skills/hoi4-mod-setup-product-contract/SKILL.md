@@ -35,11 +35,13 @@ Read:
 - The user selects an AI provider and model at the start; Codex/ChatGPT is the default, and selected-provider authentication plus confirmed schema-valid analysis are required before Create, Import, Update, or Repair planning.
 - Provider optimization changes semantic conventions only; deterministic validation, source trust, transaction safety, and readiness rules are provider-independent.
 - New projects create both descriptors, a valid replaceable thumbnail, and the selected folder profile.
-- Latest-mode components are dynamic source data. Compatible changed skills,
-  new skills, new subagents, new default-profile components, and declared
-  optional workflows must be usable from the exact newly published Agentic
-  manifest without an app release. Preserve platform, dependency, provider,
-  checksum, conflict, and review gates; dynamic never means unvalidated.
+- Latest-mode file components are dynamic source data. Compatible changed
+  skills, new skills, new subagents, new default-profile components, and
+  file-only optional-workflow declarations must be usable from the exact newly
+  published Agentic manifest without an app release. A new or changed command
+  route must match an existing audited app-owned allowlist contract or ship
+  with an app release. Preserve platform, dependency, provider, checksum,
+  conflict, and review gates; dynamic never means unvalidated.
 - Script prefixes and primary namespaces are retained as project conventions in installation metadata and adapted guidance; neither is emitted as a key in the internal or launcher descriptor.
 - Selected starter folders are real reviewed directory entries, not `.gitkeep`
   files; rollback removes only transaction-created folders that remain empty.

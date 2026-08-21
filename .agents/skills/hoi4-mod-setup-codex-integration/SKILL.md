@@ -129,7 +129,10 @@ Every analysis record is bound to the exact resolved source revision and
 manifest SHA-256 used to validate component recommendations. Changing the
 source selector invalidates the renderer proposal and requires a new reviewed
 analysis. Maintenance reanalysis ignores renderer source defaults and derives
-the immutable source request from the installed lock. Locks written before
+the source mode and pin from the installed lock. A pinned lock resolves its
+exact commit; a Latest lock resolves one current exact revision, which is
+persisted on the record and must match plan resolution or planning fails closed
+and requires reanalysis. Locks written before
 this binding existed may copy the fields only from valid source evidence
 already stored in that same lock; absent or malformed provenance remains
 blocked instead of being inferred from the current repository.
