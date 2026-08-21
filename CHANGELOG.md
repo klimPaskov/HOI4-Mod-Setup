@@ -6,7 +6,11 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
-## 0.2.13 - 2026-08-21
+## 0.2.14 - 2026-08-21
+
+- Make the dynamic default-profile regression test select an explicit supported
+  platform, so the Linux-only unsigned release gate verifies Windows/macOS
+  behavior without treating Linux as a supported desktop target.
 
 - Bind confirmed semantic analysis to the exact source revision and manifest
   digest, preserve installed source pins during maintenance reanalysis, and
@@ -72,6 +76,11 @@ No unreleased changes.
   arbitrary external file.
 - Preserve finding origins and core scan conflicts through the desktop review
   bridge, and bind conflict summaries into provider evidence approval.
+
+## 0.2.13 - 2026-08-21 (not published)
+
+- No artifacts were published. The unsigned release gate found the portable
+  default-profile test issue corrected in 0.2.14 before signing began.
 
 ## 0.2.11 - 2026-08-09
 

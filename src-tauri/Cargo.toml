@@ -1,6 +1,6 @@
 [package]
 name = "hoi4-mod-setup"
-version = "0.2.13"
+version = "0.2.14"
 description = "Safe, evidence-backed setup for agentic Hearts of Iron IV mod projects"
 authors = ["HOI4 Mod Setup contributors"]
 license = "Apache-2.0"

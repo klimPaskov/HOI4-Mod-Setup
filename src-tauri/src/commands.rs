@@ -2873,6 +2873,7 @@ fn add_supported_profile_components(
     provider: &str,
     requested: &mut Vec<String>,
     component_ids: &[String],
+    platform: Platform,
 ) -> Result<(), AppError> {
     for component_id in component_ids {
         if requested.iter().any(|selected| selected == component_id) {
@@ -2884,8 +2885,7 @@ fn add_supported_profile_components(
         if reject_codex_only_dependencies(provider, &expanded).is_err() {
             continue;
         }
-        let support =
-            crate::source::resolve_platform_support(manifest, &expanded, Platform::current())?;
+        let support = crate::source::resolve_platform_support(manifest, &expanded, platform)?;
         if support.iter().any(|item| item.state == "blocked") {
             continue;
         }
@@ -5758,6 +5758,7 @@ fn build_maintenance_plan_blocking(
             &lock.ai_provider,
             &mut requested,
             &new_defaults,
+            Platform::current(),
         )
         .map_err(command_error)?;
         let expanded =
@@ -7371,7 +7372,14 @@ mcp_server = "comfy_cloud_portraits"
         let mut requested = vec!["core.agents".into()];
 
         let defaults = default_profile_component_ids(&manifest).unwrap();
-        add_supported_profile_components(&manifest, "codex", &mut requested, &defaults).unwrap();
+        add_supported_profile_components(
+            &manifest,
+            "codex",
+            &mut requested,
+            &defaults,
+            Platform::Windows,
+        )
+        .unwrap();
 
         assert!(requested.iter().any(|id| id == "core.future_skills"));
     }
