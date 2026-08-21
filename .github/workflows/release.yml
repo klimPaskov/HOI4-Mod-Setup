@@ -138,6 +138,12 @@ jobs:
       - name: Install, launch, and remove native package
         shell: bash
         run: pnpm installer:e2e
+      - name: Verify native project lifecycle
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --all-features transaction::tests::first_install_resumes_after_validation_with_user_facing_launcher_path_and_keeps_user_thumbnail -- --exact
+          cargo test --manifest-path src-tauri/Cargo.toml --all-features transaction::tests::repair_and_removal_preserve_modified_files -- --exact
+          cargo test --manifest-path src-tauri/Cargo.toml --all-features transaction::tests::apply_then_rollback_restores_original_hashes -- --exact
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: hoi4-mod-setup-unsigned-${{ matrix.platform }}

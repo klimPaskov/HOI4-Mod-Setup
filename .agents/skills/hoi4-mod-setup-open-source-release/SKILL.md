@@ -63,6 +63,10 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
   name set, downloads all uploaded assets, and compares their SHA-256 values to
   the already curated local bytes. Manual preview publication remains a
   separate workflow rather than a no-op stable dispatch route.
+- Every native release build runs the focused project lifecycle acceptance
+  tests for launcher-ready first-install resume, modification-preserving
+  repair/removal, and exact apply/rollback restoration before uploading its
+  platform artifact.
 - The manually dispatched `development-preview.yml` uses `scripts/prepare_preview_assets.mjs` to recheck exact source, platform, architecture, package hashes, and notices before publishing one user-facing semantic-version prerelease; the workflow refuses to reuse a published tag, receives no stable signing credentials, and keeps the GitHub prerelease label.
 - Preview and stable publication scripts use deterministic installer names (`HOI4-Mod-Setup-windows-x64-setup.exe`, `HOI4-Mod-Setup-macos-arm64.dmg`, and `HOI4-Mod-Setup-macos-x64.dmg`). Preview release notes lead with three direct installer bullets. Hashes, metadata, provenance, notices, and SBOM remain in CI evidence and are verified before publication. Stable releases add `latest.json` and the two signed macOS app archives beside the three installers.
 - Platform-native lockfiles can contain legitimate optional packages for only one runner (for example, a Windows or macOS bundler). Preview and stable curation therefore require identical source, package, and platform evidence but merge the verified platform SBOM and third-party notice inventories into one deterministic union; they must not reject a release merely because those inventories differ by platform.
