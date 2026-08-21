@@ -141,6 +141,11 @@ session, cancellation, credential-health, or analysis assertions.
   remains able to use the validated locked analysis; the reanalysis evidence
   scan remains read-only and its approved references are bound to the core
   session before transmission
+- source-selector changes invalidate confirmed analysis and return new and
+  existing projects to their respective review screens; maintenance analysis
+  derives pinned source details from the installed lock, and legacy analysis
+  binding copies only valid same-lock source provenance while rejecting absent
+  or malformed evidence
 - Repair uses only the immutable locked source and rejects a component absent
   from it; Update resolves the newer source required to add that component
 - the managed lock, completed scan context, and readiness result remain the

@@ -596,6 +596,33 @@ describe("HOI4 Mod Setup wizard", () => {
     }
   });
 
+  it("does not surface a stale Windows-only MCP route on macOS", () => {
+    const originalUserAgent = navigator.userAgent;
+    Object.defineProperty(navigator, "userAgent", { configurable: true, value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)" });
+    try {
+      const component = {
+        id: "mcp.windows_tools",
+        display_name: "Windows tools",
+        category: "mcp",
+        optional: true,
+        platforms: ["windows"],
+        source: { kind: "tree", path: ".tools/windows" },
+        destination: { path: ".tools/windows/", ownership: "managed" },
+        dependencies: [],
+        required_tools: [],
+        environment: [],
+        expected_files: [],
+        capabilities: [],
+        validation: [],
+        update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true },
+      };
+      render(<Mcp state={{ selectedComponents: [component.id], manifestPreview: { components: [component] } } as unknown as WizardState} />);
+      expect(screen.getByText("No integration is selected.")).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(navigator, "userAgent", { configurable: true, value: originalUserAgent });
+    }
+  });
+
   it("offers a direct retry after manifest loading fails", async () => {
     const manifest = {
       schema_version: "1.0.0",
@@ -613,6 +640,7 @@ describe("HOI4 Mod Setup wizard", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Retry loading components" }));
     expect(await screen.findByText("Components loaded.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("status")).toHaveFocus());
     expect(previewSourceManifestResult).toHaveBeenCalledTimes(2);
   });
 
@@ -1860,6 +1888,6 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByText("Dependencies and file list"));
     expect(screen.getByText("Requires core.agents")).toBeInTheDocument();
     expect(screen.getByText("1 file · destination: .agents/skills/")).toBeInTheDocument();
-    expect(screen.queryByText(".agents/skills/example/SKILL.md")).not.toBeInTheDocument();
+    expect(screen.getByText(".agents/skills/example/SKILL.md")).toBeInTheDocument();
   });
 });

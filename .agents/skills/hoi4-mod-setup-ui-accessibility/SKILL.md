@@ -173,8 +173,15 @@ Conflict review is the exception. It may show a three-way comparison and more co
   Disabled projects show source-based portrait handling and no ComfyUI-specific
   guidance. Persist the choice through import, settings, Update, and Repair.
 - Keep a local recovery/removal entry reachable from Welcome when signed out; rollback, backup inspection, and managed removal do not depend on Codex.
-- Preserve account and analysis state when logout or usage-limit errors occur, and announce the actionable error without losing focus.
+- Preserve the draft and scan when usage-limit errors occur, and announce the
+  actionable error without losing focus. Logout clears session-scoped account,
+  analysis, and approved-evidence state even when the remote logout request
+  fails; keep local recovery/removal available.
 - The Components option `Prepare a flattened ChatGPT project-sources folder` is a native keyboard-accessible checkbox shown only when Codex is selected. Present it with the same visual structure as the other component choices: title, concise contents, file count, and an expandable per-file size list. Source-declared sizes may appear immediately; generated-file and exact total sizes appear after the plan is prepared. Install review is read-only, there is no additional-files control, the no-automatic-upload Chat recommendation appears on Ready, and the choice never appears for another provider.
+- A manifest-load failure is an announced blocking callout with a direct Retry
+  action. Suppress duplicate retries, expose the pending state with
+  `aria-busy`, and return focus to the successful status message; a repeated
+  failure retains the Retry action.
 - Existing managed projects expose **Package ChatGPT project sources** from
   maintenance when the scan finds an AGENTS.md, flattened skill, or subagent;
   no installation lock is required. The page defaults to Downloads, shows

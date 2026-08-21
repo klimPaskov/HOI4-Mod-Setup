@@ -229,9 +229,10 @@ entry as OAuth or account login.
 - Application updates use one fixed HTTPS GitHub Release endpoint and the
   committed Tauri updater public key. The private key is release-environment
   only and signs final platform bytes after platform publisher signing.
-- Background checks are non-blocking; installation requires explicit user
-  action, and any metadata, download, or signature failure preserves the
-  running app.
+- Background checks are non-blocking. After a newer signed version is
+  surfaced, verified replacement and restart begin automatically; any
+  metadata, download, signature, or replacement failure preserves the running
+  app and exposes Retry.
 - Release curation stream-verifies each final updater artifact with the
   embedded public key so a stale or mismatched private key blocks publication.
 

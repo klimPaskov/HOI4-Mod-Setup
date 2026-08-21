@@ -76,8 +76,9 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
   GitHub Secrets. The workflow decodes the PFX into the runner temporary directory,
   loads its public identity ephemerally, signs without network access, and removes
   the temporary PFX in an `always()` cleanup step.
-- Stable publication first creates a draft from the exact curated three-file
-  installer set, verifies the draft state and assets, and only then changes it
+- Stable publication first creates a draft from the exact six public assets:
+  three installers, `latest.json`, and two macOS update archives. It verifies
+  the remote draft state and exact downloaded bytes, and only then changes it
   to a normal public release.
 - A publication job that intentionally omits source checkout must pass
   `--repo "$GITHUB_REPOSITORY"` to every `gh release` command; it must not rely

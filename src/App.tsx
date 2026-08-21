@@ -2202,7 +2202,9 @@ export function Components({ state, update }: { state: WizardState; update: (pat
   const [manifest, setManifest] = useState<SourceManifestPreview | null>(state.manifestPreview ?? null);
   const [manifestMessage, setManifestMessage] = useState(state.manifestPreview ? "Components loaded." : "Loading setup components…");
   const [manifestFailed, setManifestFailed] = useState(false);
+  const [manifestRetrying, setManifestRetrying] = useState(false);
   const [manifestRequest, setManifestRequest] = useState(0);
+  const manifestStatusRef = useRef<HTMLParagraphElement | null>(null);
 
   useEffect(() => {
     if (import.meta.env.DEV && window.__HOI4_DOCUMENTATION_STATE__ && state.manifestPreview) {
@@ -2212,14 +2214,16 @@ export function Components({ state, update }: { state: WizardState; update: (pat
     }
     let active = true;
     setManifest(null);
-    setManifestFailed(false);
+    if (!manifestRetrying) setManifestFailed(false);
     setManifestMessage("Loading setup components…");
+    const returningFromRetry = manifestRetrying;
     void previewSourceManifestResult(state.sourceMode, state.pinnedRef).then((response) => {
       if (!active) return;
       const result = response.value;
       if (!result) {
         setManifest(null);
         setManifestFailed(true);
+        setManifestRetrying(false);
         setManifestMessage(response.error ? `The setup components could not be loaded: ${response.error}` : "The setup components could not be loaded.");
         return;
       }
@@ -2252,7 +2256,10 @@ export function Components({ state, update }: { state: WizardState; update: (pat
       const rows = result.components.map((component) => manifestRow(component, selectedComponents.includes(component.id), state.aiProvider, result.components));
       setManifest(result);
       setManifestMessage("Components loaded.");
+      setManifestFailed(false);
+      setManifestRetrying(false);
       update({ manifestPreview: result, components: rows, selectedComponents });
+      if (returningFromRetry) window.setTimeout(() => manifestStatusRef.current?.focus(), 0);
     });
     return () => { active = false; };
   }, [state.sourceMode, state.pinnedRef, state.aiProvider, manifestRequest]);
@@ -2279,7 +2286,12 @@ export function Components({ state, update }: { state: WizardState; update: (pat
     update({ selectedComponents: selected, maintenanceOptionalSelections, components: rows.map((row) => row.id === id ? { ...row, selected: !row.selected } : row) });
   };
   const chooseFlattenedSources = (selected: boolean) => update({ flattenForChat: selected, plan: undefined, conflictChoice: undefined, transactionError: undefined });
-  return <div className="stack narrow"><section className="panel">{manifest ? visibleRows.map((component) => <button type="button" key={component.id} className="component-row" onClick={() => toggle(component.id)} aria-pressed={component.selected} aria-disabled={component.required || component.state === "blocked" || undefined} disabled={component.state === "blocked"}><span className={`checkbox ${component.selected ? "checked" : ""}`}>{component.selected ? "✓" : ""}</span><span><strong>{component.title}</strong><small>{component.detail}</small></span><span className="size">{component.size}</span></button>) : null}{state.aiProvider === "codex" && <><label className="component-row flatten-package-row"><input className="visually-hidden" type="checkbox" checked={state.flattenForChat} onChange={(event) => chooseFlattenedSources(event.target.checked)} /><span className={`checkbox ${state.flattenForChat ? "checked" : ""}`} aria-hidden="true">{state.flattenForChat ? "✓" : ""}</span><span><strong>Prepare a flattened ChatGPT project-sources folder</strong><small>Project guidance, README, skills, and subagents in one folder</small></span><span className="size">{chatSummary}</span></label>{state.flattenForChat && <details><summary>Files in the ChatGPT folder</summary><div className="manifest-details flattened-file-list">{chatFiles.map((file) => <div key={file.name}><strong>{file.name}</strong><small>{file.size === undefined ? "Size calculated during review" : formatScanBytes(file.size)}</small></div>)}</div></details>}</>}{manifestFailed ? <div className="callout block" role="alert"><span>{manifestMessage}</span><button type="button" className="button secondary" onClick={() => setManifestRequest((request) => request + 1)}>Retry loading components</button></div> : <p className="muted" role="status">{manifestMessage}</p>}<p className="muted">Source: <ExternalLink href="https://github.com/klimPaskov/Agentic-HOI4-Modding">Agentic HOI4 Modding <span aria-hidden="true">↗</span></ExternalLink></p><details><summary>Dependencies and file list</summary>{manifest ? <div className="manifest-details">{manifest.components.map((component) => <div key={component.id}><strong>{component.display_name}</strong><span>{component.dependencies.length ? `Requires ${component.dependencies.join(", ")}` : "No additional components required"}</span><small>Platforms: {component.platforms.join(", ")}</small><small>{component.expected_files.length === 1 ? "1 file" : `${component.expected_files.length} files`} · destination: {component.destination.path}</small></div>)}</div> : <p className="muted">Dependencies appear after the components load.</p>}</details><details><summary>Choose source version</summary><label className="field"><span className="field-label">Version</span><select className="text-input" value={state.sourceMode} onChange={(event) => update({ sourceMode: event.target.value as WizardState["sourceMode"], pinnedRef: "", manifestPreview: undefined, components: [], codexAnalysis: undefined, codexAnalysisRecord: undefined, plan: undefined, transactionError: "Changing the source requires a new analysis before setup can continue." })}><option value="latest">Latest</option><option value="pinned_commit">Specific commit</option><option value="pinned_release">Release</option></select></label>{state.sourceMode !== "latest" && <Field label={state.sourceMode === "pinned_commit" ? "Commit" : "Release"} value={state.pinnedRef} onChange={(value) => update({ pinnedRef: value, manifestPreview: undefined, components: [], codexAnalysis: undefined, codexAnalysisRecord: undefined, plan: undefined, transactionError: "Changing the source requires a new analysis before setup can continue." })} mono placeholder={state.sourceMode === "pinned_commit" ? "40-character commit" : "v1.0.0"} />}</details></section><div className="disclosure-note">Download size appears before installation.</div></div>;
+  const retryManifest = () => {
+    if (manifestRetrying) return;
+    setManifestRetrying(true);
+    setManifestRequest((request) => request + 1);
+  };
+  return <div className="stack narrow"><section className="panel">{manifest ? visibleRows.map((component) => <button type="button" key={component.id} className="component-row" onClick={() => toggle(component.id)} aria-pressed={component.selected} aria-disabled={component.required || component.state === "blocked" || undefined} disabled={component.required || component.state === "blocked"}><span className={`checkbox ${component.selected ? "checked" : ""}`}>{component.selected ? "✓" : ""}</span><span><strong>{component.title}</strong><small>{component.detail}</small></span><span className="size">{component.size}</span></button>) : null}{state.aiProvider === "codex" && <><label className="component-row flatten-package-row"><input className="visually-hidden" type="checkbox" checked={state.flattenForChat} onChange={(event) => chooseFlattenedSources(event.target.checked)} /><span className={`checkbox ${state.flattenForChat ? "checked" : ""}`} aria-hidden="true">{state.flattenForChat ? "✓" : ""}</span><span><strong>Prepare a flattened ChatGPT project-sources folder</strong><small>Project guidance, README, skills, and subagents in one folder</small></span><span className="size">{chatSummary}</span></label>{state.flattenForChat && <details><summary>Files in the ChatGPT folder</summary><div className="manifest-details flattened-file-list">{chatFiles.map((file) => <div key={file.name}><strong>{file.name}</strong><small>{file.size === undefined ? "Size calculated during review" : formatScanBytes(file.size)}</small></div>)}</div></details>}</>}{manifestFailed || manifestRetrying ? <div className="callout block" role={manifestRetrying ? "status" : "alert"}><span>{manifestMessage}</span><button type="button" className="button secondary" aria-disabled={manifestRetrying || undefined} aria-busy={manifestRetrying || undefined} onClick={retryManifest}>{manifestRetrying ? "Loading components…" : "Retry loading components"}</button></div> : <p className="muted" role="status" tabIndex={-1} ref={manifestStatusRef}>{manifestMessage}</p>}<p className="muted">Source: <ExternalLink href="https://github.com/klimPaskov/Agentic-HOI4-Modding">Agentic HOI4 Modding <span aria-hidden="true">↗</span></ExternalLink></p><details><summary>Dependencies and file list</summary>{manifest ? <div className="manifest-details">{manifest.components.map((component) => <div key={component.id}><strong>{component.display_name}</strong><span>{component.dependencies.length ? `Requires ${component.dependencies.join(", ")}` : "No additional components required"}</span><small>Platforms: {component.platforms.join(", ")}</small><small>{component.expected_files.length === 1 ? "1 file" : `${component.expected_files.length} files`} · destination: {component.destination.path}</small>{component.expected_files.map((file) => <small className="manifest-file-path" key={`${component.id}-${file.path}`}>{file.path}</small>)}</div>)}</div> : <p className="muted">Dependencies appear after the components load.</p>}</details><details><summary>Choose source version</summary><label className="field"><span className="field-label">Version</span><select className="text-input" value={state.sourceMode} onChange={(event) => update({ sourceMode: event.target.value as WizardState["sourceMode"], pinnedRef: "", manifestPreview: undefined, components: [], codexAnalysis: undefined, codexAnalysisRecord: undefined, plan: undefined, transactionError: "Changing the source requires a new analysis before setup can continue." })}><option value="latest">Latest</option><option value="pinned_commit">Specific commit</option><option value="pinned_release">Release</option></select></label>{state.sourceMode !== "latest" && <Field label={state.sourceMode === "pinned_commit" ? "Commit" : "Release"} value={state.pinnedRef} onChange={(value) => update({ pinnedRef: value, manifestPreview: undefined, components: [], codexAnalysis: undefined, codexAnalysisRecord: undefined, plan: undefined, transactionError: "Changing the source requires a new analysis before setup can continue." })} mono placeholder={state.sourceMode === "pinned_commit" ? "40-character commit" : "v1.0.0"} />}</details></section><div className="disclosure-note">Download size appears before installation.</div></div>;
 }
 
 export function Workflows({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
@@ -2513,7 +2525,7 @@ export function Mesh({ state, update }: { state: WizardState; update: (patch: Pa
 }
 
 export function Mcp({ state }: { state: WizardState }) {
-  const component = state.manifestPreview?.components.find((candidate) => candidate.category === "mcp" && state.selectedComponents.includes(candidate.id));
+  const component = state.manifestPreview?.components.find((candidate) => candidate.category === "mcp" && state.selectedComponents.includes(candidate.id) && manifestComponentSupportsPlatform(candidate));
   const toolText = component?.required_tools.map((tool) => `${tool.id}${tool.version ? ` ${tool.version}` : ""}`).join(", ") || "None declared";
   const environmentText = component?.environment.map((environment) => `${environment.name}${environment.secret ? " · secret" : ""}`).join(", ") || "None declared";
   const capabilityText = component?.capabilities.join(", ") || "None declared";
