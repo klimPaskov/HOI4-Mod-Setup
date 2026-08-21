@@ -10,12 +10,17 @@ The inspected `.codex/config.toml` contains `hoi4_agent_tools` with command `hoi
 
 These findings drive the example manifest. They do not authorize macOS equivalents.
 
-The current source does not provide immutable executable, `cmd.exe`, or Node
-hash/size evidence, package identity, or version for `hoi4-agent-tools.cmd`.
-The app therefore records the Windows declaration and exposes it for review,
-but reports its health route as `planned_unavailable` and never executes an
-arbitrary same-named `PATH` entry.
-No package, command, version, or macOS route is invented.
+The current source pins `hoi4-agent-tools@2.5.2` by npm SHA-512 integrity,
+canonical package-tree SHA-256 and file count, runtime-entry SHA-256 and size,
+and required tool names. The bootstrap and app independently verify the full
+installed package tree, so changing an imported sibling module fails before
+Node starts. The verified bytes are materialized into a private temporary tree
+and Node executes that copy, preventing a change between verification and
+spawn. The `.cmd` wrapper is used only to locate the current-user npm
+prefix and is never executed. Node must be a regular link-free executable with
+a valid OpenJS Foundation signature; its actual SHA-256 is captured and
+rechecked immediately at spawn. No package, command, version, or macOS route is
+invented.
 
 ## MCP component fields
 
@@ -40,25 +45,26 @@ Security-sensitive root values such as `approval_policy` and `sandbox_mode` rece
 
 ## Health check
 
-1. Require manifest executable, command-interpreter, and runtime SHA-256 and
-   size evidence.
-2. Resolve the reviewed bare target and verify the regular, link-free file's
-   size and SHA-256.
-3. Resolve and verify the regular, link-free `cmd.exe` and Node files against
-   the same manifest evidence.
-4. Recheck the interpreter identity immediately before starting the approved
-   server with a sanitized environment.
-5. Send MCP initialize.
-6. Verify protocol response.
-7. List tools or capabilities when safe.
+1. Require exact package name/version/integrity, canonical package-tree
+   SHA-256/file count, runtime-entry SHA-256/size, and required tool evidence.
+2. Resolve the reviewed wrapper only to its regular, link-free npm prefix; do
+   not execute it.
+3. Verify package metadata, npm lock integrity, every installed package byte,
+   and the runtime entry.
+4. Require the resolved Node executable's OpenJS Foundation signature, capture
+   its SHA-256, and recheck that identity immediately at spawn.
+5. Send the MCP JSON-RPC initialize request with protocol version, empty client
+   capabilities, and client info, followed by `notifications/initialized`.
+6. Require the exact negotiated protocol version and an advertised `tools`
+   capability.
+7. Call `tools/list` and require every source-advertised route, including all
+   three Technology Tree routes.
 8. Stop cleanly.
 
 Do not run paid or mutating provider actions as generic health checks unless the repository declares a safe operation.
 
-When immutable health-check evidence is unavailable, installed readiness may
-report the exact configured bare command as present after a read-only PATH
-lookup. This is a display state only; it does not run the command or weaken the
-health-check identity requirements above.
+When any package-tree, entry, publisher, or tool evidence is unavailable, the
+route remains unavailable and no same-named command is executed.
 
 ## Capability display
 

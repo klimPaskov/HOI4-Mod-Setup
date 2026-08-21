@@ -193,20 +193,21 @@ Built-in declarative validators include exists, SHA-256, JSON Schema, TOML parse
 Command-bearing validation rules are copied into the typed installation plan as
 high-risk external actions. The dry run shows the manifest target and approval
 requirement; the core does not accept a renderer-supplied executable or command
-line. After installation, an optional workflow check re-resolves the manifest at
-the lock revision and verifies the installed target's SHA-256 and size before
-starting its manifest-derived route. A wrapper route also requires immutable
-size and SHA-256 evidence for every command interpreter and runtime dependency
-that the core resolves (currently `cmd.exe` and Node on the Windows MCP route)
-and rechecks the interpreter identity immediately before spawn.
+line. The package-backed Windows MCP route is an explicit exception to static
+Node hashes because the reviewed current-user Node LTS build can vary: the
+manifest instead binds exact npm integrity, the full canonical installed
+package tree, runtime entry, and tools. Rust requires a valid OpenJS Foundation
+signature, captures the local Node hash, and rechecks it at spawn. The wrapper
+is never executed.
 
 The closed `validation.parameters` object admits the paired
 `executable_sha256`/`executable_size`, `interpreter_sha256`/`interpreter_size`,
-and `runtime_sha256`/`runtime_size` identity fields plus bounded `arguments`,
-`network_access`, `expected_writes`, `privilege`, and `rollback_boundary` action
-evidence. Draft 2020-12 validation rejects any other parameter, while
-deterministic Rust additionally requires each declared identity to provide both
-fields and validates the lowercase SHA-256 and size.
+and `runtime_sha256`/`runtime_size` identity fields plus package name, version,
+registry integrity, canonical package-tree SHA-256/file count, runtime entry,
+required tools, bounded `arguments`, `network_access`, `expected_writes`,
+`privilege`, and `rollback_boundary` action evidence. Draft 2020-12 validation
+rejects any other parameter, while deterministic Rust validates each declared
+identity before planning or execution.
 
 If a manifest does not provide immutable executable identity evidence, the
 action remains visible in the dry run but the health route is
@@ -214,9 +215,8 @@ action remains visible in the dry run but the health route is
 Installed readiness may detect that the exact configured command exists on the
 reviewed PATH and display it as configured, but discovery alone never executes
 or authorizes the command.
-The current HOI4 MCP declaration is in this honest state because the inspected
-source provides no executable, interpreter, or runtime hash/size evidence,
-package identity, or version evidence.
+The current HOI4 MCP declaration provides the complete package-backed evidence
+above. Missing or mismatched evidence blocks the route before process start.
 
 ## Update behavior
 

@@ -1,27 +1,225 @@
 //! Bounded health probes for manifest-declared MCP servers.
 //!
 //! The probe starts only the reviewed command recorded by the locked source
-//! manifest, performs MCP initialization and (when the server advertises the
-//! capability) a read-only tools/list request, then terminates the child.
+//! manifest, performs MCP initialization and a required read-only tools/list
+//! request, then terminates the child.
 //! It never calls an MCP tool and never receives credential environment
 //! variables.
 
-use crate::codex::{AppServerProtocol, ProcessJsonlTransport};
+use crate::codex::{JsonlTransport, ProcessJsonlTransport};
 use crate::models::{ExternalAction, Platform, RemoteManifest};
 use crate::process::find_path_executable;
-use crate::security::{is_link_metadata, path_has_link_component, sha256_file};
+use crate::security::{is_link_metadata, path_has_link_component, safe_join, sha256_file};
 use crate::AppError;
 use serde::Serialize;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
+
+struct McpProtocol<T: JsonlTransport> {
+    transport: T,
+    next_id: u64,
+    timeout: Duration,
+}
+
+impl<T: JsonlTransport> McpProtocol<T> {
+    fn new(transport: T, timeout: Duration) -> Self {
+        Self {
+            transport,
+            next_id: 1,
+            timeout: timeout.max(Duration::from_millis(100)),
+        }
+    }
+
+    fn request(&mut self, method: &str, params: Value) -> Result<Value, AppError> {
+        let id = self.next_id;
+        self.next_id = self.next_id.saturating_add(1);
+        self.transport.send(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params
+        }))?;
+        let started = std::time::Instant::now();
+        loop {
+            let remaining = self.timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(AppError::Process(format!("MCP {method} timed out")));
+            }
+            let message = self
+                .transport
+                .receive(remaining)?
+                .ok_or_else(|| AppError::Process(format!("MCP closed during {method}")))?;
+            if message.get("id") != Some(&json!(id)) {
+                continue;
+            }
+            if message.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+                return Err(AppError::Process(
+                    "MCP returned an invalid JSON-RPC envelope".into(),
+                ));
+            }
+            if message.get("error").is_some() {
+                return Err(AppError::Process(format!("MCP {method} failed")));
+            }
+            return message
+                .get("result")
+                .cloned()
+                .ok_or_else(|| AppError::Process(format!("MCP {method} omitted result")));
+        }
+    }
+
+    fn initialize(&mut self) -> Result<Value, AppError> {
+        let result = self.request(
+            "initialize",
+            json!({
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "hoi4-mod-setup",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            }),
+        )?;
+        self.transport.send(&json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {}
+        }))?;
+        Ok(result)
+    }
+}
+
+impl<T: JsonlTransport> Drop for McpProtocol<T> {
+    fn drop(&mut self) {
+        self.transport.close();
+    }
+}
 
 pub const COMPONENT_ID: &str = "mcp.hoi4_agent_tools";
 pub const HEALTH_RULE_ID: &str = "mcp.hoi4.health";
 const MAX_SERVER_FIELD_BYTES: usize = 256;
 const MAX_TOOL_COUNT: usize = 4096;
 const MAX_TOOL_NAME_BYTES: usize = 256;
+const MAX_PACKAGE_FILE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_PACKAGE_TREE_BYTES: u64 = 256 * 1024 * 1024;
+
+pub(crate) struct VerifiedPackageTree {
+    _temporary: tempfile::TempDir,
+    pub(crate) root: PathBuf,
+    pub(crate) sha256: String,
+    pub(crate) file_count: u64,
+}
+
+fn read_installed_package_tree(root: &Path) -> Result<Vec<(String, Vec<u8>)>, AppError> {
+    if path_has_link_component(root) || !root.is_dir() {
+        return Err(AppError::PathSecurity(
+            "the installed MCP package root is not a link-free directory".into(),
+        ));
+    }
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)?;
+            if is_link_metadata(&metadata) {
+                return Err(AppError::PathSecurity(
+                    "the installed MCP package contains a link".into(),
+                ));
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if metadata.is_file() {
+                let relative = path
+                    .strip_prefix(root)
+                    .map_err(|_| {
+                        AppError::PathSecurity("MCP package path escaped its root".into())
+                    })?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let bytes = crate::flatten::read_bounded_regular_file_no_follow_under_root(
+                    root,
+                    &relative,
+                    MAX_PACKAGE_FILE_BYTES,
+                )?;
+                files.push((relative, bytes));
+            } else {
+                return Err(AppError::PathSecurity(
+                    "the installed MCP package contains a special file".into(),
+                ));
+            }
+        }
+    }
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    let total_bytes = files.iter().try_fold(0_u64, |total, (_, bytes)| {
+        total.checked_add(bytes.len() as u64).ok_or_else(|| {
+            AppError::PathSecurity("the installed MCP package size overflowed".into())
+        })
+    })?;
+    if total_bytes > MAX_PACKAGE_TREE_BYTES || files.len() > 10_000 {
+        return Err(AppError::PathSecurity(
+            "the installed MCP package exceeds its verification bounds".into(),
+        ));
+    }
+    Ok(files)
+}
+
+fn package_tree_identity(files: &[(String, Vec<u8>)]) -> (String, u64) {
+    let mut digest = Sha256::new();
+    for (relative, bytes) in files {
+        digest.update(relative.as_bytes());
+        digest.update([0]);
+        digest.update(bytes.len().to_string().as_bytes());
+        digest.update([0]);
+        digest.update(bytes);
+    }
+    (format!("{:x}", digest.finalize()), files.len() as u64)
+}
+
+pub(crate) fn materialize_verified_package_tree(
+    root: &Path,
+) -> Result<VerifiedPackageTree, AppError> {
+    let files = read_installed_package_tree(root)?;
+    let (sha256, file_count) = package_tree_identity(&files);
+    let temporary = tempfile::tempdir()?;
+    let private_root = temporary.path().join("package");
+    std::fs::create_dir(&private_root)?;
+    for (relative, bytes) in &files {
+        let destination = safe_join(&private_root, relative)?;
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(destination, bytes)?;
+    }
+    let copied = read_installed_package_tree(&private_root)?;
+    let copied_identity = package_tree_identity(&copied);
+    if copied_identity != (sha256.clone(), file_count) {
+        return Err(AppError::PathSecurity(
+            "the private MCP runtime copy changed during materialization".into(),
+        ));
+    }
+    Ok(VerifiedPackageTree {
+        _temporary: temporary,
+        root: private_root,
+        sha256,
+        file_count,
+    })
+}
+
+pub(crate) fn verify_materialized_package_tree(tree: &VerifiedPackageTree) -> Result<(), AppError> {
+    let copied = read_installed_package_tree(&tree.root)?;
+    if package_tree_identity(&copied) != (tree.sha256.clone(), tree.file_count) {
+        return Err(AppError::PathSecurity(
+            "the private MCP runtime tree changed before execution".into(),
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct HealthEvidence {
@@ -38,6 +236,8 @@ pub struct VerifiedMcpTarget {
     pub package_name: String,
     pub package_version: String,
     pub package_integrity: String,
+    pub package_tree_sha256: String,
+    pub package_file_count: u64,
     pub runtime_entry: String,
     pub runtime_entry_sha256: String,
     pub runtime_entry_size: u64,
@@ -59,6 +259,8 @@ fn validate_package_identity(
     package_name: &str,
     package_version: &str,
     package_integrity: &str,
+    package_tree_sha256: &str,
+    package_file_count: u64,
     runtime_entry: &str,
     required_tools: &[String],
 ) -> Result<(), AppError> {
@@ -77,6 +279,8 @@ fn validate_package_identity(
             character.is_ascii_alphanumeric() || matches!(character, '+' | '/' | '=')
         })
         || runtime_entry != "dist/bin/stdio.js"
+        || crate::source::validate_sha256(package_tree_sha256).is_err()
+        || !(1..=10_000).contains(&package_file_count)
         || required_tools.is_empty()
         || required_tools.len() > MAX_TOOL_COUNT
     {
@@ -162,6 +366,12 @@ pub fn manifest_target(manifest: &RemoteManifest) -> Result<VerifiedMcpTarget, A
     let package_version = required_parameter(rules[0], "package_version")?;
     let package_integrity = required_parameter(rules[0], "package_integrity")?;
     let runtime_entry = required_parameter(rules[0], "runtime_entry")?;
+    let package_tree_sha256 = required_parameter(rules[0], "package_tree_sha256")?;
+    let package_file_count = rules[0]
+        .parameters
+        .get("package_file_count")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| AppError::Source("the MCP route is missing package_file_count".into()))?;
     let required_tools = rules[0]
         .parameters
         .get("required_tools")
@@ -179,6 +389,8 @@ pub fn manifest_target(manifest: &RemoteManifest) -> Result<VerifiedMcpTarget, A
         package_name,
         package_version,
         package_integrity,
+        package_tree_sha256,
+        package_file_count,
         runtime_entry,
         &required_tools,
     )?;
@@ -187,6 +399,8 @@ pub fn manifest_target(manifest: &RemoteManifest) -> Result<VerifiedMcpTarget, A
         package_name: package_name.to_owned(),
         package_version: package_version.to_owned(),
         package_integrity: package_integrity.to_owned(),
+        package_tree_sha256: package_tree_sha256.to_owned(),
+        package_file_count,
         runtime_entry: runtime_entry.to_owned(),
         runtime_entry_sha256: runtime_entry_sha256.to_owned(),
         runtime_entry_size,
@@ -251,10 +465,21 @@ pub fn reviewed_plan_target(actions: &[ExternalAction]) -> Result<VerifiedMcpTar
         .verified_runtime_entry
         .as_deref()
         .ok_or_else(|| AppError::Source("the reviewed MCP action has no runtime entry".into()))?;
+    let package_tree_sha256 = matches[0]
+        .verified_package_tree_sha256
+        .as_deref()
+        .ok_or_else(|| {
+            AppError::Source("the reviewed MCP action has no package-tree hash".into())
+        })?;
+    let package_file_count = matches[0].verified_package_file_count.ok_or_else(|| {
+        AppError::Source("the reviewed MCP action has no package file count".into())
+    })?;
     validate_package_identity(
         package_name,
         package_version,
         package_integrity,
+        package_tree_sha256,
+        package_file_count,
         runtime_entry,
         &matches[0].required_tool_names,
     )?;
@@ -263,6 +488,8 @@ pub fn reviewed_plan_target(actions: &[ExternalAction]) -> Result<VerifiedMcpTar
         package_name: package_name.to_owned(),
         package_version: package_version.to_owned(),
         package_integrity: package_integrity.to_owned(),
+        package_tree_sha256: package_tree_sha256.to_owned(),
+        package_file_count,
         runtime_entry: runtime_entry.to_owned(),
         runtime_entry_sha256: runtime_entry_sha256.to_owned(),
         runtime_entry_size,
@@ -318,6 +545,15 @@ pub fn initialize_health(
             "the installed MCP package does not match the reviewed package identity".into(),
         ));
     }
+    let package_root = bin_root.join("node_modules").join(&target.package_name);
+    let verified_tree = materialize_verified_package_tree(&package_root)?;
+    if verified_tree.sha256 != target.package_tree_sha256
+        || verified_tree.file_count != target.package_file_count
+    {
+        return Err(AppError::Credential(
+            "the installed MCP package tree does not match the reviewed release".into(),
+        ));
+    }
     let lock_bytes = crate::flatten::read_bounded_regular_file_no_follow_under_root(
         bin_root,
         "node_modules/.package-lock.json",
@@ -335,11 +571,7 @@ pub fn initialize_health(
             "the installed MCP package does not match the reviewed registry integrity".into(),
         ));
     }
-    let entry_relative = format!(
-        "node_modules/{}/{}",
-        target.package_name, target.runtime_entry
-    );
-    let entry = bin_root.join(entry_relative.replace('/', std::path::MAIN_SEPARATOR_STR));
+    let entry = safe_join(&verified_tree.root, &target.runtime_entry)?;
     let entry_metadata = std::fs::symlink_metadata(&entry)?;
     if is_link_metadata(&entry_metadata)
         || !entry_metadata.is_file()
@@ -363,19 +595,12 @@ pub fn initialize_health(
         Some(node_directory),
         &sha256_file(&node)?,
     )?;
-    let mut protocol = AppServerProtocol::with_timeout(transport, Duration::from_secs(10));
+    let mut protocol = McpProtocol::new(transport, Duration::from_secs(10));
     let initialized = protocol.initialize()?;
     let evidence = validate_initialize_result(&initialized)?;
-    let tool_count = if initialized
-        .get("capabilities")
-        .and_then(Value::as_object)
-        .is_some_and(|capabilities| capabilities.contains_key("tools"))
-    {
-        let listing = protocol.request("tools/list", json!({}))?;
-        validate_tools_result(&listing, &target.required_tools)?
-    } else {
-        0
-    };
+    require_tools_capability(&initialized)?;
+    let listing = protocol.request("tools/list", json!({}))?;
+    let tool_count = validate_tools_result(&listing, &target.required_tools)?;
     Ok(HealthEvidence {
         tool_count,
         required_tools: target.required_tools.clone(),
@@ -383,11 +608,29 @@ pub fn initialize_health(
     })
 }
 
+fn require_tools_capability(initialized: &Value) -> Result<(), AppError> {
+    if !initialized
+        .get("capabilities")
+        .and_then(Value::as_object)
+        .is_some_and(|capabilities| capabilities.contains_key("tools"))
+    {
+        return Err(AppError::Process(
+            "MCP initialize did not advertise the required tools capability".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn validate_initialize_result(value: &Value) -> Result<HealthEvidence, AppError> {
     let object = value
         .as_object()
         .ok_or_else(|| AppError::Process("MCP initialize returned a non-object result".into()))?;
     let protocol_version = bounded_string(object, "protocolVersion", "protocol version")?;
+    if protocol_version != MCP_PROTOCOL_VERSION {
+        return Err(AppError::Process(format!(
+            "MCP negotiated unsupported protocol version {protocol_version}"
+        )));
+    }
     let server_info = object
         .get("serverInfo")
         .and_then(Value::as_object)
@@ -546,6 +789,56 @@ fn resolved_node() -> Result<PathBuf, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
+    struct FakeTransport {
+        sent: Arc<Mutex<Vec<Value>>>,
+        responses: VecDeque<Value>,
+    }
+
+    impl JsonlTransport for FakeTransport {
+        fn send(&mut self, value: &Value) -> Result<(), AppError> {
+            self.sent.lock().unwrap().push(value.clone());
+            Ok(())
+        }
+
+        fn receive(&mut self, _timeout: Duration) -> Result<Option<Value>, AppError> {
+            Ok(self.responses.pop_front())
+        }
+
+        fn close(&mut self) {}
+    }
+
+    #[test]
+    fn mcp_handshake_uses_json_rpc_protocol_version_and_initialized_notification() {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let transport = FakeTransport {
+            sent: sent.clone(),
+            responses: VecDeque::from([
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "protocolVersion": MCP_PROTOCOL_VERSION,
+                        "serverInfo": {"name": "hoi4-agent-tools", "version": "2.5.2"},
+                        "capabilities": {"tools": {}}
+                    }
+                }),
+                json!({"jsonrpc": "2.0", "id": 2, "result": {"tools": []}}),
+            ]),
+        };
+        let mut protocol = McpProtocol::new(transport, Duration::from_secs(1));
+        protocol.initialize().unwrap();
+        protocol.request("tools/list", json!({})).unwrap();
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent[0]["jsonrpc"], "2.0");
+        assert_eq!(sent[0]["method"], "initialize");
+        assert_eq!(sent[0]["params"]["protocolVersion"], MCP_PROTOCOL_VERSION);
+        assert!(sent[0]["params"]["capabilities"].is_object());
+        assert_eq!(sent[1]["method"], "notifications/initialized");
+        assert_eq!(sent[2]["method"], "tools/list");
+    }
 
     #[test]
     fn initialize_response_requires_server_and_capabilities() {
@@ -555,6 +848,13 @@ mod tests {
         }))
         .unwrap_err();
         assert!(error.to_string().contains("capabilities"));
+        let error = validate_initialize_result(&json!({
+            "protocolVersion": "2024-11-05",
+            "serverInfo": {"name": "hoi4-agent-tools", "version": "2.5.2"},
+            "capabilities": {"tools": {}}
+        }))
+        .unwrap_err();
+        assert!(error.to_string().contains("unsupported protocol version"));
     }
 
     #[test]
@@ -579,6 +879,60 @@ mod tests {
                 .to_string()
                 .contains("hoi4.tech_inspect")
         );
+    }
+
+    #[test]
+    fn package_tree_identity_detects_a_mutated_imported_module() {
+        let package = tempfile::tempdir().unwrap();
+        let bin = package.path().join("dist/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("stdio.js"), b"import '../core.js';\n").unwrap();
+        let sibling = package.path().join("dist/core.js");
+        std::fs::write(&sibling, b"export const value = 1;\n").unwrap();
+        let before = package_tree_identity(&read_installed_package_tree(package.path()).unwrap());
+        std::fs::write(&sibling, b"export const value = 2;\n").unwrap();
+        let after = package_tree_identity(&read_installed_package_tree(package.path()).unwrap());
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn verified_runtime_copy_is_immune_to_later_source_mutation() {
+        let package = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(package.path().join("dist")).unwrap();
+        let source = package.path().join("dist/index.js");
+        std::fs::write(&source, b"export const value = 1;\n").unwrap();
+        let verified = materialize_verified_package_tree(package.path()).unwrap();
+        std::fs::write(&source, b"export const value = 2;\n").unwrap();
+        assert_eq!(
+            std::fs::read(verified.root.join("dist/index.js")).unwrap(),
+            b"export const value = 1;\n"
+        );
+    }
+
+    #[test]
+    fn private_runtime_mutation_is_rejected_before_spawn() {
+        let package = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(package.path().join("dist")).unwrap();
+        std::fs::write(package.path().join("dist/index.js"), b"reviewed\n").unwrap();
+        let verified = materialize_verified_package_tree(package.path()).unwrap();
+        std::fs::write(verified.root.join("dist/index.js"), b"tampered\n").unwrap();
+        assert!(verify_materialized_package_tree(&verified)
+            .unwrap_err()
+            .to_string()
+            .contains("changed before execution"));
+    }
+
+    #[test]
+    fn required_tools_capability_is_not_optional() {
+        let initialized = json!({
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "serverInfo": {"name": "hoi4-agent-tools", "version": "2.5.2"},
+            "capabilities": {}
+        });
+        assert!(require_tools_capability(&initialized)
+            .unwrap_err()
+            .to_string()
+            .contains("required tools capability"));
     }
 
     #[test]
@@ -646,6 +1000,8 @@ mod tests {
             verified_package_name: None,
             verified_package_version: None,
             verified_package_integrity: None,
+            verified_package_tree_sha256: None,
+            verified_package_file_count: None,
             verified_runtime_entry: None,
             required_tool_names: vec![],
         };

@@ -22,6 +22,7 @@ const OPERATION_CHECKPOINT_BATCH: usize = 1_024;
 const OPERATION_CHECKPOINT_MAX_RECORDS: usize = 2_048;
 const OPERATION_CHECKPOINT_MAX_BYTES: usize = 32 * 1024 * 1024;
 const JOURNAL_ERROR_MESSAGE_MAX_BYTES: usize = 2 * 1024;
+const STAGE_EVIDENCE_MAX_CHARS: usize = 1_024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OperationCheckpoint {
@@ -58,6 +59,8 @@ pub struct TransactionOptions {
     /// but before the completion checkpoint was persisted.
     pub fail_before_post_install_action: bool,
     pub fail_after_post_install_action: bool,
+    pub fail_before_post_install_action_index: Option<usize>,
+    pub fail_after_post_install_action_index: Option<usize>,
     /// Runs only manifest-declared, user-reviewed post-install actions after
     /// managed-file verification. Production supplies the allowlisted runner;
     /// tests inject a deterministic fake.
@@ -72,12 +75,20 @@ pub struct PostInstallActionOutcome {
 }
 
 pub type PostInstallActionRunner =
-    fn(&Path, &InstallationPlan) -> Result<Vec<PostInstallActionOutcome>, AppError>;
+    fn(&Path, &InstallationPlan, &str) -> Result<PostInstallActionOutcome, AppError>;
 
-fn reviewed_external_action_evidence(plan: &InstallationPlan) -> Result<Vec<String>, AppError> {
+fn reviewed_external_action_evidence(
+    plan: &InstallationPlan,
+    component_id: &str,
+) -> Result<Vec<String>, AppError> {
     const MAX_ACTION_EVIDENCE_BYTES: usize = 32 * 1024;
     plan.external_actions
         .iter()
+        .filter(|action| {
+            action.component_id == component_id
+                || (component_id == crate::mcp::COMPONENT_ID
+                    && action.component_id == "mcp.hoi4_agent_tools.bootstrap")
+        })
         .map(|action| {
             let serialized = serde_json::to_string(action)?;
             if serialized.len() > MAX_ACTION_EVIDENCE_BYTES {
@@ -85,12 +96,25 @@ fn reviewed_external_action_evidence(plan: &InstallationPlan) -> Result<Vec<Stri
                     "reviewed external-action evidence is too large to journal".into(),
                 ));
             }
-            let redacted = redact_secrets(&serialized, &[]);
-            Ok(format!(
-                "external-action-reviewed:sha256={}:{}",
-                sha256_bytes(serialized.as_bytes()),
-                redacted
-            ))
+            let summary = serde_json::to_string(&serde_json::json!({
+                "id": action.id,
+                "component_id": action.component_id,
+                "command_source": action.command_source,
+                "network_access": action.network_access,
+                "expected_writes": action.expected_writes,
+                "rollback_boundary": action.rollback_boundary,
+            }))?;
+            Ok(redact_secrets(
+                &format!(
+                    "external-action-reviewed:sha256={}:{}",
+                    sha256_bytes(serialized.as_bytes()),
+                    summary
+                ),
+                &[],
+            )
+            .chars()
+            .take(STAGE_EVIDENCE_MAX_CHARS)
+            .collect())
         })
         .collect()
 }
@@ -1188,18 +1212,43 @@ pub fn run_transaction(
         )?;
         post_install_checks(&project_root, plan, &mut journal, &journal_path)?;
         if let Some(runner) = options.post_install_action_runner {
-            let reviewed_actions = reviewed_external_action_evidence(plan)?;
-            if let Some(stage) = journal.stages.get_mut(9) {
-                stage.evidence.extend(reviewed_actions);
-            }
-            journal.last_checkpoint = "post-install-actions-intent".into();
-            persist_journal(&journal_path, &mut journal)?;
-            if options.fail_before_post_install_action {
-                return Err(AppError::Transaction(
-                    "fault injected before reviewed post-install action".into(),
-                ));
-            }
-            for outcome in runner(&project_root, plan)? {
+            let components = [crate::mcp::COMPONENT_ID, "workflow.3d"]
+                .into_iter()
+                .filter(|component_id| {
+                    effective_plan
+                        .optional_workflows
+                        .get(*component_id)
+                        .is_some_and(|state| {
+                            matches!(state.as_str(), "selected_pending" | "incomplete" | "ready")
+                        })
+                })
+                .collect::<Vec<_>>();
+            for (action_index, component_id) in components.into_iter().enumerate() {
+                let reviewed_actions = reviewed_external_action_evidence(plan, component_id)?;
+                if reviewed_actions.is_empty() {
+                    return Err(AppError::Transaction(format!(
+                        "the reviewed post-install component has no action evidence: {component_id}"
+                    )));
+                }
+                if let Some(stage) = journal.stages.get_mut(9) {
+                    stage.evidence.extend(reviewed_actions);
+                }
+                journal.last_checkpoint = format!("post-install-action-intent:{component_id}");
+                persist_journal(&journal_path, &mut journal)?;
+                if (options.fail_before_post_install_action && action_index == 0)
+                    || options.fail_before_post_install_action_index == Some(action_index)
+                {
+                    return Err(AppError::Transaction(format!(
+                        "fault injected before reviewed post-install action {component_id}"
+                    )));
+                }
+                let outcome = runner(&project_root, plan, component_id)?;
+                if outcome.component_id != component_id {
+                    return Err(AppError::Transaction(format!(
+                        "post-install action for {component_id} returned result for {}",
+                        outcome.component_id
+                    )));
+                }
                 if !matches!(
                     outcome.state.as_str(),
                     "ready" | "incomplete" | "unsupported_platform"
@@ -1223,7 +1272,7 @@ pub fn run_transaction(
                     .insert(outcome.component_id.clone(), outcome.state.clone());
                 let evidence = redact_secrets(&outcome.evidence, &[])
                     .chars()
-                    .take(2_048)
+                    .take(768)
                     .collect::<String>();
                 if let Some(stage) = journal.stages.get_mut(9) {
                     stage.evidence.push(format!(
@@ -1231,14 +1280,16 @@ pub fn run_transaction(
                         outcome.component_id, outcome.state, evidence
                     ));
                 }
+                if (options.fail_after_post_install_action && action_index == 0)
+                    || options.fail_after_post_install_action_index == Some(action_index)
+                {
+                    return Err(AppError::Transaction(format!(
+                        "fault injected after reviewed post-install action {component_id}"
+                    )));
+                }
+                journal.last_checkpoint = format!("post-install-action-complete:{component_id}");
+                persist_journal(&journal_path, &mut journal)?;
             }
-            if options.fail_after_post_install_action {
-                return Err(AppError::Transaction(
-                    "fault injected after reviewed post-install action".into(),
-                ));
-            }
-            journal.last_checkpoint = "post-install-actions-complete".into();
-            persist_journal(&journal_path, &mut journal)?;
         }
         stage_complete(
             &mut journal,
@@ -3199,12 +3250,15 @@ fn build_transaction_readiness(
     } else if cfg!(target_os = "macos") {
         "unsupported_platform".into()
     } else {
-        match crate::mcp::reviewed_plan_target(&plan.external_actions)
-            .and_then(|target| crate::mcp::initialize_health(project_root, &target))
+        match plan
+            .optional_workflows
+            .get(crate::mcp::COMPONENT_ID)
+            .map(String::as_str)
         {
-            Ok(_) => "pass".into(),
-            Err(AppError::UnsupportedPlatform(_)) => "planned_unavailable".into(),
-            Err(_) => "block".into(),
+            Some("ready") => "pass".into(),
+            Some("unsupported_platform") => "unsupported_platform".into(),
+            Some("incomplete" | "selected_pending") | None => "block".into(),
+            Some(_) => "block".into(),
         }
     };
     let git_status = match plan.git_setup.as_ref() {
@@ -7410,21 +7464,35 @@ mod tests {
     fn ready_three_d_action(
         _project_root: &Path,
         _plan: &InstallationPlan,
-    ) -> Result<Vec<PostInstallActionOutcome>, AppError> {
-        Ok(vec![PostInstallActionOutcome {
-            component_id: "workflow.3d".into(),
+        component_id: &str,
+    ) -> Result<PostInstallActionOutcome, AppError> {
+        Ok(PostInstallActionOutcome {
+            component_id: component_id.into(),
             state: "ready".into(),
             evidence: "bootstrap exit=0 timed_out=false".into(),
-        }])
+        })
     }
 
     fn failing_three_d_action(
         _project_root: &Path,
         _plan: &InstallationPlan,
-    ) -> Result<Vec<PostInstallActionOutcome>, AppError> {
+        _component_id: &str,
+    ) -> Result<PostInstallActionOutcome, AppError> {
         Err(AppError::Transaction(
             "reviewed 3D bootstrap failed before readiness".into(),
         ))
+    }
+
+    fn mismatched_component_action(
+        _project_root: &Path,
+        _plan: &InstallationPlan,
+        _component_id: &str,
+    ) -> Result<PostInstallActionOutcome, AppError> {
+        Ok(PostInstallActionOutcome {
+            component_id: crate::mcp::COMPONENT_ID.into(),
+            state: "ready".into(),
+            evidence: "wrong component".into(),
+        })
     }
 
     fn reviewed_three_d_external_action() -> ExternalAction {
@@ -7460,9 +7528,20 @@ mod tests {
             verified_package_name: None,
             verified_package_version: None,
             verified_package_integrity: None,
+            verified_package_tree_sha256: None,
+            verified_package_file_count: None,
             verified_runtime_entry: None,
             required_tool_names: vec![],
         }
+    }
+
+    fn reviewed_mcp_external_action() -> ExternalAction {
+        let mut action = reviewed_three_d_external_action();
+        action.id = "external.mcp.hoi4_agent_tools.mcp.hoi4.health".into();
+        action.component_id = "mcp.hoi4_agent_tools".into();
+        action.arguments = vec!["hoi4-agent-tools.cmd".into()];
+        action.environment_names.clear();
+        action
     }
 
     #[test]
@@ -7566,12 +7645,75 @@ mod tests {
     }
 
     #[test]
+    fn each_reviewed_post_install_action_has_its_own_fault_checkpoint() {
+        let template_root = tempdir().unwrap();
+        let mut plan = ready_plan(template_root.path());
+        plan.optional_workflows
+            .insert(crate::mcp::COMPONENT_ID.into(), "selected_pending".into());
+        plan.optional_workflows
+            .insert("workflow.3d".into(), "selected_pending".into());
+        plan.external_actions = vec![
+            reviewed_mcp_external_action(),
+            reviewed_three_d_external_action(),
+        ];
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+
+        for action_index in 0..2 {
+            for fail_after in [false, true] {
+                let project = tempdir().unwrap();
+                let app = tempdir().unwrap();
+                plan.plan_id = uuid::Uuid::new_v4();
+                let error = run_transaction(
+                    project.path(),
+                    &plan,
+                    &prepared,
+                    &TransactionOptions {
+                        app_data_root: Some(app.path().into()),
+                        fail_before_post_install_action_index: (!fail_after)
+                            .then_some(action_index),
+                        fail_after_post_install_action_index: fail_after.then_some(action_index),
+                        post_install_action_runner: Some(ready_three_d_action),
+                        ..Default::default()
+                    },
+                )
+                .unwrap_err();
+                let component = if action_index == 0 {
+                    crate::mcp::COMPONENT_ID
+                } else {
+                    "workflow.3d"
+                };
+                assert!(error.to_string().contains(component));
+                let journal = read_journal(
+                    &transaction_root(app.path(), plan.plan_id)
+                        .transaction
+                        .join("journal.json"),
+                )
+                .unwrap();
+                assert_eq!(
+                    journal.last_checkpoint,
+                    format!("post-install-action-intent:{component}")
+                );
+                assert!(!project
+                    .path()
+                    .join(".hoi4-mod-setup/install.lock.json")
+                    .exists());
+            }
+        }
+    }
+
+    #[test]
     fn failed_post_install_action_never_writes_a_success_lock_and_requires_rollback() {
         let project = tempdir().unwrap();
         let app = tempdir().unwrap();
         let mut plan = ready_plan(project.path());
         plan.optional_workflows
             .insert("workflow.3d".into(), "selected_pending".into());
+        plan.external_actions = vec![reviewed_three_d_external_action()];
         let prepared = vec![PreparedFile {
             operation_id: "op-1".into(),
             destination: "AGENTS.md".into(),
@@ -7608,8 +7750,40 @@ mod tests {
         assert_eq!(journal.recovery.recommended_action, "rollback");
         assert_eq!(
             journal.error.as_ref().unwrap().stage,
-            "post-install-actions-intent"
+            "post-install-action-intent:workflow.3d"
         );
+    }
+
+    #[test]
+    fn post_install_result_must_match_the_requested_component() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let mut plan = ready_plan(project.path());
+        plan.optional_workflows
+            .insert("workflow.3d".into(), "selected_pending".into());
+        plan.external_actions = vec![reviewed_three_d_external_action()];
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        let error = run_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                post_install_action_runner: Some(mismatched_component_action),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("returned result for"));
+        assert!(!project
+            .path()
+            .join(".hoi4-mod-setup/install.lock.json")
+            .exists());
     }
 
     #[test]

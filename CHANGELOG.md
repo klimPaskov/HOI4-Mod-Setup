@@ -18,10 +18,19 @@ No unreleased changes.
 - Advertise the working Technology Tree Viewer routes
   `hoi4.tech_inspect`, `hoi4.tech_render`, and `hoi4.tech_compare` from verified
   source evidence.
+- Verify the complete installed HOI4 Agent Tools package tree, use a conforming
+  MCP JSON-RPC initialize handshake, require exact protocol negotiation and
+  the `tools` capability, execute a private verified package copy, and bind the
+  one health result into the transaction journal before readiness.
 - Make selected Windows 3D setup automatic after review: prepare the bounded
   Meshy/Blender MCP routes, verify and run the source bootstrap with OS-vault
   credentials, declare and prepare `uv`, and persist honest optional readiness
   without weakening core setup or rollback boundaries.
+- Isolate the verified Python bootstrap, keep Meshy credentials out of Blender
+  and dependency children, pin Meshy registry integrity and the io_pdx_mesh
+  archive digest, execute Meshy from a complete lockfile-verified private
+  runtime through the app-owned executable instead of project/PATH launchers,
+  and checkpoint each selected external action separately.
 
 - Complete read-only scans of very large HOI4 mods by inventorying only
   agentic setup surfaces: descriptors, instructions, skills, subagents,

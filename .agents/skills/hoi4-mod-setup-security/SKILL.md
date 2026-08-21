@@ -136,11 +136,12 @@ entry as OAuth or account login.
 - The automatic 3D bootstrap receives `MESHY_API_KEY` only through
   `ScopedSecretEnvironment` loaded from the OS vault. Copy the hash-verified
   managed bootstrap to a private temporary script, run only the reviewed
-  Python executable/argument array in the bound project root, cap time/output,
+  Python executable with `-I` and the reviewed argument array in the bound project root, cap time/output,
   redact evidence, and remove the private copy. Missing credentials or tools
   produce optional `incomplete`; changed script/action evidence fails closed.
-  Never write the key to project config, plan, lock, journal, or process
-  preview.
+  The script removes `MESHY_API_KEY` before every dependency child; Blender
+  routes declare an empty credential environment. Never write the key to
+  project config, plan, lock, journal, or process preview.
 - Provider/model, endpoint, network access, and environment names may appear in
   dry-run evidence; secret values and account metadata may not.
 - Bound runtime, output, network, and expected writes.
@@ -195,9 +196,13 @@ entry as OAuth or account login.
   claiming the manifest-declared MCP wrapper is healthy when its PATH entry is
   a link, junction, or lacks immutable manifest identity evidence.
 - MCP readiness must bind the target to the locked manifest/config, require
-  manifest SHA-256 and size verification for the wrapper, command interpreter,
-  and runtime before resolving PATH, and use a canonical `cmd.exe` plus wrapper
-  path with a cleared, non-secret environment;
+  registry integrity, the canonical full package-tree hash/count, runtime-entry
+  hash/size, required tools, and an OpenJS-signed Node runtime. The wrapper is
+  used only to locate the prefix and is never executed; Node's observed hash is
+  rechecked at spawn with a cleared, non-secret environment. Read every
+  package file through no-follow containment, require the canonical full-tree
+  identity, materialize the verified bytes into a private tree, and execute
+  only that private runtime entry;
   the bounded probe may initialize and list tool metadata but must never call
   an MCP tool or serialize raw protocol output. Missing identity is
   `planned_unavailable`, not permission to execute a same-named command.
@@ -208,6 +213,15 @@ entry as OAuth or account login.
   process-tree termination for credential-bearing external checks; direct
   child kill is only the bounded fallback when the system tool is unavailable.
 - The 3D route may inject `MESHY_API_KEY` only after the installed manifest is re-resolved at the lock revision, the bootstrap target is read through the no-follow core reader, and the Python executable is hash-checked immediately before spawn. Execute a private, hash-verified copy of the bootstrap, remove it after the supervised run, and fail without starting when cleanup or identity verification fails. A missing opaque reference must fail without starting the process; macOS must report the current Windows-only route as unsupported.
+- The installed Meshy MCP runtime uses the source-published exact npm lock and
+  complete runtime-tree identity. Its Codex route must target the absolute
+  installed HOI4 Mod Setup executable with only the fixed Meshy CLI marker;
+  project wrappers, project launchers, and PATH Python must never receive the
+  key. Each credential-bearing start rejects links and tree drift, copies and
+  re-hashes the verified runtime, copies Node before exact simple-name
+  publisher verification through the native Windows verifier, rechecks the
+  private Node hash immediately before spawn, clears Node influence variables,
+  and passes the key only to that exact private Node entry.
 - A 3D health result is cached only as `ready` or `incomplete`, keyed by the canonical project root and a fingerprint of the locked workflow revision, manifest hash, and installed workflow file hashes. The cache stores no credential, command output, or provider response; a lock or Meshy-vault change or process restart invalidates the result and requires a new explicit health run.
 
 ## Source and update trust

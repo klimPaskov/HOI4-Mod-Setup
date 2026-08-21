@@ -53,9 +53,9 @@ desktop command dispatch away from the UI event loop.
 ## Current source and release boundary
 
 The published Agentic HOI4 Modding `main` used for this update is at commit
-`f468d248bf5044c11e5db50bf0e7fd06f207352b`. Its manifest declares the
+`de7dab486e99ce926de60905e8930b20fb0eab04`. Its manifest declares the
 selected-file records generated from immutable Git blobs at revision
-`7059dafae853f46eeb8970dec40b161290c7c0dc`. The core profile now includes the
+`78da3473fa7a6260944ed1df9febdab85644083e`. The core profile now includes the
 managed HOI4 Agent Tools integration guide; enabled portrait providers expand
 through the verified portrait router; generic skills include Debug and
 Playtest; generic subagents include the AI probability auditor and event UI

@@ -12,7 +12,8 @@ The inspected route includes:
 - `.tools/3d_pipeline/adapter/pyproject.toml`
 - `.tools/3d_pipeline/config/asset_profiles.json`
 - `.tools/3d_pipeline/config/meshy_tool_contract.json`
-- `.tools/3d_pipeline/wrappers/run_meshy_mcp.cmd`
+- `.tools/3d_pipeline/meshy_runtime/package.json`
+- `.tools/3d_pipeline/meshy_runtime/package-lock.json`
 - `.tools/3d_pipeline/wrappers/run_blender_lab_mcp.cmd`
 - `.tools/3d_pipeline/wrappers/run_blender_hoi4_adapter.cmd`
 
@@ -76,9 +77,18 @@ binding.
 1. Resolve credential reference.
 2. Read the secret into protected memory.
 3. Build child environment with `MESHY_API_KEY`.
-4. Spawn only the approved executable and arguments.
-5. Redact diagnostics and crash context.
-6. Drop the value after process creation and result handling.
+4. For setup, spawn only the private hash-verified bootstrap through the
+   publisher-verified Python executable with `-I`.
+5. For normal Meshy MCP use, Codex invokes the absolute installed HOI4 Mod
+   Setup executable with only `--run-verified-meshy-mcp`; no project wrapper,
+   project Python file, or PATH Python process receives the key.
+6. The app-owned launcher no-follow captures the exact 3,916-file locked
+   runtime, materializes and re-hashes a private copy, copies Node before
+   verifying the exact `OpenJS Foundation` certificate simple name through the
+   native Windows verifier, and rechecks both private identities immediately
+   before spawn.
+7. Redact diagnostics and crash context.
+8. Drop the value after process creation and result handling.
 
 The lock stores only an opaque reference and state.
 
@@ -97,11 +107,13 @@ display the secret, and managed component removal never invokes this action.
 
 ## Repository bootstrap behavior
 
-The inspected script gates on the key, discovers local tools and Blender,
-ensures `uv` when missing, resolves Meshy package metadata, prepares the
-repository-owned bounded Blender adapter, resolves `io_pdx_mesh`, downloads the
-declared dependencies when needed, verifies the app-prepared MCP configuration,
-writes dependency evidence, and runs bridge checks.
+The inspected script gates on the key, verifies it through the bounded Meshy
+endpoint, removes it before any dependency child, discovers local tools and
+Blender, ensures `uv` when missing, verifies the exact pinned Meshy package
+integrity and complete npm-lock runtime tree, prepares the repository-owned bounded Blender adapter, and installs
+the pinned `io_pdx_mesh` 0.91 asset only after exact size and SHA-256 checks.
+It verifies the app-prepared MCP configuration, writes dependency evidence,
+and runs bridge checks. Blender routes receive no Meshy environment.
 
 These are high-impact external actions. The app shows the reviewed target,
 arguments, cwd, environment names, declared writes, network/privilege evidence,

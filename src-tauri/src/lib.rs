@@ -12,6 +12,7 @@ pub mod flatten;
 pub mod git;
 pub mod mcp;
 pub mod merge;
+pub mod meshy;
 pub mod migrations;
 pub mod models;
 pub mod paths;

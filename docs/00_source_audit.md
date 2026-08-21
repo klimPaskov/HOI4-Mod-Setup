@@ -5,9 +5,9 @@
 This planning package uses two evidence sets:
 
 1. The project files supplied with the request, including all Markdown skills, all supplied subagent TOML files, the project instruction file, the mechanics guide, and the current event, cluster, and scenario catalog CSV snapshots.
-2. The initial audit resolved the live `klimPaskov/Agentic-HOI4-Modding` repository to commit `27128a7b311d728a959afff7238a9aeeb9987f2b` on `main` on 26 July 2026. The current audit resolved the remote default branch `main` to published commit `f468d248bf5044c11e5db50bf0e7fd06f207352b` on 15 August 2026. That publication binds the complete portrait contract and provider router, Debug and Playtest skill, AI probability and event UI subagents, HOI4 Agent Tools integration guide, formable-state template package, expanded decision-category references, the Technology Tree Viewer routes, and the bounded Blender 3D adapter. The application resolves the remote manifest at runtime and retains the bundled copy only as offline bootstrap evidence.
+2. The initial audit resolved the live `klimPaskov/Agentic-HOI4-Modding` repository to commit `27128a7b311d728a959afff7238a9aeeb9987f2b` on `main` on 26 July 2026. The current audit resolved the remote default branch `main` to published commit `de7dab486e99ce926de60905e8930b20fb0eab04` on 21 August 2026. That publication binds the complete portrait contract and provider router, Debug and Playtest skill, AI probability and event UI subagents, HOI4 Agent Tools integration guide, formable-state template package, expanded decision-category references, the Technology Tree Viewer routes, and the execution-locked Blender/Meshy 3D workflow. The application resolves the remote manifest at runtime and retains the bundled copy only as offline bootstrap evidence.
 
-Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. The checked-in app manifest matches the published Agentic manifest byte-for-byte and its evidence is generated from immutable source revision `7059dafae853f46eeb8970dec40b161290c7c0dc`.
+Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. The checked-in app manifest matches the published Agentic manifest byte-for-byte and its evidence is generated from immutable source revision `78da3473fa7a6260944ed1df9febdab85644083e`.
 
 ## Fully read and processed
 
@@ -26,7 +26,7 @@ sync inspected the added and changed contract surfaces, including:
   event UI worker
 - `.tools/3d_pipeline/bootstrap_3d_workflow.py`
 - the bounded `blender_hoi4` adapter, worker, profiles, and Meshy contract
-- the Meshy, Blender Lab, and production Blender adapter wrapper commands
+- the app-owned Meshy launcher contract plus Blender Lab and production Blender adapter wrappers
 - the checked-in 3D dependency record
 - `docs/systems/hoi4_agent_tools_mcp_integration.md`
 - the offline wiki directory structure and observed page names
@@ -45,11 +45,11 @@ The body of every offline wiki article was not fully read. The installer design 
 No formal root `LICENSE` file or `paradox_wiki/LICENSE` file was found at the tested paths. The repository README contains permissive wording, but this package does not treat that wording as a verified formal license. The current manifest records both repository license evidence and wiki license status as `not_found`.
 
 The updated root manifest at commit
-`f468d248bf5044c11e5db50bf0e7fd06f207352b` has raw SHA-256
-`0f76ec660dbdafd3fc1441b579e484d72402c3bed68130097c2dfd2cc3e632ef`
+`de7dab486e99ce926de60905e8930b20fb0eab04` has raw SHA-256
+`ad40bdc6acefd990a074c63c9a27f85a79b4be750b4bb77139d5ed623acbd26e`
 and declares `generated_for_revision`
-`7059dafae853f46eeb8970dec40b161290c7c0dc`. Its 1,146 declared file records
-cover 25 components and were generated from immutable Git blob bytes before
+`78da3473fa7a6260944ed1df9febdab85644083e`. Its 1,148 declared file records
+cover 26 components and were generated from immutable Git blob bytes before
 publication.
 
 The manifest is now published upstream infrastructure. Runtime resolution

@@ -782,6 +782,58 @@ pub fn validate_executable_publisher(
     }
 }
 
+/// Relay stdio to one already-private, hash-bound credential-bearing runtime.
+/// This is intentionally narrower than ProcessSpec: it exists for an MCP
+/// server whose JSONL stream belongs to Codex rather than the desktop UI.
+pub(crate) fn run_private_credential_stdio_proxy(
+    executable: &Path,
+    expected_sha256: &str,
+    args: &[String],
+    environment_name: &str,
+    environment_value: &str,
+) -> Result<i32, AppError> {
+    if !executable.is_absolute()
+        || environment_name != "MESHY_API_KEY"
+        || environment_value.trim().is_empty()
+        || args.is_empty()
+        || args.iter().any(|value| value.contains('\0'))
+        || crate::security::sha256_file(executable)? != expected_sha256
+    {
+        return Err(AppError::Process(
+            "the private credential-bearing runtime identity is invalid".into(),
+        ));
+    }
+    let mut command = Command::new(executable);
+    command
+        .args(args)
+        .env_clear()
+        .env(environment_name, environment_value)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    add_safe_environment(&mut command);
+    configure_child_no_console_window(&mut command);
+    configure_child_process_group(&mut command);
+    if crate::security::sha256_file(executable)? != expected_sha256 {
+        return Err(AppError::Process(
+            "the private credential-bearing runtime changed before spawn".into(),
+        ));
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| AppError::Process(format!("private runtime spawn failed: {error}")))?;
+    let _containment = match ChildProcessContainment::attach(&child) {
+        Ok(containment) => containment,
+        Err(error) => {
+            terminate_process_tree(&mut child);
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
+    let status = child.wait()?;
+    Ok(status.code().unwrap_or(1))
+}
+
 /// Resolve the platform's system browser through a fixed OS-owned executable
 /// path. Login URLs are validated by the Codex boundary before this function
 /// is used; this helper never accepts a renderer-supplied executable or PATH

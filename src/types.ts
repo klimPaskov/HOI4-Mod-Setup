@@ -435,6 +435,8 @@ export interface InstallationExternalAction {
   verified_package_name?: string | null;
   verified_package_version?: string | null;
   verified_package_integrity?: string | null;
+  verified_package_tree_sha256?: string | null;
+  verified_package_file_count?: number | null;
   verified_runtime_entry?: string | null;
   required_tool_names?: string[];
 }

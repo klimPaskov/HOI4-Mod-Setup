@@ -228,7 +228,16 @@
       "display_command": "Repository-declared validation target",
       "risk": "high",
       "requires_approval": true,
-      "contains_secret": false
+      "contains_secret": false,
+      "verified_executable_sha256": "7ddc78a8c518957dea6e737663c2be5e8852795d6662fc607166f15f4fb719a8",
+      "verified_executable_size": 1916,
+      "verified_package_name": "hoi4-agent-tools",
+      "verified_package_version": "2.5.2",
+      "verified_package_integrity": "sha512-/2CmEDqkEbRsA9CcgnV0KKF8pHWOaATsAlIZexo/2D9BMbIYfYHdimAa5ZMSQiXahCGvCBA1Pq2a9ANZnp8Waw==",
+      "verified_package_tree_sha256": "9da372df1c7870728f80e850c1c7fd6b5470285f27e1ef8e0841fcde60e0a208",
+      "verified_package_file_count": 181,
+      "verified_runtime_entry": "dist/bin/stdio.js",
+      "required_tool_names": ["hoi4.tech_inspect", "hoi4.tech_render", "hoi4.tech_compare"]
     },
     {
       "id": "ext-002",
@@ -236,7 +245,7 @@
       "platform": "windows",
       "command_source": "repository_script",
       "executable": "manifest-declared Python tool",
-      "arguments": [".tools/3d_pipeline/bootstrap_3d_workflow.py"],
+      "arguments": [".tools/3d_pipeline/bootstrap_3d_workflow.py", "--project-root", "<project_root>", "--verify-reviewed-config", "--quiet"],
       "working_directory": "<project_root>",
       "environment_names": ["MESHY_API_KEY"],
       "network_access": "not_declared",

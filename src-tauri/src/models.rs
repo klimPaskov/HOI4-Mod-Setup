@@ -688,6 +688,10 @@ pub struct ExternalAction {
     #[serde(default)]
     pub verified_package_integrity: Option<String>,
     #[serde(default)]
+    pub verified_package_tree_sha256: Option<String>,
+    #[serde(default)]
+    pub verified_package_file_count: Option<u64>,
+    #[serde(default)]
     pub verified_runtime_entry: Option<String>,
     #[serde(default)]
     pub required_tool_names: Vec<String>,

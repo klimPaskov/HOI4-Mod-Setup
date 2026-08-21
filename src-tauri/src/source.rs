@@ -1789,7 +1789,13 @@ mod tests {
     #[test]
     fn checked_in_manifest_matches_the_supported_source_contract() {
         let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
-        let source_snapshot = "9e38bb1ed0a6130672b6ece948582ea2813f1f7b";
+        let inventory: Value = serde_json::from_str(include_str!(
+            "../../docs/source-audit/live_repository_inventory.json"
+        ))
+        .unwrap();
+        let source_snapshot = inventory["manifest_generated_for_revision"]
+            .as_str()
+            .unwrap();
         let manifest = parse_manifest(bytes, Some(source_snapshot)).unwrap();
         assert_eq!(manifest.repository.owner, SOURCE_OWNER);
         assert_eq!(
@@ -1948,7 +1954,7 @@ mod tests {
     #[test]
     fn super_events_package_is_complete_and_opt_in() {
         let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
-        let source_snapshot = "9e38bb1ed0a6130672b6ece948582ea2813f1f7b";
+        let source_snapshot = "3562696c57905e6ed50f377a4ab46d5ac5ca8766";
         let manifest = parse_manifest(bytes, Some(source_snapshot)).unwrap();
         let core_profile = manifest
             .profiles
@@ -2071,9 +2077,15 @@ mod tests {
 
         assert_eq!(origin, "remote");
         assert_eq!(selected_bytes, remote_bytes);
+        let inventory: Value = serde_json::from_str(include_str!(
+            "../../docs/source-audit/live_repository_inventory.json"
+        ))
+        .unwrap();
         assert_eq!(
             manifest.generated_for_revision.as_deref(),
-            Some("9e38bb1ed0a6130672b6ece948582ea2813f1f7b")
+            inventory
+                .get("manifest_generated_for_revision")
+                .and_then(Value::as_str)
         );
     }
 
@@ -2197,7 +2209,7 @@ mod tests {
 
         let error = parse_manifest(
             &serde_json::to_vec(&value).unwrap(),
-            Some("9e38bb1ed0a6130672b6ece948582ea2813f1f7b"),
+            Some("3562696c57905e6ed50f377a4ab46d5ac5ca8766"),
         )
         .unwrap_err()
         .to_string();
@@ -2218,7 +2230,7 @@ mod tests {
 
         let error = parse_manifest(
             &serde_json::to_vec(&value).unwrap(),
-            Some("9e38bb1ed0a6130672b6ece948582ea2813f1f7b"),
+            Some("3562696c57905e6ed50f377a4ab46d5ac5ca8766"),
         )
         .unwrap_err()
         .to_string();
@@ -2230,7 +2242,7 @@ mod tests {
     fn core_profile_keeps_windows_only_mcp_components_nonblocking_on_macos() {
         let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
         let manifest =
-            parse_manifest(bytes, Some("1d07603546ccbd65b4beefeb193eca9e16338862")).unwrap();
+            parse_manifest(bytes, Some("32a85b3db800dcf2920c65a6093caaf1b9b81c8b")).unwrap();
         let profile = manifest
             .profiles
             .iter()

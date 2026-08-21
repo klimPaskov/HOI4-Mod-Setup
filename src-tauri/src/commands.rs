@@ -1832,32 +1832,27 @@ fn three_d_failure(error: String) -> WorkflowHealthResult {
 fn run_reviewed_post_install_actions(
     root: &Path,
     plan: &InstallationPlan,
-) -> Result<Vec<PostInstallActionOutcome>, AppError> {
+    component_id: &str,
+) -> Result<PostInstallActionOutcome, AppError> {
     if plan.maintenance_mode.as_deref() == Some("remove") {
-        return Ok(Vec::new());
+        return Err(AppError::Transaction(
+            "managed removal cannot run a post-install action".into(),
+        ));
     }
-    let mut outcomes = Vec::new();
-    let mcp_selected = plan
-        .optional_workflows
-        .get(crate::mcp::COMPONENT_ID)
-        .is_some_and(|state| matches!(state.as_str(), "selected_pending" | "incomplete" | "ready"));
-    if mcp_selected {
-        outcomes.push(run_reviewed_mcp_bootstrap(root, plan)?);
+    if component_id == crate::mcp::COMPONENT_ID {
+        return run_reviewed_mcp_bootstrap(root, plan);
     }
-    let three_d_selected = plan
-        .optional_workflows
-        .get("workflow.3d")
-        .is_some_and(|state| matches!(state.as_str(), "selected_pending" | "incomplete" | "ready"));
-    if !three_d_selected {
-        return Ok(outcomes);
+    if component_id != "workflow.3d" {
+        return Err(AppError::Transaction(format!(
+            "unknown reviewed post-install component: {component_id}"
+        )));
     }
     if Platform::current() != Platform::Windows {
-        outcomes.push(PostInstallActionOutcome {
+        return Ok(PostInstallActionOutcome {
             component_id: "workflow.3d".into(),
             state: "unsupported_platform".into(),
             evidence: "the verified source declares no non-Windows 3D bootstrap route".into(),
         });
-        return Ok(outcomes);
     }
     let actions = plan
         .external_actions
@@ -1929,12 +1924,11 @@ fn run_reviewed_post_install_actions(
         .iter()
         .find(|reference| reference.name == MESHY_ENVIRONMENT_NAME)
     else {
-        outcomes.push(PostInstallActionOutcome {
+        return Ok(PostInstallActionOutcome {
             component_id: "workflow.3d".into(),
             state: "incomplete".into(),
             evidence: "MESHY_API_KEY was not available in the OS credential vault".into(),
         });
-        return Ok(outcomes);
     };
     validate_credential_reference(reference)?;
     let environment = match ScopedSecretEnvironment::from_credential(
@@ -1944,39 +1938,37 @@ fn run_reviewed_post_install_actions(
     ) {
         Ok(environment) => environment,
         Err(_) => {
-            outcomes.push(PostInstallActionOutcome {
+            return Ok(PostInstallActionOutcome {
                 component_id: "workflow.3d".into(),
                 state: "incomplete".into(),
                 evidence: "MESHY_API_KEY could not be loaded from the OS credential vault".into(),
             });
-            return Ok(outcomes);
         }
     };
     let python = match crate::process::find_path_executable(&["python.exe", "python"]) {
         Ok(python) => python,
         Err(_) => {
-            outcomes.push(PostInstallActionOutcome {
+            return Ok(PostInstallActionOutcome {
                 component_id: "workflow.3d".into(),
                 state: "incomplete".into(),
                 evidence: "Python is unavailable for the source-declared 3D bootstrap".into(),
             });
-            return Ok(outcomes);
         }
     };
     if crate::process::validate_executable_publisher(&python, "Python Software Foundation").is_err()
     {
-        outcomes.push(PostInstallActionOutcome {
+        return Ok(PostInstallActionOutcome {
             component_id: "workflow.3d".into(),
             state: "incomplete".into(),
             evidence: "Python publisher validation did not pass".into(),
         });
-        return Ok(outcomes);
     }
     let private_script = create_private_verified_script(&script_bytes)?;
     let spec = crate::process::ProcessSpec {
         executable: python.clone(),
         executable_sha256: Some(sha256_file(&python)?),
         args: vec![
+            "-I".into(),
             private_script.display().to_string(),
             "--project-root".into(),
             root.display().to_string(),
@@ -1996,12 +1988,11 @@ fn run_reviewed_post_install_actions(
     let result = match result {
         Ok(result) => result,
         Err(_) => {
-            outcomes.push(PostInstallActionOutcome {
+            return Ok(PostInstallActionOutcome {
                 component_id: "workflow.3d".into(),
                 state: "incomplete".into(),
                 evidence: "the source-declared 3D bootstrap could not be started".into(),
             });
-            return Ok(outcomes);
         }
     };
     let state = if result.status_code == Some(0) && !result.timed_out {
@@ -2009,7 +2000,7 @@ fn run_reviewed_post_install_actions(
     } else {
         "incomplete"
     };
-    outcomes.push(PostInstallActionOutcome {
+    Ok(PostInstallActionOutcome {
         component_id: "workflow.3d".into(),
         state: state.into(),
         evidence: format!(
@@ -2019,8 +2010,7 @@ fn run_reviewed_post_install_actions(
                 .map_or_else(|| "none".into(), |code| code.to_string()),
             result.timed_out
         ),
-    });
-    Ok(outcomes)
+    })
 }
 
 fn run_reviewed_mcp_bootstrap(
@@ -2115,7 +2105,11 @@ fn run_reviewed_mcp_bootstrap(
     let spec = crate::process::ProcessSpec {
         executable: python.clone(),
         executable_sha256: Some(sha256_file(&python)?),
-        args: vec![private_script.display().to_string(), "--quiet".into()],
+        args: vec![
+            "-I".into(),
+            private_script.display().to_string(),
+            "--quiet".into(),
+        ],
         cwd: Some(root.to_path_buf()),
         platform: Platform::Windows,
         environment_names: vec![],
@@ -3085,6 +3079,15 @@ fn manifest_external_actions(
                             .get("package_integrity")
                             .and_then(Value::as_str)
                             .map(ToOwned::to_owned),
+                        verified_package_tree_sha256: rule
+                            .parameters
+                            .get("package_tree_sha256")
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned),
+                        verified_package_file_count: rule
+                            .parameters
+                            .get("package_file_count")
+                            .and_then(Value::as_u64),
                         verified_runtime_entry: rule
                             .parameters
                             .get("runtime_entry")
@@ -3191,25 +3194,47 @@ fn adapt_codex_config_for_selection(
                 let mut route = toml::map::Map::new();
                 route.insert("enabled".into(), toml::Value::Boolean(enabled));
                 route.insert("required".into(), toml::Value::Boolean(required));
-                route.insert("command".into(), toml::Value::String("cmd.exe".into()));
-                route.insert(
-                    "args".into(),
-                    toml::Value::Array(
-                        [
-                            "/d".to_string(),
-                            "/c".to_string(),
-                            "call".to_string(),
-                            format!(".tools/3d_pipeline/wrappers/{wrapper}"),
-                        ]
-                        .into_iter()
-                        .map(toml::Value::String)
-                        .collect(),
-                    ),
-                );
+                if id == "meshy" {
+                    let launcher = std::env::current_exe().map_err(|error| {
+                        AppError::Process(format!(
+                            "the app-owned Meshy launcher path is unavailable: {error}"
+                        ))
+                    })?;
+                    route.insert(
+                        "command".into(),
+                        toml::Value::String(launcher.display().to_string()),
+                    );
+                    route.insert(
+                        "args".into(),
+                        toml::Value::Array(vec![toml::Value::String(
+                            "--run-verified-meshy-mcp".into(),
+                        )]),
+                    );
+                } else {
+                    route.insert("command".into(), toml::Value::String("cmd.exe".into()));
+                    route.insert(
+                        "args".into(),
+                        toml::Value::Array(
+                            [
+                                "/d".to_string(),
+                                "/c".to_string(),
+                                "call".to_string(),
+                                format!(".tools/3d_pipeline/wrappers/{wrapper}"),
+                            ]
+                            .into_iter()
+                            .map(toml::Value::String)
+                            .collect(),
+                        ),
+                    );
+                }
                 route.insert("cwd".into(), toml::Value::String(".".into()));
                 route.insert(
                     "env_vars".into(),
-                    toml::Value::Array(vec![toml::Value::String("MESHY_API_KEY".into())]),
+                    toml::Value::Array(if id == "meshy" {
+                        vec![toml::Value::String("MESHY_API_KEY".into())]
+                    } else {
+                        Vec::new()
+                    }),
                 );
                 route.insert("startup_timeout_sec".into(), toml::Value::Float(120.0));
                 route.insert("tool_timeout_sec".into(), toml::Value::Float(1800.0));
@@ -6938,22 +6963,6 @@ mod tests {
     }
 
     #[test]
-    fn unselected_three_d_workflow_skips_the_post_install_runner() {
-        let project = tempdir().unwrap();
-        let mut plan: InstallationPlan = serde_json::from_str(include_str!(
-            "../../docs/examples/installation-plan.example.json"
-        ))
-        .unwrap();
-        plan.optional_workflows
-            .insert("workflow.3d".into(), "not_selected".into());
-        plan.external_actions.clear();
-
-        let outcomes = run_reviewed_post_install_actions(project.path(), &plan).unwrap();
-
-        assert!(outcomes.is_empty());
-    }
-
-    #[test]
     fn managed_removal_never_restarts_the_three_d_bootstrap() {
         let project = tempdir().unwrap();
         let mut plan: InstallationPlan = serde_json::from_str(include_str!(
@@ -6965,9 +6974,9 @@ mod tests {
             .insert("workflow.3d".into(), "ready".into());
         plan.external_actions.clear();
 
-        let outcomes = run_reviewed_post_install_actions(project.path(), &plan).unwrap();
-
-        assert!(outcomes.is_empty());
+        let error =
+            run_reviewed_post_install_actions(project.path(), &plan, "workflow.3d").unwrap_err();
+        assert!(error.to_string().contains("managed removal"));
     }
 
     #[test]
@@ -7465,6 +7474,9 @@ mcp_server = "comfy_cloud_portraits"
         }
         assert!(adapted.contains("run_blender_hoi4_adapter.cmd"));
         assert!(adapted.contains("MESHY_API_KEY"));
+        assert!(adapted.contains("--run-verified-meshy-mcp"));
+        assert!(!adapted.contains("run_meshy_mcp.cmd"));
+        assert!(!adapted.contains("run_verified_meshy.py"));
     }
 
     #[test]

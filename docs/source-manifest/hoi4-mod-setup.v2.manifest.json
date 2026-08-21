@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0.0",
   "manifest_id": "agentic-hoi4-modding",
-  "generated_for_revision": "9e38bb1ed0a6130672b6ece948582ea2813f1f7b",
+  "generated_for_revision": "78da3473fa7a6260944ed1df9febdab85644083e",
   "repository": {
     "provider": "github",
     "owner": "klimPaskov",
@@ -121,8 +121,8 @@
       "expected_files": [
         {
           "path": ".agents/skills/hoi4-3d-model-pipeline/SKILL.md",
-          "sha256": "8c05e5e5539b9874f1811dbefcec6bd2b4eb10f29eb4e15e9d6775dd5822b17f",
-          "size": 42922
+          "sha256": "f23e03cbdf13a7994f62b835ad4a4f97c8442bbe376f459fb288f781982e16e7",
+          "size": 43342
         },
         {
           "path": ".agents/skills/hoi4-debug-playtest/SKILL.md",
@@ -2881,8 +2881,8 @@
       "expected_files": [
         {
           "path": ".tools/mcp/bootstrap_hoi4_agent_tools.py",
-          "sha256": "f1a5f38cba8f3c39550566f5d2cfeaab7e784885169c1bf48ae19b877d666144",
-          "size": 8183
+          "sha256": "484a510c714cfbee82113e81d5e58b5c8352cdbfcdc7d493acd3e18cb749889d",
+          "size": 9501
         }
       ]
     },
@@ -2978,7 +2978,9 @@
             "network_access": "None. This read-only health action runs the already installed exact package.",
             "expected_writes": [],
             "privilege": "current_user",
-            "rollback_boundary": "The health action performs no writes and starts no tool call."
+            "rollback_boundary": "The health action performs no writes and starts no tool call.",
+            "package_tree_sha256": "9da372df1c7870728f80e850c1c7fd6b5470285f27e1ef8e0841fcde60e0a208",
+            "package_file_count": 181
           }
         }
       ],
@@ -3098,8 +3100,8 @@
       "expected_files": [
         {
           "path": "README.md",
-          "sha256": "2cc163eeffcdcb5ec9d3d3ab815eb7be148f141a08e5b66bd1a9b3b66f11e0c3",
-          "size": 19726
+          "sha256": "65d3dc7fe77d2801ca97ad79a9b0e1f031bc619d1eb9cbca283c1c21c0eb0ddf",
+          "size": 20053
         }
       ]
     },
@@ -6472,7 +6474,7 @@
     {
       "id": "workflow.3d",
       "display_name": "3D models workflow",
-      "description": "Install the source-declared 3D workflow files and bootstrap records.",
+      "description": "Install the source-declared 3D workflow and its execution-locked Meshy runtime contract.",
       "category": "workflow",
       "optional": true,
       "platforms": [
@@ -6563,7 +6565,7 @@
         }
       ],
       "conflicts": [
-        "existing 3D bootstrap or wrapper files"
+        "existing 3D bootstrap, runtime lock, or Blender wrapper files"
       ],
       "conflict_policy": "replace_if_unmodified",
       "validation": [
@@ -6585,7 +6587,7 @@
               "--verify-reviewed-config",
               "--quiet"
             ],
-            "network_access": "Required to authenticate the Meshy credential with the bounded balance endpoint, install user-scoped Node.js LTS or uv when missing, and resolve and download the latest verified Meshy, Blender MCP, and io_pdx_mesh dependencies from approved HTTPS hosts.",
+            "network_access": "Required to authenticate the Meshy credential with the bounded balance endpoint, install user-scoped Node.js LTS or uv when missing, install the exact lockfile-resolved Meshy runtime, resolve Blender MCP to an exact commit, and download pinned io_pdx_mesh 0.91 from approved HTTPS hosts.",
             "expected_writes": [
               ".tools/3d_pipeline/adapter/.venv/**",
               ".tools/3d_pipeline/adapter/uv.lock",
@@ -6599,12 +6601,13 @@
               ".tools/3d_pipeline/config/*_version.txt",
               ".tools/3d_pipeline/runtime/**",
               ".tools/3d_pipeline/vendor/**",
+              "%LOCALAPPDATA%/HOI4 Mod Setup/runtimes/meshy-0.4.0/**",
               "the current user's Blender extensions directory",
               "the current user's winget-managed Node.js LTS installation when npx is missing",
               "the current user's Python package directory when uv is missing"
             ],
             "privilege": "current_user",
-            "rollback_boundary": "Managed project files roll back transactionally. Downloaded dependencies, the user-scoped Node.js LTS package, user-level uv, and Blender extensions are external tool state and are reported but not removed automatically."
+            "rollback_boundary": "Managed project files roll back transactionally. The execution-locked Meshy runtime, downloaded dependencies, user-scoped Node.js LTS, user-level uv, and Blender extensions are external tool state and are reported but not removed automatically."
           }
         }
       ],
@@ -6642,8 +6645,8 @@
         },
         {
           "path": ".tools/3d_pipeline/bootstrap_3d_workflow.py",
-          "sha256": "3e41245be80b17ce0ee21c215abd924dac016779d0ca748663be40b9fa2e1222",
-          "size": 53258
+          "sha256": "dd24ecaa83802c644f959fcde5df861190d051ca24c7ae89d562f94820447be5",
+          "size": 57443
         },
         {
           "path": ".tools/3d_pipeline/config/asset_profiles.json",
@@ -6656,19 +6659,24 @@
           "size": 1457
         },
         {
+          "path": ".tools/3d_pipeline/meshy_runtime/package-lock.json",
+          "sha256": "3f70a2384d25e338c6a03a1547218cca97320c4087cee14a8def4793fd24d3ce",
+          "size": 64987
+        },
+        {
+          "path": ".tools/3d_pipeline/meshy_runtime/package.json",
+          "sha256": "dc41c1df4d4243b435362fd0a4406433e728307e88815acfbf1183ce7c38ef11",
+          "size": 151
+        },
+        {
           "path": ".tools/3d_pipeline/wrappers/run_blender_hoi4_adapter.cmd",
-          "sha256": "7d8ade6c62a2d72958f91a05d7a6aa5302ac6affbe08810ced803c30c5f0d25b",
-          "size": 942
+          "sha256": "b1559651ae35ff7ebfcad5bbcf3edc9537022dcbcdcea4f81169296d8ab04db9",
+          "size": 790
         },
         {
           "path": ".tools/3d_pipeline/wrappers/run_blender_lab_mcp.cmd",
-          "sha256": "a79d2188006f999270e64a81914731d2f889fc163e6b10c62949ef4dd11b32bd",
-          "size": 2416
-        },
-        {
-          "path": ".tools/3d_pipeline/wrappers/run_meshy_mcp.cmd",
-          "sha256": "57f6f91d40d287a74f3c999b1f7d78290e47b8375076b52f3ae526617eef4913",
-          "size": 1248
+          "sha256": "b2c47afb79fd6ea4022dcc07c2d452774ce5f2bbf8993c380beb209edc698e95",
+          "size": 2088
         }
       ]
     },
