@@ -53,6 +53,46 @@ pub struct TransactionOptions {
     pub fail_after_operation: Option<usize>,
     pub fail_before_git: bool,
     pub fail_after_git: bool,
+    /// Deterministic fault boundaries around reviewed external actions. The
+    /// after-action hook models a child that returned after external effects
+    /// but before the completion checkpoint was persisted.
+    pub fail_before_post_install_action: bool,
+    pub fail_after_post_install_action: bool,
+    /// Runs only manifest-declared, user-reviewed post-install actions after
+    /// managed-file verification. Production supplies the allowlisted runner;
+    /// tests inject a deterministic fake.
+    pub post_install_action_runner: Option<PostInstallActionRunner>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostInstallActionOutcome {
+    pub component_id: String,
+    pub state: String,
+    pub evidence: String,
+}
+
+pub type PostInstallActionRunner =
+    fn(&Path, &InstallationPlan) -> Result<Vec<PostInstallActionOutcome>, AppError>;
+
+fn reviewed_external_action_evidence(plan: &InstallationPlan) -> Result<Vec<String>, AppError> {
+    const MAX_ACTION_EVIDENCE_BYTES: usize = 32 * 1024;
+    plan.external_actions
+        .iter()
+        .map(|action| {
+            let serialized = serde_json::to_string(action)?;
+            if serialized.len() > MAX_ACTION_EVIDENCE_BYTES {
+                return Err(AppError::Transaction(
+                    "reviewed external-action evidence is too large to journal".into(),
+                ));
+            }
+            let redacted = redact_secrets(&serialized, &[]);
+            Ok(format!(
+                "external-action-reviewed:sha256={}:{}",
+                sha256_bytes(serialized.as_bytes()),
+                redacted
+            ))
+        })
+        .collect()
 }
 
 pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
@@ -139,6 +179,14 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
         && plan.git_setup.is_none();
     if let Some(codex_analysis) = plan.codex_analysis.as_ref() {
         crate::codex::validate_confirmed_record(codex_analysis)?;
+        if codex_analysis.source_revision.as_deref() != Some(plan.source.resolved_revision.as_str())
+            || codex_analysis.source_manifest_sha256.as_deref()
+                != Some(plan.source.manifest_sha256.as_str())
+        {
+            return Err(AppError::Source(
+                "the confirmed semantic analysis is bound to a different source manifest".into(),
+            ));
+        }
     } else if !removing {
         return Err(AppError::Credential(
             "a confirmed selected-provider analysis is required before apply".into(),
@@ -836,6 +884,7 @@ pub fn run_transaction(
     options: &TransactionOptions,
 ) -> Result<(TransactionJournal, InstallationLock), AppError> {
     validate_plan(plan)?;
+    let mut effective_plan = plan.clone();
     let (project_root, root_exists) = validate_project_root_or_destination(project_root)?;
     validate_plan_project_root(plan, &project_root, root_exists)?;
     validate_flatten_transaction_inputs(plan, prepared_files, &project_root)?;
@@ -1138,6 +1187,59 @@ pub fn run_transaction(
             options.fail_before_stage,
         )?;
         post_install_checks(&project_root, plan, &mut journal, &journal_path)?;
+        if let Some(runner) = options.post_install_action_runner {
+            let reviewed_actions = reviewed_external_action_evidence(plan)?;
+            if let Some(stage) = journal.stages.get_mut(9) {
+                stage.evidence.extend(reviewed_actions);
+            }
+            journal.last_checkpoint = "post-install-actions-intent".into();
+            persist_journal(&journal_path, &mut journal)?;
+            if options.fail_before_post_install_action {
+                return Err(AppError::Transaction(
+                    "fault injected before reviewed post-install action".into(),
+                ));
+            }
+            for outcome in runner(&project_root, plan)? {
+                if !matches!(
+                    outcome.state.as_str(),
+                    "ready" | "incomplete" | "unsupported_platform"
+                ) {
+                    return Err(AppError::Transaction(format!(
+                        "post-install action returned an invalid state for {}",
+                        outcome.component_id
+                    )));
+                }
+                if !effective_plan
+                    .optional_workflows
+                    .contains_key(&outcome.component_id)
+                {
+                    return Err(AppError::Transaction(format!(
+                        "post-install action returned an unselected component: {}",
+                        outcome.component_id
+                    )));
+                }
+                effective_plan
+                    .optional_workflows
+                    .insert(outcome.component_id.clone(), outcome.state.clone());
+                let evidence = redact_secrets(&outcome.evidence, &[])
+                    .chars()
+                    .take(2_048)
+                    .collect::<String>();
+                if let Some(stage) = journal.stages.get_mut(9) {
+                    stage.evidence.push(format!(
+                        "external-action:{}:{}:{}",
+                        outcome.component_id, outcome.state, evidence
+                    ));
+                }
+            }
+            if options.fail_after_post_install_action {
+                return Err(AppError::Transaction(
+                    "fault injected after reviewed post-install action".into(),
+                ));
+            }
+            journal.last_checkpoint = "post-install-actions-complete".into();
+            persist_journal(&journal_path, &mut journal)?;
+        }
         stage_complete(
             &mut journal,
             9,
@@ -1152,7 +1254,7 @@ pub fn run_transaction(
             &journal_path,
             options.fail_before_stage,
         )?;
-        let readiness = build_transaction_readiness(&project_root, plan, &journal)?;
+        let readiness = build_transaction_readiness(&project_root, &effective_plan, &journal)?;
         let readiness_path = roots.transaction.join("readiness-report.json");
         atomic_write_json(&readiness_path, &readiness)?;
         if let Some(stage) = journal.stages.get_mut(10) {
@@ -1179,7 +1281,7 @@ pub fn run_transaction(
         }
         final_live_verification(&project_root, plan, &journal)?;
         let lock = build_lock(
-            plan,
+            &effective_plan,
             prepared_files,
             &journal,
             previous_lock.as_ref(),
@@ -5148,6 +5250,15 @@ pub fn resume_transaction(
     app_root: &Path,
     transaction_id: Uuid,
 ) -> Result<(TransactionJournal, InstallationLock), AppError> {
+    resume_transaction_with_options(project_root, app_root, transaction_id, None)
+}
+
+pub fn resume_transaction_with_options(
+    project_root: &Path,
+    app_root: &Path,
+    transaction_id: Uuid,
+    post_install_action_runner: Option<PostInstallActionRunner>,
+) -> Result<(TransactionJournal, InstallationLock), AppError> {
     let (project_root, _) = validate_project_root_or_destination(project_root)?;
     if crate::security::path_has_link_component(app_root) {
         return Err(AppError::PathSecurity(
@@ -5332,6 +5443,7 @@ pub fn resume_transaction(
         &TransactionOptions {
             app_data_root: Some(app_root.to_path_buf()),
             resume_transaction_id: Some(transaction_id),
+            post_install_action_runner,
             ..Default::default()
         },
     )
@@ -5774,6 +5886,8 @@ mod tests {
             project_root: None,
             scan_id: None,
             evidence_sha256: None,
+            source_revision: Some("599497ea2f93612d9094461c6fde114fc87a5c0f".into()),
+            source_manifest_sha256: Some("a".repeat(64)),
         }
     }
 
@@ -7291,6 +7405,211 @@ mod tests {
         plan.operations[0].local_state = LocalState::Unmodified;
 
         validate_plan(&plan).unwrap();
+    }
+
+    fn ready_three_d_action(
+        _project_root: &Path,
+        _plan: &InstallationPlan,
+    ) -> Result<Vec<PostInstallActionOutcome>, AppError> {
+        Ok(vec![PostInstallActionOutcome {
+            component_id: "workflow.3d".into(),
+            state: "ready".into(),
+            evidence: "bootstrap exit=0 timed_out=false".into(),
+        }])
+    }
+
+    fn failing_three_d_action(
+        _project_root: &Path,
+        _plan: &InstallationPlan,
+    ) -> Result<Vec<PostInstallActionOutcome>, AppError> {
+        Err(AppError::Transaction(
+            "reviewed 3D bootstrap failed before readiness".into(),
+        ))
+    }
+
+    fn reviewed_three_d_external_action() -> ExternalAction {
+        ExternalAction {
+            id: "external.workflow.3d.bootstrap".into(),
+            component_id: "workflow.3d".into(),
+            platform: Platform::Windows,
+            command_source: "repository_script".into(),
+            executable: Some("manifest-declared Python tool".into()),
+            arguments: vec![
+                ".tools/3d_pipeline/bootstrap_3d_workflow.py".into(),
+                "--project-root".into(),
+                "<project_root>".into(),
+                "--verify-reviewed-config".into(),
+                "--quiet".into(),
+            ],
+            working_directory: Some("<project_root>".into()),
+            environment_names: vec!["MESHY_API_KEY".into()],
+            network_access: "approved HTTPS dependency and Meshy health endpoints".into(),
+            expected_writes: vec![".tools/3d_pipeline/runtime/**".into()],
+            privilege: "current_user".into(),
+            rollback_boundary: "external dependency state is reported".into(),
+            display_command: Some("Verified 3D bootstrap".into()),
+            risk: "high".into(),
+            requires_approval: true,
+            contains_secret: false,
+            verified_executable_sha256: None,
+            verified_executable_size: None,
+            verified_interpreter_sha256: None,
+            verified_interpreter_size: None,
+            verified_runtime_sha256: None,
+            verified_runtime_size: None,
+            verified_package_name: None,
+            verified_package_version: None,
+            verified_package_integrity: None,
+            verified_runtime_entry: None,
+            required_tool_names: vec![],
+        }
+    }
+
+    #[test]
+    fn reviewed_post_install_action_updates_readiness_and_persisted_workflow_state() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let mut plan = ready_plan(project.path());
+        plan.optional_workflows
+            .insert("workflow.3d".into(), "selected_pending".into());
+        plan.external_actions = vec![reviewed_three_d_external_action()];
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+
+        let (journal, lock) = run_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                post_install_action_runner: Some(ready_three_d_action),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            lock.optional_workflows
+                .get("workflow.3d")
+                .map(|workflow| workflow.state.as_str()),
+            Some("ready")
+        );
+        assert!(journal.stages[9]
+            .evidence
+            .iter()
+            .any(|item| item.contains("external-action:workflow.3d:ready")));
+        let reviewed = journal.stages[9]
+            .evidence
+            .iter()
+            .find(|item| item.starts_with("external-action-reviewed:"))
+            .expect("the exact reviewed action must be journaled");
+        assert!(reviewed.contains("repository_script"));
+        assert!(reviewed.contains("network_access"));
+        assert!(reviewed.contains("expected_writes"));
+        assert!(reviewed.contains("rollback_boundary"));
+    }
+
+    #[test]
+    fn reviewed_post_install_action_fault_boundaries_require_rollback() {
+        for fail_after in [false, true] {
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let mut plan = ready_plan(project.path());
+            plan.optional_workflows
+                .insert("workflow.3d".into(), "selected_pending".into());
+            plan.external_actions = vec![reviewed_three_d_external_action()];
+            let prepared = vec![PreparedFile {
+                operation_id: "op-1".into(),
+                destination: "AGENTS.md".into(),
+                bytes: b"safe".to_vec(),
+                expected_sha256: sha256_bytes(b"safe"),
+            }];
+
+            let error = run_transaction(
+                project.path(),
+                &plan,
+                &prepared,
+                &TransactionOptions {
+                    app_data_root: Some(app.path().into()),
+                    fail_before_post_install_action: !fail_after,
+                    fail_after_post_install_action: fail_after,
+                    post_install_action_runner: Some(ready_three_d_action),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+
+            assert!(error.to_string().contains("reviewed post-install action"));
+            assert!(!project
+                .path()
+                .join(".hoi4-mod-setup/install.lock.json")
+                .exists());
+            let journal = read_journal(
+                &transaction_root(app.path(), plan.plan_id)
+                    .transaction
+                    .join("journal.json"),
+            )
+            .unwrap();
+            assert_eq!(journal.state, "interrupted");
+            assert!(journal.recovery.project_apply_started);
+            assert!(journal.recovery.rollback_allowed);
+            assert_eq!(journal.recovery.recommended_action, "rollback");
+            assert!(journal.stages[9]
+                .evidence
+                .iter()
+                .any(|item| item.starts_with("external-action-reviewed:")));
+        }
+    }
+
+    #[test]
+    fn failed_post_install_action_never_writes_a_success_lock_and_requires_rollback() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let mut plan = ready_plan(project.path());
+        plan.optional_workflows
+            .insert("workflow.3d".into(), "selected_pending".into());
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+
+        let error = run_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                post_install_action_runner: Some(failing_three_d_action),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("reviewed 3D bootstrap failed"));
+        assert!(!project
+            .path()
+            .join(".hoi4-mod-setup/install.lock.json")
+            .exists());
+        let journal = read_journal(
+            &transaction_root(app.path(), plan.plan_id)
+                .transaction
+                .join("journal.json"),
+        )
+        .unwrap();
+        assert_eq!(journal.state, "interrupted");
+        assert!(journal.recovery.project_apply_started);
+        assert!(journal.recovery.rollback_allowed);
+        assert_eq!(journal.recovery.recommended_action, "rollback");
+        assert_eq!(
+            journal.error.as_ref().unwrap().stage,
+            "post-install-actions-intent"
+        );
     }
 
     #[test]

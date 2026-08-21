@@ -133,6 +133,14 @@ entry as OAuth or account login.
   still requires a core-owned or platform-verified executable identity before
   a production release can claim the login, analysis, or opener boundary.
 - Preview environment variable names, never values.
+- The automatic 3D bootstrap receives `MESHY_API_KEY` only through
+  `ScopedSecretEnvironment` loaded from the OS vault. Copy the hash-verified
+  managed bootstrap to a private temporary script, run only the reviewed
+  Python executable/argument array in the bound project root, cap time/output,
+  redact evidence, and remove the private copy. Missing credentials or tools
+  produce optional `incomplete`; changed script/action evidence fails closed.
+  Never write the key to project config, plan, lock, journal, or process
+  preview.
 - Provider/model, endpoint, network access, and environment names may appear in
   dry-run evidence; secret values and account metadata may not.
 - Bound runtime, output, network, and expected writes.

@@ -430,6 +430,14 @@
             "null"
           ],
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "source_revision": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "source_manifest_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
         }
       }
     }
@@ -843,6 +851,31 @@
             "null"
           ],
           "minimum": 0
+        },
+        "verified_package_name": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
+        "verified_package_version": {
+          "type": ["string", "null"],
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+        },
+        "verified_package_integrity": {
+          "type": ["string", "null"],
+          "maxLength": 256
+        },
+        "verified_runtime_entry": {
+          "type": ["string", "null"],
+          "maxLength": 256
+        },
+        "required_tool_names": {
+          "type": "array",
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 256
+          }
         }
       }
     }

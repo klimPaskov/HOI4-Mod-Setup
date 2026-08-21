@@ -118,7 +118,11 @@ Conflict review is the exception. It may show a three-way comparison and more co
 - Existing-project scans show the current stage, bounded relative path, file/directory/byte counters, and an accessible Cancel scan action. Use an indeterminate progress bar until a total is known; partial and cancelled results must remain visibly incomplete and announce that no provider evidence was approved.
 - On the optional-workflow screen, show **3D models workflow** first and place
   the **Super Events workflow** checkbox/toggle immediately after it. Preserve
-  that order in maintenance when both workflows are offered.
+  that order in maintenance when both workflows are offered. Keep **ComfyUI
+  portrait production** third, then append compatible manifest-declared
+  optional workflows using their source title and description. The 3D row
+  states that the verified Meshy/Blender workflow is installed and prepared
+  automatically; technical action evidence stays in dry run.
 - When scan evidence identifies a valid managed installation, show a concise
   existing-setup callout with a keyboard-accessible **Repair or add workflows**
   action. The maintenance screen must show the **3D models workflow** title again only

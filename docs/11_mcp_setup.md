@@ -6,7 +6,7 @@ MCP setup is derived from repository evidence. The app exposes each server's pur
 
 ## Current evidence
 
-The inspected `.codex/config.toml` contains `hoi4_agent_tools` with command `hoi4-agent-tools.cmd`. The README describes a global npm install. The 3D bootstrap adds Meshy and Blender-related entries through repository wrappers.
+The inspected `.codex/config.toml` contains `hoi4_agent_tools` with command `hoi4-agent-tools.cmd`. The README describes a global npm install. The verified repository also publishes `docs/systems/hoi4_agent_tools_mcp_integration.md`, which the core profile installs through the managed `docs.mcp_integration` component. The guide documents capability, evidence, probability, rewrite-recovery, and troubleshooting behavior; it does not itself authorize an executable. The 3D bootstrap adds Meshy and Blender-related entries through repository wrappers.
 
 These findings drive the example manifest. They do not authorize macOS equivalents.
 
@@ -62,7 +62,13 @@ health-check identity requirements above.
 
 ## Capability display
 
-The current HOI4 Agent Tools documentation describes focus, event, technology and doctrine, weighted logic, scripted GUI, and map support. Show these as declared capabilities. Refine them with the live tool list and never invent a missing viewer.
+The current HOI4 Agent Tools documentation and manifest describe focus, event,
+weighted-logic, scripted-GUI, map, technology, and doctrine routes. The
+Technology Tree Viewer is exposed through `hoi4.tech_inspect`,
+`hoi4.tech_render`, and `hoi4.tech_compare`. Show only the capabilities declared
+by the resolved manifest and refine them with the live MCP tool list; a future
+addition or removal comes from that exact source revision rather than an app
+hardcode.
 
 ## Credentials
 

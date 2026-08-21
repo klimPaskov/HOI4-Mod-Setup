@@ -98,6 +98,14 @@ operations are not accepted; mode belongs to the reviewed file operation.
 - Use atomic rename or replace where supported.
 - Verify destination hashes after apply.
 - Do not write a successful lock until all required post-install checks pass.
+- Stage 10 may execute a core-owned post-install action runner only for actions
+  already bound into the reviewed plan. For the selected Windows 3D workflow,
+  recheck the managed bootstrap hash/size, fixed arguments, declared network,
+  writes, privilege, rollback boundary, Python identity, and scoped vault
+  reference before spawn. Apply each bounded `ready`, `incomplete`, or
+  `unsupported_platform` outcome to an effective plan used for readiness and
+  the lock; retain the original reviewed plan for managed final verification.
+  Journal redacted bounded action evidence before readiness.
 - Persist the readiness report, then refuse stage 12 and the success lock when any blocking core check is `block`; optional `incomplete`, `planned_unavailable`, and unsupported optional routes remain non-blocking.
 - Persist an `applying` operation intent before replacing or deleting a live destination. Use the platform atomic replace route where available and verify the expected incoming hash, not only an observed self-hash.
 - Bind UI apply to a core-owned reviewed plan session and prepared bytes. The renderer sends only the approved plan ID and project root when installation starts; never reserialize or accept a renderer-edited plan as authoritative.
@@ -156,6 +164,10 @@ operations are not accepted; mode belongs to the reviewed file operation.
   lock/config/source binding, while deselected and unsupported-platform MCP
   states remain non-blocking.
 - External-action details in the plan are secret-free and include argument arrays, cwd, environment names, declared writes, network/privilege evidence, and rollback boundary. `not_declared_by_source` is an honest boundary, not permission to assume rollback.
+- An interrupted pre-apply transaction resumed through production wiring must
+  receive the same post-install action runner as a fresh apply. A post-apply
+  action failure follows ordinary apply-started rollback/manual-review rules;
+  never replay unjournaled external state by guessing.
 - A configured Git remote requires `git_remote_approved` in the core-owned
   reviewed plan. Final dry-run approval may set that flag for the local remote
   configuration only; it never approves online repository creation or push.

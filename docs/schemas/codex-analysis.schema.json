@@ -55,18 +55,8 @@
         "properties": {
           "component_id": {
             "type": "string",
-            "enum": [
-              "core.agents",
-              "core.skills",
-              "core.subagents",
-              "codex.config",
-              "mcp.hoi4_agent_tools",
-              "docs.source",
-              "template.chaos_redux_agents",
-              "wiki.snapshot",
-              "workflow.3d",
-              "workflow.super_events"
-            ]
+            "maxLength": 128,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
           },
           "recommendation": {
             "type": "string",

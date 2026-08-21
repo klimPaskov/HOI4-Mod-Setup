@@ -117,6 +117,15 @@ The application must:
 - verify SHA-256 before staging
 - retain source revision and hash evidence in the installation plan and lock
 - reject path traversal, duplicate destinations, platform mismatches, unsupported manifest majors, and checksum mismatch
+- consume compatible newly published skills, subagents, default-profile
+  components, and optional workflow declarations from the exact resolved
+  manifest without requiring an app release; preserve dependency, provider,
+  platform, checksum, conflict, and user-choice gates
+
+The Agentic repository owns manifest file-evidence generation. Changes under a
+declared component tree are published with exact path, size, and SHA-256
+evidence by its source workflow; HOI4 Mod Setup must not hand-maintain or infer
+those file lists.
 
 The application must not:
 
@@ -260,6 +269,10 @@ provider state is persisted through project setup, import, settings, repair,
 and readiness; provider credentials stay outside the project. LoRA is not a
 separate setup option, component, project preference, or readiness state, and
 the app does not invent a general ComfyUI route beyond this portrait contract.
+Enabled projects install the verified complete portrait-production contract,
+the explicit provider router, exactly one selected provider skill, the bounded
+portrait subagent, and non-secret configuration through the manifest dependency
+graph. Disabled projects receive none of that optional component closure.
 When enabled, the Ready screen may show one concise external link to
 `https://github.com/klimPaskov/comfyui-hoi4-portraits`; disabled projects retain
 source-based portrait handling without ComfyUI-specific project instructions.

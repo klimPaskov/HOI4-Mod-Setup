@@ -6,7 +6,22 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
-## 0.2.12 - 2026-08-13
+## 0.2.13 - 2026-08-21
+
+- Move the expanded automatic MCP/3D contract to the versioned schema-2
+  manifest route while retaining a schema-1 compatibility manifest for
+  already installed app versions.
+
+- Consume compatible new Agentic HOI4 Modding skills, subagents,
+  default-profile additions, and optional workflow declarations from the exact
+  published manifest without requiring a new app release.
+- Advertise the working Technology Tree Viewer routes
+  `hoi4.tech_inspect`, `hoi4.tech_render`, and `hoi4.tech_compare` from verified
+  source evidence.
+- Make selected Windows 3D setup automatic after review: prepare the bounded
+  Meshy/Blender MCP routes, verify and run the source bootstrap with OS-vault
+  credentials, declare and prepare `uv`, and persist honest optional readiness
+  without weakening core setup or rollback boundaries.
 
 - Complete read-only scans of very large HOI4 mods by inventorying only
   agentic setup surfaces: descriptors, instructions, skills, subagents,

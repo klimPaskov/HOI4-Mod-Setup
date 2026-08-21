@@ -358,6 +358,14 @@
             "null"
           ],
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "source_revision": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "source_manifest_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
         }
       }
     }

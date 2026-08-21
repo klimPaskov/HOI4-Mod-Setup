@@ -53,9 +53,20 @@ desktop command dispatch away from the UI event loop.
 ## Current source and release boundary
 
 The published Agentic HOI4 Modding `main` used for this update is at commit
-`a0fdfff1f50d3e5794021e06bfa8bb97f70e0370`. Its manifest declares the
+`f468d248bf5044c11e5db50bf0e7fd06f207352b`. Its manifest declares the
 selected-file records generated from immutable Git blobs at revision
-`59bf7f23c25951ec613b0f36a6921277d16f1354`.
+`7059dafae853f46eeb8970dec40b161290c7c0dc`. The core profile now includes the
+managed HOI4 Agent Tools integration guide; enabled portrait providers expand
+through the verified portrait router; generic skills include Debug and
+Playtest; generic subagents include the AI probability auditor and event UI
+worker; and the optional 3D package includes the bounded Blender adapter.
+
+The immutable inventory is synchronized. The MCP declaration names the working
+Technology Tree Viewer tools, and the 3D component declares `uv` plus the
+reviewed bootstrap arguments and external-state boundary. The Agentic
+repository now regenerates its setup manifest when declared source trees
+change; Latest-mode setup and update consume compatible new skills, subagents,
+default-profile additions, and optional components without a new app binary.
 
 The release route produces a ChaosX Authenticode-signed Windows installer and
 ad-hoc signed macOS disk images when official credentials are absent. The same

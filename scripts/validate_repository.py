@@ -100,7 +100,7 @@ def validate_json_examples() -> None:
             formatted = "; ".join(error.message for error in errors[:5])
             fail(f"{example_name} does not validate against {schema_name}: {formatted}")
     manifest = json.loads(
-        (PLANNING / "source-manifest" / "hoi4-mod-setup.manifest.json").read_text(encoding="utf-8")
+        (PLANNING / "source-manifest" / "hoi4-mod-setup.v2.manifest.json").read_text(encoding="utf-8")
     )
     manifest_schema = json.loads(
         (PLANNING / "schemas" / "remote-manifest.schema.json").read_text(encoding="utf-8")

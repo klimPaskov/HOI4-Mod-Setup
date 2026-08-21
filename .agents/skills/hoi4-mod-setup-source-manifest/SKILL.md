@@ -15,7 +15,7 @@ Read:
 - `docs/09_component_dependency_model.md`
 - `docs/11_mcp_setup.md`
 - `docs/schemas/remote-manifest.schema.json`
-- `docs/source-manifest/hoi4-mod-setup.manifest.json`
+- `docs/source-manifest/hoi4-mod-setup.v2.manifest.json`
 
 Inspect the live Agentic HOI4 Modding repository when a path, package, command, platform declaration, or dependency may have changed. Do not rely on memory.
 
@@ -78,7 +78,13 @@ MCP servers and external dependencies are components. Their command, arguments, 
 
 ## Current implementation boundaries
 
-- The application consumes `hoi4-mod-setup.manifest.json` from the approved GitHub source at one verified commit. The local evidence generator is `scripts/generate_manifest_evidence.py`; it accepts only an explicitly supplied source root and must not discover checkouts.
+- The application consumes the versioned `hoi4-mod-setup.v2.manifest.json`
+  route from the approved GitHub source at one verified commit. The unversioned
+  schema-1 route is generated only for already released clients and must not
+  receive incompatible fields. A new incompatible contract requires a new
+  major and versioned path. The local evidence generator is
+  `scripts/generate_manifest_evidence.py`; it accepts only an explicitly
+  supplied source root and must not discover checkouts.
 - Manifest generation requires an exact lowercase 40-character revision and
   reads bytes from that revision with `git ls-tree` plus `git cat-file
   --batch`. Never hash worktree or `git archive` output because checkout
@@ -108,7 +114,25 @@ MCP servers and external dependencies are components. Their command, arguments, 
 - Release tags are resolved through typed GitHub objects, including annotated-tag dereferencing, and pinned revisions are verified as commit objects before manifest or file access.
 - The MCP component is optional and Windows-only; selecting it changes the structurally generated Codex TOML, while macOS retains an explicit unsupported state and never receives a substitute command. A wrapper action requires immutable executable, command-interpreter, and runtime hash/size evidence; if any is absent, no same-named `PATH` command is executed. Installed readiness may recognize that the exact declared command already exists on the reviewed PATH and report it as configured, but this discovery does not authorize or run it. The offline wiki is always rooted at `paradox_wiki/`; the plan and lock copy the exact manifest `wiki.required_pages` list plus snapshot/media/provenance/license metadata for the resolved revision, and readiness blocks legacy locks that lack that evidence instead of using a newer bundle.
 - `generated_for_revision` is required immutable provenance but may precede the publication commit because a manifest cannot contain the final hash of the commit that contains it. The resolver consumes the remote manifest at the resolved commit, and selective download fails closed when its per-file size or SHA-256 evidence does not match that same commit. A bundled bootstrap is never substituted for a newly resolved remote commit.
+- The Agentic source owns `scripts/generate_manifest_evidence.py` and
+  `.github/workflows/publish-hoi4-mod-setup-manifest.yml`. Relevant source
+  changes regenerate exact path/size/SHA-256 evidence for declared component
+  trees, validate generator and 3D contracts, verify the pushed `main` revision
+  is still current, and publish the manifest in a follow-up commit. Never edit
+  generated file evidence by hand or make the app search a local checkout.
+- Treat component/profile IDs as manifest data, not an app enum. New setup uses
+  the resolved default profile. Update compares the installed manifest profile
+  with the newly resolved one and adds only new, provider-compatible,
+  platform-supported defaults; it preserves prior optional deselection. New
+  files under declared skill/subagent trees flow through automatically, while
+  a new component still requires an explicit source-owned declaration.
 - Expected file evidence carries both SHA-256 and byte size into selected-file records, operations, locks, and readiness. Command-bearing validation rules become plan-visible, approval-bound external actions; their target, platform, and risk come from the verified manifest rather than renderer input. All-platform command declarations are bound to the current supported platform so they are not silently dropped.
+- The closed validation-parameter schema admits paired executable,
+  interpreter, and runtime SHA-256/size identity fields plus bounded arguments,
+  network access, expected writes, privilege, and rollback-boundary evidence.
+  Schema validation rejects unknown keys; deterministic Rust rejects an
+  incomplete identity pair or an invalid lowercase SHA-256/size before any
+  action can be planned.
 - Selected `.codex/agents/*.toml` bytes are verified before deterministic
   adaptation. Staging adds the project-required `fork_context=false` spawn
   rule to developer instructions when absent and rejects an explicit true
@@ -120,7 +144,27 @@ MCP servers and external dependencies are components. Their command, arguments, 
   Preserve the following real H2 instruction section and continue to reject
   unresolved project placeholders.
 - Dependency resolution exposes a deterministic reverse-dependency map for update/removal impact review; provider constraints are applied after forward dependency expansion.
-- The published component graph includes the optional provider-neutral portrait contract and one provider-specific skill component for each supported route. Select exactly one provider skill when the persisted portrait provider is enabled; Disabled adaptation removes the portrait component closure and marked ComfyUI guidance. Never synthesize components from the retired `workflow.lora_comfyui_interest` value; legacy lock values are ignored and removed by the next verified transaction.
+- The published core profile includes `docs.mcp_integration`, a managed copy of
+  the repository's HOI4 Agent Tools capability, evidence, recovery, and
+  troubleshooting guide. It depends on `mcp.hoi4_agent_tools`; documentation
+  never substitutes for immutable executable or platform evidence.
+- The optional Windows 3D component includes the repository-owned
+  `blender_hoi4` production adapter, worker, asset profiles, Meshy tool
+  contract, and wrapper alongside the bootstrap evidence. Keep unrestricted
+  Blender Lab development-only, derive every installed path and command from
+  the verified manifest, require declared `uv`, and do not infer a macOS route.
+  Its command validation must declare fixed bootstrap arguments, network
+  access, expected external writes, current-user privilege, and the rollback
+  boundary. The app may run only that reviewed action after verifying the
+  installed script bytes.
+- The published component graph includes the optional complete portrait
+  contract, `workflow.portraits.router`, and one provider-specific skill
+  component for each supported route. Each enabled provider depends on the
+  router; select exactly one provider skill and let dependency expansion add
+  the router at the resolved revision. Disabled adaptation removes the entire
+  portrait component closure and marked ComfyUI guidance. Never synthesize
+  components from the retired `workflow.lora_comfyui_interest` value; legacy
+  lock values are ignored and removed by the next verified transaction.
 - The optional Super Events parent installs one additional `hoi4-super-events` skill, three narrow research subagents, and six hidden runtime components.
   The verified ordinary planning, events, assets, text/audio, and subagent
   skills contain bounded marked sections that deterministic adaptation retains
@@ -140,6 +184,9 @@ MCP servers and external dependencies are components. Their command, arguments, 
 - manifest major rejection
 - authoritative schema rejection for unknown top-level and nested fields before
   typed deserialization
+- schema acceptance for all six executable/interpreter/runtime identity fields
+  and the bounded action-evidence fields, paired-field runtime enforcement, and
+  rejection of unknown validation keys
 - dependency cycle
 - selected file set only
 - selected-component isolation, including the complete hidden
@@ -154,6 +201,7 @@ MCP servers and external dependencies are components. Their command, arguments, 
 - cache corruption
 - wiki page coverage
 - unsupported platform state
+- source-backed fixtures preserve Windows-only MCP and 3D platform declarations
 - external-action declaration and approval binding
 - manifest provenance/update/signing policy rejection
 

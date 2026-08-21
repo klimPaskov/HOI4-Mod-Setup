@@ -106,8 +106,12 @@ Do not display permanent keyboard shortcut hints in the footer. Keyboard support
 4. **Existing project scan**: visible bounded launcher-candidate confirmation before one progress surface with current scan stage, detected count, and cancel or pause.
 5. **Finding review**: compact finding list and one selected finding. Show evidence only for the selected item.
 6. **Component selection**: recommended component rows, sizes, one collapsed dependency and file-list control.
-7. **Optional workflows**: three concise rows in order—**3D models workflow**,
-   **Super Events workflow**, and **ComfyUI portrait production**.
+7. **Optional workflows**: keep the three stable concise rows in order—**3D
+   models workflow**, **Super Events workflow**, and **ComfyUI portrait
+   production**. Compatible additional manifest-declared optional workflows
+   appear after those rows using their source title and description.
+   The 3D row says that the verified Meshy/Blender workflow is installed and
+   prepared automatically; action/network/write details remain in dry run.
    The Super Events row shows no credential control or provider-specific
    status. The portrait row shows a provider choice and the minimum resource
    recommendation (16 GB VRAM and 25 GB storage) only when enabled, and

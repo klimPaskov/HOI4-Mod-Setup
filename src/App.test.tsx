@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { ChatSources, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, detectedChatSourcesAvailable, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, recoveryProgress } from "./App";
+import App, { ChatSources, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
 import type { ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
@@ -87,6 +87,8 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(fixture.identity.displayName).toBe("Atlantis Rising");
     expect(fixture.codexAccount?.email).toBeUndefined();
     expect(fixture.meshKeyDraft).toBeFalsy();
+    expect(fixture.manifestPreview?.components.find((item) => item.id === "mcp.hoi4_agent_tools")?.platforms).toEqual(["windows"]);
+    expect(fixture.manifestPreview?.components.find((item) => item.id === "workflow.3d")?.platforms).toEqual(["windows"]);
   });
 
   it("provides a sanitized ChatGPT source-package screenshot state", () => {
@@ -445,6 +447,124 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByText("120 B")).toBeInTheDocument();
     expect(screen.getByText("80 B")).toBeInTheDocument();
     expect(screen.getAllByText("Size calculated during review")).toHaveLength(2);
+  });
+
+  it("selects newly published default-profile components without an app allowlist", async () => {
+    const future = {
+      id: "core.future_skills",
+      display_name: "Future skills",
+      description: "New repository-declared skills",
+      category: "skill",
+      optional: false,
+      platforms: ["all"],
+      source: { kind: "tree", path: ".agents/skills/future" },
+      destination: { path: ".agents/skills/future/", ownership: "managed" },
+      dependencies: [], required_tools: [], environment: [], expected_files: [], capabilities: [], validation: [],
+      update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true },
+    };
+    vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: {
+      schema_version: "1.0.0",
+      manifest_id: "dynamic",
+      source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
+      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
+      components: [future],
+      profiles: [{ id: "core", display_name: "Core", components: [future.id], default: true }],
+    } as unknown as SourceManifestPreview });
+
+    function ControlledComponents() {
+      const [state, setState] = useState({ aiProvider: "codex", flattenForChat: false, sourceMode: "latest", pinnedRef: "", selectedComponents: [] } as unknown as WizardState);
+      return <><Components state={state} update={(patch) => setState((value) => ({ ...value, ...patch }))} /><output aria-label="selected components">{state.selectedComponents.join(",")}</output></>;
+    }
+
+    render(<ControlledComponents />);
+    expect(await screen.findAllByText("Future skills")).not.toHaveLength(0);
+    expect(screen.getByLabelText("selected components")).toHaveTextContent("core.future_skills");
+  });
+
+  it("does not silently select a newly defaulted optional for an existing installation", async () => {
+    const future = {
+      id: "workflow.future_tools", display_name: "Future tools", category: "workflow", optional: true, platforms: ["all"],
+      source: { kind: "tree", path: ".tools/future" }, destination: { path: ".tools/future/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [], capabilities: [], validation: [],
+      update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true },
+    };
+    vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: {
+      schema_version: "1.0.0", manifest_id: "dynamic",
+      source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
+      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
+      components: [future], profiles: [{ id: "core", display_name: "Core", components: [future.id], default: true }],
+    } as unknown as SourceManifestPreview });
+
+    function ControlledComponents() {
+      const [state, setState] = useState({ aiProvider: "codex", flattenForChat: false, sourceMode: "latest", pinnedRef: "", selectedComponents: [], existingInstallationDetected: true, installedComponentIds: [], maintenanceOptionalSelections: [] } as unknown as WizardState);
+      return <><Components state={state} update={(patch) => setState((value) => ({ ...value, ...patch }))} /><output aria-label="selected existing components">{state.selectedComponents.join(",")}</output></>;
+    }
+
+    render(<ControlledComponents />);
+    await screen.findByText("Components loaded.");
+    expect(screen.getByLabelText("selected existing components")).not.toHaveTextContent("workflow.future_tools");
+  });
+
+  it("adds only explicitly selected top-level optional components during maintenance", () => {
+    const dependency = {
+      id: "workflow.future_tools.runtime", display_name: "Future runtime", category: "workflow", optional: true, platforms: ["all"],
+      source: { kind: "tree", path: ".tools/future/runtime" }, destination: { path: ".tools/future/runtime/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [], capabilities: [], validation: [], update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true },
+    };
+    const parent = { ...dependency, id: "workflow.future_tools", display_name: "Future tools", dependencies: [dependency.id] };
+    const state = {
+      ...readyState(), existingInstallationDetected: true, installedComponentIds: [], maintenanceOptionalSelections: [parent.id, dependency.id],
+      manifestPreview: { components: [parent, dependency], profiles: [] },
+    } as unknown as WizardState;
+
+    expect(dynamicMaintenanceOptionalComponentIds(state)).toEqual(["workflow.future_tools"]);
+    expect(dynamicMaintenanceOptionalComponentIds({ ...state, installedComponentIds: [parent.id] })).toEqual([]);
+  });
+
+  it("renders and selects a future optional workflow from the manifest", () => {
+    const future = {
+      id: "workflow.future_tools", display_name: "Future tools workflow", description: "New source-declared helper workflow", category: "workflow", optional: true, platforms: ["all"],
+      source: { kind: "tree", path: ".tools/future" }, destination: { path: ".tools/future/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [], capabilities: [], validation: [],
+      update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true },
+    };
+    const state = {
+      ...readyState(),
+      manifestPreview: { components: [future], profiles: [] },
+      selectedComponents: [],
+      meshSelected: false,
+      superEventsSelected: false,
+    } as unknown as WizardState;
+    function ControlledWorkflows() {
+      const [current, setCurrent] = useState(state);
+      return <><Workflows state={current} update={(patch) => setCurrent((value) => ({ ...value, ...patch }))} /><output aria-label="selected workflows">{current.selectedComponents.join(",")}</output></>;
+    }
+
+    render(<ControlledWorkflows />);
+    fireEvent.click(screen.getByRole("switch", { name: /Future tools workflow/ }));
+    expect(screen.getByLabelText("selected workflows")).toHaveTextContent("workflow.future_tools");
+  });
+
+  it("shows one parent switch for a manifest workflow dependency closure", () => {
+    const dependency = {
+      id: "workflow.future_tools.runtime", display_name: "Future runtime internals", category: "workflow", optional: true, platforms: ["all"],
+      source: { kind: "tree", path: ".tools/future/runtime" }, destination: { path: ".tools/future/runtime/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [], capabilities: [], validation: [],
+      update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true },
+    };
+    const parent = {
+      id: "workflow.future_tools", display_name: "Future tools workflow", category: "workflow", optional: true, platforms: ["all"],
+      source: { kind: "tree", path: ".tools/future" }, destination: { path: ".tools/future/", ownership: "managed" }, dependencies: [dependency.id], required_tools: [], environment: [], expected_files: [], capabilities: [], validation: [],
+      update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true },
+    };
+    const state = {
+      ...readyState(),
+      manifestPreview: { components: [parent, dependency], profiles: [] },
+      selectedComponents: [],
+      meshSelected: false,
+      superEventsSelected: false,
+    } as unknown as WizardState;
+
+    render(<Workflows state={state} update={vi.fn()} />);
+
+    expect(screen.getByRole("switch", { name: /Future tools workflow/ })).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /Future runtime internals/ })).not.toBeInTheDocument();
   });
 
   it("offers both optional workflows again for an existing managed setup", () => {

@@ -311,7 +311,7 @@ pub fn analyze<S: CredentialStore>(
     )?;
     let analysis = validate_analysis_output(
         response,
-        &request.analysis.mode,
+        &request.analysis,
         &input_sha256,
         &request.analysis.evidence,
     )?;
@@ -341,6 +341,8 @@ pub fn analyze<S: CredentialStore>(
             evidence_sha256: (!request.analysis.evidence.is_empty())
                 .then(|| crate::codex::evidence_manifest_sha256(&request.analysis.evidence))
                 .transpose()?,
+            source_revision: None,
+            source_manifest_sha256: None,
         },
     })
 }

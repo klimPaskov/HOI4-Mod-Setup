@@ -141,6 +141,17 @@
 - 3D-10: No substitute MCP or Blender command is invented.
 - 3D-11: Dependency and MCP health checks are visible.
 - 3D-12: Current unsupported macOS route is reported.
+- 3D-13: Every executable required by the selected repository wrapper,
+  including `uv` when required by the bounded Blender adapter, is declared by
+  the exact manifest revision before the workflow can be called complete.
+- 3D-14: Selecting the supported 3D workflow installs the exact source package,
+  prepares reviewed MCP routes, and runs the verified bootstrap during
+  post-install checks. A successful bootstrap persists `ready`; missing
+  credentials or tools persists an honest non-blocking `incomplete` state.
+- 3D-15: The reviewed action discloses network access, external writes,
+  current-user privilege, and the external rollback boundary. Managed project
+  files remain transactionally reversible; downloaded runtimes and Blender
+  extensions are never falsely claimed as rolled back.
 
 ## Super Events
 
@@ -156,7 +167,7 @@
 
 - POR-01: Generic setup offers Cloud, Local, RunPod, and Disabled; Chaos Redux never persists Disabled.
 - POR-02: Provider choice, exact canonical repository/commit, sourced workflow alias (`source` or `processing_only`), route fields, and honest status persist through create, import, settings, Update, Repair, readiness, and rollback without secrets.
-- POR-03: Enabled projects receive the provider-neutral portrait contract, only the selected provider skill, bounded portrait subagent, non-secret config, and exact upstream lock; Cloud registers `https://cloud.comfy.org/mcp`.
+- POR-03: Enabled projects receive the complete portrait-production contract, explicit provider router, only the selected provider skill, bounded portrait subagent, non-secret config, and exact upstream lock; Cloud registers `https://cloud.comfy.org/mcp`.
 - POR-04: Cloud can remain `needs_authorization` or `needs_subscription`, Local reports bounded root/server/hardware/workflow/model/Hugging Face state, and RunPod does not claim ready before its URL and workflow are found.
 - POR-05: Disabled output removes portrait components, marker sections, Cloud MCP configuration, and ComfyUI-specific instructions; source-based portrait handling remains available.
 - POR-06: ComfyUI applies only to sourced or grounded portraits; non-sourced fictional or impossible portraits use native ImageGen and never use this workflow. Durable source PNG/TXT pairs share the runtime basename, prompts begin with `hoi4_portrait,` and describe only the person, and runtime files never reference the source archive.
@@ -171,6 +182,13 @@
 - MCP-03: Conflicting server ID requires review.
 - MCP-04: Secrets are not literal TOML values.
 - MCP-05: Unsupported commands do not run.
+- MCP-06: The Technology Tree Viewer is reported only when the resolved
+  revision declares the working `hoi4.tech_inspect`, `hoi4.tech_render`, and
+  `hoi4.tech_compare` routes; the live tool list refines readiness.
+- MCP-07: A newly published manifest profile, skill, subagent, documentation
+  component, or optional workflow can be selected and installed without a new
+  app release when it satisfies the supported schema, platform, dependency,
+  checksum, and security contracts.
 
 ## Git
 

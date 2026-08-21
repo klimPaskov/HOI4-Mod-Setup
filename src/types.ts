@@ -203,6 +203,8 @@ export interface CodexAnalysisRecord {
   account_identity_persisted?: boolean;
   analysis_purpose?: "existing_project_import" | "maintenance_reanalysis";
   evidence_sha256?: string;
+  source_revision?: string;
+  source_manifest_sha256?: string;
 }
 
 export interface CodexAnalysisRequest {
@@ -367,6 +369,7 @@ export interface SourceManifestPreview {
   source: InstallationPlan["source"];
   repository: { provider: string; owner: string; name: string; default_branch: string; web_url?: string | null; license_evidence?: string | null };
   components: ManifestComponentPreview[];
+  profiles: Array<{ id: string; display_name: string; components: string[]; default: boolean }>;
 }
 
 export interface FolderSelection {
@@ -429,6 +432,11 @@ export interface InstallationExternalAction {
   contains_secret?: boolean;
   verified_executable_sha256?: string | null;
   verified_executable_size?: number | null;
+  verified_package_name?: string | null;
+  verified_package_version?: string | null;
+  verified_package_integrity?: string | null;
+  verified_runtime_entry?: string | null;
+  required_tool_names?: string[];
 }
 
 export interface InstallationPlan {
@@ -581,6 +589,8 @@ export interface WizardState {
   maintenanceCodexAnalysisRecord?: CodexAnalysisRecord;
   maintenanceEvidenceReady?: boolean;
   existingInstallationDetected?: boolean;
+  installedComponentIds?: string[];
+  maintenanceOptionalSelections?: string[];
   chatSourcesAvailable?: boolean;
   chatSourcesPreview?: ChatSourcesPreview;
   chatSourcesDestination?: string;

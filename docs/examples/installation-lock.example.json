@@ -223,6 +223,8 @@
       "documentation_convention"
     ],
     "confirmed_at": "2026-07-25T17:34:00+03:00",
-    "account_identity_persisted": false
+    "account_identity_persisted": false,
+    "source_revision": "599497ea2f93612d9094461c6fde114fc87a5c0f",
+    "source_manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
   }
 }

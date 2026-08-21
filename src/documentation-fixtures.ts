@@ -36,6 +36,7 @@ function component(
   category: string,
   fileCount: number,
   optional = false,
+  platforms: string[] = ["all"],
 ): ManifestComponentPreview {
   return {
     id,
@@ -43,7 +44,7 @@ function component(
     description,
     category,
     optional,
-    platforms: ["all"],
+    platforms,
     source: { kind: "repository_tree", path: id },
     destination: { path: ".", ownership: "managed" },
     dependencies: [],
@@ -61,14 +62,16 @@ function component(
 
 const manifestComponents = [
   component("core.agents", "Project instructions", "AGENTS.md adapted to the mod", "instructions", 1),
-  component("core.skills", "HOI4 skills", "Current workflows for scripting, art, research, and review", "skills", 18),
-  component("core.subagents", "Focused subagents", "Narrow helpers for common HOI4 tasks", "subagents", 14),
-  component("codex.config", "Codex and MCP configuration", "Project configuration for Codex", "configuration", 2),
-  component("mcp.hoi4_agent_tools", "HOI4 Agent Tools MCP", "HOI4-aware validation tools", "mcp", 2, true),
-  component("wiki.snapshot", "Offline Paradox wiki", "A local reference installed under paradox_wiki/", "documentation", 942),
-  component("workflow.3d", "3D models workflow", "Optional Meshy and Blender workflow", "workflow", 12, true),
-  component("workflow.super_events", "Super Events workflow", "Reusable event popup, templates, examples, and assets", "workflow", 23, true),
-  component("workflow.portraits.core", "Portrait production contract", "Provider-neutral source, prompt, archive, validation, and runtime handoff contract.", "skill", 1, true),
+  component("core.skills", "HOI4 skills", "Current workflows for scripting, art, research, and review", "skills", 494),
+  component("core.subagents", "Focused subagents", "Narrow helpers for common HOI4 tasks", "subagents", 19),
+  component("codex.config", "Codex and MCP configuration", "Project configuration for Codex", "configuration", 1),
+  component("mcp.hoi4_agent_tools", "HOI4 Agent Tools MCP", "HOI4-aware validation tools", "mcp", 0, true, ["windows"]),
+  component("docs.mcp_integration", "HOI4 Agent Tools integration guide", "Capability, evidence, recovery, and troubleshooting contract", "documentation", 1),
+  component("wiki.snapshot", "Offline Paradox wiki", "A local reference installed under paradox_wiki/", "documentation", 586),
+  component("workflow.3d", "3D models workflow", "Optional Meshy and bounded Blender adapter workflow", "workflow", 10, true, ["windows"]),
+  component("workflow.super_events", "Super Events workflow", "Reusable event popup, templates, examples, and assets", "workflow", 9, true),
+  component("workflow.portraits.core", "Complete portrait production contract", "Grounded source, native ImageGen, processing, wiring, manifest, and handoff contract.", "skill", 1, true),
+  component("workflow.portraits.router", "ComfyUI portrait-provider router", "Explicit Cloud, Local, or user-run RunPod selection contract", "workflow", 1, true),
   component("workflow.portraits.cloud", "Comfy Cloud portrait production", "Selected provider route", "workflow", 1, true),
   component("workflow.portraits.local", "Loopback ComfyUI portrait production", "Selected provider route", "workflow", 1, true),
   component("workflow.portraits.runpod", "RunPod ComfyUI portrait production", "Selected provider route", "workflow", 1, true),
@@ -83,6 +86,7 @@ const portraitComponentIds = [
 ];
 const allPortraitComponentIds = [
   "workflow.portraits.core",
+  "workflow.portraits.router",
   "workflow.portraits.cloud",
   "workflow.portraits.local",
   "workflow.portraits.runpod",
@@ -109,6 +113,12 @@ const manifest = {
     web_url: "https://github.com/klimPaskov/Agentic-HOI4-Modding",
   },
   components: manifestComponents,
+  profiles: [{
+    id: "core",
+    display_name: "Core Codex setup",
+    components: ["core.agents", "core.skills", "core.subagents", "codex.config", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot"],
+    default: true,
+  }],
 };
 
 const operations: InstallationPlan["operations"] = [
@@ -137,7 +147,7 @@ const plan: InstallationPlan = {
   ai_provider: "codex",
   ai_model: "default",
   flatten_chat_sources: true,
-  selected_components: ["core.agents", "core.skills", "core.subagents", "codex.config", "mcp.hoi4_agent_tools", "wiki.snapshot", "workflow.super_events", ...portraitComponentIds],
+  selected_components: ["core.agents", "core.skills", "core.subagents", "codex.config", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot", "workflow.super_events", "workflow.portraits.router", ...portraitComponentIds],
   wiki_required_pages: ["Hearts of Iron 4 Wiki", "Modding"],
   generated_artifacts: [
     { component_id: "chat.flattened", destination: "chatgpt_project_sources/AGENTS.md", content: "Project instructions", expected_sha256: "documentation-preview" },
@@ -226,7 +236,7 @@ export function documentationFixture(base: WizardState): WizardState {
       selected: !["workflow.3d", "workflow.super_events", ...allPortraitComponentIds].includes(item.id),
       required: !item.optional,
     })),
-    selectedComponents: ["core.agents", "core.skills", "core.subagents", "codex.config", "mcp.hoi4_agent_tools", "wiki.snapshot"],
+    selectedComponents: ["core.agents", "core.skills", "core.subagents", "codex.config", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot"],
     folderProfile: ["common", "events", "gfx", "interface", "localisation/english"],
     draftSaved: true,
   };

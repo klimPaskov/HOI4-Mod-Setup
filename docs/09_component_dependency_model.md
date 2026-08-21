@@ -39,6 +39,14 @@ A pass, warning, or blocking check.
 
 The UI shows why every automatic dependency is selected.
 
+The component IDs shown below are the current published graph, not a frozen app
+enum. Source profiles and component definitions are loaded from the exact
+resolved manifest. Newly published default components flow into new setup and
+are added during Update only when they were absent from the installed source
+profile; compatible new optional `workflow.*` declarations become explicit
+choices. Dependencies, provider restrictions, platform support, checksums, and
+conflict review still apply before selection becomes installable.
+
 ## Suggested component set
 
 | ID | Ownership | Default | Current support |
@@ -51,10 +59,14 @@ The UI shows why every automatic dependency is selected.
 | `core.subagents` | managed tree | yes | all |
 | `codex.config` | structured merge | yes | all |
 | `mcp.hoi4_agent_tools` | MCP and external tool | verified profile | current repository Windows route |
+| `docs.mcp_integration` | managed integration guide | yes | all |
 | `wiki.snapshot` | managed tree | yes | all |
-| `docs.repository_reference` | docs | optional | all |
+| `docs.source` | repository reference | optional | all |
+| `template.chaos_redux_agents` | project-specific instruction example | optional | all |
 | `workflow.3d` | optional workflow | no | current repository Windows route |
 | `workflow.super_events` | optional workflow | no | manifest-declared all-platform managed skill tree |
+| `workflow.portraits.core` | optional complete portrait contract | no | all |
+| `workflow.portraits.router` | selected-provider router | dependency | all |
 
 ## File ownership
 
@@ -94,6 +106,12 @@ ordinary planning, events, assets, text/audio, and subagent skills; declining it
 strips those sections and adds none of the selected-only files.
 The component is provider-neutral and remains optional on both supported
 platforms when the verified manifest declares its `all` route.
+
+Each enabled portrait provider depends on both the complete portrait contract
+and `workflow.portraits.router`, then adds exactly one provider skill, the
+bounded portrait subagent, and non-secret configuration. Dependency expansion
+adds the router automatically at the resolved manifest revision. Disabled
+projects omit the complete portrait component closure.
 
 ## Readiness aggregation
 

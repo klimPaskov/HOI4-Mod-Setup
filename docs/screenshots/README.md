@@ -18,7 +18,9 @@ documentation fixture in `src/documentation-fixtures.ts`; the fixture is
 available only in a development build and cannot activate in a packaged app.
 The Integrations and Ready captures show the generic RunPod route with setup
 still required; Cloud and Local remain available in the generic app but are
-not Chaos Redux routes.
+not Chaos Redux routes. The Integrations capture also records the selected 3D
+row's automatic verified Meshy/Blender preparation copy and the stable
+3D/Super Events/portrait ordering.
 
 With `pnpm dev` running, open `http://localhost:1420/?screenshot=<name>` where
 `<name>` is one of `welcome`, `provider`, `existing`, `description`, `identity`,

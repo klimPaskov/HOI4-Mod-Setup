@@ -225,6 +225,14 @@ Each component shows:
 
 Required dependencies are selected automatically and remain visible.
 
+The resolved manifest, not an app-binary component enum, owns the current
+catalog. In Latest mode, changed or newly added files under declared skill and
+subagent component trees are installed from the new exact revision after hash
+verification. Compatible newly declared default-profile components are
+selected for new setups and added during Update without reselecting optional
+components that the user previously declined. Compatible optional workflow
+components appear from their manifest metadata and remain explicit choices.
+
 ### Offline wiki
 
 Install under `<mod_project>/paradox_wiki/`. Verify path containment, every declared hash, required page coverage, media policy, snapshot marker when declared, and link integrity. Show source and licensing evidence without invention.
@@ -271,7 +279,7 @@ never blocks core readiness.
 
 ### ComfyUI HOI4 portrait workflow
 
-Generic projects may select Cloud, Local, RunPod, or Disabled on the Optional workflows screen. The selection is persisted in project state, the installation plan and lock, the scan summary, readiness, settings, Update, and Repair. Enabled projects receive the provider-neutral portrait contract, only the selected provider skill, a bounded subagent, non-secret configuration, and the exact upstream revision recorded in `docs/32_comfyui_portrait_pipeline.md`. Disabled projects receive source-based portrait handling and no ComfyUI-specific files, marker sections, MCP configuration, or instructions.
+Generic projects may select Cloud, Local, RunPod, or Disabled on the Optional workflows screen. The selection is persisted in project state, the installation plan and lock, the scan summary, readiness, settings, Update, and Repair. Enabled projects receive the complete portrait-production contract, the explicit provider router, only the selected provider skill, a bounded subagent, non-secret configuration, and the exact upstream revision recorded in `docs/32_comfyui_portrait_pipeline.md`. Disabled projects receive source-based portrait handling and no ComfyUI-specific files, marker sections, MCP configuration, or instructions.
 
 The expanded portrait row states the minimum local recommendation as 16 GB of VRAM and 25 GB of storage. These are honest resource guidance, not a blocking core readiness requirement.
 

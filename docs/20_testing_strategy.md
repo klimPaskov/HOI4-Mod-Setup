@@ -14,12 +14,25 @@ Run a controlled manual release test against a real ChatGPT account. Never place
 - project ID validation
 - descriptors
 - authoritative Draft 2020-12 manifest schema before typed deserialization,
-  including unknown nested-field rejection
+  including unknown nested-field rejection and the closed executable,
+  interpreter, and runtime SHA-256/size identity parameter set
 - dependency graph and cycles
+- source-owned manifest generation over declared component trees, including a
+  changed skill, new skill, new subagent, and unchanged-file deterministic
+  output; compatible new default-profile components are adopted on Update
+  without restoring previously declined optional choices
 - platform resolution
+- documentation fixtures preserve manifest-declared Windows-only MCP and 3D
+  routes instead of presenting them as all-platform
 - hashing
 - file classification
 - three-way and TOML merge
+- generic manifest-declared optional workflows render/select without an app
+  enum, while provider/platform/dependency gates remain enforced
+- selected 3D configuration contains exact Meshy and bounded Blender routes;
+  the reviewed bootstrap action carries fixed arguments, network/write/
+  privilege/rollback evidence, and transaction tests prove success, optional
+  incomplete outcomes, failure recovery, and production resume wiring
 - secret redaction
 - readiness aggregation
 - journal transitions
