@@ -15,6 +15,8 @@ const productName = "HOI4 Mod Setup";
 const manufacturer = "klimpaskov";
 const missingKeyExitCode = 2;
 const missingValueExitCode = 3;
+const registryScriptTimeoutMs = 10_000;
+const legacyMachineScanTimeoutMs = 60_000;
 
 const registryReadScript = String.raw`
 $ErrorActionPreference = "Stop"
@@ -175,7 +177,11 @@ export function resolveSystemPowerShellPath(
   return resolveNativeSystemExecutable("powershell.exe", fileExists, resolveNative);
 }
 
-async function runRegistryScript(script, environment = {}) {
+async function runRegistryScript(
+  script,
+  environment = {},
+  timeout = registryScriptTimeoutMs,
+) {
   return execFileAsync(
     resolveSystemPowerShellPath(),
     [
@@ -190,7 +196,7 @@ async function runRegistryScript(script, environment = {}) {
     {
       encoding: "utf8",
       env: { ...process.env, ...environment },
-      timeout: 10_000,
+      timeout,
       windowsHide: true,
     },
   );
@@ -245,11 +251,15 @@ export const windowsRegistry = {
 
   async legacyMachineInstallExists() {
     try {
-      await runRegistryScript(legacyMachineInstallScript, {
-        HOI4_MOD_SETUP_REGISTRY_SUBKEY: machineUninstallSubKey,
-        HOI4_MOD_SETUP_PRODUCT_NAME: productName,
-        HOI4_MOD_SETUP_MANUFACTURER: manufacturer,
-      });
+      await runRegistryScript(
+        legacyMachineInstallScript,
+        {
+          HOI4_MOD_SETUP_REGISTRY_SUBKEY: machineUninstallSubKey,
+          HOI4_MOD_SETUP_PRODUCT_NAME: productName,
+          HOI4_MOD_SETUP_MANUFACTURER: manufacturer,
+        },
+        legacyMachineScanTimeoutMs,
+      );
       return true;
     } catch (error) {
       if (exitedWith(error, missingKeyExitCode)) return false;

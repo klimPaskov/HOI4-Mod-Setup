@@ -113,6 +113,8 @@ Stable release evidence includes:
   a fail-closed registry preflight that also refuses matching legacy
   machine-wide installs, plus post-test proof that the temporary install path
   is absent from both filesystem and product/uninstall registry keys
+- a separate 60-second bound for the broad legacy machine-wide uninstall scan;
+  keep fixed current-user registry reads and deletes on their 10-second bound
 
 Never move a published tag. Withdraw a bad release and publish a new version.
 
