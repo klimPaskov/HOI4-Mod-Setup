@@ -8,6 +8,8 @@ No unreleased changes.
 
 ## 0.2.15 - 2026-08-24
 
+- Let the Windows release installer gate complete its fail-closed legacy
+  machine-install scan on crowded runners without weakening fixed-key timeouts.
 - Consolidate Agentic HOI4 Modding source discovery onto the single canonical
   `hoi4-mod-setup.manifest.json` schema-2 route; compatibility remains explicit
   in the manifest `schema_version` instead of parallel filenames.
