@@ -938,7 +938,7 @@ mod tests {
     #[test]
     fn manifest_target_binds_the_exact_public_package_and_technology_routes() {
         let mut manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
-            "../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
         ))
         .unwrap();
         let target = manifest_target(&manifest).unwrap();

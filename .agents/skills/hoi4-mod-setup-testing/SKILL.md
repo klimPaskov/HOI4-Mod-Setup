@@ -29,7 +29,8 @@ Use the smallest useful layer and keep high-risk behavior covered at more than o
 - transaction fault injection
 - dynamic manifest tests for changed skill/subagent trees, generic compatible
   IDs, newly published default-profile additions during Update, preservation of
-  earlier optional choices, and generic optional workflow UI
+  earlier optional choices, generic optional workflow UI, and the single
+  canonical unversioned manifest filename
 - reviewed post-install action tests for exact 3D arguments/evidence, optional
   missing-key/tool outcomes, successful readiness/lock persistence, failure
   recovery, and pre-apply resume using the production runner

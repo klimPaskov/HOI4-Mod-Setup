@@ -2,17 +2,15 @@
 
 ## Purpose
 
-The remote manifest is the installation contract between Agentic-HOI4-Modding and HOI4 Mod Setup. The current discovery path is:
+The remote manifest is the installation contract between Agentic-HOI4-Modding and HOI4 Mod Setup. The single canonical discovery path is:
 
 ```text
-hoi4-mod-setup.v2.manifest.json
+hoi4-mod-setup.manifest.json
 ```
 
-`hoi4-mod-setup.manifest.json` remains a schema-1 compatibility route for
-already released clients. It is generated from the same exact revision but
-omits schema-2 command parameters. New automation metadata is never added to a
-published schema major after clients have shipped; incompatible additions use
-a new versioned path and major.
+Compatibility is declared by the required `schema_version` inside this file.
+Unsupported majors fail closed. The repository does not publish parallel
+manifest filenames as update history.
 
 ## Latest mode
 

@@ -205,7 +205,10 @@ while signed out or disconnected.
 
 ### Remote source resolution
 
-Use GitHub API and raw endpoints. Never clone Agentic-HOI4-Modding.
+Use GitHub API and raw endpoints. Never clone Agentic-HOI4-Modding. Resolve the
+single canonical `hoi4-mod-setup.manifest.json` path; its required
+`schema_version` owns compatibility, and parallel filename aliases are not
+published as update history.
 
 Latest mode resolves the default branch to an exact commit, fetches the manifest at that commit, and records it. Pinned mode accepts an exact commit or immutable release identity.
 

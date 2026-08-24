@@ -6,6 +6,20 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.2.15 - 2026-08-24
+
+- Consolidate Agentic HOI4 Modding source discovery onto the single canonical
+  `hoi4-mod-setup.manifest.json` schema-2 route; compatibility remains explicit
+  in the manifest `schema_version` instead of parallel filenames.
+- Remove the incomplete Qoder runtime components, synchronization component,
+  optional profile, and generated project guidance from the Agentic setup.
+- Reject every non-generated manifest file or tree component that resolves to
+  zero tracked files, preventing incomplete source declarations from reaching
+  planning again.
+- Refresh the bundled source evidence to the exact current Agentic repository
+  revision without changing selective download, checksum, transaction,
+  credential, platform, or rollback protections.
+
 ## 0.2.14 - 2026-08-21
 
 - Make the dynamic default-profile regression test select an explicit supported
