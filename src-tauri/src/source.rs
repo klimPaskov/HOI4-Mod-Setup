@@ -24,7 +24,7 @@ use std::os::windows::fs::OpenOptionsExt;
 pub const SOURCE_REPOSITORY: &str = "https://github.com/klimPaskov/Agentic-HOI4-Modding";
 pub const SOURCE_OWNER: &str = "klimPaskov";
 pub const SOURCE_NAME: &str = "Agentic-HOI4-Modding";
-pub const MANIFEST_PATH: &str = "hoi4-mod-setup.v2.manifest.json";
+pub const MANIFEST_PATH: &str = "hoi4-mod-setup.manifest.json";
 const MAX_SELECTED_FILES: usize = 20_000;
 const MAX_SELECTED_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_SOURCE_FILE_BYTES: u64 = 512 * 1024 * 1024;
@@ -1788,7 +1788,8 @@ mod tests {
 
     #[test]
     fn checked_in_manifest_matches_the_supported_source_contract() {
-        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
+        assert_eq!(MANIFEST_PATH, "hoi4-mod-setup.manifest.json");
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let inventory: Value = serde_json::from_str(include_str!(
             "../../docs/source-audit/live_repository_inventory.json"
         ))
@@ -1805,6 +1806,14 @@ mod tests {
         assert!(manifest.profiles.iter().any(|profile| profile.default));
         assert_eq!(manifest.wiki.destination, "paradox_wiki/");
         assert_eq!(manifest.components.len(), 26);
+        assert!(manifest
+            .components
+            .iter()
+            .all(|component| !component.id.starts_with("runtime.qoder.")));
+        assert!(manifest
+            .profiles
+            .iter()
+            .all(|profile| profile.id != "core_with_qoder"));
         let core_profile = manifest
             .profiles
             .iter()
@@ -1953,7 +1962,7 @@ mod tests {
 
     #[test]
     fn super_events_package_is_complete_and_opt_in() {
-        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let source_snapshot = "3562696c57905e6ed50f377a4ab46d5ac5ca8766";
         let manifest = parse_manifest(bytes, Some(source_snapshot)).unwrap();
         let core_profile = manifest
@@ -2068,7 +2077,7 @@ mod tests {
     #[test]
     fn published_manifest_is_consumed_at_the_resolved_revision() {
         let bundled_bytes =
-            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let remote_bytes = bundled_bytes.to_vec();
         let resolved_revision = "8791946cffeb98e113ebf0686c3d46f735fa3eeb";
 
@@ -2092,7 +2101,7 @@ mod tests {
     #[test]
     fn authoritative_manifest_schema_rejects_unknown_top_level_fields() {
         let mut value: Value = serde_json::from_slice(include_bytes!(
-            "../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
         ))
         .unwrap();
         value
@@ -2114,7 +2123,7 @@ mod tests {
     #[test]
     fn authoritative_manifest_schema_rejects_unknown_nested_policy_fields() {
         let mut value: Value = serde_json::from_slice(include_bytes!(
-            "../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
         ))
         .unwrap();
         value["update_policy"]["latest"]["allow_branch_lock"] = Value::Bool(true);
@@ -2133,7 +2142,7 @@ mod tests {
     #[test]
     fn authoritative_manifest_schema_accepts_verified_command_identity_fields() {
         let mut value: Value = serde_json::from_slice(include_bytes!(
-            "../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
         ))
         .unwrap();
         let component = value["components"]
@@ -2162,7 +2171,7 @@ mod tests {
     #[test]
     fn authoritative_manifest_schema_rejects_unknown_validation_parameters() {
         let mut value: Value = serde_json::from_slice(include_bytes!(
-            "../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
         ))
         .unwrap();
         let component = value["components"]
@@ -2187,7 +2196,7 @@ mod tests {
     #[test]
     fn three_d_bootstrap_requires_complete_reviewed_action_evidence() {
         let mut value: Value = serde_json::from_slice(include_bytes!(
-            "../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
         ))
         .unwrap();
         let component = value["components"]
@@ -2220,7 +2229,7 @@ mod tests {
     #[test]
     fn manifest_requires_exactly_one_default_profile() {
         let mut value: Value = serde_json::from_slice(include_bytes!(
-            "../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
         ))
         .unwrap();
         let mut second = value["profiles"][0].clone();
@@ -2240,7 +2249,7 @@ mod tests {
 
     #[test]
     fn core_profile_keeps_windows_only_mcp_components_nonblocking_on_macos() {
-        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let manifest =
             parse_manifest(bytes, Some("32a85b3db800dcf2920c65a6093caaf1b9b81c8b")).unwrap();
         let profile = manifest
@@ -2460,7 +2469,7 @@ mod tests {
 
     #[test]
     fn manifest_generation_revision_may_precede_publication_revision() {
-        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let mut manifest: RemoteManifest = serde_json::from_slice(bytes).unwrap();
         manifest.generated_for_revision = Some("599497ea2f93612d9094461c6fde114fc87a5c0f".into());
         validate_manifest(&manifest, Some("27128a7b311d728a959afff7238a9aeeb9987f2b")).unwrap();
@@ -2468,7 +2477,7 @@ mod tests {
 
     #[test]
     fn manifest_rejects_unsupported_provenance_update_or_signing_policy() {
-        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let revision = "27128a7b311d728a959afff7238a9aeeb9987f2b";
 
         let mut provenance: RemoteManifest = serde_json::from_slice(bytes).unwrap();

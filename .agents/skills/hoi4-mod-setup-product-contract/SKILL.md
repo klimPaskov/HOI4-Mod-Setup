@@ -50,6 +50,9 @@ Read:
 - Existing projects are scanned before mutation.
 - No target project file is written before dry-run approval.
 - Agentic HOI4 Modding is selectively fetched, never fully cloned by the app.
+- Agentic source discovery uses one canonical
+  `hoi4-mod-setup.manifest.json` path; schema compatibility is declared inside
+  that file and parallel versioned filename aliases are not source history.
 - Latest mode records an exact commit.
 - Pinned mode is reproducible.
 - User-modified files require a visible decision.

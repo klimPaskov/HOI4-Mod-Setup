@@ -22,7 +22,7 @@ bounded launcher candidate,
 then receive a targeted read-only scan of descriptors, agentic setup files,
 Git, and conflicts; gameplay, localisation, media, and data dumps are excluded.
 
-Use the live source only through its versioned manifest: never clone, search, or
+Use the live source only through its canonical manifest: never clone, search, or
 require a checkout. Latest resolves one commit; pinned uses a commit/release.
 Fetch declared files/wiki, verify SHA-256, and never invent provenance,
 dependencies, commands, packages, servers, or support.

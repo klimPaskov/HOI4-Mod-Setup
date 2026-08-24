@@ -15,7 +15,7 @@ Read:
 - `docs/09_component_dependency_model.md`
 - `docs/11_mcp_setup.md`
 - `docs/schemas/remote-manifest.schema.json`
-- `docs/source-manifest/hoi4-mod-setup.v2.manifest.json`
+- `docs/source-manifest/hoi4-mod-setup.manifest.json`
 
 Inspect the live Agentic HOI4 Modding repository when a path, package, command, platform declaration, or dependency may have changed. Do not rely on memory.
 
@@ -78,11 +78,10 @@ MCP servers and external dependencies are components. Their command, arguments, 
 
 ## Current implementation boundaries
 
-- The application consumes the versioned `hoi4-mod-setup.v2.manifest.json`
-  route from the approved GitHub source at one verified commit. The unversioned
-  schema-1 route is generated only for already released clients and must not
-  receive incompatible fields. A new incompatible contract requires a new
-  major and versioned path. The local evidence generator is
+- The application consumes the single canonical `hoi4-mod-setup.manifest.json`
+  route from the approved GitHub source at one verified commit. The manifest's
+  required `schema_version` field owns compatibility; unsupported majors fail
+  closed without creating parallel filename routes. The local evidence generator is
   `scripts/generate_manifest_evidence.py`; it accepts only an explicitly
   supplied source root and must not discover checkouts.
 - Manifest generation requires an exact lowercase 40-character revision and
@@ -190,6 +189,8 @@ MCP servers and external dependencies are components. Their command, arguments, 
 
 ## Required tests
 
+- the one canonical `hoi4-mod-setup.manifest.json` discovery path is used and
+  no parallel versioned manifest filename is bundled or requested
 - branch to commit resolution and publication-commit manifest binding
 - commit immutability
 - manifest major rejection

@@ -8,7 +8,7 @@ const activeApp = app.replace(/\/\*[\s\S]*?\*\//g, "");
 const css = read("src/styles.css");
 const types = read("src/types.ts");
 const tauri = read("src/lib/tauri.ts");
-const sourceManifest = read("docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
+const sourceManifest = read("docs/source-manifest/hoi4-mod-setup.manifest.json");
 const portraitRepositoryUrl = "https://github.com/klimPaskov/comfyui-hoi4-portraits";
 
 const requiredAppTokens = [

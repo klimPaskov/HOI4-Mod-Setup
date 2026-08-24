@@ -33,7 +33,7 @@ Missing provider configuration, usage availability, or valid analysis blocks Cre
 
 ## Repository contract
 
-Use the published `hoi4-mod-setup.v2.manifest.json` contract and its checked-in
+Use the published `hoi4-mod-setup.manifest.json` contract and its checked-in
 schema for offline bootstrap evidence. Runtime still resolves the remote
 manifest at one exact revision and must not substitute the bundled copy for a
 new remote resolution.

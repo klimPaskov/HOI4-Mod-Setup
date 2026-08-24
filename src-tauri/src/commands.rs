@@ -1763,7 +1763,7 @@ fn remove_meshy_credential(reference: CredentialReference) -> Result<(), String>
 fn resolve_installed_manifest(lock: &InstallationLock) -> Result<RemoteManifest, AppError> {
     if lock.source.manifest_origin == "bundled_revision_bootstrap" {
         let bundled_bytes =
-            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json");
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         if sha256_bytes(bundled_bytes) != lock.source.manifest_sha256 {
             return Err(AppError::Source(
                 "the bundled manifest no longer matches its lock evidence".into(),
@@ -7349,7 +7349,7 @@ mcp_server = "comfy_cloud_portraits"
     #[test]
     fn default_profile_additions_are_adopted_without_hardcoded_component_ids() {
         let mut manifest = crate::source::parse_manifest(
-            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"),
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json"),
             None,
         )
         .unwrap();
@@ -7387,7 +7387,7 @@ mcp_server = "comfy_cloud_portraits"
     #[test]
     fn fresh_planning_records_unknown_optional_components_as_not_selected() {
         let mut manifest = crate::source::parse_manifest(
-            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"),
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json"),
             None,
         )
         .unwrap();
@@ -7414,7 +7414,7 @@ mcp_server = "comfy_cloud_portraits"
     #[test]
     fn a_declined_optional_component_is_not_silently_adopted_when_it_becomes_default() {
         let mut previous_manifest = crate::source::parse_manifest(
-            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"),
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json"),
             None,
         )
         .unwrap();
@@ -7506,7 +7506,7 @@ mcp_server = "comfy_cloud_portraits"
     #[test]
     fn published_3d_bootstrap_action_preserves_reviewed_external_boundaries() {
         let manifest = crate::source::parse_manifest(
-            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"),
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json"),
             None,
         )
         .unwrap();
@@ -7536,7 +7536,7 @@ mcp_server = "comfy_cloud_portraits"
     #[test]
     fn published_mcp_actions_bind_the_automatic_bootstrap_and_all_technology_routes() {
         let manifest = crate::source::parse_manifest(
-            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.v2.manifest.json"),
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json"),
             None,
         )
         .unwrap();

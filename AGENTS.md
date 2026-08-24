@@ -109,6 +109,9 @@ Use "C:\Users\klimp\OneDrive\Documents\Paradox Interactive\Hearts of Iron IV\mod
 
 The application must:
 
+- consume the single canonical `hoi4-mod-setup.manifest.json` route and use
+  its required `schema_version` for compatibility; do not publish or consume
+  parallel filename routes as update history
 - resolve the repository default branch in latest mode
 - resolve an exact commit before reading the install manifest
 - use one revision for the manifest and all selected source files

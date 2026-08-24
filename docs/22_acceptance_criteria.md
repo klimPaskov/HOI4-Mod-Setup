@@ -118,6 +118,9 @@
 - CMP-03: Dependency cycles block.
 - CMP-04: Unsupported optional components remain visible and non-blocking.
 - CMP-05: Unknown manifest major version blocks.
+- CMP-06: Source discovery requests only
+  `hoi4-mod-setup.manifest.json`; compatibility is declared by its required
+  `schema_version`, and no parallel versioned manifest filename is bundled.
 
 ## Wiki
 
