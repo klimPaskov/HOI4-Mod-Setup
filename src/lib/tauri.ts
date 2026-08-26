@@ -1,4 +1,4 @@
-import type { AiAccountStatus, AiAnalysisRequest, AiProviderProfile, AppUpdateStatus, ChatSourcesPackageResult, ChatSourcesPreview, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
+import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderProfile, AppUpdateStatus, ChatSourcesPackageResult, ChatSourcesPreview, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
   id: string;
@@ -61,7 +61,8 @@ interface TauriCommandMap {
   app_update_check: { args: Record<string, never>; result: AppUpdateStatus };
   app_update_install: { args: Record<string, never>; result: void };
   ai_provider_profiles: { args: Record<string, never>; result: AiProviderProfile[] };
-  ai_account_read: { args: { provider: string; model: string; endpoint: string }; result: AiAccountStatus };
+  ai_model_list: { args: { provider: string; endpoint: string }; result: AiModelOption[] };
+  ai_account_read: { args: { provider: string; model: string; reasoningEffort: string; endpoint: string }; result: AiAccountStatus };
   store_ai_provider_credential: { args: { provider: string; value: string }; result: boolean };
   remove_ai_provider_credential: { args: { provider: string }; result: boolean };
   ai_analyze: { args: { request: AiAnalysisRequest }; result: CodexAnalysisResult };
@@ -73,7 +74,7 @@ interface TauriCommandMap {
   open_codex_login_url: { args: { url: string }; result: void };
   open_external_url: { args: { url: string }; result: void };
   codex_logout: { args: Record<string, never>; result: void };
-  codex_analyze: { args: { request: CodexAnalysisRequest }; result: CodexAnalysisResult };
+  codex_analyze: { args: { request: CodexAnalysisRequest; model: string; reasoningEffort: string }; result: CodexAnalysisResult };
   confirm_codex_analysis: { args: { record: CodexAnalysisRecord; confirmedFields: string[]; confirmedValues: unknown }; result: CodexAnalysisRecord };
   pick_project_folder: { args: Record<string, never>; result: FolderSelection };
   pick_launcher_folder: { args: Record<string, never>; result: FolderSelection };
@@ -181,14 +182,20 @@ export async function readAiProviderProfiles(): Promise<AiProviderProfile[]> {
   return (await invokeCommand("ai_provider_profiles", {})) ?? [];
 }
 
+export async function readAiModels(provider: string, endpoint: string): Promise<AiModelOption[]> {
+  return (await invokeCommand("ai_model_list", { provider, endpoint })) ?? [];
+}
+
 export async function readAiAccount(
   provider: string,
   model: string,
+  reasoningEffort: string,
   endpoint: string,
 ): Promise<AiAccountStatus | null> {
   return invokeCommand("ai_account_read", {
     provider,
     model,
+    reasoningEffort,
     endpoint,
   });
 }
@@ -235,14 +242,16 @@ export async function logoutCodexResult(): Promise<CommandResult<void>> {
   return invokeCommandResult("codex_logout", {});
 }
 
-export async function runCodexAnalysis(request: CodexAnalysisRequest): Promise<CodexAnalysisResult | null> {
-  return invokeCommand("codex_analyze", { request });
+export async function runCodexAnalysis(request: CodexAnalysisRequest, model = "gpt-5.6-luna", reasoningEffort = "xhigh"): Promise<CodexAnalysisResult | null> {
+  return invokeCommand("codex_analyze", { request, model, reasoningEffort });
 }
 
 export async function runCodexAnalysisResult(
   request: CodexAnalysisRequest,
+  model: string,
+  reasoningEffort: string,
 ): Promise<CommandResult<CodexAnalysisResult>> {
-  return invokeCommandResult("codex_analyze", { request });
+  return invokeCommandResult("codex_analyze", { request, model, reasoningEffort });
 }
 
 export async function runAiAnalysis(request: AiAnalysisRequest): Promise<CodexAnalysisResult | null> {

@@ -12,7 +12,7 @@ use crate::codex::{
     AiAnalysisRequest, CodexAnalysisResult,
 };
 use crate::credentials::{validate_ai_provider_credential_for, CredentialStore};
-use crate::models::{AiProviderProfile, CredentialReference};
+use crate::models::{AiModelOption, AiProviderProfile, CredentialReference};
 use crate::security::redact_secrets;
 use crate::AppError;
 use reqwest::blocking::Client;
@@ -30,6 +30,7 @@ const ANALYSIS_SCHEMA: &str = include_str!("../../docs/schemas/codex-analysis.sc
 pub struct AiProviderConfig {
     pub provider: String,
     pub model: String,
+    pub reasoning_effort: String,
     pub endpoint: String,
     pub credential_reference: Option<CredentialReference>,
 }
@@ -42,7 +43,8 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             "codex_app_server",
             false,
             "Codex project and ChatGPT Chat",
-            None,
+            Some("gpt-5.6-luna"),
+            Some("xhigh"),
             None,
             None,
         ),
@@ -53,6 +55,7 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             true,
             "Claude Code / Anthropic conventions",
             Some("claude-sonnet-5"),
+            Some("high"),
             Some("https://api.anthropic.com/v1/messages"),
             Some("https://platform.claude.com/settings/keys"),
         ),
@@ -63,6 +66,7 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             true,
             "Kimi coding conventions",
             Some("kimi-k2.6"),
+            Some("high"),
             Some("https://api.moonshot.ai/v1/chat/completions"),
             Some("https://platform.kimi.ai/console/api-keys"),
         ),
@@ -73,6 +77,7 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             true,
             "GLM coding conventions",
             Some("glm-5.2"),
+            Some("high"),
             Some("https://open.bigmodel.cn/api/paas/v4/chat/completions"),
             Some("https://bigmodel.cn/usercenter/proj-mgmt/apikeys"),
         ),
@@ -82,7 +87,8 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             "openai_compatible",
             true,
             "DeepSeek coding conventions",
-            Some("deepseek-v4-pro"),
+            Some("deepseek-v4-flash"),
+            Some("high"),
             Some("https://api.deepseek.com/chat/completions"),
             Some("https://platform.deepseek.com/api_keys"),
         ),
@@ -93,6 +99,7 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             false,
             "Local model conventions",
             None,
+            Some("high"),
             None,
             None,
         ),
@@ -103,6 +110,7 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             true,
             "User-supplied provider conventions",
             None,
+            Some("high"),
             None,
             None,
         ),
@@ -116,6 +124,7 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             requires_credential,
             optimization_profile,
             default_model,
+            default_reasoning_effort,
             default_endpoint,
             account_url,
         )| {
@@ -126,6 +135,7 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
                 requires_credential,
                 optimization_profile: optimization_profile.into(),
                 default_model: default_model.map(str::to_owned),
+                default_reasoning_effort: default_reasoning_effort.map(str::to_owned),
                 default_endpoint: default_endpoint.map(str::to_owned),
                 account_url: account_url.map(str::to_owned),
             }
@@ -159,6 +169,7 @@ pub fn validate_config(config: &AiProviderConfig) -> Result<AiProviderProfile, A
             "AI model contains credential-shaped content".into(),
         ));
     }
+    validate_reasoning_effort(&config.reasoning_effort)?;
     if config.provider == "codex" {
         validate_endpoint_for_provider(&config.provider, Some(config.endpoint.as_str()))?;
         return Ok(profile);
@@ -173,6 +184,16 @@ pub fn validate_config(config: &AiProviderConfig) -> Result<AiProviderProfile, A
         validate_ai_provider_credential_for(reference, &config.provider)?;
     }
     Ok(profile)
+}
+
+pub fn validate_reasoning_effort(value: &str) -> Result<(), AppError> {
+    if matches!(value.trim(), "low" | "medium" | "high" | "xhigh" | "max") {
+        Ok(())
+    } else {
+        Err(AppError::InvalidInput(
+            "reasoning effort must be low, medium, high, xhigh, or max".into(),
+        ))
+    }
 }
 
 /// Validate the non-secret endpoint policy at the plan boundary. The full
@@ -274,6 +295,159 @@ pub fn account_status<S: CredentialStore>(
     }
 }
 
+pub fn list_models<S: CredentialStore>(
+    store: &S,
+    config: &AiProviderConfig,
+) -> Result<Vec<AiModelOption>, AppError> {
+    let profile = validate_config(config)?;
+    if config.provider == "codex" {
+        return Err(AppError::InvalidInput(
+            "Codex models use the App Server catalog".into(),
+        ));
+    }
+    let mut url = reqwest::Url::parse(&config.endpoint)
+        .map_err(|_| AppError::InvalidInput("AI provider endpoint must be a valid URL".into()))?;
+    let path = url.path().trim_end_matches('/');
+    let base = path
+        .strip_suffix("/chat/completions")
+        .or_else(|| path.strip_suffix("/messages"))
+        .or_else(|| path.strip_suffix("/responses"))
+        .unwrap_or(path);
+    url.set_path(&format!("{base}/models"));
+    let secret = if profile.requires_credential {
+        Some(
+            store.read(config.credential_reference.as_ref().ok_or_else(|| {
+                AppError::Credential("provider credential reference is missing".into())
+            })?)?,
+        )
+    } else {
+        None
+    };
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| {
+            AppError::Process(format!("AI provider model client could not start: {error}"))
+        })?;
+    let mut request = client.get(url).header(ACCEPT, "application/json");
+    if profile.protocol == "anthropic_messages" {
+        request = request.header("anthropic-version", ANTHROPIC_VERSION);
+        if let Some(secret) = secret.as_deref() {
+            request = request.header("x-api-key", secret);
+        }
+    } else if let Some(secret) = secret.as_deref() {
+        request = request.bearer_auth(secret);
+    }
+    let response = request
+        .send()
+        .map_err(|error| AppError::Process(format!("AI provider model list failed: {error}")))?;
+    if !response.status().is_success() {
+        return Err(AppError::Process(format!(
+            "AI provider model list returned HTTP {}",
+            response.status().as_u16()
+        )));
+    }
+    let mut bytes = Vec::new();
+    response
+        .take((MAX_RESPONSE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| AppError::Process(format!("AI provider model list failed: {error}")))?;
+    if bytes.len() > MAX_RESPONSE_BYTES {
+        return Err(AppError::Serialization(
+            "AI provider model list exceeded the bounded response limit".into(),
+        ));
+    }
+    let value: Value = serde_json::from_slice(&bytes)?;
+    let entries = value
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| AppError::Serialization("AI provider model list omitted data".into()))?;
+    let mut models = entries
+        .iter()
+        .filter_map(|entry| {
+            let id = entry.get("id")?.as_str()?.trim();
+            if id.is_empty() || id.len() > 256 || id.chars().any(char::is_control) {
+                return None;
+            }
+            let efforts = advertised_efforts(entry)
+                .unwrap_or_else(|| supported_efforts(&config.provider, id));
+            let profile_default = profile
+                .default_reasoning_effort
+                .clone()
+                .unwrap_or_else(|| "high".into());
+            let default_reasoning_effort = entry
+                .get("default_reasoning_effort")
+                .or_else(|| entry.get("defaultReasoningEffort"))
+                .and_then(Value::as_str)
+                .filter(|effort| efforts.iter().any(|candidate| candidate == effort))
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| {
+                    if efforts.contains(&profile_default) {
+                        profile_default
+                    } else {
+                        efforts.first().cloned().unwrap_or_else(|| "high".into())
+                    }
+                });
+            Some(AiModelOption {
+                id: id.to_owned(),
+                display_name: entry
+                    .get("display_name")
+                    .or_else(|| entry.get("displayName"))
+                    .and_then(Value::as_str)
+                    .unwrap_or(id)
+                    .to_owned(),
+                default_reasoning_effort,
+                supported_reasoning_efforts: efforts,
+            })
+        })
+        .take(500)
+        .collect::<Vec<_>>();
+    models.sort_by(|left, right| left.id.cmp(&right.id));
+    models.dedup_by(|left, right| left.id == right.id);
+    models.sort_by(|left, right| {
+        left.display_name
+            .cmp(&right.display_name)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(models)
+}
+
+fn supported_efforts(provider: &str, model: &str) -> Vec<String> {
+    let levels = if provider == "deepseek" || (provider == "claude" && model.contains("sonnet-5")) {
+        &["low", "medium", "high", "xhigh", "max"][..]
+    } else if provider == "claude"
+        && (model.contains("4-6")
+            || model.contains("4.6")
+            || model.contains("4-7")
+            || model.contains("4-8"))
+    {
+        &["low", "medium", "high", "max"][..]
+    } else {
+        &["high"][..]
+    };
+    levels.iter().map(|value| (*value).to_owned()).collect()
+}
+
+fn advertised_efforts(entry: &Value) -> Option<Vec<String>> {
+    let values = entry
+        .get("supported_reasoning_efforts")
+        .or_else(|| entry.get("supportedReasoningEfforts"))?
+        .as_array()?;
+    let mut efforts = values
+        .iter()
+        .filter_map(|value| {
+            value
+                .as_str()
+                .or_else(|| value.get("reasoningEffort").and_then(Value::as_str))
+        })
+        .filter(|effort| matches!(*effort, "low" | "medium" | "high" | "xhigh" | "max"))
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    efforts.dedup();
+    (!efforts.is_empty()).then_some(efforts)
+}
+
 pub fn analyze<S: CredentialStore>(
     store: &S,
     config: &AiProviderConfig,
@@ -303,9 +477,11 @@ pub fn analyze<S: CredentialStore>(
         ));
     }
     let response = request_provider(
+        &config.provider,
         &profile.protocol,
         &config.endpoint,
         &config.model,
+        &config.reasoning_effort,
         &prompt,
         secret.as_deref(),
     )?;
@@ -327,6 +503,7 @@ pub fn analyze<S: CredentialStore>(
             },
             provider: Some(config.provider.clone()),
             model: Some(config.model.clone()),
+            reasoning_effort: Some(config.reasoning_effort.clone()),
             optimization_profile: Some(profile.optimization_profile),
             analysis_id: analysis.analysis_id,
             schema_version: analysis.schema_version,
@@ -348,9 +525,11 @@ pub fn analyze<S: CredentialStore>(
 }
 
 fn request_provider(
+    provider: &str,
     protocol: &str,
     endpoint: &str,
     model: &str,
+    reasoning_effort: &str,
     prompt: &str,
     secret: Option<&str>,
 ) -> Result<Value, AppError> {
@@ -367,6 +546,8 @@ fn request_provider(
     let system_prompt = format!(
         "Return only one JSON object matching this exact schema. Do not disclose account data, hidden reasoning, credentials, or filesystem content.\n\noutput_schema={ANALYSIS_SCHEMA}"
     );
+    let supports_effort = provider == "deepseek"
+        || (provider == "claude" && supported_efforts(provider, model).len() > 1);
     let body = if protocol == "anthropic_messages" {
         if let Some(secret) = secret {
             headers.insert(
@@ -380,12 +561,16 @@ fn request_provider(
             "anthropic-version",
             HeaderValue::from_static(ANTHROPIC_VERSION),
         );
-        json!({
+        let mut body = json!({
             "model": model,
             "max_tokens": 8192,
             "system": system_prompt,
             "messages": [{"role": "user", "content": prompt}]
-        })
+        });
+        if supports_effort {
+            body["output_config"] = json!({"effort": reasoning_effort});
+        }
+        body
     } else {
         if let Some(secret) = secret {
             let value = format!("Bearer {secret}");
@@ -396,14 +581,20 @@ fn request_provider(
                 })?,
             );
         }
-        json!({
+        let mut body = json!({
             "model": model,
-            "temperature": 0,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ]
-        })
+        });
+        if supports_effort {
+            body["reasoning_effort"] = json!(reasoning_effort);
+        }
+        if protocol == "openai_compatible" && endpoint.contains("api.deepseek.com") {
+            body["thinking"] = json!({"type": "enabled"});
+        }
+        body
     };
     let response = client
         .post(endpoint)
@@ -507,7 +698,7 @@ mod tests {
             ),
             (
                 "deepseek",
-                "deepseek-v4-pro",
+                "deepseek-v4-flash",
                 "https://api.deepseek.com/chat/completions",
                 "https://platform.deepseek.com/api_keys",
             ),
@@ -520,6 +711,29 @@ mod tests {
             assert_eq!(profile.default_endpoint.as_deref(), Some(endpoint));
             assert_eq!(profile.account_url.as_deref(), Some(account_url));
         }
+        let codex = profiles
+            .iter()
+            .find(|profile| profile.id == "codex")
+            .unwrap();
+        assert_eq!(codex.default_model.as_deref(), Some("gpt-5.6-luna"));
+        assert_eq!(codex.default_reasoning_effort.as_deref(), Some("xhigh"));
+        let deepseek = profiles
+            .iter()
+            .find(|profile| profile.id == "deepseek")
+            .unwrap();
+        assert_eq!(deepseek.default_reasoning_effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn reasoning_effort_is_bounded_and_provider_catalogs_expose_ordered_choices() {
+        for effort in ["low", "medium", "high", "xhigh", "max"] {
+            assert!(validate_reasoning_effort(effort).is_ok());
+        }
+        assert!(validate_reasoning_effort("ultra").is_err());
+        assert_eq!(
+            supported_efforts("deepseek", "deepseek-v4-flash"),
+            vec!["low", "medium", "high", "xhigh", "max"]
+        );
     }
 
     #[test]
@@ -534,6 +748,7 @@ mod tests {
         let config = AiProviderConfig {
             provider: "deepseek".into(),
             model: "deepseek-chat".into(),
+            reasoning_effort: "high".into(),
             endpoint: "http://example.invalid/v1/chat/completions".into(),
             credential_reference: None,
         };
@@ -548,6 +763,7 @@ mod tests {
         let config = AiProviderConfig {
             provider: "local".into(),
             model: "local-model".into(),
+            reasoning_effort: "high".into(),
             endpoint: "http://127.0.0.1:11434/v1/chat/completions".into(),
             credential_reference: None,
         };
@@ -562,6 +778,7 @@ mod tests {
         let mut config = AiProviderConfig {
             provider: "local".into(),
             model: "local-model".into(),
+            reasoning_effort: "high".into(),
             endpoint: "https://provider.example/v1/chat/completions".into(),
             credential_reference: None,
         };
@@ -586,6 +803,7 @@ mod tests {
         let mut config = AiProviderConfig {
             provider: "deepseek".into(),
             model: test_key.clone(),
+            reasoning_effort: "high".into(),
             endpoint: "https://provider.example/v1/chat/completions".into(),
             credential_reference: Some(CredentialReference {
                 name: crate::credentials::AI_PROVIDER_ENVIRONMENT_NAME.into(),

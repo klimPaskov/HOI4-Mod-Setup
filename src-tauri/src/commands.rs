@@ -458,6 +458,7 @@ fn require_ai_session(state: &Value) -> Result<(), AppError> {
         &AiProviderConfig {
             provider: provider.clone(),
             model: ai_model_from_state(state),
+            reasoning_effort: ai_reasoning_effort_from_state(state),
             endpoint: ai_endpoint_from_state(state).unwrap_or_default(),
             credential_reference: ai_credential_reference(&provider),
         },
@@ -608,6 +609,7 @@ pub fn run() {
             app_update_check,
             app_update_install,
             ai_provider_profiles,
+            ai_model_list,
             ai_account_read,
             store_ai_provider_credential,
             remove_ai_provider_credential,
@@ -707,13 +709,43 @@ fn ai_provider_profiles() -> Vec<AiProviderProfile> {
 }
 
 #[tauri::command(async)]
-fn ai_account_read(provider: String, model: String, endpoint: String) -> AiAccountStatus {
+fn ai_model_list(provider: String, endpoint: String) -> Result<Vec<AiModelOption>, String> {
+    run_blocking_command("provider-model-list", move || {
+        if provider == "codex" {
+            return with_codex_session(AppServerProtocol::model_list).map_err(command_error);
+        }
+        let profile =
+            ai::profile(&provider).ok_or_else(|| "Unsupported AI provider".to_string())?;
+        ai::list_models(
+            &OsCredentialStore,
+            &AiProviderConfig {
+                provider: provider.clone(),
+                model: profile.default_model.unwrap_or_else(|| "model-list".into()),
+                reasoning_effort: profile
+                    .default_reasoning_effort
+                    .unwrap_or_else(|| "high".into()),
+                endpoint,
+                credential_reference: ai_credential_reference(&provider),
+            },
+        )
+        .map_err(command_error)
+    })
+}
+
+#[tauri::command(async)]
+fn ai_account_read(
+    provider: String,
+    model: String,
+    reasoning_effort: String,
+    endpoint: String,
+) -> AiAccountStatus {
     let credential_reference = ai_credential_reference(&provider);
     ai::account_status(
         &OsCredentialStore,
         &AiProviderConfig {
             provider,
             model,
+            reasoning_effort,
             endpoint,
             credential_reference,
         },
@@ -1042,7 +1074,11 @@ fn validate_analysis_source_binding(
 }
 
 #[tauri::command(async)]
-fn codex_analyze(request: CodexAnalysisRequest) -> Result<CodexAnalysisResult, String> {
+fn codex_analyze(
+    request: CodexAnalysisRequest,
+    model: String,
+    reasoning_effort: String,
+) -> Result<CodexAnalysisResult, String> {
     let mut request = request;
     if let Some(project_root) = request.project_root.as_deref() {
         request.project_root = Some(
@@ -1055,7 +1091,8 @@ fn codex_analyze(request: CodexAnalysisRequest) -> Result<CodexAnalysisResult, S
     validate_codex_evidence_approval(&request).map_err(command_error)?;
     let source = bind_analysis_component_registry(&mut request).map_err(command_error)?;
     let mut result =
-        with_codex_session(|session| session.analyze(&request)).map_err(codex_user_error)?;
+        with_codex_session(|session| session.analyze(&request, &model, &reasoning_effort))
+            .map_err(codex_user_error)?;
     bind_analysis_record_to_source(&mut result.record, &source);
     let mut analyses = codex_analyses()
         .lock()
@@ -1109,6 +1146,7 @@ fn ai_analyze_blocking(mut request: AiAnalysisRequest) -> Result<CodexAnalysisRe
         &AiProviderConfig {
             provider: request.provider.clone(),
             model: request.model.clone(),
+            reasoning_effort: request.reasoning_effort.clone(),
             endpoint: request.endpoint.clone(),
             credential_reference,
         },
@@ -2400,6 +2438,9 @@ fn installed_mcp_target(
 ) -> Result<crate::mcp::VerifiedMcpTarget, AppError> {
     let manifest = resolve_installed_manifest(lock)?;
     let target = crate::mcp::manifest_target(&manifest)?;
+    if lock.ai_provider != "codex" {
+        return Ok(target);
+    }
     let config_path = safe_join(project_root, ".codex/config.toml")?;
     let config = std::fs::read_to_string(config_path)
         .map_err(|error| AppError::Process(format!("read installed MCP configuration: {error}")))?;
@@ -2552,6 +2593,10 @@ fn evaluate_installed_readiness(
             &AiProviderConfig {
                 provider: detected.ai_provider.clone(),
                 model: detected.ai_model.clone(),
+                reasoning_effort: locked_ai
+                    .as_ref()
+                    .map(|lock| lock.ai_reasoning_effort.clone())
+                    .unwrap_or_else(crate::models::default_ai_reasoning_effort),
                 endpoint,
                 credential_reference,
             },
@@ -2853,16 +2898,9 @@ fn selected_ids(state: &Value, provider: &str) -> Vec<String> {
 }
 
 fn reject_codex_only_dependencies(provider: &str, selected: &[String]) -> Result<(), AppError> {
-    if provider != "codex"
-        && selected.iter().any(|id| {
-            matches!(
-                id.as_str(),
-                "codex.config" | "mcp.hoi4_agent_tools" | "workflow.3d"
-            )
-        })
-    {
+    if provider != "codex" && selected.iter().any(|id| id == "codex.config") {
         return Err(AppError::InvalidInput(
-            "the selected source components require the Codex integration; choose Codex or deselect the Codex-dependent MCP and 3D components".into(),
+            "Codex configuration can only be selected with the Codex provider".into(),
         ));
     }
     Ok(())
@@ -3435,6 +3473,7 @@ fn adapt_agents_for_selection(
     identity: &ProjectIdentity,
     provider: &str,
     model: &str,
+    reasoning_effort: &str,
     super_events_selected: bool,
     portrait_enabled: bool,
 ) -> Result<Vec<u8>, AppError> {
@@ -3466,7 +3505,7 @@ fn adapt_agents_for_selection(
         .map(|profile| profile.optimization_profile)
         .unwrap_or_else(|| "provider conventions".into());
     adapted.push_str(&format!(
-        "\n\n## Selected AI planning profile\n\n- Provider: `{provider}`\n- Model: `{model}`\n- Optimization profile: {profile}\n- Semantic analysis is advisory; confirm deterministic identifiers, paths, hashes, and file changes before apply.\n"
+        "\n\n## Selected AI planning profile\n\n- Provider: `{provider}`\n- Model: `{model}`\n- Reasoning effort: `{reasoning_effort}`\n- Optimization profile: {profile}\n- Semantic analysis is advisory; confirm deterministic identifiers, paths, hashes, and file changes before apply.\n"
     ));
     const SUPER_EVENTS_START: &str = "<!-- HOI4_MOD_SETUP:SUPER_EVENTS:START -->";
     const SUPER_EVENTS_END: &str = "<!-- HOI4_MOD_SETUP:SUPER_EVENTS:END -->";
@@ -3837,6 +3876,7 @@ fn adapt_selected_source(
     identity: &ProjectIdentity,
     ai_provider: &str,
     ai_model: &str,
+    ai_reasoning_effort: &str,
     super_events_selected: bool,
     mcp_selected: bool,
     three_d_selected: bool,
@@ -3851,6 +3891,7 @@ fn adapt_selected_source(
             identity,
             ai_provider,
             ai_model,
+            ai_reasoning_effort,
             super_events_selected,
             portrait.enabled,
         )
@@ -4195,6 +4236,16 @@ fn ai_model_from_state(state: &Value) -> String {
         .to_string()
 }
 
+fn ai_reasoning_effort_from_state(state: &Value) -> String {
+    state
+        .get("aiReasoningEffort")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("xhigh")
+        .to_string()
+}
+
 fn ai_endpoint_from_state(state: &Value) -> Option<String> {
     state
         .get("aiEndpoint")
@@ -4222,6 +4273,7 @@ fn project_readme(
     description: &str,
     provider: &str,
     model: &str,
+    reasoning_effort: &str,
 ) -> Result<String, AppError> {
     if description.len() > 32 * 1024 || description.contains('\0') {
         return Err(AppError::InvalidInput(
@@ -4230,13 +4282,14 @@ fn project_readme(
     }
     let optimization_profile = ai_optimization_profile(provider);
     Ok(format!(
-        "# {}\n\n{}\n\n## Local development\n\nThis project was prepared by HOI4 Mod Setup for agentic development.\n\n- Project ID: `{}`\n- Supported game version: `{}`\n- Planning provider: `{}`\n- Model: `{}`\n- Optimization profile: {}\n- Workshop identity: none assigned\n",
+        "# {}\n\n{}\n\n## Local development\n\nThis project was prepared by HOI4 Mod Setup for agentic development.\n\n- Project ID: `{}`\n- Supported game version: `{}`\n- Planning provider: `{}`\n- Model: `{}`\n- Reasoning effort: `{}`\n- Optimization profile: {}\n- Workshop identity: none assigned\n",
         identity.display_name,
         description.trim(),
         identity.project_id,
         identity.supported_game_version,
         provider,
         model,
+        reasoning_effort,
         optimization_profile,
     ))
 }
@@ -4264,23 +4317,14 @@ fn codex_analysis_from_state(
     let profile = ai::profile(&provider).ok_or_else(|| {
         AppError::Credential("confirmed analysis uses an unsupported AI provider".into())
     })?;
-    if provider != "codex"
-        && (record.model.as_deref() != Some(ai_model_from_state(state).as_str())
-            || record.optimization_profile.as_deref()
-                != Some(profile.optimization_profile.as_str()))
+    let selected_model = ai_model_from_state(state);
+    let selected_reasoning_effort = ai_reasoning_effort_from_state(state);
+    if record.model.as_deref() != Some(selected_model.as_str())
+        || record.reasoning_effort.as_deref() != Some(selected_reasoning_effort.as_str())
+        || record.optimization_profile.as_deref() != Some(profile.optimization_profile.as_str())
     {
         return Err(AppError::Credential(
-            "confirmed analysis does not match the selected provider, model, or optimization profile".into(),
-        ));
-    }
-    if provider == "codex"
-        && record
-            .optimization_profile
-            .as_deref()
-            .is_some_and(|value| value != profile.optimization_profile)
-    {
-        return Err(AppError::Credential(
-            "confirmed Codex analysis uses a different optimization profile".into(),
+            "confirmed analysis does not match the selected provider, model, reasoning effort, or optimization profile".into(),
         ));
     }
     let expected_scan_id = state
@@ -4395,6 +4439,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     ai::validate_config(&AiProviderConfig {
         provider: ai_provider.clone(),
         model: ai_model.clone(),
+        reasoning_effort: ai_reasoning_effort_from_state(state),
         endpoint: ai_endpoint_from_state(state).unwrap_or_default(),
         credential_reference: if ai_provider == "codex" {
             None
@@ -4499,6 +4544,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             &identity,
             &ai_provider,
             &ai_model,
+            &ai_reasoning_effort_from_state(state),
             super_events_selected,
             mcp_selected,
             three_d_selected,
@@ -4617,6 +4663,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             &description,
             &ai_provider,
             &ai_model_from_state(state),
+            &ai_reasoning_effort_from_state(state),
         )?;
         generated.push(GeneratedArtifact {
             component_id: "project.readme".into(),
@@ -4638,6 +4685,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             &string_field(state, "description").unwrap_or_default(),
             &ai_provider,
             &ai_model_from_state(state),
+            &ai_reasoning_effort_from_state(state),
         )?;
         generated.push(GeneratedArtifact {
             component_id: "project.readme".into(),
@@ -4892,6 +4940,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         ai_optimization_profile: ai_optimization_profile(&ai_provider),
         ai_provider,
         ai_model: ai_model_from_state(state),
+        ai_reasoning_effort: ai_reasoning_effort_from_state(state),
         ai_endpoint: ai_endpoint_from_state(state),
         flatten_chat_sources,
         codex_analysis: Some(codex_analysis),
@@ -5621,6 +5670,7 @@ fn build_maintenance_plan_blocking(
                 &AiProviderConfig {
                     provider: lock.ai_provider.clone(),
                     model: lock.ai_model.clone(),
+                    reasoning_effort: lock.ai_reasoning_effort.clone(),
                     endpoint: lock.ai_endpoint.clone().unwrap_or_default(),
                     credential_reference,
                 },
@@ -5825,6 +5875,7 @@ fn build_maintenance_plan_blocking(
                     &project_identity,
                     &lock.ai_provider,
                     &lock.ai_model,
+                    &lock.ai_reasoning_effort,
                     maintenance_components
                         .iter()
                         .any(|id| id == "workflow.super_events"),
@@ -6142,6 +6193,7 @@ fn build_maintenance_plan_blocking(
                 &maintenance_identity(&lock, &root),
                 &lock.ai_provider,
                 &lock.ai_model,
+                &lock.ai_reasoning_effort,
                 maintenance_components
                     .iter()
                     .any(|id| id == "workflow.super_events"),
@@ -6233,6 +6285,7 @@ fn build_maintenance_plan_blocking(
                             &maintenance_identity(&lock, &root),
                             &lock.ai_provider,
                             &lock.ai_model,
+                            &lock.ai_reasoning_effort,
                             lock_workflow_selected(&lock, "workflow.super_events"),
                             portrait_pipeline.enabled,
                         )
@@ -6498,6 +6551,7 @@ fn build_maintenance_plan_blocking(
         source: plan_source,
         ai_provider: lock.ai_provider.clone(),
         ai_model: lock.ai_model.clone(),
+        ai_reasoning_effort: lock.ai_reasoning_effort.clone(),
         ai_endpoint: lock.ai_endpoint.clone(),
         ai_optimization_profile: lock.ai_optimization_profile.clone(),
         flatten_chat_sources: lock.flatten_chat_sources,
@@ -7181,11 +7235,13 @@ mod tests {
             "A provider-profiled project.",
             "claude",
             "claude-sonnet",
+            "high",
         )
         .unwrap();
 
         assert!(readme.contains("Planning provider: `claude`"));
         assert!(readme.contains("Model: `claude-sonnet`"));
+        assert!(readme.contains("Reasoning effort: `high`"));
         assert!(readme.contains("Optimization profile: Claude Code / Anthropic conventions"));
     }
 
@@ -7227,15 +7283,17 @@ mod tests {
 <!-- HOI4_MOD_SETUP:SUPER_EVENTS:START -->\n\
 - Optional Super Events workflow\n\
 <!-- HOI4_MOD_SETUP:SUPER_EVENTS:END -->\n";
-        let selected =
-            adapt_agents_for_selection(template, &identity, "codex", "default", true, false)
-                .unwrap();
-        let unselected =
-            adapt_agents_for_selection(template, &identity, "codex", "default", false, false)
-                .unwrap();
-        assert!(String::from_utf8(selected)
-            .unwrap()
-            .contains("Optional Super Events workflow"));
+        let selected = adapt_agents_for_selection(
+            template, &identity, "codex", "default", "xhigh", true, false,
+        )
+        .unwrap();
+        let unselected = adapt_agents_for_selection(
+            template, &identity, "codex", "default", "xhigh", false, false,
+        )
+        .unwrap();
+        let selected = String::from_utf8(selected).unwrap();
+        assert!(selected.contains("Optional Super Events workflow"));
+        assert!(selected.contains("Reasoning effort: `xhigh`"));
         assert!(!String::from_utf8(unselected)
             .unwrap()
             .contains("Optional Super Events workflow"));
@@ -7336,6 +7394,7 @@ mcp_server = "comfy_cloud_portraits"
             &identity,
             "codex",
             "default",
+            "xhigh",
             false,
             false,
             false,
@@ -7467,6 +7526,7 @@ mcp_server = "comfy_cloud_portraits"
             &identity,
             "codex",
             "default",
+            "xhigh",
             false,
             false,
             false,
@@ -7660,9 +7720,10 @@ Use this guide once before turning the template into a real `AGENTS.md` file.\r\
 ## 0. Required Reading Before Any Change\r\n\r\n\
 Use `[MOD_PREFIX]` for identifiers.\r\n";
 
-        let adapted =
-            adapt_agents_for_selection(template, &identity, "codex", "default", false, false)
-                .unwrap();
+        let adapted = adapt_agents_for_selection(
+            template, &identity, "codex", "default", "xhigh", false, false,
+        )
+        .unwrap();
         let text = String::from_utf8(adapted).unwrap();
         assert!(text.starts_with("# Cold War: Southeast Asia"));
         assert!(text.contains("## 0. Required Reading Before Any Change"));
@@ -7757,8 +7818,16 @@ developer_instructions = "Work on the named files."
             &["core.agents".into(), "codex.config".into()],
         )
         .unwrap_err();
-        assert!(error.to_string().contains("require the Codex integration"));
-        assert!(reject_codex_only_dependencies("claude", &["core.agents".into()]).is_ok());
+        assert!(error.to_string().contains("Codex configuration"));
+        assert!(reject_codex_only_dependencies(
+            "claude",
+            &[
+                "core.agents".into(),
+                "mcp.hoi4_agent_tools".into(),
+                "workflow.3d".into()
+            ],
+        )
+        .is_ok());
     }
 
     #[test]
@@ -8121,6 +8190,7 @@ developer_instructions = "Work on the named files."
                 auth_mode: "chatgpt".into(),
                 provider: Some("codex".into()),
                 model: None,
+                reasoning_effort: None,
                 optimization_profile: Some("Codex project and ChatGPT Chat".into()),
                 analysis_id: Uuid::new_v4(),
                 schema_version: "1.0.0".into(),
@@ -8329,6 +8399,7 @@ developer_instructions = "Work on the named files."
             auth_mode: "chatgpt".into(),
             provider: Some("codex".into()),
             model: None,
+            reasoning_effort: None,
             optimization_profile: Some("Codex project and ChatGPT Chat".into()),
             analysis_id,
             schema_version: "1.0.0".into(),
@@ -8385,6 +8456,7 @@ developer_instructions = "Work on the named files."
             auth_mode: "api_key".into(),
             provider: Some("claude".into()),
             model: Some("claude-model".into()),
+            reasoning_effort: Some("high".into()),
             optimization_profile: Some("Claude Code / Anthropic conventions".into()),
             analysis_id,
             schema_version: "1.0.0".into(),
@@ -8546,7 +8618,8 @@ developer_instructions = "Work on the named files."
                     manifest_origin: "remote".into(),
                 },
                 ai_provider: "codex".into(),
-                ai_model: "default".into(),
+                ai_model: "gpt-5.6-luna".into(),
+                ai_reasoning_effort: "xhigh".into(),
                 ai_endpoint: None,
                 ai_optimization_profile: "Codex project and ChatGPT Chat".into(),
                 flatten_chat_sources: true,
@@ -8834,6 +8907,7 @@ developer_instructions = "Work on the named files."
                     auth_mode: "chatgpt".into(),
                     provider: Some("codex".into()),
                     model: None,
+                    reasoning_effort: None,
                     optimization_profile: Some("Codex project and ChatGPT Chat".into()),
                     analysis_id,
                     schema_version: "1.0.0".into(),

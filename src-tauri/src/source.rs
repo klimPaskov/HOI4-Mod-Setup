@@ -1878,6 +1878,23 @@ mod tests {
             .iter()
             .find(|component| component.id == "mcp.hoi4_agent_tools")
             .expect("MCP component must be declared");
+        assert!(!mcp
+            .dependencies
+            .iter()
+            .any(|dependency| dependency == "codex.config"));
+        assert!(mcp
+            .dependencies
+            .iter()
+            .any(|dependency| dependency == "mcp.hoi4_agent_tools.bootstrap"));
+        let workflow_3d = manifest
+            .components
+            .iter()
+            .find(|component| component.id == "workflow.3d")
+            .unwrap();
+        assert!(!workflow_3d
+            .dependencies
+            .iter()
+            .any(|dependency| dependency == "codex.config"));
         for tool in ["hoi4.tech_inspect", "hoi4.tech_render", "hoi4.tech_compare"] {
             assert!(mcp
                 .capabilities

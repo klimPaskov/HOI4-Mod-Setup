@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlan, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, packageChatSources, pickChatSourcesFolder, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewChatSources, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlan, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, packageChatSources, pickChatSourcesFolder, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewChatSources, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
-import type { AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPreview, CodexAnalysisRequest, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
+import type { AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPreview, CodexAnalysisRequest, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
 
 const PHASES: Array<{ id: PhaseId; label: string }> = [
@@ -87,11 +87,11 @@ function portraitComponentIdsFor(provider: PortraitProviderId): string[] {
 }
 
 const FALLBACK_AI_PROFILES: AiProviderProfile[] = [
-  { id: "codex", display_name: "Codex", protocol: "codex_app_server", requires_credential: false, optimization_profile: "Codex project and ChatGPT Chat" },
+  { id: "codex", display_name: "Codex", protocol: "codex_app_server", requires_credential: false, optimization_profile: "Codex project and ChatGPT Chat", default_model: "gpt-5.6-luna", default_reasoning_effort: "xhigh" },
   { id: "claude", display_name: "Claude", protocol: "anthropic_messages", requires_credential: true, optimization_profile: "Claude Code / Anthropic conventions", default_model: "claude-sonnet-5", default_endpoint: "https://api.anthropic.com/v1/messages", account_url: "https://platform.claude.com/settings/keys" },
   { id: "kimi", display_name: "Kimi", protocol: "openai_compatible", requires_credential: true, optimization_profile: "Kimi coding conventions", default_model: "kimi-k2.6", default_endpoint: "https://api.moonshot.ai/v1/chat/completions", account_url: "https://platform.kimi.ai/console/api-keys" },
   { id: "glm", display_name: "GLM", protocol: "openai_compatible", requires_credential: true, optimization_profile: "GLM coding conventions", default_model: "glm-5.2", default_endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions", account_url: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys" },
-  { id: "deepseek", display_name: "DeepSeek", protocol: "openai_compatible", requires_credential: true, optimization_profile: "DeepSeek coding conventions", default_model: "deepseek-v4-pro", default_endpoint: "https://api.deepseek.com/chat/completions", account_url: "https://platform.deepseek.com/api_keys" },
+  { id: "deepseek", display_name: "DeepSeek", protocol: "openai_compatible", requires_credential: true, optimization_profile: "DeepSeek coding conventions", default_model: "deepseek-v4-flash", default_reasoning_effort: "high", default_endpoint: "https://api.deepseek.com/chat/completions", account_url: "https://platform.deepseek.com/api_keys" },
   { id: "local", display_name: "Local model", protocol: "openai_compatible", requires_credential: false, optimization_profile: "Local model conventions" },
   { id: "custom", display_name: "Other provider", protocol: "openai_compatible", requires_credential: true, optimization_profile: "User-supplied provider conventions" },
 ];
@@ -123,7 +123,8 @@ export const initialState: WizardState = {
   sourceMode: "latest",
   pinnedRef: "",
   aiProvider: "codex",
-  aiModel: "default",
+  aiModel: "gpt-5.6-luna",
+  aiReasoningEffort: "xhigh",
   aiEndpoint: "",
   aiAccount: null,
   aiProfiles: undefined,
@@ -437,10 +438,10 @@ export default function App() {
       void readAiProviderProfiles().then((profiles) => setState((current) => ({ ...current, aiProfiles: profiles.length ? profiles : FALLBACK_AI_PROFILES })));
     }
     if (state.aiAccount !== null) return;
-    void readAiAccount(state.aiProvider, state.aiModel, state.aiEndpoint).then((account) => {
+    void readAiAccount(state.aiProvider, state.aiModel, state.aiReasoningEffort, state.aiEndpoint).then((account) => {
       if (account) setState((current) => ({ ...current, aiAccount: account }));
     });
-  }, [state.screen, state.codexAccount, state.aiProvider, state.aiModel, state.aiEndpoint, state.aiAccount, state.aiProfiles]);
+  }, [state.screen, state.codexAccount, state.aiProvider, state.aiModel, state.aiReasoningEffort, state.aiEndpoint, state.aiAccount, state.aiProfiles]);
 
   useEffect(() => {
     if (!isTauriRuntime() || state.mode !== "new" || state.projectPathsOverridden) return;
@@ -730,7 +731,7 @@ export default function App() {
         return false;
       }
     } else {
-      providerAccount = providerAccount ?? await readAiAccount(provider, state.aiModel, state.aiEndpoint);
+      providerAccount = providerAccount ?? await readAiAccount(provider, state.aiModel, state.aiReasoningEffort, state.aiEndpoint);
       if (!providerAccount?.available) {
         if (isTauriRuntime()) update({ aiAccount: providerAccount, transactionError: `${aiProviderLabel(provider, state.aiProfiles)} is not connected. Return to the first step and connect it before planning the setup.` });
         return false;
@@ -783,11 +784,12 @@ export default function App() {
       scan_id: mode === "existing_project_semantics" ? state.scanContext?.scanId : undefined,
     };
     const response = provider === "codex"
-      ? await runCodexAnalysisResult(request)
+      ? await runCodexAnalysisResult(request, state.aiModel, state.aiReasoningEffort)
       : await runAiAnalysisResult({
         ...request,
         provider,
         model: state.aiModel,
+        reasoning_effort: state.aiReasoningEffort,
         endpoint: state.aiEndpoint,
       });
     setSemanticProgressStage("validating");
@@ -918,7 +920,7 @@ export default function App() {
         return false;
       }
     } else {
-      aiAccount = aiAccount ?? await readAiAccount(provider, state.aiModel, state.aiEndpoint);
+      aiAccount = aiAccount ?? await readAiAccount(provider, state.aiModel, state.aiReasoningEffort, state.aiEndpoint);
       if (!aiAccount || !aiAccount.available) {
         update({ aiAccount, transactionError: `${providerLabel} is not connected for reanalysis. Return to the first step and check the connection.` });
         return false;
@@ -955,11 +957,12 @@ export default function App() {
       scan_id: state.scanContext.scanId,
     };
     const response = provider === "codex"
-      ? await runCodexAnalysisResult(request)
+      ? await runCodexAnalysisResult(request, state.aiModel, state.aiReasoningEffort)
       : await runAiAnalysisResult({
         ...request,
         provider,
         model: state.aiModel,
+        reasoning_effort: state.aiReasoningEffort,
         endpoint: state.aiEndpoint,
       });
     const result = response.value;
@@ -1724,6 +1727,8 @@ function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) 
 
 export function Welcome({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
   const [aiKeyDraft, setAiKeyDraft] = useState("");
+  const [aiModels, setAiModels] = useState<AiModelOption[]>([]);
+  const [modelListStatus, setModelListStatus] = useState<"idle" | "loading" | "unavailable">("idle");
   const activeCodexLoginId = useRef<string | undefined>(undefined);
   const selectedProvider = state.aiProvider ?? "codex";
   const desktopRuntime = isTauriRuntime() || Boolean(import.meta.env.DEV && window.__HOI4_DOCUMENTATION_STATE__);
@@ -1731,20 +1736,43 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
   const profile = profiles.find((candidate) => candidate.id === selectedProvider) ?? profiles[0];
   const selectedLabel = aiProviderLabel(selectedProvider, profiles);
   const providerNeedsManualDetails = selectedProvider === "local" || selectedProvider === "custom";
+  useEffect(() => {
+    const canLoad = selectedProvider === "codex" || state.aiAccount?.authenticated || (selectedProvider === "local" && Boolean(state.aiEndpoint.trim()));
+    if (!desktopRuntime || !canLoad) { setAiModels([]); setModelListStatus("idle"); return; }
+    let active = true;
+    setModelListStatus("loading");
+    void readAiModels(selectedProvider, state.aiEndpoint).then((models) => {
+      if (!active) return;
+      setAiModels(models);
+      setModelListStatus(models.length ? "idle" : "unavailable");
+      const selected = models.find((model) => model.id === state.aiModel);
+      if (selected && !selected.supported_reasoning_efforts.includes(state.aiReasoningEffort)) {
+        update({ aiReasoningEffort: selected.default_reasoning_effort });
+      }
+    }).catch(() => { if (active) { setAiModels([]); setModelListStatus("unavailable"); } });
+    return () => { active = false; };
+  }, [desktopRuntime, selectedProvider, state.aiEndpoint, state.aiAccount?.authenticated]);
+  const selectedModel = aiModels.find((model) => model.id === state.aiModel);
+  const reasoningEfforts = selectedModel?.supported_reasoning_efforts
+    ?? (selectedProvider === "codex" || selectedProvider === "deepseek" || selectedProvider === "claude"
+      ? (["low", "medium", "high", "xhigh", "max"] as const)
+      : (["high"] as const));
+  const effortLabel = (effort: string) => ({ low: "Light", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" }[effort] ?? effort);
   const selectProvider = (provider: AiProviderId) => {
     const selectedProfile = profiles.find((candidate) => candidate.id === provider);
     update({
       aiProvider: provider,
-      aiModel: provider === "codex" ? "default" : selectedProfile?.default_model ?? "",
+      aiModel: selectedProfile?.default_model ?? "",
+      aiReasoningEffort: selectedProfile?.default_reasoning_effort ?? (provider === "codex" ? "xhigh" : "high"),
       aiEndpoint: selectedProfile?.default_endpoint ?? "",
       aiAccount: null,
       codexAnalysis: undefined,
       codexAnalysisRecord: undefined,
       flattenForChat: provider === "codex" ? state.flattenForChat : false,
-      meshSelected: provider === "codex" ? state.meshSelected : false,
+      meshSelected: state.meshSelected,
       selectedComponents: provider === "codex"
         ? Array.from(new Set([...state.selectedComponents, "codex.config"]))
-        : state.selectedComponents.filter((id) => !["codex.config", "mcp.hoi4_agent_tools", "workflow.3d"].includes(id)),
+        : state.selectedComponents.filter((id) => id !== "codex.config"),
       transactionError: undefined,
     });
     setAiKeyDraft("");
@@ -1809,7 +1837,7 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
     });
   };
   const refreshProvider = async () => {
-    const next = await readAiAccount(selectedProvider, state.aiModel, state.aiEndpoint);
+    const next = await readAiAccount(selectedProvider, state.aiModel, state.aiReasoningEffort, state.aiEndpoint);
     if (next) update({ aiAccount: next, transactionError: next.error ?? undefined });
     else if (isTauriRuntime()) update({ aiAccount: { available: false, authenticated: false, provider: selectedProvider, model: state.aiModel, auth_mode: "unconfigured", usage_limited: false, error: "The selected provider could not be reached by the desktop bridge." } });
   };
@@ -1865,10 +1893,10 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
     <button type="button" className={`choice-card ${state.mode === "existing" ? "selected" : ""}`} aria-pressed={state.mode === "existing"} onClick={() => chooseMode("existing")}>
       <ChoiceIcon kind="search" /><span className="choice-radio" aria-hidden="true" /><h2>Import existing mod</h2><p>Scan the project without changing it.</p>
     </button>
-  </div><section><div className="section-label">Planning provider</div><div className="panel recent-list provider-panel"><label className="field"><span className="field-label">AI provider</span><select className="text-input" value={state.aiProvider} onChange={(event) => selectProvider(event.target.value as AiProviderId)}>{profiles.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>)}</select></label><p className="muted provider-help">Codex is the default. The project follows the provider you choose.</p>{state.aiProvider !== "codex" && <>
+  </div><section><div className="section-label">Planning provider</div><div className="panel recent-list provider-panel"><label className="field"><span className="field-label">AI provider</span><select className="text-input" value={state.aiProvider} onChange={(event) => selectProvider(event.target.value as AiProviderId)}>{profiles.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>)}</select></label><p className="muted provider-help">Codex is the default. The project follows the provider you choose.</p><div className="provider-manual-details"><label className="field"><span className="field-label">Model</span>{aiModels.length ? <select className="text-input" value={state.aiModel} onChange={(event) => { const model = aiModels.find((candidate) => candidate.id === event.target.value); update({ aiModel: event.target.value, aiReasoningEffort: model?.default_reasoning_effort ?? state.aiReasoningEffort, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined }); }}>{aiModels.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}</select> : <input className="text-input mono" value={state.aiModel} onChange={(event) => update({ aiModel: event.target.value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder={modelListStatus === "loading" ? "Loading models…" : "Model name"} />}</label><label className="field"><span className="field-label">Reasoning effort</span><select className="text-input" value={state.aiReasoningEffort} onChange={(event) => update({ aiReasoningEffort: event.target.value as WizardState["aiReasoningEffort"], aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })}>{reasoningEfforts.map((effort) => <option key={effort} value={effort}>{effortLabel(effort)}</option>)}</select></label></div>{modelListStatus === "unavailable" && <p className="muted provider-help">The live model catalog is unavailable; the verified default remains editable.</p>}{state.aiProvider !== "codex" && <>
     {profile?.account_url && <div className="provider-connect-intro"><span>Use an API key from your {selectedLabel} account.</span>{desktopRuntime ? <button type="button" className="text-button" onClick={() => void openProviderAccount()}>Get {selectedLabel} API key</button> : <a href={profile.account_url} target="_blank" rel="noreferrer">Get {selectedLabel} API key</a>}</div>}
     {profile?.requires_credential && <label className="field"><span className="field-label">{selectedLabel} API key</span><input className="text-input" type="password" value={aiKeyDraft} onChange={(event) => setAiKeyDraft(event.target.value)} autoComplete="off" /></label>}
-    {providerNeedsManualDetails ? <div className="provider-manual-details"><Field label="Model" value={state.aiModel} onChange={(value) => update({ aiModel: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder="Model name" mono /><Field label={state.aiProvider === "local" ? "Local model address" : "Provider address"} value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder={state.aiProvider === "local" ? "http://127.0.0.1:…" : "https://…"} mono /></div> : <details><summary>Advanced</summary><div className="provider-advanced"><Field label="Model" value={state.aiModel} onChange={(value) => update({ aiModel: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder="Model name" mono /><Field label="Provider address" value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder="Filled automatically" mono /></div></details>}
+    {providerNeedsManualDetails ? <div className="provider-manual-details"><Field label={state.aiProvider === "local" ? "Local model address" : "Provider address"} value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder={state.aiProvider === "local" ? "http://127.0.0.1:…" : "https://…"} mono /></div> : <details><summary>Advanced</summary><div className="provider-advanced"><Field label="Provider address" value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder="Filled automatically" mono /></div></details>}
     {state.aiProvider === "local" && <p className="muted provider-help">Enter the address shown by your local model app. No online account is needed.</p>}
     <div className="button-row"><button type="button" className="button secondary" onClick={() => void connectProvider()} disabled={!state.aiModel.trim() || !state.aiEndpoint.trim() || (profile?.requires_credential === true && !aiKeyDraft.trim() && !state.aiAccount?.authenticated)}>{state.aiAccount?.authenticated ? `Check ${selectedLabel}` : `Connect ${selectedLabel}`}</button>{state.aiAccount?.authenticated && profile?.requires_credential && <button type="button" className="text-button" onClick={() => void removeProviderCredential()}>Disconnect</button>}</div>
     {state.aiAccount && <p className="callout" role="status">{providerStatus}</p>}

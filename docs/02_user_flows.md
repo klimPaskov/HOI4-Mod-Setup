@@ -6,7 +6,7 @@
 2. Check for an incomplete local transaction.
 3. Open recovery first when a journal is incomplete.
 4. Otherwise show Welcome.
-5. Show the provider and model selection before semantic planning.
+5. Show the provider, live model catalog, and model-supported reasoning-effort selection before semantic planning.
 6. For Codex, start the local Codex App Server and read account state; for a known hosted provider, fill its verified defaults and validate the vault reference; for local or custom providers, validate the entered address.
 7. Require the selected provider to be configured before Create, Import, Update, or Repair planning.
 8. Display current remote source status without downloading selected components yet.
@@ -119,6 +119,8 @@ recommendation: 16 GB VRAM and 25 GB storage.
 ### MCP, credentials, and Git
 
 Review server requirements, credential storage, external commands, Git mode, ignore rules, branch, optional commit, and optional remote.
+The MCP package and app-owned health check remain available for every planning
+provider; only Codex-specific client registration depends on `codex.config`.
 
 ### Dry run and apply
 

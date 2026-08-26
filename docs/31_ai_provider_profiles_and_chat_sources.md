@@ -25,7 +25,14 @@ The bounded registry currently contains:
 | Custom provider (`custom`) | OpenAI-compatible | user-supplied API key in the OS vault | user-supplied HTTPS endpoint |
 
 The known hosted profiles ship with checked-in model and HTTPS address defaults
-verified against the providers' official documentation. The first screen asks
+verified against the providers' official documentation. After connection, the
+app reads the provider's model catalog through its
+official Models API. Codex uses App Server `model/list`, including each model's
+advertised reasoning levels. The model and reasoning controls remain visible on
+the first screen; labels run from Light (`low`) through Max (`max`). Codex
+defaults to `gpt-5.6-luna` at `xhigh`. DeepSeek defaults to
+`deepseek-v4-flash`; its current official API accepts explicit effort control.
+The first screen asks
 the user to open the provider's fixed official API-key page, paste the key, and
 choose **Connect**. Model and address remain available under **Advanced**. This
 is a simple provider connection, not a claim of third-party OAuth support. The
@@ -114,7 +121,8 @@ Older state defaults to the Codex profile and its existing App Server behavior.
 State written by an earlier provider-neutral build is migrated to the matching
 `provider_api` or `local_endpoint` mode without turning a disconnected provider
 into a successful one.
-New plans and locks persist the selected provider, model, optimization profile,
+New plans and locks persist the selected provider, model, reasoning effort,
+optimization profile,
 endpoint when applicable, and flatten preference without persisting a secret.
 Readiness uses generic AI checks for non-Codex profiles. `Open in Codex` and
 flattened Chat export remain Codex-only; other providers receive an honest

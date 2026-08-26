@@ -96,6 +96,11 @@ TOML uses semantic tables and keys. JSON uses schema-aware paths and identity ke
 
 A component is supported only when its platform declaration and every command-bearing dependency have a verified route. Unsupported optional components remain visible. A macOS core profile can omit or warn on a current Windows-only MCP component while still installing platform-neutral instructions, skills, subagents, Codex base config, and wiki.
 
+`mcp.hoi4_agent_tools` and `workflow.3d` do not depend on `codex.config`.
+Their verified package, bootstrap, external-action review, and app-owned health
+checks are provider-neutral. `codex.config` remains a separate Codex-only
+component that supplies structural client registration when Codex is selected.
+
 `workflow.super_events` depends on the core skills and subagents, has no tool or
 environment requirement, and contributes only its manifest-declared
 single selected-only skill and research-agent tree plus the reusable runtime. The

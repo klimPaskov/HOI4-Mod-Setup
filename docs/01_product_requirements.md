@@ -65,6 +65,11 @@ credential vault. Local models use an explicit loopback HTTP endpoint. The
 application does not invent provider URLs, OAuth routes, package names,
 commands, model names, MCP servers, or platform support.
 
+The first screen fetches the selected provider's available model catalog after
+authentication, exposes the selected model's supported reasoning levels from
+Light through Max, and persists both choices. Codex defaults to Luna at xhigh;
+DeepSeek defaults to its Flash model.
+
 All semantic fields use the selected provider profile:
 
 - normalized project description
@@ -293,6 +298,11 @@ Portrait sourcing remains separate from production. ComfyUI production applies o
 ### MCP setup
 
 Show source, capabilities, tools, environment variables, command preview without secrets, installation state, health result, and update policy. Platform compatibility is evaluated internally; ordinary screens show only a concise unavailable state when a selected route cannot run. Never invent an unsupported platform command.
+
+MCP component selection, bootstrap, package verification, and app-owned health
+checks are provider-neutral. Codex receives its structural TOML registration;
+other providers must not be rejected merely because they do not install
+`codex.config`.
 
 ### Git setup
 

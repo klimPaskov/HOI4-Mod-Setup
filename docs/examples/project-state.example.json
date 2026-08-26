@@ -38,7 +38,8 @@
   },
   "ai": {
     "provider": "codex",
-    "model": "default",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "xhigh",
     "optimization_profile": "Codex project and ChatGPT Chat"
   },
   "portrait_pipeline": {

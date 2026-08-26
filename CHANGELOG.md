@@ -6,6 +6,20 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.2.16 - 2026-08-26
+
+- Load the selected provider's live model catalog and show only the reasoning
+  levels advertised for that model, labeled from Light through Max.
+- Default Codex planning to GPT-5.6 Luna with Extra high reasoning and
+  DeepSeek planning to its Flash model.
+- Bind provider, model, and reasoning effort into confirmed analysis,
+  generated project guidance, installation plans, locks, migrations, updates,
+  and repairs so the selected profile cannot change silently.
+- Make the verified HOI4 Agent Tools MCP package and 3D workflow independent
+  of Codex configuration while retaining separate Codex client registration.
+- Refresh the bundled canonical Agentic HOI4 Modding manifest to the exact
+  green provider-neutral source revision.
+
 ## 0.2.15 - 2026-08-24
 
 - Let the Windows release installer gate complete its fail-closed legacy

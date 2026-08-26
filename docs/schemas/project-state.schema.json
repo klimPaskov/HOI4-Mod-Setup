@@ -158,7 +158,7 @@
     "ai": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "model", "optimization_profile"],
+      "required": ["provider", "model", "reasoning_effort", "optimization_profile"],
       "properties": {
         "provider": {
           "enum": ["codex", "claude", "kimi", "glm", "deepseek", "local", "custom"]
@@ -166,6 +166,9 @@
         "model": {
           "type": "string",
           "minLength": 1
+        },
+        "reasoning_effort": {
+          "enum": ["low", "medium", "high", "xhigh", "max"]
         },
         "optimization_profile": {
           "type": "string",

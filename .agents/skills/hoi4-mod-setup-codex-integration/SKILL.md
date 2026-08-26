@@ -5,16 +5,24 @@ description: Use when implementing or changing provider authentication, model pr
 
 # HOI4 Mod Setup Codex Integration
 
-Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The user selects a provider and model at the start; Codex is the default profile.
+Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The user selects a provider, live-catalog model, and model-supported reasoning effort at the start; Codex is the default profile.
 
 ## Product rule
 
 Create, Import, Update, and Repair planning require an authenticated, selected AI capability. Codex uses the official local `codex app-server` interface and ChatGPT-managed sign-in. Known hosted providers use checked-in, officially verified model/address defaults plus a provider-keyed OS-vault credential; model and address are editable under Advanced. Local and custom routes require explicit user configuration. Do not silently switch providers or invent a provider route or OAuth flow.
 
+Fetch Codex models through App Server `model/list` and provider models through
+the authenticated official Models API. Bind model plus reasoning effort to the
+analysis record, plan, and lock. The checked-in fallback defaults are
+`gpt-5.6-luna`/`xhigh` for Codex and `deepseek-v4-flash` for DeepSeek.
+
 Optional components remain provider-neutral unless their manifest explicitly
 declares a provider dependency. `workflow.super_events` is an ordinary
 manifest component for every selected provider; its selection, recommendation,
 file plan, and non-blocking readiness state must not create a Codex-only route.
+The same rule applies to `mcp.hoi4_agent_tools` and `workflow.3d`: the app-owned
+bootstrap and health paths remain usable for every provider, while only
+`codex.config` is Codex-specific.
 
 The planning-ready gate is checked in both layers: the React start gate keeps
 Create/Import/Update/Repair unavailable until the selected provider is

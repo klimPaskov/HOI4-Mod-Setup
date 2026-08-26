@@ -93,8 +93,12 @@ session, cancellation, credential-health, or analysis assertions.
   usage-limited provider capability while signed-out recovery remains usable
 - reviewed external-link commands accept only the fixed URLs and use the
   platform system-browser bridge
-- provider/model/profile stays bound from the start gate through analysis, plan,
+- provider/model/reasoning-effort/profile stays bound from the start gate through analysis, plan,
   lock, readiness, and any Codex-only flatten export
+- live model catalogs are bounded, credential-safe, and drive only supported
+  reasoning options; unavailable catalogs retain an editable verified fallback
+- MCP and 3D selection, bootstrap, and health remain available for non-Codex
+  providers while `codex.config` stays rejected outside Codex
 - provider-neutral `workflow.super_events` selection is represented by its
   parent manifest/component ID, expands to the complete hidden runtime
   dependency closure, namespace-adapts only verified text files, leaves
