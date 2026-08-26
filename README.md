@@ -33,7 +33,10 @@ reviewed the changes and started installation.
 Choose **Create new mod** or **Import existing mod**. For Codex, sign in with
 ChatGPT. For Claude, Kimi, GLM, or DeepSeek, paste an API key from the provider;
 the app fills the normal connection details automatically. Local and custom
-models let you enter the address supplied by that model service.
+models let you enter the address supplied by that model service. Once connected,
+choose from the provider's live model list and select one of the reasoning
+levels that model supports, from **Light** through **Max**. Codex defaults to
+GPT-5.6 Luna with Extra high reasoning; DeepSeek defaults to its Flash model.
 
 ![Choose and connect another AI provider](docs/screenshots/10-provider-selection.png)
 
@@ -102,7 +105,9 @@ only this optional workflow incomplete; they do not make core setup unusable.
 
 The HOI4 Agent Tools MCP integration includes the working Technology Tree
 Viewer routes `hoi4.tech_inspect`, `hoi4.tech_render`, and
-`hoi4.tech_compare` when advertised by the resolved source revision.
+`hoi4.tech_compare` when advertised by the resolved source revision. Its
+verified package and app-owned health check work with every AI provider;
+provider-specific client registration remains separate.
 
 The optional Super Events workflow adds the reusable popup, templates,
 examples, images, and supporting guidance needed to add more Super Events.

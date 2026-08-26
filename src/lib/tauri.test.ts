@@ -288,7 +288,11 @@ describe("typed scanner bridge", () => {
     await runCodexAnalysis(codexRequest);
     await runAiAnalysis(providerRequest);
 
-    expect(invoke).toHaveBeenNthCalledWith(1, "codex_analyze", { request: codexRequest });
+    expect(invoke).toHaveBeenNthCalledWith(1, "codex_analyze", {
+      request: codexRequest,
+      model: "gpt-5.6-luna",
+      reasoningEffort: "xhigh",
+    });
     expect(invoke).toHaveBeenNthCalledWith(2, "ai_analyze", { request: providerRequest });
   });
 

@@ -140,6 +140,7 @@ pub struct CodexAnalysisRequest {
 pub struct AiAnalysisRequest {
     pub provider: String,
     pub model: String,
+    pub reasoning_effort: String,
     pub endpoint: String,
     #[serde(flatten)]
     pub analysis: CodexAnalysisRequest,
@@ -472,8 +473,14 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
     pub fn analyze(
         &mut self,
         request: &CodexAnalysisRequest,
+        model: &str,
+        reasoning_effort: &str,
     ) -> Result<CodexAnalysisResult, AppError> {
         validate_analysis_request(request)?;
+        crate::ai::validate_reasoning_effort(reasoning_effort)?;
+        if model.trim().is_empty() || model.len() > 256 || model.chars().any(char::is_control) {
+            return Err(AppError::InvalidInput("Codex model is invalid".into()));
+        }
         let account = self.account_read(false)?;
         if let Some(error) = account.error.as_deref() {
             return Err(AppError::Credential(error.into()));
@@ -495,7 +502,8 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
             json!({
                 "approvalPolicy": "never",
                 "sandbox": "read-only",
-                "cwd": analysis_directory.path_string()?
+                "cwd": analysis_directory.path_string()?,
+                "model": model
             }),
         )?;
         let thread_id = thread_id(&thread)?;
@@ -512,7 +520,9 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
                 "input": [{"type": "text", "text": prompt}],
                 "outputSchema": schema,
                 "sandboxPolicy": read_only_no_project_access(),
-                "approvalPolicy": "never"
+                "approvalPolicy": "never",
+                "model": model,
+                "reasoningEffort": reasoning_effort
             }),
         )?;
         let turn_id = turn_id_from_start_response(&turn);
@@ -547,7 +557,8 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
             engine: "codex_app_server".into(),
             auth_mode: "chatgpt".into(),
             provider: Some("codex".into()),
-            model: None,
+            model: Some(model.to_owned()),
+            reasoning_effort: Some(reasoning_effort.to_owned()),
             optimization_profile: Some("Codex project and ChatGPT Chat".into()),
             analysis_id: analysis.analysis_id,
             schema_version: analysis.schema_version.clone(),
@@ -566,6 +577,67 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
             source_manifest_sha256: None,
         };
         Ok(CodexAnalysisResult { analysis, record })
+    }
+
+    pub fn model_list(&mut self) -> Result<Vec<crate::models::AiModelOption>, AppError> {
+        let mut cursor: Option<String> = None;
+        let mut result = Vec::new();
+        loop {
+            let page = self.request("model/list", json!({"cursor": cursor, "limit": 100}))?;
+            let data = page
+                .get("data")
+                .and_then(Value::as_array)
+                .ok_or_else(|| AppError::Serialization("Codex model list omitted data".into()))?;
+            for item in data {
+                if item.get("hidden").and_then(Value::as_bool) == Some(true) {
+                    continue;
+                }
+                let id = item
+                    .get("model")
+                    .or_else(|| item.get("id"))
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| {
+                        AppError::Serialization("Codex model entry omitted its ID".into())
+                    })?;
+                let efforts = item
+                    .get("supportedReasoningEfforts")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|entry| entry.get("reasoningEffort").and_then(Value::as_str))
+                    .filter(|effort| matches!(*effort, "low" | "medium" | "high" | "xhigh" | "max"))
+                    .map(ToOwned::to_owned)
+                    .collect::<Vec<_>>();
+                let default_effort = item
+                    .get("defaultReasoningEffort")
+                    .and_then(Value::as_str)
+                    .filter(|effort| efforts.iter().any(|candidate| candidate == effort))
+                    .unwrap_or_else(|| efforts.first().map(String::as_str).unwrap_or("high"));
+                result.push(crate::models::AiModelOption {
+                    id: id.to_owned(),
+                    display_name: item
+                        .get("displayName")
+                        .and_then(Value::as_str)
+                        .unwrap_or(id)
+                        .to_owned(),
+                    default_reasoning_effort: default_effort.to_owned(),
+                    supported_reasoning_efforts: if efforts.is_empty() {
+                        vec!["high".into()]
+                    } else {
+                        efforts
+                    },
+                });
+            }
+            cursor = page
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+            if cursor.is_none() || result.len() >= 500 {
+                break;
+            }
+        }
+        Ok(result)
     }
 
     fn drain_notifications(
@@ -2582,6 +2654,50 @@ mod tests {
     }
 
     #[test]
+    fn model_list_preserves_only_advertised_models_and_reasoning_efforts() {
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming: VecDeque::from([response(
+                1,
+                json!({
+                    "data": [{
+                        "id": "luna",
+                        "model": "gpt-5.6-luna",
+                        "displayName": "GPT-5.6 Luna",
+                        "hidden": false,
+                        "defaultReasoningEffort": "xhigh",
+                        "supportedReasoningEfforts": [
+                            {"reasoningEffort": "low", "description": "Light"},
+                            {"reasoningEffort": "xhigh", "description": "Extra high"},
+                            {"reasoningEffort": "max", "description": "Max"}
+                        ]
+                    }, {
+                        "id": "hidden",
+                        "model": "hidden-model",
+                        "displayName": "Hidden",
+                        "hidden": true,
+                        "defaultReasoningEffort": "high",
+                        "supportedReasoningEfforts": []
+                    }],
+                    "nextCursor": null
+                }),
+            )]),
+            alive: true,
+        };
+        let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
+        let models = protocol.model_list().unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "gpt-5.6-luna");
+        assert_eq!(models[0].default_reasoning_effort, "xhigh");
+        assert_eq!(
+            models[0].supported_reasoning_efforts,
+            vec!["low", "xhigh", "max"]
+        );
+        assert_eq!(protocol.transport.sent[0]["method"], "model/list");
+    }
+
+    #[test]
     fn account_and_login_requests_are_rejected_before_initialize() {
         let transport = FakeTransport {
             sent: Vec::new(),
@@ -3383,7 +3499,10 @@ mod tests {
         let mut protocol = AppServerProtocol::new(transport);
         protocol.initialized = true;
 
-        let error = protocol.analyze(&request).unwrap_err().to_string();
+        let error = protocol
+            .analyze(&request, "gpt-5.6-luna", "xhigh")
+            .unwrap_err()
+            .to_string();
 
         assert!(error.contains("no schema-constrained analysis output"));
         assert_eq!(protocol.transport.sent[2]["method"], "thread/start");
@@ -3426,6 +3545,7 @@ mod tests {
             auth_mode: "chatgpt".into(),
             provider: Some("codex".into()),
             model: None,
+            reasoning_effort: Some("xhigh".into()),
             optimization_profile: Some("Codex project and ChatGPT Chat".into()),
             analysis_id: Uuid::new_v4(),
             schema_version: CODEX_SCHEMA_VERSION.into(),
@@ -3553,6 +3673,7 @@ mod tests {
             auth_mode: "chatgpt".into(),
             provider: Some("codex".into()),
             model: None,
+            reasoning_effort: Some("xhigh".into()),
             optimization_profile: Some("Codex project and ChatGPT Chat".into()),
             analysis_id: analysis.analysis_id,
             schema_version: analysis.schema_version.clone(),

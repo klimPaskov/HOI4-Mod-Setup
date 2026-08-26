@@ -145,8 +145,18 @@ export interface AiProviderProfile {
   requires_credential: boolean;
   optimization_profile: string;
   default_model?: string | null;
+  default_reasoning_effort?: ReasoningEffort | null;
   default_endpoint?: string | null;
   account_url?: string | null;
+}
+
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+export interface AiModelOption {
+  id: string;
+  display_name: string;
+  default_reasoning_effort: ReasoningEffort;
+  supported_reasoning_efforts: ReasoningEffort[];
 }
 
 export interface AiAccountStatus {
@@ -193,6 +203,7 @@ export interface CodexAnalysisRecord {
   auth_mode: string;
   provider?: AiProviderId | string | null;
   model?: string | null;
+  reasoning_effort?: ReasoningEffort | null;
   optimization_profile?: string | null;
   analysis_id: string;
   schema_version: string;
@@ -225,6 +236,7 @@ export interface CodexAnalysisResult {
 export interface AiAnalysisRequest extends CodexAnalysisRequest {
   provider: AiProviderId;
   model: string;
+  reasoning_effort: ReasoningEffort;
   endpoint: string;
 }
 
@@ -458,6 +470,7 @@ export interface InstallationPlan {
   };
   ai_provider?: AiProviderId | string;
   ai_model?: string;
+  ai_reasoning_effort?: ReasoningEffort;
   ai_endpoint?: string | null;
   ai_optimization_profile?: string;
   flatten_chat_sources?: boolean;
@@ -564,6 +577,7 @@ export interface WizardState {
   pinnedRef: string;
   aiProvider: AiProviderId;
   aiModel: string;
+  aiReasoningEffort: ReasoningEffort;
   aiEndpoint: string;
   aiAccount: AiAccountStatus | null;
   aiProfiles?: AiProviderProfile[];

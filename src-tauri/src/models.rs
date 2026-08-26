@@ -402,7 +402,11 @@ pub(crate) fn default_ai_provider() -> String {
 }
 
 pub(crate) fn default_ai_model() -> String {
-    "default".into()
+    "gpt-5.6-luna".into()
+}
+
+pub(crate) fn default_ai_reasoning_effort() -> String {
+    "xhigh".into()
 }
 
 pub(crate) fn default_ai_optimization_profile() -> String {
@@ -775,6 +779,8 @@ pub struct InstallationPlan {
     pub ai_provider: String,
     #[serde(default = "default_ai_model")]
     pub ai_model: String,
+    #[serde(default = "default_ai_reasoning_effort")]
+    pub ai_reasoning_effort: String,
     #[serde(default)]
     pub ai_endpoint: Option<String>,
     #[serde(default = "default_ai_optimization_profile")]
@@ -903,6 +909,8 @@ pub struct InstallationLock {
     pub ai_provider: String,
     #[serde(default = "default_ai_model")]
     pub ai_model: String,
+    #[serde(default = "default_ai_reasoning_effort")]
+    pub ai_reasoning_effort: String,
     #[serde(default)]
     pub ai_endpoint: Option<String>,
     #[serde(default = "default_ai_optimization_profile")]
@@ -1211,9 +1219,19 @@ pub struct AiProviderProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_endpoint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiModelOption {
+    pub id: String,
+    pub display_name: String,
+    pub default_reasoning_effort: String,
+    pub supported_reasoning_efforts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1267,6 +1285,8 @@ pub struct CodexAnalysisRecord {
     pub provider: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
     #[serde(default)]
     pub optimization_profile: Option<String>,
     pub analysis_id: Uuid,

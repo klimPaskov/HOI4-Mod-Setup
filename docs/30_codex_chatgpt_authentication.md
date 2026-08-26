@@ -143,7 +143,8 @@ No provider can override a deterministic failure. It cannot create files during 
 
 Use a dedicated App Server thread for each Codex setup session. Start every semantic turn with:
 
-- no model override by default, so the user's Codex configuration controls the available model
+- fetch the live model catalog through `model/list`; default to `gpt-5.6-luna` with `xhigh` when that compatible entry is available
+- show only the selected model's advertised reasoning-effort values and bind the reviewed model and effort to both `thread/start` and `turn/start`
 - `sandbox: read-only` on `thread/start`
 - `sandboxPolicy: { type: readOnly, networkAccess: false }` on `turn/start`
 - an empty temporary working directory, with no target-project path supplied

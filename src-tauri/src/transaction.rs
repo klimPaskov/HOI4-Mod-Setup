@@ -158,6 +158,7 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
             "plan AI model must be non-empty and bounded".into(),
         ));
     }
+    crate::ai::validate_reasoning_effort(&plan.ai_reasoning_effort)?;
     if plan.ai_optimization_profile != ai_profile.optimization_profile {
         return Err(AppError::Credential(
             "plan AI optimization profile does not match the selected provider".into(),
@@ -203,6 +204,16 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
         && plan.git_setup.is_none();
     if let Some(codex_analysis) = plan.codex_analysis.as_ref() {
         crate::codex::validate_confirmed_record(codex_analysis)?;
+        if codex_analysis.provider.as_deref() != Some(plan.ai_provider.as_str())
+            || codex_analysis.model.as_deref() != Some(plan.ai_model.as_str())
+            || codex_analysis.reasoning_effort.as_deref() != Some(plan.ai_reasoning_effort.as_str())
+            || codex_analysis.optimization_profile.as_deref()
+                != Some(plan.ai_optimization_profile.as_str())
+        {
+            return Err(AppError::Credential(
+                "the confirmed semantic analysis does not match the selected provider, model, reasoning effort, or profile".into(),
+            ));
+        }
         if codex_analysis.source_revision.as_deref() != Some(plan.source.resolved_revision.as_str())
             || codex_analysis.source_manifest_sha256.as_deref()
                 != Some(plan.source.manifest_sha256.as_str())
@@ -3798,6 +3809,7 @@ fn build_lock(
         },
         ai_provider: plan.ai_provider.clone(),
         ai_model: plan.ai_model.clone(),
+        ai_reasoning_effort: plan.ai_reasoning_effort.clone(),
         ai_endpoint: plan.ai_endpoint.clone(),
         ai_optimization_profile: plan.ai_optimization_profile.clone(),
         flatten_chat_sources: plan.flatten_chat_sources,
@@ -5924,7 +5936,8 @@ mod tests {
             engine: "codex_app_server".into(),
             auth_mode: "chatgpt".into(),
             provider: Some("codex".into()),
-            model: None,
+            model: Some("gpt-5.6-luna".into()),
+            reasoning_effort: Some("xhigh".into()),
             optimization_profile: Some("Codex project and ChatGPT Chat".into()),
             analysis_id: uuid::Uuid::new_v4(),
             schema_version: "1.0.0".into(),
@@ -5964,7 +5977,8 @@ mod tests {
                 manifest_origin: "remote".into(),
             },
             ai_provider: "codex".into(),
-            ai_model: "default".into(),
+            ai_model: "gpt-5.6-luna".into(),
+            ai_reasoning_effort: "xhigh".into(),
             ai_endpoint: None,
             ai_optimization_profile: crate::models::default_ai_optimization_profile(),
             flatten_chat_sources: false,
@@ -8735,7 +8749,8 @@ mod tests {
                 manifest_origin: "remote".into(),
             },
             ai_provider: "codex".into(),
-            ai_model: "default".into(),
+            ai_model: "gpt-5.6-luna".into(),
+            ai_reasoning_effort: "xhigh".into(),
             ai_endpoint: None,
             ai_optimization_profile: crate::models::default_ai_optimization_profile(),
             flatten_chat_sources: false,
@@ -8798,7 +8813,8 @@ mod tests {
                 manifest_origin: "remote".into(),
             },
             ai_provider: "codex".into(),
-            ai_model: "default".into(),
+            ai_model: "gpt-5.6-luna".into(),
+            ai_reasoning_effort: "xhigh".into(),
             ai_endpoint: None,
             ai_optimization_profile: crate::models::default_ai_optimization_profile(),
             flatten_chat_sources: false,

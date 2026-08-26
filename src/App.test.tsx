@@ -2,13 +2,13 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { ChatSources, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, recoveryProgress } from "./App";
-import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readAiModels, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
 import type { ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), suggestProjectPaths: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), suggestProjectPaths: vi.fn() };
 });
 
 afterEach(() => {
@@ -22,6 +22,7 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.mocked(readCodexAccount).mockResolvedValue({ available: false, authenticated: false, auth_mode: "none", usage_limited: false });
+  vi.mocked(readAiModels).mockResolvedValue([]);
   vi.mocked(readTransactionJournal).mockResolvedValue(null);
   vi.mocked(rollbackInstallationResult).mockResolvedValue({ value: null, error: "Undo is unavailable." });
   vi.mocked(logoutCodexResult).mockResolvedValue({ value: null });
@@ -44,7 +45,8 @@ function readyState(): WizardState {
   return {
     identity: { projectRoot: "C:\\mods\\cold-war-curtain", displayName: "Cold War Curtain" },
     aiProvider: "codex",
-    aiModel: "default",
+    aiModel: "gpt-5.6-luna",
+    aiReasoningEffort: "xhigh",
     readiness: { openInCodex: true, coreReady: true, blockingCheckIds: [], checks: [] },
     selectedComponents: [],
     meshSelected: false,
@@ -52,7 +54,7 @@ function readyState(): WizardState {
 }
 
 function welcomeState(account: WizardState["codexAccount"], codexLogin?: WizardState["codexLogin"]): WizardState {
-  return { mode: "new", aiProvider: "codex", aiModel: "default", aiEndpoint: "", selectedComponents: ["codex.config"], flattenForChat: false, codexAccount: account, codexLogin } as unknown as WizardState;
+  return { mode: "new", aiProvider: "codex", aiModel: "gpt-5.6-luna", aiReasoningEffort: "xhigh", aiEndpoint: "", selectedComponents: ["codex.config", "mcp.hoi4_agent_tools", "workflow.3d"], flattenForChat: false, meshSelected: true, codexAccount: account, codexLogin } as unknown as WizardState;
 }
 
 async function renderAuthenticatedApp() {
@@ -74,6 +76,8 @@ describe("HOI4 Mod Setup wizard", () => {
   it("starts new projects with the Atlantis Rising example", () => {
     expect(initialState.identity.displayName).toBe("Atlantis Rising");
     expect(initialState.description).toBe("An Atlantis total conversion with a new Atlantic island, naval expansion, custom units, national focuses, and original mechanics.");
+    expect(initialState.aiModel).toBe("gpt-5.6-luna");
+    expect(initialState.aiReasoningEffort).toBe("xhigh");
     expect(initialState.identity.projectId).toBe("atlantis_rising");
   });
 
@@ -335,10 +339,31 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByLabelText("Model")).toBeInTheDocument();
     expect(screen.getByLabelText("Provider address")).toBeInTheDocument();
     expect(screen.getByLabelText("Model")).toHaveValue("claude-sonnet-5");
+    expect(screen.getByLabelText("Reasoning effort")).toHaveValue("high");
     expect(screen.getByLabelText("Provider address")).toHaveValue("https://api.anthropic.com/v1/messages");
     expect(screen.getByLabelText("Claude API key")).toHaveAttribute("type", "password");
     expect(screen.getByText("Advanced")).toBeInTheDocument();
     expect(screen.queryByText(/flattened ChatGPT project-sources/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("AI provider")).toHaveValue("claude");
+  });
+
+  it("uses the live model catalog and only offers efforts supported by the selected model", async () => {
+    enableTauriRuntime();
+    vi.mocked(readAiModels).mockResolvedValue([
+      { id: "gpt-5.6-luna", display_name: "GPT-5.6 Luna", default_reasoning_effort: "xhigh", supported_reasoning_efforts: ["low", "high", "xhigh", "max"] },
+      { id: "deliberate-model", display_name: "Deliberate model", default_reasoning_effort: "max", supported_reasoning_efforts: ["low", "max"] },
+    ]);
+    function ControlledWelcome() {
+      const [state, setState] = useState(welcomeState({ available: true, authenticated: true, auth_mode: "chatgpt", usage_limited: false }));
+      return <Welcome state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
+    }
+
+    render(<ControlledWelcome />);
+    await waitFor(() => expect(screen.getByLabelText("Model")).toHaveValue("gpt-5.6-luna"));
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "deliberate-model" } });
+
+    expect(screen.getByLabelText("Reasoning effort")).toHaveValue("max");
+    expect(within(screen.getByLabelText("Reasoning effort")).getAllByRole("option").map((option) => option.textContent)).toEqual(["Light", "Max"]);
   });
 
   it("opens only the fixed provider account page from the simple connection flow", async () => {

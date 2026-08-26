@@ -74,6 +74,10 @@
   real project-instruction section.
 - AI-03: Provider changes clear stale analysis and cannot reuse a record from another provider or model.
 - AI-03A: Claude, Kimi, GLM, and DeepSeek fill verified model and address defaults automatically; their normal path shows an official API-key link, key field, and Connect action, while overrides remain under Advanced.
+- AI-03B: The app fetches the authenticated provider's live model catalog, shows
+  the selected model's supported effort levels from Light through Max, defaults
+  Codex to `gpt-5.6-luna`/`xhigh`, defaults DeepSeek to
+  `deepseek-v4-flash`, and binds both choices through analysis, plan, and lock.
 - AI-04: A Codex-only Components checkbox prepares `chatgpt_project_sources/`; non-Codex setup never renders or persists it as selected.
 - AI-05: Flattening renames `.agents/skills/<skill>/SKILL.md` to `<skill>.md` and includes selected subagents, adapted AGENTS, and README.
 - AI-06: Flattening rejects links, case-insensitive collisions, secret-shaped content, and bounded file/aggregate-size violations.
@@ -181,6 +185,9 @@
 ## MCP
 
 - MCP-01: Servers show requirements, capabilities, variables, status, and health.
+- MCP-01A: MCP selection, verified bootstrap, and app-owned health checks work
+  with every planning provider; only the separate `codex.config` registration
+  is Codex-specific.
 - MCP-02: TOML is merged structurally.
 - MCP-03: Conflicting server ID requires review.
 - MCP-04: Secrets are not literal TOML values.

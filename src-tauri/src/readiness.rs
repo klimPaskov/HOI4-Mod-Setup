@@ -1220,11 +1220,15 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         text.contains("[mcp_servers.hoi4_agent_tools]")
             && text.contains("command = \"hoi4-agent-tools.cmd\"")
     });
+    let mcp_registration_ready = lock
+        .as_ref()
+        .is_some_and(|lock| lock.ai_provider != "codex")
+        || mcp_declared;
     let mcp_status = if mcp_unsupported {
         "unsupported_platform".into()
     } else if !mcp_selected {
         "not_selected".into()
-    } else if !mcp_declared {
+    } else if !mcp_registration_ready {
         "block".into()
     } else if on_windows && mcp_planned_unavailable {
         if find_path_executable(&["hoi4-agent-tools.cmd"]).is_ok() {

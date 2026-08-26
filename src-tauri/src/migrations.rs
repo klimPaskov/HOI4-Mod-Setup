@@ -49,7 +49,8 @@ pub fn migrate_state(value: Value) -> Result<Value, AppError> {
     let ai = object.entry("ai").or_insert_with(|| {
         json!({
             "provider": "codex",
-            "model": "default",
+            "model": "gpt-5.6-luna",
+            "reasoning_effort": "xhigh",
             "optimization_profile": "Codex project and ChatGPT Chat"
         })
     });
@@ -58,7 +59,8 @@ pub fn migrate_state(value: Value) -> Result<Value, AppError> {
     })?;
     reject_persisted_ai_secret(ai)?;
     insert_default(ai, "provider", Value::String("codex".into()));
-    insert_default(ai, "model", Value::String("default".into()));
+    insert_default(ai, "model", Value::String("gpt-5.6-luna".into()));
+    insert_default(ai, "reasoning_effort", Value::String("xhigh".into()));
     insert_default(
         ai,
         "optimization_profile",
@@ -95,6 +97,11 @@ pub fn migrate_state(value: Value) -> Result<Value, AppError> {
             "project state AI optimization profile must be a non-empty string".into(),
         ));
     }
+    crate::ai::validate_reasoning_effort(
+        ai.get("reasoning_effort")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )?;
     let codex = object.entry("codex").or_insert_with(|| {
         json!({
             "integration": "codex_app_server",
@@ -381,6 +388,9 @@ pub fn migrate_lock(value: Value) -> Result<InstallationLock, AppError> {
                 }
                 .into(),
             )
+        });
+        object.entry("ai_reasoning_effort").or_insert_with(|| {
+            Value::String(if provider == "codex" { "xhigh" } else { "high" }.into())
         });
         object
             .entry("wiki_required_pages")
