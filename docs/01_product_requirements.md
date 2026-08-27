@@ -2,7 +2,7 @@
 
 ## Product statement
 
-**HOI4 Mod Setup** is a Windows and macOS desktop application that prepares a Hearts of Iron IV mod project for agentic development with a user-selected AI provider. Codex is the default. It creates a new launcher-ready mod from a guided brief or imports an existing project through an evidence-backed read-only scan. It installs a selected workflow package from `klimPaskov/Agentic-HOI4-Modding` without cloning the complete source repository. Structural analysis is deterministic. Required semantic analysis uses the selected provider adapter and produces reviewable proposals after deterministic evidence is collected.
+**HOI4 Mod Setup** is a Windows and macOS desktop application that prepares a Hearts of Iron IV mod project for provider-neutral agentic development. The user selects a setup assistant for bounded semantic analysis; Codex is the default. That choice does not select or restrict the AI client used later for development. The app creates a new launcher-ready mod from a guided brief or imports an existing project through an evidence-backed read-only scan. It installs a selected workflow package from `klimPaskov/Agentic-HOI4-Modding` without cloning the complete source repository. Structural analysis is deterministic. Required semantic analysis uses the selected setup-provider adapter and produces reviewable proposals after deterministic evidence is collected.
 
 ## Primary outcome
 
@@ -55,10 +55,10 @@ Needs pinned installs, optional 3D support, exact provenance, update and repair,
 12. A new project is not ready until both descriptors and the thumbnail pass validation.
 13. New-project identity conventions are generated from the mod name and brief; manual review is for edits, ambiguity, or external paths.
 
-## Planning provider requirement
+## Setup assistant requirement
 
 The first setup screen selects Codex, Claude, Kimi, GLM, DeepSeek, a local
-model, or a bounded custom provider profile. Codex uses the official local Codex
+model, or a bounded custom profile as the setup assistant. Codex uses the official local Codex
 App Server and ChatGPT-managed browser or device-code authentication. Hosted
 non-Codex profiles use a user-supplied endpoint and an API key stored in the OS
 credential vault. Local models use an explicit loopback HTTP endpoint. The
@@ -68,9 +68,14 @@ commands, model names, MCP servers, or platform support.
 The first screen fetches the selected provider's available model catalog after
 authentication, exposes the selected model's supported reasoning levels from
 Light through Max, and persists both choices. Codex defaults to Luna at xhigh;
-DeepSeek defaults to its Flash model.
+DeepSeek defaults to its Flash model. A failed or empty catalog refresh keeps
+the checked-in verified model selectable for Codex and known hosted providers;
+Local and Custom keep an editable model field and add live endpoint results as
+suggestions. These values are retained as analysis
+provenance in app-managed state, plans, and locks; they are not written into
+generated project guidance as a future development preference.
 
-All semantic fields use the selected provider profile:
+All semantic proposals use the selected setup profile:
 
 - normalized project description
 - display name proposal
@@ -78,12 +83,12 @@ All semantic fields use the selected provider profile:
 - script prefix and namespace proposal
 - descriptor tag proposal restricted to the current official Hearts of Iron IV Workshop categories
 - initial folder profile proposal
-- `AGENTS.md` adaptation
+- project-specific `AGENTS.md` adaptation without provider/model attribution
 - skill and subagent recommendations
 - existing-project purpose and convention analysis
 - semantic conflict explanation
 
-The deterministic core validates syntax, collisions, paths, hashes, descriptors, PNG files, encodings, Git state, manifest rules, and transaction safety. The user confirms each proposal before rendering.
+The deterministic core validates syntax, collisions, paths, hashes, descriptors, PNG files, encodings, Git state, manifest rules, and transaction safety. The user confirms each proposal before rendering provider-neutral project bytes. Changing the setup assistant never adds or removes a development-client component.
 
 The Codex integration is `codex app-server` over stdio JSONL. Authentication
 uses the App Server managed ChatGPT browser flow with device-code fallback;
@@ -92,6 +97,28 @@ vault for the scoped provider request. No ChatGPT token, provider key, account
 identity, or credential value is stored in the target project or installation
 lock. All provider responses validate against the same `codex-analysis`
 schema, and Rust remains the authority for deterministic facts and writes.
+
+## Coding environments
+
+Coding-client selection is a separate setup step from the setup assistant and
+from workflow profiles such as Core or Core plus 3D. Exactly one primary client
+is required (Codex by default); any supported clients may be added alongside it:
+Codex, Claude Code, Cursor, Qoder, and OpenCode. Changing the primary client
+automatically removes it from the additional list.
+
+The resolved source manifest supplies a complete native package for each
+selected client. Codex keeps `.codex/agents/*.toml` as the canonical subagent
+source; Claude Code, Cursor, Qoder, and OpenCode projections are generated from
+those TOMLs and source-side synchronization checks reject drift. Runtime-neutral
+files (`AGENTS.md`, `.agents/skills/`, canonical subagents, `.tools/sync/`,
+shared docs, and selected workflows) are installed for every selection.
+
+The primary/additional selection is persisted in project state, plans, locks,
+and journals. Existing-project detection reports installed clients, defaults to
+Codex when no recorded primary exists, and never silently removes a client.
+Deselection previews all additions, updates, preserved conflicts, and removals;
+only unchanged managed files are removed, while modified or unmanaged files are
+kept.
 
 ## Functional requirements
 
@@ -103,7 +130,7 @@ The welcome screen offers **Create a new mod** and **Import an existing project*
 
 Ask for and review:
 
-- selected provider configuration or ChatGPT sign-in through Codex App Server
+- setup-assistant configuration or ChatGPT sign-in through Codex App Server
   and required provider semantic analysis
 - mod name and natural-language description
 - generated display name, stable project ID, script prefix, namespace, descriptor
@@ -197,11 +224,11 @@ switch providers.
 - Preview the exact structured findings and text excerpts before each turn.
 - Exclude binaries, secrets, credential stores, Git objects, unapproved paths, and unrelated content.
 - Require output that validates against `schemas/codex-analysis.schema.json`.
-- Use the selected provider for project identity, description, namespace and
-  prefix proposals, tags, folder profile, AGENTS adaptation, component
-  selection, convention interpretation, and semantic conflict explanations.
+- Use the selected setup assistant for project identity, description, namespace and
+  prefix proposals, tags, folder profile, provider-neutral AGENTS adaptation,
+  component recommendations, convention interpretation, and semantic conflict explanations.
 - Keep paths, hashes, descriptor validity, PNG validity, encodings, Git state, identifier syntax, collisions, manifest checks, and transaction safety under deterministic Rust ownership.
-- Label values as `Detected`, `Suggested by Codex`, or `Confirmed`.
+- Label values as `Detected`, `Suggested by <selected setup assistant>`, or `Confirmed`.
 - Require deterministic validation and user confirmation before file rendering.
 - Preserve the draft when sign-in, usage, process, or schema validation fails. Start no transaction.
 
@@ -300,9 +327,9 @@ Portrait sourcing remains separate from production. ComfyUI production applies o
 Show source, capabilities, tools, environment variables, command preview without secrets, installation state, health result, and update policy. Platform compatibility is evaluated internally; ordinary screens show only a concise unavailable state when a selected route cannot run. Never invent an unsupported platform command.
 
 MCP component selection, bootstrap, package verification, and app-owned health
-checks are provider-neutral. Codex receives its structural TOML registration;
-other providers must not be rejected merely because they do not install
-`codex.config`.
+checks are provider-neutral. `codex.config` is a development-client integration,
+not a setup-assistant dependency, and may be installed regardless of which
+provider performed setup analysis.
 
 ### Git setup
 
@@ -345,9 +372,11 @@ overwrite, and leaves the project unchanged.
 
 ### Readiness
 
-Check the internal descriptor, external launcher descriptor, external destination, descriptor agreement, thumbnail existence and decoding, selected structure, AGENTS, skills, subagents, selected provider instructions, MCP, wiki integrity and page coverage, Git, environment variables, hashes, conflicts, external dependencies, and optional `workflow.3d`, `workflow.super_events`, and portrait-provider states. Codex authentication or selected-provider configuration and confirmed analysis are blocking core checks; optional workflow states are not.
+Check the internal descriptor, external launcher descriptor, external destination, descriptor agreement, thumbnail existence and decoding, selected structure, provider-neutral AGENTS, skills, subagents, setup-analysis provenance, independently selected client integrations, MCP, wiki integrity and page coverage, Git, environment variables, hashes, conflicts, external dependencies, and optional `workflow.3d`, `workflow.super_events`, and portrait-provider states. Setup-assistant configuration and confirmed analysis are blocking core checks; optional workflow states are not.
 
-Open in Codex is enabled only when blocking core checks pass.
+Open in Codex is enabled when blocking core checks pass and the Codex project
+integration is installed, regardless of which setup assistant produced the
+confirmed analysis.
 
 ## Non-functional requirements
 
@@ -423,4 +452,4 @@ Repo-local skills are living implementation memory. A pull request that changes 
 
 ## Core authentication readiness
 
-A setup session is core-ready only when the selected provider is configured (or a compatible Codex App Server is initialized with active ChatGPT-managed authentication), required semantic analysis validates against the current schema, and every required proposal is confirmed. Optional 3D and Codex-only flattened Chat-source states remain independent.
+A setup session is core-ready only when the selected setup assistant is configured (or a compatible Codex App Server is initialized with active ChatGPT-managed authentication), required semantic analysis validates against the current schema, and every required proposal is confirmed. Optional 3D and flattened Chat-source states remain independent development choices.

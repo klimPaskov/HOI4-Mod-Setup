@@ -47,8 +47,9 @@ The application must never require a hidden detail panel to understand the prima
 
 ## Provider gate
 
-Before project selection, show a compact provider gate with the product name,
-provider and model selection, and one short configuration state. Codex shows a
+Before project selection, show a compact setup-assistant gate with the product name,
+provider and model selection, one short configuration state, and one sentence
+stating that this choice does not select the later development client. Codex shows a
 **Sign in with ChatGPT** action and device-code fallback through the official
 App Server. Known hosted profiles show an official API-key page, one key field,
 and a Connect action; verified model and address defaults stay under Advanced.
@@ -57,7 +58,7 @@ Keep a local recovery link when an interrupted transaction exists.
 
 Do not show token fields, model marketing copy, plan comparisons, protocol details, or long privacy text. Put technical details behind one disclosure.
 
-After sign-in, keep account state in the title bar or settings as one compact row. The review labels remain `Detected`, `Suggested by Codex`, and `Confirmed`.
+After provider configuration, keep account state in the title bar or settings as one compact row. The review labels remain `Detected`, `Suggested by <selected setup assistant>`, and `Confirmed`.
 
 ## Window structure
 
@@ -121,7 +122,7 @@ Do not display permanent keyboard shortcut hints in the footer. Keyboard support
 10. **Git setup**: three choices, branch and commit fields for the selected choice, remote and advanced options collapsed.
 11. **Install review**: change counts, a read-only summary of selected ChatGPT project files, short plan summary, preflight state, and a lazily rendered full file-and-folder plan on demand. Show starter directories as **Create folder** entries and never as `.gitkeep` files. Keep the preparation panel aligned to the same maximum width as the review below it.
 12. **Installation progress**: one progress bar with the current `x of y files` count, percentage, and time estimate; six grouped stages; transaction log collapsed.
-13. **Final readiness**: one success state, an Open in Codex action only for Codex, grouped core checks, compact 3D/Super Events state, portrait provider state when selected, and a direct `https://chatgpt.com` handoff when flattened Chat sources were prepared.
+13. **Final readiness**: one success state, an Open in Codex action when the Codex project integration is installed regardless of setup assistant, grouped core checks, compact 3D/Super Events state, portrait provider state when selected, and a direct `https://chatgpt.com` handoff when flattened Chat sources were prepared.
 14. **Update and repair**: four primary maintenance actions, the ChatGPT project-source package action when eligible, and a short installed-state list.
 15. **ChatGPT project-source package**: destination folder, selected source files, required-file lock state, optional root Markdown toggles, and one package action.
 16. **Merge conflict review**: local and incoming comparison, resolution choices, result preview after selection.
@@ -248,8 +249,9 @@ link, key field, and Connect action by default; model and address are under one
 Advanced disclosure. Local and custom profiles show only the configuration
 their adapter genuinely needs. Do not show provider
 prices, raw protocol events, or token locations. Semantic review uses one
-compact table for Detected, Suggested by the selected provider, and Confirmed
-values. Reasons and input evidence open on demand.
+compact table for Detected, Suggested by the selected setup assistant, and
+Confirmed values. Reasons and input evidence open on demand. Generated project
+guidance and readiness never present that assistant as the later coding client.
 
 The portrait link has a clear external destination in its accessible name and
 is opened by the typed browser action. It is never labeled as setup, installed,

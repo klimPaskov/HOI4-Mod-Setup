@@ -61,7 +61,7 @@ README pinned wording differs from latest-at-bootstrap resolution. Choose and en
 - transaction and rollback are mandatory
 - Git push and online creation require separate approval
 - no invented platform commands
-- all semantic setup fields use ChatGPT-authenticated Codex
+- all semantic setup fields use the selected setup assistant; Codex uses ChatGPT authentication and App Server
 - App Server managed browser login is primary with device-code fallback
 - the external launcher descriptor and generated thumbnail are lock-managed
 - Windows and macOS resolve the HOI4 user `mod` directory from native redirected

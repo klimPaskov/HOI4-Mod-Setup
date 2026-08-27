@@ -27,9 +27,11 @@ documents that define them.
 The workflow source is
 [`klimPaskov/Agentic-HOI4-Modding`](https://github.com/klimPaskov/Agentic-HOI4-Modding).
 The bundled manifest matches the Agentic source publication at revision
-`de7dab486e99ce926de60905e8930b20fb0eab04`; its selected-file evidence was
+`59cc276cd79db5e69b0b39280f09c831d86a2348`; its selected-file evidence was
 generated from immutable source revision
-`78da3473fa7a6260944ed1df9febdab85644083e`. The app still resolves the remote
+`cbdc5f06ff4ca71c2e1c6ef3c5befd8adc1332bb`. It includes complete native
+Codex, Claude Code, Cursor, Qoder, and OpenCode packages projected from the
+canonical Codex TOML agents. The app still resolves the remote
 default branch to one exact commit at runtime. The source-owned publication
 workflow refreshes selected-file evidence for changed skills, subagents, and
 declared component trees, allowing compatible file-only additions to flow into

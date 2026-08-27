@@ -6,6 +6,7 @@ use crate::codex::{
     ApprovedEvidence, CodexAccountStatus, CodexAnalysis, CodexAnalysisRequest, CodexAnalysisResult,
     CodexLoginStart, ProcessJsonlTransport,
 };
+use crate::coding_environment;
 use crate::credentials::{
     discover_meshy_credential_reference, provider_name, save_ai_provider_key, save_meshy_key,
     validate_ai_provider_credential_for, validate_credential_reference, CredentialStore,
@@ -2438,7 +2439,14 @@ fn installed_mcp_target(
 ) -> Result<crate::mcp::VerifiedMcpTarget, AppError> {
     let manifest = resolve_installed_manifest(lock)?;
     let target = crate::mcp::manifest_target(&manifest)?;
-    if lock.ai_provider != "codex" {
+    let codex_config_selected = lock.components.iter().any(|component| {
+        component.id == "codex.config"
+            && !matches!(
+                component.state.as_str(),
+                "not_selected" | "removed" | "unsupported_platform"
+            )
+    });
+    if !codex_config_selected {
         return Ok(target);
     }
     let config_path = safe_join(project_root, ".codex/config.toml")?;
@@ -2571,45 +2579,6 @@ fn evaluate_installed_readiness(
 ) -> Result<ReadinessReport, AppError> {
     let mut detected = crate::readiness::project_input(project_root, project_id)?;
     refresh_installed_mcp_readiness(project_root, &mut detected)?;
-    let locked_ai = read_project_lock(project_root).ok();
-    if detected.ai_provider == "codex" {
-        let live_codex = with_codex_session(|session| session.account_read(false)).ok();
-        detected.codex_authenticated = detected.codex_authenticated
-            && live_codex.as_ref().is_some_and(|status| {
-                status.error.is_none()
-                    && status.authenticated
-                    && status.auth_mode == "chatgpt"
-                    && !status.usage_limited
-            });
-        detected.ai_authenticated = detected.codex_authenticated;
-    } else {
-        let endpoint = locked_ai
-            .as_ref()
-            .and_then(|lock| lock.ai_endpoint.clone())
-            .unwrap_or_default();
-        let credential_reference = ai_credential_reference(&detected.ai_provider);
-        let status = ai::account_status(
-            &OsCredentialStore,
-            &AiProviderConfig {
-                provider: detected.ai_provider.clone(),
-                model: detected.ai_model.clone(),
-                reasoning_effort: locked_ai
-                    .as_ref()
-                    .map(|lock| lock.ai_reasoning_effort.clone())
-                    .unwrap_or_else(crate::models::default_ai_reasoning_effort),
-                endpoint,
-                credential_reference,
-            },
-        );
-        detected.ai_authenticated = detected.ai_authenticated
-            && status.error.is_none()
-            && status.authenticated
-            && !status.usage_limited;
-    }
-    if !detected.ai_authenticated {
-        detected.ai_analysis_status = "blocked".into();
-        detected.codex_analysis_status = "blocked".into();
-    }
     detected.workflow_3d_state = read_project_lock(project_root)
         .map(|lock| cached_three_d_state(project_root, &lock))
         .unwrap_or(workflow_3d_state);
@@ -2629,11 +2598,13 @@ fn evaluate_readiness(input: ReadinessInput) -> Result<ReadinessReport, String> 
             input.notes,
         )
         .map_err(command_error)?;
-        if crate::readiness::core_ready(&report) {
+        if report.open_in_codex.enabled {
             let lock_hash = sha256_file(&crate::paths::lock_path(&root)).map_err(command_error)?;
             if let Ok(mut ready) = ready_projects().lock() {
                 ready.insert(root.display().to_string(), lock_hash);
             }
+        } else if let Ok(mut ready) = ready_projects().lock() {
+            ready.remove(&root.display().to_string());
         }
         Ok(report)
     } else {
@@ -2891,24 +2862,64 @@ fn selected_ids(state: &Value, provider: &str) -> Vec<String> {
     } else {
         selected.retain(|id| !id.starts_with("workflow.portraits"));
     }
-    if provider != "codex" {
-        selected.retain(|id| id != "codex.config");
-    }
+    let _ = provider;
     selected
 }
 
-fn reject_codex_only_dependencies(provider: &str, selected: &[String]) -> Result<(), AppError> {
-    if provider != "codex" && selected.iter().any(|id| id == "codex.config") {
-        return Err(AppError::InvalidInput(
-            "Codex configuration can only be selected with the Codex provider".into(),
-        ));
+fn coding_environment_selection_from_state(
+    state: &Value,
+) -> Result<CodingEnvironmentSelection, AppError> {
+    coding_environment::selection_from_value(state)
+}
+
+fn requested_components_for_selection(
+    manifest: &RemoteManifest,
+    state: &Value,
+    provider: &str,
+) -> Result<(Vec<String>, CodingEnvironmentSelection), AppError> {
+    let selection = coding_environment_selection_from_state(state)?;
+    let environment_ids = coding_environment::all_environment_component_ids(manifest);
+    let mut requested = selected_ids(state, provider)
+        .into_iter()
+        .filter(|id| !environment_ids.contains(id))
+        .collect::<Vec<_>>();
+    // These components are runtime-neutral and are always installed.  The
+    // manifest remains authoritative: a source revision that does not declare
+    // one cannot be made complete by the app inventing a replacement.
+    for shared in [
+        "core.agents",
+        "core.skills",
+        "core.subagents",
+        "runtime.agent_sync",
+        // The verified MCP bootstrap is provider-neutral; native client
+        // configurations in every environment point at the same command.
+        "mcp.hoi4_agent_tools.bootstrap",
+        // The verified HOI4 tools package is also provider-neutral.  Its
+        // external health action is shared by every native MCP configuration;
+        // the Codex config projection remains a separate environment package.
+        "mcp.hoi4_agent_tools",
+        "docs.mcp_integration",
+        "wiki.snapshot",
+    ] {
+        if manifest
+            .components
+            .iter()
+            .any(|component| component.id == shared)
+            && !requested.iter().any(|id| id == shared)
+        {
+            requested.push(shared.into());
+        }
     }
-    Ok(())
+    for id in coding_environment::component_ids(manifest, &selection)? {
+        if !requested.iter().any(|selected| selected == &id) {
+            requested.push(id);
+        }
+    }
+    Ok((requested, selection))
 }
 
 fn add_supported_profile_components(
     manifest: &RemoteManifest,
-    provider: &str,
     requested: &mut Vec<String>,
     component_ids: &[String],
     platform: Platform,
@@ -2920,9 +2931,6 @@ fn add_supported_profile_components(
         let mut candidate = requested.clone();
         candidate.push(component_id.clone());
         let expanded = expand_components(manifest, &candidate)?;
-        if reject_codex_only_dependencies(provider, &expanded).is_err() {
-            continue;
-        }
         let support = crate::source::resolve_platform_support(manifest, &expanded, platform)?;
         if support.iter().any(|item| item.state == "blocked") {
             continue;
@@ -3501,12 +3509,7 @@ fn adapt_agents_for_selection(
             "AGENTS template contains unresolved project placeholders".into(),
         ));
     }
-    let profile = ai::profile(provider)
-        .map(|profile| profile.optimization_profile)
-        .unwrap_or_else(|| "provider conventions".into());
-    adapted.push_str(&format!(
-        "\n\n## Selected AI planning profile\n\n- Provider: `{provider}`\n- Model: `{model}`\n- Reasoning effort: `{reasoning_effort}`\n- Optimization profile: {profile}\n- Semantic analysis is advisory; confirm deterministic identifiers, paths, hashes, and file changes before apply.\n"
-    ));
+    let _ = (provider, model, reasoning_effort);
     const SUPER_EVENTS_START: &str = "<!-- HOI4_MOD_SETUP:SUPER_EVENTS:START -->";
     const SUPER_EVENTS_END: &str = "<!-- HOI4_MOD_SETUP:SUPER_EVENTS:END -->";
     match (
@@ -4280,17 +4283,13 @@ fn project_readme(
             "project description exceeds the bounded README input limit".into(),
         ));
     }
-    let optimization_profile = ai_optimization_profile(provider);
+    let _ = (provider, model, reasoning_effort);
     Ok(format!(
-        "# {}\n\n{}\n\n## Local development\n\nThis project was prepared by HOI4 Mod Setup for agentic development.\n\n- Project ID: `{}`\n- Supported game version: `{}`\n- Planning provider: `{}`\n- Model: `{}`\n- Reasoning effort: `{}`\n- Optimization profile: {}\n- Workshop identity: none assigned\n",
+        "# {}\n\n{}\n\n## Local development\n\nThis project was prepared by HOI4 Mod Setup for provider-neutral agentic development. The AI used during setup does not select or restrict the development client used later.\n\n- Project ID: `{}`\n- Supported game version: `{}`\n- Workshop identity: none assigned\n",
         identity.display_name,
         description.trim(),
         identity.project_id,
         identity.supported_game_version,
-        provider,
-        model,
-        reasoning_effort,
-        optimization_profile,
     ))
 }
 
@@ -4448,24 +4447,19 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         },
     })?;
     let flatten_chat_sources = flatten_for_chat_from_state(state);
-    if flatten_chat_sources && ai_provider != "codex" {
-        return Err(AppError::InvalidInput(
-            "flattened ChatGPT Chat sources are available only when Codex is selected".into(),
-        ));
-    }
     let git_setup = git_setup_from_state(state, &root)?;
     let request = source_request_from_state(state)?;
     let client = HttpSourceClient::new()?;
     let resolution = resolve_source(&client, &request)?;
     validate_analysis_source_binding(&codex_analysis, &resolution.identity)?;
-    let requested = selected_ids(state, &ai_provider);
+    let (requested, coding_environment_selection) =
+        requested_components_for_selection(&resolution.manifest, state, &ai_provider)?;
     if requested.is_empty() {
         return Err(AppError::InvalidInput(
             "select at least one manifest component".into(),
         ));
     }
     let selected = expand_components(&resolution.manifest, &requested)?;
-    reject_codex_only_dependencies(&ai_provider, &selected)?;
     let support = crate::source::resolve_platform_support(
         &resolution.manifest,
         &selected,
@@ -4720,7 +4714,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             "platform": Platform::current().manifest_name(),
             "wizard": {
                 "current_step": "ready",
-                "completed_steps": ["welcome", "description", "identity", "components", "workflows"]
+                "completed_steps": ["welcome", "description", "identity", "environments", "components", "workflows"]
             },
             "preferences": {
                 "telemetry": false
@@ -4728,6 +4722,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             "ai": {
                 "provider": ai_provider.clone(),
                 "model": ai_model_from_state(state),
+                "reasoning_effort": ai_reasoning_effort_from_state(state),
                 "optimization_profile": ai::profile(&ai_provider)
                     .map(|profile| profile.optimization_profile)
                     .unwrap_or_else(|| "provider conventions".into())
@@ -4739,6 +4734,10 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                 "analysis_required": true,
                 "analysis_status": "confirmed",
                 "account_values_persisted": false
+            },
+            "coding_environments": {
+                "primary": coding_environment_selection.primary.clone(),
+                "additional": coding_environment_selection.additional.clone()
             },
             "credential_references": credential_references.clone(),
             "portrait_pipeline": portrait_pipeline.clone()
@@ -4942,6 +4941,8 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         ai_model: ai_model_from_state(state),
         ai_reasoning_effort: ai_reasoning_effort_from_state(state),
         ai_endpoint: ai_endpoint_from_state(state),
+        primary_coding_environment: coding_environment_selection.primary.clone(),
+        additional_coding_environments: coding_environment_selection.additional.clone(),
         flatten_chat_sources,
         codex_analysis: Some(codex_analysis),
         selected_components: selected,
@@ -5361,6 +5362,12 @@ fn lock_mcp_selected(lock: &InstallationLock) -> bool {
     })
 }
 
+fn component_ids_include_mcp(component_ids: &[String]) -> bool {
+    component_ids.iter().any(|component_id| {
+        component_id == "mcp.hoi4_agent_tools" && Platform::current() == Platform::Windows
+    })
+}
+
 fn lock_workflow_selected(lock: &InstallationLock, workflow_id: &str) -> bool {
     lock.optional_workflows
         .get(workflow_id)
@@ -5590,6 +5597,8 @@ fn build_maintenance_plan(
     analysis_override: Option<CodexAnalysisRecord>,
     add_optional_components: Option<Vec<String>>,
     portrait_pipeline: Option<Value>,
+    primary_coding_environment: Option<String>,
+    additional_coding_environments: Option<Vec<String>>,
 ) -> Result<InstallationPlan, String> {
     run_blocking_command("maintenance-plan", move || {
         build_maintenance_plan_blocking(
@@ -5598,6 +5607,8 @@ fn build_maintenance_plan(
             analysis_override,
             add_optional_components,
             portrait_pipeline,
+            primary_coding_environment,
+            additional_coding_environments,
         )
     })
 }
@@ -5608,11 +5619,47 @@ fn build_maintenance_plan_blocking(
     analysis_override: Option<CodexAnalysisRecord>,
     add_optional_components: Option<Vec<String>>,
     portrait_pipeline_value: Option<Value>,
+    primary_coding_environment: Option<String>,
+    additional_coding_environments: Option<Vec<String>>,
 ) -> Result<InstallationPlan, String> {
     let root = validate_project_root_or_destination(Path::new(&project_root))
         .map(|(root, _)| root)
         .map_err(command_error)?;
     let lock = read_project_lock(&root).map_err(command_error)?;
+    let coding_environment_selection = if mode == "remove" {
+        CodingEnvironmentSelection {
+            primary: lock.primary_coding_environment.clone(),
+            additional: lock.additional_coding_environments.clone(),
+        }
+    } else {
+        let mut value = serde_json::Map::new();
+        if let Some(primary) = primary_coding_environment {
+            value.insert("primaryCodingEnvironment".into(), Value::String(primary));
+        } else {
+            value.insert(
+                "primaryCodingEnvironment".into(),
+                Value::String(lock.primary_coding_environment.clone()),
+            );
+        }
+        if let Some(additional) = additional_coding_environments {
+            value.insert(
+                "additionalCodingEnvironments".into(),
+                Value::Array(additional.into_iter().map(Value::String).collect()),
+            );
+        } else {
+            value.insert(
+                "additionalCodingEnvironments".into(),
+                Value::Array(
+                    lock.additional_coding_environments
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            );
+        }
+        coding_environment::selection_from_value(&Value::Object(value)).map_err(command_error)?
+    };
     let portrait_pipeline = if let Some(value) = portrait_pipeline_value {
         portrait_pipeline_from_state(&serde_json::json!({"portraitPipeline": value}))
             .map_err(command_error)?
@@ -5782,6 +5829,37 @@ fn build_maintenance_plan_blocking(
             })
             .map(|component| component.id.clone())
             .collect::<Vec<_>>();
+        let incoming_environment_ids =
+            coding_environment::all_environment_component_ids(&resolution.manifest);
+        requested.retain(|id| !incoming_environment_ids.contains(id));
+        for component_id in
+            coding_environment::component_ids(&resolution.manifest, &coding_environment_selection)
+                .map_err(command_error)?
+        {
+            if !requested.iter().any(|id| id == &component_id) {
+                requested.push(component_id);
+            }
+        }
+        if resolution
+            .manifest
+            .components
+            .iter()
+            .any(|component| component.id == "mcp.hoi4_agent_tools.bootstrap")
+            && !requested
+                .iter()
+                .any(|id| id == "mcp.hoi4_agent_tools.bootstrap")
+        {
+            requested.push("mcp.hoi4_agent_tools.bootstrap".into());
+        }
+        if resolution
+            .manifest
+            .components
+            .iter()
+            .any(|component| component.id == "mcp.hoi4_agent_tools")
+            && !requested.iter().any(|id| id == "mcp.hoi4_agent_tools")
+        {
+            requested.push("mcp.hoi4_agent_tools".into());
+        }
         requested.retain(|id| !id.starts_with("workflow.portraits"));
         if portrait_pipeline.enabled {
             if let Some(ids) = portrait_component_ids(&portrait_pipeline.provider) {
@@ -5805,7 +5883,6 @@ fn build_maintenance_plan_blocking(
                 .map_err(command_error)?;
         add_supported_profile_components(
             &resolution.manifest,
-            &lock.ai_provider,
             &mut requested,
             &new_defaults,
             Platform::current(),
@@ -5813,7 +5890,6 @@ fn build_maintenance_plan_blocking(
         .map_err(command_error)?;
         let expanded =
             expand_components(&resolution.manifest, &requested).map_err(command_error)?;
-        reject_codex_only_dependencies(&lock.ai_provider, &expanded).map_err(command_error)?;
         maintenance_components = expanded.clone();
         let support = crate::source::resolve_platform_support(
             &resolution.manifest,
@@ -5838,7 +5914,11 @@ fn build_maintenance_plan_blocking(
             .map_err(command_error)?;
         let selections = select_component_files(&resolution.manifest, &supported, &tree)
             .map_err(command_error)?;
-        let mcp_selected = lock_mcp_selected(&lock);
+        // Re-adapt the incoming Codex configuration against the desired
+        // maintenance closure.  The predecessor lock may not contain Codex
+        // yet (for example when a project switches from Claude to Codex), so
+        // using only the old lock would silently omit its MCP route.
+        let mcp_selected = component_ids_include_mcp(&maintenance_components);
         let project_identity = maintenance_identity(&lock, &root);
         if mcp_selected {
             maintenance_mcp_manifest = Some(resolution.manifest.clone());
@@ -5975,6 +6055,186 @@ fn build_maintenance_plan_blocking(
         };
         (operations, source, lock.source.revision.clone())
     };
+    if matches!(mode.as_str(), "repair" | "reinstall") {
+        let locked_selection = CodingEnvironmentSelection {
+            primary: lock.primary_coding_environment.clone(),
+            additional: lock.additional_coding_environments.clone(),
+        };
+        if coding_environment_selection != locked_selection
+            || !lock
+                .components
+                .iter()
+                .any(|component| component.id == "mcp.hoi4_agent_tools.bootstrap")
+            || !lock
+                .components
+                .iter()
+                .any(|component| component.id == "mcp.hoi4_agent_tools")
+        {
+            // Repair and reinstall are allowed to change the native client
+            // closure without switching the immutable source revision. The
+            // same pinned manifest supplies additions and the lock supplies
+            // the base used to decide whether a deselected file may be
+            // removed.
+            let resolution = resolve_source(
+                &client,
+                &SourceRequest {
+                    mode: SourceMode::PinnedCommit,
+                    requested_ref: Some(lock.source.revision.clone()),
+                    release: None,
+                },
+            )
+            .map_err(command_error)?;
+            if resolution.identity.manifest_sha256 != lock.source.manifest_sha256 {
+                return Err(
+                    "the installed source manifest does not match its immutable revision evidence"
+                        .into(),
+                );
+            }
+            let manifest_environment_ids =
+                coding_environment::all_environment_component_ids(&resolution.manifest);
+            let mut desired_environment_ids = coding_environment::component_ids(
+                &resolution.manifest,
+                &coding_environment_selection,
+            )
+            .map_err(command_error)?;
+            // The tools server is shared by every selected native client.  It
+            // is deliberately retained outside the primary/additional
+            // environment closure so switching clients never unregisters the
+            // provider-neutral MCP route.
+            if resolution
+                .manifest
+                .components
+                .iter()
+                .any(|component| component.id == "mcp.hoi4_agent_tools")
+                && !desired_environment_ids
+                    .iter()
+                    .any(|id| id == "mcp.hoi4_agent_tools")
+            {
+                desired_environment_ids.push("mcp.hoi4_agent_tools".into());
+            }
+            let active_locked_environment_ids = lock
+                .components
+                .iter()
+                .filter(|component| {
+                    manifest_environment_ids.contains(&component.id)
+                        && !matches!(
+                            component.state.as_str(),
+                            "removed" | "not_selected" | "unsupported_platform"
+                        )
+                })
+                .map(|component| component.id.clone())
+                .collect::<std::collections::HashSet<_>>();
+            let desired_set = desired_environment_ids
+                .iter()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>();
+            let mut add_ids = desired_environment_ids
+                .iter()
+                .filter(|id| !active_locked_environment_ids.contains(*id))
+                .cloned()
+                .collect::<Vec<_>>();
+            if resolution
+                .manifest
+                .components
+                .iter()
+                .any(|component| component.id == "mcp.hoi4_agent_tools.bootstrap")
+                && !lock
+                    .components
+                    .iter()
+                    .any(|component| component.id == "mcp.hoi4_agent_tools.bootstrap")
+            {
+                add_ids.push("mcp.hoi4_agent_tools.bootstrap".into());
+            }
+            if resolution
+                .manifest
+                .components
+                .iter()
+                .any(|component| component.id == "mcp.hoi4_agent_tools")
+                && !lock
+                    .components
+                    .iter()
+                    .any(|component| component.id == "mcp.hoi4_agent_tools")
+                && !add_ids.iter().any(|id| id == "mcp.hoi4_agent_tools")
+            {
+                add_ids.push("mcp.hoi4_agent_tools".into());
+            }
+            let remove_ids = active_locked_environment_ids
+                .iter()
+                .filter(|id| !desired_set.contains(*id))
+                .cloned()
+                .collect::<std::collections::HashSet<_>>();
+            if !add_ids.is_empty() {
+                let expanded =
+                    expand_components(&resolution.manifest, &add_ids).map_err(command_error)?;
+                let support = crate::source::resolve_platform_support(
+                    &resolution.manifest,
+                    &expanded,
+                    Platform::current(),
+                )
+                .map_err(command_error)?;
+                if support.iter().any(|item| item.state == "blocked") {
+                    return Err(
+                        "a selected coding environment has no verified route on this computer"
+                            .into(),
+                    );
+                }
+                let supported = expanded
+                    .into_iter()
+                    .filter(|id| {
+                        support
+                            .iter()
+                            .find(|item| item.component_id == id.as_str())
+                            .is_some_and(|item| item.state == "supported")
+                    })
+                    .collect::<Vec<_>>();
+                let tree = client
+                    .fetch_tree(&resolution.identity.resolved_revision)
+                    .map_err(command_error)?;
+                let selections = select_component_files(&resolution.manifest, &supported, &tree)
+                    .map_err(command_error)?;
+                append_additional_component_operations(
+                    &mut operations,
+                    &selections,
+                    &lock,
+                    &root,
+                    &maintenance_identity(&lock, &root),
+                    false,
+                )
+                .map_err(command_error)?;
+            }
+            if !remove_ids.is_empty() {
+                operations.retain(|operation| !remove_ids.contains(&operation.component_id));
+                let obsolete_lock = InstallationLock {
+                    components: lock
+                        .components
+                        .iter()
+                        .filter(|component| remove_ids.contains(&component.id))
+                        .cloned()
+                        .collect(),
+                    files: lock
+                        .files
+                        .iter()
+                        .filter(|file| remove_ids.contains(&file.component_id))
+                        .cloned()
+                        .collect(),
+                    ..lock.clone()
+                };
+                let mut removals =
+                    crate::transaction::managed_removal_operations(&obsolete_lock, &root)
+                        .map_err(command_error)?;
+                for (index, operation) in removals.iter_mut().enumerate() {
+                    operation.id = format!("maintenance-environment-remove-{index:05}");
+                }
+                operations.extend(removals);
+            }
+            maintenance_components.retain(|id| !remove_ids.contains(id));
+            for component_id in desired_environment_ids {
+                if !maintenance_components.iter().any(|id| id == &component_id) {
+                    maintenance_components.push(component_id);
+                }
+            }
+        }
+    }
     if mode == "repair" && !add_optional_components.is_empty() {
         let resolution = resolve_source(
             &client,
@@ -6012,7 +6272,6 @@ fn build_maintenance_plan_blocking(
         }
         let expanded =
             expand_components(&resolution.manifest, &requested).map_err(command_error)?;
-        reject_codex_only_dependencies(&lock.ai_provider, &expanded).map_err(command_error)?;
         if portrait_pipeline.enabled {
             let keep_portrait = expanded
                 .iter()
@@ -6178,7 +6437,10 @@ fn build_maintenance_plan_blocking(
                     .is_some_and(|file| file.executable),
             })
         };
-        let mcp_selected = lock_mcp_selected(&lock);
+        // `maintenance_components` already reflects additions/removals made
+        // by this plan.  Use it for adaptation so a newly selected Codex
+        // package receives its MCP route and a deselected one loses it.
+        let mcp_selected = component_ids_include_mcp(&maintenance_components);
         let generated_source = operation
             .source_path
             .as_deref()
@@ -6519,11 +6781,17 @@ fn build_maintenance_plan_blocking(
             "incomplete".into()
         },
     );
-    let external_actions = if mode != "remove" && lock_mcp_selected(&lock) {
-        let manifest = maintenance_mcp_manifest.as_ref().ok_or_else(|| {
-            "the maintenance plan could not retain the locked MCP manifest evidence".to_string()
-        })?;
-        let actions = manifest_external_actions(manifest, &maintenance_components);
+    let mcp_selected = mode != "remove" && component_ids_include_mcp(&maintenance_components);
+    let external_actions = if mcp_selected {
+        // Update already resolved the target manifest above. Repair and
+        // reinstall may add Codex to a lock that did not contain it, so load
+        // the immutable locked manifest lazily for that transition as well.
+        let manifest = if let Some(manifest) = maintenance_mcp_manifest.as_ref() {
+            manifest.clone()
+        } else {
+            resolve_installed_manifest(&lock).map_err(command_error)?
+        };
+        let actions = manifest_external_actions(&manifest, &maintenance_components);
         if !actions
             .iter()
             .any(|action| action.component_id == crate::mcp::COMPONENT_ID)
@@ -6557,6 +6825,8 @@ fn build_maintenance_plan_blocking(
         flatten_chat_sources: lock.flatten_chat_sources,
         codex_analysis,
         selected_components: maintenance_components,
+        primary_coding_environment: coding_environment_selection.primary.clone(),
+        additional_coding_environments: coding_environment_selection.additional.clone(),
         wiki_required_pages,
         wiki_metadata,
         generated_artifacts,
@@ -6921,42 +7191,20 @@ fn discard_installation_staging(
 #[tauri::command(async)]
 fn open_in_codex(project_root: String) -> Result<OpenInCodexResult, String> {
     let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
-    let current_lock_hash = sha256_file(&crate::paths::lock_path(&root)).map_err(command_error)?;
-    let cached_ready = ready_projects()
-        .lock()
-        .ok()
-        .and_then(|ready| ready.get(&root.display().to_string()).cloned())
-        .is_some_and(|hash| hash == current_lock_hash);
-    if !cached_ready {
-        let live_codex =
-            with_codex_session(|session| session.account_read(false)).map_err(command_error)?;
-        if live_codex.error.is_some()
-            || !live_codex.authenticated
-            || live_codex.auth_mode != "chatgpt"
-            || live_codex.usage_limited
-        {
-            return Err(
-                "Open in Codex requires an active ChatGPT-authenticated Codex session".into(),
-            );
-        }
-        let lock = read_project_lock(&root).map_err(command_error)?;
-        let workflow_3d_state = lock
-            .optional_workflows
-            .get("workflow.3d")
-            .map(|workflow| workflow.state.clone())
-            .unwrap_or_else(|| "not_selected".into());
-        let readiness =
-            evaluate_installed_readiness(&root, &lock.project_id, workflow_3d_state, Vec::new())
-                .map_err(command_error)?;
-        if !crate::readiness::core_ready(&readiness) {
-            return Err(format!(
-                "Codex remains disabled until core readiness passes: {}",
-                readiness.open_in_codex.blocking_check_ids.join(", ")
-            ));
-        }
-        if let Ok(mut ready) = ready_projects().lock() {
-            ready.insert(root.display().to_string(), current_lock_hash);
-        }
+    let lock = read_project_lock(&root).map_err(command_error)?;
+    let workflow_3d_state = lock
+        .optional_workflows
+        .get("workflow.3d")
+        .map(|workflow| workflow.state.clone())
+        .unwrap_or_else(|| "not_selected".into());
+    let readiness =
+        evaluate_installed_readiness(&root, &lock.project_id, workflow_3d_state, Vec::new())
+            .map_err(command_error)?;
+    if !readiness.open_in_codex.enabled {
+        return Err(format!(
+            "Codex remains disabled until its installed integration and readiness checks pass: {}",
+            readiness.open_in_codex.blocking_check_ids.join(", ")
+        ));
     }
     let Some(executable) = find_codex_executable() else {
         return Ok(manual_open_in_codex_result(&root));
@@ -7217,7 +7465,7 @@ mod tests {
     }
 
     #[test]
-    fn generated_readme_records_the_selected_provider_model_and_profile() {
+    fn generated_readme_does_not_assign_the_setup_assistant_as_the_development_client() {
         let readme = project_readme(
             &ProjectIdentity {
                 display_name: "Example Mod".into(),
@@ -7239,10 +7487,11 @@ mod tests {
         )
         .unwrap();
 
-        assert!(readme.contains("Planning provider: `claude`"));
-        assert!(readme.contains("Model: `claude-sonnet`"));
-        assert!(readme.contains("Reasoning effort: `high`"));
-        assert!(readme.contains("Optimization profile: Claude Code / Anthropic conventions"));
+        assert!(readme.contains("provider-neutral agentic development"));
+        assert!(readme.contains("does not select or restrict the development client"));
+        assert!(!readme.contains("Planning provider"));
+        assert!(!readme.contains("claude-sonnet"));
+        assert!(!readme.contains("Claude setup analysis"));
     }
 
     #[test]
@@ -7293,7 +7542,8 @@ mod tests {
         .unwrap();
         let selected = String::from_utf8(selected).unwrap();
         assert!(selected.contains("Optional Super Events workflow"));
-        assert!(selected.contains("Reasoning effort: `xhigh`"));
+        assert!(!selected.contains("Selected AI planning profile"));
+        assert!(!selected.contains("Reasoning effort"));
         assert!(!String::from_utf8(unselected)
             .unwrap()
             .contains("Optional Super Events workflow"));
@@ -7431,14 +7681,8 @@ mcp_server = "comfy_cloud_portraits"
         let mut requested = vec!["core.agents".into()];
 
         let defaults = default_profile_component_ids(&manifest).unwrap();
-        add_supported_profile_components(
-            &manifest,
-            "codex",
-            &mut requested,
-            &defaults,
-            Platform::Windows,
-        )
-        .unwrap();
+        add_supported_profile_components(&manifest, &mut requested, &defaults, Platform::Windows)
+            .unwrap();
 
         assert!(requested.iter().any(|id| id == "core.future_skills"));
     }
@@ -7812,22 +8056,63 @@ developer_instructions = "Work on the named files."
     }
 
     #[test]
-    fn non_codex_provider_rejects_a_dependency_that_expands_to_codex_config() {
-        let error = reject_codex_only_dependencies(
-            "claude",
-            &["core.agents".into(), "codex.config".into()],
+    fn setup_provider_does_not_filter_development_components() {
+        let selected = selected_ids(
+            &serde_json::json!({
+                "selectedComponents": ["core.agents", "codex.config", "mcp.hoi4_agent_tools"]
+            }),
+            "deepseek",
+        );
+        assert!(selected.iter().any(|id| id == "codex.config"));
+        assert!(selected.iter().any(|id| id == "mcp.hoi4_agent_tools"));
+    }
+
+    #[test]
+    fn shared_mcp_route_is_requested_for_every_coding_environment() {
+        let manifest = crate::source::parse_manifest(
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json"),
+            None,
         )
-        .unwrap_err();
-        assert!(error.to_string().contains("Codex configuration"));
-        assert!(reject_codex_only_dependencies(
-            "claude",
-            &[
-                "core.agents".into(),
-                "mcp.hoi4_agent_tools".into(),
-                "workflow.3d".into()
-            ],
-        )
-        .is_ok());
+        .unwrap();
+        for primary in crate::coding_environment::SUPPORTED {
+            let state = serde_json::json!({
+                "primaryCodingEnvironment": primary,
+                "additionalCodingEnvironments": [],
+                "selectedComponents": []
+            });
+            let (requested, selection) =
+                requested_components_for_selection(&manifest, &state, "deepseek").unwrap();
+            assert_eq!(selection.primary, primary);
+            assert!(
+                requested.iter().any(|id| id == "mcp.hoi4_agent_tools"),
+                "shared MCP package missing for {primary}"
+            );
+            assert!(
+                requested
+                    .iter()
+                    .any(|id| id == "mcp.hoi4_agent_tools.bootstrap"),
+                "shared MCP bootstrap missing for {primary}"
+            );
+        }
+        let state = serde_json::json!({
+            "primaryCodingEnvironment": "cursor",
+            "additionalCodingEnvironments": ["codex", "claude_code"],
+            "selectedComponents": []
+        });
+        let (requested, _) =
+            requested_components_for_selection(&manifest, &state, "codex").unwrap();
+        for id in [
+            "codex.config",
+            "runtime.cursor",
+            "runtime.claude",
+            "runtime.claude.mcp",
+        ] {
+            assert!(
+                requested.iter().any(|candidate| candidate == id),
+                "missing {id}"
+            );
+        }
+        assert!(requested.iter().any(|id| id == "mcp.hoi4_agent_tools"));
     }
 
     #[test]
@@ -8191,7 +8476,7 @@ developer_instructions = "Work on the named files."
                 provider: Some("codex".into()),
                 model: None,
                 reasoning_effort: None,
-                optimization_profile: Some("Codex project and ChatGPT Chat".into()),
+                optimization_profile: Some("Codex setup analysis".into()),
                 analysis_id: Uuid::new_v4(),
                 schema_version: "1.0.0".into(),
                 input_sha256: "a".repeat(64),
@@ -8400,7 +8685,7 @@ developer_instructions = "Work on the named files."
             provider: Some("codex".into()),
             model: None,
             reasoning_effort: None,
-            optimization_profile: Some("Codex project and ChatGPT Chat".into()),
+            optimization_profile: Some("Codex setup analysis".into()),
             analysis_id,
             schema_version: "1.0.0".into(),
             input_sha256: "a".repeat(64),
@@ -8457,7 +8742,7 @@ developer_instructions = "Work on the named files."
             provider: Some("claude".into()),
             model: Some("claude-model".into()),
             reasoning_effort: Some("high".into()),
-            optimization_profile: Some("Claude Code / Anthropic conventions".into()),
+            optimization_profile: Some("Claude setup analysis".into()),
             analysis_id,
             schema_version: "1.0.0".into(),
             input_sha256: "a".repeat(64),
@@ -8621,7 +8906,9 @@ developer_instructions = "Work on the named files."
                 ai_model: "gpt-5.6-luna".into(),
                 ai_reasoning_effort: "xhigh".into(),
                 ai_endpoint: None,
-                ai_optimization_profile: "Codex project and ChatGPT Chat".into(),
+                ai_optimization_profile: "Codex setup analysis".into(),
+                primary_coding_environment: "codex".into(),
+                additional_coding_environments: vec![],
                 flatten_chat_sources: true,
                 codex_analysis: None,
                 selected_components: vec![
@@ -8908,7 +9195,7 @@ developer_instructions = "Work on the named files."
                     provider: Some("codex".into()),
                     model: None,
                     reasoning_effort: None,
-                    optimization_profile: Some("Codex project and ChatGPT Chat".into()),
+                    optimization_profile: Some("Codex setup analysis".into()),
                     analysis_id,
                     schema_version: "1.0.0".into(),
                     input_sha256: "a".repeat(64),

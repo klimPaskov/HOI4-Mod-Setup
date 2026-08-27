@@ -5,7 +5,7 @@ description: Use when implementing or changing provider authentication, model pr
 
 # HOI4 Mod Setup Codex Integration
 
-Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The user selects a provider, live-catalog model, and model-supported reasoning effort at the start; Codex is the default profile.
+Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The user selects a setup assistant, live-catalog model, and model-supported reasoning effort at the start; Codex is the default profile. This choice is never the later Agentic HOI4 Modding development-client selection.
 
 ## Product rule
 
@@ -14,15 +14,33 @@ Create, Import, Update, and Repair planning require an authenticated, selected A
 Fetch Codex models through App Server `model/list` and provider models through
 the authenticated official Models API. Bind model plus reasoning effort to the
 analysis record, plan, and lock. The checked-in fallback defaults are
-`gpt-5.6-luna`/`xhigh` for Codex and `deepseek-v4-flash` for DeepSeek.
+`gpt-5.6-luna`/`xhigh` for Codex and `deepseek-v4-flash` for DeepSeek. Persist
+these only as setup-analysis provenance; do not write them into generated
+AGENTS/README guidance or use them to select development components.
 
-Optional components remain provider-neutral unless their manifest explicitly
-declares a provider dependency. `workflow.super_events` is an ordinary
+A model-catalog timeout, error, or empty result must not remove the model
+control. Keep the checked-in verified default selectable for Codex and every
+known hosted profile, then merge a successful live catalog into those options.
+Until live per-model metadata is available, expose only the fallback model's
+verified default reasoning effort. Keep a concise visible distinction between a
+live result, an empty result, and a failed refresh.
+For Local and Custom, keep the model name editable and expose successfully read
+endpoint models as suggestions. Never label a checked-in fallback as a live
+result, and never invent a fallback model for Local or Custom.
+
+Components and development-client integrations remain independent of the setup
+assistant unless their manifest explicitly declares a real runtime provider
+dependency. `workflow.super_events` is an ordinary
 manifest component for every selected provider; its selection, recommendation,
 file plan, and non-blocking readiness state must not create a Codex-only route.
 The same rule applies to `mcp.hoi4_agent_tools` and `workflow.3d`: the app-owned
 bootstrap and health paths remain usable for every provider, while only
 `codex.config` is Codex-specific.
+
+`Open in Codex` requires the installed Codex configuration and freshly
+recomputed local readiness. It never reads the setup provider's live account,
+App Server session, or credential-vault entry, and it must not trust a cached
+lock hash after managed project files change.
 
 The planning-ready gate is checked in both layers: the React start gate keeps
 Create/Import/Update/Repair unavailable until the selected provider is
@@ -198,7 +216,8 @@ confirmation time, the exact non-secret source revision and manifest digest,
 and `account_identity_persisted: false`.
 
 The deterministic AGENTS adapter appends the optional Super Events guidance
-only when `workflow.super_events` is selected. An unselected workflow must not
+only when `workflow.super_events` is selected. It never appends the setup
+provider, model, reasoning effort, or optimization profile. An unselected workflow must not
 leave Super Events instructions, skill references, or equivalent guidance in
 the generated project `AGENTS.md`.
 
@@ -209,7 +228,7 @@ application-managed roots such as `.git`, `.codex`, `.agents`,
 `.hoi4-mod-setup`, `paradox_wiki`, and `chatgpt_project_sources`.
 
 The UI shows a collapsed input preview before a turn, labels the result “Suggested
-by Codex,” and requires an explicit confirmation action. Drafts and scan findings
+by the selected setup assistant,” and requires an explicit confirmation action. Drafts and scan findings
 remain unchanged on process, login, usage-limit, or schema failure. The new-project
 renderer separately validates the user-confirmed launcher filename, descriptor
 agreement, and replaceable PNG placeholder; these are deterministic Rust checks.
@@ -251,7 +270,7 @@ Cover:
 - provider-neutral optional component recommendations, including the
   `workflow.super_events` registry ID/schema path and selected-vs-unselected
   AGENTS guidance
-- Codex-only flatten visibility, mapping, collision rejection, secret rejection, and recommendation copy
+- setup-assistant-independent flatten visibility, mapping, collision rejection, secret rejection, and recommendation copy
 
 ## Update this skill when
 

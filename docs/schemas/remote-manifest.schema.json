@@ -409,9 +409,20 @@
         "description": {
           "type": "string"
         },
+        "coding_environment": {
+          "type": "string",
+          "enum": [
+            "codex",
+            "claude_code",
+            "cursor",
+            "qoder",
+            "opencode"
+          ]
+        },
         "category": {
           "enum": [
             "core",
+            "environment",
             "skill",
             "subagent",
             "codex",

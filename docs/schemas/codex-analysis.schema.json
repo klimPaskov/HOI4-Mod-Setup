@@ -134,5 +134,5 @@
       }
     }
   },
-  "description": "Schema-constrained semantic proposals returned by a ChatGPT-authenticated Codex App Server turn."
+  "description": "Schema-constrained semantic proposals returned by the selected setup-assistant adapter; Codex uses a ChatGPT-authenticated App Server turn."
 }

@@ -1,16 +1,18 @@
 # AI provider profiles and flattened Chat sources
 
 This document records the provider-neutral planning boundary and the optional
-Codex-only flattened source export. It extends the planning package; it does
+flattened ChatGPT source export. It extends the planning package; it does
 not replace the source manifest, schemas, security model, or transaction
 contract.
 
 ## Provider selection
 
-The first setup screen selects a planning provider and model. Codex is the
-default. The selected profile is carried through the prompt, adapted
-`AGENTS.md`, generated `README.md`, project state, installation plan, lock,
-readiness report, and maintenance reanalysis.
+The first setup screen selects a setup assistant and model. Codex is the
+default. The choice is used for the read-only semantic turn and is retained as
+analysis provenance in app-managed project state, the installation plan, lock,
+readiness report, and maintenance reanalysis. It is not a development-client
+selection. Generated `AGENTS.md` and README content, installed components, MCP
+tools, Open in Codex, and ChatGPT packaging do not follow or identify it.
 
 The bounded registry currently contains:
 
@@ -28,7 +30,15 @@ The known hosted profiles ship with checked-in model and HTTPS address defaults
 verified against the providers' official documentation. After connection, the
 app reads the provider's model catalog through its
 official Models API. Codex uses App Server `model/list`, including each model's
-advertised reasoning levels. The model and reasoning controls remain visible on
+advertised reasoning levels. A missing, empty, or temporarily unreachable live
+catalog never removes the model control: Codex and the known hosted profiles
+retain their checked-in verified default as a selectable option, and a later
+live result augments that option. The fallback exposes only the verified default
+reasoning effort until live per-model capability metadata is available, and the
+screen identifies whether it is using a live result or the built-in choice.
+Local and custom profiles retain an editable
+model control and use a successfully read endpoint catalog as suggestions
+without inventing a model. The model and reasoning controls remain visible on
 the first screen; labels run from Light (`low`) through Max (`max`). Codex
 defaults to `gpt-5.6-luna` at `xhigh`. DeepSeek defaults to
 `deepseek-v4-flash`; its current official API accepts explicit effort control.
@@ -43,7 +53,7 @@ validation; the first semantic request is the capability check. Local
 models are explicitly configuration-based and are not described as hosted
 accounts.
 
-All providers use the same `codex-analysis` response schema and approved-input
+All setup assistants use the same `codex-analysis` response schema and approved-input
 boundary. Codex receives the schema through App Server `outputSchema`; the
 other adapters receive the exact checked-in schema in their system request.
 The core requires an explicit approval hash for the exact evidence vector after
@@ -58,10 +68,10 @@ or analysis output. Hosted requests use a bounded client with no redirects, no
 endpoint userinfo, HTTPS only, and a bounded response body. Local requests are
 limited to loopback HTTP.
 
-## Codex-only flattened Chat export
+## Flattened ChatGPT export
 
-The Components screen shows the optional checkbox only when the selected
-provider is Codex:
+The Components screen shows this optional development-client checkbox
+regardless of which setup assistant is selected:
 
 > Prepare a flattened ChatGPT project-sources folder
 
@@ -98,7 +108,8 @@ ChatGPT conversation, or start planning automatically.
 
 ## Existing-project ChatGPT source package
 
-The initial-install flatten option remains Codex-only. Separately, when an
+The initial-install flatten option is independent of the setup assistant.
+Separately, when an
 existing-project scan finds an `AGENTS.md`, flattened skill, or subagent,
 **Manage an existing project** can package its detected ChatGPT sources
 regardless of the current planning-provider screen or installation lock. The
@@ -121,9 +132,13 @@ Older state defaults to the Codex profile and its existing App Server behavior.
 State written by an earlier provider-neutral build is migrated to the matching
 `provider_api` or `local_endpoint` mode without turning a disconnected provider
 into a successful one.
-New plans and locks persist the selected provider, model, reasoning effort,
-optimization profile,
-endpoint when applicable, and flatten preference without persisting a secret.
-Readiness uses generic AI checks for non-Codex profiles. `Open in Codex` and
-flattened Chat export remain Codex-only; other providers receive an honest
-ready or incomplete state without a fake Codex opener.
+New plans and locks persist the selected setup provider, model, reasoning
+effort, optimization profile, endpoint when applicable, and flatten preference
+without persisting a secret. The provider fields are audit and maintenance
+provenance only. Legacy optimization labels are normalized to setup-analysis
+labels during migration. Readiness uses generic setup-analysis checks for
+non-Codex profiles. `Open in Codex` follows installed `codex.config` plus
+locally recomputed core readiness, and flattened Chat export follows its
+independent checkbox; neither is enabled or disabled by the setup assistant.
+The opener never rechecks the setup assistant's App Server session or
+credential-vault entry.

@@ -6,7 +6,7 @@
 2. Check for an incomplete local transaction.
 3. Open recovery first when a journal is incomplete.
 4. Otherwise show Welcome.
-5. Show the provider, live model catalog, and model-supported reasoning-effort selection before semantic planning.
+5. Show the setup assistant, model catalog, and model-supported reasoning-effort selection before semantic planning, with concise copy that this does not choose the later development client. Keep verified hosted defaults selectable when a live refresh fails; keep Local and Custom model names editable.
 6. For Codex, start the local Codex App Server and read account state; for a known hosted provider, fill its verified defaults and validate the vault reference; for local or custom providers, validate the entered address.
 7. Require the selected provider to be configured before Create, Import, Update, or Repair planning.
 8. Display current remote source status without downloading selected components yet.
@@ -39,9 +39,9 @@ hosted accounts.
 
 The user enters a mod name and describes the mod. The app immediately fills a
 valid editable project ID, script prefix, primary namespace, descriptor tags,
-and starter folder profile from those inputs. The app verifies the selected provider and sends
+and starter folder profile from those inputs. The app verifies the selected setup assistant and sends
 the approved brief and wizard constraints to a schema-constrained semantic
-turn. The selected provider may refine the normalized description, display name,
+turn. The selected setup assistant may refine the normalized description, display name,
 project ID, script prefix, namespace, tags, folder profile, likely systems, 3D
 relevance, and component selection. Deterministic validators check every
 field. The user edits only when desired or when the app identifies ambiguity,
@@ -74,6 +74,20 @@ Propose a minimal editable structure. A total conversion can include bookmarks, 
 ### Source and components
 
 Choose latest, pinned commit, or pinned release. Select components and review automatically selected dependencies.
+
+### Coding environments
+
+After identity or scan review, choose exactly one primary coding environment;
+Codex is the default. Add any number of the other supported clients: Claude
+Code, Cursor, Qoder, and OpenCode. The primary is removed from the additional
+choices whenever it changes. This selection does not change the setup assistant
+or the Core/Core plus 3D workflow profile.
+
+The plan always includes the runtime-neutral package and the complete manifest
+closure for each selected client. Existing projects show detected clients and
+recorded selections, preserve local files, and preview every add/update,
+preserved conflict, and removal. Deselecting a client removes only unchanged
+managed files; modified or unmanaged files remain.
 
 ### Optional workflows
 
@@ -119,18 +133,19 @@ recommendation: 16 GB VRAM and 25 GB storage.
 ### MCP, credentials, and Git
 
 Review server requirements, credential storage, external commands, Git mode, ignore rules, branch, optional commit, and optional remote.
-The MCP package and app-owned health check remain available for every planning
-provider; only Codex-specific client registration depends on `codex.config`.
+The MCP package and app-owned health check remain available for every setup
+assistant. Codex registration through `codex.config`, Open in Codex, and ChatGPT
+source packaging are development-client integrations independent of that choice.
 
 ### Dry run and apply
 
 Show every create, merge, replace, rename, skip, external command, Git action, source revision, hash, and recovery rule. Next stays disabled while a blocking conflict is unresolved.
 
-Run the 12-stage transaction. Verify the launcher descriptor resolves to the project, both descriptors agree, the thumbnail decodes, and the selected scaffold exists. Then show readiness. Offer Open in Codex only for the Codex profile.
+Run the 12-stage transaction. Verify the launcher descriptor resolves to the project, both descriptors agree, the thumbnail decodes, and the selected scaffold exists. Then show readiness. Offer Open in Codex whenever the independently installed Codex project integration and core readiness checks pass.
 
 ### Optional flattened Chat sources
 
-Only when Codex is selected, show the optional checkbox on Components under
+Regardless of the setup assistant, show the optional checkbox on Components under
 **Choose what to install**: **Prepare a flattened ChatGPT project-sources
 folder**. Show its filenames and available sizes there. Review its generated
 `chatgpt_project_sources/` operations. Skills become `<skill>.md`; selected
@@ -185,7 +200,7 @@ Namespace, prefix, naming, localisation, and folder-profile proposals belong
 to the separate selected-provider review. They are not deterministic scan
 findings and do not justify reading unrelated mod content.
 
-Every deterministic finding shows value, confidence, evidence path, line or file set, impact, and recommendation. Required provider suggestions show the approved input manifest, selected provider/model/profile, linked deterministic evidence, and separate confidence. The user can accept, edit, reject, or defer non-required proposals. Every field required for planning must be confirmed.
+Every deterministic finding shows value, confidence, evidence path, line or file set, impact, and recommendation. Required setup-assistant suggestions show the approved input manifest, selected provider/model/profile as analysis provenance, linked deterministic evidence, and separate confidence. The user can accept, edit, reject, or defer non-required proposals. Every field required for planning must be confirmed. The resulting project guidance does not identify that setup assistant as the future development client.
 
 ### Existing AGENTS.md
 

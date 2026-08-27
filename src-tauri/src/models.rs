@@ -89,6 +89,7 @@ pub enum Ownership {
 #[serde(rename_all = "snake_case")]
 pub enum ComponentCategory {
     Core,
+    Environment,
     Skill,
     Subagent,
     Codex,
@@ -235,6 +236,11 @@ pub struct ComponentDefinition {
     #[serde(default)]
     pub description: Option<String>,
     pub category: ComponentCategory,
+    /// Coding-client package ownership. Environment components are selected
+    /// independently from workflow profiles and share the runtime-neutral
+    /// component closure.
+    #[serde(default)]
+    pub coding_environment: Option<String>,
     pub optional: bool,
     pub platforms: Vec<ManifestPlatform>,
     pub source: SourceDefinition,
@@ -344,6 +350,13 @@ pub struct RemoteManifest {
     pub signing: Option<SigningPolicy>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodingEnvironmentSelection {
+    pub primary: String,
+    #[serde(default)]
+    pub additional: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceIdentity {
     pub repository: String,
@@ -410,7 +423,7 @@ pub(crate) fn default_ai_reasoning_effort() -> String {
 }
 
 pub(crate) fn default_ai_optimization_profile() -> String {
-    "Codex project and ChatGPT Chat".into()
+    "Codex setup analysis".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -785,6 +798,10 @@ pub struct InstallationPlan {
     pub ai_endpoint: Option<String>,
     #[serde(default = "default_ai_optimization_profile")]
     pub ai_optimization_profile: String,
+    #[serde(default = "default_coding_environment")]
+    pub primary_coding_environment: String,
+    #[serde(default)]
+    pub additional_coding_environments: Vec<String>,
     #[serde(default)]
     pub flatten_chat_sources: bool,
     #[serde(default)]
@@ -915,6 +932,10 @@ pub struct InstallationLock {
     pub ai_endpoint: Option<String>,
     #[serde(default = "default_ai_optimization_profile")]
     pub ai_optimization_profile: String,
+    #[serde(default = "default_coding_environment")]
+    pub primary_coding_environment: String,
+    #[serde(default)]
+    pub additional_coding_environments: Vec<String>,
     #[serde(default)]
     pub flatten_chat_sources: bool,
     #[serde(default)]
@@ -1094,6 +1115,10 @@ pub struct TransactionJournal {
     pub project_root: String,
     #[serde(default)]
     pub project_root_lifecycle: ProjectRootLifecycle,
+    #[serde(default = "default_coding_environment")]
+    pub primary_coding_environment: String,
+    #[serde(default)]
+    pub additional_coding_environments: Vec<String>,
     pub state: String,
     pub created_at: String,
     pub updated_at: String,
@@ -1124,6 +1149,10 @@ pub struct TransactionJournal {
 
 fn default_transaction_kind() -> String {
     "installation".into()
+}
+
+pub(crate) fn default_coding_environment() -> String {
+    "codex".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -75,11 +75,20 @@ session, cancellation, credential-health, or analysis assertions.
 - managed removal never deletes unowned content
 - secret-like values never survive serialization
 - one plan revision produces one file set
+- coding-environment validation covers Codex's default primary, exactly one
+  primary, primary/additional filtering, every supported primary and
+  multi-environment combination, and persisted selection migration
+- native package fixtures parse Codex, Claude Code, Cursor, Qoder, and OpenCode
+  settings/MCP files and canonical agent projections; drift, missing files, and
+  malformed runtime configuration fail readiness
+- existing-project detection plus update, repair, reinstall, rollback, and
+  removal preserve modified/unmanaged client files and remove only unchanged
+  managed files when an environment is deselected
 - selected manifest components and dependencies are the only downloaded files;
   an unselected `workflow.super_events` tree cannot enter the ledger or stage
 - manifest-declared `.gitkeep` markers never enter the selected file set
 - scan produces no project mutation
-- no launcher artifact is generated before confirmed Codex proposals
+- no launcher artifact is generated before confirmed selected-provider proposals
 - standard Documents/mod resolution and launcher discovery reject links,
   malformed candidates, collisions, and ambiguous sibling registrations
 - launcher scaffold coverage asserts that Windows launcher descriptors use the
@@ -94,11 +103,16 @@ session, cancellation, credential-health, or analysis assertions.
 - reviewed external-link commands accept only the fixed URLs and use the
   platform system-browser bridge
 - provider/model/reasoning-effort/profile stays bound from the start gate through analysis, plan,
-  lock, readiness, and any Codex-only flatten export
+  lock, and readiness as setup-analysis provenance, while generated guidance,
+  development components, Open in Codex, and flatten export remain independent
 - live model catalogs are bounded, credential-safe, and drive only supported
   reasoning options; unavailable catalogs retain an editable verified fallback
-- MCP and 3D selection, bootstrap, and health remain available for non-Codex
-  providers while `codex.config` stays rejected outside Codex
+- MCP, 3D, `codex.config`, ChatGPT flattening, and Open in Codex remain available
+  independently of a non-Codex setup assistant
+- direct Open in Codex rejects a missing installed Codex configuration, uses
+  fresh local readiness, and remains available after setup-provider sign-out
+- the actual `.hoi4-mod-setup/state.json` path is schema-validated and carries
+  provider, model, reasoning effort, and optimization-profile provenance
 - provider-neutral `workflow.super_events` selection is represented by its
   parent manifest/component ID, expands to the complete hidden runtime
   dependency closure, namespace-adapts only verified text files, leaves
@@ -142,7 +156,7 @@ session, cancellation, credential-health, or analysis assertions.
 - an MCP health probe accepts only the manifest-declared Windows wrapper,
   completes initialize and read-only `tools/list` validation within its bound,
   never invokes a tool, and leaves no child process running
-- update planning rejects a missing fresh Codex reanalysis record, while repair
+- update planning rejects a missing fresh selected-provider reanalysis record, while repair
   remains able to use the validated locked analysis; the reanalysis evidence
   scan remains read-only and its approved references are bound to the core
   session before transmission

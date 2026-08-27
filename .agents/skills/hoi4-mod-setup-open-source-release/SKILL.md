@@ -21,7 +21,7 @@ Read:
 ## Repository rules
 
 - Keep `README.md` user-facing.
-- Document the provider-neutral setup in README, including Codex default, explicit model/provider selection, honest local/hosted routes, and the Codex-only ChatGPT project-source flatten option.
+- Document the provider-neutral setup in README, including Codex default, explicit setup-assistant/model selection, honest local/hosted routes, its separation from later development clients, and the independent ChatGPT project-source flatten option.
 - Use pull requests for `main`.
 - Require stable status checks through a ruleset.
 - Keep CODEOWNERS current for sensitive paths.

@@ -43,6 +43,7 @@ fn migrate_value(mut value: Value, expected_kind: &str, current: &str) -> Result
 pub fn migrate_state(value: Value) -> Result<Value, AppError> {
     let mut value = migrate_value(value, "project state", CURRENT_STATE_SCHEMA)?;
     normalize_legacy_portrait_workflow(&mut value);
+    normalize_coding_environments(&mut value)?;
     let object = value
         .as_object_mut()
         .ok_or_else(|| AppError::Serialization("project state must be a JSON object".into()))?;
@@ -51,7 +52,7 @@ pub fn migrate_state(value: Value) -> Result<Value, AppError> {
             "provider": "codex",
             "model": "gpt-5.6-luna",
             "reasoning_effort": "xhigh",
-            "optimization_profile": "Codex project and ChatGPT Chat"
+            "optimization_profile": "Codex setup analysis"
         })
     });
     let ai = ai.as_object_mut().ok_or_else(|| {
@@ -60,11 +61,10 @@ pub fn migrate_state(value: Value) -> Result<Value, AppError> {
     reject_persisted_ai_secret(ai)?;
     insert_default(ai, "provider", Value::String("codex".into()));
     insert_default(ai, "model", Value::String("gpt-5.6-luna".into()));
-    insert_default(ai, "reasoning_effort", Value::String("xhigh".into()));
     insert_default(
         ai,
         "optimization_profile",
-        Value::String("Codex project and ChatGPT Chat".into()),
+        Value::String("Codex setup analysis".into()),
     );
     let provider = ai
         .get("provider")
@@ -79,6 +79,11 @@ pub fn migrate_state(value: Value) -> Result<Value, AppError> {
             "project state uses an unsupported AI provider".into(),
         ));
     }
+    insert_default(
+        ai,
+        "reasoning_effort",
+        Value::String(if provider == "codex" { "xhigh" } else { "high" }.into()),
+    );
     if ai
         .get("model")
         .and_then(Value::as_str)
@@ -97,6 +102,15 @@ pub fn migrate_state(value: Value) -> Result<Value, AppError> {
             "project state AI optimization profile must be a non-empty string".into(),
         ));
     }
+    let canonical_profile = crate::ai::profile(&provider)
+        .map(|profile| profile.optimization_profile)
+        .ok_or_else(|| {
+            AppError::InvalidInput("project state uses an unsupported AI provider".into())
+        })?;
+    ai.insert(
+        "optimization_profile".into(),
+        Value::String(canonical_profile),
+    );
     crate::ai::validate_reasoning_effort(
         ai.get("reasoning_effort")
             .and_then(Value::as_str)
@@ -365,6 +379,7 @@ pub fn migrate_lock(value: Value) -> Result<InstallationLock, AppError> {
     normalize_legacy_portrait_workflow(&mut value);
     strip_legacy_core_only_codex_bindings(&mut value);
     bind_legacy_analysis_to_lock_source(&mut value);
+    normalize_coding_environments(&mut value)?;
     // Locks written before exact manifest wiki coverage was carried forward
     // remain readable, but readiness must not silently borrow the current
     // bundled manifest for them. An empty marker is intentionally incomplete
@@ -375,23 +390,57 @@ pub fn migrate_lock(value: Value) -> Result<InstallationLock, AppError> {
             .and_then(Value::as_str)
             .unwrap_or("codex")
             .to_string();
-        object.entry("ai_optimization_profile").or_insert_with(|| {
-            Value::String(
-                match provider.as_str() {
-                    "claude" => "Claude Code / Anthropic conventions",
-                    "kimi" => "Kimi coding conventions",
-                    "glm" => "GLM coding conventions",
-                    "deepseek" => "DeepSeek coding conventions",
-                    "local" => "Local model conventions",
-                    "custom" => "User-supplied provider conventions",
-                    _ => "Codex project and ChatGPT Chat",
-                }
-                .into(),
-            )
-        });
+        let canonical_profile = crate::ai::profile(&provider)
+            .map(|profile| profile.optimization_profile)
+            .ok_or_else(|| {
+                AppError::InvalidInput("installation lock uses an unsupported AI provider".into())
+            })?;
+        object.insert(
+            "ai_optimization_profile".into(),
+            Value::String(canonical_profile.clone()),
+        );
         object.entry("ai_reasoning_effort").or_insert_with(|| {
             Value::String(if provider == "codex" { "xhigh" } else { "high" }.into())
         });
+        let lock_model = object
+            .get("ai_model")
+            .cloned()
+            .unwrap_or_else(|| Value::String(crate::models::default_ai_model()));
+        let lock_reasoning_effort =
+            object
+                .get("ai_reasoning_effort")
+                .cloned()
+                .unwrap_or_else(|| {
+                    Value::String(if provider == "codex" { "xhigh" } else { "high" }.into())
+                });
+        if let Some(analysis) = object
+            .get_mut("codex_analysis")
+            .and_then(Value::as_object_mut)
+        {
+            analysis
+                .entry("provider")
+                .or_insert_with(|| Value::String(provider.clone()));
+            analysis.entry("model").or_insert(lock_model);
+            analysis
+                .entry("reasoning_effort")
+                .or_insert(lock_reasoning_effort);
+            analysis.entry("auth_mode").or_insert_with(|| {
+                Value::String(
+                    if provider == "codex" {
+                        "chatgpt"
+                    } else if provider == "local" {
+                        "local_endpoint"
+                    } else {
+                        "api_key"
+                    }
+                    .into(),
+                )
+            });
+            analysis.insert(
+                "optimization_profile".into(),
+                Value::String(canonical_profile),
+            );
+        }
         object
             .entry("wiki_required_pages")
             .or_insert_with(|| Value::Array(Vec::new()));
@@ -401,7 +450,14 @@ pub fn migrate_lock(value: Value) -> Result<InstallationLock, AppError> {
             }
         }
     }
-    serde_json::from_value(value).map_err(AppError::from)
+    let lock: InstallationLock = serde_json::from_value(value)?;
+    crate::ai::validate_reasoning_effort(&lock.ai_reasoning_effort)?;
+    if lock.ai_model.trim().is_empty() {
+        return Err(AppError::InvalidInput(
+            "installation lock AI model must be non-empty".into(),
+        ));
+    }
+    Ok(lock)
 }
 
 fn bind_legacy_analysis_to_lock_source(value: &mut Value) {
@@ -490,6 +546,7 @@ fn normalize_legacy_portrait_workflow(value: &mut Value) {
 
 pub fn migrate_journal(value: Value) -> Result<TransactionJournal, AppError> {
     let mut value = migrate_value(value, "transaction journal", CURRENT_JOURNAL_SCHEMA)?;
+    normalize_coding_environments(&mut value)?;
     if let Some(object) = value.as_object_mut() {
         object
             .entry("transaction_kind")
@@ -507,6 +564,83 @@ pub fn migrate_journal(value: Value) -> Result<TransactionJournal, AppError> {
         });
     }
     serde_json::from_value(value).map_err(AppError::from)
+}
+
+fn normalize_coding_environments(value: &mut Value) -> Result<(), AppError> {
+    let object = value.as_object_mut().ok_or_else(|| {
+        AppError::Serialization("coding environment state must be an object".into())
+    })?;
+    let (primary, additional) = if let Some(environments) = object.get("coding_environments") {
+        let primary = environments
+            .get("primary")
+            .and_then(Value::as_str)
+            .unwrap_or("codex")
+            .to_string();
+        let additional = environments
+            .get("additional")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        (primary, additional)
+    } else {
+        (
+            object
+                .get("primary_coding_environment")
+                .and_then(Value::as_str)
+                .unwrap_or("codex")
+                .to_string(),
+            object
+                .get("additional_coding_environments")
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(ToOwned::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        )
+    };
+    let selection = crate::models::CodingEnvironmentSelection {
+        primary,
+        additional,
+    };
+    crate::coding_environment::validate_selection(&selection)?;
+    // Project state is intentionally nested and schema-closed; locks and
+    // journals keep flat fields because those structs expose lifecycle
+    // provenance directly. Never add lock-only keys to a project-state JSON.
+    let is_lock_or_journal = object.contains_key("source")
+        || object.contains_key("installed_at")
+        || object.contains_key("transaction_id");
+    if is_lock_or_journal {
+        object.insert(
+            "primary_coding_environment".into(),
+            Value::String(selection.primary.clone()),
+        );
+        object.insert(
+            "additional_coding_environments".into(),
+            Value::Array(
+                selection
+                    .additional
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
+    }
+    object.insert(
+        "coding_environments".into(),
+        json!({ "primary": selection.primary, "additional": selection.additional }),
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -541,13 +675,40 @@ mod tests {
     }
 
     #[test]
+    fn coding_environment_state_defaults_and_persists_without_duplicates() {
+        let migrated = migrate_state(json!({
+            "schema_version": "1.0.0",
+            "coding_environments": {
+                "primary": "cursor",
+                "additional": ["codex", "qoder"]
+            }
+        }))
+        .unwrap();
+        assert_eq!(migrated["coding_environments"]["primary"], "cursor");
+        assert_eq!(
+            migrated["coding_environments"]["additional"],
+            json!(["codex", "qoder"])
+        );
+
+        let defaults = migrate_state(json!({"schema_version": "1.0.0"})).unwrap();
+        assert_eq!(defaults["coding_environments"]["primary"], "codex");
+        assert_eq!(defaults["coding_environments"]["additional"], json!([]));
+
+        assert!(migrate_state(json!({
+            "schema_version": "1.0.0",
+            "coding_environments": {"primary": "cursor", "additional": ["cursor"]}
+        }))
+        .is_err());
+    }
+
+    #[test]
     fn non_codex_state_migrates_to_provider_api_without_claiming_codex_auth() {
         let migrated = migrate_state(json!({
             "schema_version": "1.0.0",
             "ai": {
                 "provider": "claude",
                 "model": "claude-model",
-                "optimization_profile": "Claude Code / Anthropic conventions"
+                "optimization_profile": "Claude setup analysis"
             },
             "codex": {
                 "integration": "codex_app_server",
@@ -563,6 +724,7 @@ mod tests {
         assert_eq!(migrated["codex"]["auth_mode"], "api_key");
         assert_eq!(migrated["codex"]["auth_status"], "signed_out");
         assert_eq!(migrated["codex"]["analysis_status"], "blocked");
+        assert_eq!(migrated["ai"]["reasoning_effort"], "high");
     }
 
     #[test]
@@ -572,7 +734,7 @@ mod tests {
             "ai": {
                 "provider": "local",
                 "model": "local-model",
-                "optimization_profile": "Local model conventions"
+                "optimization_profile": "Local setup analysis"
             }
         }))
         .unwrap();
@@ -596,7 +758,7 @@ mod tests {
             "ai": {
                 "provider": "claude",
                 "model": "",
-                "optimization_profile": "Claude Code / Anthropic conventions"
+                "optimization_profile": "Claude setup analysis"
             }
         }))
         .is_err());
@@ -761,21 +923,48 @@ mod tests {
     }
 
     #[test]
-    fn legacy_lock_gets_the_provider_optimization_profile() {
+    fn legacy_lock_normalizes_the_setup_analysis_profile() {
         let mut value: Value = serde_json::from_str(include_str!(
             "../../docs/examples/installation-lock.example.json"
         ))
         .unwrap();
         value["ai_provider"] = json!("claude");
-        value
-            .as_object_mut()
-            .unwrap()
-            .remove("ai_optimization_profile");
+        value["ai_model"] = json!("claude-3-7-sonnet");
+        value["ai_reasoning_effort"] = json!("high");
+        value["ai_optimization_profile"] = json!("Claude Code / Anthropic conventions");
+        value["codex_analysis"]["engine"] = json!("provider_api");
+        value["codex_analysis"]["auth_mode"] = json!("api_key");
+        value["codex_analysis"]["provider"] = json!("claude");
+        value["codex_analysis"]["model"] = json!("claude-3-7-sonnet");
+        value["codex_analysis"]["reasoning_effort"] = json!("high");
+        value["codex_analysis"]["optimization_profile"] =
+            json!("Claude Code / Anthropic conventions");
         let lock = migrate_lock(value).unwrap();
+        assert_eq!(lock.ai_optimization_profile, "Claude setup analysis");
         assert_eq!(
-            lock.ai_optimization_profile,
-            "Claude Code / Anthropic conventions"
+            lock.codex_analysis
+                .as_ref()
+                .and_then(|analysis| analysis.optimization_profile.as_deref()),
+            Some("Claude setup analysis")
         );
+    }
+
+    #[test]
+    fn contradictory_legacy_analysis_remains_readable_but_cannot_claim_readiness() {
+        let mut value: Value = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        value["codex_analysis"]["provider"] = json!("deepseek");
+        let lock = migrate_lock(value).unwrap();
+        assert!(crate::codex::validate_confirmed_record_for_profile(
+            lock.codex_analysis.as_ref().unwrap(),
+            &lock.ai_provider,
+            &lock.ai_model,
+            &lock.ai_reasoning_effort,
+            &lock.ai_optimization_profile,
+        )
+        .is_err());
     }
 
     #[test]

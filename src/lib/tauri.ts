@@ -1,4 +1,4 @@
-import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderProfile, AppUpdateStatus, ChatSourcesPackageResult, ChatSourcesPreview, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
+import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderProfile, AppUpdateStatus, ChatSourcesPackageResult, ChatSourcesPreview, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, CodingEnvironmentId, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
   id: string;
@@ -96,7 +96,7 @@ interface TauriCommandMap {
   preview_descriptors: { args: { state: WizardState }; result: GeneratedArtifactPreview[] };
   preview_installation_conflict: { args: { planId: string; path: string }; result: ConflictPreview };
   build_installation_plan: { args: { state: WizardState }; result: InstallationPlan };
-  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; codexAnalysis?: CodexAnalysisRecord | null; addOptionalComponents?: string[]; portraitPipeline?: WizardState["portraitPipeline"] }; result: InstallationPlan };
+  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; codexAnalysis?: CodexAnalysisRecord | null; addOptionalComponents?: string[]; portraitPipeline?: WizardState["portraitPipeline"]; primaryCodingEnvironment?: CodingEnvironmentId; additionalCodingEnvironments?: CodingEnvironmentId[] }; result: InstallationPlan };
   approve_installation: { args: { planId: string }; result: void };
   resolve_installation_conflict: { args: { planId: string; path: string; choice: string }; result: InstallationPlan };
   apply_installation: { args: { planId: string; projectRoot: string }; result: TransactionJournal };
@@ -481,9 +481,14 @@ export async function resolveInstallationConflict(planId: string, path: string, 
   return invokeCommand("resolve_installation_conflict", { planId, path, choice });
 }
 
-export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord, addOptionalComponents: string[] = [], portraitPipeline?: WizardState["portraitPipeline"]): Promise<InstallationPlan | null> {
+export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord, addOptionalComponents: string[] = [], portraitPipeline?: WizardState["portraitPipeline"], primaryCodingEnvironment?: CodingEnvironmentId, additionalCodingEnvironments?: CodingEnvironmentId[]): Promise<InstallationPlan | null> {
   const args: TauriCommandMap["build_maintenance_plan"]["args"] = { mode, projectRoot, codexAnalysis: codexAnalysis ?? null, addOptionalComponents };
   if (portraitPipeline) args.portraitPipeline = portraitPipeline;
+  if (primaryCodingEnvironment) args.primaryCodingEnvironment = primaryCodingEnvironment;
+  // An empty array is meaningful: it explicitly deselects every additional
+  // environment. Preserve the distinction between omitted (legacy caller)
+  // and [] (current UI choice).
+  if (additionalCodingEnvironments !== undefined) args.additionalCodingEnvironments = additionalCodingEnvironments;
   return invokeCommand("build_maintenance_plan", args);
 }
 

@@ -13,6 +13,8 @@
     "ai_model",
     "ai_reasoning_effort",
     "ai_optimization_profile",
+    "primary_coding_environment",
+    "additional_coding_environments",
     "flatten_chat_sources",
     "codex_analysis",
     "selected_components",
@@ -69,6 +71,16 @@
     "ai_optimization_profile": {
       "type": "string",
       "minLength": 1
+    },
+    "primary_coding_environment": {
+      "enum": ["codex", "claude_code", "cursor", "qoder", "opencode"]
+    },
+    "additional_coding_environments": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": ["codex", "claude_code", "cursor", "qoder", "opencode"]
+      }
     },
     "flatten_chat_sources": {
       "type": "boolean"

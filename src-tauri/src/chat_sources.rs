@@ -3,7 +3,7 @@
 //! This export is deliberately separate from installation transactions. It
 //! reads only the already-installed, root-contained project inputs and writes
 //! one user-requested archive outside the project. The archive contains the
-//! same flattened names used by the Codex-only installation option.
+//! same flattened names used by the optional ChatGPT client package.
 
 use crate::security::{
     canonical_relative_key, contains_credential_shaped_content, is_link_metadata, sha256_bytes,

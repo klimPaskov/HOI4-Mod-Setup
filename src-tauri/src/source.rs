@@ -969,6 +969,25 @@ pub fn validate_manifest(
                 component.id
             )));
         }
+        if let Some(environment) = component.coding_environment.as_deref() {
+            if !crate::coding_environment::is_supported(environment) {
+                return Err(AppError::Source(format!(
+                    "component {} declares an unsupported coding environment: {environment}",
+                    component.id
+                )));
+            }
+            if component.category != ComponentCategory::Environment {
+                return Err(AppError::Source(format!(
+                    "coding-environment component {} must use the environment category",
+                    component.id
+                )));
+            }
+        } else if component.category == ComponentCategory::Environment {
+            return Err(AppError::Source(format!(
+                "environment component {} must declare coding_environment",
+                component.id
+            )));
+        }
         if component.platforms.is_empty() {
             return Err(AppError::Source(format!(
                 "component {} has no platform declarations",
@@ -1755,6 +1774,7 @@ mod tests {
             display_name: id.to_string(),
             description: None,
             category: ComponentCategory::Core,
+            coding_environment: None,
             optional: false,
             platforms: vec![ManifestPlatform::All],
             source: SourceDefinition {
@@ -1805,15 +1825,13 @@ mod tests {
         );
         assert!(manifest.profiles.iter().any(|profile| profile.default));
         assert_eq!(manifest.wiki.destination, "paradox_wiki/");
-        assert_eq!(manifest.components.len(), 26);
-        assert!(manifest
-            .components
-            .iter()
-            .all(|component| !component.id.starts_with("runtime.qoder.")));
-        assert!(manifest
-            .profiles
-            .iter()
-            .all(|profile| profile.id != "core_with_qoder"));
+        assert_eq!(manifest.components.len(), 34);
+        for environment in crate::coding_environment::SUPPORTED {
+            assert!(manifest
+                .components
+                .iter()
+                .any(|component| component.coding_environment.as_deref() == Some(environment)));
+        }
         let core_profile = manifest
             .profiles
             .iter()
@@ -2096,7 +2114,7 @@ mod tests {
         let bundled_bytes =
             include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let remote_bytes = bundled_bytes.to_vec();
-        let resolved_revision = "8791946cffeb98e113ebf0686c3d46f735fa3eeb";
+        let resolved_revision = "ef01612bd845bd310efe70f3336ca83e2cdf1d2d";
 
         let (selected_bytes, manifest, origin) =
             select_manifest_for_revision(&remote_bytes, resolved_revision).unwrap();

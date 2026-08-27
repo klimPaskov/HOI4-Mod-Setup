@@ -452,6 +452,7 @@ where
             Path::new(".agents/ and .codex/"),
             {
                 detect_agentic_files(&observations, &mut findings, &mut conflicts);
+                detect_coding_environments(&observations, &mut findings, &mut conflicts);
             }
         );
         detect_phase!("detecting_paths", Path::new("absolute paths"), {
@@ -1155,6 +1156,35 @@ fn scan_content_policy(relative: &str) -> Option<ScanContentPolicy> {
     let skill = normalized.starts_with(".agents/skills/") && name == "skill.md";
     let subagent = normalized.starts_with(".codex/agents/") && extension == "toml";
     let codex_config = normalized == ".codex/config.toml";
+    // Native coding-client files are a bounded, explicit scan surface. The
+    // scanner records their paths for environment detection and retains only
+    // small text/config files needed for deterministic validation; it never
+    // walks arbitrary editor caches or client-owned project data.
+    let native_root_instruction = normalized == "claude.md";
+    let native_json = matches!(
+        normalized.as_str(),
+        ".mcp.json"
+            | ".claude/settings.json"
+            | ".cursor/settings.json"
+            | ".cursor/mcp.json"
+            | ".qoder/settings.json"
+            | ".qoder/mcp.json"
+            | ".opencode/settings.json"
+            | ".opencode/mcp.json"
+            | "opencode.json"
+    );
+    let native_map = matches!(
+        normalized.as_str(),
+        ".claude/agent-map.md"
+            | ".cursor/agent-map.md"
+            | ".qoder/agent-map.md"
+            | ".opencode/agent-map.md"
+    );
+    let native_agent = (normalized.starts_with(".claude/agents/")
+        || normalized.starts_with(".cursor/agents/")
+        || normalized.starts_with(".qoder/agents/")
+        || normalized.starts_with(".opencode/agent/"))
+        && extension == "md";
     let documentation = normalized == "agents.md"
         || normalized == "readme.md"
         || (normalized.starts_with("docs/")
@@ -1169,13 +1199,34 @@ fn scan_content_policy(relative: &str) -> Option<ScanContentPolicy> {
             extension,
             "cfg" | "json" | "md" | "ps1" | "py" | "sh" | "toml" | "txt" | "yaml" | "yml"
         );
-    if !(skill || subagent || codex_config || root_text || documentation_text) {
+    if !(skill
+        || subagent
+        || codex_config
+        || native_root_instruction
+        || native_json
+        || native_map
+        || native_agent
+        || root_text
+        || documentation_text)
+    {
         return None;
     }
     Some(ScanContentPolicy {
         max_bytes: MAX_TEXT_BYTES,
-        retain: skill || subagent || codex_config,
-        absolute_paths: documentation_text || skill || subagent || codex_config || root_text,
+        retain: skill
+            || subagent
+            || codex_config
+            || native_root_instruction
+            || native_json
+            || native_map,
+        absolute_paths: documentation_text
+            || skill
+            || subagent
+            || codex_config
+            || native_root_instruction
+            || native_json
+            || native_map
+            || root_text,
     })
 }
 
@@ -1183,6 +1234,17 @@ fn targeted_scan_directory(relative: &str) -> bool {
     let normalized = relative.replace('\\', "/").to_ascii_lowercase();
     (normalized == ".agents" || normalized.starts_with(".agents/"))
         || (normalized == ".codex" || normalized.starts_with(".codex/"))
+        || matches!(
+            normalized.as_str(),
+            ".claude"
+                | ".claude/agents"
+                | ".cursor"
+                | ".cursor/agents"
+                | ".qoder"
+                | ".qoder/agents"
+                | ".opencode"
+                | ".opencode/agent"
+        )
         || ((normalized == "docs" || normalized.starts_with("docs/"))
             && normalized != "docs/assets"
             && !normalized.starts_with("docs/assets/")
@@ -2031,6 +2093,110 @@ fn detect_agentic_files(
     }
 }
 
+fn detect_coding_environments(
+    observations: &[FileObservation],
+    findings: &mut Vec<ScanFinding>,
+    conflicts: &mut Vec<ScanConflict>,
+) {
+    let has = |path: &str| observations.iter().any(|file| file.relative == path);
+    let under = |prefix: &str| {
+        observations
+            .iter()
+            .any(|file| file.relative.starts_with(prefix))
+    };
+    let mut detected = Vec::new();
+    // Canonical Codex agent TOMLs are a shared synchronization source and
+    // are installed for every coding-environment selection.  They therefore
+    // cannot, by themselves, prove that the Codex native package is present.
+    if has(".codex/config.toml") {
+        detected.push("codex");
+    }
+    if has("CLAUDE.md")
+        || has(".claude/settings.json")
+        || has(".claude/agent-map.md")
+        || under(".claude/agents/")
+    {
+        detected.push("claude_code");
+    }
+    if has(".cursor/agent-map.md")
+        || has(".cursor/mcp.json")
+        || has(".cursor/settings.json")
+        || under(".cursor/agents/")
+    {
+        detected.push("cursor");
+    }
+    if has(".qoder/agent-map.md")
+        || has(".qoder/settings.json")
+        || has(".qoder/mcp.json")
+        || under(".qoder/agents/")
+    {
+        detected.push("qoder");
+    }
+    if has("opencode.json")
+        || has(".opencode/agent-map.md")
+        || has(".opencode/settings.json")
+        || has(".opencode/mcp.json")
+        || under(".opencode/agent/")
+    {
+        detected.push("opencode");
+    }
+    let parse_json = |path: &str| -> bool {
+        observations
+            .iter()
+            .find(|file| file.relative == path)
+            .is_some_and(|file| serde_json::from_slice::<Value>(&file.bytes).is_ok())
+    };
+    for (environment, path) in [
+        ("claude_code", ".claude/settings.json"),
+        ("claude_code", ".mcp.json"),
+        ("cursor", ".cursor/settings.json"),
+        ("cursor", ".cursor/mcp.json"),
+        ("qoder", ".qoder/settings.json"),
+        ("qoder", ".qoder/mcp.json"),
+        ("opencode", ".opencode/settings.json"),
+        ("opencode", ".opencode/mcp.json"),
+        ("opencode", "opencode.json"),
+    ] {
+        if has(path) && !parse_json(path) {
+            conflicts.push(ScanConflict {
+                id: format!("conflict.{environment}.config.parse"),
+                path: path.into(),
+                kind: "other".into(),
+                severity: "block".into(),
+                details: Some(format!("{environment} configuration is not valid JSON.")),
+            });
+        }
+    }
+    // A scan cannot infer a user-recorded primary from loose files. Codex is
+    // the compatibility default until an installation lock supplies one.
+    let primary = "codex";
+    let evidence_path = detected
+        .first()
+        .map(|id| match *id {
+            "codex" => ".codex/config.toml",
+            "claude_code" => "CLAUDE.md",
+            "cursor" => ".cursor/agent-map.md",
+            "qoder" => ".qoder/agent-map.md",
+            "opencode" => "opencode.json",
+            _ => ".",
+        })
+        .unwrap_or(".");
+    findings.push(finding(
+        "coding.environments",
+        "coding_environment",
+        "installed_environments",
+        json!({"detected": detected, "primary": primary}),
+        "accepted",
+        evidence(
+            "coding_environment_detector",
+            evidence_path,
+            1.0,
+            Some("Native coding-client files were detected without changing the project."),
+        ),
+        None,
+    ));
+}
+
 fn detect_absolute_paths(evidence_state: &ScanEvidenceState, findings: &mut Vec<ScanFinding>) {
     let matches = &evidence_state.absolute_paths;
     findings.push(finding(
@@ -2319,6 +2485,8 @@ fn detect_managed_installation(
             "present": true,
             "valid": true,
             "project_id": lock.project_id,
+            "primary_coding_environment": lock.primary_coding_environment,
+            "additional_coding_environments": lock.additional_coding_environments,
             "component_ids": component_ids,
             "workflow_3d_state": workflow_3d_state,
             "workflow_3d_key_configured": workflow_3d_key_configured,
@@ -3045,6 +3213,92 @@ mod tests {
         assert!(scan_content_policy("gfx/models/tank.dds").is_none());
         assert!(scan_content_policy("docs/assets/generated.json").is_none());
         assert!(scan_content_policy("docs/formables/generated.json").is_none());
+    }
+
+    #[test]
+    fn bounded_scan_detects_all_native_coding_environment_packages() {
+        let directory = tempdir().unwrap();
+        let write = |relative: &str, content: &str| {
+            let path = directory.path().join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(path, content).unwrap();
+        };
+        let json = r#"{"mcpServers":{}}"#;
+        write(".codex/config.toml", "model = \"default\"\n");
+        write(".codex/agents/reviewer.toml", "name = \"reviewer\"\n");
+        write("CLAUDE.md", "# Claude\n");
+        write(".mcp.json", json);
+        write(".claude/settings.json", json);
+        write(".claude/agent-map.md", "# Claude agents\n");
+        write(".claude/agents/reviewer.md", "# Reviewer\n");
+        write(".cursor/settings.json", json);
+        write(".cursor/mcp.json", json);
+        write(".cursor/agent-map.md", "# Cursor agents\n");
+        write(".cursor/agents/reviewer.md", "# Reviewer\n");
+        write(".qoder/settings.json", json);
+        write(".qoder/mcp.json", json);
+        write(".qoder/agent-map.md", "# Qoder agents\n");
+        write(".qoder/agents/reviewer.md", "# Reviewer\n");
+        write("opencode.json", json);
+        write(".opencode/settings.json", json);
+        write(".opencode/mcp.json", json);
+        write(".opencode/agent-map.md", "# OpenCode agents\n");
+        write(".opencode/agent/reviewer.md", "# Reviewer\n");
+
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| finding.id == "coding.environments")
+            .expect("coding environment finding");
+        let detected = finding.value["detected"]
+            .as_array()
+            .expect("detected environment list")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        for environment in ["codex", "claude_code", "cursor", "qoder", "opencode"] {
+            assert!(detected.contains(&environment), "missing {environment}");
+        }
+        assert!(!result.partial);
+        assert!(!result
+            .limits_hit
+            .iter()
+            .any(|limit| limit == "scan.file_limit"));
+
+        write(".cursor/settings.json", "not json");
+        let invalid = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+        assert!(invalid
+            .conflicts
+            .iter()
+            .any(|conflict| conflict.id == "conflict.cursor.config.parse"));
+    }
+
+    #[test]
+    fn shared_canonical_agents_do_not_imply_a_codex_environment() {
+        let directory = tempdir().unwrap();
+        fs::create_dir_all(directory.path().join(".codex/agents")).unwrap();
+        fs::write(
+            directory.path().join(".codex/agents/shared.toml"),
+            "name = \"shared\"\n",
+        )
+        .unwrap();
+
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| finding.id == "coding.environments")
+            .expect("coding environment finding");
+        let detected = finding.value["detected"]
+            .as_array()
+            .expect("detected environment list")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        assert!(!detected.contains(&"codex"));
     }
 
     #[test]
