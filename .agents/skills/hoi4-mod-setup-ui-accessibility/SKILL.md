@@ -31,7 +31,14 @@ Use seven grouped phases:
 - Install
 - Ready
 
-Provider selection is the first compact setup step and defaults to Codex. Codex uses a compact ChatGPT sign-in with one primary action, one status line, a device-code fallback link, and a visible cancellation action while the App Server is waiting. Known hosted profiles auto-fill their verified model and address, show one fixed official API-key link, one secret field, and one Connect action, and place model/address overrides under Advanced. Local and custom profiles expose only the details they genuinely require. Usage-limited state preserves the draft and offers retry or refresh without pretending planning succeeded. Never show raw protocol logs, model billing details, or technical terms such as endpoint in the normal hosted-provider path.
+Setup-assistant selection is the first compact setup step and defaults to Codex. State in one sentence that this choice does not select the AI used for later development. Codex uses a compact ChatGPT sign-in with one primary action, one status line, a device-code fallback link, and a visible cancellation action while the App Server is waiting. Known hosted profiles auto-fill their verified model and address, show one fixed official API-key link, one secret field, and one Connect action, and place model/address overrides under Advanced. Local and custom profiles expose only the details they genuinely require. Usage-limited state preserves the draft and offers retry or refresh without pretending planning succeeded. Never show raw protocol logs, model billing details, or technical terms such as endpoint in the normal hosted-provider path.
+
+The Components phase includes a dedicated Coding Environments step. Render one
+accessible radio group for the required primary (Codex selected initially) and a
+checkbox group for additional clients. Filter the current primary out of the
+additional group immediately when it changes. Keep the client selection visibly
+separate from setup-assistant and Core/Core plus 3D workflow choices; maintenance
+uses the same controls and explains that modified files are preserved.
 
 Each screen normally has:
 
@@ -130,7 +137,7 @@ Conflict review is the exception. It may show a three-way comparison and more co
   non-duplicating state. If the lock reports a selected workflow without a
   stored key, keep the exact workflow title visible as a disabled installed state
   and expose the vault-only key field for repair.
-- Readiness leads with core status. Open in Codex is shown only for Codex; other providers receive an honest provider-specific handoff or no opener.
+- Readiness leads with core status. Open in Codex follows the installed Codex project integration and core readiness, independently of the setup assistant.
 - Open in Codex enters a disabled `Opening Codex…` state immediately, blocks
   duplicate clicks, and changes to a concise success state after the verified
   launcher starts. Finish replaces Ready with a concise congratulations page
@@ -177,7 +184,7 @@ Conflict review is the exception. It may show a three-way comparison and more co
   actionable error without losing focus. Logout clears session-scoped account,
   analysis, and approved-evidence state even when the remote logout request
   fails; keep local recovery/removal available.
-- The Components option `Prepare a flattened ChatGPT project-sources folder` is a native keyboard-accessible checkbox shown only when Codex is selected. Present it with the same visual structure as the other component choices: title, concise contents, file count, and an expandable per-file size list. Source-declared sizes may appear immediately; generated-file and exact total sizes appear after the plan is prepared. Install review is read-only, there is no additional-files control, the no-automatic-upload Chat recommendation appears on Ready, and the choice never appears for another provider.
+- The Components option `Prepare a flattened ChatGPT project-sources folder` is a native keyboard-accessible checkbox shown independently of the setup assistant. Present it with the same visual structure as the other component choices: title, concise contents, file count, and an expandable per-file size list. Source-declared sizes may appear immediately; generated-file and exact total sizes appear after the plan is prepared. Install review is read-only, there is no additional-files control, and the no-automatic-upload Chat recommendation appears on Ready.
 - A manifest-load failure is an announced blocking callout with a direct Retry
   action. Suppress duplicate retries, expose the pending state with
   `aria-busy`, and return focus to the successful status message; a repeated

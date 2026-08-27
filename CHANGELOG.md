@@ -6,6 +6,19 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.3.0 - 2026-08-27
+
+- Add a dedicated Coding Environments step with Codex as the default primary
+  client and composable Claude Code, Cursor, Qoder, and OpenCode selections.
+- Install complete manifest-declared native client packages while keeping the
+  canonical `.codex/agents/*.toml` definitions and generated projections in
+  sync.
+- Persist environment choices through project state, installation plans,
+  locks, journals, update, repair, rollback, and removal, with detection and
+  local-file preservation for existing projects.
+- Keep coding-client selection independent from the setup assistant provider
+  and Core/Core plus 3D workflow profiles.
+
 ## 0.2.16 - 2026-08-26
 
 - Load the selected provider's live model catalog and show only the reasoning

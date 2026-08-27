@@ -12,6 +12,7 @@
       "identity",
       "scan",
       "review",
+      "environments",
       "components",
       "workflows",
       "3d",
@@ -40,7 +41,11 @@
     "provider": "codex",
     "model": "gpt-5.6-luna",
     "reasoning_effort": "xhigh",
-    "optimization_profile": "Codex project and ChatGPT Chat"
+    "optimization_profile": "Codex setup analysis"
+  },
+  "coding_environments": {
+    "primary": "codex",
+    "additional": ["cursor"]
   },
   "portrait_pipeline": {
     "enabled": false,

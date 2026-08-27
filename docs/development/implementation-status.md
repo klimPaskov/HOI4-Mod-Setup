@@ -19,7 +19,7 @@ This document is the concise developer status. User guidance stays in the root
   Meshy credentials.
 - Git initialize/preserve/skip, guarded online push, and separately approved
   public GitHub-repository creation.
-- Optional Codex-only flattened ChatGPT project sources without offline-wiki
+- Optional setup-assistant-independent flattened ChatGPT project sources without offline-wiki
   files, shown with filenames and sizes before installation.
 - Rust unit/property tests, fuzz targets, transaction fault injection,
   frontend/accessibility tests, workflow authority checks, and Windows/macOS
@@ -31,6 +31,10 @@ This document is the concise developer status. User guidance stays in the root
 - Existing-project ChatGPT source packaging with a Downloads default, required
   flattened-source selection, optional root Markdown, safe atomic ZIP output,
   and no project mutation.
+- Coding Environments setup and maintenance selection with one primary client
+  plus additional Codex, Claude Code, Cursor, Qoder, or OpenCode packages;
+  canonical Codex TOML agents and generated native projections are source-
+  synchronized, and shared runtime-neutral components remain common.
 - Sanitized development-only documentation fixtures for consistent public
   screenshots of the current wizard and maintenance flow.
 
@@ -50,12 +54,17 @@ The Rust and React regression suites cover fresh selection, later maintenance,
 remembered state, selected and unselected AGENTS adaptation, readiness, and
 desktop command dispatch away from the UI event loop.
 
+Coding-environment regression coverage includes every primary/additional
+combination, complete native runtime parsing, existing-project migration,
+managed-file preservation, and lifecycle persistence through update, repair,
+reinstall, rollback, and removal.
+
 ## Current source and release boundary
 
 The published Agentic HOI4 Modding `main` used for this update is at commit
-`de7dab486e99ce926de60905e8930b20fb0eab04`. Its manifest declares the
+`59cc276cd79db5e69b0b39280f09c831d86a2348`. Its manifest declares the
 selected-file records generated from immutable Git blobs at revision
-`78da3473fa7a6260944ed1df9febdab85644083e`. The core profile now includes the
+`cbdc5f06ff4ca71c2e1c6ef3c5befd8adc1332bb`. The core profile now includes the
 managed HOI4 Agent Tools integration guide; enabled portrait providers expand
 through the verified portrait router; generic skills include Debug and
 Playtest; generic subagents include the AI probability auditor and event UI

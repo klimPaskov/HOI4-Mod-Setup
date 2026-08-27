@@ -52,12 +52,12 @@ Every optional workflow provides:
 
 Optional checks use `blocking: false` for the core readiness gate. A selected workflow can still fail its own Ready state. The final report separates:
 
-- core ready for the selected AI provider
+- core ready with confirmed setup analysis
 - 3D workflow state
 - Super Events workflow state
 - portrait provider state
 
-This prevents a missing optional workflow key from blocking normal provider use and prevents an incomplete workflow from looking ready. A missing selected-provider configuration still blocks semantic planning; Codex-only controls remain hidden for other providers.
+This prevents a missing optional workflow key from blocking normal use and prevents an incomplete workflow from looking ready. A missing setup-assistant configuration still blocks semantic planning; development-client controls remain independent of that assistant.
 
 Portraits use the same non-blocking core gate. Generic projects support Cloud,
 Local, RunPod, and Disabled. A selected portrait provider has its own honest

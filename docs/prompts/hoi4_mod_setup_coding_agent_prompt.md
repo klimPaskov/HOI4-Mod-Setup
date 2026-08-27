@@ -27,7 +27,7 @@ Implement the semantic layer through the official local `codex app-server` proce
 
 Do not add an OpenAI API key field or API-key fallback to the Codex route. Add bounded provider profiles for Claude, Kimi, GLM, DeepSeek, local, and a custom explicitly configured OpenAI-compatible route. Non-Codex hosted routes use a user endpoint and OS-vault key; local uses loopback HTTP. Do not invent provider URLs, OAuth routes, packages, commands, model names, or platform support. Do not read Codex token files. Keep full email, account ID, plan, usage, rate limits, tokens, keys, thread history, and hidden reasoning out of project files and locks.
 
-Use the selected model and optimization profile without hardcoding a non-Codex model. Every semantic turn is read-only and uses the current `codex-analysis` output schema. The selected provider proposes the description, display name, project ID, prefix, namespace, tags, folder profile, project instructions, components, and existing-project conventions. Deterministic Rust validates and renders after confirmation.
+Use the selected setup model and optimization profile without hardcoding a non-Codex model. Every semantic turn is read-only and uses the current `codex-analysis` output schema. The selected setup assistant proposes the description, display name, project ID, prefix, namespace, tags, folder profile, provider-neutral project instructions, components, and existing-project conventions. Deterministic Rust validates and renders after confirmation. Never write the setup provider/model/profile into generated guidance or use it to select the later development client.
 
 Missing provider configuration, usage availability, or valid analysis blocks Create, Import, Update, and Repair planning. Preserve drafts and scans. Keep recovery, rollback, backup inspection, and managed removal available offline.
 
@@ -68,7 +68,7 @@ project root and launcher descriptor path, preserve explicit overrides, and
 create an absent root as exactly one reviewed leaf only at apply. Rollback may
 remove that leaf only when empty and must preserve unknown content.
 
-When Codex is selected, show the optional checkbox in the Install review: prepare
+Independently of the selected setup assistant, show the optional checkbox in the Install review: prepare
 `chatgpt_project_sources/` by flattening each skill to `<skill>.md` and adding
 selected subagents, adapted AGENTS, and the created or existing README. Use the
 full transaction and recommend
@@ -146,7 +146,7 @@ Support initialize, preserve, or skip. Merge `.gitignore`, select branch, option
 
 ## Readiness
 
-Verify both descriptors, launcher path and discoverability, descriptor consistency, thumbnail decode and hash, structure, AGENTS, skills, subagents, selected provider, MCP, wiki, Git, environment, hashes, conflicts, dependencies, `workflow.3d`, and `workflow.super_events`. Verify provider configuration or Codex ChatGPT authentication and confirmed provider analysis as blocking core checks; optional workflow states remain non-blocking. Enable Open in Codex only for Codex when core blocking checks pass.
+Verify both descriptors, launcher path and discoverability, descriptor consistency, thumbnail decode and hash, structure, AGENTS, skills, subagents, setup-analysis provenance, independently installed client integrations, MCP, wiki, Git, environment, hashes, conflicts, dependencies, `workflow.3d`, and `workflow.super_events`. Verify setup-assistant configuration or Codex ChatGPT authentication and confirmed provider analysis as blocking core checks; optional workflow states remain non-blocking. Enable Open in Codex when its project integration is installed and core blocking checks pass, regardless of the setup assistant.
 
 ## Security
 

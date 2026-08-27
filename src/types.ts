@@ -4,6 +4,7 @@ export type ScreenId =
   | "identity"
   | "scan"
   | "findings"
+  | "environments"
   | "components"
   | "workflows"
   | "mesh"
@@ -22,6 +23,13 @@ export type PhaseId = "project" | "review" | "components" | "integrations" | "gi
 export type SourceMode = "latest" | "pinned_commit" | "pinned_release";
 
 export type AiProviderId = "codex" | "claude" | "kimi" | "glm" | "deepseek" | "local" | "custom";
+
+export type CodingEnvironmentId = "codex" | "claude_code" | "cursor" | "qoder" | "opencode";
+
+export interface CodingEnvironmentSelection {
+  primary: CodingEnvironmentId;
+  additional: CodingEnvironmentId[];
+}
 
 export type WorkflowState = "not_selected" | "selected_pending" | "ready" | "incomplete" | "planned_unavailable" | "unsupported_platform";
 
@@ -280,6 +288,7 @@ export interface ComponentRow {
   id: string;
   title: string;
   detail: string;
+  coding_environment?: CodingEnvironmentId | null;
   size: string;
   selected: boolean;
   required?: boolean;
@@ -361,6 +370,7 @@ export interface ManifestComponentPreview {
   id: string;
   display_name: string;
   description?: string | null;
+  coding_environment?: CodingEnvironmentId | null;
   category: string;
   optional: boolean;
   platforms: string[];
@@ -473,6 +483,8 @@ export interface InstallationPlan {
   ai_reasoning_effort?: ReasoningEffort;
   ai_endpoint?: string | null;
   ai_optimization_profile?: string;
+  primary_coding_environment?: CodingEnvironmentId;
+  additional_coding_environments?: CodingEnvironmentId[];
   flatten_chat_sources?: boolean;
   codex_analysis?: CodexAnalysisRecord | null;
   selected_components: string[];
@@ -549,6 +561,8 @@ export interface TransactionJournal {
     observed_exists: boolean;
     cleanup_result?: string | null;
   };
+  primary_coding_environment?: CodingEnvironmentId;
+  additional_coding_environments?: CodingEnvironmentId[];
   state: string;
   created_at: string;
   updated_at: string;
@@ -581,6 +595,9 @@ export interface WizardState {
   aiEndpoint: string;
   aiAccount: AiAccountStatus | null;
   aiProfiles?: AiProviderProfile[];
+  primaryCodingEnvironment: CodingEnvironmentId;
+  additionalCodingEnvironments: CodingEnvironmentId[];
+  installedCodingEnvironments?: CodingEnvironmentId[];
   selectedComponents: string[];
   components: ComponentRow[];
   meshSelected: boolean;

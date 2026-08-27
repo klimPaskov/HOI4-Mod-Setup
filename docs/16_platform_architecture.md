@@ -183,6 +183,11 @@ credential-shaped exclusions as visible security findings.
 
 Use a platform adapter that detects a supported Codex app or CLI, previews the exact project-opening action, and opens the selected root. If no opener is found, keep readiness pass and show the path plus manual instructions.
 
+This is a development-client handoff. It depends on the installed Codex project
+integration and core readiness, not on which setup assistant produced the
+semantic analysis. Launching the local Codex app does not require HOI4 Mod
+Setup to repeat or retain the setup-time App Server account session.
+
 The Tauri command returns a typed non-error result for this opener-unavailable case. The React Ready screen announces the manual path without downgrading readiness; authentication, invalid-root, readiness, and process failures remain errors.
 
 When the verified Codex executable is available, the desktop opener runs `codex app <project-root>` so the project opens in the Codex desktop application rather than an interactive terminal session.

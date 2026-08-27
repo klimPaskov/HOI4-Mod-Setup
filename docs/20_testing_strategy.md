@@ -37,6 +37,18 @@ Run a controlled manual release test against a real ChatGPT account. Never place
 - readiness aggregation
 - journal transitions
 - provider profile and model binding
+- model-catalog failure and empty-result fallback for every provider profile,
+  including editable Local and Custom model controls
+- setup-provider isolation from generated guidance, development-client component
+  selection, flattened ChatGPT packaging, and Open in Codex
+- coding-environment selection defaults to Codex, validates exactly one primary,
+  filters the primary from additional choices, and resolves every
+  primary/additional combination against the published manifest
+- complete native package parsing for Codex, Claude Code, Cursor, Qoder, and
+  OpenCode; canonical TOML-to-projection synchronization and drift checks
+- existing-project environment detection, migration when no primary is recorded,
+  managed-file preservation, deselection removal rules, and persisted selections
+  across update, repair, reinstall, rollback, and removal
 - flattened Chat-source mapping and size/collision policy
 - read-only scan exclusion of virtual environments, dependency trees, editor
   metadata, caches, generated artifacts, app-managed `.tools/`, `.tmp/`, and
@@ -114,6 +126,15 @@ open the project.
 
 Scan local AGENTS and Codex files, review, merge, install, update, repair, and roll back.
 
+### Coding-environment matrix
+
+Run fresh Windows setups with each of the five supported primary environments,
+plus at least one multi-environment setup. Repeat the Core and Core plus 3D
+profile cases, then exercise existing-project migration, update, repair,
+reinstall, rollback, and removal. Assert that every native package is complete,
+that modified files are preserved, and that only unchanged managed files are
+removed when a client is deselected.
+
 Verify that the packaged Windows native executable launches as a GUI-subsystem
 application without opening a console window, including when started from its
 installed shortcut rather than an active terminal.
@@ -158,15 +179,17 @@ as recommendations while core readiness remains non-blocking.
 
 Terminate during staging and apply. Verify resume and rollback.
 
-### Provider selection and Chat sources
+### Setup-assistant selection and Chat sources
 
 Run each provider profile through new and existing-project planning with a fake
 adapter. Change provider and model after a proposal is returned and verify the
-old record cannot enter a plan. For Codex, select the flatten checkbox and
+old record cannot enter a plan. Verify that switching setup assistants leaves
+development-client components and the flatten checkbox unchanged, generated
+AGENTS/README content contains no setup-provider attribution, and a DeepSeek
+setup can still install Codex configuration and expose Open in Codex. Select the flatten checkbox and
 verify skill renames, subagents, adapted AGENTS, README, conflicts,
 flat-conflict preservation across a later source conflict, backup, interruption
-recovery, and rollback. For non-Codex profiles, verify
-the checkbox and Open in Codex action are absent.
+recovery, and rollback.
 
 ## Golden files
 

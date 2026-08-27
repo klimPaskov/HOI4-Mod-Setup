@@ -7,7 +7,7 @@ description: Use for targeted agentic HOI4 setup scanning, descriptor discovery,
 
 ## Purpose
 
-The scanner reads one user-selected mod project and returns evidence-backed findings without modifying the project. A required ChatGPT-authenticated Codex pass interprets approved evidence after the deterministic scan. It is a separate read-only layer.
+The scanner reads one user-selected mod project and returns evidence-backed findings without modifying the project. A required pass by the selected setup assistant interprets approved evidence after the deterministic scan. It is a separate read-only layer; Codex uses ChatGPT authentication and App Server, while other providers use their configured adapter.
 
 ## Required sources
 
@@ -20,6 +20,7 @@ Read:
 - `docs/examples/scan-result.existing.example.json`
 - `docs/20_testing_strategy.md`
 - `docs/30_codex_chatgpt_authentication.md`
+- `docs/31_ai_provider_profiles_and_chat_sources.md`
 - `docs/schemas/codex-analysis.schema.json`
 
 ## Read-only boundary
@@ -52,6 +53,14 @@ Detect only with evidence:
 - the fixed `.hoi4-mod-setup/install.lock.json` managed-installation marker
 - absolute paths and machine-local assumptions
 - possible install conflicts
+
+Detect native coding environments only inside the selected root: Codex
+(`.codex/config.toml` and canonical TOML agents), Claude Code (`CLAUDE.md`,
+`.claude/`, and `.mcp.json`), Cursor (`.cursor/`), Qoder (`.qoder/`), and
+OpenCode (`opencode.json` and `.opencode/`). Prefer the managed lock's recorded
+primary/additional selection; when it is absent, report detected clients and
+use Codex as the migration default. This finding is bounded setup evidence,
+not a reason to scan gameplay or media trees.
 
 ## Launcher and standard-path boundary
 
@@ -168,9 +177,9 @@ Present findings in small groups:
 
 Do not show a giant scan report as the default screen.
 
-## Codex boundary
+## Setup-assistant boundary
 
-Use `codex app-server` over stdio JSONL after deterministic scan completion. Require managed ChatGPT auth, an approved input manifest, read-only sandboxing, strict `outputSchema`, deterministic proposal validation, and user confirmation. Missing authentication or valid output blocks new planning while preserving scan evidence.
+After deterministic scan completion, send only the approved evidence through the selected setup-assistant adapter. Codex uses `codex app-server` over stdio JSONL with managed ChatGPT authentication. Every provider requires an approved input manifest, read-only analysis, the shared strict output schema, deterministic proposal validation, and user confirmation. Missing provider configuration, authentication where required, or valid output blocks new planning while preserving scan evidence. The setup-assistant choice never selects or configures the AI tools installed for later mod development.
 
 ## Required tests
 

@@ -9,7 +9,9 @@
   "ai_model": "gpt-5.6-luna",
   "ai_reasoning_effort": "xhigh",
   "ai_endpoint": null,
-  "ai_optimization_profile": "Codex project and ChatGPT Chat",
+  "ai_optimization_profile": "Codex setup analysis",
+  "primary_coding_environment": "codex",
+  "additional_coding_environments": ["cursor"],
   "flatten_chat_sources": false,
   "source": {
     "mode": "pinned_commit",

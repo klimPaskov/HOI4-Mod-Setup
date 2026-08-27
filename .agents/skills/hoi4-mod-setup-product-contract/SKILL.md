@@ -32,8 +32,8 @@ Read:
 
 ## Core invariants
 
-- The user selects an AI provider and model at the start; Codex/ChatGPT is the default, and selected-provider authentication plus confirmed schema-valid analysis are required before Create, Import, Update, or Repair planning.
-- Provider optimization changes semantic conventions only; deterministic validation, source trust, transaction safety, and readiness rules are provider-independent.
+- The user selects a setup assistant and model at the start; Codex/ChatGPT is the default, and selected-provider authentication plus confirmed schema-valid analysis are required before Create, Import, Update, or Repair planning.
+- The setup assistant does not select or restrict the later development client. Provider optimization changes setup-time semantic conventions only; generated AGENTS/README content, installed development integrations, source trust, transaction safety, and readiness remain provider-independent.
 - New projects create both descriptors, a valid replaceable thumbnail, and the selected folder profile.
 - Latest-mode file components are dynamic source data. Compatible changed
   skills, new skills, new subagents, new default-profile components, and
@@ -55,6 +55,15 @@ Read:
   that file and parallel versioned filename aliases are not source history.
 - Latest mode records an exact commit.
 - Pinned mode is reproducible.
+- Coding environments are a separate composable selection: exactly one primary
+  (Codex by default) plus any additional supported clients (Claude Code,
+  Cursor, Qoder, or OpenCode). The resolved manifest owns each complete native
+  package; the setup assistant and Core/Core plus 3D profiles do not encode
+  environment combinations.
+- `.codex/agents/*.toml` is the canonical subagent source. Other native agent
+  projections are generated and drift-checked by the Agentic source workflow.
+  Runtime-neutral AGENTS, skills, canonical subagents, sync tools, docs, and
+  selected workflows are always shared.
 - User-modified files require a visible decision.
 - Secrets never enter target project files or locks.
 - Transactions are staged and reversible.
@@ -79,7 +88,7 @@ Read:
   honest minimum recommendation of 16 GB VRAM and 25 GB storage without making
   it a core readiness gate. See `docs/32_comfyui_portrait_pipeline.md` for the
   current contract and acceptance rules.
-- The optional flattened ChatGPT project-sources export is selectable only for Codex on Components, maps skill `SKILL.md` files to `<skill>.md`, includes the adapted AGENTS/README/subagents, shows its files and sizes, and recommends Chat without starting an upload or planning action.
+- The optional flattened ChatGPT project-sources export is selectable independently of the setup assistant on Components, maps skill `SKILL.md` files to `<skill>.md`, includes the adapted AGENTS/README/subagents, shows its files and sizes, and recommends Chat without starting an upload or planning action.
 - Existing-project management separately offers ChatGPT source packaging when
   the scan finds an AGENTS.md, flattened skill, or subagent source; no
   installation lock is required. It defaults to Downloads, keeps detected
@@ -143,7 +152,7 @@ A broad product change needs:
 - tests and fault scenarios
 - documentation and skill updates
 - blockers and unsupported routes
-- selected provider/model/profile and Codex-only flatten behavior
+- setup provider/model/profile provenance and its isolation from development-client integrations
 
 ## Update this skill when
 

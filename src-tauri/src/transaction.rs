@@ -164,25 +164,14 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
             "plan AI optimization profile does not match the selected provider".into(),
         ));
     }
-    if plan.ai_provider != "codex"
-        && plan
-            .selected_components
-            .iter()
-            .any(|id| id == "codex.config")
-    {
-        return Err(AppError::Transaction(
-            "non-Codex plans cannot install Codex configuration".into(),
-        ));
-    }
-    if plan.flatten_chat_sources && plan.ai_provider != "codex" {
-        return Err(AppError::Transaction(
-            "flattened ChatGPT sources require the Codex provider".into(),
-        ));
-    }
     crate::ai::validate_endpoint_for_provider(
         plan.ai_provider.as_str(),
         plan.ai_endpoint.as_deref(),
     )?;
+    crate::coding_environment::validate_selection(&CodingEnvironmentSelection {
+        primary: plan.primary_coding_environment.clone(),
+        additional: plan.additional_coding_environments.clone(),
+    })?;
     if !matches!(
         plan.source.manifest_origin.as_str(),
         "remote" | "bundled_revision_bootstrap"
@@ -518,6 +507,8 @@ pub fn new_journal(
             observed_exists: plan.transaction.project_root_mode == ProjectRootMode::Existing,
             cleanup_result: None,
         },
+        primary_coding_environment: plan.primary_coding_environment.clone(),
+        additional_coding_environments: plan.additional_coding_environments.clone(),
         state: "preflight".into(),
         created_at: now.clone(),
         updated_at: now,
@@ -2459,7 +2450,9 @@ fn validate_managed_bytes(
         let value = serde_json::from_slice::<serde_json::Value>(bytes).map_err(|error| {
             AppError::Transaction(format!("JSON validation failed for {destination}: {error}"))
         })?;
-        let schema = if lower.ends_with("/.hoi4-mod-setup/project-state.json")
+        let schema = if lower.ends_with("/.hoi4-mod-setup/state.json")
+            || lower == ".hoi4-mod-setup/state.json"
+            || lower.ends_with("/.hoi4-mod-setup/project-state.json")
             || lower == ".hoi4-mod-setup/project-state.json"
         {
             Some(include_str!("../../docs/schemas/project-state.schema.json"))
@@ -3119,6 +3112,7 @@ fn build_transaction_readiness(
             )
         });
     if removing {
+        let provider_is_codex = plan.ai_provider == "codex";
         let confirmed_field_count = plan
             .codex_analysis
             .as_ref()
@@ -3132,10 +3126,17 @@ fn build_transaction_readiness(
             codex: ReadinessCodexSummary {
                 provider: plan.ai_provider.clone(),
                 model: plan.ai_model.clone(),
-                integration: "codex_app_server".into(),
-                auth_mode: "chatgpt".into(),
+                integration: if provider_is_codex { "codex_app_server" } else { "provider_api" }.into(),
+                auth_mode: if provider_is_codex {
+                    "chatgpt"
+                } else if plan.ai_provider == "local" {
+                    "local_endpoint"
+                } else {
+                    "api_key"
+                }
+                .into(),
                 authenticated_during_setup: plan.codex_analysis.is_some(),
-                analysis_status: "not_required_for_removal".into(),
+                analysis_status: if plan.codex_analysis.is_some() { "confirmed" } else { "block" }.into(),
                 confirmed_field_count,
                 no_account_metadata_persisted: true,
                 blocking_check_ids: vec![],
@@ -3187,6 +3188,26 @@ fn build_transaction_readiness(
             .unwrap_or(false)
     };
     let has_component = |id: &str| plan.selected_components.iter().any(|item| item == id);
+    // Legacy and synthetic transaction fixtures may predate the coding-client
+    // package closure. Production plans always carry at least one native
+    // environment component; only those plans require an on-disk package
+    // readiness check here.
+    let coding_environment_selected = plan.selected_components.iter().any(|id| {
+        matches!(
+            id.as_str(),
+            "codex.config"
+                | "core.claude.instructions"
+                | "runtime.claude"
+                | "runtime.claude.mcp"
+                | "runtime.cursor"
+                | "runtime.qoder"
+                | "runtime.opencode"
+                | "runtime.opencode.config"
+        ) || id.starts_with("environment.")
+    }) || plan
+        .operations
+        .iter()
+        .any(|operation| looks_like_coding_environment_destination(&operation.destination));
     let mut readiness_components = plan.selected_components.clone();
     if plan
         .operations
@@ -3353,6 +3374,28 @@ fn build_transaction_readiness(
         project_id: plan.project_id.clone(),
         project_root: project_root.display().to_string(),
         selected_components: readiness_components,
+        primary_coding_environment: plan.primary_coding_environment.clone(),
+        additional_coding_environments: plan.additional_coding_environments.clone(),
+        coding_environments_status: if !coding_environment_selected
+            || (crate::coding_environment::validate_selection(&CodingEnvironmentSelection {
+                primary: plan.primary_coding_environment.clone(),
+                additional: plan.additional_coding_environments.clone(),
+            })
+            .is_ok()
+                && crate::coding_environment::selected_environment_ids(
+                    &CodingEnvironmentSelection {
+                        primary: plan.primary_coding_environment.clone(),
+                        additional: plan.additional_coding_environments.clone(),
+                    },
+                )
+                .iter()
+                .all(|environment| {
+                    crate::readiness::valid_coding_environment(project_root, environment)
+                })) {
+            "pass".into()
+        } else {
+            "block".into()
+        },
         source_verified: crate::source::validate_commit(&plan.source.resolved_revision).is_ok()
             && crate::source::validate_sha256(&plan.source.manifest_sha256).is_ok()
             && matches!(
@@ -3464,6 +3507,18 @@ fn build_transaction_readiness(
         ],
     });
     Ok(report)
+}
+
+fn looks_like_coding_environment_destination(path: &str) -> bool {
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    normalized == "claude.md"
+        || normalized == ".mcp.json"
+        || normalized == "opencode.json"
+        || normalized.starts_with(".codex/")
+        || normalized.starts_with(".claude/")
+        || normalized.starts_with(".cursor/")
+        || normalized.starts_with(".qoder/")
+        || normalized.starts_with(".opencode/")
 }
 
 fn build_lock(
@@ -3645,7 +3700,31 @@ fn build_lock(
     let mut component_ids = plan.selected_components.clone();
     if let Some(previous) = previous_lock {
         for component in &previous.components {
-            if !component_ids.iter().any(|id| id == &component.id) {
+            if component_ids.iter().any(|id| id == &component.id) {
+                continue;
+            }
+            // Maintenance plans intentionally keep predecessor components in
+            // the lock for auditability.  A deselected coding-environment
+            // component is the exception: when every one of its managed
+            // files was removed, retaining the old component would make the
+            // package appear installed again on the next repair.  Use the
+            // resulting file set and operation actions rather than a static
+            // component-ID allowlist so newly published manifest components
+            // follow the same rule without an app release.
+            let has_live_file = files.iter().any(|file| file.component_id == component.id);
+            let has_non_delete_operation = plan.operations.iter().any(|operation| {
+                operation.component_id == component.id
+                    && operation.action != OperationAction::DeleteManaged
+            });
+            let looks_like_environment =
+                crate::coding_environment::is_known_environment_component_id(&component.id)
+                    || component.id.starts_with("environment.")
+                    || component.id.starts_with("runtime.")
+                    || plan.operations.iter().any(|operation| {
+                        operation.component_id == component.id
+                            && looks_like_coding_environment_destination(&operation.destination)
+                    });
+            if !looks_like_environment || has_live_file || has_non_delete_operation {
                 component_ids.push(component.id.clone());
             }
         }
@@ -3812,6 +3891,8 @@ fn build_lock(
         ai_reasoning_effort: plan.ai_reasoning_effort.clone(),
         ai_endpoint: plan.ai_endpoint.clone(),
         ai_optimization_profile: plan.ai_optimization_profile.clone(),
+        primary_coding_environment: plan.primary_coding_environment.clone(),
+        additional_coding_environments: plan.additional_coding_environments.clone(),
         flatten_chat_sources: plan.flatten_chat_sources,
         // Managed removal is deliberately available without provider
         // authentication. Preserve a prior non-secret analysis record when
@@ -3976,6 +4057,8 @@ fn new_rollback_journal(
         project_id: parent.project_id.clone(),
         project_root: project_root.display().to_string(),
         project_root_lifecycle: parent.project_root_lifecycle.clone(),
+        primary_coding_environment: parent.primary_coding_environment.clone(),
+        additional_coding_environments: parent.additional_coding_environments.clone(),
         state: "preflight".into(),
         created_at: now.clone(),
         updated_at: now,
@@ -5938,7 +6021,7 @@ mod tests {
             provider: Some("codex".into()),
             model: Some("gpt-5.6-luna".into()),
             reasoning_effort: Some("xhigh".into()),
-            optimization_profile: Some("Codex project and ChatGPT Chat".into()),
+            optimization_profile: Some("Codex setup analysis".into()),
             analysis_id: uuid::Uuid::new_v4(),
             schema_version: "1.0.0".into(),
             input_sha256: "a".repeat(64),
@@ -5981,6 +6064,8 @@ mod tests {
             ai_reasoning_effort: "xhigh".into(),
             ai_endpoint: None,
             ai_optimization_profile: crate::models::default_ai_optimization_profile(),
+            primary_coding_environment: "codex".into(),
+            additional_coding_environments: vec![],
             flatten_chat_sources: false,
             codex_analysis: Some(test_codex_analysis()),
             selected_components: vec!["core.agents".into()],
@@ -6134,6 +6219,73 @@ mod tests {
                 && operation.action == OperationAction::DeleteManaged
                 && operation.resolution.as_deref() == Some("obsolete_managed_remove")
         }));
+    }
+
+    #[test]
+    fn lock_reconciliation_drops_a_future_environment_component_after_its_files_are_removed() {
+        let project = tempdir().unwrap();
+        let mut predecessor: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let future_id = "runtime.future_client".to_string();
+        predecessor.components.push(LockComponent {
+            id: future_id.clone(),
+            version: None,
+            state: "installed".into(),
+            source_revision: Some(predecessor.source.revision.clone()),
+            validation: Some("pass".into()),
+        });
+        predecessor.files.push(LockedFile {
+            path: ".future-client/agent.md".into(),
+            location_scope: Some("project".into()),
+            component_id: future_id.clone(),
+            source_path: ".future-client/agent.md".into(),
+            source_revision: predecessor.source.revision.clone(),
+            source_sha256: "a".repeat(64),
+            source_size: Some(1),
+            base_sha256: None,
+            installed_sha256: "a".repeat(64),
+            installed_size: Some(1),
+            ownership: Ownership::Managed,
+            preserved_local: false,
+            external: false,
+            generated_content: None,
+            generated_bytes: None,
+            executable: false,
+            platform: Some(ManifestPlatform::All),
+        });
+
+        let mut plan = plan();
+        plan.maintenance_mode = Some("repair".into());
+        plan.selected_components = vec!["core.agents".into()];
+        plan.operations = vec![PlanOperation {
+            id: "remove-future-client".into(),
+            component_id: future_id.clone(),
+            ownership: Some(Ownership::Managed),
+            location_scope: Some("project".into()),
+            action: OperationAction::DeleteManaged,
+            source_path: None,
+            destination: ".future-client/agent.md".into(),
+            source_sha256: None,
+            source_size: Some(1),
+            platform: Some(ManifestPlatform::All),
+            executable: false,
+            result_sha256: None,
+            base_sha256: None,
+            local_sha256: Some("a".repeat(64)),
+            local_state: LocalState::Unmodified,
+            resolution: Some("managed_remove".into()),
+            external: false,
+            rollback: RollbackAction::RestoreBackup,
+        }];
+        let journal = new_journal(&plan, &plan.project_id, project.path());
+        let lock = build_lock(&plan, &[], &journal, Some(&predecessor), project.path()).unwrap();
+        assert!(!lock
+            .components
+            .iter()
+            .any(|component| component.id == future_id));
+        assert!(!lock.files.iter().any(|file| file.component_id == future_id));
     }
 
     #[test]
@@ -6349,6 +6501,26 @@ mod tests {
             b"\xff\xd8\xffbinary payload\xff\xd9",
         )
         .unwrap();
+    }
+
+    #[test]
+    fn actual_project_state_path_enforces_reasoning_effort_schema() {
+        let project = tempdir().unwrap();
+        let mut operation = plan().operations[0].clone();
+        operation.component_id = "project.state".into();
+        operation.destination = ".hoi4-mod-setup/state.json".into();
+        let incomplete = br#"{
+            "schema_version":"1.0.0",
+            "project_id":"example_mod",
+            "project_root":"C:/mods/example_mod",
+            "platform":"windows",
+            "wizard":{"current_step":"ready","completed_steps":[]},
+            "preferences":{"telemetry":false},
+            "ai":{"provider":"deepseek","model":"deepseek-chat","optimization_profile":"DeepSeek setup analysis"},
+            "codex":{"integration":"provider_api","auth_mode":"api_key","auth_status":"configured","analysis_required":true,"analysis_status":"confirmed","account_values_persisted":false},
+            "credential_references":[]
+        }"#;
+        assert!(validate_managed_bytes(project.path(), &operation, incomplete).is_err());
     }
 
     #[test]
@@ -8226,24 +8398,24 @@ mod tests {
     }
 
     #[test]
-    fn non_codex_plans_cannot_retain_codex_configuration_or_chat_flattening() {
+    fn setup_provider_does_not_restrict_development_client_components() {
         let project = tempdir().unwrap();
         let mut plan = ready_plan(project.path());
         plan.ai_provider = "claude".into();
         plan.ai_model = "claude-model".into();
-        plan.ai_optimization_profile = "Claude Code / Anthropic conventions".into();
+        plan.ai_reasoning_effort = "high".into();
+        plan.ai_endpoint = Some("https://api.anthropic.com/v1/messages".into());
+        plan.ai_optimization_profile = "Claude setup analysis".into();
+        let analysis = plan.codex_analysis.as_mut().unwrap();
+        analysis.engine = "provider_api".into();
+        analysis.auth_mode = "api_key".into();
+        analysis.provider = Some("claude".into());
+        analysis.model = Some("claude-model".into());
+        analysis.reasoning_effort = Some("high".into());
+        analysis.optimization_profile = Some("Claude setup analysis".into());
         plan.selected_components.push("codex.config".into());
-        let error = validate_plan(&plan).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("cannot install Codex configuration"));
-
-        plan.selected_components.retain(|id| id != "codex.config");
         plan.flatten_chat_sources = true;
-        let error = validate_plan(&plan).unwrap_err();
-        assert!(error.to_string().contains("require the Codex provider"));
-
-        plan.flatten_chat_sources = false;
+        validate_plan(&plan).unwrap();
     }
 
     #[test]
@@ -8753,6 +8925,8 @@ mod tests {
             ai_reasoning_effort: "xhigh".into(),
             ai_endpoint: None,
             ai_optimization_profile: crate::models::default_ai_optimization_profile(),
+            primary_coding_environment: "codex".into(),
+            additional_coding_environments: vec![],
             flatten_chat_sources: false,
             codex_analysis: None,
             wiki_required_pages: manifest_wiki_pages(),
@@ -8817,6 +8991,8 @@ mod tests {
             ai_reasoning_effort: "xhigh".into(),
             ai_endpoint: None,
             ai_optimization_profile: crate::models::default_ai_optimization_profile(),
+            primary_coding_environment: "codex".into(),
+            additional_coding_environments: vec![],
             flatten_chat_sources: false,
             codex_analysis: None,
             wiki_required_pages: manifest_wiki_pages(),

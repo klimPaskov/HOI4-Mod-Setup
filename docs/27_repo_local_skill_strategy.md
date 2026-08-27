@@ -137,6 +137,6 @@ ChatGPT authentication, the provider-neutral structured semantic boundary,
 account state, usage-limit behavior, redaction, provider/model binding, and the
 proposal-to-renderer boundary. Update it whenever any provider adapter, method,
 schema, process rule, credential boundary, or privacy rule changes. Provider
-profiles and the Codex-only flattened Chat export are documented in
+profiles, setup-assistant isolation, and the independent flattened Chat export are documented in
 `docs/31_ai_provider_profiles_and_chat_sources.md` and must stay aligned with
 the source contract, schemas, and UI.

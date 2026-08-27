@@ -121,6 +121,16 @@
         }
       }
     },
+    "primary_coding_environment": {
+      "enum": ["codex", "claude_code", "cursor", "qoder", "opencode"]
+    },
+    "additional_coding_environments": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": ["codex", "claude_code", "cursor", "qoder", "opencode"]
+      }
+    },
     "state": {
       "enum": [
         "preflight",

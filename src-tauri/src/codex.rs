@@ -508,8 +508,7 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
         )?;
         let thread_id = thread_id(&thread)?;
         let input_sha256 = analysis_input_sha256(request)?;
-        let prompt =
-            analysis_prompt_for_provider(request, &input_sha256, "Codex project and ChatGPT Chat")?;
+        let prompt = analysis_prompt_for_provider(request, &input_sha256, "Codex setup analysis")?;
         let schema: Value = serde_json::from_slice(include_bytes!(
             "../../docs/schemas/codex-analysis.schema.json"
         ))?;
@@ -559,7 +558,7 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
             provider: Some("codex".into()),
             model: Some(model.to_owned()),
             reasoning_effort: Some(reasoning_effort.to_owned()),
-            optimization_profile: Some("Codex project and ChatGPT Chat".into()),
+            optimization_profile: Some("Codex setup analysis".into()),
             analysis_id: analysis.analysis_id,
             schema_version: analysis.schema_version.clone(),
             input_sha256,
@@ -1149,7 +1148,7 @@ pub(crate) fn analysis_prompt_for_provider(
 ) -> Result<String, AppError> {
     let input = serde_json::to_string(&model_visible_analysis_input(request))?;
     Ok(format!(
-        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Set analysis_id to a fresh RFC 4122 UUID. Return every required proposal key exactly once. descriptor_tags and folder_profile proposal values must be JSON arrays of strings; every other proposal value must be a string. Descriptor tags may use only these official categories: Alternative History, Balance, Events, Fixes, Gameplay, Graphics, Historical, Ideologies, Map, Military, National Focuses, Sound, Technologies, Translation, Utilities. Propose concise, user-facing reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs; never invent paths or references. Keep project_summary, reasons, and warnings focused on the mod; never mention schemas, constraints, evidence fields, operating systems, platforms, or Workshop ID rules. Return warnings only when the user must make a decision or correct something. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
+        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Set analysis_id to a fresh RFC 4122 UUID. Return every required proposal key exactly once. descriptor_tags and folder_profile proposal values must be JSON arrays of strings; every other proposal value must be a string. Descriptor tags may use only these official categories: Alternative History, Balance, Events, Fixes, Gameplay, Graphics, Historical, Ideologies, Map, Military, National Focuses, Sound, Technologies, Translation, Utilities. Propose concise, user-facing reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs; never invent paths or references. Keep project_summary, proposal values, reasons, and warnings focused on the mod; never attribute them to the setup assistant, provider, model, or analysis process, and never mention schemas, constraints, evidence fields, operating systems, platforms, or Workshop ID rules. Return warnings only when the user must make a decision or correct something. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
     ))
 }
 
@@ -1196,7 +1195,7 @@ pub fn validate_folder_profile_paths(folders: &[String]) -> Result<Vec<String>, 
 
 #[cfg(test)]
 fn analysis_prompt(request: &CodexAnalysisRequest, input_sha256: &str) -> Result<String, AppError> {
-    analysis_prompt_for_provider(request, input_sha256, "Codex project and ChatGPT Chat")
+    analysis_prompt_for_provider(request, input_sha256, "Codex setup analysis")
 }
 
 pub(crate) fn validate_analysis_output(
@@ -1406,6 +1405,20 @@ fn validate_user_facing_analysis_text(value: &str, label: &str) -> Result<(), Ap
             "{label} contains internal setup details"
         )));
     }
+    validate_provider_neutral_text(value, label)?;
+    Ok(())
+}
+
+fn validate_provider_neutral_text(value: &str, label: &str) -> Result<(), AppError> {
+    let attribution = regex::Regex::new(
+        r"(?i)(?:\b(?:generated|suggested|analy[sz]ed|prepared|written)\s+by\s+(?:codex|chatgpt|openai|claude|anthropic|kimi|moonshot|glm|zhipu|deepseek)\b|\busing\s+(?:the\s+)?(?:codex|chatgpt|openai|claude|anthropic|kimi|moonshot|glm|zhipu|deepseek)\b|\bsetup\s+(?:assistant|provider)\b|\banalysis\s+model\b)",
+    )
+    .is_ok_and(|pattern| pattern.is_match(value));
+    if attribution {
+        return Err(AppError::Serialization(format!(
+            "{label} contains setup-provider attribution"
+        )));
+    }
     Ok(())
 }
 
@@ -1485,6 +1498,7 @@ fn validate_proposal_value(key: &ProposalKey, value: &Value) -> Result<(), AppEr
                 AppError::Serialization("Codex proposal must use a string value".into())
             })?;
             crate::descriptors::validate_field(value, "Codex proposal")?;
+            validate_provider_neutral_text(value, "Codex proposal")?;
             if value.chars().count() > 256 {
                 return Err(AppError::Serialization(
                     "Codex proposal string is too long".into(),
@@ -1520,6 +1534,7 @@ fn validate_proposal_value(key: &ProposalKey, value: &Value) -> Result<(), AppEr
                     "Codex description proposal is empty or too long".into(),
                 ));
             }
+            validate_provider_neutral_text(value, "Codex description proposal")?;
         }
         ProposalKey::DescriptorTags => {
             let tags = value.as_array().ok_or_else(|| {
@@ -2340,6 +2355,40 @@ pub fn validate_confirmed_record(record: &CodexAnalysisRecord) -> Result<(), App
     {
         return Err(AppError::Serialization(
             "Codex analysis record is incomplete or unsafe".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_confirmed_record_for_profile(
+    record: &CodexAnalysisRecord,
+    provider: &str,
+    model: &str,
+    reasoning_effort: &str,
+    optimization_profile: &str,
+) -> Result<(), AppError> {
+    validate_confirmed_record(record)?;
+    let canonical_profile = crate::ai::profile(provider)
+        .map(|profile| profile.optimization_profile)
+        .ok_or_else(|| {
+            AppError::InvalidInput("installed lock uses an unsupported AI provider".into())
+        })?;
+    crate::ai::validate_reasoning_effort(reasoning_effort)?;
+    if model.trim().is_empty()
+        || record.provider.as_deref().unwrap_or("codex") != provider
+        || record.model.as_deref().is_some_and(|value| value != model)
+        || record
+            .reasoning_effort
+            .as_deref()
+            .is_some_and(|value| value != reasoning_effort)
+        || optimization_profile != canonical_profile
+        || record
+            .optimization_profile
+            .as_deref()
+            .is_none_or(|value| value != canonical_profile)
+    {
+        return Err(AppError::Serialization(
+            "confirmed setup analysis does not match its installed provider profile".into(),
         ));
     }
     Ok(())
@@ -3179,6 +3228,21 @@ mod tests {
     }
 
     #[test]
+    fn analysis_output_rejects_setup_provider_attribution_in_rendered_values() {
+        let input = "a".repeat(64);
+        let request = analysis_request_with_component_registry(&["core.skills"]);
+        for value in [
+            "Prepared by DeepSeek for later development.",
+            "A HOI4 project using Claude.",
+            "Chosen by the setup assistant.",
+        ] {
+            let mut attributed = valid_analysis_value(&input);
+            attributed["proposals"][4]["value"] = json!(value);
+            assert!(validate_analysis_output(attributed, &request, &input, &[]).is_err());
+        }
+    }
+
+    #[test]
     fn evidence_paths_are_root_contained_and_hashes_are_lowercase() {
         let request = CodexAnalysisRequest {
             mode: "existing_project_semantics".into(),
@@ -3546,7 +3610,7 @@ mod tests {
             provider: Some("codex".into()),
             model: None,
             reasoning_effort: Some("xhigh".into()),
-            optimization_profile: Some("Codex project and ChatGPT Chat".into()),
+            optimization_profile: Some("Codex setup analysis".into()),
             analysis_id: Uuid::new_v4(),
             schema_version: CODEX_SCHEMA_VERSION.into(),
             input_sha256: "a".repeat(64),
@@ -3674,7 +3738,7 @@ mod tests {
             provider: Some("codex".into()),
             model: None,
             reasoning_effort: Some("xhigh".into()),
-            optimization_profile: Some("Codex project and ChatGPT Chat".into()),
+            optimization_profile: Some("Codex setup analysis".into()),
             analysis_id: analysis.analysis_id,
             schema_version: analysis.schema_version.clone(),
             input_sha256: analysis.input_sha256.clone(),

@@ -2,8 +2,9 @@
 
 ## AI provider data boundary
 
-The selected provider is required for Create, Import, Update, and Repair
-planning. Codex owns ChatGPT OAuth tokens and refresh. Non-Codex keys are
+The selected setup assistant is required for Create, Import, Update, and Repair
+planning. It is analysis provenance, not a later development-client preference.
+Codex owns ChatGPT OAuth tokens and refresh. Non-Codex keys are
 owned by the OS credential vault. Project state, plans, locks, readiness
 reports, logs, and support bundles never contain tokens, keys, full account
 identity, plan type, usage, rate limits, thread history, or hidden reasoning.
@@ -30,6 +31,21 @@ source-manifest SHA-256, and a proof that account identity was not persisted.
 
 `scan-result.schema.json` requires bounded-scan completion metadata (`partial`, `cancelled`, `limits_hit`, and file/directory/byte counters). Live stage/path progress is delivered only through correlated Tauri events and is not persisted as project content. The desktop bridge preserves deterministic finding origins and maps core conflicts into the review surface; provider input uses bounded normalized finding/conflict summaries and their core-bound hashes, not raw inventoried file text.
 
+## Coding-environment selection
+
+`primary_coding_environment` and `additional_coding_environments` are
+non-secret persisted selection fields on project state, installation plans,
+installation locks, and transaction journals. They use the closed IDs `codex`,
+`claude_code`, `cursor`, `qoder`, and `opencode`; exactly one primary is valid,
+and the primary cannot occur in the additional list. Nested project state uses
+`coding_environments: { primary, additional }` so migrations can distinguish a
+missing legacy choice (Codex default) from an explicit selection.
+
+Manifest components carry an optional `coding_environment` tag. The app resolves
+the selected package closure from the exact manifest revision and records the
+resulting component/file ownership in the normal lock. Workflow profile IDs do
+not encode environment combinations.
+
 ## Separation
 
 ### Provider analysis
@@ -45,7 +61,7 @@ confidence score.
 
 ### Plan
 
-A plan records one confirmed provider analysis, the selected provider/model/profile, the exact manifest
+A plan records one confirmed provider analysis, the selected setup provider/model/profile as provenance, the exact manifest
 `wiki.required_pages` list and snapshot/media/provenance/license metadata for its resolved revision, and exact operations. It
 may target the project, the external HOI4 launcher directory, or application
 data. It contains no account metadata. Optional workflow credentials are
@@ -53,6 +69,10 @@ represented only by an opaque OS-vault reference; the value is never serialized
 into the plan, state, lock, journal, or logs. Managed-removal plans may carry
 `codex_analysis: null` because removal is a local recovery operation and does
 not require provider authentication.
+
+Plans also carry the primary/additional coding-environment selection. Native
+client files use the same hash, ownership, conflict, staging, and rollback
+records as every other managed component.
 
 Manifest-declared external actions also carry a secret-free argument list,
 working-directory placeholder, environment variable names, expected writes,
@@ -66,6 +86,10 @@ snapshot/media/provenance/license metadata for that revision, generated and
 downloaded files, external launcher ownership, installed hashes, merge
 decisions, optional states including `workflow.super_events`, and confirmed
 analysis digests bound to the same exact source revision and manifest SHA-256.
+A lock also records the primary and additional coding environments so Update,
+Repair, Reinstall, Rollback, and Removal can retain or deliberately change the
+same client closure. Modified or unmanaged native files remain represented for
+preservation rather than being silently deleted.
 A legacy lock may backfill those analysis fields only from valid source
 evidence already present in that lock; absent provenance remains blocked. A legacy lock
 missing either the list or metadata is readable but readiness remains
@@ -78,17 +102,21 @@ has no credential or environment requirement.
 
 ### Project state
 
-Project state records wizard progress, provider/model/profile, non-secret
+Project state records wizard progress, setup provider/model/profile provenance, non-secret
 endpoint and flatten preferences, App Server integration state when Codex is
 selected, and opaque references for secrets such as `MESHY_API_KEY` or a
 provider key. It can be recreated without changing installation ownership.
 
 ### Readiness
 
-Readiness records whether the selected provider was configured (or ChatGPT
+Readiness records whether the selected setup assistant was configured (or ChatGPT
 authentication was verified during a Codex setup), whether required analysis
 was confirmed, whether account metadata stayed out of artifacts, and which
-checks block core readiness. Open in Codex is a Codex-only action.
+checks block core readiness. Open in Codex instead follows the independently
+installed Codex project integration and locally recomputed core readiness. The
+generated `.hoi4-mod-setup/state.json` is validated against
+`project-state.schema.json`, including provider, model, reasoning effort, and
+optimization-profile provenance.
 
 ### Journal
 

@@ -41,6 +41,15 @@ stages. Source resolution, selective download evidence, and checksum
 verification must fail before any predecessor or project-file backup is
 written.
 
+Coding-environment selection is part of the reviewed transaction identity.
+Plans, journals, and locks persist exactly one primary plus any additional
+environment IDs. The selected manifest closure includes the complete native
+package for each client and the shared runtime-neutral foundation. On update,
+repair, reinstall, rollback, or removal, compare the predecessor lock with the
+new selection; remove only unchanged managed files for a deselected client and
+retain modified or unmanaged files as explicit preserved conflicts. Do not use
+a static app-side component list when reconciling future manifest components.
+
 ## Operation model
 
 Every operation needs:
@@ -112,7 +121,7 @@ operations are not accepted; mode belongs to the reviewed file operation.
 - Persist the readiness report, then refuse stage 12 and the success lock when any blocking core check is `block`; optional `incomplete`, `planned_unavailable`, and unsupported optional routes remain non-blocking.
 - Persist an `applying` operation intent before replacing or deleting a live destination. Use the platform atomic replace route where available and verify the expected incoming hash, not only an observed self-hash.
 - Bind UI apply to a core-owned reviewed plan session and prepared bytes. The renderer sends only the approved plan ID and project root when installation starts; never reserialize or accept a renderer-edited plan as authoritative.
-- Track source hash separately from result hash: generated files, structured merges, and optional MCP TOML adaptation may have a verified incoming source hash and a different deterministic installed hash.
+- Track source hash separately from result hash: generated files, structured merges, and optional MCP TOML adaptation may have a verified incoming source hash and a different deterministic installed hash. The generated `.hoi4-mod-setup/state.json` must validate against `project-state.schema.json`, including provider, model, reasoning effort, and optimization-profile provenance.
 - The Super Events source package uses stable `hoi4ms_*` names for manifest
   evidence, but its reviewed project destinations use the confirmed mod
   prefix. Update planning compares those adapted paths and removes an old
@@ -124,7 +133,7 @@ operations are not accepted; mode belongs to the reviewed file operation.
   declaration. Revalidate that
   ledger before backup. Generated inputs use an explicit `generated:` source
   and do not fabricate remote evidence.
-- Treat provider/model/reasoning-effort/profile selection and the Codex-only flattened ChatGPT-source export as reviewed plan inputs. Flattening is a generated, root-contained operation: direct skill `SKILL.md` files become `<skill>.md`; required adapted `AGENTS.md`, README, and subagents are included; and collisions, links, and secrets are rejected before staging. Build it only from eligible files selected for the current plan. Never include offline-wiki pages, wiki media, descriptors, configuration, workflow assets, or other unrelated selected component files in the flat view or count them against its limits. When review keeps a selected local skill or subagent, read that exact root-contained regular file without following links and flatten the kept bytes; never enumerate unrelated skills or subagents already present in an existing project.
+- Treat provider/model/reasoning-effort/profile selection as setup-analysis provenance and the independently selectable flattened ChatGPT-source export as a reviewed plan input. Flattening is a generated, root-contained operation: direct skill `SKILL.md` files become `<skill>.md`; required adapted `AGENTS.md`, README, and subagents are included; and collisions, links, and secrets are rejected before staging. Build it only from eligible files selected for the current plan. Never include offline-wiki pages, wiki media, descriptors, configuration, workflow assets, or other unrelated selected component files in the flat view or count them against its limits. When review keeps a selected local skill or subagent, read that exact root-contained regular file without following links and flatten the kept bytes; never enumerate unrelated skills or subagents already present in an existing project.
 - Deterministically adapt every selected Codex subagent definition before
   staging so its developer instructions explicitly require
   `fork_context=false`, unless verified TOML already declares the same rule.
@@ -287,7 +296,7 @@ separate non-secret lock object. Disabling it during Update or Repair removes
 only unchanged managed portrait files; modified files remain explicit review
 operations, and rollback restores the predecessor lock normally.
 
-Opaque OS-vault credential references are carried separately from secret values. A lock refresh may preserve the non-secret Meshy reference only in the selected `workflow.3d` entry; provider-key references remain core-owned and outside project state, plans, and locks. Managed removal clears optional-workflow references without deleting an OS credential implicitly. A flatten preference is copied only when the selected provider is Codex.
+Opaque OS-vault credential references are carried separately from secret values. A lock refresh may preserve the non-secret Meshy reference only in the selected `workflow.3d` entry; provider-key references remain core-owned and outside project state, plans, and locks. Managed removal clears optional-workflow references without deleting an OS credential implicitly. A flatten preference is copied independently of the setup assistant.
 
 ## Maintenance
 

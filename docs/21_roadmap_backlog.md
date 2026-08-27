@@ -54,9 +54,9 @@ Add and validate the remote manifest, generate a resolved file index, declare pl
 - skills
 - subagents
 - Codex and MCP
-- required Codex App Server semantic review after ChatGPT authentication
+- required selected-provider semantic review; Codex uses App Server after ChatGPT authentication
 - request manifest and schema-constrained suggestions
-- Detected, Suggested by Codex, and Confirmed states
+- Detected, Suggested by the selected setup assistant, and Confirmed states
 - finding review
 
 The existing-project scanner phase also includes bounded immediate-parent

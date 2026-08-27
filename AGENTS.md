@@ -159,13 +159,43 @@ Required behavior:
 - never inspect, copy, persist, or log ChatGPT tokens
 - never write email, account ID, plan type, usage, or rate limits into a project or installation lock
 - do not use the experimental externally managed token mode
-- do not hardcode a model name for the Codex path; non-Codex models are user-selected and persisted as non-secret configuration
+- do not hardcode a model name for the Codex path; the selected setup model is persisted only as non-secret analysis provenance
 
-Every semantic turn uses approved inputs and the current `codex-analysis` output schema. Codex turns use a dedicated App Server thread and restricted read-only sandbox. Provider adapters never write files or approve transactions. The selected profile shapes names, IDs, namespaces, descriptions, tags, folder profiles, project instructions, and component choices. Deterministic Rust validates and renders the final bytes after user confirmation.
+The provider, model, and reasoning effort selected on the first screen are the
+**setup assistant**. They do not select, install, recommend, or restrict the AI
+client used later for Agentic HOI4 Modding. Generated `AGENTS.md` and README
+content must remain provider-neutral. Development-client integrations such as
+`codex.config`, Open in Codex, flattened ChatGPT sources, and provider-neutral
+MCP tooling are selected or enabled independently of the setup assistant.
+
+Every semantic turn uses approved inputs and the current `codex-analysis` output schema. Codex turns use a dedicated App Server thread and restricted read-only sandbox. Provider adapters never write files or approve transactions. The selected setup profile shapes semantic proposals for names, IDs, namespaces, descriptions, tags, folder profiles, and component recommendations. It may help adapt project-specific guidance, but it must not insert the setup provider, model, reasoning effort, or provider-specific development convention into the generated project. Deterministic Rust validates and renders the final provider-neutral bytes after user confirmation.
 
 No AI provider can write project files during analysis, approve a transaction, resolve conflicts automatically, or pass readiness checks. Missing authentication/configuration or usage availability blocks new planning. Recovery, rollback, backup inspection, and managed removal remain locally available while signed out or disconnected.
 
 Use `hoi4-mod-setup-codex-integration` for changes to this boundary.
+
+## 5B. Coding-environment selection
+
+The Components phase includes a separate **Coding Environments** step. Require
+exactly one primary environment, defaulting to Codex, and allow any additional
+selection from Claude Code, Cursor, Qoder, and OpenCode. The primary is never
+listed as an additional choice, and this selection is independent of the setup
+assistant and Core/Core plus 3D workflow profiles.
+
+Resolve complete native packages from manifest components tagged with
+`coding_environment`. Always include the shared runtime-neutral package:
+adapted `AGENTS.md`, `.agents/skills/`, canonical `.codex/agents/*.toml`,
+`.tools/sync/`, shared documentation, and selected workflows. The Codex TOMLs
+are the canonical subagent source; other client projections are generated and
+must pass source-side drift checks.
+
+Persist primary and additional IDs in project state, plans, locks, and journals.
+Existing-project scans detect installed clients and default to Codex only when
+no primary is recorded. Update, repair, reinstall, rollback, and removal must
+preview client changes, preserve existing or modified files, and remove only
+unchanged managed files when a client is deselected. Use
+`hoi4-mod-setup-transactions` and `hoi4-mod-setup-source-manifest` for changes
+to this surface.
 
 ## 6. Existing project scanner
 

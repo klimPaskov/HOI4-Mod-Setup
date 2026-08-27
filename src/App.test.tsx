@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { ChatSources, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, recoveryProgress } from "./App";
+import App, { ChatSources, CodingEnvironments, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readAiModels, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
 import type { ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
@@ -79,6 +79,41 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(initialState.aiModel).toBe("gpt-5.6-luna");
     expect(initialState.aiReasoningEffort).toBe("xhigh");
     expect(initialState.identity.projectId).toBe("atlantis_rising");
+    expect(initialState.primaryCodingEnvironment).toBe("codex");
+    expect(initialState.additionalCodingEnvironments).toEqual([]);
+  });
+
+  it("normalizes coding-environment choices to one primary and unique additional clients", () => {
+    expect(normalizeCodingEnvironmentSelection("cursor", ["cursor", "codex", "cursor", "unknown"])).toEqual({
+      primary: "cursor",
+      additional: ["codex"],
+    });
+    expect(normalizeCodingEnvironmentSelection(undefined, undefined)).toEqual({ primary: "codex", additional: [] });
+  });
+
+  it("lets every supported environment be primary and keeps the primary out of additional choices", () => {
+    for (const environment of ["codex", "claude_code", "cursor", "qoder", "opencode"] as const) {
+      const update = vi.fn();
+      const state = { ...initialState, primaryCodingEnvironment: environment, additionalCodingEnvironments: [] };
+      render(<CodingEnvironments state={state} update={update} />);
+      expect(screen.getByRole("radio", { name: new RegExp(environment === "claude_code" ? "Claude Code" : environment, "i") })).toBeChecked();
+      expect(screen.queryByRole("checkbox", { name: new RegExp(environment === "claude_code" ? "Claude Code" : environment, "i") })).not.toBeInTheDocument();
+      cleanup();
+    }
+  });
+
+  it("updates a controlled selection when the primary changes and removes it from additions", () => {
+    function ControlledEnvironmentStep() {
+      const [state, setState] = useState<WizardState>({ ...initialState, primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["cursor", "qoder"] });
+      return <CodingEnvironments state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
+    }
+
+    render(<ControlledEnvironmentStep />);
+    fireEvent.click(screen.getByRole("radio", { name: /^Cursor / }));
+    expect(screen.getByRole("radio", { name: /^Cursor / })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Codex/ })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Cursor/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Qoder/ })).toBeChecked();
   });
 
   it("provides sanitized development-only states for public screenshots", () => {
@@ -327,7 +362,7 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(continueButton).toBeDisabled();
   });
 
-  it("selects a non-Codex provider at the start and keeps the Codex-only option out of that route", () => {
+  it("selects a setup assistant without presenting it as the future development client", () => {
     function ControlledWelcome() {
       const [state, setState] = useState(welcomeState({ available: false, authenticated: false, auth_mode: "none", usage_limited: false }));
       return <Welcome state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
@@ -343,7 +378,8 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByLabelText("Provider address")).toHaveValue("https://api.anthropic.com/v1/messages");
     expect(screen.getByLabelText("Claude API key")).toHaveAttribute("type", "password");
     expect(screen.getByText("Advanced")).toBeInTheDocument();
-    expect(screen.queryByText(/flattened ChatGPT project-sources/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Used only to analyze and prepare the mod/i)).toBeInTheDocument();
+    expect(screen.queryByText(/project follows the provider/i)).not.toBeInTheDocument();
     expect(screen.getByLabelText("AI provider")).toHaveValue("claude");
   });
 
@@ -359,11 +395,95 @@ describe("HOI4 Mod Setup wizard", () => {
     }
 
     render(<ControlledWelcome />);
-    await waitFor(() => expect(screen.getByLabelText("Model")).toHaveValue("gpt-5.6-luna"));
+    await waitFor(() => expect(within(screen.getByLabelText("Reasoning effort")).getAllByRole("option").map((option) => option.textContent)).toEqual(["Light", "High", "Extra high", "Max"]));
     fireEvent.change(screen.getByLabelText("Model"), { target: { value: "deliberate-model" } });
 
     expect(screen.getByLabelText("Reasoning effort")).toHaveValue("max");
     expect(within(screen.getByLabelText("Reasoning effort")).getAllByRole("option").map((option) => option.textContent)).toEqual(["Light", "Max"]);
+  });
+
+  it.each([
+    ["codex", "gpt-5.6-luna", "xhigh", ""],
+    ["claude", "claude-sonnet-5", "high", "https://api.anthropic.com/v1/messages"],
+    ["kimi", "kimi-k2.6", "high", "https://api.moonshot.ai/v1/chat/completions"],
+    ["glm", "glm-5.2", "high", "https://open.bigmodel.cn/api/paas/v4/chat/completions"],
+    ["deepseek", "deepseek-v4-flash", "high", "https://api.deepseek.com/chat/completions"],
+    ["local", "local-model", "high", "http://127.0.0.1:11434/v1/chat/completions"],
+    ["custom", "custom-model", "high", "https://models.example.test/v1/chat/completions"],
+  ] as const)("keeps the %s model control usable when its live catalog fails", async (provider, model, effort, endpoint) => {
+    enableTauriRuntime();
+    vi.mocked(readAiModels).mockRejectedValue(new Error("catalog offline"));
+    function ControlledWelcome() {
+      const [state, setState] = useState({
+        ...welcomeState({ available: true, authenticated: true, auth_mode: "chatgpt", usage_limited: false }),
+        aiProvider: provider,
+        aiModel: model,
+        aiReasoningEffort: effort,
+        aiEndpoint: endpoint,
+        aiAccount: provider === "codex" ? null : { available: true, authenticated: true, provider, model, auth_mode: provider === "local" ? "local_or_user_configured" : "api_key", usage_limited: false },
+      } as WizardState);
+      return <Welcome state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
+    }
+
+    render(<ControlledWelcome />);
+    await waitFor(() => expect(readAiModels).toHaveBeenCalledWith(provider, endpoint));
+    expect(screen.getByLabelText("Model")).toHaveValue(model);
+    if (provider === "local" || provider === "custom") {
+      expect(screen.getByLabelText("Model")).toHaveAttribute("list", "provider-model-options");
+      expect(await screen.findByText(/Live model suggestions could not be refreshed/i)).toBeInTheDocument();
+    } else {
+      expect(within(screen.getByLabelText("Model")).getByRole("option", { name: model })).toBeInTheDocument();
+      expect(within(screen.getByLabelText("Reasoning effort")).getAllByRole("option")).toHaveLength(1);
+      expect(await screen.findByText(/Using the verified built-in model/i)).toBeInTheDocument();
+    }
+  });
+
+  it.each([
+    ["codex", "gpt-5.6-luna", "", false],
+    ["claude", "claude-sonnet-5", "https://api.anthropic.com/v1/messages", false],
+    ["kimi", "kimi-k2.6", "https://api.moonshot.ai/v1/chat/completions", false],
+    ["glm", "glm-5.2", "https://open.bigmodel.cn/api/paas/v4/chat/completions", false],
+    ["deepseek", "deepseek-v4-flash", "https://api.deepseek.com/chat/completions", false],
+    ["local", "local-model", "http://127.0.0.1:11434/v1/chat/completions", true],
+    ["custom", "custom-model", "https://models.example.test/v1/chat/completions", true],
+  ] as const)("distinguishes an empty %s catalog from a live result", async (provider, model, endpoint, manual) => {
+    enableTauriRuntime();
+    vi.mocked(readAiModels).mockResolvedValue([]);
+    function ControlledWelcome() {
+      const [state, setState] = useState({
+        ...welcomeState({ available: true, authenticated: true, auth_mode: "chatgpt", usage_limited: false }),
+        aiProvider: provider,
+        aiModel: model,
+        aiEndpoint: endpoint,
+        aiAccount: provider === "codex" ? null : { available: true, authenticated: true, provider, model, auth_mode: provider === "local" ? "local_or_user_configured" : "api_key", usage_limited: false },
+      } as WizardState);
+      return <Welcome state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
+    }
+
+    render(<ControlledWelcome />);
+    expect(await screen.findByText(manual ? /No live model suggestions were returned/i : /No live models were returned/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Model")).toHaveValue(model);
+  });
+
+  it.each(["local", "custom"] as const)("keeps the %s model field editable while showing live suggestions", async (provider) => {
+    enableTauriRuntime();
+    vi.mocked(readAiModels).mockResolvedValue([{ id: "suggested-model", display_name: "Suggested model", default_reasoning_effort: "high", supported_reasoning_efforts: ["high"] }]);
+    function ControlledWelcome() {
+      const [state, setState] = useState({
+        ...welcomeState({ available: true, authenticated: true, auth_mode: "chatgpt", usage_limited: false }),
+        aiProvider: provider,
+        aiModel: "entered-model",
+        aiEndpoint: provider === "local" ? "http://127.0.0.1:11434/v1/chat/completions" : "https://models.example.test/v1/chat/completions",
+        aiAccount: { available: true, authenticated: true, provider, model: "entered-model", auth_mode: provider === "local" ? "local_or_user_configured" : "api_key", usage_limited: false },
+      } as WizardState);
+      return <Welcome state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
+    }
+
+    render(<ControlledWelcome />);
+    await waitFor(() => expect(document.querySelector('datalist option[value="suggested-model"]')).toBeInTheDocument());
+    const modelInput = screen.getByRole("combobox", { name: /^Model/ });
+    fireEvent.change(modelInput, { target: { value: "another-model" } });
+    expect(modelInput).toHaveValue("another-model");
   });
 
   it("opens only the fixed provider account page from the simple connection flow", async () => {
@@ -380,7 +500,7 @@ describe("HOI4 Mod Setup wizard", () => {
     await waitFor(() => expect(openExternalUrlResult).toHaveBeenCalledWith("https://platform.claude.com/settings/keys"));
   });
 
-  it("shows the flattened ChatGPT sources checkbox only in Codex Components", async () => {
+  it("keeps the optional ChatGPT client package independent of the setup assistant", async () => {
     const manifest = {
       schema_version: "1.0.0",
       manifest_id: "example",
@@ -414,7 +534,8 @@ describe("HOI4 Mod Setup wizard", () => {
 
     render(<ControlledComponents provider="claude" />);
     await screen.findByText("Components loaded.");
-    expect(screen.queryByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i })).toBeInTheDocument();
+    expect(screen.getByText(/independent of the setup assistant/i)).toBeInTheDocument();
   });
 
   it("shows flattened ChatGPT sources as a sized file package in Components after planning", async () => {
@@ -531,6 +652,8 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await screen.findByRole("heading", { name: "Project identity" });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByRole("heading", { name: "Coding Environments" });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await screen.findByRole("heading", { name: "Choose what to install" });
     fireEvent.click(screen.getByText("Choose source version"));
@@ -897,6 +1020,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
     const modelsWorkflow = screen.getByRole("switch", { name: /3D models workflow/ });
     const superEventsWorkflow = screen.getByRole("switch", { name: /Super Events workflow/ });
     expect(modelsWorkflow.compareDocumentPosition(superEventsWorkflow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -985,6 +1109,16 @@ describe("HOI4 Mod Setup wizard", () => {
     render(<Ready state={{ ...readyState(), meshSelected: true } as unknown as WizardState} update={vi.fn()} onMaintenance={vi.fn()} />);
     expect(screen.getByText("3D model workflow")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /check 3d setup/i })).not.toBeInTheDocument();
+  });
+
+  it("explains when core readiness passes without an installed Codex integration", () => {
+    render(<Ready state={{
+      ...readyState(),
+      readiness: { openInCodex: false, coreReady: true, blockingCheckIds: ["codex.config"], checks: [] },
+    }} update={vi.fn()} onMaintenance={vi.fn()} />);
+
+    expect(screen.getByText("Install the Codex configuration component to enable this action.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /open in codex/i })).toBeDisabled();
   });
 
   it("shows selected portrait provider guidance only after core setup succeeds", () => {
@@ -1604,7 +1738,7 @@ describe("HOI4 Mod Setup wizard", () => {
     await renderAuthenticatedApp();
     fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-    for (let index = 0; index < 6; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     expect(screen.getByText("Unresolved conflicts")).toBeInTheDocument();
     expect(screen.getByText("Plan unavailable")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /start installation/i })).toBeDisabled();
@@ -1633,6 +1767,19 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByText("Setup checks", { selector: "summary" }));
     expect(screen.getByText("Check the installed AI tools")).toBeInTheDocument();
     expect(screen.getByText("Check the 3D workflow")).toBeInTheDocument();
+  });
+
+  it("shows selected ChatGPT project files for a non-Codex setup assistant", () => {
+    render(<DryRun state={{
+      aiProvider: "deepseek",
+      gitBranch: "main",
+      gitOnlineAction: "none",
+      flattenForChat: true,
+      plan: { operations: [], conflicts: [], external_actions: [], generated_artifacts: [] },
+    } as unknown as WizardState} update={vi.fn()} />);
+
+    expect(screen.getByText("ChatGPT project files")).toBeInTheDocument();
+    expect(screen.getByText("Prepare changes to calculate")).toBeInTheDocument();
   });
 
   it("shows the real file plan only when the user opens it", () => {
@@ -1693,7 +1840,7 @@ describe("HOI4 Mod Setup wizard", () => {
     await renderAuthenticatedApp();
     fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-    for (let index = 0; index < 6; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
 
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     expect(screen.getByRole("button", { name: "Preparing changes…" })).toBeDisabled();
@@ -1715,7 +1862,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\cold_war_curtain" } });
-    for (let index = 0; index < 5; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 6; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
 
@@ -1776,7 +1923,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\active" } });
-    for (let index = 0; index < 5; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 6; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
 
@@ -1818,7 +1965,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\failing" } });
-    for (let index = 0; index < 5; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 6; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: /start installation/i }));

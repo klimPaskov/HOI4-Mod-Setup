@@ -68,17 +68,28 @@
 ## Provider profiles and flattened Chat sources
 
 - AI-01: Codex, Claude, Kimi, GLM, DeepSeek, local, and custom provider profiles are selectable at the start.
-- AI-02: The selected profile changes semantic guidance, adapted `AGENTS.md`, generated `README.md`, state, plan, lock, and maintenance review.
+- AI-01A: The first screen labels that choice as the setup assistant and states
+  that it does not select or restrict the AI client used for later development.
+- AI-02: The selected setup profile changes semantic analysis only. Provider/model/profile provenance is retained in app-managed state, plan, lock, and maintenance review, but generated `AGENTS.md`, README, installed development-client components, and readiness remain provider-neutral.
 - AI-02A: The installed and flattened adapted `AGENTS.md` omit the source
   template's entire `## Placeholder Guide` section while preserving the first
   real project-instruction section.
 - AI-03: Provider changes clear stale analysis and cannot reuse a record from another provider or model.
+- AI-03C: Changing the setup assistant does not add, remove, select, or clear
+  `codex.config`, MCP components, flattened ChatGPT sources, Open in Codex, or
+  another development-client integration.
 - AI-03A: Claude, Kimi, GLM, and DeepSeek fill verified model and address defaults automatically; their normal path shows an official API-key link, key field, and Connect action, while overrides remain under Advanced.
 - AI-03B: The app fetches the authenticated provider's live model catalog, shows
   the selected model's supported effort levels from Light through Max, defaults
   Codex to `gpt-5.6-luna`/`xhigh`, defaults DeepSeek to
   `deepseek-v4-flash`, and binds both choices through analysis, plan, and lock.
-- AI-04: A Codex-only Components checkbox prepares `chatgpt_project_sources/`; non-Codex setup never renders or persists it as selected.
+  An empty or failed catalog refresh retains the verified selectable default for
+  Codex and each known hosted profile. Local and custom profiles keep an
+  editable model control and add successfully discovered endpoint models as
+  suggestions. The fallback is visibly distinguished from a live result and
+  offers only its verified default effort until live capability metadata is
+  available.
+- AI-04: A Components checkbox prepares `chatgpt_project_sources/` independently of the setup assistant; selecting a non-Codex setup provider neither hides nor clears it.
 - AI-05: Flattening renames `.agents/skills/<skill>/SKILL.md` to `<skill>.md` and includes selected subagents, adapted AGENTS, and README.
 - AI-06: Flattening rejects links, case-insensitive collisions, secret-shaped content, and bounded file/aggregate-size violations.
 - AI-07: Flattening uses the normal dry-run, backup, staging, validation, apply, readiness, journal, and rollback path.
@@ -125,6 +136,28 @@
 - CMP-06: Source discovery requests only
   `hoi4-mod-setup.manifest.json`; compatibility is declared by its required
   `schema_version`, and no parallel versioned manifest filename is bundled.
+
+## Coding environments
+
+- ENV-01: Setup includes a dedicated Coding Environments step with exactly one
+  primary selection; Codex is the default.
+- ENV-02: Additional selections allow any subset of the other supported
+  environments (Claude Code, Cursor, Qoder, and OpenCode), never include the
+  primary, and update automatically when the primary changes.
+- ENV-03: The manifest-declared native package is complete for every selected
+  environment, while shared runtime-neutral components remain installed.
+- ENV-04: Codex TOML agents are canonical; Claude Code, Cursor, Qoder, and
+  OpenCode projections are generated from them and checked for drift.
+- ENV-05: Environment selection is independent of Core/Core plus 3D workflow
+  profiles and is resolved through composable manifest components.
+- ENV-06: Existing-project scans detect installed environments, default to
+  Codex when no primary is recorded, and preview additions, updates, preserved
+  conflicts, and removals without silently uninstalling a client.
+- ENV-07: Deselecting an environment removes only unchanged managed files;
+  modified and unmanaged files remain, with state persisted through update,
+  repair, reinstall, rollback, and removal.
+- ENV-08: Fresh end-to-end setups pass for each primary environment and for a
+  multi-environment selection on the supported platform route.
 
 ## Wiki
 
@@ -186,8 +219,8 @@
 
 - MCP-01: Servers show requirements, capabilities, variables, status, and health.
 - MCP-01A: MCP selection, verified bootstrap, and app-owned health checks work
-  with every planning provider; only the separate `codex.config` registration
-  is Codex-specific.
+  with every setup assistant. The separate `codex.config` development-client
+  registration can be installed independently of that assistant.
 - MCP-02: TOML is merged structurally.
 - MCP-03: Conflicting server ID requires review.
 - MCP-04: Secrets are not literal TOML values.
@@ -299,7 +332,7 @@
 - UI-11: 200 percent scaling works.
 - UI-12: Project identity shows compact descriptor rows and thumbnail preview on demand.
 - UI-13: Selected-provider analysis shows the approved request manifest and separates detected, suggested, and confirmed values without adding a permanent explanatory panel.
-- UI-14: The flatten checkbox is native, keyboard accessible, Codex-only, appears under **Choose what to install** with its file list and sizes, remains read-only during Install review, and is followed on Ready by the ChatGPT “Chat” recommendation.
+- UI-14: The flatten checkbox is native, keyboard accessible, independent of the setup assistant, appears under **Choose what to install** with its file list and sizes, remains read-only during Install review, and is followed on Ready by the ChatGPT “Chat” recommendation.
 - UI-15: Portrait provider state, local fields, RunPod fields, Cloud MCP
   guidance, and the canonical source link are keyboard accessible, have clear
   names, and keep secondary evidence behind progressive disclosure.

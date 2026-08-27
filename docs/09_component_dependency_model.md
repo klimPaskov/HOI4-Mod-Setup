@@ -14,6 +14,15 @@ A directed requirement. The expanded graph must be acyclic.
 
 A named default set such as Core or Core plus 3D.
 
+### Coding-environment package
+
+A composable manifest closure selected independently of a workflow profile. The
+closure is identified by each component's `coding_environment` value and may
+contain native instructions, project configuration, MCP configuration, and a
+projected agent tree. The manifest—not an app enum—defines the files and
+dependencies in the closure, so compatible additions can be consumed on the
+next update without an application release.
+
 ### Tool requirement
 
 An external executable or package with version policy and health checks.
@@ -39,6 +48,13 @@ A pass, warning, or blocking check.
 
 The UI shows why every automatic dependency is selected.
 
+Every install also selects the runtime-neutral foundation (`core.agents`,
+`core.skills`, `core.subagents`, `runtime.agent_sync`, shared documentation,
+and the verified MCP bootstrap when declared). Native packages are then added
+for the one primary and any additional environments. `.codex/agents/*.toml` is
+the only subagent authoring source; other client trees are generated projections
+and are checked for drift in the source repository.
+
 The component IDs shown below are the current published graph, not a frozen app
 enum. Source profiles and component definitions are loaded from the exact
 resolved manifest. Newly published default components flow into new setup and
@@ -57,7 +73,7 @@ conflict review still apply before selection becomes installable.
 | `core.agents` | merged template | yes | all |
 | `core.skills` | managed tree | yes | all |
 | `core.subagents` | managed tree | yes | all |
-| `codex.config` | structured merge | yes | all |
+| `codex.config` | structured merge; development-client integration | yes | all |
 | `mcp.hoi4_agent_tools` | MCP and external tool | verified profile | current repository Windows route |
 | `docs.mcp_integration` | managed integration guide | yes | all |
 | `wiki.snapshot` | managed tree | yes | all |
@@ -98,8 +114,9 @@ A component is supported only when its platform declaration and every command-be
 
 `mcp.hoi4_agent_tools` and `workflow.3d` do not depend on `codex.config`.
 Their verified package, bootstrap, external-action review, and app-owned health
-checks are provider-neutral. `codex.config` remains a separate Codex-only
-component that supplies structural client registration when Codex is selected.
+checks are provider-neutral. `codex.config` remains a separate development-client
+component that supplies structural Codex registration independently of the
+setup assistant.
 
 `workflow.super_events` depends on the core skills and subagents, has no tool or
 environment requirement, and contributes only its manifest-declared
@@ -120,7 +137,7 @@ projects omit the complete portrait component closure.
 
 ## Readiness aggregation
 
-State derives from file integrity, dependencies, tools, environment, platform, conflicts, and validation. Selected-provider configuration, confirmed provider analysis, and required launcher artifacts flow into core readiness. ChatGPT authentication and confirmed Codex analysis flow into the Open in Codex gate only for the Codex profile. Unselected or incomplete optional workflows do not.
+State derives from file integrity, dependencies, tools, environment, platform, conflicts, and validation. Setup-assistant configuration, confirmed provider analysis, and required launcher artifacts flow into core readiness. Open in Codex follows the installed `codex.config` development integration and core readiness, not the provider that performed setup analysis. Unselected or incomplete optional workflows do not.
 
 ## Removal
 

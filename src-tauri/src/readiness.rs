@@ -118,6 +118,74 @@ pub(crate) fn valid_subagent_tree(project_root: &Path) -> bool {
         })
 }
 
+fn valid_json_file(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .ok()
+        .is_some_and(|metadata| metadata.is_file() && !is_link_metadata(&metadata))
+        && fs::read(path)
+            .ok()
+            .is_some_and(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).is_ok())
+}
+
+fn valid_text_file(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .ok()
+        .is_some_and(|metadata| metadata.is_file() && !is_link_metadata(&metadata))
+        && fs::read_to_string(path)
+            .ok()
+            .is_some_and(|text| !text.trim().is_empty())
+}
+
+/// Validate the complete native package for one coding client. Native
+/// projections are generated from the canonical Codex TOMLs by the source
+/// synchronizer; readiness checks their presence and parseability without
+/// executing a client.
+pub(crate) fn valid_coding_environment(project_root: &Path, environment: &str) -> bool {
+    match environment {
+        "codex" => {
+            fs::read_to_string(project_root.join(".codex/config.toml"))
+                .ok()
+                .is_some_and(|text| text.parse::<toml::Value>().is_ok())
+                && valid_subagent_tree(project_root)
+        }
+        "claude_code" => {
+            valid_text_file(&project_root.join("CLAUDE.md"))
+                && valid_json_file(&project_root.join(".claude/settings.json"))
+                && valid_text_file(&project_root.join(".claude/agent-map.md"))
+                && bounded_agent_files(&project_root.join(".claude/agents"), ".md").is_some_and(
+                    |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
+                )
+                && valid_json_file(&project_root.join(".mcp.json"))
+        }
+        "cursor" => {
+            valid_text_file(&project_root.join(".cursor/agent-map.md"))
+                && valid_json_file(&project_root.join(".cursor/mcp.json"))
+                && valid_json_file(&project_root.join(".cursor/settings.json"))
+                && bounded_agent_files(&project_root.join(".cursor/agents"), ".md").is_some_and(
+                    |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
+                )
+        }
+        "qoder" => {
+            valid_json_file(&project_root.join(".qoder/settings.json"))
+                && valid_json_file(&project_root.join(".qoder/mcp.json"))
+                && valid_text_file(&project_root.join(".qoder/agent-map.md"))
+                && bounded_agent_files(&project_root.join(".qoder/agents"), ".md").is_some_and(
+                    |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
+                )
+        }
+        "opencode" => {
+            valid_json_file(&project_root.join("opencode.json"))
+                && valid_json_file(&project_root.join(".opencode/settings.json"))
+                && valid_json_file(&project_root.join(".opencode/mcp.json"))
+                && valid_text_file(&project_root.join(".opencode/agent-map.md"))
+                && bounded_agent_files(&project_root.join(".opencode/agent"), ".md").is_some_and(
+                    |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
+                )
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn flattened_artifact_status(
     project_root: &Path,
     artifacts: &[GeneratedArtifact],
@@ -205,6 +273,12 @@ pub struct ReadinessInput {
     pub project_root: String,
     #[serde(default)]
     pub selected_components: Vec<String>,
+    #[serde(default = "crate::models::default_coding_environment")]
+    pub primary_coding_environment: String,
+    #[serde(default)]
+    pub additional_coding_environments: Vec<String>,
+    #[serde(default)]
+    pub coding_environments_status: String,
     #[serde(default)]
     pub source_verified: bool,
     #[serde(default)]
@@ -287,6 +361,12 @@ impl Default for ReadinessInput {
             project_id: "project".into(),
             project_root: ".".into(),
             selected_components: vec![],
+            primary_coding_environment: "codex".into(),
+            additional_coding_environments: vec![],
+            // Standalone readiness inputs predate environment selection. The
+            // transaction and project adapters provide an explicit status
+            // after checking the selected native package on disk.
+            coding_environments_status: "pass".into(),
             source_verified: false,
             descriptors_valid: false,
             launcher_valid: false,
@@ -339,6 +419,10 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
     } else {
         input.ai_model.trim()
     };
+    let codex_integration_selected = input
+        .selected_components
+        .iter()
+        .any(|component| component == "codex.config" || component == "environment.codex.config");
     let launcher_required = input.selected_components.iter().any(|component| {
         matches!(
             component.as_str(),
@@ -474,24 +558,18 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         "Selected subagent definitions parse and require fork_context=false.",
         ".codex/agents/",
     );
-    let integration_label = if ai_provider == "codex" {
-        "Codex configuration".to_string()
-    } else {
-        format!("{ai_provider} project integration")
-    };
-    let integration_message = if ai_provider == "codex" {
-        "Project Codex configuration parses and preserves unrelated entries.".to_string()
-    } else {
-        format!("The selected {ai_provider} project profile is recorded without a Codex opener.")
-    };
     add_bool_check(
         &mut checks,
         "codex.config",
-        &integration_label,
+        "Codex project configuration",
         "ai",
-        ai_provider != "codex" || input.codex_valid,
-        true,
-        &integration_message,
+        !codex_integration_selected || input.codex_valid,
+        codex_integration_selected,
+        if codex_integration_selected {
+            "Project Codex configuration parses and preserves unrelated entries."
+        } else {
+            "Codex project configuration was not selected."
+        },
         ".codex/config.toml",
     );
     let authenticated = if ai_provider == "codex" {
@@ -609,6 +687,16 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         "Secrets are available through the OS credential vault without entering the project.",
         "OS credential vault",
     );
+    add_status_check(
+        &mut checks,
+        "coding.environments",
+        "Coding environments",
+        "coding_environment",
+        &input.coding_environments_status,
+        true,
+        "Every selected coding client has its complete native package and synchronized agents.",
+        ".codex/, .claude/, .cursor/, .qoder/, or .opencode/",
+    );
     add_bool_check(
         &mut checks,
         "hashes.managed",
@@ -673,6 +761,10 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         "block"
     };
     let blocking_check_ids = blocking_ids.clone();
+    let mut open_in_codex_blocking_ids = blocking_ids;
+    if !codex_integration_selected {
+        open_in_codex_blocking_ids.push("codex.config".into());
+    }
     ReadinessReport {
         schema_version: "1.0.0".into(),
         report_id: uuid::Uuid::new_v4(),
@@ -703,10 +795,10 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         summary,
         core_ready: enabled,
         open_in_codex: OpenInCodex {
-            enabled: ai_provider == "codex" && enabled,
-            blocking_check_ids,
-            command_preview: (ai_provider == "codex" && enabled)
-                .then(|| format!("codex --cd \"{}\"", input.project_root)),
+            enabled: codex_integration_selected && enabled,
+            blocking_check_ids: open_in_codex_blocking_ids,
+            command_preview: (codex_integration_selected && enabled)
+                .then(|| format!("codex app \"{}\"", input.project_root)),
         },
         notes,
     }
@@ -1220,10 +1312,13 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         text.contains("[mcp_servers.hoi4_agent_tools]")
             && text.contains("command = \"hoi4-agent-tools.cmd\"")
     });
-    let mcp_registration_ready = lock
-        .as_ref()
-        .is_some_and(|lock| lock.ai_provider != "codex")
-        || mcp_declared;
+    let codex_config_selected = lock.as_ref().is_some_and(|lock| {
+        lock.components.iter().any(|component| {
+            (component.id == "codex.config" || component.id == "environment.codex.config")
+                && mcp_component_is_selected(&component.state)
+        })
+    });
+    let mcp_registration_ready = !codex_config_selected || mcp_declared;
     let mcp_status = if mcp_unsupported {
         "unsupported_platform".into()
     } else if !mcp_selected {
@@ -1330,8 +1425,18 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         .map(|lock| lock.ai_model.clone())
         .filter(|model| !model.trim().is_empty())
         .unwrap_or_else(|| "default".into());
-    let ai_authenticated = codex_analysis
-        .is_some_and(|record| crate::codex::validate_confirmed_record(record).is_ok());
+    let ai_authenticated = lock.as_ref().is_some_and(|lock| {
+        codex_analysis.is_some_and(|record| {
+            crate::codex::validate_confirmed_record_for_profile(
+                record,
+                &lock.ai_provider,
+                &lock.ai_model,
+                &lock.ai_reasoning_effort,
+                &lock.ai_optimization_profile,
+            )
+            .is_ok()
+        })
+    });
     let ai_analysis_status = if ai_authenticated {
         "confirmed"
     } else {
@@ -1350,6 +1455,23 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         "block"
     };
     let mcp_blocking = on_windows && mcp_selected && mcp_status != "planned_unavailable";
+    let coding_selection = lock.as_ref().map(|lock| CodingEnvironmentSelection {
+        primary: lock.primary_coding_environment.clone(),
+        additional: lock.additional_coding_environments.clone(),
+    });
+    let coding_environments_status = if let Some(selection) = coding_selection.as_ref() {
+        if crate::coding_environment::validate_selection(selection).is_ok()
+            && crate::coding_environment::selected_environment_ids(selection)
+                .iter()
+                .all(|environment| valid_coding_environment(project_root, environment))
+        {
+            "pass"
+        } else {
+            "block"
+        }
+    } else {
+        "block"
+    };
     Ok(ReadinessInput {
         project_id: project_id.into(),
         project_root: project_root.display().to_string(),
@@ -1357,6 +1479,15 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
             .as_ref()
             .map(|lock| lock.components.iter().map(|component| component.id.clone()).collect())
             .unwrap_or_default(),
+        primary_coding_environment: lock
+            .as_ref()
+            .map(|lock| lock.primary_coding_environment.clone())
+            .unwrap_or_else(|| "codex".into()),
+        additional_coding_environments: lock
+            .as_ref()
+            .map(|lock| lock.additional_coding_environments.clone())
+            .unwrap_or_default(),
+        coding_environments_status: coding_environments_status.into(),
         source_verified: lock.is_some() && hashes_valid,
         descriptors_valid: descriptor_valid,
         launcher_valid: launcher_descriptors_valid,
@@ -1450,6 +1581,7 @@ mod tests {
     #[test]
     fn optional_incomplete_workflow_does_not_block_codex() {
         let input = ReadinessInput {
+            selected_components: vec!["codex.config".into()],
             source_verified: true,
             descriptors_valid: true,
             launcher_valid: true,
@@ -1488,6 +1620,116 @@ mod tests {
             .checks
             .iter()
             .any(|check| check.id.contains("lora") || check.label.contains("ComfyUI")));
+    }
+
+    #[test]
+    fn setup_provider_does_not_control_the_codex_development_handoff() {
+        let input = ReadinessInput {
+            selected_components: vec!["codex.config".into()],
+            source_verified: true,
+            descriptors_valid: true,
+            launcher_valid: true,
+            thumbnail_valid: true,
+            structure_valid: true,
+            agents_valid: true,
+            skills_valid: true,
+            subagents_valid: true,
+            codex_valid: true,
+            ai_provider: "deepseek".into(),
+            ai_model: "deepseek-v4-flash".into(),
+            ai_authenticated: true,
+            ai_analysis_status: "confirmed".into(),
+            ai_confirmed_field_count: 10,
+            mcp_status: "pass".into(),
+            wiki_status: "pass".into(),
+            git_status: "not_selected".into(),
+            environment_status: "pass".into(),
+            hashes_valid: true,
+            conflict_status: "pass".into(),
+            dependency_status: "pass".into(),
+            ..Default::default()
+        };
+
+        let report = evaluate(&input);
+        assert!(report.core_ready);
+        assert!(report.open_in_codex.enabled);
+        assert_eq!(
+            report.open_in_codex.command_preview.as_deref(),
+            Some("codex app \".\"")
+        );
+    }
+
+    #[test]
+    fn shared_mcp_does_not_require_an_unselected_codex_configuration() {
+        let report = evaluate(&ReadinessInput {
+            selected_components: vec!["mcp.hoi4_agent_tools".into()],
+            source_verified: true,
+            descriptors_valid: true,
+            launcher_valid: true,
+            thumbnail_valid: true,
+            structure_valid: true,
+            agents_valid: true,
+            skills_valid: true,
+            subagents_valid: true,
+            codex_valid: false,
+            ai_provider: "deepseek".into(),
+            ai_model: "deepseek-v4-flash".into(),
+            ai_authenticated: true,
+            ai_analysis_status: "confirmed".into(),
+            ai_confirmed_field_count: 1,
+            mcp_status: "pass".into(),
+            wiki_status: "pass".into(),
+            git_status: "not_selected".into(),
+            environment_status: "pass".into(),
+            hashes_valid: true,
+            conflict_status: "pass".into(),
+            dependency_status: "pass".into(),
+            ..Default::default()
+        });
+        let codex_check = report
+            .checks
+            .iter()
+            .find(|check| check.id == "codex.config")
+            .expect("Codex check should remain visible");
+        assert_eq!(codex_check.status, "pass");
+        assert!(!codex_check.blocking);
+    }
+
+    #[test]
+    fn core_ready_project_without_codex_config_cannot_open_in_codex() {
+        let input = ReadinessInput {
+            source_verified: true,
+            descriptors_valid: true,
+            launcher_valid: true,
+            thumbnail_valid: true,
+            structure_valid: true,
+            agents_valid: true,
+            skills_valid: true,
+            subagents_valid: true,
+            codex_valid: true,
+            ai_provider: "deepseek".into(),
+            ai_model: "deepseek-v4-flash".into(),
+            ai_authenticated: true,
+            ai_analysis_status: "confirmed".into(),
+            ai_confirmed_field_count: 10,
+            mcp_status: "pass".into(),
+            wiki_status: "pass".into(),
+            git_status: "not_selected".into(),
+            environment_status: "pass".into(),
+            hashes_valid: true,
+            conflict_status: "pass".into(),
+            dependency_status: "pass".into(),
+            ..Default::default()
+        };
+
+        let report = evaluate(&input);
+        assert!(report.core_ready);
+        assert!(!report.open_in_codex.enabled);
+        assert!(report
+            .open_in_codex
+            .blocking_check_ids
+            .iter()
+            .any(|id| id == "codex.config"));
     }
 
     #[test]
@@ -1543,6 +1785,52 @@ mod tests {
         )
         .unwrap();
         assert!(!valid_subagent_tree(project.path()));
+    }
+
+    #[test]
+    fn readiness_parses_the_complete_native_package_for_every_environment() {
+        let project = tempfile::tempdir().unwrap();
+        let write = |relative: &str, content: &str| {
+            let path = project.path().join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        };
+
+        write(
+            ".codex/config.toml",
+            "[mcp_servers.hoi4_agent_tools]\ncommand = 'hoi4-agent-tools.cmd'\n",
+        );
+        write(
+            ".codex/agents/example.toml",
+            "name = 'example'\nfork_context = false\n",
+        );
+        write("CLAUDE.md", "# Claude\n");
+        write(".claude/settings.json", "{}\n");
+        write(".claude/agent-map.md", "# Agents\n");
+        write(".claude/agents/example.md", "# Example\n");
+        write(".mcp.json", "{\"mcpServers\":{}}\n");
+        write(".cursor/settings.json", "{}\n");
+        write(".cursor/mcp.json", "{}\n");
+        write(".cursor/agent-map.md", "# Agents\n");
+        write(".cursor/agents/example.md", "# Example\n");
+        write(".qoder/settings.json", "{}\n");
+        write(".qoder/mcp.json", "{}\n");
+        write(".qoder/agent-map.md", "# Agents\n");
+        write(".qoder/agents/example.md", "# Example\n");
+        write("opencode.json", "{}\n");
+        write(".opencode/settings.json", "{}\n");
+        write(".opencode/mcp.json", "{}\n");
+        write(".opencode/agent-map.md", "# Agents\n");
+        write(".opencode/agent/example.md", "# Example\n");
+
+        for environment in crate::coding_environment::SUPPORTED {
+            assert!(
+                valid_coding_environment(project.path(), environment),
+                "native package should be ready for {environment}"
+            );
+        }
+        fs::write(project.path().join(".cursor/settings.json"), "not json").unwrap();
+        assert!(!valid_coding_environment(project.path(), "cursor"));
     }
 
     #[test]

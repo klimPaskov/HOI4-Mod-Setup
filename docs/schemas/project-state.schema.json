@@ -13,6 +13,7 @@
     "preferences",
     "codex",
     "ai",
+    "coding_environments",
     "credential_references"
   ],
   "properties": {
@@ -173,6 +174,23 @@
         "optimization_profile": {
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "coding_environments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary", "additional"],
+      "properties": {
+        "primary": {
+          "enum": ["codex", "claude_code", "cursor", "qoder", "opencode"]
+        },
+        "additional": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": ["codex", "claude_code", "cursor", "qoder", "opencode"]
+          }
         }
       }
     },

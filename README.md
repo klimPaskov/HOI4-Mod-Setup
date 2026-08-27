@@ -6,8 +6,10 @@ HOI4 Mod Setup is a desktop wizard for preparing a Hearts of Iron IV mod for
 AI-assisted development. Start a new mod from its name and description, or
 choose an existing mod to add, update, or repair its development setup.
 
-The app supports Codex, Claude, Kimi, GLM, DeepSeek, local models, and custom
-providers. Codex is selected by default.
+The setup assistant can use Codex, Claude, Kimi, GLM, DeepSeek, a local model,
+or a custom provider. Codex is selected by default. This choice is only for
+analyzing and preparing the mod; it does not choose the AI client you use later
+for Agentic HOI4 Modding.
 
 ## Download
 
@@ -26,7 +28,7 @@ community build as harmful falsely. The project is safe and open source.
 The wizard has seven short phases. Nothing is added to the mod until you have
 reviewed the changes and started installation.
 
-### 1. Choose a project and AI provider
+### 1. Choose a project and setup assistant
 
 ![Create a new mod or import an existing one](docs/screenshots/01-welcome.png)
 
@@ -80,6 +82,16 @@ unrelated data dumps, so even very large mods stay within the setup scan.
 Select the instructions, skills, helpers, tools, and offline wiki you want.
 Required items stay selected so the project remains usable.
 
+Before the component list, choose **Coding Environments**. Select exactly one
+primary client (Codex is the default), then add any combination of Claude Code,
+Cursor, Qoder, and OpenCode. The primary is removed from the additional choices
+automatically. Each selected client receives its complete native package while
+the shared `AGENTS.md`, skills, canonical `.codex/agents/*.toml`, sync tools,
+documentation, and selected workflows remain common. This client choice is
+independent of the setup assistant and of Core/Core plus 3D workflow profiles.
+For an existing project, the app detects installed clients and removes only
+unchanged managed files when one is deselected; modified files are preserved.
+
 The component list comes from the exact published Agentic HOI4 Modding
 manifest. When that repository publishes changed skills, new skills, new
 subagents, or compatible new components, **Latest** mode can use them without a
@@ -87,7 +99,7 @@ new HOI4 Mod Setup release. Update adds newly published default-profile
 components while preserving earlier optional choices and local-file conflict
 review.
 
-When Codex is selected, **Prepare a flattened ChatGPT project-sources folder**
+Independently of the setup assistant, **Prepare a flattened ChatGPT project-sources folder**
 creates a separate folder with the adapted project guidance, README, selected
 skills, and selected subagents. The offline wiki is not copied into this
 folder. Its file list and sizes are shown before installation.
@@ -153,7 +165,8 @@ recovery choices that still apply.
 
 The Ready screen checks the project, instructions, selected tools, offline
 wiki, Git state, and optional workflows. **Open in Codex** becomes available
-when the required checks pass.
+when the required checks pass and the Codex project integration is installed,
+even when another AI performed setup analysis.
 
 If flattened ChatGPT files were selected, the Ready screen links directly to
 [ChatGPT Chat](https://chatgpt.com). When the optional portrait workflow is

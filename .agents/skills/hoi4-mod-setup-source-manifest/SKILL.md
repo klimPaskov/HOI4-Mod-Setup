@@ -14,6 +14,7 @@ Read:
 - `docs/05_wiki_installation.md`
 - `docs/09_component_dependency_model.md`
 - `docs/11_mcp_setup.md`
+- `docs/31_ai_provider_profiles_and_chat_sources.md`
 - `docs/schemas/remote-manifest.schema.json`
 - `docs/source-manifest/hoi4-mod-setup.manifest.json`
 
@@ -111,7 +112,7 @@ MCP servers and external dependencies are components. Their command, arguments, 
 - Manifest paths must use canonical slash-separated spelling (with an optional directory trailing slash); collision keys use Unicode NFC plus case folding so composed and decomposed macOS names cannot map to two managed destinations.
 - The runtime rejects manifests whose wiki provenance/license status is outside the schema enums, whose latest policy does not require default-branch resolution plus recorded commit evidence, or whose signing policy requires verification that the build does not implement. Pinned commit/release modes are checked against the manifest's explicit allow flags.
 - Release tags are resolved through typed GitHub objects, including annotated-tag dereferencing, and pinned revisions are verified as commit objects before manifest or file access.
-- The MCP component is optional, Windows-only, and provider-neutral; it depends on its verified bootstrap rather than `codex.config`. Codex selection additionally changes the structurally generated Codex TOML, while other providers retain the app-owned package and health route. macOS retains an explicit unsupported state and never receives a substitute command. Its package-backed route requires exact npm integrity, canonical full-package-tree SHA-256/file count, runtime-entry identity, and required tools. The wrapper locates the current-user npm prefix but is never executed. Require an OpenJS Foundation-signed Node executable, capture its local SHA-256, and recheck it at spawn. Any missing evidence blocks execution. The offline wiki is always rooted at `paradox_wiki/`; the plan and lock copy the exact manifest `wiki.required_pages` list plus snapshot/media/provenance/license metadata for the resolved revision, and readiness blocks legacy locks that lack that evidence instead of using a newer bundle.
+- The MCP component is optional, Windows-only, and provider-neutral; it depends on its verified bootstrap rather than `codex.config`. The setup-assistant choice does not change component selection or generated Codex TOML. Installed `codex.config` and MCP declarations independently control their later-development integrations. macOS retains an explicit unsupported state and never receives a substitute command. Its package-backed route requires exact npm integrity, canonical full-package-tree SHA-256/file count, runtime-entry identity, and required tools. The wrapper locates the current-user npm prefix but is never executed. Require an OpenJS Foundation-signed Node executable, capture its local SHA-256, and recheck it at spawn. Any missing evidence blocks execution. The offline wiki is always rooted at `paradox_wiki/`; the plan and lock copy the exact manifest `wiki.required_pages` list plus snapshot/media/provenance/license metadata for the resolved revision, and readiness blocks legacy locks that lack that evidence instead of using a newer bundle.
 - The MCP health probe requires exact protocol negotiation, an advertised
   `tools` capability, and a `tools/list` result containing every declared
   route. It executes only a private copy materialized from the verified
@@ -135,6 +136,17 @@ MCP servers and external dependencies are components. Their command, arguments, 
   platform-supported defaults; it preserves prior optional deselection. New
   files under declared skill/subagent trees flow through automatically, while
   a new component still requires an explicit source-owned declaration.
+- Coding-client packages are also manifest data. Components tagged with
+  `coding_environment` form the complete closure for exactly one primary and
+  any additional environment selected by the user. Keep environment packages
+  composable with workflow profiles, and include native instructions, settings,
+  MCP configuration, maps, and generated agent projections with complete file
+  evidence. A future component under an existing supported environment must be
+  consumable from its exact manifest revision without an app release.
+- The canonical agent authoring source is `.codex/agents/*.toml`. Source-side
+  synchronizers generate Claude Code, Cursor, Qoder, and OpenCode projections;
+  `--check` must fail on missing, stale, extra, or drifted projections before a
+  manifest is published.
 - Expected file evidence carries both SHA-256 and byte size into selected-file records, operations, locks, and readiness. Command-bearing validation rules become plan-visible, approval-bound external actions; their target, platform, and risk come from the verified manifest rather than renderer input. All-platform command declarations are bound to the current supported platform so they are not silently dropped.
 - The closed validation-parameter schema admits paired executable,
   interpreter, and runtime SHA-256/size identity fields plus bounded arguments,

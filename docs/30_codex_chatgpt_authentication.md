@@ -2,7 +2,7 @@
 
 ## Decision
 
-Codex is the default semantic provider. HOI4 Mod Setup uses the user's Codex
+Codex is the default setup-time semantic provider. HOI4 Mod Setup uses the user's Codex
 access through their ChatGPT account for the Codex route. The application does
 not use an application-owned OpenAI API key, does not request an API key for
 Codex, and does not implement a separate token service. Users may instead
@@ -11,7 +11,9 @@ verified model and address automatically and ask only for a provider API key,
 which is stored in the OS vault. Advanced users may review or change those
 defaults. The
 bounded non-Codex registry uses Claude, Kimi, GLM, DeepSeek, local, and
-`custom` profiles.
+`custom` profiles. This selection chooses only the assistant used by HOI4 Mod
+Setup for semantic planning. It does not choose or restrict the AI client the
+user later uses for Agentic HOI4 Modding.
 
 The integration boundary is the official local `codex app-server` process. The desktop application launches it as a child process and communicates over its default stdio JSONL transport. On Windows, Codex children are created with `CREATE_NO_WINDOW`, so the packaged app works from a shortcut or Start menu without a visible terminal. This is the Codex interface intended for product integrations that need authentication, threads, approvals, and streamed events.
 
@@ -106,7 +108,7 @@ the user to remove secrets, and protocol details remain hidden.
 
 ## Semantic responsibilities
 
-The selected provider is used for:
+The selected setup assistant is used for:
 
 - interpreting a new-mod description
 - proposing the display name
@@ -115,7 +117,7 @@ The selected provider is used for:
 - producing the normalized project description
 - proposing descriptor tags
 - selecting the initial folder profile
-- adapting `AGENTS.md`
+- proposing project-specific `AGENTS.md` adaptations that render without setup-provider attribution
 - recommending skills and subagents
 - interpreting an existing project's purpose and conventions
 - explaining conflicts and migration choices that require semantic judgment
@@ -139,11 +141,18 @@ The deterministic Rust core remains authoritative for:
 
 No provider can override a deterministic failure. It cannot create files during analysis, approve a transaction, resolve a conflict automatically, or mark readiness as passed.
 
+Provider/model/reasoning/profile values are retained only as setup-analysis
+provenance. They must not be emitted into generated `AGENTS.md` or README files,
+must not select or remove development-client components, and must not control
+Open in Codex or flattened ChatGPT source packaging.
+
 ## Turn contract
 
 Use a dedicated App Server thread for each Codex setup session. Start every semantic turn with:
 
-- fetch the live model catalog through `model/list`; default to `gpt-5.6-luna` with `xhigh` when that compatible entry is available
+- fetch the live model catalog through `model/list`; retain the checked-in
+  `gpt-5.6-luna`/`xhigh` option when the catalog is empty or temporarily
+  unreachable, without describing the fallback as a live result
 - show only the selected model's advertised reasoning-effort values and bind the reviewed model and effort to both `thread/start` and `turn/start`
 - `sandbox: read-only` on `thread/start`
 - `sandboxPolicy: { type: readOnly, networkAccess: false }` on `turn/start`
@@ -224,3 +233,5 @@ The final readiness report includes blocking checks for:
 - no account identity, provider key, or token stored in project artifacts
 
 Optional 3D state remains independent of this core provider gate.
+Open in Codex is a separate development-client handoff gated by core readiness
+and the installed Codex project integration, not by the setup assistant.
