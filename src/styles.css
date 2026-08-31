@@ -281,6 +281,16 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .check-row { justify-content: space-between; }
 .radio-row { position: relative; }
 .radio-row input, .check-row input { width: 17px; height: 17px; accent-color: #7680ff; }
+.coding-environment-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 0 16px 16px; }
+.coding-environment-option { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 14px; border: 1px solid #344864; border-radius: 10px; background: #0a111c; cursor: pointer; }
+.coding-environment-option:has(input:checked) { border-color: #6489ff; background: #111a2b; }
+.coding-environment-option:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: 2px; }
+.coding-environment-option input { width: 17px; height: 17px; margin: 1px 0 0; accent-color: #7680ff; }
+.coding-environment-copy { min-width: 0; display: grid; gap: 5px; }
+.coding-environment-copy strong, .coding-environment-copy small { display: block; min-width: 0; overflow-wrap: anywhere; }
+.coding-environment-copy strong { color: #e6edf8; font-size: 13px; line-height: 1.35; }
+.coding-environment-copy small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.coding-environment-option > .status { align-self: start; justify-content: flex-end; text-align: right; }
 .check-row > input + span { min-width: 0; display: grid; gap: 6px; }
 .workflow-provider-panel { min-width: 0; border-top: 1px solid var(--line); }
 .workflow-resource-note { margin: 0; padding: 12px 16px 0; color: #c3d2eb; font-size: 12px; line-height: 1.5; }
@@ -406,6 +416,7 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 }
 
 @media (max-width: 700px) {
+  .coding-environment-options { grid-template-columns: 1fr; }
   .workflow-provider-panel .radio-row { grid-template-columns: 1fr; }
   .form-panel > .field > .input-with-action, .panel > details > .field > .input-with-action { flex-wrap: wrap; }
   .form-panel > .field > .input-with-action .input-action, .panel > details > .field > .input-with-action .input-action { width: 100%; max-width: none; flex-basis: 100%; min-height: 44px; }

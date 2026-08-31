@@ -285,10 +285,11 @@ separate public files.
 The protected environment sets
 `HOI4_MOD_SETUP_RELEASE_PUBLISH=true`. When
 `HOI4_MOD_SETUP_RELEASE_SIGNING_CONFIGURED=false`, Windows creates an
-ephemeral ChaosX code-signing certificate, signs with SHA-256 and the reviewed
-DigiCert RFC 3161 timestamp endpoint, verifies Authenticode, and deletes the
-private material. macOS ad-hoc signs the application before rebuilding the
-DMG and verifies the resulting signature.
+ephemeral ChaosX code-signing certificate, signs with SHA-256 without network
+timestamping, verifies Authenticode, and deletes the private material. macOS
+ad-hoc signs the application before rebuilding the DMG and verifies the
+resulting signature. Only the official Azure signing route uses the reviewed
+DigiCert RFC 3161 timestamp endpoint.
 
 When `HOI4_MOD_SETUP_RELEASE_SIGNING_CONFIGURED=true`, Windows uses Azure
 Artifact Signing through the OIDC secrets `AZURE_CLIENT_ID`,

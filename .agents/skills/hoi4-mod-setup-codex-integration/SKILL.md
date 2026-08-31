@@ -78,6 +78,8 @@ Recovery, rollback, backup inspection, and managed removal remain locally usable
 - use `chatgptDeviceCode` only as the fallback flow
 - open returned HTTPS login and device-code URLs through the typed fixed-path system-browser command
 - wait for login and account update notifications
+- bound and redact login-failure notification text before it can reach the UI;
+  replace account-shaped failure detail with a generic login error
 - use `account/logout` for sign-out
 - bind every pending login to the App Server `loginId`; cancellation must target
   only that attempt with `account/login/cancel` and then interrupt its local

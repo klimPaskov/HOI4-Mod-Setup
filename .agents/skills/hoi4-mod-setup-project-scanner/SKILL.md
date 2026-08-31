@@ -108,7 +108,10 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
   record branch, detached state, commit, dirty/staged/unstaged/untracked
   counts, remote names, submodule paths, hook names, ignore files, and
   tracked secret-like path names. Never follow a linked worktree's external
-  gitdir; report partial probe evidence as a review state.
+  gitdir; report the current bounded Git review conflicts as visible review
+  state, not as overall scan truncation. Classify those advisory IDs explicitly
+  rather than excluding the `scan.git.*` namespace, so a future Git detector
+  limit remains an honest partial result.
 - Prefer repeated patterns over one isolated match.
 - Do not infer a project-wide namespace from generated, vendored, or test files.
 - Separate existing project conventions from proposed installation values.

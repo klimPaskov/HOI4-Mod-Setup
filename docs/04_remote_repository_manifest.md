@@ -58,6 +58,7 @@ Each component defines:
 
 - stable ID and display name
 - category and optional state
+- optional coding-environment ownership
 - platforms
 - source kind, path, includes, and excludes
 - destination path and ownership
@@ -72,7 +73,8 @@ Each component defines:
 The Agentic repository owns a generator and publication workflow for this
 manifest. A relevant push enumerates only declared component source trees,
 computes exact path/size/SHA-256 evidence from the pushed revision, validates
-the result, verifies that `main` did not move underneath the run, and publishes
+the result, runs every alternate-runtime synchronizer in drift-check mode,
+verifies that `main` did not move underneath the run, and publishes
 the refreshed manifest in a follow-up commit. New files inside `core.skills`
 and `core.subagents` therefore require no app release. A genuinely new
 component still needs an explicit source-owned component/profile declaration;
@@ -85,6 +87,14 @@ revision for manifest and file downloads. New setup seeds the resolved default
 profile. Update compares the installed manifest's default profile with the
 newly resolved one and adds only newly published, provider-compatible,
 platform-supported defaults, preserving earlier optional choices.
+
+Coding-environment base components contain only runtime-neutral core agents.
+An optional environment component is activated only when its declared optional
+workflow dependencies are already in the selected closure. This lets one
+Portrait Production or Super Events selection add only the projections for the
+selected coding environments. Platform-specific MCP registrations are separate
+optional environment components; a Windows `.cmd` registration must never be
+declared by an all-platform component.
 
 The current core profile includes `docs.mcp_integration`, a managed copy of the
 repository's HOI4 Agent Tools capability, evidence, recovery, and

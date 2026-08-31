@@ -30,17 +30,17 @@ const requiredAppTokens = [
 ];
 
 const requiredPhaseLabels = ["Project", "Review", "Components", "Integrations", "Git", "Install", "Ready", "Overview", "Update", "Conflicts", "Recovery"];
-const requiredScreens = ["welcome", "description", "identity", "scan", "findings", "components", "workflows", "mesh", "mcp", "git", "dry-run", "install", "ready", "update", "chat-sources", "conflict", "recovery"];
+const requiredScreens = ["welcome", "description", "identity", "scan", "findings", "environments", "components", "workflows", "mesh", "mcp", "git", "dry-run", "install", "ready", "update", "chat-sources", "conflict", "recovery"];
 const optionalWorkflowTitles = [
   "3D models workflow",
   "Super Events workflow",
   "ComfyUI portrait production",
 ];
-const requiredCssTokens = [":focus-visible", "prefers-reduced-motion", "@media (min-width: 1920px)", "@media (max-width: 560px)", "overflow: auto", ".visually-hidden", ".button.primary:disabled", ".toggle-row > span:last-child", ".path-preview", "overflow-wrap: anywhere", "min-width: 0", ".provider-panel", ".provider-help"];
+const requiredCssTokens = [":focus-visible", "prefers-reduced-motion", "@media (min-width: 1920px)", "@media (max-width: 560px)", "overflow: auto", ".visually-hidden", ".button.primary:disabled", ".toggle-row > span:last-child", ".path-preview", "overflow-wrap: anywhere", "min-width: 0", ".provider-panel", ".provider-help", ".coding-environment-options", ".coding-environment-option:has(input:focus-visible)"];
 const requiredTypeTokens = ["conflictChoice?: ConflictChoice", "recoveryChoice: RecoveryChoice", "interface InstallationPlan", "interface TransactionJournal"];
 const requiredTauriTokens = ["interface TauriCommandMap", "isTauriRuntime", '"codex_account_read"', '"codex_login_start"', '"codex_login_cancel"', '"open_codex_login_url"', '"codex_analyze"', '"confirm_codex_analysis"', '"pick_project_folder"', '"pick_launcher_folder"', '"scan_project"', '"cancel_scan"', '"scan-progress"', '"preview_source_manifest"', '"preview_installation_conflict"', '"build_installation_plan"', '"build_maintenance_plan"', '"approve_installation"', '"resolve_installation_conflict"', '"apply_installation"', '"rollback_installation"', '"open_in_codex"', '"pick_chat_sources_folder"', '"preview_chat_sources"', '"package_chat_sources"', "Promise<InstallationPlan | null>", "Promise<TransactionJournal | null>"];
 
-if (requiredScreens.length !== 17) throw new Error(`expected 17 screens, found ${requiredScreens.length}`);
+if (requiredScreens.length !== 18) throw new Error(`expected 18 screens, found ${requiredScreens.length}`);
 for (const token of requiredAppTokens) if (!app.includes(token)) throw new Error(`missing UI accessibility hook: ${token}`);
 for (const label of requiredPhaseLabels) if (!app.includes(`label: "${label}"`)) throw new Error(`missing phase label: ${label}`);
 for (const screen of requiredScreens) {
@@ -74,4 +74,4 @@ for (const token of requiredTypeTokens) if (!types.includes(token)) throw new Er
 for (const token of requiredTauriTokens) if (!tauri.includes(token)) throw new Error(`missing typed Tauri boundary hook: ${token}`);
 if (app.includes("import(\"./lib/tauri\")") || app.includes("invokeCommand")) throw new Error("App.tsx must use named typed Tauri wrappers, not the low-level invoker");
 
-console.log("Accessibility contract covers seven setup phases, four maintenance phases, 17 screens, keyboard/focus hooks, disclosure escape handling, reduced motion, scaling, ordered declarative workflow titles, one completed-Ready portrait link, and the typed Tauri boundary.");
+console.log("Accessibility contract covers seven setup phases, four maintenance phases, 18 screens, keyboard/focus hooks, coding-environment containment, disclosure escape handling, reduced motion, scaling, ordered declarative workflow titles, one completed-Ready portrait link, and the typed Tauri boundary.");

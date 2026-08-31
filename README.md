@@ -92,6 +92,8 @@ independent of the setup assistant and of Core/Core plus 3D workflow profiles.
 For an existing project, the app detects installed clients and removes only
 unchanged managed files when one is deselected; modified files are preserved.
 
+![Choose one primary coding environment and any additional clients](docs/screenshots/15-coding-environments.png)
+
 The component list comes from the exact published Agentic HOI4 Modding
 manifest. When that repository publishes changed skills, new skills, new
 subagents, or compatible new components, **Latest** mode can use them without a

@@ -77,6 +77,11 @@ provider has write access.
    count and parse validity, and an exact top-level `fork_context=false` gate.
    Helpers, assets, and model choices are reviewed later through selected
    component and merge previews rather than executed or inferred by the scan.
+   Native Codex, Claude Code, Cursor, Qoder, and OpenCode files are detected
+   inside the selected root. A validated managed lock supplies the recorded
+   primary and additional environment selection; loose files are merged into
+   the detected set, and Codex is the migration default only when no valid
+   recorded selection exists.
 7. **Codex and MCP:** structural TOML validity, configuration presence, and MCP
    server IDs. Commands, arguments, cwd, environment names, timeouts, sandbox,
    approval policy, and feature flags remain visible in the later structured
@@ -88,7 +93,8 @@ provider has write access.
     `.hoi4-mod-setup/install.lock.json` path. A valid lock is reported as
     `installation.managed` with a safe component and optional-workflow summary,
     including the remembered `workflow.super_events` and
-    `workflow.portraits` provider states. The summary does not expose lock
+    `workflow.portraits` provider states and coding-environment selection. The
+    summary does not expose lock
     contents or credential references as scan evidence; portrait provider
     state is non-secret and credentials remain outside the project. A
     missing lock is a non-blocking absent state. A linked, unreadable,
@@ -192,6 +198,14 @@ definition. An unreadable,
 oversized, timed-out, linked, identity-changed, or count-truncated detector
 surface is partial.
 
+A bounded Git status probe that cannot collect complete repository metadata is
+reported as a visible `needs_review` finding and conflict. It does not set
+`partial` or appear in `limits_hit` unless a separate detector surface was
+actually truncated. Git review evidence must not make an otherwise complete
+targeted Agentic setup scan fail. Only the explicitly classified current Git
+review conflicts receive this treatment; a future Git detector limit remains
+an honest partial result.
+
 Cancellation returns `partial: true` and `cancelled: true`, emits a terminal
 event, and clears approved evidence. Any partial result blocks semantic
 analysis until an untruncated scan completes; limits remain visible.
@@ -203,6 +217,8 @@ analysis until an untruncated scan completes; limits remain visible.
   worktree, cloud-synced root, and link escape;
 - very large gameplay/media/content-dump trees proving they are not inventoried
   or read and do not make the targeted scan partial;
+- a very large real mod whose bounded Git status remains reviewable while the
+  targeted Agentic setup evidence completes without a safety-limit result;
 - locally modified wiki, skill collision, MCP collision, and a Windows-only
   incoming component on macOS;
 - valid descriptors with missing or modified thumbnails and duplicate launcher

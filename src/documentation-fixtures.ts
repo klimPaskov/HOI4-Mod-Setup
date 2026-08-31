@@ -7,6 +7,7 @@ export const DOCUMENTATION_SCENARIOS = [
   "description",
   "identity",
   "components",
+  "environments",
   "workflows",
   "mcp",
   "git",
@@ -259,6 +260,7 @@ export function documentationFixture(base: WizardState): WizardState {
   }
   if (scenario === "existing") return { ...common, screen: "identity", mode: "existing", recoveryEntry: true };
   if (scenario === "components") return { ...common, screen: "components", flattenForChat: true };
+  if (scenario === "environments") return { ...common, screen: "environments", primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["cursor"] };
   if (scenario === "workflows") return { ...common, screen: "workflows", meshSelected: true, superEventsSelected: true, portraitPipeline: runpodPortrait, selectedComponents: [...common.selectedComponents, "workflow.3d", "workflow.super_events", ...portraitComponentIds] };
   if (scenario === "mcp") return { ...common, screen: "mcp", meshSelected: true, meshKeyStatus: "present", selectedComponents: [...common.selectedComponents, "workflow.3d"] };
   if (scenario === "git") return { ...common, screen: "git", gitOnlineAction: "create_public_github", gitHubRepository: "atlantis-rising" };

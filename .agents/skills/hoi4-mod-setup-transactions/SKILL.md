@@ -49,6 +49,12 @@ repair, reinstall, rollback, or removal, compare the predecessor lock with the
 new selection; remove only unchanged managed files for a deselected client and
 retain modified or unmanaged files as explicit preserved conflicts. Do not use
 a static app-side component list when reconciling future manifest components.
+Resolve optional coding-environment components only after the non-environment
+workflow closure is expanded: every optional dependency declared by the
+environment component must already be active. Recompute that intersection for
+fresh setup and maintenance so optional projected agents appear only for a
+selected workflow and selected environment, while a deselected environment's
+unchanged projections remain eligible for reviewed removal.
 
 ## Operation model
 
