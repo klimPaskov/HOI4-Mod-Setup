@@ -2910,7 +2910,10 @@ fn requested_components_for_selection(
             requested.push(shared.into());
         }
     }
-    for id in coding_environment::component_ids(manifest, &selection)? {
+    let active_component_ids = expand_components(manifest, &requested)?
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    for id in coding_environment::component_ids(manifest, &selection, &active_component_ids)? {
         if !requested.iter().any(|selected| selected == &id) {
             requested.push(id);
         }
@@ -3221,6 +3224,7 @@ fn adapt_codex_config_for_selection(
     bytes: &[u8],
     mcp_selected: bool,
     three_d_selected: bool,
+    super_events_selected: bool,
     portrait: &PortraitPipelineConfig,
 ) -> Result<Vec<u8>, AppError> {
     let bytes = adapt_optional_portrait_section(bytes, portrait.enabled)?;
@@ -3230,6 +3234,11 @@ fn adapt_codex_config_for_selection(
         AppError::Source(format!("Codex configuration is not valid TOML: {error}"))
     })?;
     if let Some(table) = config.as_table_mut() {
+        if !super_events_selected {
+            if let Some(agents) = table.get_mut("agents").and_then(toml::Value::as_table_mut) {
+                agents.retain(|id, _| !id.starts_with("hoi4_super_event_"));
+            }
+        }
         if three_d_selected {
             let mcp_servers = table
                 .entry("mcp_servers")
@@ -3899,7 +3908,13 @@ fn adapt_selected_source(
             portrait.enabled,
         )
     } else if component_id == "codex.config" {
-        adapt_codex_config_for_selection(bytes, mcp_selected, three_d_selected, portrait)
+        adapt_codex_config_for_selection(
+            bytes,
+            mcp_selected,
+            three_d_selected,
+            super_events_selected,
+            portrait,
+        )
     } else if destination
         .replace('\\', "/")
         .to_ascii_lowercase()
@@ -5832,14 +5847,6 @@ fn build_maintenance_plan_blocking(
         let incoming_environment_ids =
             coding_environment::all_environment_component_ids(&resolution.manifest);
         requested.retain(|id| !incoming_environment_ids.contains(id));
-        for component_id in
-            coding_environment::component_ids(&resolution.manifest, &coding_environment_selection)
-                .map_err(command_error)?
-        {
-            if !requested.iter().any(|id| id == &component_id) {
-                requested.push(component_id);
-            }
-        }
         if resolution
             .manifest
             .components
@@ -5888,6 +5895,21 @@ fn build_maintenance_plan_blocking(
             Platform::current(),
         )
         .map_err(command_error)?;
+        let active_component_ids = expand_components(&resolution.manifest, &requested)
+            .map_err(command_error)?
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>();
+        for component_id in coding_environment::component_ids(
+            &resolution.manifest,
+            &coding_environment_selection,
+            &active_component_ids,
+        )
+        .map_err(command_error)?
+        {
+            if !requested.iter().any(|id| id == &component_id) {
+                requested.push(component_id);
+            }
+        }
         let expanded =
             expand_components(&resolution.manifest, &requested).map_err(command_error)?;
         maintenance_components = expanded.clone();
@@ -6092,9 +6114,31 @@ fn build_maintenance_plan_blocking(
             }
             let manifest_environment_ids =
                 coding_environment::all_environment_component_ids(&resolution.manifest);
+            let mut active_requested = lock
+                .components
+                .iter()
+                .filter(|component| {
+                    !manifest_environment_ids.contains(&component.id)
+                        && !matches!(
+                            component.state.as_str(),
+                            "removed" | "not_selected" | "unsupported_platform"
+                        )
+                })
+                .map(|component| component.id.clone())
+                .collect::<Vec<_>>();
+            for component_id in &add_optional_components {
+                if !active_requested.iter().any(|id| id == component_id) {
+                    active_requested.push(component_id.clone());
+                }
+            }
+            let active_component_ids = expand_components(&resolution.manifest, &active_requested)
+                .map_err(command_error)?
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>();
             let mut desired_environment_ids = coding_environment::component_ids(
                 &resolution.manifest,
                 &coding_environment_selection,
+                &active_component_ids,
             )
             .map_err(command_error)?;
             // The tools server is shared by every selected native client.  It
@@ -6538,6 +6582,9 @@ fn build_maintenance_plan_blocking(
                             &base_source,
                             mcp_selected,
                             maintenance_components.iter().any(|id| id == "workflow.3d"),
+                            maintenance_components
+                                .iter()
+                                .any(|id| id == "workflow.super_events"),
                             &portrait_pipeline,
                         )
                         .map_err(command_error)?
@@ -7622,6 +7669,7 @@ mcp_server = "comfy_cloud_portraits"
                 config,
                 false,
                 false,
+                false,
                 &test_portrait_config("local", true),
             )
             .unwrap(),
@@ -7629,6 +7677,45 @@ mcp_server = "comfy_cloud_portraits"
         .unwrap();
         assert!(!local.contains("comfy_cloud_portraits"));
         assert!(!local.contains("cloud.comfy.org"));
+    }
+
+    #[test]
+    fn unselected_super_events_agents_are_removed_from_codex_config() {
+        let config = br#"[agents]
+max_threads = 8
+
+[agents.hoi4_repo_explorer]
+config_file = "agents/hoi4_repo_explorer.toml"
+
+[agents.hoi4_super_event_art_researcher]
+config_file = "agents/hoi4_super_event_art_researcher.toml"
+"#;
+        let core = String::from_utf8(
+            adapt_codex_config_for_selection(
+                config,
+                false,
+                false,
+                false,
+                &test_portrait_config("disabled", false),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(core.contains("hoi4_repo_explorer"));
+        assert!(!core.contains("hoi4_super_event_art_researcher"));
+
+        let selected = String::from_utf8(
+            adapt_codex_config_for_selection(
+                config,
+                false,
+                false,
+                true,
+                &test_portrait_config("disabled", false),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(selected.contains("hoi4_super_event_art_researcher"));
     }
 
     #[test]
@@ -7791,6 +7878,7 @@ mcp_server = "comfy_cloud_portraits"
                 config,
                 true,
                 true,
+                false,
                 &test_portrait_config("disabled", false),
             )
             .unwrap(),

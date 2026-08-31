@@ -98,8 +98,15 @@ pub fn selection_from_value(value: &Value) -> Result<CodingEnvironmentSelection,
 pub fn component_ids(
     manifest: &RemoteManifest,
     selection: &CodingEnvironmentSelection,
+    active_component_ids: &HashSet<String>,
 ) -> Result<Vec<String>, AppError> {
     validate_selection(selection)?;
+    let optional_ids = manifest
+        .components
+        .iter()
+        .filter(|component| component.optional)
+        .map(|component| component.id.as_str())
+        .collect::<HashSet<_>>();
     let mut result = Vec::new();
     let mut requested = vec![selection.primary.as_str()];
     requested.extend(selection.additional.iter().map(String::as_str));
@@ -108,6 +115,20 @@ pub fn component_ids(
             .components
             .iter()
             .filter(|component| component.coding_environment.as_deref() == Some(environment))
+            .filter(|component| {
+                if !component.optional {
+                    return true;
+                }
+                let activation_dependencies = component
+                    .dependencies
+                    .iter()
+                    .filter(|dependency| optional_ids.contains(dependency.as_str()))
+                    .collect::<Vec<_>>();
+                !activation_dependencies.is_empty()
+                    && activation_dependencies
+                        .iter()
+                        .all(|dependency| active_component_ids.contains(dependency.as_str()))
+            })
             .map(|component| component.id.clone())
             .collect::<Vec<_>>();
         if ids.is_empty() {
@@ -149,9 +170,20 @@ pub fn is_known_environment_component_id(id: &str) -> bool {
             | "runtime.claude"
             | "runtime.claude.mcp"
             | "runtime.cursor"
+            | "runtime.cursor.mcp"
             | "runtime.qoder"
+            | "runtime.qoder.mcp"
             | "runtime.opencode"
             | "runtime.opencode.config"
+            | "runtime.opencode.mcp"
+            | "runtime.claude.portrait_agent"
+            | "runtime.claude.super_event_agents"
+            | "runtime.cursor.portrait_agent"
+            | "runtime.cursor.super_event_agents"
+            | "runtime.qoder.portrait_agent"
+            | "runtime.qoder.super_event_agents"
+            | "runtime.opencode.portrait_agent"
+            | "runtime.opencode.super_event_agents"
     )
 }
 
@@ -217,7 +249,10 @@ mod tests {
                     primary: (*primary).into(),
                     additional,
                 };
-                let ids = component_ids(&manifest, &selection)
+                let active = ["mcp.hoi4_agent_tools".to_string()]
+                    .into_iter()
+                    .collect::<HashSet<_>>();
+                let ids = component_ids(&manifest, &selection, &active)
                     .expect("every published environment combination is declared");
                 for environment in selected_environment_ids(&selection) {
                     assert!(ids.iter().any(|id| {
@@ -231,5 +266,38 @@ mod tests {
                 assert_eq!(ids.len(), ids.iter().collect::<HashSet<_>>().len());
             }
         }
+    }
+
+    #[test]
+    fn optional_environment_projections_require_their_workflow_dependency() {
+        let manifest = published_manifest();
+        let selection = CodingEnvironmentSelection {
+            primary: CURSOR.into(),
+            additional: vec![],
+        };
+        let shared = ["mcp.hoi4_agent_tools".to_string()]
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let core = component_ids(&manifest, &selection, &shared).unwrap();
+        assert!(core.iter().any(|id| id == "runtime.cursor.mcp"));
+        assert!(!core.iter().any(|id| id == "runtime.cursor.portrait_agent"));
+        assert!(!core
+            .iter()
+            .any(|id| id == "runtime.cursor.super_event_agents"));
+
+        let active = [
+            "mcp.hoi4_agent_tools".to_string(),
+            "workflow.portraits.subagent".to_string(),
+            "workflow.super_events.subagents".to_string(),
+        ]
+        .into_iter()
+        .collect::<HashSet<_>>();
+        let optional = component_ids(&manifest, &selection, &active).unwrap();
+        assert!(optional
+            .iter()
+            .any(|id| id == "runtime.cursor.portrait_agent"));
+        assert!(optional
+            .iter()
+            .any(|id| id == "runtime.cursor.super_event_agents"));
     }
 }

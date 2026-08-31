@@ -63,11 +63,15 @@ model names. The first schema-validated request is the capability check.
 
 ```json
 {
-  "type": "chatgpt",
-  "useHostedLoginSuccessPage": true,
-  "appBrand": "chatgpt"
+  "type": "chatgpt"
 }
 ```
+
+The App Server owns the managed ChatGPT login experience. Keep the request to
+the required `type` field because optional client-brand and hosted-success-page
+extensions vary between App Server schemas. Starting a new attempt clears a
+stale availability message before the pending state is shown, so the interface
+never presents an old failure alongside an active sign-in.
 
 6. Open the returned `authUrl` through the typed Rust system-browser command, which accepts only a validated HTTPS URL and a fixed OS-owned opener.
 7. Bind the pending UI state to the returned `loginId`. Cancellation calls

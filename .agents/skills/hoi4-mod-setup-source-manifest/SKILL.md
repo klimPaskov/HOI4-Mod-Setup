@@ -143,6 +143,13 @@ MCP servers and external dependencies are components. Their command, arguments, 
   MCP configuration, maps, and generated agent projections with complete file
   evidence. A future component under an existing supported environment must be
   consumable from its exact manifest revision without an app release.
+- Keep every non-optional coding-environment component free of optional
+  workflow projections. Represent a runtime/workflow intersection as an
+  optional `coding_environment` component whose optional dependencies name the
+  canonical selected workflow components. The app activates it only when all
+  of those optional dependencies are in the selected closure. Use the same
+  pattern for platform-specific MCP registrations; never place a Windows
+  `.cmd` command in an all-platform source component.
 - The canonical agent authoring source is `.codex/agents/*.toml`. Source-side
   synchronizers generate Claude Code, Cursor, Qoder, and OpenCode projections;
   `--check` must fail on missing, stale, extra, or drifted projections before a

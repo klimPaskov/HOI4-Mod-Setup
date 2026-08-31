@@ -23,6 +23,14 @@ projected agent tree. The manifest—not an app enum—defines the files and
 dependencies in the closure, so compatible additions can be consumed on the
 next update without an application release.
 
+Optional environment components are conditional intersections. The resolver
+adds one only when every optional dependency it declares is active in the
+workflow closure. Base runtime packages therefore exclude optional workflow
+agents, while separate Portrait Production and Super Events projection
+components depend on both the runtime base and the corresponding canonical
+workflow subagent component. Optional platform-specific MCP registrations use
+the same rule through the selected shared MCP dependency.
+
 ### Tool requirement
 
 An external executable or package with version policy and health checks.
@@ -54,6 +62,12 @@ and the verified MCP bootstrap when declared). Native packages are then added
 for the one primary and any additional environments. `.codex/agents/*.toml` is
 the only subagent authoring source; other client trees are generated projections
 and are checked for drift in the source repository.
+
+The verified Codex config may list optional agent registrations in its source
+template. Deterministic adaptation removes the Portrait and Super Events
+registrations when their canonical TOMLs are absent from the selected workflow
+closure, preventing a default config from pointing at files that were not
+installed.
 
 The component IDs shown below are the current published graph, not a frozen app
 enum. Source profiles and component definitions are loaded from the exact

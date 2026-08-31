@@ -1857,7 +1857,11 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
     if (state.codexLoginPending && state.codexLogin?.login_id) {
       await cancelCodexLogin(state.codexLogin.login_id);
     }
-    update({ codexLoginPending: true, transactionError: undefined });
+    update({
+      codexLoginPending: true,
+      codexAccount: state.codexAccount ? { ...state.codexAccount, error: undefined } : state.codexAccount,
+      transactionError: undefined,
+    });
     const login = await startCodexLogin(mode);
     if (login) {
       activeCodexLoginId.current = login.login_id ?? undefined;
@@ -2310,10 +2314,10 @@ export function CodingEnvironments({ state, update }: { state: WizardState; upda
     <section className="panel">
       <PanelTitle title="Primary environment" />
       <p className="muted">This client is the first-class entry point for the generated project. Codex is selected by default.</p>
-      <div className="radio-row" role="radiogroup" aria-label="Primary coding environment">
-        {CODING_ENVIRONMENTS.map((environment) => <label className="radio-option" key={environment.id}>
+      <div className="coding-environment-options" role="radiogroup" aria-label="Primary coding environment">
+        {CODING_ENVIRONMENTS.map((environment) => <label className="coding-environment-option" key={environment.id}>
           <input type="radio" name="primary-coding-environment" value={environment.id} checked={selection.primary === environment.id} onChange={() => choosePrimary(environment.id)} />
-          <span><strong>{environment.label}</strong><small>{environment.detail}</small></span>
+          <span className="coding-environment-copy"><strong>{environment.label}</strong><small>{environment.detail}</small></span>
           {selection.primary === environment.id && <Status label="Primary" tone="info" />}
         </label>)}
       </div>
@@ -2321,7 +2325,7 @@ export function CodingEnvironments({ state, update }: { state: WizardState; upda
     <section className="panel">
       <PanelTitle title="Additional environments" />
       <p className="muted">Install any other native client packages alongside the primary. The primary environment is excluded automatically.</p>
-      <div className="stack">
+      <div className="stack" role="group" aria-label="Additional coding environments">
         {CODING_ENVIRONMENTS.filter((environment) => environment.id !== selection.primary).map((environment) => <label className="radio-row" key={environment.id}>
           <input type="checkbox" checked={selection.additional.includes(environment.id)} onChange={(event) => toggleAdditional(environment.id, event.target.checked)} />
           <span><strong>{environment.label}</strong><small>{environment.detail}</small></span>
@@ -3055,7 +3059,7 @@ function MaintenanceCodingEnvironmentOptions({ state, update }: { state: WizardS
     const next = normalizeCodingEnvironmentSelection(selection.primary, checked ? [...selection.additional, id] : selection.additional.filter((candidate) => candidate !== id));
     update({ primaryCodingEnvironment: next.primary, additionalCodingEnvironments: next.additional, plan: undefined, transactionError: undefined });
   };
-  return <section className="panel maintenance-environment-panel"><PanelTitle title="Coding environments" /><p className="muted">Existing and locally modified files are preserved. Deselecting removes only unchanged files after review.</p><div className="radio-row" role="radiogroup" aria-label="Primary coding environment">{CODING_ENVIRONMENTS.map((environment) => <label className="radio-option" key={environment.id}><input type="radio" name="maintenance-primary-coding-environment" checked={selection.primary === environment.id} onChange={() => choosePrimary(environment.id)} /><span><strong>{environment.label}</strong><small>{environment.detail}</small></span>{selection.primary === environment.id && <Status label="Primary" tone="info" />}</label>)}</div><details><summary>Additional environments</summary><div className="stack">{CODING_ENVIRONMENTS.filter((environment) => environment.id !== selection.primary).map((environment) => <label className="radio-row" key={environment.id}><input type="checkbox" checked={selection.additional.includes(environment.id)} onChange={(event) => toggle(environment.id, event.target.checked)} /><span><strong>{environment.label}</strong><small>Keep this native package installed alongside the primary.</small></span></label>)}</div></details></section>;
+  return <section className="panel maintenance-environment-panel"><PanelTitle title="Coding environments" /><p className="muted">Existing and locally modified files are preserved. Deselecting removes only unchanged files after review.</p><div className="coding-environment-options" role="radiogroup" aria-label="Primary coding environment">{CODING_ENVIRONMENTS.map((environment) => <label className="coding-environment-option" key={environment.id}><input type="radio" name="maintenance-primary-coding-environment" checked={selection.primary === environment.id} onChange={() => choosePrimary(environment.id)} /><span className="coding-environment-copy"><strong>{environment.label}</strong><small>{environment.detail}</small></span>{selection.primary === environment.id && <Status label="Primary" tone="info" />}</label>)}</div><details><summary>Additional environments</summary><div className="stack" role="group" aria-label="Additional coding environments">{CODING_ENVIRONMENTS.filter((environment) => environment.id !== selection.primary).map((environment) => <label className="radio-row" key={environment.id}><input type="checkbox" checked={selection.additional.includes(environment.id)} onChange={(event) => toggle(environment.id, event.target.checked)} /><span><strong>{environment.label}</strong><small>Keep this native package installed alongside the primary.</small></span></label>)}</div></details></section>;
 }
 
 export function Update({ state, update, findings, setFindings, onMaintenance, onStartMaintenance, onReanalyze, onPackageChatSources, pending = false }: { state: WizardState; update: (patch: Partial<WizardState>) => void; findings: ScanFinding[]; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void; onReanalyze: () => Promise<boolean>; onPackageChatSources?: () => Promise<void>; pending?: boolean }) {

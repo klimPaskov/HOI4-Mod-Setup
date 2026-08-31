@@ -38,7 +38,10 @@ accessible radio group for the required primary (Codex selected initially) and a
 checkbox group for additional clients. Filter the current primary out of the
 additional group immediately when it changes. Keep the client selection visibly
 separate from setup-assistant and Core/Core plus 3D workflow choices; maintenance
-uses the same controls and explains that modified files are preserved.
+uses the same controls and explains that modified files are preserved. Give each
+primary choice independent name, description, and status grid cells, contain and
+wrap long descriptions inside the card, and collapse the card grid to one column
+before text can overlap at 200 percent scaling.
 
 Each screen normally has:
 

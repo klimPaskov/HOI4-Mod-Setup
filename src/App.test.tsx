@@ -2,13 +2,13 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { ChatSources, CodingEnvironments, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, recoveryProgress } from "./App";
-import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readAiModels, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, suggestProjectPaths } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readAiModels, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, startCodexLogin, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
 import type { ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), suggestProjectPaths: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), startCodexLogin: vi.fn(), suggestProjectPaths: vi.fn(), waitForCodexLoginResult: vi.fn() };
 });
 
 afterEach(() => {
@@ -33,7 +33,9 @@ beforeEach(() => {
   vi.mocked(previewDescriptorsResult).mockResolvedValue({ value: null });
   vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: null });
   vi.mocked(runCodexAnalysisResult).mockResolvedValue({ value: null });
+  vi.mocked(startCodexLogin).mockResolvedValue(null);
   vi.mocked(suggestProjectPaths).mockResolvedValue(null);
+  vi.mocked(waitForCodexLoginResult).mockResolvedValue({ value: null });
   vi.mocked(checkForAppUpdate).mockResolvedValue({ value: null });
   vi.mocked(installAppUpdate).mockResolvedValue({ value: undefined });
   vi.mocked(findInterruptedTransaction).mockResolvedValue(null);
@@ -116,6 +118,17 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByRole("checkbox", { name: /Qoder/ })).toBeChecked();
   });
 
+  it("keeps environment names, descriptions, and primary state in bounded layout cells", () => {
+    const { container } = render(<CodingEnvironments state={initialState} update={vi.fn()} />);
+    const group = screen.getByRole("radiogroup", { name: /primary coding environment/i });
+
+    expect(group).toHaveClass("coding-environment-options");
+    expect(container.querySelectorAll(".coding-environment-option")).toHaveLength(5);
+    expect(container.querySelectorAll(".coding-environment-copy")).toHaveLength(5);
+    expect(within(group).getByText("Codex").closest(".coding-environment-copy")).toHaveTextContent(/Native \.codex configuration and canonical TOML agents/);
+    expect(screen.getByRole("group", { name: /additional coding environments/i })).toContainElement(screen.getByRole("checkbox", { name: /Cursor/ }));
+  });
+
   it("provides sanitized development-only states for public screenshots", () => {
     const base = readyState();
     window.history.replaceState({}, "", "/?screenshot=ready");
@@ -128,6 +141,16 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(fixture.meshKeyDraft).toBeFalsy();
     expect(fixture.manifestPreview?.components.find((item) => item.id === "mcp.hoi4_agent_tools")?.platforms).toEqual(["windows"]);
     expect(fixture.manifestPreview?.components.find((item) => item.id === "workflow.3d")?.platforms).toEqual(["windows"]);
+  });
+
+  it("provides a sanitized coding-environment visual regression state", () => {
+    window.history.replaceState({}, "", "/?screenshot=environments");
+    const fixture = documentationFixture(readyState());
+
+    expect(fixture.screen).toBe("environments");
+    expect(fixture.primaryCodingEnvironment).toBe("codex");
+    expect(fixture.additionalCodingEnvironments).toEqual(["cursor"]);
+    expect(fixture.identity.projectRoot).toContain("C:\\Users\\Player\\");
   });
 
   it("provides a sanitized ChatGPT source-package screenshot state", () => {
@@ -1722,6 +1745,22 @@ describe("HOI4 Mod Setup wizard", () => {
 
     await waitFor(() => expect(openCodexLoginUrlResult).toHaveBeenCalledWith(url));
     expect(update).toHaveBeenCalledWith({ transactionError: undefined });
+  });
+
+  it("clears a stale availability error as soon as a new sign-in attempt starts", async () => {
+    enableTauriRuntime();
+    const update = vi.fn();
+    vi.mocked(startCodexLogin).mockResolvedValue({ available: true, device_code: false });
+    render(<Welcome state={welcomeState({ available: false, authenticated: false, auth_mode: "none", usage_limited: false, error: "Codex is temporarily unavailable." })} update={update} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /sign in with chatgpt/i }));
+
+    await waitFor(() => expect(startCodexLogin).toHaveBeenCalledWith("browser"));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      codexLoginPending: true,
+      codexAccount: expect.objectContaining({ error: undefined }),
+      transactionError: undefined,
+    }));
   });
 
   it("exposes a cancellable pending sign-in state", async () => {

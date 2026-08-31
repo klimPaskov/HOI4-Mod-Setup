@@ -6,6 +6,19 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.3.1 - 2026-08-31
+
+- Publish and consume complete manifest-declared Codex, Claude Code, Cursor,
+  Qoder, and OpenCode packages from the Agentic HOI4 Modding default branch,
+  with platform-correct MCP registration and workflow-conditional agents.
+- Restore ChatGPT sign-in against the current Codex App Server request schema
+  and clear stale availability errors when a new login begins.
+- Keep coding-environment names, descriptions, and primary status contained at
+  normal and 200 percent scaling.
+- Treat bounded Git-status evidence as a review finding instead of falsely
+  failing a complete targeted scan; validate the fix against Chaos Redux and
+  preserve recorded coding-environment choices from valid managed locks.
+
 ## 0.3.0 - 2026-08-27
 
 - Add a dedicated Coding Environments step with Codex as the default primary

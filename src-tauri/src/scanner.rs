@@ -474,6 +474,7 @@ where
                             || !scan_path_identity_matches(&root, root_identity)
                     },
                 );
+                reconcile_coding_environment_finding(&mut findings);
             }
         );
 
@@ -537,9 +538,7 @@ where
     let summary = summarize(&findings, &conflicts);
     let limits_hit = conflicts
         .iter()
-        .filter(|conflict| {
-            conflict.id.starts_with("scan.") && !conflict.id.starts_with("scan.sensitive.")
-        })
+        .filter(|conflict| scan_conflict_truncated_detector_evidence(&conflict.id))
         .map(|conflict| conflict.id.clone())
         .collect::<Vec<_>>();
     let cancelled = limits_hit.iter().any(|id| id == "scan.cancelled");
@@ -593,6 +592,19 @@ where
         conflicts,
         summary,
     })
+}
+
+/// Only conflicts that made detector evidence incomplete turn the overall scan
+/// into a partial result. Git inspection is deliberately bounded and advisory:
+/// an incomplete Git status probe remains visible for review, but it does not
+/// mean the targeted agentic project scan was truncated.
+fn scan_conflict_truncated_detector_evidence(id: &str) -> bool {
+    id.starts_with("scan.")
+        && !id.starts_with("scan.sensitive.")
+        && !matches!(
+            id,
+            "scan.git.inspection" | "scan.git.link" | "scan.git.head_link" | "scan.git.head_read"
+        )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2185,7 +2197,7 @@ fn detect_coding_environments(
         "coding.environments",
         "coding_environment",
         "installed_environments",
-        json!({"detected": detected, "primary": primary}),
+        json!({"detected": detected, "primary": primary, "additional": []}),
         "accepted",
         evidence(
             "coding_environment_detector",
@@ -2194,6 +2206,57 @@ fn detect_coding_environments(
             Some("Native coding-client files were detected without changing the project."),
         ),
         None,
+    ));
+}
+
+fn reconcile_coding_environment_finding(findings: &mut [ScanFinding]) {
+    let recorded = findings
+        .iter()
+        .find(|finding| finding.id == "installation.managed")
+        .filter(|finding| finding.value["valid"] == true)
+        .and_then(|finding| {
+            let primary = finding.value["primary_coding_environment"]
+                .as_str()?
+                .to_string();
+            let additional = finding.value["additional_coding_environments"]
+                .as_array()?
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>();
+            Some((primary, additional))
+        });
+    let Some((primary, additional)) = recorded else {
+        return;
+    };
+    let Some(coding) = findings
+        .iter_mut()
+        .find(|finding| finding.id == "coding.environments")
+    else {
+        return;
+    };
+    let mut detected = coding.value["detected"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for environment in std::iter::once(&primary).chain(additional.iter()) {
+        if !detected
+            .iter()
+            .any(|value| value.as_str() == Some(environment.as_str()))
+        {
+            detected.push(Value::String(environment.clone()));
+        }
+    }
+    coding.value = json!({
+        "detected": detected,
+        "primary": primary,
+        "additional": additional,
+    });
+    coding.evidence.push(evidence(
+        "managed_installation_detector",
+        ".hoi4-mod-setup/install.lock.json",
+        1.0,
+        Some("The recorded primary and additional coding environments were read from the validated installation lock."),
     ));
 }
 
@@ -2595,6 +2658,37 @@ mod tests {
     use std::fs;
     use std::sync::{atomic::AtomicBool, Arc};
     use tempfile::tempdir;
+
+    #[test]
+    fn only_truncated_detector_evidence_marks_a_scan_partial() {
+        for advisory in [
+            "scan.git.inspection",
+            "scan.git.link",
+            "scan.git.head_link",
+            "scan.git.head_read",
+            "scan.sensitive.config",
+        ] {
+            assert!(
+                !scan_conflict_truncated_detector_evidence(advisory),
+                "{advisory} should stay a review conflict without truncating the targeted scan"
+            );
+        }
+
+        for truncated in [
+            "scan.file_limit",
+            "scan.depth.limit",
+            "scan.read_error.AGENTS.md",
+            "scan.managed_lock_read",
+            "scan.git.file_limit",
+            "scan.cancelled",
+            "scan.timeout",
+        ] {
+            assert!(
+                scan_conflict_truncated_detector_evidence(truncated),
+                "{truncated} should mark detector evidence partial"
+            );
+        }
+    }
 
     #[test]
     fn launcher_discovery_reports_duplicate_matching_registrations() {
@@ -3437,6 +3531,8 @@ mod tests {
                 credential_reference: None,
             },
         );
+        lock.primary_coding_environment = "cursor".into();
+        lock.additional_coding_environments = vec!["qoder".into()];
         fs::write(
             metadata.join("install.lock.json"),
             serde_json::to_vec(&lock).unwrap(),
@@ -3464,6 +3560,17 @@ mod tests {
         assert_eq!(managed.value["present"], true);
         assert_eq!(managed.value["valid"], true);
         assert_eq!(managed.value["workflow_super_events_state"], "not_selected");
+        let coding = result
+            .findings
+            .iter()
+            .find(|finding| finding.id == "coding.environments")
+            .expect("coding environments finding");
+        assert_eq!(coding.value["primary"], "cursor");
+        assert_eq!(coding.value["additional"], json!(["qoder"]));
+        assert!(coding.value["detected"]
+            .as_array()
+            .is_some_and(|detected| detected.iter().any(|value| value == "cursor")
+                && detected.iter().any(|value| value == "qoder")));
         assert!(result
             .findings
             .iter()

@@ -24,6 +24,6 @@ row's automatic verified Meshy/Blender preparation copy and the stable
 
 With `pnpm dev` running, open `http://localhost:1420/?screenshot=<name>` where
 `<name>` is one of `welcome`, `provider`, `existing`, `description`, `identity`,
-`components`, `workflows`, `mcp`, `git`, `dry-run`, `ready`, `maintenance`, or
-`chat-sources`, or `recovery`.
+`components`, `workflows`, `mcp`, `git`, `dry-run`, `ready`, `maintenance`,
+`chat-sources`, `recovery`, or `environments`.
 Capture the complete 1280 by 960 application viewport from the top of the page.

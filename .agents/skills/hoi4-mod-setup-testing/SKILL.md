@@ -186,7 +186,20 @@ state without account identity or secret values, unknown routes are ignored,
 and production builds cannot activate the fixture. Capture at 1280 by 960 from
 the top of the page so comparison evidence is consistent.
 
-Test all 17 required screen states and seven phases. Include density assertions, keyboard traversal, scaling, reduced motion, long values, errors, conflict comparison, staged scanner progress, correlated event filtering, indeterminate progress semantics, and cancellation evidence messaging. Assert the **3D models workflow** title and the immediately following **Super Events workflow** order. Recovery coverage must render a validation-stage checkpoint with its sanitized Details disclosure and only the core-permitted Continue/Discard actions before apply; feed prefixed, quoted-field, and unquoted-assignment secret shapes plus multibyte overflow through that path and prove the raw values are absent and the result remains within 2 KiB. Direct transaction and rollback command errors use quoted-field fixtures too. Never show Undo as an unavailable card.
+Test all 18 required screen states and seven phases. The dedicated Coding
+Environments screen is part of that required set; assert its bounded option
+layout and visible focus-within styling so the accessibility gate cannot omit
+it. Include density assertions, keyboard traversal, scaling, reduced motion,
+long values, errors, conflict comparison, staged scanner progress, correlated
+event filtering, indeterminate progress semantics, and cancellation evidence
+messaging. Assert the **3D models workflow** title and the immediately following
+**Super Events workflow** order. Recovery coverage must render a
+validation-stage checkpoint with its sanitized Details disclosure and only the
+core-permitted Continue/Discard actions before apply; feed prefixed,
+quoted-field, and unquoted-assignment secret shapes plus multibyte overflow
+through that path and prove the raw values are absent and the result remains
+within 2 KiB. Direct transaction and rollback command errors use quoted-field
+fixtures too. Never show Undo as an unavailable card.
 
 Keep a desktop responsiveness regression test that verifies every Tauri command
 uses `#[tauri::command(async)]` so blocking Rust core work cannot run on the UI

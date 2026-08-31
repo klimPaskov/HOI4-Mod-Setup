@@ -298,11 +298,10 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
         let params = if device_code {
             json!({"type": "chatgptDeviceCode"})
         } else {
-            json!({
-                "type": "chatgpt",
-                "useHostedLoginSuccessPage": true,
-                "appBrand": "chatgpt"
-            })
+            // Managed ChatGPT authentication is owned by Codex. Keep this at
+            // the version-compatible required request shape; optional
+            // branding/login-page extensions vary across App Server schemas.
+            json!({"type": "chatgpt"})
         };
         let result = self.request("account/login/start", params)?;
         Ok(parse_login_start(&result, device_code))
@@ -692,6 +691,15 @@ fn bounded_redacted_protocol_text(value: &str, max_chars: usize) -> String {
         .filter(|character| !character.is_control())
         .take(max_chars)
         .collect()
+}
+
+fn safe_login_error(value: &str) -> String {
+    let bounded = bounded_redacted_protocol_text(value, MAX_PROTOCOL_ERROR_DETAIL_CHARS);
+    if bounded.trim().is_empty() || validate_output_text(&bounded, "Codex login error").is_err() {
+        "Codex login failed".into()
+    } else {
+        bounded
+    }
 }
 
 fn safe_protocol_error_code(value: Option<&Value>) -> String {
@@ -1767,9 +1775,8 @@ fn account_login_notification(
                 let error = params
                     .get("error")
                     .and_then(Value::as_str)
-                    .unwrap_or("Codex login failed")
-                    .to_string();
-                Ok(LoginNotification::Failed(redact_secrets(&error, &[])))
+                    .unwrap_or("Codex login failed");
+                Ok(LoginNotification::Failed(safe_login_error(error)))
             }
         }
         "account/updated"
@@ -2960,10 +2967,9 @@ mod tests {
         assert_eq!(browser_start.login_id.as_deref(), Some("browser-1"));
         assert_eq!(browser.transport.sent[0]["params"]["type"], "chatgpt");
         assert_eq!(
-            browser.transport.sent[0]["params"]["useHostedLoginSuccessPage"],
-            true
+            browser.transport.sent[0]["params"],
+            json!({"type": "chatgpt"})
         );
-        assert_eq!(browser.transport.sent[0]["params"]["appBrand"], "chatgpt");
 
         let device_transport = FakeTransport {
             sent: Vec::new(),
@@ -2980,6 +2986,10 @@ mod tests {
         assert_eq!(
             device.transport.sent[0]["params"]["type"],
             "chatgptDeviceCode"
+        );
+        assert_eq!(
+            device.transport.sent[0]["params"],
+            json!({"type": "chatgptDeviceCode"})
         );
         assert!(device.transport.sent[0]["params"].get("apiKey").is_none());
         assert!(device.transport.sent[0]["params"].get("token").is_none());
@@ -3498,6 +3508,36 @@ mod tests {
         assert!(!error.contains("cancelled-device-secret"));
         assert!(error.contains("REDACTED"));
         assert!(protocol.transport.sent.is_empty());
+    }
+
+    #[test]
+    fn login_failure_is_bounded_and_drops_account_shaped_text() {
+        let oversized = "x".repeat(MAX_PROTOCOL_ERROR_DETAIL_CHARS * 2);
+        let bounded = account_login_notification(
+            &json!({
+                "method": "account/login/completed",
+                "params": {"loginId": "login-1", "success": false, "error": oversized}
+            }),
+            "login-1",
+        )
+        .unwrap();
+        let LoginNotification::Failed(bounded) = bounded else {
+            panic!("expected a failed login notification");
+        };
+        assert_eq!(bounded.chars().count(), MAX_PROTOCOL_ERROR_DETAIL_CHARS);
+
+        let private = account_login_notification(
+            &json!({
+                "method": "account/login/completed",
+                "params": {"loginId": "login-1", "success": false, "error": "Account user@example.com could not sign in"}
+            }),
+            "login-1",
+        )
+        .unwrap();
+        let LoginNotification::Failed(private) = private else {
+            panic!("expected a failed login notification");
+        };
+        assert_eq!(private, "Codex login failed");
     }
 
     #[test]
