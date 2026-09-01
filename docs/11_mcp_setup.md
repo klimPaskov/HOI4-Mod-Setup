@@ -10,7 +10,7 @@ The inspected `.codex/config.toml` contains `hoi4_agent_tools` with command `hoi
 
 These findings drive the example manifest. They do not authorize macOS equivalents.
 
-The current source pins `hoi4-agent-tools@2.5.2` by npm SHA-512 integrity,
+The current source pins `hoi4-agent-tools@3.0.5` by npm SHA-512 integrity,
 canonical package-tree SHA-256 and file count, runtime-entry SHA-256 and size,
 and required tool names. The bootstrap and app independently verify the full
 installed package tree, so changing an imported sibling module fails before
@@ -21,6 +21,13 @@ prefix and is never executed. Node must be a regular link-free executable with
 a valid OpenJS Foundation signature; its actual SHA-256 is captured and
 rechecked immediately at spawn. No package, command, version, or macOS route is
 invented.
+
+The verified 3.0.5 package contains 4,846 files and an 18,406,400-byte native
+library. Package verification therefore allows at most 32 MiB per file while
+retaining the 256 MiB total-tree and 10,000-file bounds. npm versions that emit
+a hidden global `.package-lock.json` must retain the declared integrity there;
+when npm does not emit that optional file, exact manifest integrity plus the
+complete package-tree identity remain mandatory.
 
 ## MCP component fields
 
@@ -49,8 +56,8 @@ Security-sensitive root values such as `approval_policy` and `sandbox_mode` rece
    SHA-256/file count, runtime-entry SHA-256/size, and required tool evidence.
 2. Resolve the reviewed wrapper only to its regular, link-free npm prefix; do
    not execute it.
-3. Verify package metadata, npm lock integrity, every installed package byte,
-   and the runtime entry.
+3. Verify package metadata, any emitted hidden npm lock integrity, every
+   installed package byte, and the runtime entry.
 4. Require the resolved Node executable's OpenJS Foundation signature, capture
    its SHA-256, and recheck that identity immediately at spawn.
 5. Send the MCP JSON-RPC initialize request with protocol version, empty client

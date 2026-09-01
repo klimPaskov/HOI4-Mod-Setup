@@ -203,6 +203,10 @@ entry as OAuth or account login.
   package file through no-follow containment, require the canonical full-tree
   identity, materialize the verified bytes into a private tree, and execute
   only that private runtime entry;
+  allow at most 32 MiB per package file, 256 MiB for the complete tree, and
+  10,000 files. Verify a hidden npm lock when the installed npm version emits
+  one, but do not require that optional file when exact registry integrity and
+  the complete manifest-bound package-tree identity both pass;
   the bounded probe may initialize and list tool metadata but must never call
   an MCP tool or serialize raw protocol output. Missing identity is
   `planned_unavailable`, not permission to execute a same-named command.
