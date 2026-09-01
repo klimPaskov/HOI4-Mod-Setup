@@ -62,9 +62,9 @@ reinstall, rollback, and removal.
 ## Current source and release boundary
 
 The published Agentic HOI4 Modding `main` used for this update is at commit
-`59cc276cd79db5e69b0b39280f09c831d86a2348`. Its manifest declares the
+`0bb4917dca228886aa9a52963bc09e7078666d64`. Its manifest declares the
 selected-file records generated from immutable Git blobs at revision
-`cbdc5f06ff4ca71c2e1c6ef3c5befd8adc1332bb`. The core profile now includes the
+`7e50711580a3fa377f1acb834bb19a51128eacd2`. The core profile now includes the
 managed HOI4 Agent Tools integration guide; enabled portrait providers expand
 through the verified portrait router; generic skills include Debug and
 Playtest; generic subagents include the AI probability auditor and event UI

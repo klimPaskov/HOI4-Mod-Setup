@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0.0",
   "manifest_id": "agentic-hoi4-modding",
-  "generated_for_revision": "99a9cf40a9d9c5da8a40502b7dad6b0a8bfe2339",
+  "generated_for_revision": "7e50711580a3fa377f1acb834bb19a51128eacd2",
   "repository": {
     "provider": "github",
     "owner": "klimPaskov",
@@ -56,7 +56,7 @@
       "expected_files": [
         {
           "path": "AGENTS_template.md",
-          "sha256": "9c083a653b5de1ead9543e1fbabfe07d8f54b5df00f4fde1eeb77ce3c5137a47",
+          "sha256": "022486e59f4698a64c34ba856fb80b387f5f337d4fbc3206c15cfe2372030a2e",
           "size": 50383
         }
       ]
@@ -4388,7 +4388,7 @@
             "arguments": [
               "--quiet"
             ],
-            "network_access": "Required to install current-user Node.js LTS when missing and resolve the exact hoi4-agent-tools@2.5.2 package from https://registry.npmjs.org.",
+            "network_access": "Required to install current-user Node.js LTS when missing and resolve the exact hoi4-agent-tools@3.0.7 package from https://registry.npmjs.org.",
             "expected_writes": [
               "the current user's winget-managed Node.js LTS installation when Node is missing",
               "the current user's AppData/Roaming/npm package prefix",
@@ -4412,8 +4412,8 @@
       "expected_files": [
         {
           "path": ".tools/mcp/bootstrap_hoi4_agent_tools.py",
-          "sha256": "484a510c714cfbee82113e81d5e58b5c8352cdbfcdc7d493acd3e18cb749889d",
-          "size": 9501
+          "sha256": "b69b06fd523701e8de1d1ffd8442db70d8c56d583c2177b48538ecf446007529",
+          "size": 9671
         }
       ]
     },
@@ -4456,7 +4456,7 @@
           "id": "hoi4-agent-tools.cmd",
           "required": true,
           "version_policy": "manifest",
-          "version": "2.5.2",
+          "version": "3.0.7",
           "health_checks": [
             "hoi4-agent-tools.cmd resolves",
             "MCP initialize succeeds"
@@ -4475,8 +4475,8 @@
           "target": "hoi4-agent-tools.cmd",
           "parameters": {
             "package_name": "hoi4-agent-tools",
-            "package_version": "2.5.2",
-            "package_integrity": "sha512-/2CmEDqkEbRsA9CcgnV0KKF8pHWOaATsAlIZexo/2D9BMbIYfYHdimAa5ZMSQiXahCGvCBA1Pq2a9ANZnp8Waw==",
+            "package_version": "3.0.7",
+            "package_integrity": "sha512-xjc7gbo/584YCycx1eSYwIMtJasTgtuE0CskV7FC9iE9LLNmkduQ2JV37DmSILWLYUFUQhfrp5u77cFjAs3Jcg==",
             "runtime_entry": "dist/bin/stdio.js",
             "runtime_entry_sha256": "7ddc78a8c518957dea6e737663c2be5e8852795d6662fc607166f15f4fb719a8",
             "runtime_entry_size": 1916,
@@ -4509,8 +4509,8 @@
             "expected_writes": [],
             "privilege": "current_user",
             "rollback_boundary": "The health action performs no writes and starts no tool call.",
-            "package_tree_sha256": "9da372df1c7870728f80e850c1c7fd6b5470285f27e1ef8e0841fcde60e0a208",
-            "package_file_count": 181
+            "package_tree_sha256": "91893b13d6650e54704325a8ddf978127015afafd0e495e85d9bbcc585e5ebdf",
+            "package_file_count": 4848
           }
         }
       ],
@@ -4630,8 +4630,8 @@
       "expected_files": [
         {
           "path": "README.md",
-          "sha256": "00a5627e58b63da9aea0ecb487ea29b611af668bf065d016fa26e8ce4cfa34d6",
-          "size": 22709
+          "sha256": "8b981272e7e9d8daef2ed98d8e7e0e1cfb4acda7df4836bcecd035b0e6e241a8",
+          "size": 22864
         }
       ]
     },
