@@ -117,7 +117,10 @@ MCP servers and external dependencies are components. Their command, arguments, 
   `tools` capability, and a `tools/list` result containing every declared
   route. It executes only a private copy materialized from the verified
   package-tree bytes, so a global-package mutation after verification cannot
-  change the entry that runs.
+  change the entry that runs. Keep package inspection bounded to 32 MiB per
+  file, 256 MiB total, and 10,000 files. A hidden npm lock is additional
+  integrity evidence when npm emits it; full manifest integrity and exact
+  package-tree identity remain required regardless.
 - The selected Windows 3D component may publish its exact npm lock and runtime
   identity dynamically, but the credential-bearing Codex route is rendered by
   the app as the absolute installed HOI4 Mod Setup executable plus the one

@@ -6,6 +6,18 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.3.2 - 2026-09-01
+
+- Accept the verified `hoi4-agent-tools@3.0.5` package layout in Latest mode,
+  including its 18,406,400-byte native library, while retaining exact npm
+  integrity, complete package-tree hashing, link rejection, and bounded private
+  runtime execution.
+- Treat npm's hidden global package lock as additional evidence when present;
+  installations from npm versions that omit it still require the exact
+  manifest-bound 4,846-file package identity before the MCP can start.
+- Keep all 23 source-advertised HOI4 Agent Tools routes available to every
+  setup assistant, including Technology Tree inspect, render, and compare.
+
 ## 0.3.1 - 2026-08-31
 
 - Publish and consume complete manifest-declared Codex, Claude Code, Cursor,

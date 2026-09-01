@@ -104,7 +104,7 @@ pub const HEALTH_RULE_ID: &str = "mcp.hoi4.health";
 const MAX_SERVER_FIELD_BYTES: usize = 256;
 const MAX_TOOL_COUNT: usize = 4096;
 const MAX_TOOL_NAME_BYTES: usize = 256;
-const MAX_PACKAGE_FILE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_PACKAGE_FILE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_PACKAGE_TREE_BYTES: u64 = 256 * 1024 * 1024;
 
 pub(crate) struct VerifiedPackageTree {
@@ -179,6 +179,47 @@ fn package_tree_identity(files: &[(String, Vec<u8>)]) -> (String, u64) {
         digest.update(bytes);
     }
     (format!("{:x}", digest.finalize()), files.len() as u64)
+}
+
+fn verify_optional_npm_lock_integrity(
+    bin_root: &Path,
+    package_name: &str,
+    package_integrity: &str,
+) -> Result<(), AppError> {
+    let lock_relative = "node_modules/.package-lock.json";
+    let lock_path = safe_join(bin_root, lock_relative)?;
+    match std::fs::symlink_metadata(&lock_path) {
+        Ok(metadata) => {
+            if is_link_metadata(&metadata)
+                || !metadata.is_file()
+                || path_has_link_component(&lock_path)
+            {
+                return Err(AppError::PathSecurity(
+                    "the installed MCP npm lock is not a regular, link-free file".into(),
+                ));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    }
+    let lock_bytes = crate::flatten::read_bounded_regular_file_no_follow_under_root(
+        bin_root,
+        lock_relative,
+        16 * 1024 * 1024,
+    )?;
+    let lock: Value = serde_json::from_slice(&lock_bytes)?;
+    let lock_key = format!("node_modules/{package_name}");
+    let installed_integrity = lock
+        .get("packages")
+        .and_then(|packages| packages.get(&lock_key))
+        .and_then(|package| package.get("integrity"))
+        .and_then(Value::as_str);
+    if installed_integrity != Some(package_integrity) {
+        return Err(AppError::Credential(
+            "the installed MCP package does not match the reviewed registry integrity".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn materialize_verified_package_tree(
@@ -554,23 +595,7 @@ pub fn initialize_health(
             "the installed MCP package tree does not match the reviewed release".into(),
         ));
     }
-    let lock_bytes = crate::flatten::read_bounded_regular_file_no_follow_under_root(
-        bin_root,
-        "node_modules/.package-lock.json",
-        16 * 1024 * 1024,
-    )?;
-    let lock: Value = serde_json::from_slice(&lock_bytes)?;
-    let lock_key = format!("node_modules/{}", target.package_name);
-    let installed_integrity = lock
-        .get("packages")
-        .and_then(|packages| packages.get(&lock_key))
-        .and_then(|package| package.get("integrity"))
-        .and_then(Value::as_str);
-    if installed_integrity != Some(target.package_integrity.as_str()) {
-        return Err(AppError::Credential(
-            "the installed MCP package does not match the reviewed registry integrity".into(),
-        ));
-    }
+    verify_optional_npm_lock_integrity(bin_root, &target.package_name, &target.package_integrity)?;
     let entry = safe_join(&verified_tree.root, &target.runtime_entry)?;
     let entry_metadata = std::fs::symlink_metadata(&entry)?;
     if is_link_metadata(&entry_metadata)
@@ -821,7 +846,7 @@ mod tests {
                     "id": 1,
                     "result": {
                         "protocolVersion": MCP_PROTOCOL_VERSION,
-                        "serverInfo": {"name": "hoi4-agent-tools", "version": "2.5.2"},
+                        "serverInfo": {"name": "hoi4-agent-tools", "version": "3.0.5"},
                         "capabilities": {"tools": {}}
                     }
                 }),
@@ -850,7 +875,7 @@ mod tests {
         assert!(error.to_string().contains("capabilities"));
         let error = validate_initialize_result(&json!({
             "protocolVersion": "2024-11-05",
-            "serverInfo": {"name": "hoi4-agent-tools", "version": "2.5.2"},
+            "serverInfo": {"name": "hoi4-agent-tools", "version": "3.0.5"},
             "capabilities": {"tools": {}}
         }))
         .unwrap_err();
@@ -896,6 +921,56 @@ mod tests {
     }
 
     #[test]
+    fn package_reader_accepts_the_current_native_library_size_within_the_bound() {
+        let package = tempfile::tempdir().unwrap();
+        let native_library = package.path().join("libvips-42.dll");
+        std::fs::File::create(&native_library)
+            .unwrap()
+            .set_len(18_406_400)
+            .unwrap();
+        let files = read_installed_package_tree(package.path()).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].1.len(), 18_406_400);
+    }
+
+    #[test]
+    fn package_reader_rejects_a_file_above_the_bounded_limit() {
+        let package = tempfile::tempdir().unwrap();
+        std::fs::File::create(package.path().join("oversized.bin"))
+            .unwrap()
+            .set_len(MAX_PACKAGE_FILE_BYTES + 1)
+            .unwrap();
+        assert!(read_installed_package_tree(package.path()).is_err());
+    }
+
+    #[test]
+    fn missing_optional_npm_lock_does_not_replace_full_tree_identity() {
+        let prefix = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(prefix.path().join("node_modules")).unwrap();
+        verify_optional_npm_lock_integrity(prefix.path(), "hoi4-agent-tools", "sha512-reviewed")
+            .unwrap();
+
+        std::fs::write(
+            prefix.path().join("node_modules/.package-lock.json"),
+            serde_json::to_vec(&json!({
+                "packages": {
+                    "node_modules/hoi4-agent-tools": {"integrity": "sha512-wrong"}
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(verify_optional_npm_lock_integrity(
+            prefix.path(),
+            "hoi4-agent-tools",
+            "sha512-reviewed",
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("registry integrity"));
+    }
+
+    #[test]
     fn verified_runtime_copy_is_immune_to_later_source_mutation() {
         let package = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(package.path().join("dist")).unwrap();
@@ -926,7 +1001,7 @@ mod tests {
     fn required_tools_capability_is_not_optional() {
         let initialized = json!({
             "protocolVersion": MCP_PROTOCOL_VERSION,
-            "serverInfo": {"name": "hoi4-agent-tools", "version": "2.5.2"},
+            "serverInfo": {"name": "hoi4-agent-tools", "version": "3.0.5"},
             "capabilities": {}
         });
         assert!(require_tools_capability(&initialized)
