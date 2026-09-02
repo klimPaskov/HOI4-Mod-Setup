@@ -4,10 +4,10 @@
   "default_branch": "main",
   "inspection_date": "2026-09-01",
   "manifest_path": "hoi4-mod-setup.manifest.json",
-  "manifest_sha256": "1116eb73a64b291b58b52e262379b12a12030b09092671c1aeec5921bc9a5880",
+  "manifest_sha256": "4550334afaea4cb3c6ad6d83219b02cadf3ee60d46112d7e46a352ee889ceb10",
   "manifest_generated_for_revision": "7e50711580a3fa377f1acb834bb19a51128eacd2",
   "manifest_worktree_state": "published",
-  "workspace_manifest_sha256": "1116eb73a64b291b58b52e262379b12a12030b09092671c1aeec5921bc9a5880",
+  "workspace_manifest_sha256": "4550334afaea4cb3c6ad6d83219b02cadf3ee60d46112d7e46a352ee889ceb10",
   "verified_root_entries": [
     ".agents/skills/",
     ".codex/",

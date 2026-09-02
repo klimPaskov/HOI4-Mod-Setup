@@ -1814,6 +1814,14 @@ mod tests {
             "../../docs/source-audit/live_repository_inventory.json"
         ))
         .unwrap();
+        let manifest_sha256 = sha256_bytes(bytes);
+        for field in ["manifest_sha256", "workspace_manifest_sha256"] {
+            assert_eq!(
+                inventory[field].as_str(),
+                Some(manifest_sha256.as_str()),
+                "source audit must identify the exact bundled manifest bytes"
+            );
+        }
         let source_snapshot = inventory["manifest_generated_for_revision"]
             .as_str()
             .unwrap();

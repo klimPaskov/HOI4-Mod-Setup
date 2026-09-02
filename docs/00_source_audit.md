@@ -55,7 +55,7 @@ both Agentic repository license evidence and wiki license status as
 
 The current root manifest at publication commit
 `0bb4917dca228886aa9a52963bc09e7078666d64` has raw SHA-256
-`1116eb73a64b291b58b52e262379b12a12030b09092671c1aeec5921bc9a5880`
+`4550334afaea4cb3c6ad6d83219b02cadf3ee60d46112d7e46a352ee889ceb10`
 and declares `generated_for_revision`
 `7e50711580a3fa377f1acb834bb19a51128eacd2`. Its 1,276 declared file records
 cover 45 components and were generated from immutable Git blob bytes before
