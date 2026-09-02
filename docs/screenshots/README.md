@@ -27,3 +27,9 @@ With `pnpm dev` running, open `http://localhost:1420/?screenshot=<name>` where
 `components`, `workflows`, `mcp`, `git`, `dry-run`, `ready`, `maintenance`,
 `chat-sources`, `recovery`, or `environments`.
 Capture the complete 1280 by 960 application viewport from the top of the page.
+
+Before saving, wait for the expected screen heading and controls to be visible;
+navigation completion alone is not proof that React has rendered the fixture.
+Check the page for runtime errors and visually inspect the actual capture for
+blank areas or missing content. Keep the capture's real file format and matching
+extension (PNG or JPEG), then verify its README link before committing.
