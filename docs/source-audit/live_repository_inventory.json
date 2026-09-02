@@ -1,13 +1,13 @@
 {
   "repository": "klimPaskov/Agentic-HOI4-Modding",
-  "resolved_commit": "7c0590e1d2f96716eebb676eaebb3c5dcd632aaa",
+  "resolved_commit": "0bb4917dca228886aa9a52963bc09e7078666d64",
   "default_branch": "main",
-  "inspection_date": "2026-08-27",
+  "inspection_date": "2026-09-01",
   "manifest_path": "hoi4-mod-setup.manifest.json",
-  "manifest_sha256": "eb911082a6064b972acda90bdf55ad63d1866f5d1c4a122b3101d251ea9ce891",
-  "manifest_generated_for_revision": "99a9cf40a9d9c5da8a40502b7dad6b0a8bfe2339",
+  "manifest_sha256": "1116eb73a64b291b58b52e262379b12a12030b09092671c1aeec5921bc9a5880",
+  "manifest_generated_for_revision": "7e50711580a3fa377f1acb834bb19a51128eacd2",
   "manifest_worktree_state": "published",
-  "workspace_manifest_sha256": "07709d6c5ed08eb50835541e6c96950b427c9ca5422e179c67a396d3dfac1136",
+  "workspace_manifest_sha256": "1116eb73a64b291b58b52e262379b12a12030b09092671c1aeec5921bc9a5880",
   "verified_root_entries": [
     ".agents/skills/",
     ".codex/",

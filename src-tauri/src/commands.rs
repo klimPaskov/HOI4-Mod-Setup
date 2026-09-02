@@ -7952,7 +7952,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
         assert_eq!(bootstrap.privilege, "current_user");
 
         let target = crate::mcp::reviewed_plan_target(&actions).unwrap();
-        assert_eq!(target.package_version, "2.5.2");
+        assert_eq!(target.package_version, "3.0.7");
         for route in ["hoi4.tech_inspect", "hoi4.tech_render", "hoi4.tech_compare"] {
             assert!(target.required_tools.iter().any(|tool| tool == route));
         }

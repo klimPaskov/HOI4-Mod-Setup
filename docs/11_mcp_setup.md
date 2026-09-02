@@ -10,7 +10,7 @@ The inspected `.codex/config.toml` contains `hoi4_agent_tools` with command `hoi
 
 These findings drive the example manifest. They do not authorize macOS equivalents.
 
-The current source pins `hoi4-agent-tools@3.0.5` by npm SHA-512 integrity,
+The current source pins `hoi4-agent-tools@3.0.7` by npm SHA-512 integrity,
 canonical package-tree SHA-256 and file count, runtime-entry SHA-256 and size,
 and required tool names. The bootstrap and app independently verify the full
 installed package tree, so changing an imported sibling module fails before
@@ -22,12 +22,17 @@ a valid OpenJS Foundation signature; its actual SHA-256 is captured and
 rechecked immediately at spawn. No package, command, version, or macOS route is
 invented.
 
-The verified 3.0.5 package contains 4,846 files and an 18,406,400-byte native
+The verified 3.0.7 package contains 4,848 files and an 18,406,400-byte native
 library. Package verification therefore allows at most 32 MiB per file while
 retaining the 256 MiB total-tree and 10,000-file bounds. npm versions that emit
 a hidden global `.package-lock.json` must retain the declared integrity there;
 when npm does not emit that optional file, exact manifest integrity plus the
 complete package-tree identity remain mandatory.
+
+Version 3.0.7 also releases detached parser, graph, and renderer memory after
+the idle cache window, preventing parallel coding-agent sessions from
+exhausting the server process while leaving the command, runtime entry, and
+23-tool readiness baseline unchanged.
 
 ## MCP component fields
 

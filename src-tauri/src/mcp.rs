@@ -846,7 +846,7 @@ mod tests {
                     "id": 1,
                     "result": {
                         "protocolVersion": MCP_PROTOCOL_VERSION,
-                        "serverInfo": {"name": "hoi4-agent-tools", "version": "3.0.5"},
+                        "serverInfo": {"name": "hoi4-agent-tools", "version": "3.0.7"},
                         "capabilities": {"tools": {}}
                     }
                 }),
@@ -875,7 +875,7 @@ mod tests {
         assert!(error.to_string().contains("capabilities"));
         let error = validate_initialize_result(&json!({
             "protocolVersion": "2024-11-05",
-            "serverInfo": {"name": "hoi4-agent-tools", "version": "3.0.5"},
+            "serverInfo": {"name": "hoi4-agent-tools", "version": "3.0.7"},
             "capabilities": {"tools": {}}
         }))
         .unwrap_err();
@@ -1001,7 +1001,7 @@ mod tests {
     fn required_tools_capability_is_not_optional() {
         let initialized = json!({
             "protocolVersion": MCP_PROTOCOL_VERSION,
-            "serverInfo": {"name": "hoi4-agent-tools", "version": "3.0.5"},
+            "serverInfo": {"name": "hoi4-agent-tools", "version": "3.0.7"},
             "capabilities": {}
         });
         assert!(require_tools_capability(&initialized)
@@ -1018,7 +1018,7 @@ mod tests {
         .unwrap();
         let target = manifest_target(&manifest).unwrap();
         assert_eq!(target.package_name, "hoi4-agent-tools");
-        assert_eq!(target.package_version, "2.5.2");
+        assert_eq!(target.package_version, "3.0.7");
         for tool in ["hoi4.tech_inspect", "hoi4.tech_render", "hoi4.tech_compare"] {
             assert!(target
                 .required_tools
