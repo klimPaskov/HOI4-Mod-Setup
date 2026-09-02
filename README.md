@@ -40,8 +40,6 @@ choose from the provider's live model list and select one of the reasoning
 levels that model supports, from **Light** through **Max**. Codex defaults to
 GPT-5.6 Luna with Extra high reasoning; DeepSeek defaults to its Flash model.
 
-![Choose and connect another AI provider](docs/screenshots/10-provider-selection.png)
-
 **Manage an existing project** scans any selected mod before changing it. If the
 scan finds app-managed setup, the view also offers repair, update, optional
 workflow, and removal actions. Choose the project folder; the app finds its
