@@ -90,6 +90,10 @@ MCP servers and external dependencies are components. Their command, arguments, 
   --batch`. Never hash worktree or `git archive` output because checkout
   attributes and line-ending conversion can change bytes. The generator fails
   when a declared path is absent from the selected commit.
+- Apply the same immutable-blob rule to source-audit manifest digests. Record
+  the published manifest's Git bytes, not a source checkout's converted bytes,
+  and keep the bundled LF bytes identical. The source contract test compares
+  both audit digest fields with the included manifest before release.
 - Runtime parsing compiles and applies
   `docs/schemas/remote-manifest.schema.json` as Draft 2020-12 before
   deserializing `RemoteManifest`. Unknown fields, including nested policy
@@ -228,6 +232,7 @@ MCP servers and external dependencies are components. Their command, arguments, 
   skill, runtime, binary, or guide files when unselected
 - checksum mismatch
 - Git-blob generation under a worktree with different line endings
+- source-audit digests match the exact bundled manifest bytes
 - cache path replacement after a verified handle is opened
 - partial download and resume
 - redirect and host policy

@@ -6,7 +6,7 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
-## 0.3.3 - 2026-09-01
+## 0.3.4 - 2026-09-02
 
 - Pin the bundled Agentic HOI4 Modding source manifest to
   `hoi4-agent-tools@3.0.7`, including exact npm integrity, the complete
@@ -14,6 +14,8 @@ No unreleased changes.
 - Carry the latest server's detached parser, graph, and renderer memory
   retention fixes into fresh, update, and repair plans without changing the
   provider-neutral MCP contract or its security boundaries.
+- Bind source-audit digests to the committed manifest bytes and test that
+  checkout line-ending conversion cannot silently change the recorded identity.
 
 ## 0.3.2 - 2026-09-01
 
