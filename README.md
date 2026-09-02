@@ -30,7 +30,7 @@ reviewed the changes and started installation.
 
 ### 1. Choose a project and setup assistant
 
-![Create a new mod or import an existing one](docs/screenshots/01-welcome.png)
+![Create a new mod or import an existing one](docs/screenshots/01-welcome.jpg)
 
 Choose **Create new mod** or **Import existing mod**. For Codex, sign in with
 ChatGPT. For Claude, Kimi, GLM, or DeepSeek, paste an API key from the provider;

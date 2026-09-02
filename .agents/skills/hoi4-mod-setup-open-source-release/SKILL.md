@@ -21,6 +21,10 @@ Read:
 ## Repository rules
 
 - Keep `README.md` user-facing.
+- README screenshots use the sanitized development fixtures documented in
+  `docs/screenshots/README.md`. Wait for the expected heading and controls,
+  inspect the captured image, and keep its format, extension, and README link
+  consistent; a completed navigation can still produce a blank capture.
 - Document the provider-neutral setup in README, including Codex default, explicit setup-assistant/model selection, honest local/hosted routes, its separation from later development clients, and the independent ChatGPT project-source flatten option.
 - Use pull requests for `main`.
 - Require stable status checks through a ruleset.
