@@ -128,8 +128,31 @@ struct PendingGitOnlinePlan {
 static PENDING_GIT_ONLINE_PLANS: OnceLock<Mutex<HashMap<Uuid, PendingGitOnlinePlan>>> =
     OnceLock::new();
 const MAX_GIT_METADATA_TEXT_BYTES: u64 = 1024 * 1024;
+const MAX_GIT_CONTROL_ENTRIES: usize = 65_536;
 const MAX_GIT_MANAGED_FILE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_GIT_HOOK_ENTRIES: usize = 1_024;
+const MAX_AGENTIC_GIT_PATHS: usize = 4_096;
+const FULL_REPOSITORY_PATHSPEC: &[&str] = &[":(top)"];
+const MAX_GIT_PATHS_PER_BATCH: usize = 512;
+const MAX_GIT_PATHSPEC_BATCH_BYTES: usize = 24 * 1024;
+const EMPTY_AGENTIC_SCAN_PATHSPEC: &str = ":(top,literal).hoi4-mod-setup-no-targeted-files";
+const AGENTIC_INDEX_ROOT_PATHS: &[&str] = &[
+    ":(top,icase,literal).agents",
+    ":(top,icase,literal).codex",
+    ":(top,icase,literal).claude",
+    ":(top,icase,literal).cursor",
+    ":(top,icase,literal).qoder",
+    ":(top,icase,literal).opencode",
+    ":(top,icase,literal).mcp.json",
+    ":(top,icase,literal)opencode.json",
+    ":(top,icase,literal)AGENTS.md",
+    ":(top,icase,literal)CLAUDE.md",
+    ":(top,icase,literal)README.md",
+    ":(top,icase,literal)docs",
+    ":(top,icase,literal)descriptor.mod",
+    ":(top,icase,literal)thumbnail.png",
+    ":(top,icase,literal).gitignore",
+];
 const APP_GIT_USER_NAME: &str = "HOI4 Mod Setup";
 const APP_GIT_USER_EMAIL: &str = "hoi4-mod-setup@localhost";
 
@@ -543,7 +566,7 @@ fn run_online_action(
                 30,
                 1024 * 1024,
             )?;
-            if auth.status_code != Some(0) || auth.timed_out {
+            if !process_succeeded(&auth) {
                 return Err(AppError::Process(
                     "GitHub sign-in is unavailable. Sign in with GitHub CLI and try again.".into(),
                 ));
@@ -614,7 +637,7 @@ fn run_reviewed_tool(
 }
 
 fn require_success(output: ProcessResult, operation: &str) -> Result<ProcessResult, AppError> {
-    if output.status_code == Some(0) && !output.timed_out {
+    if process_succeeded(&output) {
         Ok(output)
     } else {
         Err(AppError::Process(format!(
@@ -623,9 +646,17 @@ fn require_success(output: ProcessResult, operation: &str) -> Result<ProcessResu
     }
 }
 
+fn process_output_complete(output: &ProcessResult) -> bool {
+    !output.timed_out && !output.stdout_truncated && !output.stderr_truncated
+}
+
+fn process_succeeded(output: &ProcessResult) -> bool {
+    output.status_code == Some(0) && process_output_complete(output)
+}
+
 fn configured_push_url(root: &Path, remote_name: &str) -> Result<String, AppError> {
     let output = run_git_read_only(root, &["remote", "get-url", "--push", remote_name])?;
-    if output.status_code != Some(0) || output.timed_out {
+    if !process_succeeded(&output) {
         return Err(AppError::Transaction(format!(
             "Git push remote {remote_name} is not configured"
         )));
@@ -645,7 +676,7 @@ fn validate_online_git_configuration(root: &Path) -> Result<(), AppError> {
             root,
             &["config", "--local", "--no-includes", "--get-all", key],
         )?;
-        if output.timed_out {
+        if !process_output_complete(&output) {
             return Err(AppError::Process(format!(
                 "Git configuration check for {label} timed out"
             )));
@@ -671,7 +702,7 @@ fn validate_online_git_configuration(root: &Path) -> Result<(), AppError> {
             r"^url\..*\.insteadof$",
         ],
     )?;
-    if rewrites.timed_out {
+    if !process_output_complete(&rewrites) {
         return Err(AppError::Process(
             "Git URL rewrite configuration check timed out".into(),
         ));
@@ -691,7 +722,7 @@ fn validate_online_git_configuration(root: &Path) -> Result<(), AppError> {
 
 fn remote_exists(root: &Path, remote_name: &str) -> Result<bool, AppError> {
     let output = run_git_read_only(root, &["remote", "get-url", remote_name])?;
-    if output.timed_out {
+    if !process_output_complete(&output) {
         return Err(AppError::Process("Git remote check timed out".into()));
     }
     Ok(output.status_code == Some(0))
@@ -892,7 +923,7 @@ pub fn apply_git_setup(
     if let (Some(name), Some(url)) = (&setup.remote_name, &setup.remote_url) {
         if setup.mode == GitMode::Preserve {
             let existing = run_git_read_only(root, &["remote", "get-url", name])?;
-            if existing.status_code == Some(0) {
+            if process_succeeded(&existing) {
                 if existing.stdout.trim() != url {
                     return Err(AppError::Transaction(format!(
                         "Git remote {name} already exists with a different URL; refusing to replace it"
@@ -912,7 +943,7 @@ pub fn apply_git_setup(
 
 fn run_git(root: &Path, args: &[&str]) -> Result<(), AppError> {
     let output = run_hardened_git(root, HardenedGitProfile::Mutation, args, &[])?;
-    if output.status_code == Some(0) {
+    if process_succeeded(&output) {
         Ok(())
     } else {
         Err(AppError::Process(format!(
@@ -964,7 +995,7 @@ fn stage_managed_paths_without_filters_with_hook(
             &bytes,
         )?;
         let object = hash.stdout.trim();
-        if hash.status_code != Some(0) || hash.timed_out || !valid_commit_id(object) {
+        if !process_succeeded(&hash) || !valid_commit_id(object) {
             return Err(AppError::Process(
                 "Git could not hash a managed file without content filters".into(),
             ));
@@ -985,7 +1016,7 @@ fn stage_managed_paths_without_filters_with_hook(
             &git_root,
             &["update-index", "--add", "--cacheinfo", &cacheinfo],
         )?;
-        if update.status_code != Some(0) || update.timed_out {
+        if !process_succeeded(&update) {
             return Err(AppError::Process(
                 "Git could not stage the filter-free managed object".into(),
             ));
@@ -1054,7 +1085,7 @@ fn run_git_initialize(root: &Path, initial_branch: &str) -> Result<(), AppError>
         &["init", initial_branch],
         &[],
     )?;
-    if output.status_code == Some(0) {
+    if process_succeeded(&output) {
         Ok(())
     } else {
         Err(AppError::Process(format!(
@@ -1075,7 +1106,7 @@ fn run_git_initial_commit(root: &Path) -> Result<(), AppError> {
             ("user.useConfigOnly", "true"),
         ],
     )?;
-    if output.status_code == Some(0) {
+    if process_succeeded(&output) {
         Ok(())
     } else {
         Err(AppError::Process(format!(
@@ -1106,10 +1137,38 @@ fn run_hardened_git(
     spec.run_git_read_only(&[executable])
 }
 
+#[cfg(test)]
 fn run_hardened_git_with_validated_config(
     git_root: &crate::flatten::BoundedReadRoot,
     git_process_root: &Path,
     args: &[&str],
+) -> Result<ProcessResult, AppError> {
+    run_hardened_git_with_validated_config_and_check(git_root, git_process_root, args, &mut || {
+        false
+    })
+}
+
+fn run_hardened_git_with_validated_config_and_check(
+    git_root: &crate::flatten::BoundedReadRoot,
+    git_process_root: &Path,
+    args: &[&str],
+    should_stop: &mut dyn FnMut() -> bool,
+) -> Result<ProcessResult, AppError> {
+    run_hardened_git_with_validated_config_and_check_inner(
+        git_root,
+        git_process_root,
+        args,
+        should_stop,
+        || {},
+    )
+}
+
+fn run_hardened_git_with_validated_config_and_check_inner(
+    git_root: &crate::flatten::BoundedReadRoot,
+    git_process_root: &Path,
+    args: &[&str],
+    should_stop: &mut dyn FnMut() -> bool,
+    before_spawn: impl FnOnce(),
 ) -> Result<ProcessResult, AppError> {
     let (mut spec, executable) = prepare_hardened_git_process(
         git_process_root,
@@ -1121,7 +1180,23 @@ fn run_hardened_git_with_validated_config(
     )?;
     spec.args.insert(2, "--work-tree=..".into());
     spec.args.insert(2, "--git-dir=.".into());
-    let result = spec.run_git_read_only_bound(&[executable], git_root.directory_handle());
+    validate_local_git_config_in_git_root(git_root)?;
+    if !git_child_metadata_links_are_safe(git_root) {
+        return Err(AppError::PathSecurity(
+            "Git child metadata is linked or externally directed".into(),
+        ));
+    }
+    before_spawn();
+    let result = spec.run_git_read_only_bound_with_check(
+        &[executable],
+        git_root.directory_handle(),
+        should_stop,
+    );
+    if !git_child_metadata_links_are_safe(git_root) {
+        return Err(AppError::PathSecurity(
+            "Git child metadata changed to a linked or external route".into(),
+        ));
+    }
     validate_local_git_config_in_git_root(git_root)?;
     result
 }
@@ -1586,6 +1661,11 @@ pub fn rollback_added_remote(root: &Path, name: &str, expected_url: &str) -> Res
     }
     validate_remote_url(expected_url)?;
     let current = run_git_rollback(root, &["remote", "get-url", name])?;
+    if !process_output_complete(&current) {
+        return Err(AppError::Process(
+            "Git remote inspection did not complete during rollback".into(),
+        ));
+    }
     if current.status_code != Some(0) {
         // If the user already removed the transaction-added remote, there is
         // nothing left for rollback to do. Other Git failures remain visible.
@@ -1597,7 +1677,7 @@ pub fn rollback_added_remote(root: &Path, name: &str, expected_url: &str) -> Res
         ));
     }
     let output = run_git_rollback(root, &["remote", "remove", name])?;
-    if output.status_code == Some(0) {
+    if process_succeeded(&output) {
         Ok(())
     } else {
         Err(AppError::Process(format!(
@@ -1731,8 +1811,258 @@ pub fn inspect_read_only(root: &Path) -> GitInspection {
     inspect_read_only_bound(&read_root)
 }
 
+fn with_pathspecs<'a>(base: &[&'a str], pathspecs: &[&'a str]) -> Vec<&'a str> {
+    let mut args = base.to_vec();
+    if !pathspecs.is_empty() {
+        if args.last().copied() != Some("--") {
+            args.push("--");
+        }
+        args.extend_from_slice(pathspecs);
+    }
+    args
+}
+
+fn next_pathspec_batch_end(pathspecs: &[&str], start: usize) -> usize {
+    let mut end = start;
+    let mut bytes = 0_usize;
+    while end < pathspecs.len() && end - start < MAX_GIT_PATHS_PER_BATCH {
+        let next = pathspecs[end].len().saturating_add(1);
+        if end > start && bytes.saturating_add(next) > MAX_GIT_PATHSPEC_BATCH_BYTES {
+            break;
+        }
+        bytes = bytes.saturating_add(next);
+        end += 1;
+    }
+    end.max(start.saturating_add(1).min(pathspecs.len()))
+}
+
+fn run_pathspec_probe(
+    git_root: &crate::flatten::BoundedReadRoot,
+    base: &[&str],
+    pathspecs: &[&str],
+    should_stop: &mut dyn FnMut() -> bool,
+) -> Result<std::collections::HashSet<String>, AppError> {
+    let mut paths = std::collections::HashSet::new();
+    let mut start = 0_usize;
+    while start < pathspecs.len() {
+        if should_stop() {
+            return Err(AppError::Process(
+                "bounded Git path inspection was cancelled".into(),
+            ));
+        }
+        let end = next_pathspec_batch_end(pathspecs, start);
+        let args = with_pathspecs(base, &pathspecs[start..end]);
+        let result = git_root.with_stable_path(|git_dir| {
+            validate_local_git_config_in_git_root(git_root)?;
+            run_hardened_git_with_validated_config_and_check(git_root, git_dir, &args, should_stop)
+        })??;
+        if !process_succeeded(&result) {
+            return Err(AppError::Process(
+                "bounded Git path inspection did not complete".into(),
+            ));
+        }
+        paths.extend(
+            result
+                .stdout
+                .split('\0')
+                .filter(|path| !path.is_empty())
+                .filter_map(|path| normalize_relative_path(path.trim_start_matches("../")).ok()),
+        );
+        start = end;
+    }
+    Ok(paths)
+}
+
+fn git_child_metadata_links_are_safe(git_root: &crate::flatten::BoundedReadRoot) -> bool {
+    let root = git_root.canonical();
+    for relative in [
+        "HEAD",
+        "config",
+        "index",
+        "packed-refs",
+        "refs",
+        "objects",
+        "info",
+        "shallow",
+    ] {
+        match fs::symlink_metadata(root.join(relative)) {
+            Ok(metadata) if is_link_metadata(&metadata) => return false,
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return false,
+        }
+    }
+    for external_route in [
+        "commondir",
+        "gitdir",
+        "objects/info/alternates",
+        "objects/info/http-alternates",
+    ] {
+        match fs::symlink_metadata(root.join(external_route)) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            _ => return false,
+        }
+    }
+    if !git_control_directory_links_are_safe(git_root) {
+        return false;
+    }
+
+    let Ok(head_bytes) =
+        git_root.read_bounded_with_check("HEAD", MAX_GIT_METADATA_TEXT_BYTES, || false)
+    else {
+        return false;
+    };
+    let Ok(head) = std::str::from_utf8(&head_bytes) else {
+        return false;
+    };
+    let Some(reference) = head.trim().strip_prefix("ref: ") else {
+        return true;
+    };
+    let Ok(reference) = normalize_relative_path(reference) else {
+        return false;
+    };
+    reference.starts_with("refs/") && !path_has_link_component(&root.join(reference))
+}
+
+fn git_control_directory_links_are_safe(git_root: &crate::flatten::BoundedReadRoot) -> bool {
+    let mut checked_entries = 0_usize;
+    let mut pending = vec![
+        "refs".to_string(),
+        "info".to_string(),
+        "objects/info".to_string(),
+        "objects/pack".to_string(),
+    ];
+    while let Some(relative) = pending.pop() {
+        let path = git_root.canonical().join(&relative);
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Ok(metadata) if metadata.is_dir() && !is_link_metadata(&metadata) => {}
+            _ => return false,
+        }
+        let Ok(directory) = git_root.open_child_directory(&relative) else {
+            return false;
+        };
+        let mut names = Vec::new();
+        let mut enumeration_safe = true;
+        if directory
+            .visit_directory_names(|entry| {
+                let Ok(name) = entry else {
+                    enumeration_safe = false;
+                    return false;
+                };
+                checked_entries = checked_entries.saturating_add(1);
+                if checked_entries > MAX_GIT_CONTROL_ENTRIES {
+                    return false;
+                }
+                names.push(name);
+                true
+            })
+            .is_err()
+            || !enumeration_safe
+            || checked_entries > MAX_GIT_CONTROL_ENTRIES
+        {
+            return false;
+        }
+        for name in names {
+            let Some(name) = name.to_str() else {
+                return false;
+            };
+            let Ok(child_relative) = normalize_relative_path(&format!("{relative}/{name}")) else {
+                return false;
+            };
+            let child_path = git_root.canonical().join(&child_relative);
+            let Ok(metadata) = fs::symlink_metadata(child_path) else {
+                return false;
+            };
+            if is_link_metadata(&metadata) || (!metadata.is_file() && !metadata.is_dir()) {
+                return false;
+            }
+            if metadata.is_dir() {
+                pending.push(child_relative);
+            }
+        }
+    }
+
+    let Ok(objects) = git_root.open_child_directory("objects") else {
+        return false;
+    };
+    let mut safe = true;
+    let visit = objects.visit_directory_names(|entry| {
+        let Ok(name) = entry else {
+            safe = false;
+            return false;
+        };
+        checked_entries = checked_entries.saturating_add(1);
+        if checked_entries > MAX_GIT_CONTROL_ENTRIES {
+            safe = false;
+            return false;
+        }
+        let path = objects.canonical().join(name);
+        safe = fs::symlink_metadata(path).is_ok_and(|metadata| {
+            !is_link_metadata(&metadata) && (metadata.is_file() || metadata.is_dir())
+        });
+        safe
+    });
+    visit.is_ok() && safe
+}
+
+fn exact_top_pathspec(path: &str) -> String {
+    format!(":(top,literal){path}")
+}
+
 pub(crate) fn inspect_read_only_bound(
     read_root: &crate::flatten::BoundedReadRoot,
+) -> GitInspection {
+    inspect_read_only_bound_with_pathspecs(read_root, FULL_REPOSITORY_PATHSPEC, false, true, || {
+        false
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn inspect_agentic_read_only_bound(
+    read_root: &crate::flatten::BoundedReadRoot,
+    setup_paths: &[String],
+) -> GitInspection {
+    inspect_agentic_read_only_bound_with_check(read_root, setup_paths, || false)
+}
+
+pub(crate) fn inspect_agentic_read_only_bound_with_check(
+    read_root: &crate::flatten::BoundedReadRoot,
+    setup_paths: &[String],
+    should_stop: impl FnMut() -> bool,
+) -> GitInspection {
+    let path_inventory_complete = setup_paths.len() <= MAX_AGENTIC_GIT_PATHS;
+    let mut owned_pathspecs = setup_paths
+        .iter()
+        .take(MAX_AGENTIC_GIT_PATHS)
+        .filter_map(|path| normalize_relative_path(path).ok())
+        .filter(|path| !secret_like_path(path))
+        .map(|path| exact_top_pathspec(&path))
+        .collect::<Vec<_>>();
+    owned_pathspecs.sort();
+    owned_pathspecs.dedup();
+    if owned_pathspecs.is_empty() {
+        owned_pathspecs.push(EMPTY_AGENTIC_SCAN_PATHSPEC.into());
+    }
+    let pathspecs = owned_pathspecs
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    inspect_read_only_bound_with_pathspecs(
+        read_root,
+        &pathspecs,
+        true,
+        path_inventory_complete,
+        should_stop,
+    )
+}
+
+fn inspect_read_only_bound_with_pathspecs(
+    read_root: &crate::flatten::BoundedReadRoot,
+    pathspecs: &[&str],
+    targeted: bool,
+    path_inventory_complete: bool,
+    mut should_stop: impl FnMut() -> bool,
 ) -> GitInspection {
     let root = read_root.canonical();
     let base = read_git_head_bound(read_root);
@@ -1746,6 +2076,10 @@ pub(crate) fn inspect_read_only_bound(
         ..GitInspection::default()
     };
     if !base.repository_present {
+        return inspection;
+    }
+    if should_stop() {
+        inspection.status_probe = "stopped".into();
         return inspection;
     }
 
@@ -1768,47 +2102,75 @@ pub(crate) fn inspect_read_only_bound(
         inspection.status_probe = "unsafe_configuration".into();
         return inspection;
     }
-    let mut complete = true;
-    let unstaged_result = git_root.with_stable_path(|git_dir| {
-        validate_local_git_config_in_git_root(&git_root)?;
-        run_hardened_git_with_validated_config(
-            &git_root,
-            git_dir,
-            &["ls-files", "--modified", "--deleted", "-z", "--"],
-        )
-    });
-    match unstaged_result {
-        Ok(Ok(result)) if result.status_code == Some(0) && !result.timed_out => {
-            inspection.unstaged_files = count_nul_paths(&result.stdout);
+    if !git_child_metadata_links_are_safe(&git_root) {
+        inspection.status_probe = "linked_metadata_not_followed".into();
+        return inspection;
+    }
+    macro_rules! stop_if_requested {
+        () => {
+            if should_stop() {
+                inspection.status_probe = "stopped".into();
+                return inspection;
+            }
+        };
+    }
+    let mut complete = path_inventory_complete;
+    stop_if_requested!();
+    let mut unstaged_paths = match run_pathspec_probe(
+        &git_root,
+        &["ls-files", "--modified", "--deleted", "-z", "--"],
+        pathspecs,
+        &mut should_stop,
+    ) {
+        Ok(paths) => paths,
+        Err(_) => {
+            complete = false;
+            std::collections::HashSet::new()
         }
-        _ => complete = false,
+    };
+    if targeted {
+        match run_pathspec_probe(
+            &git_root,
+            &["ls-files", "--deleted", "-z", "--"],
+            AGENTIC_INDEX_ROOT_PATHS,
+            &mut should_stop,
+        ) {
+            Ok(paths) => unstaged_paths.extend(paths.into_iter().filter(|path| {
+                !secret_like_path(path) && crate::scanner::targeted_scan_path_candidate(path)
+            })),
+            Err(_) => complete = false,
+        }
+    }
+    inspection.unstaged_files = unstaged_paths.len().min(u32::MAX as usize) as u32;
+
+    stop_if_requested!();
+    match run_pathspec_probe(
+        &git_root,
+        &["ls-files", "--others", "--exclude-standard", "-z", "--"],
+        pathspecs,
+        &mut should_stop,
+    ) {
+        Ok(paths) => inspection.untracked_files = paths.len().min(u32::MAX as usize) as u32,
+        Err(_) => complete = false,
     }
 
-    let untracked_result = git_root.with_stable_path(|git_dir| {
-        validate_local_git_config_in_git_root(&git_root)?;
-        run_hardened_git_with_validated_config(
-            &git_root,
-            git_dir,
-            &["ls-files", "--others", "--exclude-standard", "-z", "--"],
-        )
-    });
-    match untracked_result {
-        Ok(Ok(result)) if result.status_code == Some(0) && !result.timed_out => {
-            inspection.untracked_files = count_nul_paths(&result.stdout);
-        }
-        _ => complete = false,
-    }
-
+    stop_if_requested!();
     let head_result = git_root.with_stable_path(|git_dir| {
         validate_local_git_config_in_git_root(&git_root)?;
-        run_hardened_git_with_validated_config(
+        run_hardened_git_with_validated_config_and_check(
             &git_root,
             git_dir,
             &["rev-parse", "--verify", "HEAD"],
+            &mut should_stop,
         )
     });
     match head_result {
-        Ok(Ok(result)) if result.status_code == Some(0) && !result.timed_out => {
+        Ok(Ok(result))
+            if result.status_code == Some(0)
+                && !result.timed_out
+                && !result.stdout_truncated
+                && !result.stderr_truncated =>
+        {
             inspection.commit = result
                 .stdout
                 .lines()
@@ -1819,51 +2181,60 @@ pub(crate) fn inspect_read_only_bound(
         _ => complete = false,
     }
 
-    let staged_result = git_root.with_stable_path(|git_dir| {
-        validate_local_git_config_in_git_root(&git_root)?;
-        run_hardened_git_with_validated_config(
-            &git_root,
-            git_dir,
-            &[
-                "diff-index",
-                "--cached",
-                "--name-only",
-                "--no-renames",
-                "-z",
-                "HEAD",
-                "--",
-            ],
-        )
-    });
-    match staged_result {
-        Ok(Ok(result)) if result.status_code == Some(0) && !result.timed_out => {
-            inspection.staged_files = count_nul_paths(&result.stdout);
-        }
-        _ if inspection.commit.is_none() => {
-            let initial_result = git_root.with_stable_path(|git_dir| {
-                validate_local_git_config_in_git_root(&git_root)?;
-                run_hardened_git_with_validated_config(
-                    &git_root,
-                    git_dir,
-                    &["ls-files", "--cached", "-z", "--"],
-                )
-            });
-            match initial_result {
-                Ok(Ok(result)) if result.status_code == Some(0) && !result.timed_out => {
-                    inspection.staged_files = count_nul_paths(&result.stdout);
-                }
-                _ => complete = false,
+    stop_if_requested!();
+    let staged_base = if inspection.commit.is_none() {
+        vec!["ls-files", "--cached", "-z", "--"]
+    } else {
+        vec![
+            "diff-index",
+            "--cached",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            "HEAD",
+            "--",
+        ]
+    };
+    let mut staged_paths =
+        match run_pathspec_probe(&git_root, &staged_base, pathspecs, &mut should_stop) {
+            Ok(paths) => paths,
+            Err(_) => {
+                complete = false;
+                std::collections::HashSet::new()
             }
+        };
+    if targeted && inspection.commit.is_some() {
+        match run_pathspec_probe(
+            &git_root,
+            &staged_base,
+            AGENTIC_INDEX_ROOT_PATHS,
+            &mut should_stop,
+        ) {
+            Ok(paths) => staged_paths.extend(paths.into_iter().filter(|path| {
+                !secret_like_path(path) && crate::scanner::targeted_scan_path_candidate(path)
+            })),
+            Err(_) => complete = false,
         }
-        _ => complete = false,
     }
+    inspection.staged_files = staged_paths.len().min(u32::MAX as usize) as u32;
 
+    stop_if_requested!();
     let remote_result = git_root.with_stable_path(|git_dir| {
         validate_local_git_config_in_git_root(&git_root)?;
-        run_hardened_git_with_validated_config(&git_root, git_dir, &["remote"])
+        run_hardened_git_with_validated_config_and_check(
+            &git_root,
+            git_dir,
+            &["remote"],
+            &mut should_stop,
+        )
     });
     match remote_result {
-        Ok(Ok(result)) if result.status_code == Some(0) && !result.timed_out => {
+        Ok(Ok(result))
+            if result.status_code == Some(0)
+                && !result.timed_out
+                && !result.stdout_truncated
+                && !result.stderr_truncated =>
+        {
             inspection.status.remotes = result
                 .stdout
                 .lines()
@@ -1878,6 +2249,7 @@ pub(crate) fn inspect_read_only_bound(
         _ => complete = false,
     }
 
+    stop_if_requested!();
     match read_submodule_paths_bound(read_root) {
         Ok(paths) => inspection.submodules = paths,
         Err(_) => complete = false,
@@ -1908,30 +2280,47 @@ pub(crate) fn inspect_read_only_bound(
     };
     inspection.ignore_files = safe_ignore_files(read_root, &git_root);
 
-    let mut tracked_scan_complete = false;
-    let tracked_result = git_root.with_stable_path(|git_dir| {
-        validate_local_git_config_in_git_root(&git_root)?;
-        run_hardened_git_with_validated_config(
-            &git_root,
-            git_dir,
-            &["ls-files", "--cached", "-z", "--"],
-        )
-    });
-    match tracked_result {
-        Ok(Ok(result)) if result.status_code == Some(0) && !result.timed_out => {
-            tracked_scan_complete = result.stdout.len() < 4 * 1024 * 1024;
-            inspection.status.tracked_secret_like_paths = result
-                .stdout
-                .split('\0')
-                .filter(|path| !path.is_empty() && crate::git::secret_like_path(path))
-                .filter_map(|path| normalize_relative_path(path).ok())
-                .take(100)
-                .collect();
-            inspection.status.tracked_secret_like_paths.sort();
-            inspection.status.tracked_secret_like_paths.dedup();
+    stop_if_requested!();
+    let tracked_scan_complete = if targeted {
+        // The targeted scanner deliberately excludes credential-shaped names,
+        // so it neither inventories nor returns those names through Git.
+        true
+    } else {
+        let tracked_args = with_pathspecs(&["ls-files", "--cached", "-z", "--"], pathspecs);
+        let tracked_result = git_root.with_stable_path(|git_dir| {
+            validate_local_git_config_in_git_root(&git_root)?;
+            run_hardened_git_with_validated_config_and_check(
+                &git_root,
+                git_dir,
+                &tracked_args,
+                &mut should_stop,
+            )
+        });
+        match tracked_result {
+            Ok(Ok(result))
+                if result.status_code == Some(0)
+                    && !result.timed_out
+                    && !result.stdout_truncated
+                    && !result.stderr_truncated =>
+            {
+                inspection.status.tracked_secret_like_paths = result
+                    .stdout
+                    .split('\0')
+                    .filter(|path| !path.is_empty() && crate::git::secret_like_path(path))
+                    .filter_map(|path| normalize_relative_path(path.trim_start_matches("../")).ok())
+                    .take(100)
+                    .collect();
+                inspection.status.tracked_secret_like_paths.sort();
+                inspection.status.tracked_secret_like_paths.dedup();
+                true
+            }
+            _ => {
+                complete = false;
+                false
+            }
         }
-        _ => complete = false,
-    }
+    };
+    stop_if_requested!();
     inspection.tracked_path_scan_complete = tracked_scan_complete;
     if !tracked_scan_complete {
         complete = false;
@@ -1946,7 +2335,11 @@ pub(crate) fn inspect_read_only_bound(
     inspection.status_probe = if !hooks_safe {
         "unsafe_hooks".into()
     } else if complete {
-        "complete".into()
+        if targeted {
+            "targeted_complete".into()
+        } else {
+            "complete".into()
+        }
     } else {
         "partial".into()
     };
@@ -2008,14 +2401,6 @@ fn read_submodule_paths(root: &Path) -> Result<Vec<String>, AppError> {
 
 fn valid_commit_id(value: &str) -> bool {
     matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-fn count_nul_paths(value: &str) -> u32 {
-    value
-        .split('\0')
-        .filter(|path| !path.is_empty())
-        .count()
-        .min(u32::MAX as usize) as u32
 }
 
 fn inspect_hook_names(hooks: &Path, trusted_root: bool) -> Result<Vec<String>, AppError> {
@@ -2208,6 +2593,378 @@ mod tests {
         assert_eq!(inspection.status.branch.as_deref(), Some("main"));
         assert_eq!(inspection.status.dirty, Some(false));
         assert!(inspection.tracked_path_scan_complete);
+    }
+
+    #[test]
+    fn generic_read_only_inspection_detects_modified_staged_and_untracked_paths() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        fs::write(project.path().join("tracked.txt"), "stable\n").unwrap();
+        run_git(project.path(), &["add", "tracked.txt"]).unwrap();
+        run_git(project.path(), &["config", "user.name", "Test"]).unwrap();
+        run_git(
+            project.path(),
+            &["config", "user.email", "test@example.invalid"],
+        )
+        .unwrap();
+        run_git(project.path(), &["commit", "-m", "fixture"]).unwrap();
+
+        fs::write(project.path().join("tracked.txt"), "modified\n").unwrap();
+        let modified = inspect_read_only(project.path());
+        assert_eq!(modified.status_probe, "complete");
+        assert_eq!(modified.status.dirty, Some(true), "{modified:#?}");
+        assert_eq!(modified.unstaged_files, 1);
+
+        run_git(project.path(), &["add", "tracked.txt"]).unwrap();
+        let staged = inspect_read_only(project.path());
+        assert_eq!(staged.status_probe, "complete");
+        assert_eq!(staged.status.dirty, Some(true));
+        assert_eq!(staged.staged_files, 1);
+
+        run_git(project.path(), &["commit", "-m", "staged change"]).unwrap();
+        fs::write(project.path().join("untracked.txt"), "untracked\n").unwrap();
+        let untracked = inspect_read_only(project.path());
+        assert_eq!(untracked.status_probe, "complete");
+        assert_eq!(untracked.status.dirty, Some(true));
+        assert_eq!(untracked.untracked_files, 1);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn linked_git_head_blocks_every_child_probe() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        let head = project.path().join(".git").join("HEAD");
+        let outside = project.path().join("outside-head");
+        fs::write(&outside, "ref: refs/heads/main\n").unwrap();
+        fs::remove_file(&head).unwrap();
+        #[cfg(unix)]
+        let link_result = std::os::unix::fs::symlink(&outside, &head);
+        #[cfg(windows)]
+        let link_result = std::os::windows::fs::symlink_file(&outside, &head);
+        if let Err(error) = link_result {
+            #[cfg(windows)]
+            if error.kind() == std::io::ErrorKind::PermissionDenied
+                || error.raw_os_error() == Some(1314)
+            {
+                return;
+            }
+            panic!("create linked Git HEAD fixture: {error}");
+        }
+
+        let inspection = inspect_read_only(project.path());
+
+        assert_eq!(inspection.status_probe, "linked_metadata_not_followed");
+        assert_eq!(inspection.status.dirty, None);
+        assert!(inspection.commit.is_none());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn linked_git_info_descendant_blocks_every_child_probe() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        let exclude = project.path().join(".git").join("info").join("exclude");
+        fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+        let outside = project.path().join("outside-exclude");
+        fs::write(&outside, "*.secret\n").unwrap();
+        if exclude.exists() {
+            fs::remove_file(&exclude).unwrap();
+        }
+        #[cfg(unix)]
+        let link_result = std::os::unix::fs::symlink(&outside, &exclude);
+        #[cfg(windows)]
+        let link_result = std::os::windows::fs::symlink_file(&outside, &exclude);
+        if let Err(error) = link_result {
+            #[cfg(windows)]
+            if error.kind() == std::io::ErrorKind::PermissionDenied
+                || error.raw_os_error() == Some(1314)
+            {
+                return;
+            }
+            panic!("create linked Git info fixture: {error}");
+        }
+
+        let inspection = inspect_read_only(project.path());
+
+        assert_eq!(inspection.status_probe, "linked_metadata_not_followed");
+        assert_eq!(inspection.status.dirty, None);
+    }
+
+    #[test]
+    fn git_object_alternates_block_every_child_probe() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        let outside = tempdir().unwrap();
+        fs::write(
+            project.path().join(".git/objects/info/alternates"),
+            outside.path().to_string_lossy().as_bytes(),
+        )
+        .unwrap();
+
+        let inspection = inspect_read_only(project.path());
+
+        assert_eq!(inspection.status_probe, "linked_metadata_not_followed");
+        assert_eq!(inspection.status.dirty, None);
+    }
+
+    #[test]
+    fn git_metadata_is_rechecked_after_every_child_before_output_is_accepted() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        run_git(project.path(), &["config", "user.name", "Test"]).unwrap();
+        run_git(
+            project.path(),
+            &["config", "user.email", "test@example.invalid"],
+        )
+        .unwrap();
+        run_git(
+            project.path(),
+            &["commit", "--allow-empty", "-m", "fixture"],
+        )
+        .unwrap();
+        let outside = tempdir().unwrap();
+        let alternates = project.path().join(".git/objects/info/alternates");
+        let read_root = crate::flatten::BoundedReadRoot::open(project.path()).unwrap();
+        let git_root = read_root.open_child_directory(".git").unwrap();
+        let result = git_root
+            .with_stable_path(|git_dir| {
+                run_hardened_git_with_validated_config_and_check_inner(
+                    &git_root,
+                    git_dir,
+                    &["rev-parse", "--verify", "HEAD"],
+                    &mut || false,
+                    || {
+                        fs::write(&alternates, outside.path().to_string_lossy().as_bytes())
+                            .unwrap();
+                    },
+                )
+            })
+            .unwrap();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn agentic_scan_git_probe_ignores_gameplay_files_but_detects_setup_paths() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        fs::write(project.path().join("gameplay.txt"), "stable\n").unwrap();
+        fs::write(project.path().join("AGENTS.md"), "# Stable instructions\n").unwrap();
+        run_git(project.path(), &["add", "gameplay.txt", "AGENTS.md"]).unwrap();
+        run_git(project.path(), &["config", "user.name", "Test"]).unwrap();
+        run_git(
+            project.path(),
+            &["config", "user.email", "test@example.invalid"],
+        )
+        .unwrap();
+        run_git(project.path(), &["commit", "-m", "fixture"]).unwrap();
+        fs::write(project.path().join("gameplay.txt"), "changed\n").unwrap();
+        let read_root = crate::flatten::BoundedReadRoot::open(project.path()).unwrap();
+
+        let setup_paths = vec!["AGENTS.md".to_string()];
+        let gameplay_only = inspect_agentic_read_only_bound(&read_root, &setup_paths);
+        assert_eq!(gameplay_only.status_probe, "targeted_complete");
+        assert_eq!(gameplay_only.status.dirty, Some(false));
+
+        fs::write(project.path().join("AGENTS.md"), "# Changed instructions\n").unwrap();
+        run_git(project.path(), &["add", "AGENTS.md"]).unwrap();
+        let setup_changed = inspect_agentic_read_only_bound(&read_root, &setup_paths);
+        assert_eq!(setup_changed.status_probe, "targeted_complete");
+        assert_eq!(setup_changed.status.dirty, Some(true));
+        assert_eq!(setup_changed.staged_files, 1);
+    }
+
+    #[test]
+    fn agentic_scan_git_probe_detects_unstaged_and_staged_setup_deletions() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        fs::write(project.path().join("AGENTS.md"), "# Instructions\n").unwrap();
+        run_git(project.path(), &["add", "AGENTS.md"]).unwrap();
+        run_git(project.path(), &["config", "user.name", "Test"]).unwrap();
+        run_git(
+            project.path(),
+            &["config", "user.email", "test@example.invalid"],
+        )
+        .unwrap();
+        run_git(project.path(), &["commit", "-m", "fixture"]).unwrap();
+        fs::remove_file(project.path().join("AGENTS.md")).unwrap();
+        let read_root = crate::flatten::BoundedReadRoot::open(project.path()).unwrap();
+
+        let unstaged = inspect_agentic_read_only_bound(&read_root, &[]);
+        assert_eq!(unstaged.status_probe, "targeted_complete");
+        assert_eq!(unstaged.status.dirty, Some(true));
+        assert_eq!(unstaged.unstaged_files, 1);
+
+        run_git(project.path(), &["add", "-u", "AGENTS.md"]).unwrap();
+        let staged = inspect_agentic_read_only_bound(&read_root, &[]);
+        assert_eq!(staged.status_probe, "targeted_complete");
+        assert_eq!(staged.status.dirty, Some(true));
+        assert_eq!(staged.staged_files, 1);
+    }
+
+    #[test]
+    fn agentic_scan_git_probe_detects_deleted_case_aliases() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        fs::write(project.path().join("agents.md"), "# Instructions\n").unwrap();
+        run_git(project.path(), &["add", "agents.md"]).unwrap();
+        run_git(project.path(), &["config", "user.name", "Test"]).unwrap();
+        run_git(
+            project.path(),
+            &["config", "user.email", "test@example.invalid"],
+        )
+        .unwrap();
+        run_git(project.path(), &["commit", "-m", "fixture"]).unwrap();
+        fs::remove_file(project.path().join("agents.md")).unwrap();
+        let read_root = crate::flatten::BoundedReadRoot::open(project.path()).unwrap();
+
+        let inspection = inspect_agentic_read_only_bound(&read_root, &[]);
+
+        assert_eq!(inspection.status_probe, "targeted_complete");
+        assert_eq!(inspection.status.dirty, Some(true));
+        assert_eq!(inspection.unstaged_files, 1);
+    }
+
+    #[test]
+    fn agentic_scan_git_probe_treats_observed_wildcards_as_literal_names() {
+        let project = tempdir().unwrap();
+        let agents = project.path().join(".codex/agents");
+        fs::create_dir_all(&agents).unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        fs::write(agents.join("[x].toml"), "name = 'bracket'\n").unwrap();
+        fs::write(agents.join("x.toml"), "name = 'plain'\n").unwrap();
+        run_git(project.path(), &["add", ".codex/agents"]).unwrap();
+        run_git(project.path(), &["config", "user.name", "Test"]).unwrap();
+        run_git(
+            project.path(),
+            &["config", "user.email", "test@example.invalid"],
+        )
+        .unwrap();
+        run_git(project.path(), &["commit", "-m", "fixture"]).unwrap();
+        fs::write(agents.join("x.toml"), "name = 'changed'\n").unwrap();
+        let read_root = crate::flatten::BoundedReadRoot::open(project.path()).unwrap();
+        let paths = vec![".codex/agents/[x].toml".to_string()];
+
+        let inspection = inspect_agentic_read_only_bound(&read_root, &paths);
+
+        assert_eq!(inspection.status_probe, "targeted_complete");
+        assert_eq!(inspection.status.dirty, Some(false));
+    }
+
+    #[test]
+    fn agentic_scan_git_probe_batches_large_exact_path_inventories() {
+        let project = tempdir().unwrap();
+        let agents = project.path().join(".codex/agents");
+        fs::create_dir_all(&agents).unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        let paths = (0..=MAX_GIT_PATHS_PER_BATCH)
+            .map(|index| format!(".codex/agents/agent-{index:04}.toml"))
+            .collect::<Vec<_>>();
+        for path in &paths {
+            fs::write(project.path().join(path), "name = 'agent'\n").unwrap();
+        }
+        run_git(project.path(), &["add", ".codex/agents"]).unwrap();
+        run_git(project.path(), &["config", "user.name", "Test"]).unwrap();
+        run_git(
+            project.path(),
+            &["config", "user.email", "test@example.invalid"],
+        )
+        .unwrap();
+        run_git(project.path(), &["commit", "-m", "fixture"]).unwrap();
+        fs::write(
+            project.path().join(paths.last().unwrap()),
+            "name = 'changed'\n",
+        )
+        .unwrap();
+        let read_root = crate::flatten::BoundedReadRoot::open(project.path()).unwrap();
+
+        let inspection = inspect_agentic_read_only_bound(&read_root, &paths);
+
+        assert_eq!(inspection.status_probe, "targeted_complete");
+        assert_eq!(inspection.status.dirty, Some(true));
+        assert_eq!(inspection.unstaged_files, 1);
+    }
+
+    #[test]
+    fn agentic_scan_git_probe_reports_a_truncated_path_inventory_as_partial() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        run_git(project.path(), &["config", "user.name", "Test"]).unwrap();
+        run_git(
+            project.path(),
+            &["config", "user.email", "test@example.invalid"],
+        )
+        .unwrap();
+        run_git(
+            project.path(),
+            &["commit", "--allow-empty", "-m", "fixture"],
+        )
+        .unwrap();
+        let paths = (0..=MAX_AGENTIC_GIT_PATHS)
+            .map(|index| format!(".codex/agents/agent-{index:04}.toml"))
+            .collect::<Vec<_>>();
+        let read_root = crate::flatten::BoundedReadRoot::open(project.path()).unwrap();
+
+        let inspection = inspect_agentic_read_only_bound(&read_root, &paths);
+
+        assert_eq!(inspection.status_probe, "partial");
+        assert_eq!(inspection.status.dirty, None);
+    }
+
+    #[test]
+    fn successful_status_with_truncated_git_output_is_never_accepted() {
+        let complete = ProcessResult {
+            status_code: Some(0),
+            stdout: "result".into(),
+            stderr: String::new(),
+            timed_out: false,
+            stdout_truncated: false,
+            stderr_truncated: false,
+        };
+        assert!(process_output_complete(&complete));
+        assert!(process_succeeded(&complete));
+
+        for (stdout_truncated, stderr_truncated) in [(true, false), (false, true)] {
+            let truncated = ProcessResult {
+                stdout_truncated,
+                stderr_truncated,
+                ..complete.clone()
+            };
+            assert!(!process_output_complete(&truncated));
+            assert!(!process_succeeded(&truncated));
+        }
+    }
+
+    #[test]
+    fn agentic_scan_git_probe_honors_cancellation_through_the_child_chain() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        run_git(project.path(), &["config", "user.name", "Test"]).unwrap();
+        run_git(
+            project.path(),
+            &["config", "user.email", "test@example.invalid"],
+        )
+        .unwrap();
+        run_git(
+            project.path(),
+            &["commit", "--allow-empty", "-m", "fixture"],
+        )
+        .unwrap();
+        let paths = (0..MAX_AGENTIC_GIT_PATHS)
+            .map(|index| format!(".codex/agents/agent-{index:04}.toml"))
+            .collect::<Vec<_>>();
+        let read_root = crate::flatten::BoundedReadRoot::open(project.path()).unwrap();
+        let mut cancellation_checks = 0_usize;
+
+        let inspection = inspect_agentic_read_only_bound_with_check(&read_root, &paths, || {
+            cancellation_checks += 1;
+            cancellation_checks >= 5
+        });
+
+        assert_eq!(inspection.status_probe, "stopped");
+        assert!(cancellation_checks >= 5);
+        assert_eq!(inspection.status.dirty, None);
     }
 
     #[test]
@@ -2520,6 +3277,9 @@ mod tests {
     fn invalid_hook_directory_blocks_repository_inspection() {
         let project = tempdir().unwrap();
         fs::create_dir(project.path().join(".git")).unwrap();
+        for relative in ["objects/info", "objects/pack", "refs", "info"] {
+            fs::create_dir_all(project.path().join(".git").join(relative)).unwrap();
+        }
         fs::write(
             project.path().join(".git").join("HEAD"),
             "ref: refs/heads/main\n",

@@ -45,6 +45,8 @@ pub enum AppError {
     Credential(String),
     #[error("process error: {0}")]
     Process(String),
+    #[error("protocol error: {0}")]
+    Protocol(String),
     #[error("serialization error: {0}")]
     Serialization(String),
     #[error("unsupported platform: {0}")]

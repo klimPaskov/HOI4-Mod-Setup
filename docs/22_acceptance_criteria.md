@@ -105,6 +105,14 @@
 - EXT-03A: Read-only scanning excludes bounded virtual environments,
   dependency trees, editor metadata, caches, generated artifacts, gameplay,
   localisation, media, and root data dumps that are unrelated to agentic setup.
+- EXT-03B: Out-of-scope directory entries are discarded before targeted
+  inventory and sort budgets, so a very large mod cannot hide relevant setup
+  evidence or become partial solely because of gameplay content.
+- EXT-03C: Each scanned directory is enumerated through a retained no-follow
+  handle; a failed identity fence discards observed names, and sensitive paths
+  produce one non-identifying aggregate warning.
+- EXT-03D: Import-time Git probes are restricted to Agentic setup paths and a
+  forged, linked, replaced, or stale launcher descriptor approval is rejected.
 - EXT-04: Findings have evidence and confidence.
 - EXT-05: Findings appear in small review groups.
 - EXT-06: The user can accept, edit, reject, or defer values.

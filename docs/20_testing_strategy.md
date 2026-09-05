@@ -2,7 +2,7 @@
 
 ## AI provider integration matrix
 
-Use a protocol fixture that emulates App Server JSONL without real account credentials in ordinary CI. Cover process absence, incompatible versions, initialize ordering, an existing ChatGPT session, browser login, exact per-`loginId` `account/login/cancel` behavior, isolated concurrent cancellation, device-code fallback, logout, account updates, usage limits, App Server crash, turn cancellation, output schema acceptance and rejection, unexpected fields, deterministic rejection of bad identifiers, token and account-data absence, and recovery while signed out. Add fake Anthropic, OpenAI-compatible, and loopback adapters for configured, missing-key, malformed-response, endpoint, redirect, bounded-response, provider-switch, and no-secret-persistence cases.
+Use a protocol fixture that emulates App Server JSONL without real account credentials in ordinary CI. Cover process absence, incompatible versions, initialize ordering, an existing ChatGPT session, browser login, exact per-`loginId` `account/login/cancel` behavior, isolated concurrent cancellation, device-code fallback, logout, account updates, usage limits, App Server crash, turn cancellation, output schema acceptance and rejection, proposal key/value type binding, unexpected fields, deterministic rejection of bad identifiers, token and account-data absence, and recovery while signed out. Add fake Anthropic, OpenAI-compatible, and loopback adapters for configured, missing-key, malformed-response, endpoint, redirect, bounded-response, provider-switch, and no-secret-persistence cases.
 
 Run a controlled manual release test against a real ChatGPT account. Never place real credentials in CI.
 
@@ -223,7 +223,8 @@ Test targeted setup inventories containing 500, 20,000, and 150,000 approved
 agentic files, plus mods with very large gameplay, media, wiki, and generated
 data trees that must be pruned. Measure first finding, total scan, memory, UI
 responsiveness, and cancellation latency. Large-mod evidence must prove that
-out-of-scope content is neither opened nor counted and that detector text stays
+out-of-scope directory entries are filtered before targeted sort/count/path
+budgets, out-of-scope content is neither opened nor counted, and detector text stays
 within its retained-content bound. An isolated fixture keeps its complete
 path/size/modified-time signature unchanged; an approved live fixture also
 snapshots app-owned metadata and reports unrelated concurrent changes instead
@@ -231,6 +232,20 @@ of attributing them to the scanner. Windows installer lifecycle evidence must
 start without current-user or matching legacy machine-wide product
 registration, fail closed on registry inspection errors, and end with no
 E2E-owned install path in either product registry key.
+
+Exercise retained project and launcher-parent directory enumeration against
+symlink/junction replacement and swap-back, aggregate sensitive-path reporting
+without filename disclosure, case-colliding setup paths, forged launcher
+approvals, and Git dirtiness both inside and outside literal targeted Agentic
+pathspecs. Cover modified, staged and unstaged deleted, wildcard-shaped, and
+command-line-batched setup paths, path-inventory and process-output truncation,
+Unicode case collisions, Unix literal backslashes, CRLF skill frontmatter,
+Windows drive/UNC absolute paths, and equality between rendered evidence bytes
+and approved evidence hashes. Cancellation tests must interrupt launcher-parent
+enumeration and a running reviewed Git/process child within the documented
+latency bound. A provider schema rejection must
+leave the approved scan reusable; malformed transport JSON must force a fresh
+initialized App Server without exposing raw protocol text.
 
 Add a Tauri command responsiveness regression test with blocking fake
 filesystem, network, Git, and provider waits. Hold each representative wait

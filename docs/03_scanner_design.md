@@ -66,7 +66,10 @@ provider has write access.
    `.codex/agents`, `.codex/config.toml`, approved documentation, descriptors,
    thumbnail, Git metadata, and the managed setup lock. Ordinary HOI4 gameplay,
    localisation, media, content dumps, and generated documentation corpora are
-   outside this setup scan and are neither opened nor counted.
+   outside this setup scan and are neither opened nor counted. Directory entries
+   are classified before targeted file, path, and directory-sort budgets are
+   charged, so a large gameplay directory cannot hide or truncate relevant setup
+   evidence.
 4. **Git:** repository root, branch, detached state, commit, dirty buckets,
    remotes, submodules, hooks, ignore files, linked worktrees, and tracked
    secret-like paths using bounded read-only commands.
@@ -180,18 +183,48 @@ managed lock at 2 MiB, and retained parser evidence at 128 MiB. Feed a bounded
 absolute-path accumulator as each approved text file is read, then discard
 content that no later parser needs. File reads do not follow links, traversal
 fences the stable filesystem identity of the selected root and each directory,
-and a retained root handle binds bounded reads and read-only Git probes to that
-identity. Relative paths are capped at 4 KiB, segments at 255 bytes, conflicts
-at 4,096 entries, aggregate retained inventory paths at 64 MiB, and each
-directory sort at 50,000 entries / 8 MiB of entry names. Malformed agentic
+retained no-follow directory handles bind both project-tree and launcher-parent
+enumeration, and a retained root handle binds bounded reads and read-only Git
+probes to that identity. Unix enumeration reads names from a duplicated
+descriptor-backed directory stream, including across rename/symlink swap-back
+races; Windows retains its non-delete-sharing identity fence. Credential-shaped names
+produce one non-identifying aggregate warning, and raw iterator failures
+produce at most one fixed-detail warning per directory. Relative paths are
+capped at 4 KiB, segments at 255 bytes, conflicts at 4,096 entries, aggregate
+retained inventory paths at 64 MiB, and each targeted directory sort at 50,000
+relevant entries / 8 MiB of relevant entry names. Case-collision keys use
+Unicode lowercase normalization and share the same conflict budget. Unix
+rejects backslash-bearing relative scan candidates instead of letting a later
+shared reader reinterpret the literal name as a separator. Skill traversal
+stops after `.agents/skills/<skill>/SKILL.md`, canonical
+subagent and client-agent traversal stops after the direct agent file, and
+approved documentation traversal stops after `docs/<section>/<file>`; nested
+references, assets, archives, and generated corpora are not scan inputs.
+Malformed agentic
 samples are capped at 512, structure and Git-ignore samples at 1,024 each, and
 launcher discovery at 10,000 parent entries / 512 descriptor candidates.
+An approved launcher is rebound to the same retained parent identity and read
+once through that handle; detector parsing uses the captured bytes, so a later
+parent-path replacement cannot redirect the approved evidence.
 The retained root and `.git` directory handles also bind every Git probe to the
 approved directories. Unix children enter the retained `.git` handle with
 `fchdir` before exec; Windows retains the non-delete-sharing handle while using
 its canonical path. Dirty-state probes use fixed `ls-files` and cached-index
-operations that do not invoke attribute-selected content filters; repository
-configuration is checked immediately before and after each child.
+operations restricted to exact, literal, scanner-observed Agentic setup paths,
+with fixed index-only probes recovering deleted managed paths. Exact paths are
+batched under command-line size bounds and deletion roots are case-insensitive,
+so wildcard-shaped names cannot expand, case aliases are not missed,
+and ordinary gameplay files never enter the import-time Git worktree probe. The
+operations do not invoke attribute-selected content filters; repository
+configuration is checked immediately before and after each child. Git child
+stdout/stderr reports whether its byte cap was exceeded; truncated output makes
+the bounded probe partial instead of being parsed as complete. Cancellation is
+checked before every batch and while each child is running, terminating the
+reviewed process tree promptly. Before any Git child starts, critical metadata
+such as `HEAD`, the referenced ref, config, index, refs, objects, and info must
+be link-free; linked descendants and object-alternate declarations are rejected.
+The complete policy is rechecked immediately before and after every child, and
+output is discarded if the metadata route changes.
 The `files_scanned` and `directories_scanned` counters describe only this
 targeted setup inventory. Intentional out-of-scope content remains complete by
 definition. An unreadable,
@@ -203,8 +236,14 @@ reported as a visible `needs_review` finding and conflict. It does not set
 `partial` or appear in `limits_hit` unless a separate detector surface was
 actually truncated. Git review evidence must not make an otherwise complete
 targeted Agentic setup scan fail. Only the explicitly classified current Git
-review conflicts receive this treatment; a future Git detector limit remains
-an honest partial result.
+review conflicts receive this treatment; `scan.git.limit` records a path-count
+or process-output truncation and is always an honest partial result.
+
+Finding evidence hashes cover the exact rendered excerpt: raw UTF-8 bytes for a
+string value and compact JSON for every other JSON value. This is the same byte
+representation stored in the approved-evidence map for semantic analysis.
+Skills accept LF or CRLF YAML frontmatter. Absolute-path evidence recognizes
+Windows drive paths with either separator, UNC paths, and Unix home roots.
 
 Cancellation returns `partial: true` and `cancelled: true`, emits a terminal
 event, and clears approved evidence. Any partial result blocks semantic

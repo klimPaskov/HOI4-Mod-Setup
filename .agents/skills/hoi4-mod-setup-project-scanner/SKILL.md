@@ -131,20 +131,37 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
   directories, depth 64, and ten minutes. Prune ordinary gameplay,
   localisation, binary/media, root data dumps, and generated `docs/assets/`
   or `docs/formables/` corpora before file inventory; those intentional
-  exclusions do not make a scan partial. Read only bounded detector inputs:
+  exclusions do not make a scan partial. Classify every directory entry before
+  charging the targeted entry-count, entry-name, path, file, or directory
+  budgets. Traverse skills only through `.agents/skills/<skill>/SKILL.md`,
+  canonical and native agents only through their direct files, and approved
+  documentation only through `docs/<section>/<file>`. Nested references,
+  archives, and assets are not scan inputs. Read only bounded detector inputs:
   project and launcher descriptors, thumbnail, root AGENTS/README and
   `.gitignore`, approved docs, skills, subagent/Codex TOML, and the separately
   bounded managed lock. Detector text is capped at 16 MiB per
   file and 256 MiB per scan; retained parser evidence is capped at 128 MiB.
-- Bind reads and read-only Git probes to one retained, identity-checked root
-  handle and retain a separate identity-checked `.git` handle while invoking
-  Git. Unix Git children enter that retained directory with `fchdir` before
+- Bind project-tree and launcher-parent enumeration, reads, and read-only Git
+  probes to retained, no-follow, identity-checked directory handles. Unix name
+  enumeration must use a duplicated descriptor-backed directory stream so an
+  ABA swap-back cannot redirect it. Retain a separate identity-checked `.git` handle
+  while invoking Git. Unix Git children enter that retained directory with `fchdir` before
   exec; Windows holds the non-delete-sharing handle while using its canonical
-  path. Use fixed `ls-files`/cached-index dirty probes that do not invoke
-  attribute-selected content filters, and reject repository configuration that
-  changes before or after a child. Bound relative paths to 4 KiB, individual segments to 255 bytes,
+  path. Reject linked `HEAD`, referenced refs, config, index, refs, objects,
+  info descendants, object-pack metadata, object alternates, or other critical
+  child metadata. Recheck the policy immediately before and after every child
+  and discard output when it changes. Use fixed
+  `ls-files`/cached-index dirty probes restricted to exact
+  literal scanner-observed Agentic setup paths, recover deleted setup paths
+  through bounded case-insensitive index-only probes, and batch path arguments below platform
+  command-line limits; never walk gameplay files merely to populate
+  the import review. Do not invoke attribute-selected content filters, and reject repository configuration that
+  changes before or after a child. Treat a capped child output or targeted path
+  inventory as `scan.git.limit` and an honest partial result. Check cancellation
+  before batches and while a reviewed child is running. Bound relative paths to 4 KiB, individual segments to 255 bytes,
   aggregate retained inventory paths to 64 MiB, conflicts to 4,096 entries,
-  and each directory sort to 50,000 entries / 8 MiB of entry names. Bound
+  and each targeted directory sort to 50,000 relevant entries / 8 MiB of
+  relevant entry names. Bound
   malformed agentic samples to 512, Git-ignore samples to 1,024, and launcher
   discovery to 10,000 parent entries / 512 descriptor
   candidates.
@@ -154,7 +171,9 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
   Continuing confirms the displayed match; **Scan without launcher file**
   excludes it from the scan and semantic evidence. At scan invocation, bind
   any renderer-supplied path back to the current unique core-discovered
-  candidate; a forged absolute path is never approval.
+  candidate and same retained parent identity, then parse the captured
+  no-follow bytes instead of reopening the path; a forged or race-replaced
+  absolute path is never approval.
 - Feed the absolute-path accumulator while reading approved text, then discard
   bytes that no later parser needs. Keep retained parser evidence bounded and
   open detector files with the shared no-follow contained reader. A file,
@@ -167,6 +186,12 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
 - Support cancellation and partial result reporting.
 - Stream progress through an opaque request ID with stage, relative path, file count, directory count, and bytes read. Do not emit or render a percentage when a total is unknown.
 - Cancellation is cooperative, returns explicit `partial` and `cancelled` metadata, emits a terminal cancellation event, and clears the approved-evidence binding before any Codex analysis can use it. Any non-cancelled partial result also clears that binding and blocks semantic analysis until a complete scan is available.
+- Hash the exact UI-approved evidence representation: raw UTF-8 for string
+  values and compact JSON for all other values. Require finding confidence,
+  blocking state, proposed action, and decision state in the current result
+  schema. Normalize Unicode case for collision detection, share its 4,096-entry
+  conflict budget, reject Unix literal-backslash candidates, accept LF/CRLF
+  skill frontmatter, and detect both Windows drive separators plus UNC paths.
 
 ## Review grouping
 

@@ -17,12 +17,13 @@ use std::fs::OpenOptions;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-#[cfg(unix)]
-use std::ffi::CString;
-#[cfg(windows)]
 use std::ffi::OsString;
 #[cfg(unix)]
+use std::ffi::{CStr, CString};
+#[cfg(unix)]
 use std::os::fd::{AsRawFd, FromRawFd};
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 #[cfg(windows)]
@@ -39,6 +40,30 @@ pub const FLAT_DESTINATION_ROOT: &str = "chatgpt_project_sources";
 const MAX_FLAT_FILES: usize = 512;
 const MAX_FLAT_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_FLAT_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn clear_directory_errno() {
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn directory_errno() -> i32 {
+    unsafe { *libc::__errno_location() }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn clear_directory_errno() {
+    unsafe {
+        *libc::__error() = 0;
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn directory_errno() -> i32 {
+    unsafe { *libc::__error() }
+}
 
 pub fn build_artifacts(
     prepared: &[PreparedFile],
@@ -272,6 +297,11 @@ impl BoundedReadRoot {
         &self.handle
     }
 
+    pub(crate) fn same_directory_identity(&self, other: &Self) -> bool {
+        handle_identity(&self.handle).is_some()
+            && handle_identity(&self.handle) == handle_identity(&other.handle)
+    }
+
     /// A process working-directory path tied to the retained directory handle.
     /// Unix resolves the descriptor before exec; Windows relies on the retained
     /// non-delete-sharing handle to keep the canonical directory in place.
@@ -332,6 +362,81 @@ impl BoundedReadRoot {
             ));
         }
         Ok(output)
+    }
+
+    /// Enumerate names from the retained directory itself. Unix uses a
+    /// duplicated descriptor-backed DIR stream, so a path rename followed by
+    /// a swap-back cannot redirect enumeration. Windows keeps the directory
+    /// handle open without delete sharing and retains the identity fence.
+    pub(crate) fn visit_directory_names(
+        &self,
+        mut visitor: impl FnMut(Result<OsString, std::io::Error>) -> bool,
+    ) -> Result<(), AppError> {
+        #[cfg(unix)]
+        {
+            let duplicated = unsafe { libc::dup(self.handle.as_raw_fd()) };
+            if duplicated < 0 {
+                return Err(AppError::PathSecurity(
+                    "contained directory handle could not be duplicated".into(),
+                ));
+            }
+            let stream = unsafe { libc::fdopendir(duplicated) };
+            if stream.is_null() {
+                unsafe {
+                    libc::close(duplicated);
+                }
+                return Err(AppError::PathSecurity(
+                    "contained directory stream could not be opened".into(),
+                ));
+            }
+
+            let mut read_error = None;
+            loop {
+                clear_directory_errno();
+                let entry = unsafe { libc::readdir(stream) };
+                if entry.is_null() {
+                    let errno = directory_errno();
+                    if errno != 0 {
+                        read_error = Some(std::io::Error::from_raw_os_error(errno));
+                    }
+                    break;
+                }
+                let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+                if name == b"." || name == b".." {
+                    continue;
+                }
+                if !visitor(Ok(OsString::from_vec(name.to_vec()))) {
+                    break;
+                }
+            }
+            let close_failed = unsafe { libc::closedir(stream) } != 0;
+            if let Some(error) = read_error {
+                let _ = visitor(Err(error));
+            } else if close_failed {
+                let _ = visitor(Err(std::io::Error::last_os_error()));
+            }
+            Ok(())
+        }
+
+        #[cfg(not(unix))]
+        {
+            self.with_stable_path(|stable_path| {
+                let entries = std::fs::read_dir(stable_path).map_err(|_| {
+                    AppError::PathSecurity("contained directory could not be enumerated".into())
+                })?;
+                for entry in entries {
+                    let keep_going = match entry {
+                        Ok(entry) => visitor(Ok(entry.file_name())),
+                        Err(error) => visitor(Err(error)),
+                    };
+                    if !keep_going {
+                        break;
+                    }
+                }
+                Ok::<(), AppError>(())
+            })??;
+            Ok(())
+        }
     }
 
     pub(crate) fn read_bounded_with_check<F>(

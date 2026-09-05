@@ -23,6 +23,10 @@
       "status": "accepted",
       "user_value": null,
       "origin": "user_confirmed",
+      "confidence": 0.94,
+      "blocking": false,
+      "proposed_action": null,
+      "decision_state": "accepted",
       "evidence": [
         {
           "detector": "codex_app_server",
@@ -44,6 +48,10 @@
       "status": "accepted",
       "user_value": null,
       "origin": "user_confirmed",
+      "confidence": 0.99,
+      "blocking": false,
+      "proposed_action": null,
+      "decision_state": "accepted",
       "evidence": [
         {
           "detector": "codex_app_server",
@@ -65,6 +73,10 @@
       "status": "accepted",
       "user_value": null,
       "origin": "user_confirmed",
+      "confidence": 0.88,
+      "blocking": false,
+      "proposed_action": "Use cwc consistently for new project-owned script identifiers.",
+      "decision_state": "accepted",
       "evidence": [
         {
           "detector": "codex_app_server",
@@ -86,6 +98,10 @@
       "status": "accepted",
       "user_value": null,
       "origin": "user_confirmed",
+      "confidence": 1.0,
+      "blocking": false,
+      "proposed_action": null,
+      "decision_state": "accepted",
       "evidence": [
         {
           "detector": "project_id_path_default",
@@ -107,6 +123,10 @@
       "status": "accepted",
       "user_value": null,
       "origin": "user_confirmed",
+      "confidence": 1.0,
+      "blocking": false,
+      "proposed_action": null,
+      "decision_state": "accepted",
       "evidence": [
         {
           "detector": "project_id_launcher_default",
@@ -158,6 +178,10 @@
         "status": "accepted",
         "user_value": null,
         "origin": "provider_suggested",
+        "confidence": 0.94,
+        "blocking": false,
+        "proposed_action": null,
+        "decision_state": "accepted",
         "evidence": [
           {
             "detector": "codex_app_server",
@@ -179,6 +203,10 @@
         "status": "accepted",
         "user_value": null,
         "origin": "provider_suggested",
+        "confidence": 0.99,
+        "blocking": false,
+        "proposed_action": null,
+        "decision_state": "accepted",
         "evidence": [
           {
             "detector": "codex_app_server",
@@ -200,6 +228,10 @@
         "status": "accepted",
         "user_value": null,
         "origin": "provider_suggested",
+        "confidence": 0.88,
+        "blocking": false,
+        "proposed_action": "Use cwc consistently for new project-owned script identifiers.",
+        "decision_state": "accepted",
         "evidence": [
           {
             "detector": "codex_app_server",

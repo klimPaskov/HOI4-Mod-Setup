@@ -6,6 +6,43 @@ HOI4 Mod Setup follows semantic versioning.
 
 No unreleased changes.
 
+## 0.3.5 - 2026-09-05
+
+- Bind every semantic proposal key to its required JSON value type in the
+  authoritative output schema, keeping malformed provider responses out of
+  planning and replacing raw serialization details with a safe retry message.
+- Filter gameplay, localisation, media, nested skill assets, agent archives,
+  and generated documentation before targeted scan budgets are charged, so
+  large mods cannot hide relevant setup evidence behind unrelated files.
+- Bound credential-shaped path warnings independently and verify the read-only
+  import scan against Chaos Redux without a safety-limit result or project
+  metadata changes.
+- Enumerate through retained no-follow directory handles, reject forged or
+  replaced launcher descriptors, ignore linked setup files as positive facts,
+  and report case-colliding setup paths as blocking evidence.
+- Cache the immutable redaction patterns and restrict import-time Git probes to
+  literal, batched Agentic setup paths while recovering tracked deletions from
+  the index; the final live Chaos Redux scan completes in under ten seconds in
+  the debug test harness.
+- Bind launcher-parent enumeration to retained directory handles and cover
+  directory swap-back, setup deletion, wildcard filename, and large Git
+  path-inventory regressions.
+- Mark capped Git path inventories or process output as partial, propagate scan
+  cancellation into launcher discovery and supervised Git children, and bind
+  evidence hashes to the exact rendered excerpt. Unicode case collisions, Unix
+  backslash names, CRLF skills, and drive/UNC absolute paths now have explicit
+  regression coverage.
+- Restore whole-repository dirty detection for generic Git review gates and
+  refuse to start Git when `HEAD`, its referenced ref, or other critical Git
+  metadata is linked or externally redirected, with the policy rechecked around
+  every child before output is accepted.
+- Preserve the approved scan after a rejected Codex proposal or interrupted App
+  Server session, while clearing only unconfirmed session proposals and keeping
+  every renderer-facing provider error categorical and secret-free.
+- Dispatch descriptor-preview capability checks outside the UI event loop and
+  sanitize model-list, preview, install-plan, and maintenance-plan provider
+  failures through the same bounded error map.
+
 ## 0.3.4 - 2026-09-02
 
 - Pin the bundled Agentic HOI4 Modding source manifest to

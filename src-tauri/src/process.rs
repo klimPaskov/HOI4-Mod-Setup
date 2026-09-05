@@ -36,6 +36,19 @@ pub struct ProcessResult {
     pub stdout: String,
     pub stderr: String,
     pub timed_out: bool,
+    #[serde(default)]
+    pub stdout_truncated: bool,
+    #[serde(default)]
+    pub stderr_truncated: bool,
+}
+
+#[derive(Default)]
+struct ProcessRunProfile<'a> {
+    isolated_git_read_only: bool,
+    stdin_bytes: Option<&'a [u8]>,
+    disable_local_git_config: bool,
+    bound_directory: Option<&'a std::fs::File>,
+    should_stop: Option<&'a mut dyn FnMut() -> bool>,
 }
 
 #[cfg(target_os = "windows")]
@@ -180,10 +193,7 @@ impl ProcessSpec {
         self.run_with_profile(
             allowlisted_executables,
             environment,
-            false,
-            None,
-            false,
-            None,
+            ProcessRunProfile::default(),
         )
     }
 
@@ -210,7 +220,14 @@ impl ProcessSpec {
                     .into(),
             ));
         }
-        self.run_with_profile(allowlisted_executables, None, true, None, false, None)
+        self.run_with_profile(
+            allowlisted_executables,
+            None,
+            ProcessRunProfile {
+                isolated_git_read_only: true,
+                ..ProcessRunProfile::default()
+            },
+        )
     }
 
     /// Run an isolated Git probe from the exact directory represented by a
@@ -240,10 +257,44 @@ impl ProcessSpec {
         self.run_with_profile(
             allowlisted_executables,
             None,
-            true,
+            ProcessRunProfile {
+                isolated_git_read_only: true,
+                bound_directory: Some(directory),
+                ..ProcessRunProfile::default()
+            },
+        )
+    }
+
+    pub(crate) fn run_git_read_only_bound_with_check(
+        &self,
+        allowlisted_executables: &[PathBuf],
+        directory: &std::fs::File,
+        should_stop: &mut dyn FnMut() -> bool,
+    ) -> Result<ProcessResult, AppError> {
+        let executable_name = self
+            .executable
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if !matches!(
+            executable_name.to_ascii_lowercase().as_str(),
+            "git" | "git.exe"
+        ) || !self.environment_names.is_empty()
+        {
+            return Err(AppError::Process(
+                "the isolated Git profile accepts only a reviewed Git executable without credentials"
+                    .into(),
+            ));
+        }
+        self.run_with_profile(
+            allowlisted_executables,
             None,
-            false,
-            Some(directory),
+            ProcessRunProfile {
+                isolated_git_read_only: true,
+                bound_directory: Some(directory),
+                should_stop: Some(should_stop),
+                ..ProcessRunProfile::default()
+            },
         )
     }
 
@@ -279,10 +330,12 @@ impl ProcessSpec {
         self.run_with_profile(
             allowlisted_executables,
             None,
-            true,
-            Some(stdin_bytes),
-            false,
-            Some(directory),
+            ProcessRunProfile {
+                isolated_git_read_only: true,
+                stdin_bytes: Some(stdin_bytes),
+                bound_directory: Some(directory),
+                ..ProcessRunProfile::default()
+            },
         )
     }
 
@@ -308,19 +361,31 @@ impl ProcessSpec {
                     .into(),
             ));
         }
-        self.run_with_profile(allowlisted_executables, None, true, None, true, None)
+        self.run_with_profile(
+            allowlisted_executables,
+            None,
+            ProcessRunProfile {
+                isolated_git_read_only: true,
+                disable_local_git_config: true,
+                ..ProcessRunProfile::default()
+            },
+        )
     }
 
     fn run_with_profile(
         &self,
         allowlisted_executables: &[PathBuf],
         environment: Option<&ScopedSecretEnvironment>,
-        isolated_git_read_only: bool,
-        stdin_bytes: Option<&[u8]>,
-        disable_local_git_config: bool,
-        bound_directory: Option<&std::fs::File>,
+        mut profile: ProcessRunProfile<'_>,
     ) -> Result<ProcessResult, AppError> {
         self.validate(allowlisted_executables)?;
+        if profile
+            .should_stop
+            .as_mut()
+            .is_some_and(|check| (**check)())
+        {
+            return Err(AppError::Process("reviewed process was cancelled".into()));
+        }
         if let Some(environment) = environment {
             let expected: std::collections::HashSet<&str> =
                 self.environment_names.iter().map(String::as_str).collect();
@@ -338,7 +403,7 @@ impl ProcessSpec {
         command
             .args(&self.args)
             .env_clear()
-            .stdin(if stdin_bytes.is_some() {
+            .stdin(if profile.stdin_bytes.is_some() {
                 Stdio::piped()
             } else {
                 Stdio::null()
@@ -346,17 +411,17 @@ impl ProcessSpec {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         add_safe_environment(&mut command);
-        if isolated_git_read_only {
+        if profile.isolated_git_read_only {
             add_isolated_git_environment(&mut command);
         }
-        if disable_local_git_config {
+        if profile.disable_local_git_config {
             command.env("GIT_CONFIG", null_git_config_path());
         }
         if let Some(cwd) = &self.cwd {
             command.current_dir(cwd);
         }
         #[cfg(unix)]
-        if let Some(directory) = bound_directory {
+        if let Some(directory) = profile.bound_directory {
             use std::os::fd::AsRawFd;
             use std::os::unix::process::CommandExt;
 
@@ -374,7 +439,7 @@ impl ProcessSpec {
             }
         }
         #[cfg(not(unix))]
-        let _ = bound_directory;
+        let _ = profile.bound_directory;
         if let Some(environment) = environment {
             command.envs(environment.values());
         }
@@ -402,7 +467,7 @@ impl ProcessSpec {
         let output_limit = self.max_output_bytes;
         let stdout_thread = std::thread::spawn(move || read_bounded(stdout_pipe, output_limit));
         let stderr_thread = std::thread::spawn(move || read_bounded(stderr_pipe, output_limit));
-        if let Some(stdin_bytes) = stdin_bytes {
+        if let Some(stdin_bytes) = profile.stdin_bytes {
             let mut stdin = child
                 .stdin
                 .take()
@@ -419,6 +484,7 @@ impl ProcessSpec {
         }
         let started = Instant::now();
         let mut timed_out = false;
+        let mut cancelled = false;
         loop {
             if let Some(_status) = child
                 .try_wait()
@@ -431,17 +497,29 @@ impl ProcessSpec {
                 terminate_process_tree(&mut child);
                 break;
             }
+            if profile
+                .should_stop
+                .as_mut()
+                .is_some_and(|check| (**check)())
+            {
+                cancelled = true;
+                terminate_process_tree(&mut child);
+                break;
+            }
             std::thread::sleep(Duration::from_millis(25));
         }
         let status = child
             .wait()
             .map_err(|error| AppError::Process(format!("collect output failed: {error}")))?;
-        let stdout_bytes = stdout_thread
+        let (stdout_bytes, stdout_truncated) = stdout_thread
             .join()
             .map_err(|_| AppError::Process("stdout reader failed".into()))??;
-        let stderr_bytes = stderr_thread
+        let (stderr_bytes, stderr_truncated) = stderr_thread
             .join()
             .map_err(|_| AppError::Process("stderr reader failed".into()))??;
+        if cancelled {
+            return Err(AppError::Process("reviewed process was cancelled".into()));
+        }
         let stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
         let stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
         let known: Vec<String> = environment
@@ -452,6 +530,8 @@ impl ProcessSpec {
             stdout: redact_secrets(&stdout, &known),
             stderr: redact_secrets(&stderr, &known),
             timed_out,
+            stdout_truncated,
+            stderr_truncated,
         })
     }
 
@@ -888,16 +968,17 @@ fn same_executable(left: &PathBuf, right: &PathBuf) -> bool {
     std::fs::canonicalize(left).ok() == std::fs::canonicalize(right).ok()
 }
 
-fn read_bounded<R: Read>(reader: R, limit: usize) -> Result<Vec<u8>, AppError> {
+fn read_bounded<R: Read>(reader: R, limit: usize) -> Result<(Vec<u8>, bool), AppError> {
     let mut bytes = Vec::new();
     reader
         .take(limit as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| AppError::Process(format!("read process output failed: {error}")))?;
-    if bytes.len() > limit {
+    let truncated = bytes.len() > limit;
+    if truncated {
         bytes.truncate(limit);
     }
-    Ok(bytes)
+    Ok((bytes, truncated))
 }
 
 fn quote_argument(value: &str) -> String {
@@ -947,6 +1028,56 @@ mod tests {
             max_output_bytes: 100,
         };
         assert!(spec.validate(&[]).is_err());
+    }
+
+    #[test]
+    fn bounded_process_output_reports_truncation() {
+        let (bytes, truncated) = read_bounded(std::io::Cursor::new(b"12345"), 4).unwrap();
+
+        assert_eq!(bytes, b"1234");
+        assert!(truncated);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn reviewed_process_cancellation_interrupts_the_child_promptly() {
+        let (executable, args) = if cfg!(windows) {
+            (
+                std::fs::canonicalize(std::env::var_os("ComSpec").unwrap()).unwrap(),
+                vec!["/D".into(), "/C".into(), "ping 127.0.0.1 -n 30 >NUL".into()],
+            )
+        } else {
+            (
+                std::fs::canonicalize("/bin/sh").unwrap(),
+                vec!["-c".into(), "sleep 30".into()],
+            )
+        };
+        let spec = ProcessSpec {
+            executable: executable.clone(),
+            executable_sha256: Some(crate::security::sha256_file(&executable).unwrap()),
+            args,
+            cwd: None,
+            platform: Platform::current(),
+            environment_names: vec![],
+            timeout_seconds: 30,
+            max_output_bytes: 1024,
+        };
+        let started = Instant::now();
+        let mut should_stop = || started.elapsed() >= Duration::from_millis(100);
+
+        let error = spec
+            .run_with_profile(
+                &[executable],
+                None,
+                ProcessRunProfile {
+                    should_stop: Some(&mut should_stop),
+                    ..ProcessRunProfile::default()
+                },
+            )
+            .unwrap_err();
+
+        assert!(error.to_string().contains("cancelled"));
+        assert!(started.elapsed() < Duration::from_secs(3));
     }
 
     #[test]

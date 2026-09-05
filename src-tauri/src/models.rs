@@ -481,6 +481,14 @@ pub struct ScanFinding {
     pub origin: String,
     #[serde(default)]
     pub user_value: Option<Value>,
+    #[serde(default)]
+    pub confidence: f32,
+    #[serde(default)]
+    pub blocking: bool,
+    #[serde(default)]
+    pub proposed_action: Option<String>,
+    #[serde(default = "default_scan_decision_state")]
+    pub decision_state: String,
     pub evidence: Vec<ScanEvidence>,
     #[serde(default)]
     pub recommendation: Option<String>,
@@ -488,6 +496,10 @@ pub struct ScanFinding {
 
 fn default_scan_origin() -> String {
     "deterministic".into()
+}
+
+fn default_scan_decision_state() -> String {
+    "pending".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

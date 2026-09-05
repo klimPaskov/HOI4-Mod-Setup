@@ -38,6 +38,7 @@
     "proposals": {
       "type": "array",
       "minItems": 10,
+      "maxItems": 10,
       "items": {
         "$ref": "#/$defs/proposal"
       }
@@ -81,57 +82,87 @@
   },
   "$defs": {
     "proposal": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "key",
-        "value",
-        "confidence",
-        "reason",
-        "evidence_refs"
-      ],
-      "properties": {
-        "key": {
-          "type": "string",
-          "enum": [
-            "display_name",
-            "project_id",
-            "script_prefix",
-            "primary_namespace",
-            "project_description",
-            "descriptor_tags",
-            "folder_profile",
-            "agents_profile",
-            "localisation_convention",
-            "documentation_convention"
-          ]
-        },
-        "value": {
-          "anyOf": [
-            {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "key",
+            "value",
+            "confidence",
+            "reason",
+            "evidence_refs"
+          ],
+          "properties": {
+            "key": {
+              "type": "string",
+              "enum": [
+                "display_name",
+                "project_id",
+                "script_prefix",
+                "primary_namespace",
+                "project_description",
+                "agents_profile",
+                "localisation_convention",
+                "documentation_convention"
+              ]
+            },
+            "value": {
               "type": "string"
             },
-            {
+            "confidence": {
+              "type": "number"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "evidence_refs": {
               "type": "array",
               "items": {
                 "type": "string"
               }
             }
-          ]
+          }
         },
-        "confidence": {
-          "type": "number"
-        },
-        "reason": {
-          "type": "string"
-        },
-        "evidence_refs": {
-          "type": "array",
-          "items": {
-            "type": "string"
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "key",
+            "value",
+            "confidence",
+            "reason",
+            "evidence_refs"
+          ],
+          "properties": {
+            "key": {
+              "type": "string",
+              "enum": [
+                "descriptor_tags",
+                "folder_profile"
+              ]
+            },
+            "value": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "confidence": {
+              "type": "number"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         }
-      }
+      ]
     }
   },
   "description": "Schema-constrained semantic proposals returned by the selected setup-assistant adapter; Codex uses a ChatGPT-authenticated App Server turn."
