@@ -2060,17 +2060,23 @@ impl JsonlTransport for ProcessJsonlTransport {
                 "Codex App Server request is too large".into(),
             ));
         }
-        self.stdin.write_all(&line)?;
-        self.stdin.write_all(b"\n")?;
-        self.stdin.flush()?;
+        self.stdin.write_all(&line).map_err(|_| {
+            AppError::Protocol("Codex App Server input stream is unavailable".into())
+        })?;
+        self.stdin.write_all(b"\n").map_err(|_| {
+            AppError::Protocol("Codex App Server input stream is unavailable".into())
+        })?;
+        self.stdin.flush().map_err(|_| {
+            AppError::Protocol("Codex App Server input stream is unavailable".into())
+        })?;
         Ok(())
     }
 
     fn receive(&mut self, timeout: Duration) -> Result<Option<Value>, AppError> {
         match self.lines.recv_timeout(timeout) {
-            Ok(Ok(line)) => serde_json::from_str(&line).map(Some).map_err(|_| {
-                AppError::Serialization("Codex App Server returned invalid JSONL".into())
-            }),
+            Ok(Ok(line)) => serde_json::from_str(&line)
+                .map(Some)
+                .map_err(|_| AppError::Protocol("Codex App Server returned invalid JSONL".into())),
             Ok(Err(error)) => Err(AppError::Process(error)),
             Err(RecvTimeoutError::Timeout) => {
                 Err(AppError::Process("Codex App Server timed out".into()))
@@ -3119,6 +3125,26 @@ mod tests {
     }
 
     #[test]
+    fn authoritative_schema_binds_proposal_value_types_to_their_keys() {
+        let schema: Value = serde_json::from_str(include_str!(
+            "../../docs/schemas/codex-analysis.schema.json"
+        ))
+        .unwrap();
+        let validator = jsonschema::draft202012::new(&schema).unwrap();
+        let input = "a".repeat(64);
+        let valid = valid_analysis_value(&input);
+        assert!(validator.is_valid(&valid));
+
+        let mut invalid_scalar = valid.clone();
+        invalid_scalar["proposals"][0]["value"] = json!(["Demo Project"]);
+        assert!(!validator.is_valid(&invalid_scalar));
+
+        let mut invalid_list = valid;
+        invalid_list["proposals"][5]["value"] = json!("Gameplay");
+        assert!(!validator.is_valid(&invalid_list));
+    }
+
+    #[test]
     fn analysis_output_requires_the_complete_semantic_proposal_set() {
         let request = CodexAnalysisRequest {
             mode: "new_project_identity".into(),
@@ -3413,7 +3439,7 @@ mod tests {
         let mut protocol = AppServerProtocol::new(transport);
 
         let error = protocol
-            .drain_notifications(Duration::from_secs(1), "thread-1", Some("turn-1"))
+            .drain_notifications(Duration::from_secs(30), "thread-1", Some("turn-1"))
             .unwrap_err()
             .to_string();
 
@@ -3635,9 +3661,14 @@ mod tests {
                 "networkAccess": false
             })
         );
-        assert!(protocol.transport.sent[3]["params"]
-            .get("outputSchema")
-            .is_some());
+        let authoritative_schema: Value = serde_json::from_str(include_str!(
+            "../../docs/schemas/codex-analysis.schema.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            protocol.transport.sent[3]["params"]["outputSchema"],
+            authoritative_schema
+        );
         assert!(!std::path::Path::new(&analysis_directory).exists());
     }
 

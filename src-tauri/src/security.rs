@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
@@ -421,35 +422,37 @@ pub fn contains_credential_shaped_content(value: &str) -> bool {
     redact_secrets(&inspected, &[]) != inspected
 }
 
+fn secret_redaction_patterns() -> &'static [Regex] {
+    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+    PATTERNS.get_or_init(|| {
+        [
+            r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+",
+            r#"(?i)(["']?(?:authorization|api[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?token|refresh[_-]?token|device[_-]?code|user[_-]?code|login[_-]?token)["']?\s*:\s*["'])[^"']+(["'])"#,
+            r"(?i)((?:authorization|api[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?token|refresh[_-]?token|device[_-]?code|user[_-]?code|login[_-]?token)\s*[:=]\s*)[^\s,;&]+",
+            r"(?i)([?&](?:code|token|access_token|refresh_token|device_code|user_code)=)[^&#\s]+",
+            r"(?i)(api[_-]?key\s*[=:]\s*)[^\s,;&]+",
+            r"(?i)(meshy_api_key\s*[=:]\s*)[^\s,;&]+",
+            r"\bmsy_[A-Za-z0-9_-]{8,}\b",
+            r"\bsk-ant-[A-Za-z0-9_-]{20,}\b",
+            r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b",
+            r"\bAIza[A-Za-z0-9_-]{20,}\b",
+            r"\bxai-[A-Za-z0-9_-]{20,}\b",
+        ]
+        .into_iter()
+        .map(|pattern| Regex::new(pattern).expect("static secret redaction regex"))
+        .collect()
+    })
+}
+
 pub fn redact_secrets(value: &str, known_secrets: &[String]) -> String {
     let mut redacted = value.to_string();
     for secret in known_secrets.iter().filter(|secret| !secret.is_empty()) {
         redacted = redacted.replace(secret, "[REDACTED]");
     }
 
-    let patterns = [
-        Regex::new(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+"),
-        Regex::new(
-            r#"(?i)(["']?(?:authorization|api[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?token|refresh[_-]?token|device[_-]?code|user[_-]?code|login[_-]?token)["']?\s*:\s*["'])[^"']+(["'])"#,
-        ),
-        Regex::new(
-            r"(?i)((?:authorization|api[_-]?key|client[_-]?secret|private[_-]?key|access[_-]?token|refresh[_-]?token|device[_-]?code|user[_-]?code|login[_-]?token)\s*[:=]\s*)[^\s,;&]+",
-        ),
-        Regex::new(
-            r"(?i)([?&](?:code|token|access_token|refresh_token|device_code|user_code)=)[^&#\s]+",
-        ),
-        Regex::new(r"(?i)(api[_-]?key\s*[=:]\s*)[^\s,;&]+"),
-        Regex::new(r"(?i)(meshy_api_key\s*[=:]\s*)[^\s,;&]+"),
-        Regex::new(r"\bmsy_[A-Za-z0-9_-]{8,}\b"),
-        // Common hosted-provider key shapes. These are intentionally bounded
-        // to high-signal prefixes so ordinary model IDs and endpoint names do
-        // not become credentials by guesswork.
-        Regex::new(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b"),
-        Regex::new(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b"),
-        Regex::new(r"\bAIza[A-Za-z0-9_-]{20,}\b"),
-        Regex::new(r"\bxai-[A-Za-z0-9_-]{20,}\b"),
-    ];
-    for pattern in patterns.into_iter().flatten() {
+    // Common hosted-provider key shapes use high-signal prefixes so ordinary
+    // model IDs and endpoint names do not become credentials by guesswork.
+    for pattern in secret_redaction_patterns() {
         redacted = pattern
             .replace_all(&redacted, |captures: &regex::Captures<'_>| {
                 if captures.len() > 1 {

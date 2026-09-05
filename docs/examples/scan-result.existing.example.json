@@ -23,6 +23,10 @@
       "status": "accepted",
       "user_value": null,
       "origin": "deterministic",
+      "confidence": 1.0,
+      "blocking": false,
+      "proposed_action": null,
+      "decision_state": "accepted",
       "evidence": [
         {
           "detector": "descriptor_parser",
@@ -44,6 +48,10 @@
       "status": "accepted",
       "user_value": "D:\\HOI4 Mods\\cold_war_curtain.mod",
       "origin": "user_confirmed",
+      "confidence": 1.0,
+      "blocking": false,
+      "proposed_action": null,
+      "decision_state": "accepted",
       "evidence": [
         {
           "detector": "bounded_parent_launcher_discovery",
@@ -65,6 +73,10 @@
       "status": "accepted",
       "user_value": null,
       "origin": "deterministic",
+      "confidence": 0.91,
+      "blocking": false,
+      "proposed_action": "Keep cwc as the project namespace.",
+      "decision_state": "accepted",
       "evidence": [
         {
           "detector": "identifier_frequency",
@@ -86,6 +98,10 @@
       "status": "needs_review",
       "user_value": null,
       "origin": "deterministic",
+      "confidence": 1.0,
+      "blocking": false,
+      "proposed_action": "Preserve files during setup and report them for later repair.",
+      "decision_state": "pending",
       "evidence": [
         {
           "detector": "bom_scanner",
@@ -107,6 +123,10 @@
       "status": "accepted",
       "user_value": null,
       "origin": "deterministic",
+      "confidence": 1.0,
+      "blocking": false,
+      "proposed_action": null,
+      "decision_state": "accepted",
       "evidence": [
         {
           "detector": "managed_lock_summary",
@@ -173,6 +193,10 @@
         "status": "accepted",
         "user_value": null,
         "origin": "provider_suggested",
+        "confidence": 0.9,
+        "blocking": false,
+        "proposed_action": "Use this summary when adapting AGENTS.md and selecting workflow components.",
+        "decision_state": "accepted",
         "evidence": [
           {
             "detector": "codex_app_server",

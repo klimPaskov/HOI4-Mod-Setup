@@ -282,6 +282,31 @@ Use read-only default permissions. Grant write permission only to a release job 
 - provider-keyed AI credential isolation, endpoint validation, bounded response
   handling, and no-secret flatten output
 
+## Read-only scanner exclusions
+
+Classify credential-shaped paths from directory-entry metadata before the
+targeted Agentic inventory. Never open or retain their content or names. Emit
+one aggregate `scan.sensitive.excluded` warning per scan so a large irrelevant
+secret-shaped tree cannot exhaust the general conflict budget, leak filenames,
+or make otherwise complete setup evidence partial. Enumerate project and
+launcher-parent names from retained no-follow handles; Unix uses a duplicated
+descriptor-backed directory stream so path swap-back cannot redirect reads.
+The targeted Git detector uses batched literal observed paths plus fixed,
+case-insensitive index-only deletion probes and never returns credential-shaped
+names. Approved launcher bytes are captured through the retained discovered
+parent identity rather than reopened by pathname. `.git`
+remains in that separately bounded detector and is not reported as a project
+credential path. Process output carries explicit truncation flags; a capped Git
+stdout or stderr stream cannot be parsed as complete. Scan cancellation reaches
+the launcher gate, every Git batch, and the supervised child wait so the child
+process tree is terminated rather than waiting for the normal timeout. Skip all
+Git child probes when `HEAD`, its referenced ref, or other critical Git metadata
+or descendants are linked, or object alternates direct reads externally. Recheck
+that policy around every child and discard output if the route changes; the
+scanner reports the unsafe metadata without following it.
+Compile the immutable secret-redaction pattern set once and reuse it; per-
+finding regex compilation is an avoidable large-project scan bottleneck.
+
 ## Update this skill when
 
 Update this skill when credential storage, redaction, path containment, archive rules, process policy, source trust, updater trust, Git safety, GitHub Actions permissions, or security test expectations change.

@@ -261,6 +261,9 @@ export interface ScanFinding {
   evidencePath?: string;
   origin?: "deterministic" | "provider_suggested" | "user_confirmed";
   recommendation?: string;
+  blocking?: boolean;
+  proposedAction?: string;
+  decisionState?: "pending" | "accepted" | "edited" | "rejected";
 }
 
 export interface ScanProgress {

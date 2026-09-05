@@ -23,6 +23,8 @@ use crate::paths::{
     validate_project_root, validate_project_root_or_destination,
 };
 use crate::readiness::ReadinessInput;
+#[cfg(test)]
+use crate::scanner::discover_launcher_descriptor_with_check;
 use crate::scanner::{
     discover_launcher_descriptor, scan_project_with_progress as scan_project_files, ScanOptions,
     ScanProgress,
@@ -400,7 +402,7 @@ fn with_codex_session<R>(
         },
         AppServerProtocol::is_alive,
         callback,
-        clear_codex_local_state,
+        clear_codex_analysis_state,
     )
 }
 
@@ -423,10 +425,7 @@ fn with_supervised_codex_session<S, R>(
             .as_mut()
             .expect("Codex session was just initialized"),
     );
-    if matches!(
-        &result,
-        Err(AppError::Process(_) | AppError::Serialization(_))
-    ) {
+    if matches!(&result, Err(AppError::Process(_) | AppError::Protocol(_))) {
         *session = None;
         clear_local_state().map_err(AppError::Process)?;
     }
@@ -434,11 +433,16 @@ fn with_supervised_codex_session<S, R>(
 }
 
 fn clear_codex_local_state() -> Result<(), String> {
+    clear_codex_analysis_state()?;
+    clear_approved_scan_evidence()?;
+    Ok(())
+}
+
+fn clear_codex_analysis_state() -> Result<(), String> {
     codex_analyses()
         .lock()
         .map_err(|_| "Codex analysis store is unavailable".to_string())?
         .clear();
-    clear_approved_scan_evidence()?;
     Ok(())
 }
 
@@ -523,6 +527,60 @@ fn command_error(error: AppError) -> String {
     error.to_string()
 }
 
+fn provider_analysis_user_error(error: AppError) -> String {
+    match error {
+        AppError::InvalidInput(_) => {
+            "The selected provider settings or returned proposal were invalid. Review the setup assistant settings and try again."
+                .into()
+        }
+        AppError::PathSecurity(_) => {
+            "The response contained an unsafe project value. Review the proposal and try again."
+                .into()
+        }
+        AppError::Source(_) => {
+            "The verified setup source could not be loaded. Check the connection and try again."
+                .into()
+        }
+        AppError::Scan(_) => {
+            "The approved project scan could not be used for analysis. Scan the project again and retry."
+                .into()
+        }
+        AppError::Merge(_) | AppError::Transaction(_) => {
+            "The analysis could not be prepared safely. Your draft and scan remain unchanged; try again."
+                .into()
+        }
+        AppError::Credential(_) => {
+            "The selected provider credential needs attention. Reconnect the setup assistant and try again."
+                .into()
+        }
+        AppError::Process(_) => {
+            "The selected provider is temporarily unavailable. Check its connection and try again."
+                .into()
+        }
+        AppError::Protocol(_) => {
+            "The selected provider returned an invalid protocol response. Check its connection and try again."
+                .into()
+        }
+        AppError::Serialization(_) => {
+            "The response did not match the required proposal format. Try the analysis again."
+                .into()
+        }
+        AppError::UnsupportedPlatform(_) => {
+            "The selected provider is not supported on this platform. Choose another setup assistant."
+                .into()
+        }
+    }
+}
+
+fn planning_command_error(error: AppError) -> String {
+    match error {
+        provider_error @ (AppError::Credential(_)
+        | AppError::Protocol(_)
+        | AppError::Serialization(_)) => provider_analysis_user_error(provider_error),
+        other => command_error(other),
+    }
+}
+
 fn run_blocking_command<T, F>(name: &'static str, work: F) -> Result<T, String>
 where
     T: Send + 'static,
@@ -552,6 +610,9 @@ fn codex_user_error(error: AppError) -> String {
         AppError::Process(_) => {
             "Codex is temporarily unavailable. Close and reopen Codex, then try again.".into()
         }
+        AppError::Protocol(_) => {
+            "Codex is temporarily unavailable. Close and reopen Codex, then try again.".into()
+        }
         AppError::Credential(message) => {
             let category = message.to_ascii_lowercase();
             if category.contains("cancel") {
@@ -567,7 +628,8 @@ fn codex_user_error(error: AppError) -> String {
             }
         }
         AppError::Serialization(_) => {
-            "Codex returned an unexpected response. Update Codex and try again.".into()
+            "Codex returned a response that did not match the required proposal format. Try the analysis again."
+                .into()
         }
         AppError::UnsupportedPlatform(_) => {
             "Codex sign-in is not available on this computer.".into()
@@ -713,10 +775,12 @@ fn ai_provider_profiles() -> Vec<AiProviderProfile> {
 fn ai_model_list(provider: String, endpoint: String) -> Result<Vec<AiModelOption>, String> {
     run_blocking_command("provider-model-list", move || {
         if provider == "codex" {
-            return with_codex_session(AppServerProtocol::model_list).map_err(command_error);
+            return with_codex_session(AppServerProtocol::model_list)
+                .map_err(provider_analysis_user_error);
         }
-        let profile =
-            ai::profile(&provider).ok_or_else(|| "Unsupported AI provider".to_string())?;
+        let profile = ai::profile(&provider)
+            .ok_or_else(|| AppError::InvalidInput("unsupported AI provider".into()))
+            .map_err(provider_analysis_user_error)?;
         ai::list_models(
             &OsCredentialStore,
             &AiProviderConfig {
@@ -729,7 +793,7 @@ fn ai_model_list(provider: String, endpoint: String) -> Result<Vec<AiModelOption
                 credential_reference: ai_credential_reference(&provider),
             },
         )
-        .map_err(command_error)
+        .map_err(provider_analysis_user_error)
     })
 }
 
@@ -788,14 +852,30 @@ fn remove_ai_provider_credential(provider: String) -> Result<bool, String> {
 
 #[tauri::command(async)]
 fn codex_account_read() -> CodexAccountStatus {
-    match with_codex_session(|session| session.account_read(false)) {
-        Ok(status) => status,
-        Err(error) => missing_status(codex_user_error(error)),
-    }
+    run_blocking_command("codex-account-read", || {
+        Ok(
+            match with_codex_session(|session| session.account_read(false)) {
+                Ok(status) => status,
+                Err(error) => missing_status(codex_user_error(error)),
+            },
+        )
+    })
+    .unwrap_or_else(missing_status)
 }
 
 #[tauri::command(async)]
 fn codex_login_start(mode: String) -> CodexLoginStart {
+    run_blocking_command("codex-login-start", move || {
+        Ok(codex_login_start_blocking(mode))
+    })
+    .unwrap_or_else(|error| CodexLoginStart {
+        available: false,
+        error: Some(error),
+        ..Default::default()
+    })
+}
+
+fn codex_login_start_blocking(mode: String) -> CodexLoginStart {
     let device_code = match mode.as_str() {
         "browser" => false,
         "device" => true,
@@ -836,6 +916,12 @@ fn codex_login_start(mode: String) -> CodexLoginStart {
 
 #[tauri::command(async)]
 fn codex_login_wait(login_id: String) -> Result<CodexAccountStatus, String> {
+    run_blocking_command("codex-login-wait", move || {
+        codex_login_wait_blocking(login_id)
+    })
+}
+
+fn codex_login_wait_blocking(login_id: String) -> Result<CodexAccountStatus, String> {
     let cancellation = codex_login_cancellations()
         .lock()
         .map_err(|_| "Codex login cancellation store is unavailable".to_string())?
@@ -930,6 +1016,10 @@ fn open_url_in_system_browser(url: String) -> Result<(), String> {
 
 #[tauri::command(async)]
 fn codex_logout() -> Result<(), String> {
+    run_blocking_command("codex-logout", codex_logout_blocking)
+}
+
+fn codex_logout_blocking() -> Result<(), String> {
     cancel_all_codex_logins();
     // A prior App Server interruption may have cleared the supervised
     // process while Codex-owned authentication remains persisted. Start and
@@ -1080,6 +1170,16 @@ fn codex_analyze(
     model: String,
     reasoning_effort: String,
 ) -> Result<CodexAnalysisResult, String> {
+    run_blocking_command("codex-analysis", move || {
+        codex_analyze_blocking(request, model, reasoning_effort)
+    })
+}
+
+fn codex_analyze_blocking(
+    request: CodexAnalysisRequest,
+    model: String,
+    reasoning_effort: String,
+) -> Result<CodexAnalysisResult, String> {
     let mut request = request;
     if let Some(project_root) = request.project_root.as_deref() {
         request.project_root = Some(
@@ -1153,7 +1253,7 @@ fn ai_analyze_blocking(mut request: AiAnalysisRequest) -> Result<CodexAnalysisRe
         },
         &request,
     )
-    .map_err(command_error)?;
+    .map_err(provider_analysis_user_error)?;
     bind_analysis_record_to_source(&mut result.record, &source);
     let mut analyses = codex_analyses()
         .lock()
@@ -1628,10 +1728,6 @@ fn scan_project_blocking(
     *approved = ApprovedScanEvidence::default();
     drop(approved);
     drop(active_generation);
-    let root = validate_project_root(Path::new(&root)).map_err(command_error)?;
-    let launcher_descriptor =
-        approve_launcher_descriptor_for_scan(&root, launcher_descriptor_path.as_deref())
-            .map_err(command_error)?;
     let cancellation = Arc::new(AtomicBool::new(false));
     {
         let mut active = scan_cancellations()
@@ -1644,29 +1740,40 @@ fn scan_project_blocking(
             return Err("scan request ID is already active".into());
         }
     }
-    let event_request_id = request_id.clone();
-    let event_app = app.clone();
-    let result = scan_project_files(
-        &root,
-        &ScanOptions {
-            approved_external_descriptor: launcher_descriptor,
-            cancel_flag: Some(cancellation),
-            ..ScanOptions::default()
-        },
-        |progress| {
-            let _ = event_app.emit(
-                "scan-progress",
-                ScanProgressEvent {
-                    request_id: event_request_id.clone(),
-                    progress,
-                },
-            );
-        },
-    );
+    let scan_attempt = (|| {
+        let root = validate_project_root(Path::new(&root)).map_err(command_error)?;
+        let launcher_descriptor = launcher_descriptor_path
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(validate_external_destination)
+            .transpose()
+            .map_err(command_error)?;
+        let event_request_id = request_id.clone();
+        let event_app = app.clone();
+        let result = scan_project_files(
+            &root,
+            &ScanOptions {
+                approved_external_descriptor: launcher_descriptor,
+                cancel_flag: Some(cancellation.clone()),
+                ..ScanOptions::default()
+            },
+            |progress| {
+                let _ = event_app.emit(
+                    "scan-progress",
+                    ScanProgressEvent {
+                        request_id: event_request_id.clone(),
+                        progress,
+                    },
+                );
+            },
+        )
+        .map_err(command_error)?;
+        Ok::<_, String>((root, result))
+    })();
     if let Ok(mut active) = scan_cancellations().lock() {
         active.remove(&request_id);
     }
-    let result = result.map_err(command_error)?;
+    let (root, result) = scan_attempt?;
     let active_generation = scan_generation()
         .lock()
         .map_err(|_| "scan generation store is unavailable".to_string())?;
@@ -1718,9 +1825,19 @@ fn scan_project_blocking(
     Ok(result)
 }
 
+#[cfg(test)]
 fn approve_launcher_descriptor_for_scan(
     root: &Path,
     requested: Option<&str>,
+) -> Result<Option<PathBuf>, AppError> {
+    approve_launcher_descriptor_for_scan_with_check(root, requested, || false)
+}
+
+#[cfg(test)]
+fn approve_launcher_descriptor_for_scan_with_check(
+    root: &Path,
+    requested: Option<&str>,
+    mut should_stop: impl FnMut() -> bool,
 ) -> Result<Option<PathBuf>, AppError> {
     let Some(requested) = requested.filter(|value| !value.trim().is_empty()) else {
         return Ok(None);
@@ -1728,11 +1845,12 @@ fn approve_launcher_descriptor_for_scan(
     let requested = validate_external_destination(requested)?
         .canonicalize()
         .map_err(AppError::from)?;
-    let discovered = discover_launcher_descriptor(root)?.ok_or_else(|| {
-        AppError::InvalidInput(
-            "the requested launcher descriptor is not the current bounded candidate".into(),
-        )
-    })?;
+    let discovered =
+        discover_launcher_descriptor_with_check(root, &mut should_stop)?.ok_or_else(|| {
+            AppError::InvalidInput(
+                "the requested launcher descriptor is not the current bounded candidate".into(),
+            )
+        })?;
     let discovered = validate_external_destination(&discovered.to_string_lossy())?
         .canonicalize()
         .map_err(AppError::from)?;
@@ -2614,11 +2732,18 @@ fn evaluate_readiness(input: ReadinessInput) -> Result<ReadinessReport, String> 
 
 #[tauri::command(async)]
 fn preview_descriptors(state: Value) -> Result<Vec<GeneratedArtifact>, String> {
-    require_ai_session(&state).map_err(command_error)?;
-    let root = project_root_from_state(&state).map_err(command_error)?;
-    let _ = codex_analysis_from_state(&state, &root).map_err(command_error)?;
-    let identity = project_identity_from_state(&state, &root).map_err(command_error)?;
-    render_generated_artifacts(&identity).map_err(command_error)
+    run_blocking_command("descriptor-preview", move || {
+        preview_descriptors_blocking(state)
+    })
+}
+
+fn preview_descriptors_blocking(state: Value) -> Result<Vec<GeneratedArtifact>, String> {
+    require_ai_session(&state).map_err(provider_analysis_user_error)?;
+    let root = project_root_from_state(&state).map_err(provider_analysis_user_error)?;
+    let _ = codex_analysis_from_state(&state, &root).map_err(provider_analysis_user_error)?;
+    let identity =
+        project_identity_from_state(&state, &root).map_err(provider_analysis_user_error)?;
+    render_generated_artifacts(&identity).map_err(provider_analysis_user_error)
 }
 
 fn conflict_kind_label(kind: FileKind) -> &'static str {
@@ -4439,7 +4564,6 @@ fn git_setup_from_state(
 }
 
 fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), AppError> {
-    require_ai_session(state)?;
     let root = project_root_from_state(state)?;
     let identity = project_identity_from_state(state, &root)?;
     let codex_analysis = codex_analysis_from_state(state, &root)?;
@@ -5346,6 +5470,7 @@ fn build_installation_plan(state: Value) -> Result<InstallationPlan, String> {
 }
 
 fn build_installation_plan_blocking(state: Value) -> Result<InstallationPlan, String> {
+    require_ai_session(&state).map_err(provider_analysis_user_error)?;
     build_plan(&state)
         .and_then(|(plan, prepared_files)| {
             store_prepared_plan(
@@ -5355,7 +5480,7 @@ fn build_installation_plan_blocking(state: Value) -> Result<InstallationPlan, St
                 project_root_from_state(&state)?,
             )
         })
-        .map_err(command_error)
+        .map_err(planning_command_error)
 }
 
 fn read_project_lock(root: &Path) -> Result<InstallationLock, AppError> {
@@ -5724,7 +5849,7 @@ fn build_maintenance_plan_blocking(
     }
     if mode != "remove" {
         if lock.ai_provider == "codex" {
-            require_codex_chatgpt_session().map_err(command_error)?;
+            require_codex_chatgpt_session().map_err(provider_analysis_user_error)?;
         } else {
             let credential_reference = ai_credential_reference(&lock.ai_provider);
             let status = ai::account_status(
@@ -5751,7 +5876,7 @@ fn build_maintenance_plan_blocking(
         &root,
         lock.ai_endpoint.as_deref(),
     )
-    .map_err(command_error)?;
+    .map_err(planning_command_error)?;
     let codex_analysis = if mode == "remove" {
         None
     } else {
@@ -5762,7 +5887,7 @@ fn build_maintenance_plan_blocking(
                 "the installed project has no confirmed provider analysis; run Import review before maintenance"
                     .to_string()
         })?;
-        crate::codex::validate_confirmed_record(&record).map_err(command_error)?;
+        crate::codex::validate_confirmed_record(&record).map_err(planning_command_error)?;
         let record_provider = record.provider.as_deref().unwrap_or("codex");
         let profile = ai::profile(&lock.ai_provider).ok_or_else(|| {
             format!(
@@ -7372,7 +7497,7 @@ mod tests {
             |session| session.alive,
             |session| {
                 assert!(session.initialized);
-                Err::<(), _>(AppError::Serialization("malformed JSONL".into()))
+                Err::<(), _>(AppError::Protocol("malformed JSONL".into()))
             },
             || {
                 clears.set(clears.get() + 1);
@@ -7380,7 +7505,7 @@ mod tests {
             },
         );
 
-        assert!(matches!(malformed, Err(AppError::Serialization(_))));
+        assert!(matches!(malformed, Err(AppError::Protocol(_))));
         assert!(session.is_none());
         assert_eq!(starts.get(), 1);
         assert_eq!(clears.get(), 2);
@@ -7410,6 +7535,34 @@ mod tests {
     }
 
     #[test]
+    fn rejected_codex_proposal_keeps_the_initialized_session_and_approved_scan() {
+        #[derive(Debug)]
+        struct FakeSession;
+
+        let starts = Cell::new(0_u8);
+        let clears = Cell::new(0_u8);
+        let mut session = Some(FakeSession);
+        let result = with_supervised_codex_session(
+            &mut session,
+            || {
+                starts.set(starts.get() + 1);
+                Ok(FakeSession)
+            },
+            |_| true,
+            |_| Err::<(), _>(AppError::Serialization("proposal rejected".into())),
+            || {
+                clears.set(clears.get() + 1);
+                Ok(())
+            },
+        );
+
+        assert!(matches!(result, Err(AppError::Serialization(_))));
+        assert!(session.is_some());
+        assert_eq!(starts.get(), 0);
+        assert_eq!(clears.get(), 0);
+    }
+
+    #[test]
     fn every_desktop_command_uses_the_async_dispatcher() {
         let source = include_str!("commands.rs");
         let synchronous_attribute = ["#[tauri::", "command]"].concat();
@@ -7418,6 +7571,10 @@ mod tests {
             "a synchronous Tauri command can freeze the desktop event loop"
         );
         assert!(source.contains("#[tauri::command(async)]"));
+        assert!(source.contains("run_blocking_command(\"descriptor-preview\""));
+        assert!(
+            source.contains("require_ai_session(&state).map_err(provider_analysis_user_error)?")
+        );
     }
 
     #[test]
@@ -8305,6 +8462,60 @@ developer_instructions = "Work on the named files."
                 "sign in with ChatGPT through the official Codex App Server before planning".into()
             )),
             "Sign in with ChatGPT before continuing."
+        );
+        let codex_schema_error = codex_user_error(AppError::Serialization(
+            "Codex proposal must use a string value".into(),
+        ));
+        assert!(codex_schema_error.contains("required proposal format"));
+        assert!(!codex_schema_error.contains("serialization"));
+        assert!(!codex_schema_error.contains("must use a string value"));
+
+        let provider_schema_error = provider_analysis_user_error(AppError::Serialization(
+            "Codex proposal must use a string value".into(),
+        ));
+        assert!(provider_schema_error.contains("required proposal format"));
+        assert!(!provider_schema_error.contains("serialization"));
+        assert!(!provider_schema_error.contains("must use a string value"));
+
+        let sentinel = "provider-private-sentinel C:\\private\\provider.log";
+        let provider_errors = [
+            AppError::InvalidInput(sentinel.into()),
+            AppError::PathSecurity(sentinel.into()),
+            AppError::Source(sentinel.into()),
+            AppError::Scan(sentinel.into()),
+            AppError::Merge(sentinel.into()),
+            AppError::Transaction(sentinel.into()),
+            AppError::Credential(sentinel.into()),
+            AppError::Process(sentinel.into()),
+            AppError::Protocol(sentinel.into()),
+            AppError::Serialization(sentinel.into()),
+            AppError::UnsupportedPlatform(sentinel.into()),
+        ];
+        for error in provider_errors {
+            let message = provider_analysis_user_error(error);
+            assert!(!message.contains(sentinel));
+            assert!(!message.contains("provider-private-sentinel"));
+            assert!(!message.contains("private\\provider.log"));
+            assert!(message.len() <= 160);
+        }
+
+        for error in [
+            AppError::Credential(sentinel.into()),
+            AppError::Protocol(sentinel.into()),
+            AppError::Serialization(sentinel.into()),
+        ] {
+            let message = planning_command_error(error);
+            assert!(!message.contains(sentinel));
+            assert!(!message.contains("provider-private-sentinel"));
+            assert!(message.len() <= 160);
+        }
+
+        let source = include_str!("commands.rs");
+        assert!(source.contains(
+            "with_codex_session(AppServerProtocol::model_list)\n                .map_err(provider_analysis_user_error)"
+        ));
+        assert!(
+            source.contains("validate_confirmed_record(&record).map_err(planning_command_error)?")
         );
     }
 
@@ -9311,6 +9522,23 @@ developer_instructions = "Work on the named files."
             entries: HashMap::from([("finding".into(), Vec::new())]),
             evidence_sha256: None,
         };
+    }
+
+    #[test]
+    fn interrupted_codex_session_clears_proposals_but_preserves_approved_scan_evidence() {
+        let _state_guard = test_state_guard();
+        seed_codex_local_state_for_test();
+
+        clear_codex_analysis_state().unwrap();
+
+        assert!(codex_analyses().lock().unwrap().is_empty());
+        let evidence = codex_approved_evidence().lock().unwrap();
+        assert_eq!(
+            evidence.project_root,
+            Some(PathBuf::from("C:/mods/example"))
+        );
+        assert!(evidence.scan_id.is_some());
+        assert!(evidence.entries.contains_key("finding"));
     }
 
     #[test]

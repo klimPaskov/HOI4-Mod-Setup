@@ -17,6 +17,18 @@ user later uses for Agentic HOI4 Modding.
 
 The integration boundary is the official local `codex app-server` process. The desktop application launches it as a child process and communicates over its default stdio JSONL transport. On Windows, Codex children are created with `CREATE_NO_WINDOW`, so the packaged app works from a shortcut or Start menu without a visible terminal. This is the Codex interface intended for product integrations that need authentication, threads, approvals, and streamed events.
 
+Account reads, login start/wait, logout, descriptor preview capability checks,
+and semantic analysis run through the desktop blocking-work dispatcher and a
+bounded user-facing error mapper. A malformed JSONL transport response drops
+the supervised session and requires a new initialize handshake; a transport-
+valid response whose proposal is rejected keeps the initialized session and
+approved scan available for retry.
+
+Model-catalog, installation-plan authentication, and maintenance-plan
+authentication failures use the same closed renderer error map. Provider or
+App Server protocol, serialization, filesystem, and account detail is never
+forwarded as raw planning text.
+
 The core supervises the child transport before reusing a session and starts a
 fresh App Server when the prior child has exited. Logout always drops the local
 process and clears pending analysis and approved scan state even if the App
@@ -170,7 +182,12 @@ Rust core extracts their native response envelope, validates it, binds the
 provider/model/profile to the confirmation record, and never gives the adapter
 write access to the project.
 
-The response must validate against `schemas/codex-analysis.schema.json`. Reject malformed, incomplete, credential-shaped, account-shaped, or extra fields. The response must include the complete ten-key semantic proposal set. Store only:
+The response must validate against `schemas/codex-analysis.schema.json`. The
+schema binds scalar keys to string values and `descriptor_tags` and
+`folder_profile` to arrays of strings before the turn can complete. Reject
+malformed, incomplete, mistyped, credential-shaped, account-shaped, or extra
+fields. The response must include the complete ten-key semantic proposal set.
+Store only:
 
 - analysis schema version
 - analysis ID
@@ -219,7 +236,7 @@ Codex proposes identity. The renderer owns final bytes.
 | Login cancelled | Keep wizard inputs locally and stay at sign-in | Recovery remains available |
 | Login failed | Show retry and device-code options | Recovery remains available |
 | Usage limited | Preserve scan and draft, block new analysis | Recovery remains available |
-| App Server exits | Mark session interrupted and allow restart | No project mutation |
+| App Server exits | Mark session interrupted, preserve the approved scan, and allow restart | No project mutation |
 | Malformed analysis | Reject response and retry with same approved input | No project mutation |
 | User rejects proposal | Return to editable brief or review | No project mutation |
 | Provider endpoint or key missing | Preserve the draft and block new analysis | Recovery remains available |

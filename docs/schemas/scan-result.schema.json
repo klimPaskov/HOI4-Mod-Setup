@@ -189,6 +189,10 @@
         "value",
         "status",
         "origin",
+        "confidence",
+        "blocking",
+        "proposed_action",
+        "decision_state",
         "evidence"
       ],
       "properties": {
@@ -231,6 +235,28 @@
           ]
         },
         "user_value": {},
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "blocking": {
+          "type": "boolean"
+        },
+        "proposed_action": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decision_state": {
+          "enum": [
+            "pending",
+            "accepted",
+            "edited",
+            "rejected"
+          ]
+        },
         "evidence": {
           "type": "array",
           "minItems": 1,

@@ -11,6 +11,14 @@ Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The us
 
 Create, Import, Update, and Repair planning require an authenticated, selected AI capability. Codex uses the official local `codex app-server` interface and ChatGPT-managed sign-in. Known hosted providers use checked-in, officially verified model/address defaults plus a provider-keyed OS-vault credential; model and address are editable under Advanced. Local and custom routes require explicit user configuration. Do not silently switch providers or invent a provider route or OAuth flow.
 
+Dispatch account reads, login start/wait, logout, descriptor preview capability
+checks, and analysis through the desktop blocking-work boundary and bounded
+user-facing error mapping. Do not hold the UI event loop during App Server or
+hosted-provider I/O.
+Use that closed error map for model catalogs and Create/Import/Update/Repair
+capability checks as well; never send raw provider protocol or serialization
+detail to the renderer.
+
 Fetch Codex models through App Server `model/list` and provider models through
 the authenticated official Models API. Bind model plus reasoning effort to the
 analysis record, plan, and lock. The checked-in fallback defaults are
@@ -204,7 +212,10 @@ empty temporary working directory that contains no target-project path. Codex
 `turn/start` receives the checked-in `docs/schemas/codex-analysis.schema.json`
 as its `outputSchema` and uses the current App Server policy shape
 `{type: readOnly, networkAccess: false}`. Do not add legacy `readOnly.access`
-fields: current App Server schemas reject them. The core rejects extra fields, duplicate
+fields: current App Server schemas reject them. The schema itself binds the
+eight scalar proposal keys to string values and `descriptor_tags` and
+`folder_profile` to arrays of strings; keep this aligned with the defensive
+Rust validator. The core rejects extra fields, duplicate
 proposal keys, incomplete proposal sets, invalid evidence references, incorrect
 excerpt hashes, unsafe identifiers, malformed tags, unsafe folder profiles, and
 credential/account-shaped output before the result can reach planning. The
@@ -244,8 +255,10 @@ out, usage-limited, and private-looking-input states distinct; do not collapse
 usage or input rejection into a sign-in error. Raw App Server method, error
 code, parameter, account identity, credential, and protocol details never reach
 React, including when the rate-limit lookup fails. A dead or malformed App
-Server session is discarded, clears session-scoped proposals and evidence, and
-must complete a fresh initialize handshake before reuse.
+Server session is discarded, clears session-scoped proposals, and must complete
+a fresh initialize handshake before reuse. Preserve the approved scan-evidence
+binding across that restart so the user can retry without another filesystem
+scan; explicit sign-out still clears both proposals and approved evidence.
 
 Do not silently switch to another provider, an unverified endpoint, heuristic-only identity generation, or direct model writes.
 

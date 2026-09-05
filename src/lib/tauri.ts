@@ -7,6 +7,10 @@ interface RawScanFinding {
   value: unknown;
   status: string;
   origin?: "deterministic" | "provider_suggested" | "user_confirmed";
+  confidence?: number;
+  blocking?: boolean;
+  proposed_action?: string | null;
+  decision_state?: "pending" | "accepted" | "edited" | "rejected";
   recommendation?: string | null;
   evidence?: Array<{ path: string; confidence: number; note?: string }>;
 }
@@ -345,12 +349,15 @@ export async function scanProject(
         label: `${finding.origin === "provider_suggested" ? "Suggested" : finding.origin === "user_confirmed" ? "Confirmed" : "Detected"} · ${finding.key}`,
         value: typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? "",
         evidenceExcerpt: typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? "",
-        confidence: Math.max(0, ...(finding.evidence ?? []).map((evidence) => evidence.confidence)),
+        confidence: finding.confidence ?? Math.max(0, ...(finding.evidence ?? []).map((evidence) => evidence.confidence)),
         evidencePath: finding.evidence?.[0]?.path,
         status: finding.status === "blocking" ? "blocking" as const : finding.status === "needs_review" ? "needs_review" as const : "accepted" as const,
         evidence: (finding.evidence ?? []).map((evidence) => `${evidence.path}${evidence.note ? ` - ${evidence.note}` : ""}`).join("; "),
         origin: finding.origin ?? "deterministic",
         recommendation: finding.recommendation ?? undefined,
+        blocking: finding.blocking ?? finding.status === "blocking",
+        proposedAction: finding.proposed_action ?? undefined,
+        decisionState: finding.decision_state ?? "pending",
       })), ...(result.conflicts ?? []).map((conflict) => ({
         id: conflict.id,
         category: "conflict",
