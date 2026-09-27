@@ -1,4 +1,4 @@
-import type { ChatSourcesPreview, InstallationPlan, ManifestComponentPreview, ReadinessReport, WizardState } from "./types";
+import type { ChatSourcesPreview, CodexAnalysis, CodexAnalysisRecord, InstallationPlan, ManifestComponentPreview, ReadinessReport, SemanticConventions, WizardState } from "./types";
 
 export const DOCUMENTATION_SCENARIOS = [
   "welcome",
@@ -122,6 +122,54 @@ const manifest = {
   }],
 };
 
+const semanticAnalysis: CodexAnalysis = {
+  schema_version: "1.0.0",
+  analysis_id: "documentation-semantic-analysis",
+  mode: "new_project_identity",
+  input_sha256: "documentation-input",
+  project_summary: "An island-focused total conversion with naval and political systems.",
+  proposals: [
+    ["display_name", "Atlantis Rising"],
+    ["project_id", "atlantis_rising"],
+    ["script_prefix", "atr"],
+    ["primary_namespace", "atr"],
+    ["project_description", "An island-focused total conversion with naval and political systems."],
+    ["descriptor_tags", ["Alternative History", "National Focuses", "Gameplay"]],
+    ["folder_profile", ["common", "events", "gfx", "interface", "localisation/english"]],
+    ["agents_profile", "default"],
+    ["localisation_convention", "english"],
+    ["documentation_convention", "markdown"],
+  ].map(([key, value]) => ({ key: key as string, value, confidence: 0.9, reason: "Matches the approved development brief.", evidence_refs: ["brief:1"] })),
+  component_recommendations: [
+    { component_id: "core.skills", recommendation: "recommended", reason: "The brief calls for repeated HOI4 scripting and asset workflows." },
+    { component_id: "workflow.3d", recommendation: "not_recommended", reason: "The brief does not require custom models at project creation." },
+  ],
+  warnings: ["The project ID and namespace remain subject to deterministic validation."],
+};
+
+const semanticAnalysisRecord: CodexAnalysisRecord = {
+  engine: "codex_app_server",
+  auth_mode: "chatgpt",
+  provider: "codex",
+  model: "gpt-5.6-luna",
+  reasoning_effort: "xhigh",
+  optimization_profile: "Codex setup analysis",
+  analysis_id: semanticAnalysis.analysis_id,
+  schema_version: "1.0.0",
+  input_sha256: semanticAnalysis.input_sha256,
+  output_sha256: "documentation-output",
+  confirmed_fields: [],
+  confirmed_at: "pending",
+  source_revision: "documentation-preview",
+  source_manifest_sha256: "documentation-preview",
+};
+
+const semanticConventions: SemanticConventions = {
+  agents_profile: "default",
+  localisation_convention: "english",
+  documentation_convention: "markdown",
+};
+
 const operations: InstallationPlan["operations"] = [
   ["agents", "core.agents", "AGENTS.md"],
   ["skills", "core.skills", ".agents/skills/"],
@@ -239,6 +287,10 @@ export function documentationFixture(base: WizardState): WizardState {
     })),
     selectedComponents: ["core.agents", "core.skills", "core.subagents", "codex.config", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot"],
     folderProfile: ["common", "events", "gfx", "interface", "localisation/english"],
+    codexAnalysis: semanticAnalysis,
+    codexAnalysisRecord: semanticAnalysisRecord,
+    conventions: semanticConventions,
+    semanticComponentRecommendations: semanticAnalysis.component_recommendations,
     draftSaved: true,
   };
   const runpodPortrait: WizardState["portraitPipeline"] = {
@@ -258,6 +310,8 @@ export function documentationFixture(base: WizardState): WizardState {
       aiAccount: { available: true, authenticated: true, provider: "claude", model: "claude-sonnet-5", auth_mode: "api_key", usage_limited: false },
     };
   }
+  if (scenario === "description") return { ...common, screen: "description", mode: "new", codexAnalysis: undefined, codexAnalysisRecord: undefined };
+  if (scenario === "identity") return { ...common, screen: "identity", mode: "new", codexAnalysis: semanticAnalysis, codexAnalysisRecord: semanticAnalysisRecord, conventions: semanticConventions, semanticComponentRecommendations: semanticAnalysis.component_recommendations };
   if (scenario === "existing") return { ...common, screen: "identity", mode: "existing", recoveryEntry: true };
   if (scenario === "components") return { ...common, screen: "components", flattenForChat: true };
   if (scenario === "environments") return { ...common, screen: "environments", primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["cursor"] };

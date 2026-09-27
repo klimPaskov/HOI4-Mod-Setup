@@ -51,12 +51,34 @@ The repository should expose stable scripts for normal work:
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm test:e2e:install
 pnpm test:e2e
+pnpm test:mcp-live
+pnpm test:codex-live
 pnpm tauri dev
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
+
+`pnpm test:e2e:install` installs Playwright's Chromium and its platform
+dependencies. `pnpm test:e2e` runs the actual React wizard in an isolated
+headless browser against synthetic development fixtures, including keyboard
+selection, signed-out management, recovery details, runtime errors, and narrow
+viewports. For an existing local browser, set `HOI4_TEST_BROWSER_PATH` to its
+absolute executable path instead of installing Chromium. These browser tests
+do not replace native IPC, authentication, installation, or rollback tests.
+`pnpm test:mcp-live` is a Windows-only smoke for the manifest-pinned HOI4 Agent
+Tools package. It installs into a temporary prefix with npm user/global
+configuration isolated, verifies registry integrity, the complete package
+tree, the runtime entry, and the live initialize/tools-list contract. It does
+not invoke a tool or require an AI provider credential.
+`pnpm test:codex-live` is a manual Windows smoke for the signed installed
+Codex executable named by `HOI4_CODEX_EXECUTABLE`. It reads only the account
+type from the current Codex home, then uses a temporary home to start and cancel
+browser and device-code login attempts. It never opens a login URL or prints an
+email, account ID, verification code, token, or rate-limit value; completing a
+sign-in still requires a user-owned browser session and is not automated.
 
 On Windows, activate the MSVC environment before the all-feature Rust gates
 when using PowerShell:
@@ -151,3 +173,9 @@ Do not add tokens or account exports to `.env`, fixtures, snapshots, or logs. Ma
 ## Required auth fixtures
 
 Development uses a fake App Server for normal tests. Real-account tests are opt-in and must not run in CI. The fake covers browser login, device code, account updates, usage limits, schema-valid turns, malformed turns, process exit, and redacted logs.
+
+The browser harness builds development-only synthetic routes into the ignored
+`artifacts/browser-fixture` directory, then serves that fixture on loopback
+port 1421. It never reuses a running user app or enables fixtures in the normal
+production output. Build readiness is awaited before browser tests start, so
+Vite cold module compilation is not charged to the first wizard assertion.

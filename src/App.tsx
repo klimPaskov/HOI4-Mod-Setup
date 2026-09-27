@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
 import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlan, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, packageChatSources, pickChatSourcesFolder, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewChatSources, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
-import type { AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPreview, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisRequest, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
+import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPreview, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
 
 const PHASES: Array<{ id: PhaseId; label: string }> = [
@@ -110,12 +110,31 @@ function portraitComponentIdsFor(provider: PortraitProviderId): string[] {
   ];
 }
 
+const DEFAULT_SEMANTIC_CONVENTIONS: SemanticConventions = {
+  agents_profile: "default",
+  localisation_convention: "english",
+  documentation_convention: "markdown",
+};
+
+export const REQUIRED_SEMANTIC_PROPOSAL_KEYS: SemanticProposalKey[] = [
+  "display_name",
+  "project_id",
+  "script_prefix",
+  "primary_namespace",
+  "project_description",
+  "descriptor_tags",
+  "folder_profile",
+  "agents_profile",
+  "localisation_convention",
+  "documentation_convention",
+];
+
 const FALLBACK_AI_PROFILES: AiProviderProfile[] = [
   { id: "codex", display_name: "Codex", protocol: "codex_app_server", requires_credential: false, optimization_profile: "Codex setup analysis", default_model: "gpt-5.6-luna", default_reasoning_effort: "xhigh" },
   { id: "claude", display_name: "Claude", protocol: "anthropic_messages", requires_credential: true, optimization_profile: "Claude setup analysis", default_model: "claude-sonnet-5", default_endpoint: "https://api.anthropic.com/v1/messages", account_url: "https://platform.claude.com/settings/keys" },
   { id: "kimi", display_name: "Kimi", protocol: "openai_compatible", requires_credential: true, optimization_profile: "Kimi setup analysis", default_model: "kimi-k2.6", default_endpoint: "https://api.moonshot.ai/v1/chat/completions", account_url: "https://platform.kimi.ai/console/api-keys" },
   { id: "glm", display_name: "GLM", protocol: "openai_compatible", requires_credential: true, optimization_profile: "GLM setup analysis", default_model: "glm-5.2", default_endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions", account_url: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys" },
-  { id: "deepseek", display_name: "DeepSeek", protocol: "openai_compatible", requires_credential: true, optimization_profile: "DeepSeek setup analysis", default_model: "deepseek-v4-flash", default_reasoning_effort: "high", default_endpoint: "https://api.deepseek.com/chat/completions", account_url: "https://platform.deepseek.com/api_keys" },
+  { id: "deepseek", display_name: "DeepSeek", protocol: "openai_compatible", requires_credential: true, optimization_profile: "DeepSeek setup analysis", default_model: "deepseek-flash", default_reasoning_effort: "high", default_endpoint: "https://api.deepseek.com/chat/completions", account_url: "https://platform.deepseek.com/api_keys" },
   { id: "local", display_name: "Local model", protocol: "openai_compatible", requires_credential: false, optimization_profile: "Local setup analysis" },
   { id: "custom", display_name: "Other provider", protocol: "openai_compatible", requires_credential: true, optimization_profile: "Custom setup analysis" },
 ];
@@ -143,6 +162,46 @@ function mergeModelOptions(verified: AiModelOption[], live: AiModelOption[]): Ai
   return [...options.values()];
 }
 
+function proposalString(analysis: NonNullable<WizardState["codexAnalysis"]> | undefined, key: SemanticProposalKey, fallback: string): string {
+  const value = analysis?.proposals.find((proposal) => proposal.key === key)?.value;
+  return typeof value === "string" ? value : fallback;
+}
+
+function proposalStrings(analysis: NonNullable<WizardState["codexAnalysis"]> | undefined, key: SemanticProposalKey, fallback: string[]): string[] {
+  const value = analysis?.proposals.find((proposal) => proposal.key === key)?.value;
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value as string[] : fallback;
+}
+
+function conventionsFromAnalysis(analysis: NonNullable<WizardState["codexAnalysis"]> | undefined, current?: SemanticConventions, preserveKeys?: Set<SemanticProposalKey>): SemanticConventions {
+  return {
+    agents_profile: (!preserveKeys || preserveKeys.has("agents_profile")) ? current?.agents_profile ?? proposalString(analysis, "agents_profile", DEFAULT_SEMANTIC_CONVENTIONS.agents_profile) : proposalString(analysis, "agents_profile", DEFAULT_SEMANTIC_CONVENTIONS.agents_profile),
+    localisation_convention: (!preserveKeys || preserveKeys.has("localisation_convention")) ? current?.localisation_convention ?? proposalString(analysis, "localisation_convention", DEFAULT_SEMANTIC_CONVENTIONS.localisation_convention) : proposalString(analysis, "localisation_convention", DEFAULT_SEMANTIC_CONVENTIONS.localisation_convention),
+    documentation_convention: (!preserveKeys || preserveKeys.has("documentation_convention")) ? current?.documentation_convention ?? proposalString(analysis, "documentation_convention", DEFAULT_SEMANTIC_CONVENTIONS.documentation_convention) : proposalString(analysis, "documentation_convention", DEFAULT_SEMANTIC_CONVENTIONS.documentation_convention),
+  };
+}
+
+function componentRecommendationsFromAnalysis(analysis: NonNullable<WizardState["codexAnalysis"]> | undefined, current?: ComponentRecommendation[]): ComponentRecommendation[] {
+  return analysis?.component_recommendations ?? current ?? [];
+}
+
+function semanticProposalIsOverridden(state: WizardState, key: SemanticProposalKey): boolean {
+  return state.semanticProposalOverrides?.includes(key) === true;
+}
+
+function semanticProposalOverrideSet(state: WizardState, key: SemanticProposalKey): SemanticProposalKey[] {
+  return Array.from(new Set([...(state.semanticProposalOverrides ?? []), key]));
+}
+
+export function buildAnalysisConfirmationValues(state: WizardState): CodexAnalysisConfirmationValues {
+  return {
+    description: state.description,
+    folderProfile: state.folderProfile ?? [],
+    identity: state.identity,
+    conventions: conventionsFromAnalysis(state.codexAnalysis, state.conventions),
+    componentRecommendations: componentRecommendationsFromAnalysis(state.codexAnalysis, state.semanticComponentRecommendations),
+  };
+}
+
 function ChoiceIcon({ kind }: { kind: "plus" | "search" | "sparkle" | "circle" }) {
   const paths = {
     plus: <><path d="M12 5v14M5 12h14" /></>,
@@ -167,6 +226,7 @@ export const initialState: WizardState = {
   aiProvider: "codex",
   aiModel: "gpt-5.6-luna",
   aiReasoningEffort: "xhigh",
+  aiModelCatalogStatus: "idle",
   aiEndpoint: "",
   aiAccount: null,
   aiProfiles: undefined,
@@ -207,6 +267,9 @@ export const initialState: WizardState = {
   codexLoginPending: false,
   codexAnalysis: undefined,
   codexAnalysisRecord: undefined,
+  conventions: DEFAULT_SEMANTIC_CONVENTIONS,
+  semanticProposalOverrides: [],
+  semanticComponentRecommendations: undefined,
   draftSaved: true,
 };
 
@@ -556,7 +619,7 @@ export default function App() {
       setScanPartial(false);
       setScanLimitsHit([]);
       setFindings([]);
-      setState((current) => ({ ...current, scanContext: undefined, codexAnalysis: undefined, codexAnalysisRecord: undefined }));
+      setState((current) => ({ ...current, scanContext: undefined, codexAnalysis: undefined, codexAnalysisRecord: undefined, semanticComponentRecommendations: undefined }));
       if (!state.identity.projectRoot.trim()) {
         setScanError("Choose an accessible project folder before scanning.");
         return;
@@ -712,17 +775,53 @@ export default function App() {
 
   const update = (patch: Partial<WizardState>) => setState((current) => {
     const overrides = new Set(current.identityOverrides ?? []);
+    const semanticOverrides = new Set(current.semanticProposalOverrides ?? []);
     if (Object.prototype.hasOwnProperty.call(patch, "identity")) overrides.clear();
-    if (Object.prototype.hasOwnProperty.call(patch, "folderProfile")) overrides.add("folderProfile");
-    return { ...current, ...patch, identityOverrides: Array.from(overrides), draftSaved: true };
+    if (Object.prototype.hasOwnProperty.call(patch, "folderProfile")) {
+      overrides.add("folderProfile");
+      if (current.codexAnalysis) semanticOverrides.add("folder_profile");
+    }
+    const semanticEdit = Boolean(current.codexAnalysis)
+      && (Object.prototype.hasOwnProperty.call(patch, "folderProfile") || Object.prototype.hasOwnProperty.call(patch, "conventions"));
+    const analysisInputChanged = ["aiProvider", "aiModel", "aiReasoningEffort", "aiEndpoint", "sourceMode", "pinnedRef"]
+      .some((field) => Object.prototype.hasOwnProperty.call(patch, field));
+    const nextAnalysisRecord = semanticEdit
+      ? undefined
+      : Object.prototype.hasOwnProperty.call(patch, "codexAnalysisRecord")
+        ? patch.codexAnalysisRecord
+        : current.codexAnalysisRecord;
+    return {
+      ...current,
+      ...patch,
+      codexAnalysisRecord: nextAnalysisRecord,
+      semanticComponentRecommendations: analysisInputChanged
+        ? undefined
+        : Object.prototype.hasOwnProperty.call(patch, "semanticComponentRecommendations")
+          ? patch.semanticComponentRecommendations
+          : current.semanticComponentRecommendations,
+      identityOverrides: Array.from(overrides),
+      semanticProposalOverrides: Array.from(semanticOverrides),
+      draftSaved: true,
+    };
   });
   const updateIdentity = (patch: Partial<ProjectIdentity>) => setState((current) => {
     const oldProjectId = current.identity.projectId;
     const identity = { ...current.identity, ...patch };
     let gitHubRepository = current.gitHubRepository;
     const overrides = new Set(current.identityOverrides ?? []);
+    const semanticOverrides = new Set(current.semanticProposalOverrides ?? []);
+    const semanticKeyByIdentityField: Partial<Record<keyof ProjectIdentity, SemanticProposalKey>> = {
+      displayName: "display_name",
+      projectId: "project_id",
+      scriptPrefix: "script_prefix",
+      primaryNamespace: "primary_namespace",
+      descriptorTags: "descriptor_tags",
+    };
     for (const field of GENERATED_IDENTITY_FIELDS) {
       if (field !== "folderProfile" && Object.prototype.hasOwnProperty.call(patch, field)) overrides.add(field);
+    }
+    for (const [field, key] of Object.entries(semanticKeyByIdentityField) as Array<[keyof ProjectIdentity, SemanticProposalKey]>) {
+      if (current.codexAnalysis && Object.prototype.hasOwnProperty.call(patch, field)) semanticOverrides.add(key);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "displayName")) {
       const generated = deriveGeneratedIdentity(identity.displayName, current.description);
@@ -739,26 +838,41 @@ export default function App() {
       }
     }
     if (identity.projectId !== oldProjectId && (!gitHubRepository || gitHubRepository === oldProjectId)) gitHubRepository = identity.projectId;
-    return { ...current, identity, gitHubRepository, identityOverrides: Array.from(overrides), transactionError: undefined, draftSaved: true };
+    const semanticEdit = Boolean(current.codexAnalysis) && Object.keys(semanticKeyByIdentityField).some((field) => Object.prototype.hasOwnProperty.call(patch, field));
+    return {
+      ...current,
+      identity,
+      gitHubRepository,
+      codexAnalysisRecord: semanticEdit ? undefined : current.codexAnalysisRecord,
+      identityOverrides: Array.from(overrides),
+      semanticProposalOverrides: Array.from(semanticOverrides),
+      transactionError: undefined,
+      draftSaved: true,
+    };
   });
-  const updateDescription = (description: string) => setState((current) => {
+  const updateDescription = (description: string, preserveAnalysis = false) => setState((current) => {
     const overrides = new Set(current.identityOverrides ?? []);
     const oldProjectId = current.identity.projectId;
     const generated = deriveGeneratedIdentity(current.identity.displayName, description);
     const identity = { ...current.identity };
-    if (!overrides.has("projectId")) identity.projectId = generated.projectId;
-    if (!overrides.has("scriptPrefix")) identity.scriptPrefix = generated.scriptPrefix;
-    if (!overrides.has("primaryNamespace")) identity.primaryNamespace = generated.primaryNamespace;
-    if (!overrides.has("descriptorTags")) identity.descriptorTags = generated.descriptorTags;
-    const gitHubRepository = (!current.gitHubRepository || current.gitHubRepository === oldProjectId) ? generated.projectId : current.gitHubRepository;
+    const semanticOverrides = new Set(current.semanticProposalOverrides ?? []);
+    if (current.codexAnalysis && preserveAnalysis) semanticOverrides.add("project_description");
+    if (!preserveAnalysis) {
+      if (!overrides.has("projectId")) identity.projectId = generated.projectId;
+      if (!overrides.has("scriptPrefix")) identity.scriptPrefix = generated.scriptPrefix;
+      if (!overrides.has("primaryNamespace")) identity.primaryNamespace = generated.primaryNamespace;
+      if (!overrides.has("descriptorTags")) identity.descriptorTags = generated.descriptorTags;
+    }
+    const gitHubRepository = !preserveAnalysis && (!current.gitHubRepository || current.gitHubRepository === oldProjectId) ? generated.projectId : current.gitHubRepository;
     return {
       ...current,
       description,
       identity,
       gitHubRepository,
-      folderProfile: overrides.has("folderProfile") ? current.folderProfile : generated.folderProfile,
-      codexAnalysis: undefined,
+      folderProfile: preserveAnalysis || overrides.has("folderProfile") ? current.folderProfile : generated.folderProfile,
+      codexAnalysis: preserveAnalysis ? current.codexAnalysis : undefined,
       codexAnalysisRecord: undefined,
+      semanticProposalOverrides: Array.from(semanticOverrides),
       draftSaved: true,
     };
   });
@@ -874,6 +988,9 @@ export default function App() {
     const scriptPrefix = proposal("script_prefix");
     const primaryNamespace = proposal("primary_namespace");
     const descriptorTags = proposal("descriptor_tags");
+    const agentsProfile = proposal("agents_profile");
+    const localisationConvention = proposal("localisation_convention");
+    const documentationConvention = proposal("documentation_convention");
     const generated = deriveGeneratedIdentity(
       typeof displayName === "string" ? displayName : state.identity.displayName,
       typeof description === "string" ? description : state.description,
@@ -885,14 +1002,20 @@ export default function App() {
       codexAnalysisRecord: result.record,
       identity: {
         ...current.identity,
-        displayName: typeof displayName === "string" ? displayName : current.identity.displayName,
-        projectId: current.identityOverrides?.includes("projectId") ? current.identity.projectId : typeof projectId === "string" ? projectId : current.identity.projectId || generated.projectId,
-        scriptPrefix: current.identityOverrides?.includes("scriptPrefix") ? current.identity.scriptPrefix : typeof scriptPrefix === "string" && scriptPrefix.trim() ? scriptPrefix : current.identity.scriptPrefix || generated.scriptPrefix,
-        primaryNamespace: current.identityOverrides?.includes("primaryNamespace") ? current.identity.primaryNamespace : typeof primaryNamespace === "string" && primaryNamespace.trim() ? primaryNamespace : current.identity.primaryNamespace || generated.primaryNamespace,
-        descriptorTags: current.identityOverrides?.includes("descriptorTags") ? current.identity.descriptorTags : Array.isArray(descriptorTags) && descriptorTags.every((item) => typeof item === "string") && descriptorTags.length > 0 ? descriptorTags as string[] : current.identity.descriptorTags?.length ? current.identity.descriptorTags : generated.descriptorTags,
+        displayName: semanticProposalIsOverridden(current, "display_name") ? current.identity.displayName : typeof displayName === "string" ? displayName : current.identity.displayName,
+        projectId: current.identityOverrides?.includes("projectId") || semanticProposalIsOverridden(current, "project_id") ? current.identity.projectId : typeof projectId === "string" ? projectId : current.identity.projectId || generated.projectId,
+        scriptPrefix: current.identityOverrides?.includes("scriptPrefix") || semanticProposalIsOverridden(current, "script_prefix") ? current.identity.scriptPrefix : typeof scriptPrefix === "string" && scriptPrefix.trim() ? scriptPrefix : current.identity.scriptPrefix || generated.scriptPrefix,
+        primaryNamespace: current.identityOverrides?.includes("primaryNamespace") || semanticProposalIsOverridden(current, "primary_namespace") ? current.identity.primaryNamespace : typeof primaryNamespace === "string" && primaryNamespace.trim() ? primaryNamespace : current.identity.primaryNamespace || generated.primaryNamespace,
+        descriptorTags: current.identityOverrides?.includes("descriptorTags") || semanticProposalIsOverridden(current, "descriptor_tags") ? current.identity.descriptorTags : Array.isArray(descriptorTags) && descriptorTags.every((item) => typeof item === "string") && descriptorTags.length > 0 ? descriptorTags as string[] : current.identity.descriptorTags?.length ? current.identity.descriptorTags : generated.descriptorTags,
       },
-      description: typeof description === "string" ? description : current.description,
-      folderProfile: current.identityOverrides?.includes("folderProfile") ? current.folderProfile : Array.isArray(folderProfile) && folderProfile.every((item) => typeof item === "string") && folderProfile.length > 0 ? folderProfile as string[] : current.folderProfile?.length ? current.folderProfile : generated.folderProfile,
+      description: semanticProposalIsOverridden(current, "project_description") ? current.description : typeof description === "string" ? description : current.description,
+      folderProfile: current.identityOverrides?.includes("folderProfile") || semanticProposalIsOverridden(current, "folder_profile") ? current.folderProfile : Array.isArray(folderProfile) && folderProfile.every((item) => typeof item === "string") && folderProfile.length > 0 ? folderProfile as string[] : current.folderProfile?.length ? current.folderProfile : generated.folderProfile,
+      conventions: {
+        agents_profile: semanticProposalIsOverridden(current, "agents_profile") ? current.conventions?.agents_profile ?? DEFAULT_SEMANTIC_CONVENTIONS.agents_profile : typeof agentsProfile === "string" ? agentsProfile : current.conventions?.agents_profile ?? DEFAULT_SEMANTIC_CONVENTIONS.agents_profile,
+        localisation_convention: semanticProposalIsOverridden(current, "localisation_convention") ? current.conventions?.localisation_convention ?? DEFAULT_SEMANTIC_CONVENTIONS.localisation_convention : typeof localisationConvention === "string" ? localisationConvention : current.conventions?.localisation_convention ?? DEFAULT_SEMANTIC_CONVENTIONS.localisation_convention,
+        documentation_convention: semanticProposalIsOverridden(current, "documentation_convention") ? current.conventions?.documentation_convention ?? DEFAULT_SEMANTIC_CONVENTIONS.documentation_convention : typeof documentationConvention === "string" ? documentationConvention : current.conventions?.documentation_convention ?? DEFAULT_SEMANTIC_CONVENTIONS.documentation_convention,
+      },
+      semanticComponentRecommendations: result.analysis.component_recommendations,
       transactionError: undefined,
       draftSaved: true,
     }));
@@ -949,6 +1072,7 @@ export default function App() {
       maintenanceCodexAnalysisRecord: undefined,
       codexAnalysis: undefined,
       codexAnalysisRecord: undefined,
+      semanticComponentRecommendations: undefined,
       screen: "update",
       transactionError: scanWasPartial
         ? scanned.cancelled
@@ -1046,6 +1170,8 @@ export default function App() {
       aiAccount,
       codexAnalysis: result.analysis,
       codexAnalysisRecord: result.record,
+      conventions: conventionsFromAnalysis(result.analysis, state.conventions, new Set(state.semanticProposalOverrides ?? [])),
+      semanticComponentRecommendations: result.analysis.component_recommendations,
       maintenanceCodexAnalysisRecord: result.record,
       transactionError: `Review and confirm the ${providerLabel} reanalysis before creating the update plan.`,
       screen: "update",
@@ -1055,11 +1181,7 @@ export default function App() {
   const confirmAnalysis = async () => {
     if (!state.codexAnalysis || !state.codexAnalysisRecord) return;
     const confirmedFields = state.codexAnalysis.proposals.map((proposal) => proposal.key);
-    const record = await confirmCodexAnalysis(state.codexAnalysisRecord, confirmedFields, {
-      description: state.description,
-      folderProfile: state.folderProfile ?? [],
-      identity: state.identity,
-    });
+    const record = await confirmCodexAnalysis(state.codexAnalysisRecord, confirmedFields, buildAnalysisConfirmationValues(state));
     if (!record) {
       update({ transactionError: `${aiProviderLabel(state.aiProvider, state.aiProfiles)} suggestions could not be confirmed.` });
       return;
@@ -1179,7 +1301,7 @@ export default function App() {
           : []),
       ]
       : [];
-    const plan = await buildMaintenancePlan(mode, state.identity.projectRoot, state.maintenanceCodexAnalysisRecord, addOptionalComponents, state.portraitPipeline, state.primaryCodingEnvironment, state.additionalCodingEnvironments);
+    const plan = await buildMaintenancePlan(mode, state.identity.projectRoot, state.maintenanceCodexAnalysisRecord, addOptionalComponents, state.portraitPipeline, state.primaryCodingEnvironment, state.additionalCodingEnvironments, state.codexAnalysis ? buildAnalysisConfirmationValues(state) : undefined);
     if (!plan) {
       update({ transactionError: "The maintenance plan is unavailable. Nothing was changed." });
       return;
@@ -1683,6 +1805,7 @@ function preferredRecoveryChoice(transaction: NonNullable<WizardState["transacti
 }
 
 function providerReady(state: WizardState): boolean {
+  if (state.aiModelCatalogStatus === "live-missing") return false;
   if (state.aiProvider === "codex") {
     return Boolean(
       state.codexAccount?.available
@@ -1698,6 +1821,13 @@ function providerReady(state: WizardState): boolean {
     && !state.aiAccount.usage_limited
     && !state.aiAccount.error,
   );
+}
+
+function analysisConfirmed(state: WizardState): boolean {
+  if (!state.codexAnalysis || !state.codexAnalysisRecord) return false;
+  const confirmed = new Set(state.codexAnalysisRecord.confirmed_fields);
+  return REQUIRED_SEMANTIC_PROPOSAL_KEYS.every((key) => confirmed.has(key))
+    && state.codexAnalysis.proposals.every((proposal) => confirmed.has(proposal.key as SemanticProposalKey));
 }
 
 function canAdvanceFromScreen(
@@ -1727,7 +1857,7 @@ function canAdvanceFromScreen(
       }
       return planningReady
         && (state.projectPathStatus === "ready" || state.projectPathStatus === "manual")
-        && Boolean(state.codexAnalysisRecord?.confirmed_fields.length)
+        && analysisConfirmed(state)
         && [
           state.identity.displayName,
           state.identity.projectId,
@@ -1742,7 +1872,7 @@ function canAdvanceFromScreen(
       return scan.scanComplete && !scan.scanError && !scan.scanPartial;
     case "findings":
       if (!planningReady || scan.findings.length === 0) return false;
-      return !state.codexAnalysis || Boolean(state.codexAnalysisRecord?.confirmed_fields.length);
+      return !state.codexAnalysis || analysisConfirmed(state);
     case "environments": {
       const selection = normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments);
       return selection.primary === (state.primaryCodingEnvironment ?? "codex")
@@ -1780,9 +1910,9 @@ function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) 
   switch (state.screen) {
     case "welcome": return <Welcome state={state} update={update} />;
     case "description": return <Description state={state} updateDescription={updateDescription} updateIdentity={updateIdentity} />;
-    case "identity": return <Identity state={state} update={update} updateIdentity={updateIdentity} onPickProjectFolder={onPickProjectFolder} onPickLauncherFolder={onPickLauncherFolder} onConfirmAnalysis={onConfirmAnalysis} />;
+    case "identity": return <Identity state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onPickProjectFolder={onPickProjectFolder} onPickLauncherFolder={onPickLauncherFolder} onConfirmAnalysis={onConfirmAnalysis} />;
     case "scan": return <Scan state={state} complete={scanComplete} error={scanError} progress={scanProgress} partial={scanPartial} limitsHit={scanLimitsHit} canCancel={Boolean(scanRequestId)} cancellationRequested={scanCancellationRequested} onCancel={onCancelScan} />;
-    case "findings": return <Findings state={state} findings={findings} selected={selectedFinding} setSelected={setSelectedFinding} setFindings={setFindings} onConfirmAnalysis={onConfirmAnalysis} onManageExisting={() => onMaintenance("update")} onPackageChatSources={onPackageChatSources} />;
+    case "findings": return <Findings state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} findings={findings} selected={selectedFinding} setSelected={setSelectedFinding} setFindings={setFindings} onConfirmAnalysis={onConfirmAnalysis} onManageExisting={() => onMaintenance("update")} onPackageChatSources={onPackageChatSources} />;
     case "environments": return <CodingEnvironments state={state} update={update} />;
     case "components": return <Components state={state} update={update} />;
     case "workflows": return <Workflows state={state} update={update} />;
@@ -1802,47 +1932,83 @@ function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) 
 export function Welcome({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
   const [aiKeyDraft, setAiKeyDraft] = useState("");
   const [liveAiModels, setLiveAiModels] = useState<AiModelOption[]>([]);
-  const [modelListStatus, setModelListStatus] = useState<"idle" | "loading" | "live" | "fallback-empty" | "fallback-error">("idle");
+  const [modelListStatus, setModelListStatus] = useState<AiModelCatalogStatus>(state.aiModelCatalogStatus ?? "idle");
   const activeCodexLoginId = useRef<string | undefined>(undefined);
   const selectedProvider = state.aiProvider ?? "codex";
   const desktopRuntime = isTauriRuntime() || Boolean(import.meta.env.DEV && window.__HOI4_DOCUMENTATION_STATE__);
-  const profiles = state.aiProfiles?.length ? state.aiProfiles : FALLBACK_AI_PROFILES;
+  const profiles = (state.aiProfiles?.length ? state.aiProfiles : FALLBACK_AI_PROFILES).map((candidate) => candidate.id === "deepseek" ? { ...candidate, default_model: "deepseek-flash" } : candidate);
   const profile = profiles.find((candidate) => candidate.id === selectedProvider) ?? profiles[0];
   const aiModels = mergeModelOptions(verifiedModelOptions(profile), liveAiModels);
   const selectedLabel = aiProviderLabel(selectedProvider, profiles);
   const providerNeedsManualDetails = selectedProvider === "local" || selectedProvider === "custom";
   useEffect(() => {
     const canLoad = selectedProvider === "codex" || state.aiAccount?.authenticated || (selectedProvider === "local" && Boolean(state.aiEndpoint.trim()));
-    if (!desktopRuntime || !canLoad) { setLiveAiModels([]); setModelListStatus("idle"); return; }
+    if (!desktopRuntime || !canLoad) {
+      setLiveAiModels([]);
+      setModelListStatus("idle");
+      update({ aiModelCatalogStatus: "idle" });
+      return;
+    }
     let active = true;
     setModelListStatus("loading");
+    update({ aiModelCatalogStatus: "loading" });
     void readAiModels(selectedProvider, state.aiEndpoint).then((models) => {
       if (!active) return;
       setLiveAiModels(models);
-      setModelListStatus(models.length ? "live" : "fallback-empty");
       const selected = models.find((model) => model.id === state.aiModel);
+      const nextStatus: AiModelCatalogStatus = models.length === 0 ? "fallback-empty" : selected ? "live" : "live-missing";
+      setModelListStatus(nextStatus);
+      update({ aiModelCatalogStatus: nextStatus });
       if (selected && !selected.supported_reasoning_efforts.includes(state.aiReasoningEffort)) {
         update({ aiReasoningEffort: selected.default_reasoning_effort });
       }
-    }).catch(() => { if (active) { setLiveAiModels([]); setModelListStatus("fallback-error"); } });
+    }).catch(() => {
+      if (active) {
+        setLiveAiModels([]);
+        setModelListStatus("fallback-error");
+        update({ aiModelCatalogStatus: "fallback-error" });
+      }
+    });
     return () => { active = false; };
   }, [desktopRuntime, selectedProvider, state.aiEndpoint, state.aiAccount?.authenticated]);
-  const selectedModel = aiModels.find((model) => model.id === state.aiModel);
+  const selectedModel = liveAiModels.length
+    ? liveAiModels.find((model) => model.id === state.aiModel)
+    : aiModels.find((model) => model.id === state.aiModel);
   const reasoningEfforts = selectedModel?.supported_reasoning_efforts
-    ?? (selectedProvider === "codex" || selectedProvider === "deepseek" || selectedProvider === "claude"
+    ?? (modelListStatus === "live-missing"
+      ? [state.aiReasoningEffort]
+      : selectedProvider === "codex" || selectedProvider === "deepseek" || selectedProvider === "claude"
       ? (["low", "medium", "high", "xhigh", "max"] as const)
       : (["high"] as const));
   const effortLabel = (effort: string) => ({ low: "Light", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" }[effort] ?? effort);
+  const selectModel = (modelId: string) => {
+    const model = liveAiModels.find((candidate) => candidate.id === modelId) ?? aiModels.find((candidate) => candidate.id === modelId);
+    const nextCatalogStatus: AiModelCatalogStatus = liveAiModels.length > 0
+      ? liveAiModels.some((candidate) => candidate.id === modelId) ? "live" : "live-missing"
+      : modelListStatus;
+    update({
+      aiModel: modelId,
+      aiReasoningEffort: model?.default_reasoning_effort ?? state.aiReasoningEffort,
+      aiModelCatalogStatus: nextCatalogStatus,
+      aiAccount: null,
+      codexAnalysis: undefined,
+      codexAnalysisRecord: undefined,
+      semanticComponentRecommendations: undefined,
+    });
+    setModelListStatus(nextCatalogStatus);
+  };
   const selectProvider = (provider: AiProviderId) => {
     const selectedProfile = profiles.find((candidate) => candidate.id === provider);
     update({
       aiProvider: provider,
       aiModel: selectedProfile?.default_model ?? "",
       aiReasoningEffort: selectedProfile?.default_reasoning_effort ?? (provider === "codex" ? "xhigh" : "high"),
+      aiModelCatalogStatus: "idle",
       aiEndpoint: selectedProfile?.default_endpoint ?? "",
       aiAccount: null,
       codexAnalysis: undefined,
       codexAnalysisRecord: undefined,
+      semanticComponentRecommendations: undefined,
       meshSelected: state.meshSelected,
       transactionError: undefined,
     });
@@ -1907,6 +2073,7 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
       codexAccount: next,
       codexAnalysis: undefined,
       codexAnalysisRecord: undefined,
+      semanticComponentRecommendations: undefined,
       maintenanceCodexAnalysisRecord: undefined,
       transactionError: result.error ?? undefined,
     });
@@ -1968,7 +2135,7 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
     <button type="button" className={`choice-card ${state.mode === "existing" ? "selected" : ""}`} aria-pressed={state.mode === "existing"} onClick={() => chooseMode("existing")}>
       <ChoiceIcon kind="search" /><span className="choice-radio" aria-hidden="true" /><h2>Import existing mod</h2><p>Scan the project without changing it.</p>
     </button>
-  </div><section><div className="section-label">Setup assistant</div><div className="panel recent-list provider-panel"><label className="field"><span className="field-label">AI provider</span><select className="text-input" value={state.aiProvider} onChange={(event) => selectProvider(event.target.value as AiProviderId)}>{profiles.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>)}</select></label><p className="muted provider-help">Used only to analyze and prepare the mod. It does not choose the AI you use for later development.</p><div className="provider-manual-details"><label className="field"><span className="field-label">Model</span>{providerNeedsManualDetails ? <><input aria-label="Model" className="text-input mono" list="provider-model-options" value={state.aiModel} onChange={(event) => { const model = aiModels.find((candidate) => candidate.id === event.target.value); update({ aiModel: event.target.value, aiReasoningEffort: model?.default_reasoning_effort ?? state.aiReasoningEffort, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined }); }} placeholder={modelListStatus === "loading" ? "Loading models…" : "Model name"} /><datalist id="provider-model-options">{aiModels.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}</datalist></> : <select className="text-input" value={state.aiModel} onChange={(event) => { const model = aiModels.find((candidate) => candidate.id === event.target.value); update({ aiModel: event.target.value, aiReasoningEffort: model?.default_reasoning_effort ?? state.aiReasoningEffort, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined }); }}>{aiModels.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}</select>}</label><label className="field"><span className="field-label">Reasoning effort</span><select className="text-input" value={state.aiReasoningEffort} onChange={(event) => update({ aiReasoningEffort: event.target.value as WizardState["aiReasoningEffort"], aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })}>{reasoningEfforts.map((effort) => <option key={effort} value={effort}>{effortLabel(effort)}</option>)}</select></label></div>{modelListStatus === "fallback-empty" && <p className="muted provider-help" role="status">{providerNeedsManualDetails ? "No live model suggestions were returned. Enter the model name used by this provider." : "No live models were returned. The verified built-in model remains available."}</p>}{modelListStatus === "fallback-error" && <p className="muted provider-help" role="status">{providerNeedsManualDetails ? "Live model suggestions could not be refreshed. Enter the model name used by this provider." : "Using the verified built-in model while live choices refresh."}</p>}{state.aiProvider !== "codex" && <>
+  </div><section><div className="section-label">Setup assistant</div><div className="panel recent-list provider-panel"><label className="field"><span className="field-label">AI provider</span><select className="text-input" value={state.aiProvider} onChange={(event) => selectProvider(event.target.value as AiProviderId)}>{profiles.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>)}</select></label><p className="muted provider-help">Used only to analyze and prepare the mod. It does not choose the AI you use for later development.</p><div className="provider-manual-details"><label className="field"><span className="field-label">Model</span>{providerNeedsManualDetails ? <><input aria-label="Model" className="text-input mono" list="provider-model-options" value={state.aiModel} onChange={(event) => selectModel(event.target.value)} placeholder={modelListStatus === "loading" ? "Loading models…" : "Model name"} /><datalist id="provider-model-options">{aiModels.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}</datalist></> : <select className="text-input" value={state.aiModel} onChange={(event) => selectModel(event.target.value)}>{aiModels.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}</select>}</label><label className="field"><span className="field-label">Reasoning effort</span><select className="text-input" value={state.aiReasoningEffort} onChange={(event) => update({ aiReasoningEffort: event.target.value as WizardState["aiReasoningEffort"], aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })}>{reasoningEfforts.map((effort) => <option key={effort} value={effort}>{effortLabel(effort)}</option>)}</select></label></div>{modelListStatus === "fallback-empty" && <p className="muted provider-help" role="status">{providerNeedsManualDetails ? "No live model suggestions were returned. Enter the model name used by this provider." : "No live models were returned. The verified built-in model remains available."}</p>}{modelListStatus === "fallback-error" && <p className="muted provider-help" role="status">{providerNeedsManualDetails ? "Live model suggestions could not be refreshed. Enter the model name used by this provider." : "Using the verified built-in model while live choices refresh."}</p>}{modelListStatus === "live-missing" && <p className="callout review" role="alert">The selected model is not in the live catalog. Choose a listed model before continuing.</p>}{state.aiProvider !== "codex" && <>
     {profile?.account_url && <div className="provider-connect-intro"><span>Use an API key from your {selectedLabel} account.</span>{desktopRuntime ? <button type="button" className="text-button" onClick={() => void openProviderAccount()}>Get {selectedLabel} API key</button> : <a href={profile.account_url} target="_blank" rel="noreferrer">Get {selectedLabel} API key</a>}</div>}
     {profile?.requires_credential && <label className="field"><span className="field-label">{selectedLabel} API key</span><input className="text-input" type="password" value={aiKeyDraft} onChange={(event) => setAiKeyDraft(event.target.value)} autoComplete="off" /></label>}
     {providerNeedsManualDetails ? <div className="provider-manual-details"><Field label={state.aiProvider === "local" ? "Local model address" : "Provider address"} value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder={state.aiProvider === "local" ? "http://127.0.0.1:…" : "https://…"} mono /></div> : <details><summary>Advanced</summary><div className="provider-advanced"><Field label="Provider address" value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder="Filled automatically" mono /></div></details>}
@@ -1984,8 +2151,22 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
   <section><div className="section-label">Already have a project?</div><div className="panel recent-list"><p className="muted">Inspect its files, package ChatGPT sources, or manage setup if this app has installed it.</p><button type="button" className="text-button" onClick={() => update({ screen: "identity", mode: "existing", recoveryEntry: false, identity: { ...DEFAULT_IDENTITY }, transaction: undefined, transactionError: undefined })}>Manage an existing project</button></div></section></div>;
 }
 
+function SemanticInputManifest({ state, analysis }: { state: WizardState; analysis?: WizardState["codexAnalysis"] }) {
+  const source = state.sourceMode === "latest" ? "Latest resolved source" : `${state.sourceMode === "pinned_commit" ? "Pinned commit" : "Pinned release"}: ${state.pinnedRef || "Not selected"}`;
+  return <details className="analysis-input-manifest">
+    <summary>{analysis ? "Approved semantic input" : "Analysis input preview"}</summary>
+    <div className="manifest-details">
+      <div><strong>Mode</strong><span>{analysis?.mode === "existing_project_semantics" ? "Existing project semantics" : "New project identity"}</span></div>
+      <div><strong>Brief</strong><span>{state.description || "No description entered"}</span></div>
+      <div><strong>Source</strong><span>{source}</span></div>
+      <div><strong>Constraints</strong><span>Project ID must match <code>{"^[a-z][a-z0-9_]{1,63}$"}</code>; deterministic validation remains required.</span></div>
+      <div><strong>Evidence</strong><span>{analysis?.mode === "existing_project_semantics" ? "Approved scan findings only" : "No project files supplied for a new project"}</span></div>
+    </div>
+  </details>;
+}
+
 function Description({ state, updateDescription, updateIdentity }: { state: WizardState; updateDescription: (description: string) => void; updateIdentity: (patch: Partial<ProjectIdentity>) => void }) {
-  return <div className="stack narrow"><section className="panel form-panel"><Field label="Mod name" value={state.identity.displayName} onChange={(value) => updateIdentity({ displayName: value })} /><label className="field"><span className="field-label">Description</span><textarea className="brief-input" aria-label="Mod description" value={state.description} onChange={(event) => updateDescription(event.target.value)} /></label><p className="muted">The project ID, script prefix, namespace, tags, and initial folders are filled from these two fields. You can edit any generated value on the next screen.</p></section><details><summary>{aiProviderLabel(state.aiProvider, state.aiProfiles)} input preview</summary><p className="muted">Your brief and setup preferences are used to prepare editable project details. No files are changed.</p></details><div className="chips"><span>Natural-language brief</span><span>Generated identity</span><span>Editable structure</span></div></div>;
+  return <div className="stack narrow"><section className="panel form-panel"><Field label="Mod name" value={state.identity.displayName} onChange={(value) => updateIdentity({ displayName: value })} /><label className="field"><span className="field-label">Description</span><textarea className="brief-input" aria-label="Mod description" value={state.description} onChange={(event) => updateDescription(event.target.value)} /></label><p className="muted">The project ID, script prefix, namespace, tags, and initial folders are filled from these two fields. You can edit any generated value on the next screen.</p></section><SemanticInputManifest state={state} analysis={state.codexAnalysis} /><div className="chips"><span>Natural-language brief</span><span>Generated identity</span><span>Editable structure</span></div></div>;
 }
 
 const PROPOSAL_LABELS: Record<string, string> = {
@@ -2007,12 +2188,89 @@ function formatProposalValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function CodexReview({ state, onConfirmAnalysis }: { state: WizardState; onConfirmAnalysis: () => Promise<void> }) {
+function proposalValueForState(state: WizardState, proposal: { key: string; value: unknown }): string | string[] {
+  switch (proposal.key as SemanticProposalKey) {
+    case "display_name": return state.identity?.displayName ?? formatProposalValue(proposal.value);
+    case "project_id": return state.identity?.projectId ?? formatProposalValue(proposal.value);
+    case "script_prefix": return state.identity?.scriptPrefix ?? formatProposalValue(proposal.value);
+    case "primary_namespace": return state.identity?.primaryNamespace ?? formatProposalValue(proposal.value);
+    case "project_description": return state.description ?? formatProposalValue(proposal.value);
+    case "descriptor_tags": return state.identity?.descriptorTags ?? proposalStrings(state.codexAnalysis, "descriptor_tags", []);
+    case "folder_profile": return state.folderProfile ?? proposalStrings(state.codexAnalysis, "folder_profile", []);
+    case "agents_profile": return state.conventions?.agents_profile ?? proposalString(state.codexAnalysis, "agents_profile", DEFAULT_SEMANTIC_CONVENTIONS.agents_profile);
+    case "localisation_convention": return state.conventions?.localisation_convention ?? proposalString(state.codexAnalysis, "localisation_convention", DEFAULT_SEMANTIC_CONVENTIONS.localisation_convention);
+    case "documentation_convention": return state.conventions?.documentation_convention ?? proposalString(state.codexAnalysis, "documentation_convention", DEFAULT_SEMANTIC_CONVENTIONS.documentation_convention);
+    default: return formatProposalValue(proposal.value);
+  }
+}
+
+interface CodexReviewProps {
+  state: WizardState;
+  update?: (patch: Partial<WizardState>) => void;
+  updateIdentity?: (patch: Partial<ProjectIdentity>) => void;
+  updateDescription?: (description: string, preserveAnalysis?: boolean) => void;
+  onConfirmAnalysis: () => Promise<void>;
+}
+
+function CodexReview({ state, update, updateIdentity, updateDescription, onConfirmAnalysis }: CodexReviewProps) {
   const analysis = state.codexAnalysis;
+  const [draftValues, setDraftValues] = useState<Record<string, string | string[]>>({});
+  const [confirmPending, setConfirmPending] = useState(false);
   if (!analysis) return null;
-  const confirmed = (state.codexAnalysisRecord?.confirmed_fields.length ?? 0) > 0;
+  const confirmedFields = new Set(state.codexAnalysisRecord?.confirmed_fields ?? []);
+  const confirmed = analysisConfirmed(state);
   const providerLabel = aiProviderLabel(state.aiProvider, state.aiProfiles);
-  return <section className="panel proposal-review" aria-label={`${providerLabel} proposal review`}><div className="list-row"><div><strong>{confirmed ? `${providerLabel} suggestions confirmed` : `Suggested by ${providerLabel}`}</strong><span>{analysis.project_summary}</span></div><Status label={confirmed ? "Confirmed" : "Review required"} tone={confirmed ? "pass" : "review"} /></div><details open={!confirmed}><summary>{analysis.proposals.length} suggested values</summary><div className="manifest-details proposal-list">{analysis.proposals.map((proposal) => <div className="proposal-row" key={proposal.key}><div className="proposal-heading"><strong>{PROPOSAL_LABELS[proposal.key] ?? proposal.key.replaceAll("_", " ")}</strong><span>{Math.round(proposal.confidence * 100)}% confidence</span></div><span className="proposal-value">{formatProposalValue(proposal.value)}</span><small>{proposal.reason}</small></div>)}</div></details>{analysis.warnings.length > 0 && <details className="analysis-notes"><summary>Before you continue</summary><ul>{analysis.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details>}{!confirmed && <div className="proposal-actions"><button type="button" className="button primary" onClick={() => void onConfirmAnalysis()}>Confirm {providerLabel} suggestions</button></div>}</section>;
+  const setProposalValue = (proposal: { key: string; value: unknown }, value: string | string[]) => {
+    const key = proposal.key as SemanticProposalKey;
+    setDraftValues((current) => ({ ...current, [key]: value }));
+    const markEdited = () => update?.({ semanticProposalOverrides: semanticProposalOverrideSet(state, key), codexAnalysisRecord: undefined, transactionError: undefined });
+    switch (key) {
+      case "display_name": updateIdentity?.({ displayName: String(value) }); break;
+      case "project_id": updateIdentity?.({ projectId: String(value) }); break;
+      case "script_prefix": updateIdentity?.({ scriptPrefix: String(value) }); break;
+      case "primary_namespace": updateIdentity?.({ primaryNamespace: String(value) }); break;
+      case "project_description": updateDescription?.(String(value), true); break;
+      case "descriptor_tags": updateIdentity?.({ descriptorTags: Array.isArray(value) ? value : String(value).split(",").map((item) => item.trim()).filter(Boolean) }); break;
+      case "folder_profile": update?.({ folderProfile: Array.isArray(value) ? value : String(value).split(",").map((item) => item.trim()).filter(Boolean) }); break;
+      case "agents_profile":
+      case "localisation_convention":
+      case "documentation_convention": {
+        const conventions = { ...conventionsFromAnalysis(state.codexAnalysis, state.conventions), [key]: String(value) } as SemanticConventions;
+        update?.({ conventions });
+        break;
+      }
+      default: break;
+    }
+    markEdited();
+  };
+  const confirm = async () => {
+    if (confirmPending || confirmed) return;
+    setConfirmPending(true);
+    try {
+      await onConfirmAnalysis();
+    } finally {
+      setConfirmPending(false);
+    }
+  };
+  return <section className="panel proposal-review" aria-label={`${providerLabel} proposal review`}>
+    <div className="list-row"><div><strong>{confirmed ? `${providerLabel} suggestions confirmed` : `Suggested by ${providerLabel}`}</strong><span>{analysis.project_summary}</span></div><Status label={confirmed ? "Confirmed" : "Review required"} tone={confirmed ? "pass" : "review"} /></div>
+    {analysis.mode === "new_project_identity" && <SemanticInputManifest state={state} analysis={analysis} />}
+    <details open={!confirmed}><summary>{analysis.proposals.length} suggested values</summary><div className="manifest-details proposal-list">{analysis.proposals.map((proposal) => {
+      const label = PROPOSAL_LABELS[proposal.key] ?? proposal.key.replaceAll("_", " ");
+      const value = draftValues[proposal.key] ?? proposalValueForState(state, proposal);
+      const reasonId = `proposal-${proposal.key}-reason`;
+      const inputId = `proposal-${proposal.key}`;
+      const inputValue = Array.isArray(value) ? value.join(", ") : value;
+      return <div className="proposal-row" key={proposal.key}>
+        <div className="proposal-heading"><label className="proposal-label" htmlFor={inputId}>{label}</label><span className="proposal-state">{confirmedFields.has(proposal.key) ? "Confirmed" : "Suggested"}</span><span>{Math.round(proposal.confidence * 100)}% confidence</span></div>
+        {proposal.key === "project_description" ? <textarea id={inputId} className="text-input proposal-editor" value={inputValue} aria-describedby={reasonId} onChange={(event) => setProposalValue(proposal, event.target.value)} /> : <input id={inputId} className="text-input proposal-editor" value={inputValue} aria-describedby={reasonId} onChange={(event) => setProposalValue(proposal, event.target.value)} />}
+        <output className="visually-hidden" aria-label={`Current ${label}`}>{inputValue}</output>
+        <details className="proposal-evidence"><summary>Why this was suggested</summary><div id={reasonId}><p>{proposal.reason}</p>{proposal.evidence_refs.length > 0 && <p>Evidence references: {proposal.evidence_refs.join(", ")}</p>}</div></details>
+      </div>;
+    })}</div></details>
+    {analysis.warnings.length > 0 && <details className="analysis-notes"><summary>Before you continue</summary><ul>{analysis.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details>}
+    {!confirmed && <div className="proposal-actions"><button type="button" className="button primary" onClick={() => void confirm()} disabled={confirmPending} aria-busy={confirmPending || undefined}>{confirmPending ? "Confirming suggestions…" : `Confirm ${providerLabel} suggestions`}</button></div>}
+  </section>;
 }
 
 function RecoveryProjectPicker({ state, updateIdentity, onPickProjectFolder }: { state: WizardState; updateIdentity: (patch: Partial<ProjectIdentity>) => void; onPickProjectFolder: () => Promise<FolderSelection | null> }) {
@@ -2057,7 +2315,7 @@ function ExistingProjectPicker({ state, updateIdentity, onPickProjectFolder }: {
   return <div className="stack narrow"><section className="panel form-panel"><p className="muted">Choose the mod project. Its descriptors, agentic setup, and existing managed state will be detected during the read-only scan.</p><Field label="Project folder" value={state.identity.projectRoot} placeholder="Choose an existing mod project" onChange={(value) => { setPendingSelection(undefined); updateIdentity({ projectRoot: value, launcherDescriptorPath: undefined }); }} action="Browse" onAction={() => void choose()} />{pendingSelection?.path && <button type="button" className="button secondary" onClick={() => { updateIdentity({ projectRoot: pendingSelection.path ?? "", launcherDescriptorPath: undefined }); setPendingSelection(undefined); setMessage("The scan will continue without an external launcher file."); }}>Scan without launcher file</button>}{state.identity.launcherDescriptorPath && <div className="path-preview" role="status"><p className="muted"><strong>Launcher candidate:</strong> <code>{state.identity.launcherDescriptorPath}</code></p><p className="muted">Its declared path matches the selected project. Continue to use it, or exclude it from the scan.</p><button type="button" className="button secondary" onClick={() => { updateIdentity({ launcherDescriptorPath: undefined }); setMessage("The scan will continue without an external launcher file."); }}>Scan without launcher file</button></div>}{message && <p className="muted" role="status">{message}</p>}</section></div>;
 }
 
-export function Identity({ state, update, updateIdentity, onPickProjectFolder, onPickLauncherFolder, onConfirmAnalysis }: { state: WizardState; update: (patch: Partial<WizardState>) => void; updateIdentity: (patch: Partial<ProjectIdentity>) => void; onPickProjectFolder: () => Promise<FolderSelection | null>; onPickLauncherFolder: () => Promise<FolderSelection | null>; onConfirmAnalysis: () => Promise<void> }) {
+export function Identity({ state, update, updateIdentity, updateDescription, onPickProjectFolder, onPickLauncherFolder, onConfirmAnalysis }: { state: WizardState; update: (patch: Partial<WizardState>) => void; updateIdentity: (patch: Partial<ProjectIdentity>) => void; updateDescription?: (description: string, preserveAnalysis?: boolean) => void; onPickProjectFolder: () => Promise<FolderSelection | null>; onPickLauncherFolder: () => Promise<FolderSelection | null>; onConfirmAnalysis: () => Promise<void> }) {
   const [selectedPreview, setSelectedPreview] = useState<GeneratedArtifactPreview>();
   const [previewMessage, setPreviewMessage] = useState<string>();
   const [previewPending, setPreviewPending] = useState(false);
@@ -2131,7 +2389,7 @@ export function Identity({ state, update, updateIdentity, onPickProjectFolder, o
   if (state.mode === "existing") {
     return <ExistingProjectPicker state={state} updateIdentity={updateIdentity} onPickProjectFolder={onPickProjectFolder} />;
   }
-  return <div className="stack">{state.codexAnalysis && <CodexReview state={state} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel form-panel"><p className="muted">Generated from the mod name and description. Edit any value when you want a different convention.</p><div className="form-grid">
+  return <div className="stack">{state.codexAnalysis && <CodexReview state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel form-panel"><p className="muted">Generated from the mod name and description. Edit any value when you want a different convention.</p><div className="form-grid">
     <Field label="Mod name" value={state.identity.displayName} onChange={(value) => updateIdentity({ displayName: value })} />
     <Field label="Project ID" value={state.identity.projectId} onChange={(value) => updateIdentity({ projectId: value })} mono />
     <Field label="Script prefix" value={state.identity.scriptPrefix ?? ""} onChange={(value) => updateIdentity({ scriptPrefix: value })} mono />
@@ -2203,10 +2461,10 @@ export function Scan({ state, complete, error, progress, partial, limitsHit, can
   );
 }
 
-export function Findings({ state, findings, selected, setSelected, setFindings, onConfirmAnalysis, onManageExisting, onPackageChatSources }: { state: WizardState; findings: ScanFinding[]; selected: string; setSelected: (id: string) => void; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onConfirmAnalysis: () => Promise<void>; onManageExisting: () => void; onPackageChatSources: () => Promise<void> }) {
+export function Findings({ state, update, updateIdentity, updateDescription, findings, selected, setSelected, setFindings, onConfirmAnalysis, onManageExisting, onPackageChatSources }: { state: WizardState; update?: (patch: Partial<WizardState>) => void; updateIdentity?: (patch: Partial<ProjectIdentity>) => void; updateDescription?: (description: string, preserveAnalysis?: boolean) => void; findings: ScanFinding[]; selected: string; setSelected: (id: string) => void; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onConfirmAnalysis: () => Promise<void>; onManageExisting: () => void; onPackageChatSources: () => Promise<void> }) {
   const active = findings.find((finding) => finding.id === selected) ?? findings[0];
   const managed = managedInstallationDetails(findings);
-  return <div className="stack"><details><summary>{aiProviderLabel(state.aiProvider, state.aiProfiles)} input preview</summary><div className="manifest-details">{findings.filter((finding) => finding.status !== "rejected").map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small></div>)}</div></details>{managed.present && managed.valid && <section className="callout info existing-setup-callout"><div><strong>Existing setup found</strong><p>This project already has a managed setup. You can repair it now or add the 3D workflow later without starting over.</p></div><button type="button" className="button secondary" onClick={onManageExisting}>Repair or add workflows</button></section>}{managed.chatSourcesAvailable && <section className="callout info existing-setup-callout"><div><strong>ChatGPT project sources found</strong><p>Package the detected instructions, skills, subagents, and optional root Markdown outside the mod project.</p></div><button type="button" className="button secondary" onClick={() => void onPackageChatSources()}>Package ChatGPT project sources</button></section>}{state.codexAnalysis && <CodexReview state={state} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel"><PanelTitle title="Project facts" />{findings.length ? <div>{findings.map((finding) => <button type="button" key={finding.id} className={`finding-row ${finding.status === "needs_review" ? "review" : ""}`} aria-pressed={finding.id === active?.id} onClick={() => setSelected(finding.id)}><span className={`state-icon ${finding.status === "needs_review" ? "review" : "pass"}`}>{finding.status === "needs_review" ? "!" : "✓"}</span><span><strong>{finding.label}</strong><small>{finding.value}</small></span><span className="text-button">{finding.status === "needs_review" ? "Review" : "Edit"}</span></button>)}</div> : <p className="muted">No scan findings are available in this runtime. The desktop scanner must return evidence before values can be accepted.</p>}</section><section className="panel selected-finding"><PanelTitle title="Selected finding" />{active ? <div className="selected-body"><label className="field-label" htmlFor="finding-value">Editable project value: {active.label}</label><input id="finding-value" className="text-input focused" value={active.value} onChange={(event) => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, value: event.target.value, status: "edited" } : finding))} /><span className="confidence">{Math.round(active.confidence * 100)}% confidence</span><button type="button" className="text-button" aria-pressed={active.status !== "rejected"} onClick={() => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, status: finding.status === "rejected" ? "accepted" : "rejected" } : finding))}>{active.status === "rejected" ? `Include in ${aiProviderLabel(state.aiProvider, state.aiProfiles)} input` : `Exclude from ${aiProviderLabel(state.aiProvider, state.aiProfiles)} input`}</button><div className="evidence-block"><span>Evidence</span><p>{active.evidence}</p></div><details><summary>Show matching files</summary><p className="muted">Full evidence and hashes stay behind progressive disclosure.</p></details></div> : <p className="muted">Select a finding after the bounded scan returns.</p>}</section></div></div>;
+  return <div className="stack"><details><summary>{aiProviderLabel(state.aiProvider, state.aiProfiles)} input preview</summary><div className="manifest-details">{findings.filter((finding) => finding.status !== "rejected").map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small></div>)}</div></details>{managed.present && managed.valid && <section className="callout info existing-setup-callout"><div><strong>Existing setup found</strong><p>This project already has a managed setup. You can repair it now or add the 3D workflow later without starting over.</p></div><button type="button" className="button secondary" onClick={onManageExisting}>Repair or add workflows</button></section>}{managed.chatSourcesAvailable && <section className="callout info existing-setup-callout"><div><strong>ChatGPT project sources found</strong><p>Package the detected instructions, skills, subagents, and optional root Markdown outside the mod project.</p></div><button type="button" className="button secondary" onClick={() => void onPackageChatSources()}>Package ChatGPT project sources</button></section>}{state.codexAnalysis && <CodexReview state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel"><PanelTitle title="Project facts" />{findings.length ? <div>{findings.map((finding) => <button type="button" key={finding.id} className={`finding-row ${finding.status === "needs_review" ? "review" : ""}`} aria-pressed={finding.id === active?.id} onClick={() => setSelected(finding.id)}><span className={`state-icon ${finding.status === "needs_review" ? "review" : "pass"}`}>{finding.status === "needs_review" ? "!" : "✓"}</span><span><strong>{finding.label}</strong><small>{finding.value}</small></span><span className="text-button">{finding.status === "needs_review" ? "Review" : "Edit"}</span></button>)}</div> : <p className="muted">No scan findings are available in this runtime. The desktop scanner must return evidence before values can be accepted.</p>}</section><section className="panel selected-finding"><PanelTitle title="Selected finding" />{active ? <div className="selected-body"><label className="field-label" htmlFor="finding-value">Editable project value: {active.label}</label><input id="finding-value" className="text-input focused" value={active.value} onChange={(event) => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, value: event.target.value, status: "edited" } : finding))} /><span className="confidence">{Math.round(active.confidence * 100)}% confidence</span><button type="button" className="text-button" aria-pressed={active.status !== "rejected"} onClick={() => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, status: finding.status === "rejected" ? "accepted" : "rejected" } : finding))}>{active.status === "rejected" ? `Include in ${aiProviderLabel(state.aiProvider, state.aiProfiles)} input` : `Exclude from ${aiProviderLabel(state.aiProvider, state.aiProfiles) } input`}</button><div className="evidence-block"><span>Evidence</span><p>{active.evidence}</p></div><details><summary>Show matching files</summary><p className="muted">Full evidence and hashes stay behind progressive disclosure.</p></details></div> : <p className="muted">Select a finding after the bounded scan returns.</p>}</section></div></div>;
 }
 
 function formatManifestSize(component: ManifestComponentPreview): string {
@@ -2254,6 +2512,10 @@ function providerSupportsComponent(component: ManifestComponentPreview, componen
   void components;
   void provider;
   return true;
+}
+
+function componentRecommendationLabel(value: ComponentRecommendation["recommendation"]): string {
+  return value === "required" ? "Required" : value === "recommended" ? "Recommended" : "Not recommended";
 }
 
 function meshWorkflowAvailable(state: WizardState): boolean {
@@ -2431,7 +2693,8 @@ export function Components({ state, update }: { state: WizardState; update: (pat
     setManifestRetrying(true);
     setManifestRequest((request) => request + 1);
   };
-  return <div className="stack narrow"><section className="panel">{manifest ? visibleRows.map((component) => <button type="button" key={component.id} className="component-row" onClick={() => toggle(component.id)} aria-pressed={component.selected} aria-disabled={component.required || component.state === "blocked" || undefined} disabled={component.required || component.state === "blocked"}><span className={`checkbox ${component.selected ? "checked" : ""}`}>{component.selected ? "✓" : ""}</span><span><strong>{component.title}</strong><small>{component.detail}</small></span><span className="size">{component.size}</span></button>) : null}<label className="component-row flatten-package-row"><input className="visually-hidden" type="checkbox" checked={state.flattenForChat} onChange={(event) => chooseFlattenedSources(event.target.checked)} /><span className={`checkbox ${state.flattenForChat ? "checked" : ""}`} aria-hidden="true">{state.flattenForChat ? "✓" : ""}</span><span><strong>Prepare a flattened ChatGPT project-sources folder</strong><small>Optional ChatGPT client package; independent of the setup assistant</small></span><span className="size">{chatSummary}</span></label>{state.flattenForChat && <details><summary>Files in the ChatGPT folder</summary><div className="manifest-details flattened-file-list">{chatFiles.map((file) => <div key={file.name}><strong>{file.name}</strong><small>{file.size === undefined ? "Size calculated during review" : formatScanBytes(file.size)}</small></div>)}</div></details>}{manifestFailed || manifestRetrying ? <div className="callout block" role={manifestRetrying ? "status" : "alert"}><span>{manifestMessage}</span><button type="button" className="button secondary" aria-disabled={manifestRetrying || undefined} aria-busy={manifestRetrying || undefined} onClick={retryManifest}>{manifestRetrying ? "Loading components…" : "Retry loading components"}</button></div> : <p className="muted" role="status" tabIndex={-1} ref={manifestStatusRef}>{manifestMessage}</p>}<p className="muted">Source: <ExternalLink href="https://github.com/klimPaskov/Agentic-HOI4-Modding">Agentic HOI4 Modding <span aria-hidden="true">↗</span></ExternalLink></p><details><summary>Dependencies and file list</summary>{manifest ? <div className="manifest-details">{manifest.components.map((component) => <div key={component.id}><strong>{component.display_name}</strong><span>{component.dependencies.length ? `Requires ${component.dependencies.join(", ")}` : "No additional components required"}</span><small>Platforms: {component.platforms.join(", ")}</small><small>{component.expected_files.length === 1 ? "1 file" : `${component.expected_files.length} files`} · destination: {component.destination.path}</small>{component.expected_files.map((file) => <small className="manifest-file-path" key={`${component.id}-${file.path}`}>{file.path}</small>)}</div>)}</div> : <p className="muted">Dependencies appear after the components load.</p>}</details><details><summary>Choose source version</summary><label className="field"><span className="field-label">Version</span><select className="text-input" value={state.sourceMode} onChange={(event) => update({ sourceMode: event.target.value as WizardState["sourceMode"], pinnedRef: "", manifestPreview: undefined, components: [], codexAnalysis: undefined, codexAnalysisRecord: undefined, plan: undefined, transactionError: "Changing the source requires a new analysis before setup can continue." })}><option value="latest">Latest</option><option value="pinned_commit">Specific commit</option><option value="pinned_release">Release</option></select></label>{state.sourceMode !== "latest" && <Field label={state.sourceMode === "pinned_commit" ? "Commit" : "Release"} value={state.pinnedRef} onChange={(value) => update({ pinnedRef: value, manifestPreview: undefined, components: [], codexAnalysis: undefined, codexAnalysisRecord: undefined, plan: undefined, transactionError: "Changing the source requires a new analysis before setup can continue." })} mono placeholder={state.sourceMode === "pinned_commit" ? "40-character commit" : "v1.0.0"} />}</details></section><div className="disclosure-note">Download size appears before installation.</div></div>;
+  const recommendations = componentRecommendationsFromAnalysis(state.codexAnalysis, state.semanticComponentRecommendations);
+  return <div className="stack narrow"><section className="panel">{recommendations.length > 0 && manifest && <section className="component-recommendation-summary" aria-labelledby="component-recommendation-title"><h2 id="component-recommendation-title" className="panel-title">Setup assistant recommendations</h2><p className="muted">Review the suggestions below; they do not change the selected components.</p><div className="manifest-details">{recommendations.map((recommendation) => { const component = manifest.components.find((candidate) => candidate.id === recommendation.component_id); return <div className="component-recommendation-row" key={recommendation.component_id}><div className="proposal-heading"><strong>{component?.display_name ?? recommendation.component_id}</strong><Status label={componentRecommendationLabel(recommendation.recommendation)} tone={recommendation.recommendation === "not_recommended" ? "muted" : recommendation.recommendation === "required" ? "review" : "info"} /></div><span>{recommendation.reason}</span></div>; })}</div></section>}{manifest ? visibleRows.map((component) => <button type="button" key={component.id} className="component-row" onClick={() => toggle(component.id)} aria-pressed={component.selected} aria-disabled={component.required || component.state === "blocked" || undefined} disabled={component.required || component.state === "blocked"}><span className={`checkbox ${component.selected ? "checked" : ""}`}>{component.selected ? "✓" : ""}</span><span><strong>{component.title}</strong><small>{component.detail}</small></span><span className="size">{component.size}</span></button>) : null}<label className="component-row flatten-package-row"><input className="visually-hidden" type="checkbox" checked={state.flattenForChat} onChange={(event) => chooseFlattenedSources(event.target.checked)} /><span className={`checkbox ${state.flattenForChat ? "checked" : ""}`} aria-hidden="true">{state.flattenForChat ? "✓" : ""}</span><span><strong>Prepare a flattened ChatGPT project-sources folder</strong><small>Optional ChatGPT client package; independent of the setup assistant</small></span><span className="size">{chatSummary}</span></label>{state.flattenForChat && <details><summary>Files in the ChatGPT folder</summary><div className="manifest-details flattened-file-list">{chatFiles.map((file) => <div key={file.name}><strong>{file.name}</strong><small>{file.size === undefined ? "Size calculated during review" : formatScanBytes(file.size)}</small></div>)}</div></details>}{manifestFailed || manifestRetrying ? <div className="callout block" role={manifestRetrying ? "status" : "alert"}><span>{manifestMessage}</span><button type="button" className="button secondary" aria-disabled={manifestRetrying || undefined} aria-busy={manifestRetrying || undefined} onClick={retryManifest}>{manifestRetrying ? "Loading components…" : "Retry loading components"}</button></div> : <p className="muted" role="status" tabIndex={-1} ref={manifestStatusRef}>{manifestMessage}</p>}<p className="muted">Source: <ExternalLink href="https://github.com/klimPaskov/Agentic-HOI4-Modding">Agentic HOI4 Modding <span aria-hidden="true">↗</span></ExternalLink></p><details><summary>Dependencies and file list</summary>{manifest ? <div className="manifest-details">{manifest.components.map((component) => <div key={component.id}><strong>{component.display_name}</strong><span>{component.dependencies.length ? `Requires ${component.dependencies.join(", ")}` : "No additional components required"}</span><small>Platforms: {component.platforms.join(", ")}</small><small>{component.expected_files.length === 1 ? "1 file" : `${component.expected_files.length} files`} · destination: {component.destination.path}</small>{component.expected_files.map((file) => <small className="manifest-file-path" key={`${component.id}-${file.path}`}>{file.path}</small>)}</div>)}</div> : <p className="muted">Dependencies appear after the components load.</p>}</details><details><summary>Choose source version</summary><label className="field"><span className="field-label">Version</span><select className="text-input" value={state.sourceMode} onChange={(event) => update({ sourceMode: event.target.value as WizardState["sourceMode"], pinnedRef: "", manifestPreview: undefined, components: [], codexAnalysis: undefined, codexAnalysisRecord: undefined, semanticComponentRecommendations: undefined, plan: undefined, transactionError: "Changing the source requires a new analysis before setup can continue." })}><option value="latest">Latest</option><option value="pinned_commit">Specific commit</option><option value="pinned_release">Release</option></select></label>{state.sourceMode !== "latest" && <Field label={state.sourceMode === "pinned_commit" ? "Commit" : "Release"} value={state.pinnedRef} onChange={(value) => update({ pinnedRef: value, manifestPreview: undefined, components: [], codexAnalysis: undefined, codexAnalysisRecord: undefined, semanticComponentRecommendations: undefined, plan: undefined, transactionError: "Changing the source requires a new analysis before setup can continue." })} mono placeholder={state.sourceMode === "pinned_commit" ? "40-character commit" : "v1.0.0"} />}</details></section><div className="disclosure-note">Download size appears before installation.</div></div>;
 }
 
 export function Workflows({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {

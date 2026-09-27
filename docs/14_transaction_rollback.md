@@ -137,6 +137,11 @@ it is never silently replayed. Pre-apply resume uses the same production runner.
 
 Generate checks and core gate. A blocking check fails the transaction before stage 12 and before a success lock is written; optional incomplete or unsupported routes remain visible without blocking core setup.
 
+Blocking errors include the check's diagnostic message. For MCP bootstrap
+failure, that message comes from the already journaled, bounded and redacted
+process result, including exit/timeout information. Recovery therefore retains
+the cause without rerunning the external action or bypassing package integrity.
+
 ### 12. Rollback record
 
 Record restoration steps and retention. The current runner writes this record

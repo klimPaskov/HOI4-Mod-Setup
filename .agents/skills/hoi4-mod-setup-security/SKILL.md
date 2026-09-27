@@ -97,6 +97,13 @@ URL carried by the reviewed profile; Rust must still compare it against the
 exact allowlist before invoking the system browser. Do not describe API-key
 entry as OAuth or account login.
 
+For JSON persistence, inspect decoded string values and object keys for
+credential-shaped content before serialization; keep the separate forbidden
+key check. Do not run the shape detector over serialized JSON punctuation:
+an already redacted assignment at a string boundary must remain persistable.
+Test nested arrays/objects, embedded JSON strings, secret rejection without
+replacing existing bytes, and a redacted assignment at the end of a message.
+
 ## Filesystem
 
 - Normalize and contain every path.

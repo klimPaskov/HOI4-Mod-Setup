@@ -77,6 +77,13 @@ Install the manifest-declared wiki tree at `<mod_project>/paradox_wiki/`. Valida
 
 MCP servers and external dependencies are components. Their command, arguments, tools, environment variable names, health checks, supported platforms, and update behavior come from verified repository evidence. A similar command on another platform is not support evidence.
 
+For npm runtimes, verify that the exact published artifacts pin the complete
+transitive runtime, not only the top-level version. Reproduce the declared
+package-tree identity with a clean install into a disposable prefix. A tree
+hash captured from mutable transitive resolution can become uninstallable;
+fix it upstream with a bundled runtime or integrity-complete pinned closure.
+Never bless the current machine's changed hash or relax installed-tree checks.
+
 ## Current implementation boundaries
 
 - The application consumes the single canonical `hoi4-mod-setup.manifest.json`

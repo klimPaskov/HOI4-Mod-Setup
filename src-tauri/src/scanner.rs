@@ -36,6 +36,9 @@ const MAX_LAUNCHER_CANDIDATES: usize = 512;
 const MAX_LAUNCHER_PARENT_ENTRIES: usize = 10_000;
 const MAX_LAUNCHER_DESCRIPTOR_BYTES: u64 = 256 * 1024;
 const MAX_GIT_HEAD_BYTES: u64 = 1024 * 1024;
+// A semantic evidence identifier, never a path to open. The real approved
+// external path remains in the launcher finding's value for user review.
+const APPROVED_LAUNCHER_EVIDENCE_PATH: &str = "@approved-launcher/descriptor.mod";
 
 const IGNORED_SCAN_DIRECTORIES: &[&str] = &[
     ".git",
@@ -603,7 +606,7 @@ where
                         "needs_review",
                         evidence(
                             "approved_external_descriptor",
-                            &external.display().to_string(),
+                            APPROVED_LAUNCHER_EVIDENCE_PATH,
                             0.5,
                             Some("Approved launcher descriptor was not found."),
                         ),
@@ -1822,7 +1825,7 @@ fn detect_descriptors(
             "accepted",
             evidence(
                 "approved_external_descriptor",
-                &external.display().to_string(),
+                APPROVED_LAUNCHER_EVIDENCE_PATH,
                 1.0,
                 None,
             ),
@@ -1837,7 +1840,7 @@ fn detect_descriptors(
                     }) => {}
             _ => conflicts.push(ScanConflict {
                 id: "conflict.launcher.malformed".into(),
-                path: external_value,
+                path: APPROVED_LAUNCHER_EVIDENCE_PATH.into(),
                 kind: "descriptor_mismatch".into(),
                 severity: "block".into(),
                 details: Some(
@@ -2021,7 +2024,7 @@ fn detect_git(
         finding_status,
         evidence(
             "git_metadata",
-            ".git/HEAD",
+            "@scan/git-summary",
             if !is_git {
                 0.8
             } else if inspection.status_probe == "targeted_complete" {
@@ -2047,7 +2050,7 @@ fn detect_git(
                 "scan.git.inspection"
             }
             .into(),
-            path: ".git".into(),
+            path: "@scan/git-summary".into(),
             kind: "other".into(),
             severity: "warn".into(),
             details: Some(
@@ -2059,7 +2062,7 @@ fn detect_git(
     if git_is_link {
         conflicts.push(ScanConflict {
             id: "scan.git.link".into(),
-            path: ".git".into(),
+            path: "@scan/git-summary".into(),
             kind: "other".into(),
             severity: "block".into(),
             details: Some("The .git entry is a link; Git metadata was not followed.".into()),
@@ -2067,7 +2070,7 @@ fn detect_git(
     } else if head_is_link {
         conflicts.push(ScanConflict {
             id: "scan.git.head_link".into(),
-            path: ".git/HEAD".into(),
+            path: "@scan/git-summary".into(),
             kind: "other".into(),
             severity: "block".into(),
             details: Some("Git HEAD is a link; metadata was not followed.".into()),
@@ -2075,7 +2078,7 @@ fn detect_git(
     } else if head_read_error {
         conflicts.push(ScanConflict {
             id: "scan.git.head_read".into(),
-            path: ".git/HEAD".into(),
+            path: "@scan/git-summary".into(),
             kind: "other".into(),
             severity: "warn".into(),
             details: Some("Git HEAD could not be read as bounded UTF-8 text.".into()),
@@ -2086,7 +2089,7 @@ fn detect_git(
     {
         conflicts.push(ScanConflict {
             id: "conflict.git.worktree".into(),
-            path: ".git".into(),
+            path: "@scan/git-summary".into(),
             kind: "other".into(),
             severity: "warn".into(),
             details: Some(
@@ -2429,9 +2432,9 @@ fn detect_coding_environments(
             "cursor" => ".cursor/agent-map.md",
             "qoder" => ".qoder/agent-map.md",
             "opencode" => "opencode.json",
-            _ => ".",
+            _ => "@scan/coding-environments",
         })
-        .unwrap_or(".");
+        .unwrap_or("@scan/coding-environments");
     findings.push(finding(
         "coding.environments",
         "coding_environment",
@@ -2513,7 +2516,7 @@ fn detect_absolute_paths(evidence_state: &ScanEvidenceState, findings: &mut Vec<
         },
         evidence(
             "absolute_path_detector",
-            ".",
+            "@scan/absolute-paths",
             if matches.is_empty() { 1.0 } else { 0.9 },
             Some("Only paths are reported; matching content is not copied into evidence."),
         ),

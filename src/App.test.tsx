@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { ChatSources, CodingEnvironments, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, recoveryProgress } from "./App";
+import App, { ChatSources, CodingEnvironments, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readAiModels, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, startCodexLogin, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
 import type { ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
@@ -72,6 +72,30 @@ async function renderAuthenticatedApp() {
 
 function enableTauriRuntime() {
   (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+}
+
+function semanticAnalysisFixture() {
+  return {
+    schema_version: "1.0.0",
+    analysis_id: "semantic-analysis",
+    mode: "new_project_identity" as const,
+    input_sha256: "a".repeat(64),
+    project_summary: "A focused project summary.",
+    proposals: [
+      ["display_name", "Iron Dawn"],
+      ["project_id", "iron_dawn"],
+      ["script_prefix", "id"],
+      ["primary_namespace", "id"],
+      ["project_description", "A focused alternate-history project."],
+      ["descriptor_tags", ["Alternative History", "Events"]],
+      ["folder_profile", ["common", "events"]],
+      ["agents_profile", "default"],
+      ["localisation_convention", "english"],
+      ["documentation_convention", "markdown"],
+    ].map(([key, value]) => ({ key, value, confidence: 0.9, reason: `Reason for ${String(key)}.`, evidence_refs: ["brief:1"] })),
+    component_recommendations: [{ component_id: "core.skills", recommendation: "recommended", reason: "The brief calls for repeated HOI4 workflow support." }],
+    warnings: [],
+  };
 }
 
 describe("HOI4 Mod Setup wizard", () => {
@@ -430,7 +454,7 @@ describe("HOI4 Mod Setup wizard", () => {
     ["claude", "claude-sonnet-5", "high", "https://api.anthropic.com/v1/messages"],
     ["kimi", "kimi-k2.6", "high", "https://api.moonshot.ai/v1/chat/completions"],
     ["glm", "glm-5.2", "high", "https://open.bigmodel.cn/api/paas/v4/chat/completions"],
-    ["deepseek", "deepseek-v4-flash", "high", "https://api.deepseek.com/chat/completions"],
+    ["deepseek", "deepseek-flash", "high", "https://api.deepseek.com/chat/completions"],
     ["local", "local-model", "high", "http://127.0.0.1:11434/v1/chat/completions"],
     ["custom", "custom-model", "high", "https://models.example.test/v1/chat/completions"],
   ] as const)("keeps the %s model control usable when its live catalog fails", async (provider, model, effort, endpoint) => {
@@ -466,7 +490,7 @@ describe("HOI4 Mod Setup wizard", () => {
     ["claude", "claude-sonnet-5", "https://api.anthropic.com/v1/messages", false],
     ["kimi", "kimi-k2.6", "https://api.moonshot.ai/v1/chat/completions", false],
     ["glm", "glm-5.2", "https://open.bigmodel.cn/api/paas/v4/chat/completions", false],
-    ["deepseek", "deepseek-v4-flash", "https://api.deepseek.com/chat/completions", false],
+    ["deepseek", "deepseek-flash", "https://api.deepseek.com/chat/completions", false],
     ["local", "local-model", "http://127.0.0.1:11434/v1/chat/completions", true],
     ["custom", "custom-model", "https://models.example.test/v1/chat/completions", true],
   ] as const)("distinguishes an empty %s catalog from a live result", async (provider, model, endpoint, manual) => {
@@ -1469,6 +1493,100 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(within(review).getByText("Alternative History, Events")).toBeInTheDocument();
     expect(within(review).queryByText("display_name")).not.toBeInTheDocument();
     expect(within(review).queryByText("descriptor_tags")).not.toBeInTheDocument();
+  });
+
+  it("renders all ten semantic proposals as editable accessible review fields", () => {
+    const analysis = semanticAnalysisFixture();
+    function ControlledIdentity() {
+      const [state, setState] = useState({
+        ...initialState,
+        screen: "identity" as const,
+        mode: "new" as const,
+        projectPathStatus: "manual" as const,
+        identity: { ...initialState.identity, projectRoot: "C:\\mods\\iron_dawn", launcherDescriptorPath: "C:\\mods\\iron_dawn.mod" },
+        codexAnalysis: analysis as unknown as WizardState["codexAnalysis"],
+        codexAnalysisRecord: { engine: "codex_app_server", auth_mode: "chatgpt", analysis_id: "semantic-analysis", schema_version: "1.0.0", input_sha256: "a".repeat(64), output_sha256: "b".repeat(64), confirmed_fields: [], confirmed_at: "pending" },
+        conventions: { agents_profile: "default", localisation_convention: "english", documentation_convention: "markdown" },
+      } as WizardState);
+      return <Identity state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} updateIdentity={(patch) => setState((current) => ({ ...current, identity: { ...current.identity, ...patch } }))} updateDescription={(description) => setState((current) => ({ ...current, description }))} onPickProjectFolder={vi.fn().mockResolvedValue(null)} onPickLauncherFolder={vi.fn().mockResolvedValue(null)} onConfirmAnalysis={vi.fn().mockResolvedValue(undefined)} />;
+    }
+
+    render(<ControlledIdentity />);
+
+    expect(screen.getAllByText("Suggested", { exact: true })).toHaveLength(10);
+    expect(screen.getAllByText("Why this was suggested", { selector: "summary" })).toHaveLength(10);
+    expect(screen.getByLabelText("Project guidance")).toHaveValue("default");
+    expect(screen.getByLabelText("Localisation style")).toHaveValue("english");
+    expect(screen.getByLabelText("Documentation style")).toHaveValue("markdown");
+
+    fireEvent.change(screen.getByLabelText("Project guidance"), { target: { value: "events-first" } });
+    expect(screen.getByLabelText("Project guidance")).toHaveValue("events-first");
+    fireEvent.click(screen.getAllByText("Why this was suggested", { selector: "summary" })[0]);
+    expect(screen.getByText("Reason for display_name.")).toBeInTheDocument();
+  });
+
+  it("builds the confirmation payload with conventions and component recommendations", () => {
+    const analysis = semanticAnalysisFixture() as unknown as WizardState["codexAnalysis"];
+    const state = {
+      ...initialState,
+      description: "Edited description",
+      folderProfile: ["common", "events"],
+      codexAnalysis: analysis,
+      conventions: { agents_profile: "events-first", localisation_convention: "english", documentation_convention: "markdown" },
+      semanticComponentRecommendations: [{ component_id: "core.skills", recommendation: "recommended", reason: "Keep the workflow skills." }],
+    } as WizardState;
+
+    expect(buildAnalysisConfirmationValues(state)).toMatchObject({
+      description: "Edited description",
+      folderProfile: ["common", "events"],
+      conventions: { agents_profile: "events-first", localisation_convention: "english", documentation_convention: "markdown" },
+      componentRecommendations: [{ component_id: "core.skills", recommendation: "recommended", reason: "The brief calls for repeated HOI4 workflow support." }],
+    });
+    expect(Object.keys(buildAnalysisConfirmationValues(state))).toEqual(["description", "folderProfile", "identity", "conventions", "componentRecommendations"]);
+  });
+
+  it("shows component recommendations by manifest display name without selecting them", async () => {
+    const manifest = {
+      schema_version: "1.0.0",
+      manifest_id: "recommendation-fixture",
+      source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
+      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
+      components: [{ id: "core.skills", display_name: "HOI4 Skills", description: "Workflow skills", category: "skill", optional: true, platforms: ["all"], source: { kind: "tree", path: ".agents/skills" }, destination: { path: ".agents/skills/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [], capabilities: [], validation: [], update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true } }],
+      profiles: [],
+    } as unknown as SourceManifestPreview;
+    vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: manifest });
+    function ControlledComponents() {
+      const [state, setState] = useState({
+        ...initialState,
+        sourceMode: "latest" as const,
+        pinnedRef: "",
+        selectedComponents: [],
+        codexAnalysis: { ...semanticAnalysisFixture(), component_recommendations: [{ component_id: "core.skills", recommendation: "recommended", reason: "Keep the workflow skills." }] } as unknown as WizardState["codexAnalysis"],
+        semanticComponentRecommendations: [{ component_id: "core.skills", recommendation: "recommended", reason: "Keep the workflow skills." }],
+      } as WizardState);
+      return <><Components state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} /><output aria-label="selected components">{state.selectedComponents.join(",")}</output></>;
+    }
+
+    render(<ControlledComponents />);
+    const summary = await screen.findByRole("region", { name: "Setup assistant recommendations" });
+    expect(within(summary).getByText("HOI4 Skills")).toBeInTheDocument();
+    expect(within(summary).getByText("Keep the workflow skills.")).toBeInTheDocument();
+    expect(screen.getByLabelText("selected components")).toHaveTextContent("");
+  });
+
+  it("announces a live catalog that omits the selected model and recovers when a listed model is chosen", async () => {
+    enableTauriRuntime();
+    vi.mocked(readAiModels).mockResolvedValue([{ id: "listed-model", display_name: "Listed model", default_reasoning_effort: "high", supported_reasoning_efforts: ["high"] }]);
+    function ControlledWelcome() {
+      const [state, setState] = useState(welcomeState({ available: true, authenticated: true, auth_mode: "chatgpt", usage_limited: false }));
+      return <Welcome state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
+    }
+
+    render(<ControlledWelcome />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/not in the live catalog/i);
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "listed-model" } });
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(screen.getByLabelText("Reasoning effort")).toHaveValue("high");
   });
 
   it("shows the bounded launcher candidate and allows scanning without it", async () => {

@@ -68,6 +68,7 @@ jobs:
           python -m pip install --disable-pip-version-check "jsonschema==4.25.1" "PyYAML==6.0.3"
       - name: Run release gates without signing or publication authority
         run: |
+          pnpm test:e2e:install
           pnpm lint
           pnpm typecheck
           pnpm test -- --run

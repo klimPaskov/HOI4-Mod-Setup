@@ -41,7 +41,10 @@ model control and use a successfully read endpoint catalog as suggestions
 without inventing a model. The model and reasoning controls remain visible on
 the first screen; labels run from Light (`low`) through Max (`max`). Codex
 defaults to `gpt-5.6-luna` at `xhigh`. DeepSeek defaults to
-`deepseek-v4-flash`; its current official API accepts explicit effort control.
+`deepseek-flash`; its authenticated Models API supplies the supported effort
+levels for each returned model. The provider catalog can change independently
+of an app release, so a successful live catalog is authoritative for model
+availability and effort support.
 The first screen asks
 the user to open the provider's fixed official API-key page, paste the key, and
 choose **Connect**. Model and address remain available under **Advanced**. This

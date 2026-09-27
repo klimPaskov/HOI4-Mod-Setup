@@ -158,6 +158,16 @@ pub fn selected_environment_ids(selection: &CodingEnvironmentSelection) -> Vec<S
     result
 }
 
+pub fn mcp_registration_component_id(environment: &str) -> Option<&'static str> {
+    match environment {
+        CLAUDE_CODE => Some("runtime.claude.mcp"),
+        CURSOR => Some("runtime.cursor.mcp"),
+        QODER => Some("runtime.qoder.mcp"),
+        OPENCODE => Some("runtime.opencode.mcp"),
+        _ => None,
+    }
+}
+
 /// Compatibility helper for lock reconciliation. Future source manifests may
 /// add more environment component IDs; current IDs are kept here so a
 /// deselected package cannot be resurrected by a legacy lock append.
@@ -206,6 +216,28 @@ mod tests {
         })
         .unwrap_err();
         assert!(error.to_string().contains("cannot also be additional"));
+    }
+
+    #[test]
+    fn optional_mcp_registration_ids_are_bounded_to_verified_environments() {
+        assert_eq!(
+            mcp_registration_component_id(CLAUDE_CODE),
+            Some("runtime.claude.mcp")
+        );
+        assert_eq!(
+            mcp_registration_component_id(CURSOR),
+            Some("runtime.cursor.mcp")
+        );
+        assert_eq!(
+            mcp_registration_component_id(QODER),
+            Some("runtime.qoder.mcp")
+        );
+        assert_eq!(
+            mcp_registration_component_id(OPENCODE),
+            Some("runtime.opencode.mcp")
+        );
+        assert_eq!(mcp_registration_component_id(CODEX), None);
+        assert_eq!(mcp_registration_component_id("dsh"), None);
     }
 
     #[test]

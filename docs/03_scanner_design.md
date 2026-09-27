@@ -26,6 +26,13 @@ different root are explicit discovery conflicts, never silently selected. A
 candidate count beyond the 512-file bound is also an explicit review state,
 not a truncated successful discovery.
 
+The accepted launcher finding retains its real absolute path in the displayed
+value, but identifies its semantic evidence as
+`@approved-launcher/descriptor.mod`. This is a reserved summary reference,
+never a filesystem path to open. It remains bound to the current completed
+scan, exact excerpt hash, project, and explicit evidence approval. Other
+absolute evidence paths remain rejected by the provider boundary.
+
 The UI visibly presents the candidate path and match before the scan starts.
 The user confirms by continuing, chooses **Scan without launcher file**, or
 cancels by going back. Selecting the root authorizes only this bounded parse of
@@ -33,6 +40,13 @@ direct-parent candidates; declared target paths are compared as normalized
 text and are never opened. Only a confirmed candidate is added to the approved
 companion paths and scanner input. A declined or absent candidate produces an
 internal-only scan and does not grant permission to read another path.
+
+Aggregate scan evidence uses reserved `@scan/git-summary`,
+`@scan/coding-environments`, and `@scan/absolute-paths` identifiers instead of
+`.` or raw `.git` paths. These identifiers and `@approved-launcher/descriptor.mod`
+are summaries, never filesystem inputs. They remain bound to the core scan ID,
+canonical project root, finding/conflict reference, excerpt hash, and explicit
+evidence approval. Do not relax the generic absolute-path or `.git` rejection.
 
 ## Two-layer analysis contract
 

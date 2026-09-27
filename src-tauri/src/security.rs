@@ -401,14 +401,33 @@ fn replace_existing_file(temporary: &Path, destination: &Path) -> Result<(), std
 pub fn atomic_write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), AppError> {
     let json = serde_json::to_value(value)?;
     reject_secret_like_keys(&json)?;
-    let bytes = serde_json::to_vec_pretty(&json)?;
-    let text = String::from_utf8_lossy(&bytes);
-    if contains_credential_shaped_content(&text) {
+    // Inspect decoded values, not JSON punctuation. Otherwise an already
+    // redacted assignment at the end of a string consumes its closing quote
+    // on a second redaction pass and falsely prevents journal persistence.
+    if json_contains_credential_shaped_content(&json) {
         return Err(AppError::Credential(
             "credential-shaped content is not serializable".into(),
         ));
     }
+    let bytes = serde_json::to_vec_pretty(&json)?;
     atomic_write(path, &bytes)
+}
+
+fn json_contains_credential_shaped_content(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(text) => contains_credential_shaped_content(text),
+        serde_json::Value::Array(items) => {
+            items.iter().any(json_contains_credential_shaped_content)
+        }
+        serde_json::Value::Object(items) => items.iter().any(|(key, value)| {
+            contains_credential_shaped_content(key)
+                // Preserve assignment-shaped key detection (for example
+                // "provider.api_key") without inspecting serialized values.
+                || contains_credential_shaped_content(&format!("{key}=[FIELD_VALUE]"))
+                || json_contains_credential_shaped_content(value)
+        }),
+        _ => false,
+    }
 }
 
 /// Detect credential-shaped content while allowing the exact non-secret
@@ -416,8 +435,11 @@ pub fn atomic_write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<
 /// merely starts with the placeholder remains detectable because the token
 /// replacement requires word boundaries.
 pub fn contains_credential_shaped_content(value: &str) -> bool {
-    let placeholder = Regex::new(r"\bmsy_your_actual_key_here\b")
-        .expect("static documented Meshy placeholder regex");
+    static PLACEHOLDER: OnceLock<Regex> = OnceLock::new();
+    let placeholder = PLACEHOLDER.get_or_init(|| {
+        Regex::new(r"\bmsy_your_actual_key_here\b")
+            .expect("static documented Meshy placeholder regex")
+    });
     let inspected = placeholder.replace_all(value, "[DOCUMENTED_MESHY_KEY_PLACEHOLDER]");
     redact_secrets(&inspected, &[]) != inspected
 }
@@ -667,6 +689,39 @@ mod tests {
         assert!(!output.contains(&secret_value));
         assert!(output.contains(&format!("{secret_name}=[REDACTED]")));
         assert!(contains_credential_shaped_content(&input));
+    }
+
+    #[test]
+    fn json_persistence_accepts_redacted_string_endings_but_rejects_nested_secrets() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("journal.json");
+        let secret = ["private", "persistence", "value"].join("-");
+        let unsafe_message = format!("setup failed: client_secret={secret}");
+        let safe =
+            serde_json::json!({"stages": [{"evidence": [redact_secrets(&unsafe_message, &[])]}]});
+        atomic_write_json(&path, &safe).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&fs::read(&path).unwrap()).unwrap(),
+            safe
+        );
+        assert!(!fs::read_to_string(&path).unwrap().contains(&secret));
+        let unsafe_value = serde_json::json!({"stages": [{"evidence": [unsafe_message]}]});
+        assert!(atomic_write_json(&path, &unsafe_value).is_err());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&fs::read(&path).unwrap()).unwrap(),
+            safe
+        );
+        // A serialized JSON object embedded inside a string remains untrusted.
+        let nested = serde_json::json!({"message": format!(r#"{{"client_secret":"{secret}"}}"#)});
+        assert!(atomic_write_json(&path, &nested).is_err());
+        for key in [
+            "provider.api_key",
+            "config-client_secret",
+            "custom_access_token",
+        ] {
+            let disguised = serde_json::json!({(key): "plain-value-without-a-provider-prefix"});
+            assert!(atomic_write_json(&path, &disguised).is_err(), "{key}");
+        }
     }
 
     #[test]

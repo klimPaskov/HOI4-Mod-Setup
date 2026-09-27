@@ -71,7 +71,10 @@ jobs:
       - name: Accessibility contract
         if: steps.detect.outputs.present == 'true'
         run: pnpm test:a11y
-      - name: Browser smoke contract
+      - name: Install browser test runtime
+        if: steps.detect.outputs.present == 'true'
+        run: pnpm test:e2e:install
+      - name: Browser wizard tests
         if: steps.detect.outputs.present == 'true'
         run: pnpm test:e2e
 
@@ -201,6 +204,7 @@ jobs:
         if: steps.detect.outputs.present == 'true'
         shell: bash
         run: |
+          pnpm test:e2e:install
           pnpm lint
           pnpm typecheck
           pnpm test -- --run

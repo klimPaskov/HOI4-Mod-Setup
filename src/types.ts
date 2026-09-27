@@ -167,6 +167,42 @@ export interface AiModelOption {
   supported_reasoning_efforts: ReasoningEffort[];
 }
 
+export type AiModelCatalogStatus = "idle" | "loading" | "live" | "fallback-empty" | "fallback-error" | "live-missing";
+
+export type SemanticProposalKey =
+  | "display_name"
+  | "project_id"
+  | "script_prefix"
+  | "primary_namespace"
+  | "project_description"
+  | "descriptor_tags"
+  | "folder_profile"
+  | "agents_profile"
+  | "localisation_convention"
+  | "documentation_convention";
+
+export interface SemanticConventions {
+  agents_profile: string;
+  localisation_convention: string;
+  documentation_convention: string;
+}
+
+export type ComponentRecommendationKind = "required" | "recommended" | "not_recommended";
+
+export interface ComponentRecommendation {
+  component_id: string;
+  recommendation: ComponentRecommendationKind;
+  reason: string;
+}
+
+export interface CodexAnalysisConfirmationValues {
+  description: string;
+  folderProfile: string[];
+  identity: ProjectIdentity;
+  conventions: SemanticConventions;
+  componentRecommendations: ComponentRecommendation[];
+}
+
 export interface AiAccountStatus {
   available: boolean;
   authenticated: boolean;
@@ -202,7 +238,7 @@ export interface CodexAnalysis {
   input_sha256: string;
   project_summary: string;
   proposals: CodexProposal[];
-  component_recommendations: Array<{ component_id: string; recommendation: string; reason: string }>;
+  component_recommendations: ComponentRecommendation[];
   warnings: string[];
 }
 
@@ -595,6 +631,7 @@ export interface WizardState {
   aiProvider: AiProviderId;
   aiModel: string;
   aiReasoningEffort: ReasoningEffort;
+  aiModelCatalogStatus?: AiModelCatalogStatus;
   aiEndpoint: string;
   aiAccount: AiAccountStatus | null;
   aiProfiles?: AiProviderProfile[];
@@ -646,6 +683,9 @@ export interface WizardState {
   codexLoginPending?: boolean;
   codexAnalysis?: CodexAnalysis;
   codexAnalysisRecord?: CodexAnalysisRecord;
+  conventions?: SemanticConventions;
+  semanticProposalOverrides?: SemanticProposalKey[];
+  semanticComponentRecommendations?: ComponentRecommendation[];
   manifestPreview?: SourceManifestPreview;
   draftSaved: boolean;
 }

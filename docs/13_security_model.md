@@ -60,6 +60,12 @@ evidence checks pass.
 
 ## Path security
 
+JSON persistence validates decoded string values and object keys for
+credential-shaped content, as well as rejecting forbidden secret field names.
+The check runs before serialization so JSON quoting cannot turn an already
+redacted diagnostic into a false credential failure. Nested and embedded
+secret-shaped text remains rejected, preserving the previous file on failure.
+
 Normalize Unicode and separators, reject absolute managed destinations and parent traversal, resolve links, verify final parent containment, detect case collisions, reject Windows device names and alternate data streams, and block archive-link escapes.
 
 ## Portrait provider security

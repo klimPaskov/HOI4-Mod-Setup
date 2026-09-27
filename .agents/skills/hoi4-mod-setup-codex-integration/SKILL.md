@@ -145,6 +145,13 @@ briefs, constraints, or excerpts before prompt construction. New-project
 analysis may have no scan evidence but still receives only the bounded user
 brief and typed constraints.
 
+The already approved external launcher uses the reserved summary identifier
+`@approved-launcher/descriptor.mod` at this boundary; its actual path stays in
+the displayed finding value. Do not open the identifier or accept arbitrary
+absolute paths. Bind it through the same completed scan, project, excerpt hash,
+and explicit evidence-vector approval as other summaries. Cover the actual
+scanner-to-approval path and reject an altered path, hash, or stale scan.
+
 The application renders files only after deterministic validation and user confirmation.
 
 Protocol failure coverage uses local fake transports only: browser and device
@@ -172,6 +179,13 @@ and requires reanalysis. Locks written before
 this binding existed may copy the fields only from valid source evidence
 already stored in that same lock; absent or malformed provenance remains
 blocked instead of being inferred from the current repository.
+
+Aggregate scan evidence uses reserved `@scan/git-summary`,
+`@scan/coding-environments`, and `@scan/absolute-paths` identifiers instead of
+`.` or raw `.git` paths. These identifiers and `@approved-launcher/descriptor.mod`
+are summaries, never filesystem inputs. They remain bound to the core scan ID,
+canonical project root, finding/conflict reference, excerpt hash, and explicit
+evidence approval. Do not relax the generic absolute-path or `.git` rejection.
 
 ## Current implementation boundary
 
@@ -268,6 +282,7 @@ Cover:
 
 - process startup and shutdown
 - initialize ordering
+- initialize response compatibility and platform metadata
 - existing ChatGPT session
 - browser login success, cancellation, and failure
 - exact `account/login/cancel` method and `loginId` payload, including isolated
@@ -286,6 +301,13 @@ Cover:
   `workflow.super_events` registry ID/schema path and selected-vs-unselected
   AGENTS guidance
 - setup-assistant-independent flatten visibility, mapping, collision rejection, secret rejection, and recommendation copy
+
+`pnpm test:codex-live` is an opt-in Windows smoke using the signed installed
+Codex executable named by `HOI4_CODEX_EXECUTABLE`. It reads only the current
+account type, then starts and cancels browser and device-code login attempts in
+a temporary Codex home. It does not print account or login values, open returned
+URLs, or wait for user input. It proves login-start/cancel transport only;
+manual browser and device-code completion remains a separate release gate.
 
 ## Update this skill when
 

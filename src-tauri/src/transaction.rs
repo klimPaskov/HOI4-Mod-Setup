@@ -1324,7 +1324,10 @@ pub fn run_transaction(
             .checks
             .iter()
             .filter(|check| check.blocking && check.status == "block")
-            .map(|check| check.id.as_str())
+            .map(|check| match check.message.as_deref() {
+                Some(message) => format!("{}: {message}", check.id),
+                None => check.id.clone(),
+            })
             .collect::<Vec<_>>();
         if !blocking_checks.is_empty() {
             return Err(AppError::Transaction(format!(
@@ -3370,7 +3373,7 @@ fn build_transaction_readiness(
     let mcp_blocking = has_component("mcp.hoi4_agent_tools")
         && cfg!(target_os = "windows")
         && mcp_status == "block";
-    let report = crate::readiness::evaluate(&crate::readiness::ReadinessInput {
+    let mut report = crate::readiness::evaluate(&crate::readiness::ReadinessInput {
         project_id: plan.project_id.clone(),
         project_root: project_root.display().to_string(),
         selected_components: readiness_components,
@@ -3390,7 +3393,19 @@ fn build_transaction_readiness(
                 )
                 .iter()
                 .all(|environment| {
-                    crate::readiness::valid_coding_environment(project_root, environment)
+                    let require_mcp = crate::models::Platform::current()
+                        == crate::models::Platform::Windows
+                        && crate::coding_environment::mcp_registration_component_id(environment)
+                            .is_some_and(|component_id| {
+                                plan.selected_components
+                                    .iter()
+                                    .any(|selected| selected == component_id)
+                            });
+                    crate::readiness::valid_coding_environment_with_mcp(
+                        project_root,
+                        environment,
+                        require_mcp,
+                    )
                 })) {
             "pass".into()
         } else {
@@ -3506,6 +3521,24 @@ fn build_transaction_readiness(
             "Transaction readiness is evaluated before the success lock is written.".into(),
         ],
     });
+    if let Some(check) = report
+        .checks
+        .iter_mut()
+        .find(|check| check.id == "mcp.hoi4" && check.status == "block")
+    {
+        if let Some(detail) = journal
+            .stages
+            .iter()
+            .filter(|stage| stage.id == "post-install checks")
+            .flat_map(|stage| stage.evidence.iter())
+            .find_map(|evidence| {
+                evidence.strip_prefix("external-action:mcp.hoi4_agent_tools:incomplete:")
+            })
+        {
+            let bounded: String = redact_secrets(detail, &[]).chars().take(736).collect();
+            check.message = Some(redact_secrets(&bounded, &[]));
+        }
+    }
     Ok(report)
 }
 
@@ -8536,6 +8569,74 @@ mod tests {
             .path()
             .join(".hoi4-mod-setup/install.lock.json")
             .exists());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn failed_mcp_bootstrap_cause_reaches_recovery_without_a_success_lock() {
+        fn fail_mcp(
+            _: &Path,
+            _: &InstallationPlan,
+            component: &str,
+        ) -> Result<PostInstallActionOutcome, AppError> {
+            Ok(PostInstallActionOutcome {
+                component_id: component.into(),
+                state: "incomplete".into(),
+                evidence: "MCP package tree does not match the reviewed release. client_secret=private-regression-value".into(),
+            })
+        }
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let mut plan = ready_plan(project.path());
+        plan.selected_components
+            .push(crate::mcp::COMPONENT_ID.into());
+        plan.optional_workflows
+            .insert(crate::mcp::COMPONENT_ID.into(), "selected_pending".into());
+        plan.external_actions = vec![reviewed_mcp_external_action()];
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        let error = run_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                post_install_action_runner: Some(fail_mcp),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("MCP package tree does not match"),
+            "{error}"
+        );
+        assert!(!error.to_string().contains("private-regression-value"));
+        assert!(!project
+            .path()
+            .join(".hoi4-mod-setup/install.lock.json")
+            .exists());
+        let journal_path = transaction_root(app.path(), plan.plan_id)
+            .transaction
+            .join("journal.json");
+        let mut journal = read_journal(&journal_path).unwrap();
+        assert!(journal.recovery.rollback_allowed);
+        assert!(journal
+            .error
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("MCP package tree does not match"));
+        assert!(!serde_json::to_string(&journal)
+            .unwrap()
+            .contains("private-regression-value"));
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert!(!project.path().join("AGENTS.md").exists());
     }
 
     #[test]

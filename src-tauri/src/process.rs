@@ -844,7 +844,7 @@ pub fn validate_executable_publisher(
         );
         if !details.status.success()
             || detail.len() > 16 * 1024
-            || !detail.contains(expected_publisher)
+            || !macos_signature_matches_publisher(expected_publisher, &detail)
         {
             return Err(AppError::Process(
                 "executable publisher does not match the reviewed product".into(),
@@ -859,6 +859,26 @@ pub fn validate_executable_publisher(
         Err(AppError::UnsupportedPlatform(
             "executable publisher verification is supported only on Windows and macOS".into(),
         ))
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_signature_matches_publisher(expected_publisher: &str, details: &str) -> bool {
+    match expected_publisher {
+        "OpenAI" => {
+            let expected_authority =
+                "Authority=Developer ID Application: OpenAI OpCo, LLC (2DC432GLL2)";
+            details
+                .lines()
+                .any(|line| line.trim() == expected_authority)
+                && details
+                    .lines()
+                    .any(|line| line.trim() == "TeamIdentifier=2DC432GLL2")
+        }
+        // The only current macOS account-bearing route is Codex. MCP and the
+        // credential-bearing Meshy route are Windows-only, so do not infer a
+        // macOS OpenJS identity without a reviewed Apple Team ID.
+        _ => false,
     }
 }
 
@@ -996,6 +1016,21 @@ fn quote_argument(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::credentials::{save_meshy_key, MemoryCredentialStore, ScopedSecretEnvironment};
+
+    #[test]
+    fn macos_publisher_requires_exact_openai_authority_and_team_identity() {
+        let valid = "Authority=Developer ID Application: OpenAI OpCo, LLC (2DC432GLL2)\nTeamIdentifier=2DC432GLL2\n";
+        assert!(macos_signature_matches_publisher("OpenAI", valid));
+
+        let lookalike = "Authority=Developer ID Application: Other Company (AAAA111111)\nDesignatedRequirement=anchor apple and identifier com.openai.codex\nTeamIdentifier=AAAA111111\n";
+        assert!(!macos_signature_matches_publisher("OpenAI", lookalike));
+        let wrong_team = "Authority=Developer ID Application: OpenAI OpCo, LLC (BBBB222222)\nTeamIdentifier=BBBB222222\n";
+        assert!(!macos_signature_matches_publisher("OpenAI", wrong_team));
+        assert!(!macos_signature_matches_publisher(
+            "OpenJS Foundation",
+            valid
+        ));
+    }
 
     #[test]
     fn process_preview_contains_names_not_secret_values() {

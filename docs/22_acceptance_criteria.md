@@ -82,7 +82,7 @@
 - AI-03B: The app fetches the authenticated provider's live model catalog, shows
   the selected model's supported effort levels from Light through Max, defaults
   Codex to `gpt-5.6-luna`/`xhigh`, defaults DeepSeek to
-  `deepseek-v4-flash`, and binds both choices through analysis, plan, and lock.
+  `deepseek-flash`, and binds both choices through analysis, plan, and lock.
   An empty or failed catalog refresh retains the verified selectable default for
   Codex and each known hosted profile. Local and custom profiles keep an
   editable model control and add successfully discovered endpoint models as

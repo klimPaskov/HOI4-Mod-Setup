@@ -125,6 +125,10 @@ operations are not accepted; mode belongs to the reviewed file operation.
   readiness consumes that result and never launches a second probe that could
   reverse an earlier failure.
 - Persist the readiness report, then refuse stage 12 and the success lock when any blocking core check is `block`; optional `incomplete`, `planned_unavailable`, and unsupported optional routes remain non-blocking.
+- Preserve bounded, redacted MCP bootstrap exit/timeout and diagnostic output
+  in its action outcome. A failed MCP readiness check copies that journaled
+  cause into the readiness message and final failure so Recovery can explain
+  the failure without rerunning the external action or weakening integrity.
 - Persist an `applying` operation intent before replacing or deleting a live destination. Use the platform atomic replace route where available and verify the expected incoming hash, not only an observed self-hash.
 - Bind UI apply to a core-owned reviewed plan session and prepared bytes. The renderer sends only the approved plan ID and project root when installation starts; never reserialize or accept a renderer-edited plan as authoritative.
 - Track source hash separately from result hash: generated files, structured merges, and optional MCP TOML adaptation may have a verified incoming source hash and a different deterministic installed hash. The generated `.hoi4-mod-setup/state.json` must validate against `project-state.schema.json`, including provider, model, reasoning effort, and optimization-profile provenance.

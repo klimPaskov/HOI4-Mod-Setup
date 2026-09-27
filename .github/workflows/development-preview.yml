@@ -65,6 +65,7 @@ jobs:
       - name: Run application gates
         shell: bash
         run: |
+          pnpm test:e2e:install
           pnpm lint
           pnpm typecheck
           pnpm test -- --run

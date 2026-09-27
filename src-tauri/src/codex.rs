@@ -4,8 +4,11 @@
 //! validation. Codex owns authentication and token persistence. No method in
 //! this module reads a Codex token file or accepts an API key.
 
-use crate::models::CodexAnalysisRecord;
-use crate::security::{is_link_metadata, redact_secrets, reject_secret_like_keys, sha256_bytes};
+use crate::models::{CodexAnalysisRecord, Platform};
+use crate::process::ProcessSpec;
+use crate::security::{
+    is_link_metadata, redact_secrets, reject_secret_like_keys, sha256_bytes, sha256_file,
+};
 use crate::AppError;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -14,7 +17,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -234,6 +237,69 @@ pub struct AppServerProtocol<T: JsonlTransport> {
     notifications: Vec<Value>,
     request_timeout: Duration,
     initialized: bool,
+    expected_server_version: Option<String>,
+}
+
+fn validate_initialize_response(
+    value: &Value,
+    expected_server_version: Option<&str>,
+) -> Result<(), AppError> {
+    let object = value.as_object().ok_or_else(|| {
+        AppError::Protocol("Codex App Server returned an incompatible initialize response".into())
+    })?;
+    let user_agent = object
+        .get("userAgent")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty() && value.len() <= 512)
+        .ok_or_else(|| {
+            AppError::Protocol("Codex App Server initialize response omitted its user agent".into())
+        })?;
+    let server_version = user_agent
+        .split_whitespace()
+        .next()
+        .and_then(|value| value.strip_prefix("hoi4-mod-setup/"))
+        .filter(|version| {
+            regex::Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$")
+                .expect("static Codex version regex")
+                .is_match(version)
+        });
+    if server_version.is_none()
+        || expected_server_version.is_some_and(|expected| server_version != Some(expected))
+    {
+        return Err(AppError::Protocol(
+            "Codex App Server initialize response did not acknowledge the reviewed client and server versions".into(),
+        ));
+    }
+    let family = object
+        .get("platformFamily")
+        .and_then(Value::as_str)
+        .filter(|value| value.len() <= 32)
+        .ok_or_else(|| {
+            AppError::Protocol(
+                "Codex App Server initialize response omitted its platform family".into(),
+            )
+        })?;
+    let platform_os = object
+        .get("platformOs")
+        .and_then(Value::as_str)
+        .filter(|value| value.len() <= 32)
+        .ok_or_else(|| {
+            AppError::Protocol("Codex App Server initialize response omitted its platform".into())
+        })?;
+    if family != std::env::consts::FAMILY || platform_os != std::env::consts::OS {
+        return Err(AppError::Protocol(
+            "Codex App Server initialize response does not match this computer".into(),
+        ));
+    }
+    if object
+        .get("codexHome")
+        .is_some_and(|value| value.as_str().is_none_or(|path| path.len() > 4096))
+    {
+        return Err(AppError::Protocol(
+            "Codex App Server initialize response contains invalid home metadata".into(),
+        ));
+    }
+    Ok(())
 }
 
 impl<T: JsonlTransport> AppServerProtocol<T> {
@@ -248,7 +314,14 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
             notifications: Vec::new(),
             request_timeout: request_timeout.max(Duration::from_millis(100)),
             initialized: false,
+            expected_server_version: None,
         }
+    }
+
+    pub fn with_expected_server_version(transport: T, expected_server_version: String) -> Self {
+        let mut protocol = Self::new(transport);
+        protocol.expected_server_version = Some(expected_server_version);
+        protocol
     }
 
     pub fn is_alive(&mut self) -> bool {
@@ -271,6 +344,7 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
                 }
             }),
         )?;
+        validate_initialize_response(&result, self.expected_server_version.as_deref())?;
         self.transport.send(&json!({"method": "initialized"}))?;
         self.initialized = true;
         Ok(result)
@@ -1494,7 +1568,7 @@ fn reject_sensitive_output_value(value: &Value) -> Result<(), AppError> {
     validate_recursive(value)
 }
 
-fn validate_proposal_value(key: &ProposalKey, value: &Value) -> Result<(), AppError> {
+pub(crate) fn validate_proposal_value(key: &ProposalKey, value: &Value) -> Result<(), AppError> {
     match key {
         ProposalKey::DisplayName
         | ProposalKey::ScriptPrefix
@@ -2110,6 +2184,45 @@ impl Drop for ProcessJsonlTransport {
     }
 }
 
+pub fn codex_executable_version(executable: &Path) -> Result<String, AppError> {
+    if !executable.is_absolute() || crate::security::path_has_link_component(executable) {
+        return Err(AppError::Process(
+            "the reviewed Codex executable path is invalid".into(),
+        ));
+    }
+    crate::process::validate_executable_publisher(executable, "OpenAI")?;
+    let executable_sha256 = sha256_file(executable)?;
+    let spec = ProcessSpec {
+        executable: executable.to_path_buf(),
+        executable_sha256: Some(executable_sha256.clone()),
+        args: vec!["--version".into()],
+        cwd: None,
+        platform: Platform::current(),
+        environment_names: Vec::new(),
+        timeout_seconds: 10,
+        max_output_bytes: 2048,
+    };
+    let result = spec.run(&[executable.to_path_buf()], None)?;
+    if result.status_code != Some(0)
+        || result.timed_out
+        || result.stdout_truncated
+        || result.stderr_truncated
+        || sha256_file(executable)? != executable_sha256
+    {
+        return Err(AppError::Process(
+            "the reviewed Codex executable version could not be verified".into(),
+        ));
+    }
+    regex::Regex::new(r"(?:^|\s)([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)(?:\s|$)")
+        .expect("static Codex version regex")
+        .captures(&result.stdout)
+        .and_then(|captures| captures.get(1))
+        .map(|version| version.as_str().to_owned())
+        .ok_or_else(|| {
+            AppError::Protocol("Codex executable returned an incompatible version string".into())
+        })
+}
+
 pub fn find_codex_executable() -> Option<PathBuf> {
     let cache = CODEX_EXECUTABLE.get_or_init(|| Mutex::new(None));
     if let Ok(cached) = cache.lock() {
@@ -2617,6 +2730,15 @@ mod tests {
         json!({"id": id, "result": result})
     }
 
+    fn fake_initialize_result() -> Value {
+        json!({
+            "userAgent": format!("hoi4-mod-setup/{} (test)", env!("CARGO_PKG_VERSION")),
+            "codexHome": std::env::temp_dir().to_string_lossy(),
+            "platformFamily": std::env::consts::FAMILY,
+            "platformOs": std::env::consts::OS
+        })
+    }
+
     #[cfg(target_os = "windows")]
     fn fake_jsonl_process_command(interrupt_after_request: bool) -> (PathBuf, Vec<String>) {
         let executable = PathBuf::from(std::env::var_os("SystemRoot").expect("SystemRoot"))
@@ -2624,13 +2746,15 @@ mod tests {
             .join("WindowsPowerShell")
             .join("v1.0")
             .join("powershell.exe");
+        let response = serde_json::to_string(&response(1, fake_initialize_result())).unwrap();
         let script = if interrupt_after_request {
-            "$null = [Console]::In.ReadLine(); exit 0"
+            "$null = [Console]::In.ReadLine(); exit 0".to_owned()
         } else {
             "$line = [Console]::In.ReadLine(); if ($null -eq $line) { exit 2 }; \
-             [Console]::Out.WriteLine('{\"id\":1,\"result\":{\"version\":\"fake\"}}'); \
+             [Console]::Out.WriteLine('__INIT_RESPONSE__'); \
              [Console]::Out.Flush(); $null = [Console]::In.ReadLine(); \
              while ($true) { Start-Sleep -Milliseconds 50 }"
+                .replace("__INIT_RESPONSE__", &response)
         };
         (
             executable,
@@ -2639,7 +2763,7 @@ mod tests {
                 "-NoProfile".into(),
                 "-NonInteractive".into(),
                 "-Command".into(),
-                script.into(),
+                script,
             ],
         )
     }
@@ -2647,13 +2771,15 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     fn fake_jsonl_process_command(interrupt_after_request: bool) -> (PathBuf, Vec<String>) {
         let executable = fs::canonicalize("/bin/sh").expect("system shell");
+        let response = serde_json::to_string(&response(1, fake_initialize_result())).unwrap();
         let script = if interrupt_after_request {
             "IFS= read -r line; exit 0"
         } else {
             "IFS= read -r line || exit 2; \
-             printf '%s\n' '{\"id\":1,\"result\":{\"version\":\"fake\"}}'; \
+             printf '%s\n' '__INIT_RESPONSE__'; \
              IFS= read -r initialized || exit 3; \
              while :; do sleep 1; done"
+                .replace("__INIT_RESPONSE__", &response)
         };
         (executable, vec!["-c".into(), script.into()])
     }
@@ -2706,13 +2832,61 @@ mod tests {
     fn initialize_is_first_request_and_initialized_notification_follows() {
         let transport = FakeTransport {
             sent: Vec::new(),
-            incoming: VecDeque::from([response(1, json!({"version": "test"}))]),
+            incoming: VecDeque::from([response(1, fake_initialize_result())]),
             alive: true,
         };
         let mut protocol = AppServerProtocol::new(transport);
         protocol.initialize().unwrap();
         assert_eq!(protocol.transport.sent[0]["method"], "initialize");
         assert_eq!(protocol.transport.sent[1]["method"], "initialized");
+    }
+
+    #[test]
+    fn initialize_rejects_an_incompatible_server_before_marking_ready() {
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming: VecDeque::from([response(
+                1,
+                json!({
+                    "userAgent": "unreviewed/1.0",
+                    "platformFamily": std::env::consts::FAMILY,
+                    "platformOs": std::env::consts::OS
+                }),
+            )]),
+            alive: true,
+        };
+        let mut protocol = AppServerProtocol::new(transport);
+
+        assert!(protocol.initialize().is_err());
+        assert_eq!(protocol.transport.sent.len(), 1);
+        assert_eq!(protocol.transport.sent[0]["method"], "initialize");
+        assert!(!protocol.initialized);
+    }
+
+    #[test]
+    fn initialize_requires_the_server_version_bound_to_the_executable() {
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming: VecDeque::from([response(1, fake_initialize_result())]),
+            alive: true,
+        };
+        let mut protocol = AppServerProtocol::with_expected_server_version(
+            transport,
+            env!("CARGO_PKG_VERSION").into(),
+        );
+        protocol.initialize().unwrap();
+        assert!(protocol.initialized);
+
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming: VecDeque::from([response(1, fake_initialize_result())]),
+            alive: true,
+        };
+        let mut incompatible =
+            AppServerProtocol::with_expected_server_version(transport, "99.0.0".into());
+        assert!(incompatible.initialize().is_err());
+        assert_eq!(incompatible.transport.sent.len(), 1);
+        assert!(!incompatible.initialized);
     }
 
     #[test]
@@ -2854,7 +3028,10 @@ mod tests {
 
         let initialized = protocol.initialize().unwrap();
 
-        assert_eq!(initialized["version"], "fake");
+        assert!(initialized["userAgent"]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("hoi4-mod-setup/{}", env!("CARGO_PKG_VERSION"))));
         assert!(protocol.is_alive());
         protocol.transport.close();
         assert!(!protocol.is_alive());

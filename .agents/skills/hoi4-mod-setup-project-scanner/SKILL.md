@@ -80,6 +80,19 @@ not a reason to scan gameplay or media trees.
 - Existing-project folder selection returns the canonical project path plus
   any discovered launcher path. A scan never searches sibling drives or
   unrelated folders.
+- Keep the actual external launcher path in the finding value for review.
+  Use `@approved-launcher/descriptor.mod` as its semantic evidence reference
+  and for its validation conflict. This reserved summary identifier is never
+  opened as a file; generic absolute-path rejection and exact core scan/hash
+  approval remain unchanged. Test a real scan through evidence approval, not
+  just manually constructed relative-path evidence.
+
+Aggregate scan evidence uses reserved `@scan/git-summary`,
+`@scan/coding-environments`, and `@scan/absolute-paths` identifiers instead of
+`.` or raw `.git` paths. These identifiers and `@approved-launcher/descriptor.mod`
+are summaries, never filesystem inputs. They remain bound to the core scan ID,
+canonical project root, finding/conflict reference, excerpt hash, and explicit
+evidence approval. Do not relax the generic absolute-path or `.git` rejection.
 
 ## Finding model
 

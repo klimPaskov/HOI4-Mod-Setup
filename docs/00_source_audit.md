@@ -5,9 +5,9 @@
 This planning package uses two evidence sets:
 
 1. The project files supplied with the request, including all Markdown skills, all supplied subagent TOML files, the project instruction file, the mechanics guide, and the current event, cluster, and scenario catalog CSV snapshots.
-2. The current audit resolves the live `klimPaskov/Agentic-HOI4-Modding` repository to published commit `0bb4917dca228886aa9a52963bc09e7078666d64` on `main` on 1 September 2026. That publication binds the complete portrait contract and provider router, the Technology Tree Viewer routes, the execution-locked Blender/Meshy 3D workflow, the verified `hoi4-agent-tools@3.0.7` package, and native Codex, Claude Code, Cursor, Qoder, and OpenCode packages projected from canonical Codex agent TOMLs. The application resolves the remote manifest at runtime and retains the bundled copy only as offline bootstrap evidence.
+2. The current audit resolves the live `klimPaskov/Agentic-HOI4-Modding` repository to published commit `a957ba3b6b3e23b315630809d5e7e73e2155682a` on `main` on 27 September 2026. That publication binds the complete portrait contract and provider router, the Technology Tree Viewer routes, the execution-locked Blender/Meshy 3D workflow, the verified `hoi4-agent-tools@3.6.0` package with 34 required tools, and native Codex, Claude Code, Cursor, Qoder, and OpenCode packages projected from canonical Codex agent TOMLs. The application resolves the remote manifest at runtime and retains the bundled copy only as offline bootstrap evidence.
 
-Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. The checked-in app manifest matches the published Agentic manifest byte-for-byte and its evidence is generated from immutable source revision `7e50711580a3fa377f1acb834bb19a51128eacd2`.
+Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. The checked-in app manifest matches the published Agentic manifest byte-for-byte. Its `generated_for_revision` is `4f55856532b5be7549a7a44050ea083c1eeb4464`, the immutable source snapshot used to generate the current evidence.
 
 ## Fully read and processed
 
@@ -54,12 +54,12 @@ both Agentic repository license evidence and wiki license status as
 `not_found`.
 
 The current root manifest at publication commit
-`0bb4917dca228886aa9a52963bc09e7078666d64` has raw SHA-256
-`4550334afaea4cb3c6ad6d83219b02cadf3ee60d46112d7e46a352ee889ceb10`
-and declares `generated_for_revision`
-`7e50711580a3fa377f1acb834bb19a51128eacd2`. Its 1,276 declared file records
-cover 45 components and were generated from immutable Git blob bytes before
-publication.
+`a957ba3b6b3e23b315630809d5e7e73e2155682a` declares
+`generated_for_revision` `4f55856532b5be7549a7a44050ea083c1eeb4464`. Its 1,388
+declared file records, including the 5,099-file MCP package identity, were
+generated from immutable Git blob bytes before publication. The current wiki
+evidence covers 601 files and all 11 required pages; formal provenance and
+license evidence remain `repository_only` and `not_found` respectively.
 
 The manifest is now published upstream infrastructure. Runtime resolution
 still verifies the manifest and every selected blob against one exact source

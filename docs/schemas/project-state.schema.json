@@ -194,6 +194,29 @@
         }
       }
     },
+    "project_conventions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agents_profile",
+        "localisation_convention",
+        "documentation_convention"
+      ],
+      "properties": {
+        "agents_profile": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "localisation_convention": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "documentation_convention": {
+          "type": "string",
+          "maxLength": 256
+        }
+      }
+    },
     "portrait_pipeline": {
       "type": "object",
       "additionalProperties": false,

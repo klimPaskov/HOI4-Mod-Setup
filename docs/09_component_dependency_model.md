@@ -90,9 +90,11 @@ conflict review still apply before selection becomes installable.
 | `codex.config` | structured merge; development-client integration | yes | all |
 | `mcp.hoi4_agent_tools` | MCP and external tool | verified profile | current repository Windows route |
 | `docs.mcp_integration` | managed integration guide | yes | all |
+| `docs.runtimes` | managed shared runtime guide | yes | all |
 | `wiki.snapshot` | managed tree | yes | all |
 | `docs.source` | repository reference | optional | all |
-| `template.chaos_redux_agents` | project-specific instruction example | optional | all |
+| `core.claude.instructions` | adapted Claude Code instructions | Claude Code environment | all |
+| `runtime.claude.mcp`, `runtime.cursor.mcp`, `runtime.qoder.mcp`, `runtime.opencode.mcp` | native MCP registration | optional | manifest-declared Windows route |
 | `workflow.3d` | optional workflow | no | current repository Windows route |
 | `workflow.super_events` | optional workflow | no | manifest-declared all-platform managed skill tree |
 | `workflow.portraits.core` | optional complete portrait contract | no | all |

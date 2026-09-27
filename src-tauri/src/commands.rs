@@ -396,7 +396,10 @@ fn with_codex_session<R>(
                     "official Codex executable was not found on the reviewed PATH".into(),
                 )
             })?;
-            let mut protocol = AppServerProtocol::new(ProcessJsonlTransport::start(executable)?);
+            let server_version = crate::codex::codex_executable_version(&executable)?;
+            let transport = ProcessJsonlTransport::start(executable)?;
+            let mut protocol =
+                AppServerProtocol::with_expected_server_version(transport, server_version);
             protocol.initialize()?;
             Ok(protocol)
         },
@@ -581,16 +584,13 @@ fn planning_command_error(error: AppError) -> String {
     }
 }
 
-fn run_blocking_command<T, F>(name: &'static str, work: F) -> Result<T, String>
+async fn run_blocking_command<T, F>(name: &'static str, work: F) -> Result<T, String>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, String> + Send + 'static,
 {
-    std::thread::Builder::new()
-        .name(format!("hoi4-setup-{name}"))
-        .spawn(work)
-        .map_err(|_| format!("{name} could not be started"))?
-        .join()
+    tauri::async_runtime::spawn_blocking(work)
+        .await
         .map_err(|_| format!("{name} stopped unexpectedly"))?
 }
 
@@ -772,7 +772,7 @@ fn ai_provider_profiles() -> Vec<AiProviderProfile> {
 }
 
 #[tauri::command(async)]
-fn ai_model_list(provider: String, endpoint: String) -> Result<Vec<AiModelOption>, String> {
+async fn ai_model_list(provider: String, endpoint: String) -> Result<Vec<AiModelOption>, String> {
     run_blocking_command("provider-model-list", move || {
         if provider == "codex" {
             return with_codex_session(AppServerProtocol::model_list)
@@ -795,6 +795,7 @@ fn ai_model_list(provider: String, endpoint: String) -> Result<Vec<AiModelOption
         )
         .map_err(provider_analysis_user_error)
     })
+    .await
 }
 
 #[tauri::command(async)]
@@ -851,7 +852,7 @@ fn remove_ai_provider_credential(provider: String) -> Result<bool, String> {
 }
 
 #[tauri::command(async)]
-fn codex_account_read() -> CodexAccountStatus {
+async fn codex_account_read() -> CodexAccountStatus {
     run_blocking_command("codex-account-read", || {
         Ok(
             match with_codex_session(|session| session.account_read(false)) {
@@ -860,14 +861,16 @@ fn codex_account_read() -> CodexAccountStatus {
             },
         )
     })
+    .await
     .unwrap_or_else(missing_status)
 }
 
 #[tauri::command(async)]
-fn codex_login_start(mode: String) -> CodexLoginStart {
+async fn codex_login_start(mode: String) -> CodexLoginStart {
     run_blocking_command("codex-login-start", move || {
         Ok(codex_login_start_blocking(mode))
     })
+    .await
     .unwrap_or_else(|error| CodexLoginStart {
         available: false,
         error: Some(error),
@@ -915,10 +918,11 @@ fn codex_login_start_blocking(mode: String) -> CodexLoginStart {
 }
 
 #[tauri::command(async)]
-fn codex_login_wait(login_id: String) -> Result<CodexAccountStatus, String> {
+async fn codex_login_wait(login_id: String) -> Result<CodexAccountStatus, String> {
     run_blocking_command("codex-login-wait", move || {
         codex_login_wait_blocking(login_id)
     })
+    .await
 }
 
 fn codex_login_wait_blocking(login_id: String) -> Result<CodexAccountStatus, String> {
@@ -1015,8 +1019,8 @@ fn open_url_in_system_browser(url: String) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
-fn codex_logout() -> Result<(), String> {
-    run_blocking_command("codex-logout", codex_logout_blocking)
+async fn codex_logout() -> Result<(), String> {
+    run_blocking_command("codex-logout", codex_logout_blocking).await
 }
 
 fn codex_logout_blocking() -> Result<(), String> {
@@ -1165,7 +1169,7 @@ fn validate_analysis_source_binding(
 }
 
 #[tauri::command(async)]
-fn codex_analyze(
+async fn codex_analyze(
     request: CodexAnalysisRequest,
     model: String,
     reasoning_effort: String,
@@ -1173,6 +1177,7 @@ fn codex_analyze(
     run_blocking_command("codex-analysis", move || {
         codex_analyze_blocking(request, model, reasoning_effort)
     })
+    .await
 }
 
 fn codex_analyze_blocking(
@@ -1219,8 +1224,8 @@ fn codex_analyze_blocking(
 }
 
 #[tauri::command(async)]
-fn ai_analyze(request: AiAnalysisRequest) -> Result<CodexAnalysisResult, String> {
-    run_blocking_command("provider-analysis", move || ai_analyze_blocking(request))
+async fn ai_analyze(request: AiAnalysisRequest) -> Result<CodexAnalysisResult, String> {
+    run_blocking_command("provider-analysis", move || ai_analyze_blocking(request)).await
 }
 
 fn ai_analyze_blocking(mut request: AiAnalysisRequest) -> Result<CodexAnalysisResult, String> {
@@ -1398,14 +1403,40 @@ fn same_project_root(left: &Path, right: &Path) -> bool {
     }
 }
 
+fn canonical_component_recommendations(value: &Value) -> Result<Value, AppError> {
+    let mut recommendations: Vec<crate::codex::ComponentRecommendation> =
+        serde_json::from_value(value.clone())?;
+    if recommendations.len() > 64 {
+        return Err(AppError::InvalidInput(
+            "confirmed component recommendations exceed the supported limit".into(),
+        ));
+    }
+    recommendations.sort_by(|left, right| left.component_id.cmp(&right.component_id));
+    if recommendations
+        .windows(2)
+        .any(|pair| pair[0].component_id == pair[1].component_id)
+    {
+        return Err(AppError::InvalidInput(
+            "confirmed component recommendations contain duplicate IDs".into(),
+        ));
+    }
+    serde_json::to_value(recommendations).map_err(AppError::from)
+}
+
 fn canonical_confirmation_values(value: &Value) -> Result<Value, AppError> {
     let object = value.as_object().ok_or_else(|| {
         AppError::InvalidInput("confirmed render values must be an object".into())
     })?;
-    if object
-        .keys()
-        .any(|key| !matches!(key.as_str(), "identity" | "description" | "folderProfile"))
-    {
+    if object.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "identity"
+                | "description"
+                | "folderProfile"
+                | "conventions"
+                | "componentRecommendations"
+        )
+    }) {
         return Err(AppError::InvalidInput(
             "confirmed render values contain an unsupported field".into(),
         ));
@@ -1414,6 +1445,10 @@ fn canonical_confirmation_values(value: &Value) -> Result<Value, AppError> {
         .get("description")
         .and_then(Value::as_str)
         .ok_or_else(|| AppError::InvalidInput("confirmed description is missing".into()))?;
+    crate::codex::validate_proposal_value(
+        &crate::codex::ProposalKey::ProjectDescription,
+        &Value::String(description.to_owned()),
+    )?;
     let folder_profile = object
         .get("folderProfile")
         .and_then(Value::as_array)
@@ -1480,10 +1515,53 @@ fn canonical_confirmation_values(value: &Value) -> Result<Value, AppError> {
         }
         canonical_identity.insert((*field).into(), current);
     }
+    let conventions = object
+        .get("conventions")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            AppError::InvalidInput("confirmed project conventions are missing".into())
+        })?;
+    const CONVENTION_FIELDS: &[(&str, crate::codex::ProposalKey)] = &[
+        ("agents_profile", crate::codex::ProposalKey::AgentsProfile),
+        (
+            "localisation_convention",
+            crate::codex::ProposalKey::LocalisationConvention,
+        ),
+        (
+            "documentation_convention",
+            crate::codex::ProposalKey::DocumentationConvention,
+        ),
+    ];
+    if conventions
+        .keys()
+        .any(|key| !CONVENTION_FIELDS.iter().any(|(name, _)| name == key))
+    {
+        return Err(AppError::InvalidInput(
+            "confirmed project conventions contain an unsupported field".into(),
+        ));
+    }
+    let mut canonical_conventions = serde_json::Map::new();
+    for (field, proposal_key) in CONVENTION_FIELDS {
+        let value = conventions
+            .get(*field)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                AppError::InvalidInput(format!("confirmed project convention is missing: {field}"))
+            })?;
+        crate::codex::validate_proposal_value(proposal_key, &Value::String(value.to_owned()))?;
+        canonical_conventions.insert((*field).into(), Value::String(value.to_owned()));
+    }
+    let component_recommendations = object.get("componentRecommendations").ok_or_else(|| {
+        AppError::InvalidInput("confirmed component recommendations are missing".into())
+    })?;
+    let component_recommendations = canonical_component_recommendations(component_recommendations)?;
     Ok(serde_json::json!({
         "description": description,
         "folderProfile": folders,
         "identity": canonical_identity,
+        "conventions": canonical_conventions,
+        "componentRecommendations": component_recommendations,
     }))
 }
 
@@ -1498,6 +1576,12 @@ fn confirmation_values_from_state(state: &Value) -> Result<Value, AppError> {
         "description": state.get("description").cloned().unwrap_or(Value::String(String::new())),
         "folderProfile": state.get("folderProfile").cloned().unwrap_or_else(|| serde_json::json!([])),
         "identity": state.get("identity").cloned().unwrap_or(Value::Null),
+        "conventions": state.get("conventions").cloned().unwrap_or(Value::Null),
+        "componentRecommendations": state
+            .pointer("/codexAnalysis/component_recommendations")
+            .cloned()
+            .or_else(|| state.get("componentRecommendations").cloned())
+            .unwrap_or_else(|| serde_json::json!([])),
     }))
 }
 
@@ -1507,14 +1591,30 @@ fn confirm_codex_analysis(
     confirmed_fields: Vec<String>,
     confirmed_values: Value,
 ) -> Result<CodexAnalysisRecord, String> {
-    let confirmed_values_sha256 =
-        confirmation_values_sha256(&confirmed_values).map_err(command_error)?;
+    let canonical_values =
+        canonical_confirmation_values(&confirmed_values).map_err(command_error)?;
+    let canonical_bytes = serde_json::to_vec(&canonical_values)
+        .map_err(AppError::from)
+        .map_err(command_error)?;
+    let confirmed_values_sha256 = sha256_bytes(&canonical_bytes);
     let mut analyses = codex_analyses()
         .lock()
         .map_err(|_| "Codex analysis store is unavailable".to_string())?;
     let pending = analyses
         .get_mut(&record.analysis_id)
         .ok_or_else(|| "Codex analysis is no longer available in the core session".to_string())?;
+    let expected_recommendations = canonical_component_recommendations(
+        &serde_json::to_value(&pending.analysis.component_recommendations)
+            .map_err(AppError::from)
+            .map_err(command_error)?,
+    )
+    .map_err(command_error)?;
+    if canonical_values.get("componentRecommendations") != Some(&expected_recommendations) {
+        return Err(
+            "component recommendations changed after the selected provider returned its analysis"
+                .into(),
+        );
+    }
     if let Some(confirmed) = &pending.confirmed {
         if confirmed.confirmed_fields == confirmed_fields {
             if pending.confirmed_values_sha256.as_deref() == Some(confirmed_values_sha256.as_str())
@@ -1648,7 +1748,7 @@ async fn pick_chat_sources_folder(app: tauri::AppHandle) -> Result<FolderSelecti
 }
 
 #[tauri::command(async)]
-fn preview_chat_sources(
+async fn preview_chat_sources(
     project_root: String,
 ) -> Result<crate::chat_sources::ChatSourcesPreview, String> {
     run_blocking_command("chat-sources-preview", move || {
@@ -1659,10 +1759,11 @@ fn preview_chat_sources(
         let project_id = crate::chat_sources::project_id_from_root(&root).map_err(command_error)?;
         crate::chat_sources::preview(&root, &project_id, destination).map_err(command_error)
     })
+    .await
 }
 
 #[tauri::command(async)]
-fn package_chat_sources(
+async fn package_chat_sources(
     project_root: String,
     destination_directory: String,
     selected_file_ids: Vec<String>,
@@ -1675,6 +1776,7 @@ fn package_chat_sources(
         crate::chat_sources::package(&root, &project_id, &destination, &selected_file_ids)
             .map_err(command_error)
     })
+    .await
 }
 
 #[tauri::command(async)]
@@ -1697,7 +1799,7 @@ fn suggest_project_paths(project_id: String) -> Result<SuggestedProjectPaths, St
 }
 
 #[tauri::command(async)]
-fn scan_project(
+async fn scan_project(
     app: tauri::AppHandle,
     root: String,
     request_id: String,
@@ -1706,6 +1808,7 @@ fn scan_project(
     run_blocking_command("project-scan", move || {
         scan_project_blocking(app, root, request_id, launcher_descriptor_path)
     })
+    .await
 }
 
 fn scan_project_blocking(
@@ -1786,43 +1889,48 @@ fn scan_project_blocking(
     if result.cancelled || result.partial {
         *approved = ApprovedScanEvidence::default();
     } else {
-        let mut entries = HashMap::<String, Vec<(String, String)>>::new();
         // The approval store represents only the most recently completed scan.
         // Clearing it prevents an evidence reference from one project from being
         // replayed after the user switches projects in the same desktop session.
-        for finding in &result.findings {
-            let excerpt = match &finding.value {
-                Value::String(value) => value.clone(),
-                value => serde_json::to_string(value)
-                    .map_err(|error| format!("scan evidence could not be serialized: {error}"))?,
-            };
-            let excerpt_sha256 = sha256_bytes(excerpt.as_bytes());
-            let finding_entries = entries.entry(finding.id.clone()).or_default();
-            for evidence in &finding.evidence {
-                finding_entries.push((evidence.path.clone(), excerpt_sha256.clone()));
-            }
-        }
-        for conflict in &result.conflicts {
-            let excerpt = conflict
-                .details
-                .clone()
-                .unwrap_or_else(|| conflict.kind.clone());
-            entries
-                .entry(conflict.id.clone())
-                .or_default()
-                .push((conflict.path.clone(), sha256_bytes(excerpt.as_bytes())));
-        }
-        if entries.len() > 4096 {
-            return Err(
-                "scan produced too many evidence references for a safe Codex review".into(),
-            );
-        }
+        let entries = scan_evidence_entries(&result)?;
         approved.project_root = Some(root);
         approved.scan_id = Some(result.scan_id);
         approved.entries = entries;
         approved.evidence_sha256 = None;
     }
     Ok(result)
+}
+
+fn scan_evidence_entries(
+    result: &ScanResult,
+) -> Result<HashMap<String, Vec<(String, String)>>, String> {
+    let mut entries = HashMap::<String, Vec<(String, String)>>::new();
+    for finding in &result.findings {
+        let excerpt = match &finding.value {
+            Value::String(value) => value.clone(),
+            value => serde_json::to_string(value)
+                .map_err(|error| format!("scan evidence could not be serialized: {error}"))?,
+        };
+        let excerpt_sha256 = sha256_bytes(excerpt.as_bytes());
+        let finding_entries = entries.entry(finding.id.clone()).or_default();
+        for evidence in &finding.evidence {
+            finding_entries.push((evidence.path.clone(), excerpt_sha256.clone()));
+        }
+    }
+    for conflict in &result.conflicts {
+        let excerpt = conflict
+            .details
+            .clone()
+            .unwrap_or_else(|| conflict.kind.clone());
+        entries
+            .entry(conflict.id.clone())
+            .or_default()
+            .push((conflict.path.clone(), sha256_bytes(excerpt.as_bytes())));
+    }
+    if entries.len() > 4096 {
+        return Err("scan produced too many evidence references for a safe Codex review".into());
+    }
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -1971,7 +2079,7 @@ async fn run_3d_health_check(project_root: String) -> Result<WorkflowHealthResul
 }
 
 #[tauri::command(async)]
-fn inspect_local_portrait_provider(
+async fn inspect_local_portrait_provider(
     configured_root: Option<String>,
     server_url: String,
 ) -> Result<crate::portraits::LocalPortraitDiscovery, String> {
@@ -1981,15 +2089,17 @@ fn inspect_local_portrait_provider(
             &server_url,
         ))
     })
+    .await
 }
 
 #[tauri::command(async)]
-fn install_local_portrait_workflows(
+async fn install_local_portrait_workflows(
     comfyui_root: String,
 ) -> Result<crate::portraits::LocalPortraitInstallResult, String> {
     run_blocking_command("portrait-local-install", move || {
         crate::portraits::install_current_workflows(&comfyui_root).map_err(command_error)
     })
+    .await
 }
 
 fn three_d_failure(error: String) -> WorkflowHealthResult {
@@ -2294,12 +2404,11 @@ fn run_reviewed_mcp_bootstrap(
     cleanup_result?;
     let result = match run_result {
         Ok(result) if result.status_code == Some(0) && !result.timed_out => result,
-        _ => {
+        failure => {
             return Ok(PostInstallActionOutcome {
                 component_id: crate::mcp::COMPONENT_ID.into(),
                 state: "incomplete".into(),
-                evidence: "the exact HOI4 Agent Tools package could not be installed and verified"
-                    .into(),
+                evidence: mcp_bootstrap_failure_details(failure),
             });
         }
     };
@@ -2324,6 +2433,46 @@ fn run_reviewed_mcp_bootstrap(
             ),
         },
     })
+}
+
+fn mcp_bootstrap_failure_details(
+    result: Result<crate::process::ProcessResult, AppError>,
+) -> String {
+    let detail = match result {
+        Err(error) => format!("MCP package setup could not start: {error}"),
+        Ok(result) => {
+            let output = if result.stderr.trim().is_empty() {
+                result.stdout.trim()
+            } else {
+                result.stderr.trim()
+            };
+            format!(
+                "MCP package setup failed (exit={}, timed_out={}): {}",
+                result
+                    .status_code
+                    .map_or_else(|| "none".into(), |code| code.to_string()),
+                result.timed_out,
+                if output.is_empty() {
+                    "the setup process returned no diagnostic output"
+                } else {
+                    output
+                }
+            )
+        }
+    };
+    let mut detail = redact_secrets(&detail, &[]);
+    const MAX_BYTES: usize = 2 * 1024;
+    if detail.len() > MAX_BYTES {
+        // Leave room to complete a redaction marker if truncation splits it.
+        let mut end = MAX_BYTES - 32;
+        while !detail.is_char_boundary(end) {
+            end -= 1;
+        }
+        detail.truncate(end);
+        detail.push_str(" ...");
+        detail = redact_secrets(&detail, &[]);
+    }
+    detail
 }
 
 fn run_3d_health_check_blocking(project_root: String) -> Result<WorkflowHealthResult, String> {
@@ -2587,10 +2736,11 @@ fn installed_mcp_target(
 }
 
 #[tauri::command(async)]
-fn run_mcp_health_check(project_root: String) -> Result<WorkflowHealthResult, String> {
+async fn run_mcp_health_check(project_root: String) -> Result<WorkflowHealthResult, String> {
     run_blocking_command("mcp-health-check", move || {
         run_mcp_health_check_blocking(project_root)
     })
+    .await
 }
 
 fn run_mcp_health_check_blocking(project_root: String) -> Result<WorkflowHealthResult, String> {
@@ -2731,10 +2881,11 @@ fn evaluate_readiness(input: ReadinessInput) -> Result<ReadinessReport, String> 
 }
 
 #[tauri::command(async)]
-fn preview_descriptors(state: Value) -> Result<Vec<GeneratedArtifact>, String> {
+async fn preview_descriptors(state: Value) -> Result<Vec<GeneratedArtifact>, String> {
     run_blocking_command("descriptor-preview", move || {
         preview_descriptors_blocking(state)
     })
+    .await
 }
 
 fn preview_descriptors_blocking(state: Value) -> Result<Vec<GeneratedArtifact>, String> {
@@ -2886,13 +3037,14 @@ fn source_request_from_state(state: &Value) -> Result<SourceRequest, AppError> {
 }
 
 #[tauri::command(async)]
-fn preview_source_manifest(
+async fn preview_source_manifest(
     source_mode: String,
     pinned_ref: String,
 ) -> Result<SourceManifestPreview, String> {
     run_blocking_command("source-preview", move || {
         preview_source_manifest_blocking(source_mode, pinned_ref)
     })
+    .await
 }
 
 fn preview_source_manifest_blocking(
@@ -3008,6 +3160,11 @@ fn requested_components_for_selection(
         .into_iter()
         .filter(|id| !environment_ids.contains(id))
         .collect::<Vec<_>>();
+    // Resolve non-optional defaults from the current source manifest in Rust
+    // so a new published runtime guide or core component is included even if
+    // a renderer is stale or omits the newly declared ID.
+    let defaults = default_profile_component_ids(manifest)?;
+    add_supported_profile_components(manifest, &mut requested, &defaults, Platform::current())?;
     // These components are runtime-neutral and are always installed.  The
     // manifest remains authoritative: a source revision that does not declare
     // one cannot be made complete by the app inventing a replacement.
@@ -3610,12 +3767,101 @@ fn adapt_optional_portrait_section(
     Ok(adapted.into_bytes())
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ProjectConventions {
+    agents_profile: String,
+    localisation_convention: String,
+    documentation_convention: String,
+}
+
+fn project_conventions_from_value(value: Option<&Value>) -> Result<ProjectConventions, AppError> {
+    let Some(value) = value else {
+        return Ok(ProjectConventions::default());
+    };
+    let object = value
+        .as_object()
+        .ok_or_else(|| AppError::InvalidInput("project conventions must be an object".into()))?;
+    let fields = [
+        ("agents_profile", crate::codex::ProposalKey::AgentsProfile),
+        (
+            "localisation_convention",
+            crate::codex::ProposalKey::LocalisationConvention,
+        ),
+        (
+            "documentation_convention",
+            crate::codex::ProposalKey::DocumentationConvention,
+        ),
+    ];
+    if object
+        .keys()
+        .any(|key| !fields.iter().any(|(name, _)| name == key))
+    {
+        return Err(AppError::InvalidInput(
+            "project conventions contain an unsupported field".into(),
+        ));
+    }
+    let mut result = ProjectConventions::default();
+    for (field, key) in fields {
+        let value = object
+            .get(field)
+            .map(|value| {
+                value.as_str().ok_or_else(|| {
+                    AppError::InvalidInput(format!("project convention is invalid: {field}"))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
+        if !value.is_empty() {
+            crate::codex::validate_proposal_value(&key, &Value::String(value.to_owned()))?;
+        }
+        match field {
+            "agents_profile" => result.agents_profile = value.to_owned(),
+            "localisation_convention" => result.localisation_convention = value.to_owned(),
+            "documentation_convention" => result.documentation_convention = value.to_owned(),
+            _ => unreachable!("the checked-in convention field set is exhaustive"),
+        }
+    }
+    Ok(result)
+}
+
+fn project_conventions_from_state(state: &Value) -> Result<ProjectConventions, AppError> {
+    project_conventions_from_value(
+        state
+            .get("conventions")
+            .or_else(|| state.get("project_conventions")),
+    )
+}
+
+fn persisted_project_conventions(project_root: &Path) -> ProjectConventions {
+    const STATE_PATH: &str = ".hoi4-mod-setup/state.json";
+    let Ok(bytes) = crate::flatten::read_bounded_regular_file_no_follow_under_root(
+        project_root,
+        STATE_PATH,
+        1024 * 1024,
+    ) else {
+        return ProjectConventions::default();
+    };
+    serde_json::from_slice::<Value>(&bytes)
+        .ok()
+        .and_then(|state| project_conventions_from_state(&state).ok())
+        .unwrap_or_default()
+}
+
+fn escape_markdown_code_span(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('`', "\\`")
+        .replace(['\r', '\n'], " ")
+}
+
+#[allow(clippy::too_many_arguments)]
 fn adapt_agents_for_selection(
     bytes: &[u8],
     identity: &ProjectIdentity,
     provider: &str,
     model: &str,
     reasoning_effort: &str,
+    conventions: &ProjectConventions,
     super_events_selected: bool,
     portrait_enabled: bool,
 ) -> Result<Vec<u8>, AppError> {
@@ -3671,7 +3917,78 @@ fn adapt_agents_for_selection(
             ));
         }
     }
+    let convention_rows = [
+        ("Agent guidance profile", &conventions.agents_profile),
+        (
+            "Localisation convention",
+            &conventions.localisation_convention,
+        ),
+        (
+            "Documentation convention",
+            &conventions.documentation_convention,
+        ),
+    ]
+    .into_iter()
+    .filter(|(_, value)| !value.is_empty())
+    .map(|(label, value)| format!("- {label}: `{}`", escape_markdown_code_span(value)))
+    .collect::<Vec<_>>();
+    if !convention_rows.is_empty() {
+        adapted.push_str("\n## Confirmed project conventions\n\n");
+        adapted.push_str(&convention_rows.join("\n"));
+        adapted.push('\n');
+    }
     Ok(adapted.into_bytes())
+}
+
+fn adapt_claude_instructions(
+    bytes: &[u8],
+    identity: &ProjectIdentity,
+) -> Result<Vec<u8>, AppError> {
+    let template = std::str::from_utf8(bytes)
+        .map_err(|error| AppError::Source(format!("Claude Code template is not UTF-8: {error}")))?;
+    if !template.contains("[MOD_NAME]")
+        || !template.contains("[MOD_PREFIX]")
+        || !template.contains("exactly one authority")
+        || !template.contains("@AGENTS.md")
+    {
+        return Err(AppError::Source(
+            "Claude Code template does not match the reviewed single-authority contract".into(),
+        ));
+    }
+    let project_name = identity
+        .display_name
+        .replace(['\r', '\n'], " ")
+        .replace('`', "\\`");
+    if project_name.trim().is_empty() {
+        return Err(AppError::InvalidInput(
+            "a confirmed project name is required for Claude Code instructions".into(),
+        ));
+    }
+    let rendered_template = template.replace("[MOD_NAME]", &project_name).replace(
+        "[MOD_PREFIX]",
+        identity
+            .primary_namespace
+            .as_deref()
+            .or(identity.script_prefix.as_deref())
+            .unwrap_or(&identity.project_id),
+    );
+    if rendered_template.contains("[MOD_")
+        || rendered_template.contains("{{PROJECT_")
+        || rendered_template.contains("<PROJECT_")
+    {
+        return Err(AppError::Source(
+            "Claude Code template contains unresolved project placeholders".into(),
+        ));
+    }
+
+    // The source template explicitly allows this projection. AGENTS.md is
+    // always installed as the shared, provider-neutral authority; CLAUDE.md
+    // therefore contains only Claude Code's loading note and an import, never
+    // a second full copy of project rules.
+    Ok(format!(
+        "# Claude Code entry for {project_name}\n\nThe root `AGENTS.md` contains the complete project instructions and is the single authority for project rules. Read and follow it before making changes. This file only directs Claude Code to that shared guidance; it does not add or override project instructions.\n\n@AGENTS.md\n"
+    )
+    .into_bytes())
 }
 
 fn strip_agents_placeholder_guide(text: &str) -> String {
@@ -4011,6 +4328,7 @@ fn adapt_selected_source(
     destination: &str,
     bytes: &[u8],
     identity: &ProjectIdentity,
+    conventions: &ProjectConventions,
     ai_provider: &str,
     ai_model: &str,
     ai_reasoning_effort: &str,
@@ -4029,9 +4347,12 @@ fn adapt_selected_source(
             ai_provider,
             ai_model,
             ai_reasoning_effort,
+            conventions,
             super_events_selected,
             portrait.enabled,
         )
+    } else if component_id == "core.claude.instructions" {
+        adapt_claude_instructions(bytes, identity)
     } else if component_id == "codex.config" {
         adapt_codex_config_for_selection(
             bytes,
@@ -4566,6 +4887,7 @@ fn git_setup_from_state(
 fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), AppError> {
     let root = project_root_from_state(state)?;
     let identity = project_identity_from_state(state, &root)?;
+    let conventions = project_conventions_from_state(state)?;
     let codex_analysis = codex_analysis_from_state(state, &root)?;
     let ai_provider = ai_provider_from_state(state)?;
     let ai_model = ai_model_from_state(state);
@@ -4675,6 +4997,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             &adapted_destination,
             &source_bytes,
             &identity,
+            &conventions,
             &ai_provider,
             &ai_model,
             &ai_reasoning_effort_from_state(state),
@@ -4789,7 +5112,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     // review operation for each one; an existing descriptor is not evidence
     // that the other two routes are valid.
     let mut generated = render_generated_artifacts(&identity)?;
-    if mode == "new" {
+    if mode == "new" || mode == "existing" {
         let description = string_field(state, "description").unwrap_or_default();
         let readme = project_readme(
             &identity,
@@ -4877,6 +5200,11 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             "coding_environments": {
                 "primary": coding_environment_selection.primary.clone(),
                 "additional": coding_environment_selection.additional.clone()
+            },
+            "project_conventions": {
+                "agents_profile": conventions.agents_profile,
+                "localisation_convention": conventions.localisation_convention,
+                "documentation_convention": conventions.documentation_convention
             },
             "credential_references": credential_references.clone(),
             "portrait_pipeline": portrait_pipeline.clone()
@@ -5463,10 +5791,11 @@ fn refresh_flattened_outputs(prepared_plan: &mut PreparedPlan) -> Result<(), App
 }
 
 #[tauri::command(async)]
-fn build_installation_plan(state: Value) -> Result<InstallationPlan, String> {
+async fn build_installation_plan(state: Value) -> Result<InstallationPlan, String> {
     run_blocking_command("installation-plan", move || {
         build_installation_plan_blocking(state)
     })
+    .await
 }
 
 fn build_installation_plan_blocking(state: Value) -> Result<InstallationPlan, String> {
@@ -5531,6 +5860,7 @@ fn require_maintenance_reanalysis(
     analysis_override: Option<&CodexAnalysisRecord>,
     project_root: &Path,
     expected_endpoint: Option<&str>,
+    expected_confirmation_values_sha256: Option<&str>,
 ) -> Result<(), AppError> {
     if mode != "update" {
         return Ok(());
@@ -5541,6 +5871,12 @@ fn require_maintenance_reanalysis(
                 .into(),
         )
     })?;
+    let expected_confirmation_values_sha256 =
+        expected_confirmation_values_sha256.ok_or_else(|| {
+            AppError::Credential(
+                "update planning requires the exact values confirmed in the semantic review".into(),
+            )
+        })?;
     crate::codex::validate_confirmed_record(record)?;
     if record.analysis_purpose.as_deref() != Some("maintenance_reanalysis") {
         return Err(AppError::Credential(
@@ -5585,6 +5921,11 @@ fn require_maintenance_reanalysis(
         {
             return Err(AppError::Credential(
                 "update reanalysis was confirmed against a different provider endpoint".into(),
+            ));
+        }
+        if pending.confirmed_values_sha256.as_deref() != Some(expected_confirmation_values_sha256) {
+            return Err(AppError::Credential(
+                "update review values changed after semantic confirmation".into(),
             ));
         }
         (pending.project_root.clone(), pending.scan_id)
@@ -5731,7 +6072,8 @@ fn append_additional_component_operations(
 }
 
 #[tauri::command(async)]
-fn build_maintenance_plan(
+#[allow(clippy::too_many_arguments)]
+async fn build_maintenance_plan(
     mode: String,
     project_root: String,
     analysis_override: Option<CodexAnalysisRecord>,
@@ -5739,6 +6081,7 @@ fn build_maintenance_plan(
     portrait_pipeline: Option<Value>,
     primary_coding_environment: Option<String>,
     additional_coding_environments: Option<Vec<String>>,
+    analysis_confirmation_values: Option<Value>,
 ) -> Result<InstallationPlan, String> {
     run_blocking_command("maintenance-plan", move || {
         build_maintenance_plan_blocking(
@@ -5749,10 +6092,13 @@ fn build_maintenance_plan(
             portrait_pipeline,
             primary_coding_environment,
             additional_coding_environments,
+            analysis_confirmation_values,
         )
     })
+    .await
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_maintenance_plan_blocking(
     mode: String,
     project_root: String,
@@ -5761,9 +6107,21 @@ fn build_maintenance_plan_blocking(
     portrait_pipeline_value: Option<Value>,
     primary_coding_environment: Option<String>,
     additional_coding_environments: Option<Vec<String>>,
+    analysis_confirmation_values: Option<Value>,
 ) -> Result<InstallationPlan, String> {
     let root = validate_project_root_or_destination(Path::new(&project_root))
         .map(|(root, _)| root)
+        .map_err(command_error)?;
+    let conventions = analysis_confirmation_values
+        .as_ref()
+        .map(|value| project_conventions_from_value(value.get("conventions")))
+        .transpose()
+        .map_err(command_error)?
+        .unwrap_or_else(|| persisted_project_conventions(&root));
+    let confirmation_values_sha256 = analysis_confirmation_values
+        .as_ref()
+        .map(confirmation_values_sha256)
+        .transpose()
         .map_err(command_error)?;
     let lock = read_project_lock(&root).map_err(command_error)?;
     let coding_environment_selection = if mode == "remove" {
@@ -5875,6 +6233,7 @@ fn build_maintenance_plan_blocking(
         analysis_override.as_ref(),
         &root,
         lock.ai_endpoint.as_deref(),
+        confirmation_values_sha256.as_deref(),
     )
     .map_err(planning_command_error)?;
     let codex_analysis = if mode == "remove" {
@@ -5913,7 +6272,7 @@ fn build_maintenance_plan_blocking(
                         sha256_bytes(lock.ai_endpoint.as_deref().unwrap_or_default().as_bytes())
                     })
                     .as_deref(),
-                None,
+                confirmation_values_sha256.as_deref(),
             )
             .map_err(command_error)?
         {
@@ -6100,6 +6459,7 @@ fn build_maintenance_plan_blocking(
                     &destination,
                     &source_bytes,
                     &project_identity,
+                    &conventions,
                     &lock.ai_provider,
                     &lock.ai_model,
                     &lock.ai_reasoning_effort,
@@ -6622,6 +6982,7 @@ fn build_maintenance_plan_blocking(
                 &operation.destination,
                 &source_bytes,
                 &maintenance_identity(&lock, &root),
+                &conventions,
                 &lock.ai_provider,
                 &lock.ai_model,
                 &lock.ai_reasoning_effort,
@@ -6720,6 +7081,7 @@ fn build_maintenance_plan_blocking(
                             &lock.ai_provider,
                             &lock.ai_model,
                             &lock.ai_reasoning_effort,
+                            &conventions,
                             lock_workflow_selected(&lock, "workflow.super_events"),
                             portrait_pipeline.enabled,
                         )
@@ -7454,6 +7816,44 @@ mod tests {
     }
 
     #[test]
+    fn mcp_bootstrap_failure_keeps_the_cause_without_secrets_or_unbounded_output() {
+        let output = |stderr: String| crate::process::ProcessResult {
+            status_code: Some(1),
+            stdout: String::new(),
+            stderr,
+            timed_out: false,
+            stdout_truncated: false,
+            stderr_truncated: false,
+        };
+        let message = mcp_bootstrap_failure_details(Ok(output(
+            "The installed MCP package tree does not match the reviewed release. client_secret=private-test-value".into(),
+        )));
+        assert!(message.contains("package tree does not match"));
+        assert!(message.contains("exit=1"));
+        assert!(!message.contains("private-test-value"));
+        assert!(message.contains("REDACTED"));
+        let message = mcp_bootstrap_failure_details(Ok(output("界".repeat(3000))));
+        assert!(message.len() <= 2048);
+        assert!(message.ends_with("..."));
+        for padding in 1880..2048 {
+            let message = mcp_bootstrap_failure_details(Ok(output(format!(
+                "{} client_secret=private-test-value {}",
+                "x".repeat(padding),
+                "y".repeat(100)
+            ))));
+            assert!(message.len() <= 2048);
+            assert!(!crate::security::contains_credential_shaped_content(
+                &message
+            ));
+        }
+        let message = mcp_bootstrap_failure_details(Err(AppError::Process(
+            "publisher check failed; Bearer private-test-token".into(),
+        )));
+        assert!(message.contains("publisher check failed"));
+        assert!(!message.contains("private-test-token"));
+    }
+
+    #[test]
     fn managed_removal_never_restarts_the_three_d_bootstrap() {
         let project = tempdir().unwrap();
         let mut plan: InstallationPlan = serde_json::from_str(include_str!(
@@ -7575,6 +7975,19 @@ mod tests {
         assert!(
             source.contains("require_ai_session(&state).map_err(provider_analysis_user_error)?")
         );
+    }
+
+    #[test]
+    fn blocking_command_work_uses_the_async_runtime_blocking_pool() {
+        let source = include_str!("commands.rs");
+        let start = source
+            .find("async fn run_blocking_command")
+            .expect("blocking command helper is present");
+        let helper = &source[start..];
+        let end = helper.find("\n}").expect("blocking helper body is closed");
+        let helper = &helper[..end];
+        assert!(helper.contains("tauri::async_runtime::spawn_blocking(work)"));
+        assert!(!helper.contains(".join()"));
     }
 
     #[test]
@@ -7737,11 +8150,25 @@ mod tests {
 - Optional Super Events workflow\n\
 <!-- HOI4_MOD_SETUP:SUPER_EVENTS:END -->\n";
         let selected = adapt_agents_for_selection(
-            template, &identity, "codex", "default", "xhigh", true, false,
+            template,
+            &identity,
+            "codex",
+            "default",
+            "xhigh",
+            &ProjectConventions::default(),
+            true,
+            false,
         )
         .unwrap();
         let unselected = adapt_agents_for_selection(
-            template, &identity, "codex", "default", "xhigh", false, false,
+            template,
+            &identity,
+            "codex",
+            "default",
+            "xhigh",
+            &ProjectConventions::default(),
+            false,
+            false,
         )
         .unwrap();
         let selected = String::from_utf8(selected).unwrap();
@@ -7751,6 +8178,88 @@ mod tests {
         assert!(!String::from_utf8(unselected)
             .unwrap()
             .contains("Optional Super Events workflow"));
+    }
+
+    #[test]
+    fn claude_instructions_are_adapted_to_one_shared_authority() {
+        let identity = ProjectIdentity {
+            display_name: "Example Mod".into(),
+            project_id: "example_mod".into(),
+            author: String::new(),
+            version: "0.1.0".into(),
+            supported_game_version: "1.17.*".into(),
+            project_root: PathBuf::from("C:/mods/example_mod"),
+            default_branch: "main".into(),
+            script_prefix: Some("example".into()),
+            primary_namespace: Some("example".into()),
+            descriptor_tags: Vec::new(),
+            launcher_descriptor_path: None,
+        };
+        let template = b"# Project Instructions\n\nThis describes `[MOD_NAME]`.\n\nReplace `[MOD_PREFIX]` before use.\n\nKeep exactly one authority and use `@AGENTS.md` when AGENTS owns the rules.\n";
+        let adapted = adapt_selected_source(
+            "core.claude.instructions",
+            "CLAUDE.md",
+            template,
+            &identity,
+            &ProjectConventions::default(),
+            "deepseek",
+            "deepseek-flash",
+            "high",
+            false,
+            false,
+            false,
+            &test_portrait_config("disabled", false),
+        )
+        .unwrap();
+        let adapted = String::from_utf8(adapted).unwrap();
+        assert!(adapted.contains("Claude Code entry for Example Mod"));
+        assert!(adapted.contains("single authority"));
+        assert!(adapted.contains("@AGENTS.md"));
+        assert!(!adapted.contains("[MOD_NAME]"));
+        assert!(!adapted.contains("[MOD_PREFIX]"));
+        assert!(!adapted.contains("DeepSeek"));
+        assert!(!adapted.contains("deepseek-flash"));
+    }
+
+    #[test]
+    fn confirmed_project_conventions_are_rendered_provider_neutrally() {
+        let identity = ProjectIdentity {
+            display_name: "Example Mod".into(),
+            project_id: "example_mod".into(),
+            author: String::new(),
+            version: "0.1.0".into(),
+            supported_game_version: "1.17.*".into(),
+            project_root: PathBuf::from("C:/mods/example_mod"),
+            default_branch: "main".into(),
+            script_prefix: Some("example".into()),
+            primary_namespace: Some("example".into()),
+            descriptor_tags: Vec::new(),
+            launcher_descriptor_path: None,
+        };
+        let conventions = ProjectConventions {
+            agents_profile: "events-first".into(),
+            localisation_convention: "English keys use snake_case".into(),
+            documentation_convention: "Markdown under docs/".into(),
+        };
+        let adapted = adapt_agents_for_selection(
+            b"# [MOD_NAME]\n\nUse `[MOD_PREFIX]` for identifiers.\n",
+            &identity,
+            "deepseek",
+            "deepseek-flash",
+            "high",
+            &conventions,
+            false,
+            false,
+        )
+        .unwrap();
+        let adapted = String::from_utf8(adapted).unwrap();
+        assert!(adapted.contains("## Confirmed project conventions"));
+        assert!(adapted.contains("`events-first`"));
+        assert!(adapted.contains("`English keys use snake_case`"));
+        assert!(adapted.contains("`Markdown under docs/`"));
+        assert!(!adapted.contains("DeepSeek"));
+        assert!(!adapted.contains("deepseek-flash"));
+        assert!(!adapted.contains("reasoning effort"));
     }
 
     #[test]
@@ -7886,6 +8395,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
             ".agents/skills/hoi4-portrait-production/SKILL.md",
             &source,
             &identity,
+            &ProjectConventions::default(),
             "codex",
             "default",
             "xhigh",
@@ -8012,6 +8522,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
             ".codex/agents/future_helper.toml",
             source,
             &identity,
+            &ProjectConventions::default(),
             "codex",
             "default",
             "xhigh",
@@ -8109,8 +8620,16 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
         assert_eq!(bootstrap.privilege, "current_user");
 
         let target = crate::mcp::reviewed_plan_target(&actions).unwrap();
-        assert_eq!(target.package_version, "3.0.7");
-        for route in ["hoi4.tech_inspect", "hoi4.tech_render", "hoi4.tech_compare"] {
+        assert_eq!(target.package_version, "3.6.0");
+        assert_eq!(target.required_tools.len(), 34);
+        for route in [
+            "hoi4.tech_inspect",
+            "hoi4.tech_render",
+            "hoi4.tech_compare",
+            "hoi4.probability_sequence",
+            "hoi4.job_inspect",
+            "hoi4.job_cancel",
+        ] {
             assert!(target.required_tools.iter().any(|tool| tool == route));
         }
     }
@@ -8210,7 +8729,14 @@ Use this guide once before turning the template into a real `AGENTS.md` file.\r\
 Use `[MOD_PREFIX]` for identifiers.\r\n";
 
         let adapted = adapt_agents_for_selection(
-            template, &identity, "codex", "default", "xhigh", false, false,
+            template,
+            &identity,
+            "codex",
+            "default",
+            "xhigh",
+            &ProjectConventions::default(),
+            false,
+            false,
         )
         .unwrap();
         let text = String::from_utf8(adapted).unwrap();
@@ -8337,6 +8863,10 @@ developer_instructions = "Work on the named files."
                     .iter()
                     .any(|id| id == "mcp.hoi4_agent_tools.bootstrap"),
                 "shared MCP bootstrap missing for {primary}"
+            );
+            assert!(
+                requested.iter().any(|id| id == "docs.runtimes"),
+                "new source-declared core default missing for {primary}"
             );
         }
         let state = serde_json::json!({
@@ -8671,6 +9201,155 @@ developer_instructions = "Work on the named files."
     }
 
     #[test]
+    fn approved_launcher_scan_crosses_the_semantic_bridge_without_authorizing_other_paths() {
+        let _state_guard = test_state_guard();
+        for (linked_worktree, malformed_launcher) in [(false, false), (true, false), (false, true)]
+        {
+            assert_launcher_scan_bridge(linked_worktree, malformed_launcher);
+        }
+    }
+
+    fn assert_launcher_scan_bridge(linked_worktree: bool, malformed_launcher: bool) {
+        let parent = tempfile::tempdir().unwrap();
+        let project = parent.path().join("example");
+        std::fs::create_dir(&project).unwrap();
+        let root = project.canonicalize().unwrap();
+        let declared = crate::paths::user_facing_path(&root).replace('\\', "/");
+        let launcher = parent.path().join("example.mod");
+        std::fs::write(project.join("descriptor.mod"), "name=\"Example\"\n").unwrap();
+        std::fs::write(
+            &launcher,
+            if malformed_launcher {
+                format!("path=\"{declared}\"\n")
+            } else {
+                format!("name=\"Example\"\npath=\"{declared}\"\n")
+            },
+        )
+        .unwrap();
+        if linked_worktree {
+            std::fs::write(project.join(".git"), "gitdir: ../unopened-worktree\n").unwrap();
+        }
+        let result = crate::scanner::scan_project(
+            &project,
+            &ScanOptions {
+                approved_external_descriptor: Some(launcher.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!result.partial);
+        if malformed_launcher {
+            assert!(result.conflicts.iter().any(|conflict| {
+                conflict.id == "conflict.launcher.malformed" && conflict.severity == "block"
+            }));
+        }
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| finding.id == "descriptor.launcher")
+            .unwrap();
+        assert_eq!(
+            finding.value["path"],
+            launcher.canonicalize().unwrap().display().to_string()
+        );
+        let mut evidence = result
+            .findings
+            .iter()
+            .map(|finding| {
+                let excerpt = match &finding.value {
+                    Value::String(text) => text.clone(),
+                    value => serde_json::to_string(value).unwrap(),
+                };
+                ApprovedEvidence {
+                    reference: finding.id.clone(),
+                    path: finding.evidence[0].path.clone(),
+                    excerpt_sha256: sha256_bytes(excerpt.as_bytes()),
+                    excerpt,
+                    confidence: Some(finding.confidence),
+                }
+            })
+            .collect::<Vec<_>>();
+        if linked_worktree {
+            assert!(result
+                .conflicts
+                .iter()
+                .any(|conflict| conflict.id == "conflict.git.worktree"));
+        }
+        evidence.extend(result.conflicts.iter().map(|conflict| {
+            let excerpt = conflict.details.clone().unwrap_or_default();
+            ApprovedEvidence {
+                reference: conflict.id.clone(),
+                path: conflict.path.clone(),
+                excerpt_sha256: sha256_bytes(excerpt.as_bytes()),
+                excerpt,
+                confidence: None,
+            }
+        }));
+        for item in &evidence {
+            assert!(
+                crate::codex::validate_analysis_evidence(std::slice::from_ref(item)).is_ok(),
+                "invalid evidence {} at {}",
+                item.reference,
+                item.path
+            );
+        }
+        *codex_approved_evidence().lock().unwrap() = ApprovedScanEvidence {
+            project_root: Some(root.clone()),
+            scan_id: Some(result.scan_id),
+            entries: scan_evidence_entries(&result).unwrap(),
+            evidence_sha256: None,
+        };
+        approve_scan_evidence(
+            root.display().to_string(),
+            result.scan_id.to_string(),
+            evidence.clone(),
+        )
+        .unwrap();
+        let mut request = CodexAnalysisRequest {
+            mode: "existing_project_semantics".into(),
+            brief: String::new(),
+            evidence,
+            constraints: serde_json::json!({}),
+            analysis_purpose: Some("existing_project_import".into()),
+            project_root: Some(root.display().to_string()),
+            scan_id: Some(result.scan_id),
+        };
+        crate::codex::validate_analysis_evidence(&request.evidence).unwrap();
+        validate_codex_evidence_approval(&request).unwrap();
+        let approved_evidence = request.evidence.clone();
+        request.evidence[0].excerpt.push('x');
+        assert!(crate::codex::validate_analysis_evidence(&request.evidence).is_err());
+        assert!(validate_codex_evidence_approval(&request).is_err());
+        request.evidence[0].excerpt_sha256 = sha256_bytes(request.evidence[0].excerpt.as_bytes());
+        crate::codex::validate_analysis_evidence(&request.evidence).unwrap();
+        assert!(validate_codex_evidence_approval(&request).is_err());
+        request.evidence = approved_evidence;
+        request.scan_id = Some(Uuid::new_v4());
+        assert!(validate_codex_evidence_approval(&request).is_err());
+        request.scan_id = Some(result.scan_id);
+        request.project_root = Some(parent.path().display().to_string());
+        assert!(validate_codex_evidence_approval(&request).is_err());
+        request.project_root = Some(root.display().to_string());
+        let external = request
+            .evidence
+            .iter_mut()
+            .find(|item| item.reference == "descriptor.launcher")
+            .unwrap();
+        external.path = parent.path().join("unapproved.mod").display().to_string();
+        assert!(crate::codex::validate_analysis_evidence(&request.evidence).is_err());
+        assert!(validate_codex_evidence_approval(&request).is_err());
+        request
+            .evidence
+            .iter_mut()
+            .find(|item| item.reference == "descriptor.launcher")
+            .unwrap()
+            .path = "unapproved.mod".into();
+        crate::codex::validate_analysis_evidence(&request.evidence).unwrap();
+        assert!(validate_codex_evidence_approval(&request).is_err());
+        clear_approved_scan_evidence().unwrap();
+    }
+
+    #[test]
     fn semantic_analysis_requires_the_exact_explicitly_approved_evidence_set() {
         let _state_guard = test_state_guard();
         let project = tempfile::tempdir().unwrap();
@@ -8713,6 +9392,12 @@ developer_instructions = "Work on the named files."
         let base = serde_json::json!({
             "description": "A focused HOI4 overhaul",
             "folderProfile": ["common", "events"],
+            "conventions": {
+                "agents_profile": "default",
+                "localisation_convention": "english",
+                "documentation_convention": "markdown"
+            },
+            "componentRecommendations": [],
             "identity": {
                 "displayName": "Example Mod",
                 "projectId": "example_mod",
@@ -8732,6 +9417,23 @@ developer_instructions = "Work on the named files."
         assert_ne!(
             confirmation_values_sha256(&base).unwrap(),
             confirmation_values_sha256(&changed).unwrap()
+        );
+        let mut changed_convention = base.clone();
+        changed_convention["conventions"]["documentation_convention"] =
+            serde_json::json!("plain markdown");
+        assert_ne!(
+            confirmation_values_sha256(&base).unwrap(),
+            confirmation_values_sha256(&changed_convention).unwrap()
+        );
+        let mut changed_recommendation = base.clone();
+        changed_recommendation["componentRecommendations"] = serde_json::json!([{
+            "component_id": "core.skills",
+            "recommendation": "recommended",
+            "reason": "Repeated workflows were requested."
+        }]);
+        assert_ne!(
+            confirmation_values_sha256(&base).unwrap(),
+            confirmation_values_sha256(&changed_recommendation).unwrap()
         );
         let mut unsafe_folder = base;
         unsafe_folder["folderProfile"] = serde_json::json!([".codex"]);
@@ -8762,11 +9464,11 @@ developer_instructions = "Work on the named files."
     fn update_maintenance_requires_a_fresh_reanalysis_record() {
         let project = tempfile::tempdir().unwrap();
         let error =
-            require_maintenance_reanalysis("update", None, project.path(), None).unwrap_err();
+            require_maintenance_reanalysis("update", None, project.path(), None, None).unwrap_err();
         assert!(error
             .to_string()
             .contains("fresh, confirmed provider reanalysis"));
-        assert!(require_maintenance_reanalysis("repair", None, project.path(), None).is_ok());
+        assert!(require_maintenance_reanalysis("repair", None, project.path(), None, None).is_ok());
         assert!(require_maintenance_reanalysis(
             "update",
             Some(&CodexAnalysisRecord {
@@ -8794,6 +9496,7 @@ developer_instructions = "Work on the named files."
                 source_manifest_sha256: Some("d".repeat(64)),
             }),
             project.path(),
+            None,
             None,
         )
         .is_err());
@@ -9002,6 +9705,26 @@ developer_instructions = "Work on the named files."
             source_revision: Some("a".repeat(40)),
             source_manifest_sha256: Some("d".repeat(64)),
         };
+        let confirmation_values = serde_json::json!({
+            "description": "A focused project.",
+            "folderProfile": [],
+            "identity": {
+                "displayName": "Project",
+                "projectId": "project",
+                "author": "Author",
+                "version": "0.1.0",
+                "supportedGameVersion": "1.17.*",
+                "projectRoot": root.display().to_string(),
+                "defaultBranch": "main"
+            },
+            "conventions": {
+                "agents_profile": "default",
+                "localisation_convention": "english",
+                "documentation_convention": "markdown"
+            },
+            "componentRecommendations": []
+        });
+        let confirmation_hash = confirmation_values_sha256(&confirmation_values).unwrap();
         codex_analyses().lock().unwrap().insert(
             analysis_id,
             PendingCodexAnalysis {
@@ -9020,13 +9743,27 @@ developer_instructions = "Work on the named files."
                 project_root: Some(root.clone()),
                 scan_id: Some(scan_id),
                 endpoint_fingerprint: None,
-                confirmed_values_sha256: None,
+                confirmed_values_sha256: Some(confirmation_hash.clone()),
             },
         );
-        assert!(require_maintenance_reanalysis("update", Some(&record), &root, None).is_ok());
+        assert!(require_maintenance_reanalysis(
+            "update",
+            Some(&record),
+            &root,
+            None,
+            Some(&confirmation_hash)
+        )
+        .is_ok());
         let mut stale = record;
         stale.evidence_sha256 = Some("d".repeat(64));
-        assert!(require_maintenance_reanalysis("update", Some(&stale), &root, None).is_err());
+        assert!(require_maintenance_reanalysis(
+            "update",
+            Some(&stale),
+            &root,
+            None,
+            Some(&confirmation_hash)
+        )
+        .is_err());
         codex_analyses().lock().unwrap().clear();
         codex_approved_evidence().lock().unwrap().entries.clear();
     }

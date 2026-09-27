@@ -87,7 +87,7 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             "openai_compatible",
             true,
             "DeepSeek setup analysis",
-            Some("deepseek-v4-flash"),
+            Some("deepseek-flash"),
             Some("high"),
             Some("https://api.deepseek.com/chat/completions"),
             Some("https://platform.deepseek.com/api_keys"),
@@ -203,7 +203,8 @@ pub fn validate_endpoint_for_provider(
     provider: &str,
     endpoint: Option<&str>,
 ) -> Result<(), AppError> {
-    let profile = profile(provider.trim())
+    let provider = provider.trim();
+    let profile = profile(provider)
         .ok_or_else(|| AppError::InvalidInput("unsupported AI provider".into()))?;
     let value = endpoint.unwrap_or_default().trim();
     if provider == "codex" {
@@ -249,7 +250,22 @@ pub fn validate_endpoint_for_provider(
             "AI provider endpoint contains credential-shaped content".into(),
         ));
     }
-    let _ = profile;
+    if provider != "custom" && provider != "local" {
+        let expected = profile
+            .default_endpoint
+            .as_deref()
+            .and_then(|value| reqwest::Url::parse(value).ok())
+            .ok_or_else(|| {
+                AppError::InvalidInput(
+                    "the selected hosted provider has no reviewed endpoint".into(),
+                )
+            })?;
+        if parsed.origin() != expected.origin() {
+            return Err(AppError::Credential(
+                "known provider keys may only be sent to the provider's reviewed HTTPS origin; use the custom provider for another host".into(),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -379,6 +395,11 @@ pub fn list_models<S: CredentialStore>(
             let default_reasoning_effort = entry
                 .get("default_reasoning_effort")
                 .or_else(|| entry.get("defaultReasoningEffort"))
+                .or_else(|| {
+                    entry
+                        .get("effort")
+                        .and_then(|effort| effort.get("default_level"))
+                })
                 .and_then(Value::as_str)
                 .filter(|effort| efforts.iter().any(|candidate| candidate == effort))
                 .map(ToOwned::to_owned)
@@ -414,7 +435,9 @@ pub fn list_models<S: CredentialStore>(
 }
 
 fn supported_efforts(provider: &str, model: &str) -> Vec<String> {
-    let levels = if provider == "deepseek" || (provider == "claude" && model.contains("sonnet-5")) {
+    let levels = if provider == "deepseek" {
+        &["low", "high", "max"][..]
+    } else if provider == "claude" && model.contains("sonnet-5") {
         &["low", "medium", "high", "xhigh", "max"][..]
     } else if provider == "claude"
         && (model.contains("4-6")
@@ -432,7 +455,12 @@ fn supported_efforts(provider: &str, model: &str) -> Vec<String> {
 fn advertised_efforts(entry: &Value) -> Option<Vec<String>> {
     let values = entry
         .get("supported_reasoning_efforts")
-        .or_else(|| entry.get("supportedReasoningEfforts"))?
+        .or_else(|| entry.get("supportedReasoningEfforts"))
+        .or_else(|| {
+            entry
+                .get("effort")
+                .and_then(|effort| effort.get("supported_levels"))
+        })?
         .as_array()?;
     let mut efforts = values
         .iter()
@@ -698,7 +726,7 @@ mod tests {
             ),
             (
                 "deepseek",
-                "deepseek-v4-flash",
+                "deepseek-flash",
                 "https://api.deepseek.com/chat/completions",
                 "https://platform.deepseek.com/api_keys",
             ),
@@ -731,8 +759,15 @@ mod tests {
         }
         assert!(validate_reasoning_effort("ultra").is_err());
         assert_eq!(
-            supported_efforts("deepseek", "deepseek-v4-flash"),
-            vec!["low", "medium", "high", "xhigh", "max"]
+            supported_efforts("deepseek", "deepseek-flash"),
+            vec!["low", "high", "max"]
+        );
+        assert_eq!(
+            advertised_efforts(&json!({
+                "id": "deepseek-flash",
+                "effort": {"supported_levels": ["low", "high", "max"], "default_level": "high"}
+            })),
+            Some(vec!["low".into(), "high".into(), "max".into()])
         );
     }
 
@@ -793,8 +828,37 @@ mod tests {
         assert!(validate_endpoint_for_provider("claude", None).is_err());
         assert!(
             validate_endpoint_for_provider("claude", Some("https://api.example.invalid/v1"))
-                .is_ok()
+                .is_err()
         );
+        assert!(validate_endpoint_for_provider(
+            "claude",
+            Some("https://api.anthropic.com/v1/messages")
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn known_provider_credentials_cannot_be_routed_to_an_unreviewed_origin() {
+        assert!(validate_endpoint_for_provider(
+            "deepseek",
+            Some("https://api.deepseek.com/v1/chat/completions")
+        )
+        .is_ok());
+        for endpoint in [
+            "https://attacker.example/v1/chat/completions",
+            "https://api.deepseek.com.attacker.example/v1/chat/completions",
+            "https://api.deepseek.com:444/v1/chat/completions",
+        ] {
+            assert!(
+                validate_endpoint_for_provider("deepseek", Some(endpoint)).is_err(),
+                "accepted unreviewed origin: {endpoint}"
+            );
+        }
+        assert!(validate_endpoint_for_provider(
+            "custom",
+            Some("https://custom.example/v1/chat/completions")
+        )
+        .is_ok());
     }
 
     #[test]

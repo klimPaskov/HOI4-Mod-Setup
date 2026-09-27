@@ -4,7 +4,14 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
-No unreleased changes.
+- Fix existing-project review rejecting approved launcher descriptors, Git
+  summaries, and aggregate scan findings as invalid evidence paths.
+- Preserve bounded, redacted MCP bootstrap failure details through readiness
+  and recovery, and allow already redacted error messages to persist safely.
+- Replace the HTML-only browser smoke check with real headless wizard rendering
+  and interaction tests in CI.
+- Upgrade Vitest to 4.1.11 to remove the moderate path traversal advisory from
+  the test dependency tree.
 
 ## 0.3.5 - 2026-09-05
 

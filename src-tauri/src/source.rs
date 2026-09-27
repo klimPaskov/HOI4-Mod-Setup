@@ -969,6 +969,23 @@ pub fn validate_manifest(
                 component.id
             )));
         }
+        if let Some(engine) = component.source.template_engine.as_deref() {
+            let supported_engine = match (component.id.as_str(), engine) {
+                ("core.agents" | "core.claude.instructions", "agents_adaptation_v1") => {
+                    component.source.kind == SourceKind::File
+                }
+                ("mcp.hoi4_agent_tools", "mcp_config_v1") => {
+                    component.source.kind == SourceKind::Generated
+                }
+                _ => false,
+            };
+            if !supported_engine {
+                return Err(AppError::Source(format!(
+                    "component {} declares an unsupported template engine: {engine}",
+                    component.id
+                )));
+            }
+        }
         if let Some(environment) = component.coding_environment.as_deref() {
             if !crate::coding_environment::is_supported(environment) {
                 return Err(AppError::Source(format!(
@@ -1849,6 +1866,15 @@ mod tests {
             .components
             .iter()
             .any(|component| component == "docs.mcp_integration"));
+        assert!(core_profile
+            .components
+            .iter()
+            .any(|component| component == "docs.runtimes"));
+        assert!(manifest.components.iter().any(|component| {
+            component.id == "core.claude.instructions"
+                && component.source.template_engine.as_deref() == Some("agents_adaptation_v1")
+                && component.destination.path == "CLAUDE.md"
+        }));
         assert!(manifest
             .components
             .iter()
@@ -1912,6 +1938,21 @@ mod tests {
             .dependencies
             .iter()
             .any(|dependency| dependency == "mcp.hoi4_agent_tools.bootstrap"));
+        let mcp_health = mcp
+            .validation
+            .iter()
+            .find(|rule| rule.id == "mcp.hoi4.health")
+            .expect("current MCP health declaration must be present");
+        assert_eq!(
+            mcp_health.parameters["package_version"].as_str(),
+            Some("3.6.0")
+        );
+        assert_eq!(
+            mcp_health.parameters["required_tools"]
+                .as_array()
+                .map(Vec::len),
+            Some(34)
+        );
         let workflow_3d = manifest
             .components
             .iter()
@@ -1953,6 +1994,22 @@ mod tests {
             .components
             .iter()
             .all(|component| component.id != "workflow.lora_comfyui_interest"));
+    }
+
+    #[test]
+    fn unknown_component_template_engine_fails_closed() {
+        let mut manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+        ))
+        .unwrap();
+        let component = manifest
+            .components
+            .iter_mut()
+            .find(|component| component.id == "core.claude.instructions")
+            .unwrap();
+        component.source.template_engine = Some("future_unreviewed_engine".into());
+        let error = validate_manifest(&manifest, None).unwrap_err();
+        assert!(error.to_string().contains("unsupported template engine"));
     }
 
     #[test]

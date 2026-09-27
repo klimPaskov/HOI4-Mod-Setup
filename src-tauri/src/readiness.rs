@@ -140,7 +140,16 @@ fn valid_text_file(path: &Path) -> bool {
 /// projections are generated from the canonical Codex TOMLs by the source
 /// synchronizer; readiness checks their presence and parseability without
 /// executing a client.
-pub(crate) fn valid_coding_environment(project_root: &Path, environment: &str) -> bool {
+#[cfg(test)]
+fn valid_coding_environment(project_root: &Path, environment: &str) -> bool {
+    valid_coding_environment_with_mcp(project_root, environment, true)
+}
+
+pub(crate) fn valid_coding_environment_with_mcp(
+    project_root: &Path,
+    environment: &str,
+    require_native_mcp_registration: bool,
+) -> bool {
     match environment {
         "codex" => {
             fs::read_to_string(project_root.join(".codex/config.toml"))
@@ -155,11 +164,13 @@ pub(crate) fn valid_coding_environment(project_root: &Path, environment: &str) -
                 && bounded_agent_files(&project_root.join(".claude/agents"), ".md").is_some_and(
                     |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
                 )
-                && valid_json_file(&project_root.join(".mcp.json"))
+                && (!require_native_mcp_registration
+                    || valid_json_file(&project_root.join(".mcp.json")))
         }
         "cursor" => {
             valid_text_file(&project_root.join(".cursor/agent-map.md"))
-                && valid_json_file(&project_root.join(".cursor/mcp.json"))
+                && (!require_native_mcp_registration
+                    || valid_json_file(&project_root.join(".cursor/mcp.json")))
                 && valid_json_file(&project_root.join(".cursor/settings.json"))
                 && bounded_agent_files(&project_root.join(".cursor/agents"), ".md").is_some_and(
                     |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
@@ -167,7 +178,8 @@ pub(crate) fn valid_coding_environment(project_root: &Path, environment: &str) -
         }
         "qoder" => {
             valid_json_file(&project_root.join(".qoder/settings.json"))
-                && valid_json_file(&project_root.join(".qoder/mcp.json"))
+                && (!require_native_mcp_registration
+                    || valid_json_file(&project_root.join(".qoder/mcp.json")))
                 && valid_text_file(&project_root.join(".qoder/agent-map.md"))
                 && bounded_agent_files(&project_root.join(".qoder/agents"), ".md").is_some_and(
                     |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
@@ -176,7 +188,8 @@ pub(crate) fn valid_coding_environment(project_root: &Path, environment: &str) -
         "opencode" => {
             valid_json_file(&project_root.join("opencode.json"))
                 && valid_json_file(&project_root.join(".opencode/settings.json"))
-                && valid_json_file(&project_root.join(".opencode/mcp.json"))
+                && (!require_native_mcp_registration
+                    || valid_json_file(&project_root.join(".opencode/mcp.json")))
                 && valid_text_file(&project_root.join(".opencode/agent-map.md"))
                 && bounded_agent_files(&project_root.join(".opencode/agent"), ".md").is_some_and(
                     |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
@@ -184,6 +197,23 @@ pub(crate) fn valid_coding_environment(project_root: &Path, environment: &str) -
         }
         _ => false,
     }
+}
+
+fn native_mcp_registration_required(
+    components: &[LockComponent],
+    environment: &str,
+    platform: Platform,
+) -> bool {
+    if platform != Platform::Windows {
+        return false;
+    }
+    let Some(component_id) = crate::coding_environment::mcp_registration_component_id(environment)
+    else {
+        return false;
+    };
+    components.iter().any(|component| {
+        component.id == component_id && mcp_component_is_selected(&component.state)
+    })
 }
 
 pub(crate) fn flattened_artifact_status(
@@ -1463,7 +1493,16 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         if crate::coding_environment::validate_selection(selection).is_ok()
             && crate::coding_environment::selected_environment_ids(selection)
                 .iter()
-                .all(|environment| valid_coding_environment(project_root, environment))
+                .all(|environment| {
+                    let require_mcp = lock.as_ref().is_some_and(|lock| {
+                        native_mcp_registration_required(
+                            &lock.components,
+                            environment,
+                            Platform::current(),
+                        )
+                    });
+                    valid_coding_environment_with_mcp(project_root, environment, require_mcp)
+                })
         {
             "pass"
         } else {
@@ -1636,7 +1675,7 @@ mod tests {
             subagents_valid: true,
             codex_valid: true,
             ai_provider: "deepseek".into(),
-            ai_model: "deepseek-v4-flash".into(),
+            ai_model: "deepseek-flash".into(),
             ai_authenticated: true,
             ai_analysis_status: "confirmed".into(),
             ai_confirmed_field_count: 10,
@@ -1673,7 +1712,7 @@ mod tests {
             subagents_valid: true,
             codex_valid: false,
             ai_provider: "deepseek".into(),
-            ai_model: "deepseek-v4-flash".into(),
+            ai_model: "deepseek-flash".into(),
             ai_authenticated: true,
             ai_analysis_status: "confirmed".into(),
             ai_confirmed_field_count: 1,
@@ -1708,7 +1747,7 @@ mod tests {
             subagents_valid: true,
             codex_valid: true,
             ai_provider: "deepseek".into(),
-            ai_model: "deepseek-v4-flash".into(),
+            ai_model: "deepseek-flash".into(),
             ai_authenticated: true,
             ai_analysis_status: "confirmed".into(),
             ai_confirmed_field_count: 10,
@@ -1831,6 +1870,61 @@ mod tests {
         }
         fs::write(project.path().join(".cursor/settings.json"), "not json").unwrap();
         assert!(!valid_coding_environment(project.path(), "cursor"));
+    }
+
+    #[test]
+    fn unsupported_native_mcp_registration_does_not_block_environment_readiness() {
+        let project = tempfile::tempdir().unwrap();
+        let write = |relative: &str, content: &str| {
+            let path = project.path().join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        };
+        write(".cursor/settings.json", "{}\n");
+        write(".cursor/agent-map.md", "# Agents\n");
+        write(".cursor/agents/example.md", "# Example\n");
+
+        assert!(valid_coding_environment_with_mcp(
+            project.path(),
+            "cursor",
+            false
+        ));
+        assert!(!valid_coding_environment_with_mcp(
+            project.path(),
+            "cursor",
+            true
+        ));
+    }
+
+    #[test]
+    fn native_mcp_registration_requirement_tracks_platform_support() {
+        let installed = LockComponent {
+            id: "runtime.cursor.mcp".into(),
+            version: None,
+            state: "installed".into(),
+            source_revision: None,
+            validation: Some("pass".into()),
+        };
+        assert!(native_mcp_registration_required(
+            std::slice::from_ref(&installed),
+            "cursor",
+            Platform::Windows
+        ));
+        assert!(!native_mcp_registration_required(
+            std::slice::from_ref(&installed),
+            "cursor",
+            Platform::Macos
+        ));
+
+        let unsupported = LockComponent {
+            state: "unsupported_platform".into(),
+            ..installed
+        };
+        assert!(!native_mcp_registration_required(
+            &[unsupported],
+            "cursor",
+            Platform::Windows
+        ));
     }
 
     #[test]
