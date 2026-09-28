@@ -24,6 +24,26 @@ macOS:   ~/Library/Application Support/HOI4 Mod Setup/
 
 Large transactions append bounded per-operation records to one checkpoint log during backup, staging, apply, and rollback instead of rewriting the complete operation array for every file. Before apply or rollback changes any live file, durable intent records are written in groups of at most 64 operations. Completed-file records then provide per-file recovery and progress evidence. The log is compacted into an atomic full-journal snapshot every 1,024 completed operations and at stage boundaries; journal reads replay only newer records and reject links, wrong bindings, oversized records, and oversized logs. A crash inside a group leaves durable intents that recovery resolves against verified backups and observed live hashes.
 
+## Rooted filesystem operations
+
+Production transaction file reads, writes, copies, appends, deletes,
+executable-mode changes, and staging-tree discard use
+`src-tauri/src/safe_fs.rs::RootedDir`. Unix opens each path component with
+`openat` and no-follow flags, then performs file operations relative to the
+retained directory descriptor. Windows retains the ancestor directory handles,
+opens leaves with `FILE_FLAG_OPEN_REPARSE_POINT`, and rejects the reparse
+attribute. Deletion and new-target rename use opened handles; replacement of
+an existing file still uses `ReplaceFileW` while the retained parent chain is
+open. A source regression test rejects ambient `std::fs` mutations and reads
+in production `transaction.rs`.
+
+The current facade establishes containment for each rooted operation. It does
+not yet preserve one project and application-data identity from preflight
+through every transaction stage and later recovery. It also does not preserve a
+regular destination that changes after its precondition hash and before commit.
+Those remain release blockers. Recovery must persist root identities and
+displaced-leaf evidence before treating path-swap safety as complete.
+
 ## Twelve stages
 
 ### 1. Preflight
@@ -78,6 +98,11 @@ Show exact file, external, Git, conflict, and rollback actions. Require approval
 ### 6. Backup
 
 Copy every path that may be replaced, merged, removed, or have metadata changed. Record hash and metadata. If a prior installation lock exists, copy and hash it outside the project before apply.
+
+Open each backup source once without following links, hash and copy those same
+opened bytes, create the backup through the retained backup directory, and
+sync it before checkpointing. Reopening a path after hashing is not sufficient
+for source identity.
 
 ### 7. Staging
 

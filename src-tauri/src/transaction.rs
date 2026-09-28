@@ -3,6 +3,7 @@ use crate::paths::{
     application_data_root, transaction_root, validate_project_root,
     validate_project_root_or_destination,
 };
+use crate::safe_fs::RootedDir;
 use crate::security::{
     atomic_write, atomic_write_json, canonical_relative_key, is_link_metadata,
     normalize_relative_path, path_has_link_component, redact_secrets, safe_join, sha256_bytes,
@@ -12,7 +13,10 @@ use crate::AppError;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::{self, OpenOptions};
+use std::fs;
+#[cfg(test)]
+use std::fs::OpenOptions;
+#[cfg(test)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -760,35 +764,37 @@ pub fn find_incomplete_transaction(
             "transaction storage contains a symlink or junction".into(),
         ));
     }
-    let entries = match fs::read_dir(&transactions_root) {
-        Ok(entries) => entries,
+    match fs::symlink_metadata(&transactions_root) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    let mut candidates = Vec::new();
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        let metadata = fs::symlink_metadata(&path)?;
-        if is_link_metadata(&metadata) {
+        Ok(metadata) if is_link_metadata(&metadata) || !metadata.is_dir() => {
             return Err(AppError::PathSecurity(
-                "transaction storage contains a linked transaction directory".into(),
+                "transaction storage is not a regular directory".into(),
             ));
         }
-        if !metadata.is_dir() {
+        Ok(_) => {}
+        Err(error) => return Err(error.into()),
+    }
+    let transactions = RootedDir::open_read(&transactions_root)?;
+    let entries = transactions.read_dir_names()?;
+    let mut candidates = Vec::new();
+    for entry in entries {
+        let Some(entry_name) = entry.to_str() else {
+            continue;
+        };
+        if !transactions.is_directory(entry_name)? {
             continue;
         }
-        let journal_path = path.join("journal.json");
-        let journal_metadata = match fs::symlink_metadata(&journal_path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error.into()),
-        };
-        if is_link_metadata(&journal_metadata) || !journal_metadata.is_file() {
+        let path = transactions_root.join(entry_name);
+        let directory = transactions.open_dir(entry_name)?;
+        if !directory.exists("journal.json")? {
+            continue;
+        }
+        if !directory.is_regular_file("journal.json")? {
             return Err(AppError::PathSecurity(
                 "transaction journal is not a regular file".into(),
             ));
         }
+        let journal_path = path.join("journal.json");
         match read_journal(&journal_path) {
             Ok(mut journal) => {
                 if !transaction_state_is_terminal(&journal.state)
@@ -802,7 +808,7 @@ pub fn find_incomplete_transaction(
                 // A corrupt journal cannot be safely recovered, but if its
                 // bounded root field identifies this project it must still
                 // block a second transaction instead of being ignored.
-                let bytes = fs::read(&journal_path)?;
+                let bytes = read_file_path(&journal_path)?;
                 if bytes.len() <= 1024 * 1024 {
                     let root_matches = serde_json::from_slice::<serde_json::Value>(&bytes)
                         .ok()
@@ -860,12 +866,33 @@ fn expected_operation_backup(
 }
 
 fn read_existing_lock(project_root: &Path) -> Result<Option<InstallationLock>, AppError> {
-    let lock_path = safe_join(project_root, ".hoi4-mod-setup/install.lock.json")?;
-    let bytes = match fs::read(&lock_path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(AppError::Transaction(error.to_string())),
-    };
+    let parent = project_root
+        .parent()
+        .ok_or_else(|| AppError::PathSecurity("project root has no parent".into()))?;
+    let leaf = project_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("project root name is invalid".into()))?;
+    let parent = RootedDir::open_read(parent)?;
+    if !parent.exists(leaf)? {
+        return Ok(None);
+    }
+    if !parent.is_directory(leaf)? {
+        return Err(AppError::PathSecurity(
+            "selected project root is not a directory".into(),
+        ));
+    }
+    let project = parent.open_dir(leaf)?;
+    let lock_relative = ".hoi4-mod-setup/install.lock.json";
+    if !project.exists(lock_relative)? {
+        return Ok(None);
+    }
+    if !project.is_regular_file(lock_relative)? {
+        return Err(AppError::PathSecurity(
+            "installation lock is not a regular file".into(),
+        ));
+    }
+    let bytes = project.read_file(lock_relative)?;
     let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
         AppError::Transaction(format!("invalid existing installation lock: {error}"))
     })?;
@@ -889,9 +916,9 @@ fn capture_previous_lock(
             "installation lock is not a regular file".into(),
         ));
     }
-    let bytes = fs::read(&lock_path)?;
+    let bytes = read_file_path(&lock_path)?;
     let backup = backup_root.join("install.lock.json.bak");
-    fs::write(&backup, &bytes)?;
+    atomic_write(&backup, &bytes)?;
     let digest = sha256_bytes(&bytes);
     if sha256_file(&backup)? != digest {
         return Err(AppError::Transaction(
@@ -933,7 +960,7 @@ pub fn run_transaction(
     }
     let previous_lock = read_existing_lock(&project_root)?;
     let roots = transaction_root(&app_root, plan.plan_id);
-    fs::create_dir_all(&roots.transaction)?;
+    RootedDir::open_or_create(&roots.transaction)?;
     if path_has_link_component(&roots.transaction) {
         return Err(AppError::PathSecurity(format!(
             "transaction storage contains a symlink or junction: {}",
@@ -1040,7 +1067,7 @@ pub fn run_transaction(
             &journal_path,
             options.fail_before_stage,
         )?;
-        fs::create_dir_all(&roots.backup)?;
+        RootedDir::open_or_create(&roots.backup)?;
         if path_has_link_component(&roots.backup) {
             return Err(AppError::PathSecurity(format!(
                 "backup root contains a symlink or junction: {}",
@@ -1070,7 +1097,7 @@ pub fn run_transaction(
             &journal_path,
             options.fail_before_stage,
         )?;
-        fs::create_dir_all(&roots.staging)?;
+        RootedDir::open_or_create(&roots.staging)?;
         if path_has_link_component(&roots.staging) {
             return Err(AppError::PathSecurity(format!(
                 "staging root contains a symlink or junction: {}",
@@ -1378,7 +1405,7 @@ pub fn run_transaction(
             ));
         }
         let metadata_root = project_root.join(".hoi4-mod-setup");
-        fs::create_dir_all(&metadata_root)?;
+        RootedDir::open_or_create(&metadata_root)?;
         // The lock is the final success artifact. Journal finalization after
         // this point is best-effort: a stale `finalizing` journal is safely
         // reconciled by resume only after the lock and rollback record verify.
@@ -1508,15 +1535,18 @@ fn append_operation_checkpoints(
         return Ok(());
     }
     let checkpoint_path = operation_checkpoint_root(journal_path)?;
-    if path_has_link_component(&checkpoint_path) {
-        return Err(AppError::PathSecurity(
-            "operation checkpoint storage contains a symlink or junction".into(),
-        ));
-    }
-    if !checkpoint_path.exists() {
+    let checkpoint_parent = checkpoint_path
+        .parent()
+        .ok_or_else(|| AppError::PathSecurity("checkpoint log has no parent".into()))?;
+    let checkpoint_name = checkpoint_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("checkpoint log name is invalid".into()))?;
+    let checkpoint_directory = RootedDir::open(checkpoint_parent)?;
+    if !checkpoint_directory.exists(checkpoint_name)? {
         // Atomically create the append log once so its directory entry is
         // durable before an apply-intent checkpoint can guard a live change.
-        atomic_write(&checkpoint_path, b"")?;
+        checkpoint_directory.write_atomic(checkpoint_name, b"")?;
     }
     journal.updated_at = Utc::now().to_rfc3339();
     let mut bytes = Vec::new();
@@ -1548,31 +1578,28 @@ fn append_operation_checkpoints(
         bytes.extend(record);
     }
 
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&checkpoint_path)?;
-    file.write_all(&bytes)?;
-    if sync {
-        file.sync_data()?;
-    }
-    Ok(())
+    checkpoint_directory.append_file(checkpoint_name, &bytes, sync)
 }
 
 fn clear_operation_checkpoints(journal_path: &Path) -> Result<(), AppError> {
     let root = operation_checkpoint_root(journal_path)?;
-    let metadata = match fs::symlink_metadata(&root) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-    if is_link_metadata(&metadata) || !metadata.is_file() || path_has_link_component(&root) {
+    let parent = root
+        .parent()
+        .ok_or_else(|| AppError::PathSecurity("checkpoint log has no parent".into()))?;
+    let name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("checkpoint log name is invalid".into()))?;
+    let directory = RootedDir::open(parent)?;
+    if !directory.exists(name)? {
+        return Ok(());
+    }
+    if !directory.is_regular_file(name)? {
         return Err(AppError::PathSecurity(
             "operation checkpoint storage is not a regular file".into(),
         ));
     }
-    fs::remove_file(root)?;
-    Ok(())
+    directory.remove_file(name)
 }
 
 fn compact_operation_checkpoints(
@@ -1588,18 +1615,24 @@ fn replay_operation_checkpoints(
     journal: &mut TransactionJournal,
 ) -> Result<(), AppError> {
     let root = operation_checkpoint_root(journal_path)?;
-    let metadata = match fs::symlink_metadata(&root) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-    if is_link_metadata(&metadata) || !metadata.is_file() || path_has_link_component(&root) {
+    let parent = root
+        .parent()
+        .ok_or_else(|| AppError::PathSecurity("checkpoint log has no parent".into()))?;
+    let name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("checkpoint log name is invalid".into()))?;
+    let directory = RootedDir::open_read(parent)?;
+    if !directory.exists(name)? {
+        return Ok(());
+    }
+    if !directory.is_regular_file(name)? {
         return Err(AppError::PathSecurity(
             "operation checkpoint storage is not a regular file".into(),
         ));
     }
     let snapshot_updated_at = journal.updated_at.clone();
-    let bytes = fs::read(&root)?;
+    let bytes = directory.read_file(name)?;
     if bytes.len() > OPERATION_CHECKPOINT_MAX_BYTES {
         return Err(AppError::Transaction(
             "operation checkpoint log exceeds its bounded size".into(),
@@ -2187,7 +2220,7 @@ fn backup_existing(
                     operation.destination
                 )));
             }
-            fs::copy(&destination, &backup)?;
+            copy_atomic(&destination, &backup)?;
             if sha256_file(&backup)? != current_hash {
                 return Err(AppError::Transaction(format!(
                     "backup verification failed: {}",
@@ -2284,7 +2317,7 @@ fn stage_files(
             )));
         }
         if let Some(parent) = staged.parent() {
-            fs::create_dir_all(parent)?;
+            RootedDir::open_or_create(parent)?;
             if path_has_link_component(parent) {
                 return Err(AppError::PathSecurity(format!(
                     "staging parent contains a symlink or junction: {}",
@@ -2300,7 +2333,7 @@ fn stage_files(
                 )));
             }
         }
-        fs::write(&staged, &file.bytes)?;
+        atomic_write(&staged, &file.bytes)?;
         apply_executable_state(&staged, operation.executable)?;
         if observed_executable(&staged)?.is_some_and(|value| value != operation.executable) {
             return Err(AppError::Transaction(format!(
@@ -2334,7 +2367,7 @@ fn stage_profile_directories(plan: &InstallationPlan, staging_root: &Path) -> Re
                 "staged profile directory contains a symlink or junction: {directory}"
             )));
         }
-        fs::create_dir_all(staged)?;
+        RootedDir::open_or_create(&staged)?;
     }
     Ok(())
 }
@@ -2396,7 +2429,7 @@ fn validate_staging(
                 operation.destination
             )));
         }
-        let bytes = fs::read(&staged)?;
+        let bytes = read_file_path(&staged)?;
         validate_managed_bytes(project_root, operation, &bytes)?;
     }
     Ok(())
@@ -2569,19 +2602,9 @@ fn ensure_project_root_for_apply(
             journal.last_checkpoint = "apply-project-root-intent".into();
             persist_journal(journal_path, journal)?;
             maybe_abort_for_test("before_project_root_create");
-            fs::create_dir(project_root).map_err(|error| {
-                AppError::Transaction(format!(
-                    "could not create reviewed project folder {}: {error}",
-                    project_root.display()
-                ))
-            })?;
+            create_directory_path(project_root)?;
             maybe_abort_for_test("after_project_root_create");
-            let metadata = fs::symlink_metadata(project_root)?;
-            if is_link_metadata(&metadata) || !metadata.is_dir() {
-                return Err(AppError::PathSecurity(
-                    "created project root is not a regular directory".into(),
-                ));
-            }
+            RootedDir::open(project_root)?;
             journal.project_root_lifecycle.checkpoint = "created".into();
             journal.project_root_lifecycle.created_by_transaction = true;
             journal.project_root_lifecycle.observed_exists = true;
@@ -2629,14 +2652,8 @@ fn apply_profile_directories(
     journal.last_checkpoint = "apply-profile-directories-intent".into();
     persist_journal(journal_path, journal)?;
     for directory in &plan.transaction.directories {
-        let destination = safe_join(project_root, directory)?;
-        fs::create_dir_all(&destination)?;
-        let metadata = fs::symlink_metadata(&destination)?;
-        if is_link_metadata(&metadata) || !metadata.is_dir() {
-            return Err(AppError::PathSecurity(format!(
-                "created profile path is not a regular directory: {directory}"
-            )));
-        }
+        RootedDir::open(project_root)?.ensure_dir(directory)?;
+        RootedDir::open(project_root)?.open_dir(directory)?;
     }
     journal.last_checkpoint = "apply-profile-directories-created".into();
     persist_journal(journal_path, journal)
@@ -2771,7 +2788,7 @@ fn apply_operations(
         match operation.action {
             OperationAction::DeleteManaged => {
                 if current_hash.is_some() {
-                    fs::remove_file(&destination)?;
+                    remove_file_path(&destination)?;
                 }
             }
             _ => {
@@ -2836,68 +2853,79 @@ fn apply_operations(
 }
 
 fn copy_atomic(source: &Path, destination: &Path) -> Result<(), AppError> {
-    if path_has_link_component(source) || path_has_link_component(destination) {
-        return Err(AppError::PathSecurity(
-            "atomic copy path contains a symlink or junction".into(),
-        ));
-    }
-    let parent = destination
+    let source_parent = source
+        .parent()
+        .ok_or_else(|| AppError::Transaction("source has no parent".into()))?;
+    let destination_parent = destination
         .parent()
         .ok_or_else(|| AppError::Transaction("destination has no parent".into()))?;
-    fs::create_dir_all(parent).map_err(|error| {
-        AppError::Transaction(format!(
-            "could not create atomic destination parent {}: {error}",
-            parent.display()
-        ))
-    })?;
-    let temporary = parent.join(format!(
-        ".{}.{}.apply.tmp",
-        destination.file_name().unwrap().to_string_lossy(),
-        Uuid::new_v4()
-    ));
-    fs::copy(source, &temporary).map_err(|error| {
-        AppError::Transaction(format!(
-            "could not stage atomic copy {} -> {}: {error}",
-            source.display(),
-            temporary.display()
-        ))
-    })?;
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&temporary)
-        .map_err(|error| {
-            AppError::Transaction(format!(
-                "could not reopen atomic temporary {}: {error}",
-                temporary.display()
-            ))
-        })?;
-    file.sync_all().map_err(|error| {
-        AppError::Transaction(format!(
-            "could not flush atomic temporary {}: {error}",
-            temporary.display()
-        ))
-    })?;
-    drop(file);
-    replace_path(&temporary, destination).map_err(|error| {
-        AppError::Transaction(format!(
-            "could not atomically replace {}: {error}",
-            destination.display()
-        ))
-    })?;
-    Ok(())
+    let source_root = RootedDir::open_read(source_parent)?;
+    let destination_root = RootedDir::open_or_create(destination_parent)?;
+    let source_name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("source file name is not valid UTF-8".into()))?;
+    let destination_name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("destination file name is not valid UTF-8".into()))?;
+    source_root.copy_file_atomic_to(source_name, &destination_root, destination_name)
+}
+
+fn remove_file_path(path: &Path) -> Result<(), AppError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::PathSecurity("removed file has no parent directory".into()))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("removed file name is invalid".into()))?;
+    RootedDir::open(parent)?.remove_file(name)
+}
+
+fn read_file_path(path: &Path) -> Result<Vec<u8>, AppError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::PathSecurity("read file has no parent directory".into()))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("read file name is invalid".into()))?;
+    RootedDir::open_read(parent)?.read_file(name)
+}
+
+fn create_directory_path(path: &Path) -> Result<(), AppError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::PathSecurity("created directory has no parent".into()))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("created directory name is invalid".into()))?;
+    RootedDir::open(parent)?.create_dir(name).map(|_| ())
+}
+
+fn remove_directory_path_if_empty(path: &Path) -> Result<bool, AppError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::PathSecurity("removed directory has no parent".into()))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("removed directory name is invalid".into()))?;
+    RootedDir::open(parent)?.remove_dir_if_empty(name)
 }
 
 #[cfg(unix)]
 fn observed_executable(path: &Path) -> Result<Option<bool>, AppError> {
-    let metadata = fs::symlink_metadata(path)?;
-    if is_link_metadata(&metadata) || !metadata.is_file() {
-        return Err(AppError::PathSecurity(format!(
-            "executable metadata target is not a regular file: {}",
-            path.display()
-        )));
-    }
-    Ok(Some(metadata.permissions().mode() & 0o111 != 0))
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::PathSecurity("executable file has no parent".into()))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("executable file name is invalid".into()))?;
+    RootedDir::open_read(parent)?.observed_executable(name)
 }
 
 #[cfg(not(unix))]
@@ -2907,73 +2935,18 @@ fn observed_executable(_path: &Path) -> Result<Option<bool>, AppError> {
 
 #[cfg(unix)]
 fn apply_executable_state(path: &Path, executable: bool) -> Result<(), AppError> {
-    let metadata = fs::symlink_metadata(path)?;
-    if is_link_metadata(&metadata) || !metadata.is_file() {
-        return Err(AppError::PathSecurity(format!(
-            "executable metadata target is not a regular file: {}",
-            path.display()
-        )));
-    }
-    let mut permissions = metadata.permissions();
-    let mut mode = permissions.mode();
-    if executable {
-        mode |= 0o111;
-    } else {
-        mode &= !0o111;
-    }
-    permissions.set_mode(mode);
-    fs::set_permissions(path, permissions)?;
-    Ok(())
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::PathSecurity("executable file has no parent".into()))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("executable file name is invalid".into()))?;
+    RootedDir::open(parent)?.set_executable(name, executable)
 }
 
 #[cfg(not(unix))]
 fn apply_executable_state(_path: &Path, _executable: bool) -> Result<(), AppError> {
-    Ok(())
-}
-
-#[cfg(windows)]
-fn replace_path(temporary: &Path, destination: &Path) -> Result<(), AppError> {
-    use std::os::windows::ffi::OsStrExt;
-    let destination_wide = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let temporary_wide = temporary
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let result = if destination.exists() {
-        unsafe {
-            windows_sys::Win32::Storage::FileSystem::ReplaceFileW(
-                destination_wide.as_ptr(),
-                temporary_wide.as_ptr(),
-                std::ptr::null(),
-                0,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            )
-        }
-    } else {
-        0
-    };
-    if result == 0 {
-        if destination.exists() {
-            return Err(AppError::Transaction(format!(
-                "atomic replacement failed for {}: {}",
-                destination.display(),
-                std::io::Error::last_os_error()
-            )));
-        }
-        fs::rename(temporary, destination)?;
-    }
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn replace_path(temporary: &Path, destination: &Path) -> Result<(), AppError> {
-    fs::rename(temporary, destination)?;
     Ok(())
 }
 
@@ -3000,7 +2973,7 @@ fn post_install_checks(
             }
             None
         } else {
-            let bytes = fs::read(&destination)?;
+            let bytes = read_file_path(&destination)?;
             validate_managed_bytes(project_root, operation, &bytes)?;
             Some(sha256_bytes(&bytes))
         };
@@ -3232,7 +3205,7 @@ fn build_transaction_readiness(
         readiness_components.push("project.thumbnail".into());
     }
     let descriptor_valid = is_file("descriptor.mod")
-        && fs::read(safe_join(project_root, "descriptor.mod")?)
+        && read_file_path(&safe_join(project_root, "descriptor.mod")?)
             .ok()
             .and_then(|bytes| crate::descriptors::parse_descriptor(&bytes).ok())
             .is_some_and(|descriptor| {
@@ -3316,7 +3289,7 @@ fn build_transaction_readiness(
     let thumbnail_valid = thumbnail_operation.is_some_and(|operation| {
         safe_join(project_root, "thumbnail.png")
             .ok()
-            .and_then(|path| fs::read(path).ok())
+            .and_then(|path| read_file_path(&path).ok())
             .is_some_and(|bytes| {
                 crate::descriptors::validate_thumbnail_png(&bytes).is_ok()
                     && (operation.action == OperationAction::Skip
@@ -3434,7 +3407,7 @@ fn build_transaction_readiness(
                         .or(operation.source_sha256.as_ref());
                     validate_external_destination(&operation.destination)
                         .ok()
-                        .and_then(|path| fs::read(path).ok())
+                        .and_then(|path| read_file_path(&path).ok())
                         .is_some_and(|bytes| {
                             crate::readiness::launcher_descriptor_matches_project(
                                 project_root,
@@ -3624,7 +3597,7 @@ fn build_lock(
                     // still be represented in the lock so readiness can hash
                     // it and future maintenance cannot treat it as absent.
                     let destination = operation_destination(project_root, operation)?;
-                    let bytes = fs::read(&destination).map_err(|error| {
+                    let bytes = read_file_path(&destination).map_err(|error| {
                         AppError::Transaction(format!(
                             "cannot lock preserved file {}: {error}",
                             operation.destination
@@ -4318,8 +4291,8 @@ fn prepare_rollback_transaction(
             "rollback transaction storage contains a symlink or junction".into(),
         ));
     }
-    fs::create_dir_all(&roots.transaction)?;
-    fs::create_dir_all(&roots.backup)?;
+    RootedDir::open_or_create(&roots.transaction)?;
+    RootedDir::open_or_create(&roots.backup)?;
     let journal_path = roots.transaction.join("journal.json");
     let mut rollback = if journal_path.is_file() {
         let journal = read_journal(&journal_path)?;
@@ -4511,8 +4484,8 @@ fn ensure_project_root_for_inverse_rollback(
                 ));
             }
             if checkpoint == "applying" && exists {
-                let root = validate_project_root(project_root)?;
-                if fs::read_dir(&root)?.next().transpose()?.is_some() {
+                let root = RootedDir::open(&validate_project_root(project_root)?)?;
+                if !root.read_dir_names()?.is_empty() {
                     return Err(AppError::Transaction(
                         "content appeared while recreating the project root; refusing inverse rollback"
                             .into(),
@@ -4528,20 +4501,10 @@ fn ensure_project_root_for_inverse_rollback(
                 persist_journal(journal_path, journal)?;
                 persist_journal(rollback_path, rollback_journal)?;
                 maybe_abort_for_test("before_inverse_project_root_create");
-                fs::create_dir(project_root).map_err(|error| {
-                    AppError::Transaction(format!(
-                        "could not recreate reviewed project folder {}: {error}",
-                        project_root.display()
-                    ))
-                })?;
+                create_directory_path(project_root)?;
                 maybe_abort_for_test("after_inverse_project_root_create");
             }
-            let metadata = fs::symlink_metadata(project_root)?;
-            if is_link_metadata(&metadata) || !metadata.is_dir() {
-                return Err(AppError::PathSecurity(
-                    "recreated project root is not a regular directory".into(),
-                ));
-            }
+            RootedDir::open(project_root)?;
             journal.project_root_lifecycle.checkpoint = "created".into();
             journal.project_root_lifecycle.created_by_transaction = true;
             journal.project_root_lifecycle.observed_exists = true;
@@ -4863,7 +4826,7 @@ pub fn rollback_transaction(
                     )));
                 }
             } else if destination.is_file() {
-                fs::remove_file(&destination)?;
+                remove_file_path(&destination)?;
             }
             let restored = regular_file_hash(&destination)?;
             if let Some(expected) = expected_restored {
@@ -5016,13 +4979,8 @@ fn cleanup_created_profile_directories(
     directories.sort_by_key(|path| std::cmp::Reverse(Path::new(path).components().count()));
     for directory in directories {
         let destination = safe_join(project_root, &directory)?;
-        match fs::remove_dir(&destination) {
-            Ok(()) => {}
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
-                ) => {}
+        match remove_directory_path_if_empty(&destination) {
+            Ok(_) => {}
             Err(error) => {
                 return Err(AppError::Transaction(format!(
                     "could not remove empty profile directory {}: {error}",
@@ -5089,13 +5047,8 @@ fn cleanup_created_project_root(
     let mut directories = directories.into_iter().collect::<Vec<_>>();
     directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
     for directory in directories {
-        match fs::remove_dir(&directory) {
-            Ok(()) => {}
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
-                ) => {}
+        match remove_directory_path_if_empty(&directory) {
+            Ok(_) => {}
             Err(error) => {
                 return Err(AppError::Transaction(format!(
                     "could not remove empty managed directory {}: {error}",
@@ -5104,21 +5057,19 @@ fn cleanup_created_project_root(
             }
         }
     }
-    let mut entries = fs::read_dir(&root)?;
-    if entries.next().transpose()?.is_some() {
-        journal.project_root_lifecycle.checkpoint = "retained_user_content".into();
-        journal.project_root_lifecycle.observed_exists = true;
-        journal.project_root_lifecycle.cleanup_result = Some("retained_user_content".into());
-    } else {
-        journal.project_root_lifecycle.checkpoint = "removing".into();
-        journal.last_checkpoint = "rollback-project-root-intent".into();
-        persist_journal(journal_path, journal)?;
-        maybe_abort_for_test("before_project_root_remove");
-        fs::remove_dir(&root)?;
+    journal.project_root_lifecycle.checkpoint = "removing".into();
+    journal.last_checkpoint = "rollback-project-root-intent".into();
+    persist_journal(journal_path, journal)?;
+    maybe_abort_for_test("before_project_root_remove");
+    if remove_directory_path_if_empty(&root)? {
         maybe_abort_for_test("after_project_root_remove");
         journal.project_root_lifecycle.checkpoint = "removed".into();
         journal.project_root_lifecycle.observed_exists = false;
         journal.project_root_lifecycle.cleanup_result = Some("removed".into());
+    } else {
+        journal.project_root_lifecycle.checkpoint = "retained_user_content".into();
+        journal.project_root_lifecycle.observed_exists = true;
+        journal.project_root_lifecycle.cleanup_result = Some("retained_user_content".into());
     }
     rollback_journal.project_root_lifecycle = journal.project_root_lifecycle.clone();
     persist_journal(journal_path, journal)?;
@@ -5210,7 +5161,7 @@ fn restore_previous_lock(
                     "refusing to remove an installation lock link during rollback".into(),
                 ));
             }
-            fs::remove_file(&lock_path)?;
+            remove_file_path(&lock_path)?;
         } else if lock_path.exists() {
             return Err(AppError::Transaction(
                 "installation lock could not be inspected during rollback".into(),
@@ -5225,19 +5176,20 @@ fn restore_previous_lock(
 }
 
 pub fn read_journal(path: &Path) -> Result<TransactionJournal, AppError> {
-    if path_has_link_component(path) {
-        return Err(AppError::PathSecurity(
-            "transaction journal path contains a symlink or junction".into(),
-        ));
-    }
-    let metadata =
-        fs::symlink_metadata(path).map_err(|error| AppError::Transaction(error.to_string()))?;
-    if is_link_metadata(&metadata) || !metadata.is_file() {
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::PathSecurity("transaction journal has no parent".into()))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("transaction journal name is invalid".into()))?;
+    let directory = RootedDir::open_read(parent)?;
+    if !directory.is_regular_file(name)? {
         return Err(AppError::PathSecurity(
             "transaction journal is not a regular file".into(),
         ));
     }
-    let bytes = fs::read(path).map_err(|error| AppError::Transaction(error.to_string()))?;
+    let bytes = directory.read_file(name)?;
     let value: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|error| AppError::Transaction(format!("invalid transaction journal: {error}")))?;
     let mut journal = crate::migrations::migrate_journal(value)?;
@@ -5265,7 +5217,7 @@ fn finish_finalization(
         ));
     }
     let lock_path = safe_join(&project_root, ".hoi4-mod-setup/install.lock.json")?;
-    let lock_bytes = fs::read(&lock_path).map_err(|error| {
+    let lock_bytes = read_file_path(&lock_path).map_err(|error| {
         AppError::Transaction(format!(
             "finalization lock is unavailable; rollback or manual review is required: {error}"
         ))
@@ -5495,7 +5447,7 @@ pub fn resume_transaction_with_options(
     validate_journal_project_root(&project_root, &journal, &journal_path)?;
 
     let plan_path = roots.transaction.join("plan.json");
-    let plan_bytes = fs::read(&plan_path).map_err(|error| {
+    let plan_bytes = read_file_path(&plan_path).map_err(|error| {
         AppError::Transaction(format!("cannot read interrupted transaction plan: {error}"))
     })?;
     let plan: InstallationPlan = serde_json::from_slice(&plan_bytes).map_err(|error| {
@@ -5595,7 +5547,7 @@ pub fn resume_transaction_with_options(
                 operation.destination
             )));
         }
-        let bytes = fs::read(&staged)?;
+        let bytes = read_file_path(&staged)?;
         let actual = sha256_bytes(&bytes);
         if expected != Some(&actual) {
             return Err(AppError::Source(format!(
@@ -5669,20 +5621,23 @@ pub fn discard_staging(
             "staging directory contains a symlink or junction".into(),
         ));
     }
-    match fs::symlink_metadata(&roots.staging) {
-        Ok(metadata) if is_link_metadata(&metadata) => {
-            return Err(AppError::PathSecurity(
-                "refusing to remove a staging symlink".into(),
-            ));
-        }
-        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&roots.staging)?,
-        Ok(_) => {
+    let staging_parent = roots
+        .staging
+        .parent()
+        .ok_or_else(|| AppError::PathSecurity("staging directory has no parent".into()))?;
+    let staging_name = roots
+        .staging
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("staging directory name is invalid".into()))?;
+    let staging_parent = RootedDir::open(staging_parent)?;
+    if staging_parent.exists(staging_name)? {
+        if !staging_parent.is_directory(staging_name)? {
             return Err(AppError::PathSecurity(
                 "staging path is not a directory".into(),
             ));
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
+        staging_parent.remove_tree(staging_name)?;
     }
     journal.state = "staging_discarded".into();
     journal.recovery = RecoveryState {
@@ -6046,6 +6001,34 @@ mod tests {
     use crate::readiness::manifest_wiki_pages;
     use std::process::Command;
     use tempfile::tempdir;
+
+    #[test]
+    fn transaction_mutations_do_not_use_ambient_filesystem_apis() {
+        let source = include_str!("transaction.rs");
+        let production = source
+            .split("mod tests {")
+            .next()
+            .expect("transaction module test boundary");
+        for forbidden in [
+            "fs::read(",
+            "fs::read_dir(",
+            "fs::write(",
+            "fs::copy(",
+            "fs::remove_file(",
+            "fs::remove_dir(",
+            "fs::remove_dir_all(",
+            "fs::rename(",
+            "fs::create_dir(",
+            "fs::create_dir_all(",
+            "fs::set_permissions(",
+            "OpenOptions::new()",
+        ] {
+            assert!(
+                !production.contains(forbidden),
+                "transaction production code must use RootedDir instead of {forbidden}"
+            );
+        }
+    }
 
     fn test_codex_analysis() -> CodexAnalysisRecord {
         CodexAnalysisRecord {
@@ -7058,9 +7041,12 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(interrupted
-            .to_string()
-            .contains("fault injected after stage validation"));
+        assert!(
+            interrupted
+                .to_string()
+                .contains("fault injected after stage validation"),
+            "{interrupted}"
+        );
         assert!(!launcher_path.exists());
         assert!(!project
             .path()

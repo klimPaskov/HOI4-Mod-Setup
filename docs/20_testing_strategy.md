@@ -121,6 +121,17 @@ reviewed leaf is created only at apply, that a pre-apply race stops safely, and
 that rollback removes the leaf only when empty while preserving unknown content
 and its parent.
 
+Transaction filesystem regressions must run natively on Windows and macOS.
+Cover link and reparse swaps at every ancestor, root/transaction/backup/staging
+replacement, journal and checkpoint updates, apply and rollback, external
+launcher parents, executable metadata, and recursive staging discard. Use
+deterministic barriers after root/parent acquisition and immediately before
+namespace changes. Assert outside sentinels remain byte-for-byte unchanged,
+root identity drift cannot produce a success lock, and displaced user bytes
+remain recoverable. Current `safe_fs` unit tests cover static link leaves,
+ancestor swaps, and recursive staging links on Windows and Unix; they do not
+cover concurrent final-leaf changes or macOS native execution.
+
 ## End-to-end cases
 
 ### New Windows project

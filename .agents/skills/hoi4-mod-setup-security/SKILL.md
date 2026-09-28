@@ -107,6 +107,17 @@ replacing existing bytes, and a redacted assignment at the end of a message.
 ## Filesystem
 
 - Normalize and contain every path.
+- Transaction reads and mutations go through `src-tauri/src/safe_fs.rs` and
+  its `RootedDir`: Unix file operations are relative to retained descriptors;
+  Windows operations retain ancestor handles, open leaves without following
+  reparse points, and inspect the raw reparse attribute. Use `open_read` for
+  read-only roots so hashing an executable or cache does not deny ordinary
+  delete sharing; mutation roots retain stricter directory handles.
+- This implementation is not yet a full race-proof transaction boundary.
+  Transaction roots are reopened between stages/recovery, and replacement of
+  a final regular-file leaf after its precondition hash can still overwrite
+  concurrent user content. Preserve this as a release blocker until root IDs
+  are bound into journals and displaced leaves have recoverable evidence.
 - Reject traversal, absolute destination, reserved names, case collisions, and invalid encodings.
 - Enforce total path, segment, and depth limits before filesystem access.
 - Defend against symlink and junction swaps between validation and apply.

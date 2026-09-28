@@ -178,6 +178,13 @@ session, cancellation, credential-health, or analysis assertions.
 
 For every transaction operation, support controlled failure before and after the live mutation boundary. Verify journal state, recovery options, destination hashes, and absence of false success.
 
+When transaction filesystem code changes, run the `safe_fs` link/reparse tests,
+the transaction fault matrix, and `transaction_mutations_do_not_use_ambient_filesystem_apis`.
+Add native Windows junction and macOS symlink swap barriers for every affected
+ancestor and operation boundary. These tests currently establish ancestor-link
+containment for selected paths; final-leaf races and root identity across
+recovery remain separate required cases.
+
 ## UI tests
 
 Run `pnpm test:e2e:install` once to prepare Playwright Chromium, then

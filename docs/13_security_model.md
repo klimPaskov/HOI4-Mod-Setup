@@ -68,6 +68,20 @@ secret-shaped text remains rejected, preserving the previous file on failure.
 
 Normalize Unicode and separators, reject absolute managed destinations and parent traversal, resolve links, verify final parent containment, detect case collisions, reject Windows device names and alternate data streams, and block archive-link escapes.
 
+Production transaction reads and mutations use `RootedDir` in
+`src-tauri/src/safe_fs.rs`. Unix operations use retained directory descriptors
+and no-follow `*at` calls. Windows retains the ancestor directory handles,
+opens leaves with `FILE_FLAG_OPEN_REPARSE_POINT`, checks
+`FILE_ATTRIBUTE_REPARSE_POINT`, and applies deletion to opened file handles.
+Read-only roots permit delete sharing; mutation roots hold stricter directory
+handles.
+
+This currently closes ancestor symlink/junction redirection for migrated
+transaction operations. It does not yet bind one project/application root
+identity across all stages and recovery. Replacing a regular final leaf after
+the precondition hash can still lose concurrent user content; both remain
+release gates.
+
 ## Portrait provider security
 
 The portrait workflow is optional for generic projects and mandatory only in

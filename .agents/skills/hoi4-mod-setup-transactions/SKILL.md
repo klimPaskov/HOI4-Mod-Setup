@@ -96,6 +96,23 @@ operations are not accepted; mode belongs to the reviewed file operation.
 
 ## Apply rules
 
+Transaction file operations use the native `RootedDir` facade in
+`src-tauri/src/safe_fs.rs`. It opens path components without following links,
+retains ancestor handles, and provides atomic writes, copy, append, delete,
+executable-mode updates, and bounded staging-tree removal. Use
+`RootedDir::open_read` for read-only roots and `RootedDir::open` or
+`open_or_create` for mutation roots. Do not add ambient `std::fs` mutation or
+read calls to production transaction code; the source regression test checks
+this boundary.
+
+This facade closes ancestor symlink/junction redirection for migrated calls,
+but it does not yet bind one project/app-data root identity across every
+transaction stage and recovery process. Replacing an existing leaf between
+its reviewed hash and commit can still lose concurrent user edits. Keep the P1
+release finding open until root identity is journal-bound, displaced leaf
+content is quarantined and recoverable, and native Windows/macOS swap tests
+cover backup, staging, apply, rollback, journal, lock, and recursive discard.
+
 - Backup all replace or delete targets before mutation.
 - Stage files outside live destinations.
 - Carry selected starter folders as normalized reviewed directory entries.

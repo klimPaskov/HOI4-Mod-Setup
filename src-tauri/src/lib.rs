@@ -20,6 +20,7 @@ pub mod paths;
 pub mod portraits;
 pub mod process;
 pub mod readiness;
+mod safe_fs;
 pub mod scanner;
 pub mod security;
 pub mod source;

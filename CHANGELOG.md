@@ -12,6 +12,8 @@ HOI4 Mod Setup follows semantic versioning.
   and interaction tests in CI.
 - Upgrade Vitest to 4.1.11 to remove the moderate path traversal advisory from
   the test dependency tree.
+- Route transaction file reads and mutations through retained, no-follow
+  directory handles to prevent ancestor link swaps from redirecting them.
 
 ## 0.3.5 - 2026-09-05
 
