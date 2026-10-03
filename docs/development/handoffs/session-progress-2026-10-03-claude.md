@@ -54,3 +54,7 @@ A background agent implemented displaced-leaf quarantine (`mutate_live_leaf`), n
 
 - Disposable legacy fixture: `C:\Users\klimp\Documents\Projects\hoi4-test-mods` (synthetic; safe to delete after testing).
 - No test mod has been written into the real HOI4 mod folder: the only create attempt stopped before project apply because of the LFS pointer, and its staging and journal live in app data as an interrupted, pre-apply transaction (`9043b5bf-...`) that recovery can discard.
+
+## Native Linux run (2026-10-04)
+
+The Rust suite had never compiled on a Unix target in this candidate. A clean clone on WSL Ubuntu 24.04's native ext4 filesystem (Rust 1.88.0, default features, because the desktop feature needs WebKitGTK development packages that are not installed there) exposed two Unix-only defects that Windows builds cannot see: a type mismatch in the Unix fake Codex process helper, which broke compilation of the test target, and an unused Unix `PermissionsExt` import in `transaction.rs`, which `clippy -D warnings` rejects. After the fixes, `cargo clippy -p hoi4-mod-setup --all-targets -- -D warnings` is clean and `cargo test -p hoi4-mod-setup` passes 418 tests with 3 ignored, including the `openat`, `renameat2`, `linkat`, and quarantine routes on a real Linux filesystem. macOS (`renameatx_np`, case-insensitive APFS) is still unrun and needs CI or a Mac.
