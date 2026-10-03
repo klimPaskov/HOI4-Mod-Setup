@@ -122,8 +122,11 @@ subscription. The `claude_account` profile is built on that permitted route:
   session and runs do not add new project entries to Claude Code's state. The
   reply is parsed and validated before any redaction, so credential-shaped
   content is rejected instead of masked. No tools, MCP servers, user or project customizations, or session
-  history are available. The schema-shaped `structured_output` is validated by
-  the same deterministic validator as every other provider.
+  history are available. Claude Code's schema validator rejects the draft
+  2020-12 `$schema` declaration, so the copy passed to `--json-schema` omits
+  `$schema` and `$id`; the schema-shaped `structured_output` is then validated
+  against the complete Draft 2020-12 schema by the same deterministic
+  validator as every other provider.
 - The child environment is cleared. Besides the standard safe process
   variables, only `USER`, `LOGNAME`, `ProgramData`, the user's
   `CLAUDE_CONFIG_DIR`, proxy settings, and `NODE_EXTRA_CA_CERTS` pass through,

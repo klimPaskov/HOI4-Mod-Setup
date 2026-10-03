@@ -91,7 +91,12 @@ Recovery, rollback, backup inspection, and managed removal remain locally usable
 - Parse Claude output raw (`run_reviewed_tool(..., raw_stdout = true)`) and
   validate before any redaction; never redact a structured reply before
   parsing. `analyze_with_runner` is the injectable loop for tests.
-- Retry only a completed run whose structured output was rejected or missing;
+- Pass Claude Code the analysis schema without `$schema`/`$id`
+  (`claude_output_schema`): its validator rejects the 2020-12 declaration and
+  the run exits with empty stdout. Empty stdout is a Process error.
+- Retry (via `correctable_output_error`) only a completed run whose
+  structured output was missing or rejected for schema, identifier/value, or
+  path rules;
   never retry timeouts, truncation, unreadable envelopes, or sign-in/usage
   errors. For Codex, an incomplete turn is a timeout and a corrective turn
   requires the completed turn's ID.

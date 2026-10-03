@@ -533,6 +533,19 @@ fn analysis_system_prompt() -> String {
     )
 }
 
+/// The analysis schema in the form Claude Code accepts. Its validator rejects
+/// the draft 2020-12 `$schema` declaration (and would fail the whole run with
+/// empty output), so the declaration and `$id` are removed; the app's own
+/// Draft 2020-12 validator still enforces the complete schema on the reply.
+fn claude_output_schema() -> Result<String, AppError> {
+    let mut schema: Value = serde_json::from_str(ANALYSIS_SCHEMA)?;
+    if let Some(object) = schema.as_object_mut() {
+        object.remove("$schema");
+        object.remove("$id");
+    }
+    Ok(serde_json::to_string(&schema)?)
+}
+
 /// Build the isolated print-mode arguments. Tools, MCP servers, user and
 /// project customizations, and session persistence are all disabled; the
 /// prompt travels on standard input rather than the command line.
@@ -544,7 +557,7 @@ pub fn analysis_arguments(model: &str, reasoning_effort: &str) -> Result<Vec<Str
         "--output-format".into(),
         "json".into(),
         "--json-schema".into(),
-        serde_json::to_string(&serde_json::from_str::<Value>(ANALYSIS_SCHEMA)?)?,
+        claude_output_schema()?,
         "--model".into(),
         model.into(),
         "--tools".into(),
@@ -705,6 +718,13 @@ pub(crate) fn analyze_with_runner(
                 "Claude Code response exceeded the bounded response limit".into(),
             ));
         }
+        if result.stdout.trim().is_empty() {
+            // Claude Code reports argument and startup failures on stderr
+            // with a non-zero exit and no result envelope.
+            return Err(AppError::Process(
+                "Claude Code exited without a result".into(),
+            ));
+        }
         let response = extract_analysis_output(&result.stdout)?;
         match validate_analysis_output(
             response,
@@ -713,15 +733,17 @@ pub(crate) fn analyze_with_runner(
             &request.analysis.evidence,
         ) {
             Ok(analysis) => break analysis,
-            Err(AppError::Serialization(reason)) if attempt < crate::codex::ANALYSIS_ATTEMPTS => {
-                turn_prompt = format!(
+            Err(error) => match crate::codex::correctable_output_error(&error) {
+                Some(reason) if attempt < crate::codex::ANALYSIS_ATTEMPTS => {
+                    turn_prompt = format!(
                     "{prompt}
 
 {}",
-                    crate::codex::corrective_analysis_prompt(&reason, &input_sha256)
-                );
-            }
-            Err(error) => return Err(error),
+                    crate::codex::corrective_analysis_prompt(reason, &input_sha256)
+                    );
+                }
+                _ => return Err(error),
+            },
         }
     };
     let output_sha256 = crate::security::sha256_bytes(&serde_json::to_vec(&analysis)?);
@@ -829,6 +851,8 @@ mod tests {
         let schema = args.iter().position(|arg| arg == "--json-schema").unwrap();
         let parsed: Value = serde_json::from_str(&args[schema + 1]).unwrap();
         assert!(parsed.get("properties").is_some());
+        // Claude Code rejects the draft 2020-12 declaration outright.
+        assert!(parsed.get("$schema").is_none());
         // Haiku 4.5 does not support effort, so it must not be forwarded.
         assert!(!args.iter().any(|arg| arg == "--effort"));
         assert!(!args
@@ -990,7 +1014,17 @@ mod tests {
                 mode: "new_project_identity".into(),
                 brief: "Iron Dawn: an alternate-history mod about a surviving Austro-Hungarian federation with new focus trees and events.".into(),
                 evidence: Vec::new(),
-                constraints: serde_json::json!({}),
+                // The real planning flow always binds the manifest's component
+                // registry; recommendations may name only these IDs.
+                constraints: serde_json::json!({
+                    "project_id_pattern": "^[a-z][a-z0-9_]{1,63}$",
+                    "requested_mod_name": "Iron Dawn",
+                    "component_registry": {
+                        "source_revision": "7b7d2a49db60887dce69ad5ddd4b45d788d14a85",
+                        "manifest_sha256": "499c9176b5dfd7e9a4003f84d02bc4b40468bcac4a5cde680d8a43c82beeee66",
+                        "component_ids": ["core.agents", "core.skills", "core.subagents", "codex.config", "mcp.hoi4_agent_tools", "wiki.snapshot", "workflow.super_events"]
+                    }
+                }),
                 analysis_purpose: None,
                 project_root: None,
                 scan_id: None,

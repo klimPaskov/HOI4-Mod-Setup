@@ -576,15 +576,17 @@ pub fn analyze<S: CredentialStore>(
         });
         match validated {
             Ok(analysis) => break analysis,
-            Err(AppError::Serialization(reason)) if attempt < crate::codex::ANALYSIS_ATTEMPTS => {
-                turn_prompt = format!(
+            Err(error) => match crate::codex::correctable_output_error(&error) {
+                Some(reason) if attempt < crate::codex::ANALYSIS_ATTEMPTS => {
+                    turn_prompt = format!(
                     "{prompt}
 
 {}",
-                    crate::codex::corrective_analysis_prompt(&reason, &input_sha256)
-                );
-            }
-            Err(error) => return Err(error),
+                    crate::codex::corrective_analysis_prompt(reason, &input_sha256)
+                    );
+                }
+                _ => return Err(error),
+            },
         }
     };
     let output_sha256 = crate::security::sha256_bytes(&serde_json::to_vec(&analysis)?);
