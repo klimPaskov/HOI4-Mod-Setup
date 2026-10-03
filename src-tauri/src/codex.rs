@@ -624,9 +624,17 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
                     "Codex planning turn failed: {error}"
                 )));
             }
-            let validated = turn_completed
-                .then(|| messages.iter().rev().find_map(structured_output))
-                .flatten()
+            if !turn_completed {
+                // A turn that is still running is a timeout, never a rejected
+                // response: retrying would start a second paid turn beside it.
+                return Err(AppError::Process(
+                    "Codex analysis timed out before the turn completed".into(),
+                ));
+            }
+            let validated = messages
+                .iter()
+                .rev()
+                .find_map(structured_output)
                 .ok_or_else(|| {
                     AppError::Serialization(
                         "Codex returned no schema-constrained analysis output".into(),
@@ -637,7 +645,11 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
                 });
             match validated {
                 Ok(analysis) => break analysis,
-                Err(AppError::Serialization(reason)) if attempt < ANALYSIS_ATTEMPTS => {
+                // A corrective turn needs the completed turn's ID so its
+                // output cannot be confused with this one.
+                Err(AppError::Serialization(reason))
+                    if attempt < ANALYSIS_ATTEMPTS && turn_id.is_some() =>
+                {
                     turn_text = corrective_analysis_prompt(&reason, &input_sha256);
                 }
                 Err(error) => return Err(error),
@@ -3820,6 +3832,41 @@ mod tests {
     }
 
     #[test]
+    fn an_incomplete_codex_turn_is_a_timeout_and_is_not_retried() {
+        let request = CodexAnalysisRequest {
+            mode: "new_project_identity".into(),
+            brief: "brief".into(),
+            evidence: Vec::new(),
+            constraints: json!({}),
+            analysis_purpose: None,
+            project_root: None,
+            scan_id: None,
+        };
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming: VecDeque::from([
+                response(
+                    1,
+                    json!({"account": {"type": "chatgpt", "authenticated": true}}),
+                ),
+                response(2, json!({"rateLimits": {"primary": {"usedPercent": 1}}})),
+                response(3, json!({"threadId": "thread-1"})),
+                response(4, json!({"turn": {"id": "turn-1"}})),
+            ]),
+            alive: true,
+        };
+        let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
+
+        let error = protocol
+            .analyze(&request, "gpt-5.6-luna", "xhigh")
+            .unwrap_err();
+
+        assert!(matches!(&error, AppError::Process(message) if message.contains("timed out")));
+        assert_eq!(protocol.transport.sent.len(), 4);
+    }
+
+    #[test]
     fn a_requested_new_project_name_is_kept_in_the_display_name_proposal() {
         let request = CodexAnalysisRequest {
             mode: "new_project_identity".into(),
@@ -4094,9 +4141,10 @@ mod tests {
                 ),
                 response(2, json!({"rateLimits": {"primary": {"usedPercent": 1}}})),
                 response(3, json!({"threadId": "thread-1"})),
-                response(4, json!({"status": "started"})),
-                json!({"method": "turn/completed", "params": {"threadId": "thread-1", "turn": {"status": "completed"}}}),
-                response(5, json!({"status": "started"})),
+                response(4, json!({"turn": {"id": "turn-1"}})),
+                json!({"method": "turn/completed", "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed"}}}),
+                response(5, json!({"turn": {"id": "turn-2"}})),
+                json!({"method": "turn/completed", "params": {"threadId": "thread-1", "turn": {"id": "turn-2", "status": "completed"}}}),
             ]),
             alive: true,
         };

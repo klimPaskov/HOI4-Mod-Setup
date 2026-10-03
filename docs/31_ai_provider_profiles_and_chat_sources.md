@@ -102,23 +102,33 @@ subscription. The `claude_account` profile is built on that permitted route:
   Sign-in can be cancelled, and it times out after ten minutes.
 - Status comes from `claude auth status --json`. Only `loggedIn`, a bounded
   `authMethod` token, and `apiProvider` are read; email, organization, and plan
-  fields are discarded before any value leaves the adapter. A session that
-  Claude Code routes to another inference provider is not treated as a Claude
-  account sign-in.
-- **Sign out** runs `claude auth logout` and clears pending proposals and the
-  approved scan evidence, like Codex sign-out.
+  fields are discarded before any value leaves the adapter. Only a Claude plan
+  sign-in (`authMethod = "claude.ai"` with the first-party provider) is the
+  Claude account route; a Console or API-key sign-in is shown as such and
+  points to the Claude API key option, and a session routed to another
+  inference provider is not accepted.
+- **Sign out** runs `claude auth logout`, clears pending proposals and the
+  approved scan evidence like Codex sign-out, and advances a session
+  generation so an analysis that was running is discarded. Switching provider
+  cancels a pending Claude sign-in, and each sign-in attempt is waited on
+  once.
 - Analysis runs one print-mode turn:
   `claude --print --output-format json --json-schema <codex-analysis schema>
   --model <model> --tools "" --strict-mcp-config --safe-mode
   --no-session-persistence --system-prompt <bounded instructions>`. The prompt
-  travels on standard input. The working directory is a fresh, empty temporary
-  directory, so no project path or directory-scoped configuration reaches the
-  session. No tools, MCP servers, user or project customizations, or session
+  travels on standard input. The working directory is a stable, app-owned
+  empty directory (`claude-analysis` under the app data root) that must stay
+  empty, so no project path or directory-scoped configuration reaches the
+  session and runs do not add new project entries to Claude Code's state. The
+  reply is parsed and validated before any redaction, so credential-shaped
+  content is rejected instead of masked. No tools, MCP servers, user or project customizations, or session
   history are available. The schema-shaped `structured_output` is validated by
   the same deterministic validator as every other provider.
 - The child environment is cleared. Besides the standard safe process
-  variables, only the user's `CLAUDE_CONFIG_DIR`, proxy settings, and
-  `NODE_EXTRA_CA_CERTS` pass through. `ANTHROPIC_*` keys and tokens, Claude
+  variables, only `USER`, `LOGNAME`, `ProgramData`, the user's
+  `CLAUDE_CONFIG_DIR`, proxy settings, and `NODE_EXTRA_CA_CERTS` pass through,
+  and `DISABLE_AUTOUPDATER=1` plus `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`
+  keep the reviewed binary from updating itself mid-session. `ANTHROPIC_*` keys and tokens, Claude
   Code host-session variables, and alternate-provider selectors are never
   forwarded, so the user's own Claude Code sign-in is what authenticates.
 - Claude Code exposes no remaining-usage reading, so the panel states that

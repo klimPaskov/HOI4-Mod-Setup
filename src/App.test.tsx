@@ -491,6 +491,23 @@ describe("HOI4 Mod Setup wizard", () => {
       expect(screen.getAllByText("Claude sign-in cancelled. You can try again.").length).toBeGreaterThan(0);
     });
 
+    it("cancels a pending Claude sign-in when another provider is selected", async () => {
+      enableTauriRuntime();
+      let finishLogin: ((result: { value: AiAccountStatus }) => void) | undefined;
+      vi.mocked(waitForClaudeLoginResult).mockReturnValue(new Promise((resolve) => { finishLogin = resolve; }));
+      render(<App />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "Sign in to Claude" }));
+      await screen.findByRole("button", { name: "Waiting for browser sign-in…" });
+      fireEvent.change(screen.getByLabelText("AI provider"), { target: { value: "kimi" } });
+
+      await waitFor(() => expect(cancelClaudeLogin).toHaveBeenCalledWith("claude-login"));
+      await act(async () => finishLogin?.({ value: signedInClaude }));
+      expect(screen.getByLabelText("AI provider")).toHaveValue("kimi");
+      expect(screen.queryByText("Signed in to Claude")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    });
+
     it("keeps the draft usable when Claude sign-in does not finish", async () => {
       enableTauriRuntime();
       render(<App />);

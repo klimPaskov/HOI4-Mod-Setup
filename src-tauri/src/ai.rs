@@ -699,11 +699,13 @@ fn request_provider(
         .send()
         .map_err(|error| AppError::Process(format!("AI provider request failed: {error}")))?;
     let status = response.status();
+    // Transport-level failures are Process or Protocol errors so they are
+    // never mistaken for a rejected proposal set and retried.
     if response
         .content_length()
         .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
     {
-        return Err(AppError::Serialization(
+        return Err(AppError::Process(
             "AI provider response exceeded the bounded response limit".into(),
         ));
     }
@@ -713,7 +715,7 @@ fn request_provider(
         .read_to_end(&mut bytes)
         .map_err(|error| AppError::Process(format!("AI provider response failed: {error}")))?;
     if bytes.len() > MAX_RESPONSE_BYTES {
-        return Err(AppError::Serialization(
+        return Err(AppError::Process(
             "AI provider response exceeded the bounded response limit".into(),
         ));
     }
@@ -723,7 +725,9 @@ fn request_provider(
             status.as_u16()
         )));
     }
-    let envelope: Value = serde_json::from_slice(&bytes)?;
+    let envelope: Value = serde_json::from_slice(&bytes).map_err(|_| {
+        AppError::Protocol("AI provider returned an unreadable response envelope".into())
+    })?;
     extract_structured_output(&envelope)
 }
 

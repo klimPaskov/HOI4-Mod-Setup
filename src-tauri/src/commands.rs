@@ -256,6 +256,11 @@ fn claude_login_cancellations() -> &'static Mutex<HashMap<String, Arc<AtomicBool
     CLAUDE_LOGIN_CANCELLATIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn claude_logins_in_flight() -> &'static Mutex<std::collections::HashSet<String>> {
+    static IN_FLIGHT: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+    IN_FLIGHT.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+}
+
 fn cancel_all_claude_logins() {
     if let Ok(mut cancellations) = claude_login_cancellations().lock() {
         for cancellation in cancellations.values() {
@@ -1031,13 +1036,26 @@ async fn claude_login_wait(login_id: String, model: String) -> Result<AiAccountS
             .get(&login_id)
             .cloned()
             .ok_or_else(|| "Claude sign-in is not active or was already cancelled".to_string())?;
+        // Each attempt is waited on once, so one ID never starts two
+        // `claude auth login` processes.
+        if !claude_logins_in_flight()
+            .lock()
+            .map_err(|_| "Claude sign-in store is unavailable".to_string())?
+            .insert(login_id.clone())
+        {
+            return Err("Claude sign-in is already in progress.".into());
+        }
         let mut should_stop = || cancellation.load(Ordering::SeqCst);
         let result = crate::claude_code::run_login(&mut should_stop);
-        let cancelled = cancellation.load(Ordering::SeqCst);
+        if let Ok(mut in_flight) = claude_logins_in_flight().lock() {
+            in_flight.remove(&login_id);
+        }
         if let Ok(mut cancellations) = claude_login_cancellations().lock() {
             cancellations.remove(&login_id);
         }
-        if cancelled {
+        // A cancel that arrives after Claude Code finished signing in does
+        // not turn a completed sign-in into a cancellation.
+        if result.is_err() && cancellation.load(Ordering::SeqCst) {
             return Err("Claude sign-in was cancelled.".into());
         }
         result.map_err(claude_user_error)?;
@@ -1062,6 +1080,7 @@ fn claude_login_cancel(login_id: String) -> Result<(), String> {
 async fn claude_logout() -> Result<(), String> {
     run_blocking_command("claude-logout", || {
         cancel_all_claude_logins();
+        crate::claude_code::invalidate_session();
         let result = crate::claude_code::logout().map_err(claude_user_error);
         if let Ok(mut projects) = ready_projects().lock() {
             projects.clear();
