@@ -151,9 +151,7 @@
       "expected_executable": false,
       "after_sha256": null,
       "after_exists": null,
-      "after_executable": null,
-      "quarantine_leaf": null,
-      "quarantine_sha256": null
+      "after_executable": null
     },
     {
       "id": "op-002",
@@ -200,6 +198,7 @@
   "git_remote_added_url": null,
   "previous_lock_backup_path": "C:\\Users\\example\\AppData\\Local\\HOI4 Mod Setup\\backups\\960ccbb7-c36a-41b0-9d76-0105bcd83b05\\install.lock.json.bak",
   "previous_lock_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+  "checkpoint_sequence": 4,
   "error": {
     "code": "APP_TERMINATED",
     "message": "The application closed during staging.",

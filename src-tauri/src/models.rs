@@ -1063,8 +1063,10 @@ pub struct JournalOperation {
     pub quarantine_leaf: Option<String>,
     /// Observed SHA-256 of the quarantined bytes after the namespace change.
     /// Absent while the quarantine is planned but not yet verified. A value
-    /// different from `before_sha256` records local bytes that changed after
-    /// review and were preserved instead of replaced.
+    /// different from `backup_sha256` records local bytes that changed after
+    /// review and were preserved instead of replaced. When rollback moves a
+    /// surviving forward quarantine back, it records the hash of the bytes it
+    /// moved back here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quarantine_sha256: Option<String>,
 }
@@ -1183,6 +1185,12 @@ pub struct TransactionJournal {
     pub previous_lock_sha256: Option<String>,
     #[serde(default)]
     pub error: Option<JournalError>,
+    /// Position of the last operation checkpoint this snapshot includes.
+    /// Checkpoint replay applies only records with a higher sequence, so the
+    /// order never depends on wall-clock time. Journals written before the
+    /// field existed omit it and replay falls back to timestamps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_sequence: Option<u64>,
 }
 
 fn default_transaction_kind() -> String {

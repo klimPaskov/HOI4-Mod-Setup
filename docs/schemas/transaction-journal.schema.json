@@ -423,7 +423,7 @@
             "pattern": "^\\.hoi4ms-quarantine-[0-9a-f]{32}-[A-Za-z0-9_-]{1,64}\\.tmp$"
           },
           "quarantine_sha256": {
-            "description": "Observed SHA-256 of the quarantined bytes. Null or absent while the quarantine is planned but not verified; a value different from before_sha256 records local bytes that changed after review and were preserved.",
+            "description": "Observed SHA-256 of the quarantined bytes. Absent while the quarantine is planned but not verified; a value different from backup_sha256 records local bytes that changed after review and were preserved. When rollback moves a surviving forward quarantine back, it records the hash of the bytes it moved back.",
             "type": [
               "string",
               "null"
@@ -433,6 +433,13 @@
         },
         "dependentRequired": {
           "quarantine_sha256": ["quarantine_leaf"]
+        },
+        "if": {
+          "required": ["quarantine_sha256"],
+          "properties": { "quarantine_sha256": { "type": "string" } }
+        },
+        "then": {
+          "properties": { "quarantine_leaf": { "type": "string" } }
         }
       }
     },
@@ -493,6 +500,11 @@
       ],
       "pattern": "^[0-9a-f]{64}$"
     },
+    "checkpoint_sequence": {
+      "description": "Sequence of the last operation checkpoint this snapshot includes. Replay applies only checkpoint records with a higher sequence; journals written before the field existed omit it and replay by timestamp.",
+      "type": "integer",
+      "minimum": 0
+    },
     "result_lock_sha256": {
       "type": [
         "string",
@@ -543,7 +555,8 @@
                 "quarantine_sha256": false
               }
             }
-          }
+          },
+          "checkpoint_sequence": false
         }
       }
     },

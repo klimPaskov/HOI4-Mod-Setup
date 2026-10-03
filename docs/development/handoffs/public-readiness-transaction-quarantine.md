@@ -28,7 +28,7 @@ Exclusive rename uses `FILE_RENAME_INFO` with `ReplaceIfExists = 0` on Windows, 
 Recovery:
 
 - Forward file crash points recover through rollback, because resume stays refused once project apply has started. Rollback moves a surviving forward quarantine back instead of copying the backup. When the destination holds the installed bytes, rollback first moves them into its own quarantine on the child operation and releases that quarantine after both rollback records are durable.
-- Rollback treats preserved local bytes (`quarantine_sha256` different from the predecessor, quarantine absent, destination equal to it) as already restored.
+- Rollback treats preserved local bytes (`quarantine_sha256` different from `backup_sha256`, quarantine absent, destination equal to it) as already restored.
 - Rollback never deletes a quarantine whose hash differs from both the precondition and the backup; a quarantine beside unexpected destination bytes keeps both files and fails for manual review.
 - A rollback retry settles the child step quarantine first: verified beside the completed destination means release, beside an absent destination means move back and retry. A child operation that reached its quarantine intent is not re-captured by the inverse-backup step.
 - Lock quarantines use derived names (`install-lock-commit`, `install-lock-restore`) and expected hashes from `previous_lock_sha256` and `result_lock_sha256`. `finish_finalization` and `rollback_transaction` settle them before checking the lock. Finalization resume releases a verified commit quarantine beside the exact committed lock; beside an absent lock it restores the predecessor and leaves rollback as the route.
@@ -37,7 +37,7 @@ Recovery:
 ## Journal fields
 
 - `quarantine_leaf`: optional string, pattern `^\.hoi4ms-quarantine-[0-9a-f]{32}-[A-Za-z0-9_-]{1,64}\.tmp$`. Recovery accepts only the name derived from the journal's transaction ID and the operation ID.
-- `quarantine_sha256`: optional SHA-256 of the quarantined bytes; requires `quarantine_leaf` through `dependentRequired`.
+- `quarantine_sha256`: optional SHA-256 of the quarantined bytes; a string value requires a string `quarantine_leaf`. Rollback records the hash of the bytes it moved back from a forward quarantine here.
 - Both are omitted from serialization when absent, so existing journals and snapshots are unchanged. Schema `1.0.0` journals must not contain them; the journal schema version stays `1.1.0`.
 
 ## Call sites
@@ -99,3 +99,13 @@ The existing stage and operation fault matrix, `fail_after_live_mutation`, and e
 - The Windows flush fallback reopens the directory by its retained path. Ancestor handles deny delete sharing and the identity is compared, but this is not a handle-only flush. Directory-entry durability across sudden power loss is still unproven.
 - `docs/13_security_model.md`, `.agents/skills/hoi4-mod-setup-security/SKILL.md`, and `docs/development/handoffs/session-continuation-2026-10-03.md` still describe displaced bytes as unquarantined. They were outside this task's file scope and need an owner update.
 - Items 1, 3, and 4 of the transaction-handles handoff remain open.
+
+## Audit follow-up (2026-10-03)
+
+The fixes for `audit-transaction-quarantine-2026-10-03.md` changed this design in five places; that report's "Fix addendum (2026-10-03)" lists dispositions, tests, and commands.
+
+- Forward apply records `verified` only when the read-back destination equals the staged hash (or is absent for a delete); otherwise the quarantine is kept and apply fails as a conflict.
+- Recovery probes derived quarantine names without the journal, settles a quarantine beside already-restored bytes by hash, and ends apply, finalization resume, and rollback with a bounded sweep of leftover `.hoi4ms-quarantine-<transaction id>-*` files.
+- Checkpoint replay is ordered by a monotonic `sequence` against the journal's new optional `checkpoint_sequence`, and checkpoint records are format `1.1.0`.
+- Ordinary errors after the quarantine rename move the bytes back before returning.
+- Windows deletes fall back to the classic delete disposition on the same handle when POSIX semantics are unsupported.

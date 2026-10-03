@@ -27,6 +27,14 @@ const OPERATION_CHECKPOINT_MAX_RECORDS: usize = 2_048;
 const OPERATION_CHECKPOINT_MAX_BYTES: usize = 32 * 1024 * 1024;
 const JOURNAL_ERROR_MESSAGE_MAX_BYTES: usize = 2 * 1024;
 const STAGE_EVIDENCE_MAX_CHARS: usize = 1_024;
+/// Operation checkpoint record format. `1.1.0` adds the optional quarantine
+/// fields on the embedded operation and the monotonic `sequence`; replay still
+/// accepts `1.0.0` records written before them.
+const OPERATION_CHECKPOINT_SCHEMA: &str = "1.1.0";
+const LEGACY_OPERATION_CHECKPOINT_SCHEMA: &str = "1.0.0";
+/// Bounds for the recovery sweep of leftover destination quarantines.
+const QUARANTINE_SWEEP_MAX_DIRECTORIES: usize = 4_096;
+const QUARANTINE_SWEEP_MAX_ENTRIES: usize = 1_000_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OperationCheckpoint {
@@ -38,6 +46,10 @@ struct OperationCheckpoint {
     last_checkpoint: String,
     recovery: RecoveryState,
     updated_at: String,
+    /// Monotonic per-journal position. Replay orders records by this value,
+    /// never by wall-clock time; records written before it existed omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sequence: Option<u64>,
 }
 
 #[cfg(unix)]
@@ -88,6 +100,9 @@ pub enum QuarantineBoundary {
     BeforeRename,
     /// The destination moved to its quarantine name and is not yet verified.
     AfterRename,
+    /// The quarantined bytes differed from the precondition, that observed
+    /// hash is durable, and the changed bytes have not been moved back.
+    BeforeMoveBack,
     /// The quarantined bytes matched the precondition and nothing is placed.
     AfterVerification,
     /// The operation result is durable and the quarantine still exists.
@@ -101,6 +116,9 @@ pub enum LiveMutationBarrier {
     AfterPrecondition,
     /// The displaced bytes were verified and the new bytes are not placed.
     AfterQuarantineVerified,
+    /// The new bytes were placed and the operation result is not yet read
+    /// back or journaled.
+    AfterPlacement,
 }
 
 /// Receives the absolute live destination and the operation index.
@@ -655,6 +673,7 @@ pub fn new_journal(
         git_remote_added_url: None,
         previous_lock_backup_path: None,
         previous_lock_sha256: None,
+        checkpoint_sequence: None,
         error: None,
     }
 }
@@ -1441,6 +1460,14 @@ pub fn run_transaction(
         )?;
         compact_operation_checkpoints(&journal_path, &mut journal)?;
         project_directory.verify_bound_to_path()?;
+        // Every operation verified, so a quarantine of this transaction that
+        // still exists is a leftover; settle it by hash or stop here.
+        sweep_transaction_quarantines(
+            Some(project_directory),
+            &journal,
+            None,
+            QuarantineSweep::Result,
+        )?;
         if let Some(setup) = &plan.git_setup {
             journal.git_initialized = setup.mode == crate::git::GitMode::Initialize;
             if setup.mode == crate::git::GitMode::Preserve && setup.remote_url.is_some() {
@@ -1854,6 +1881,10 @@ fn settle_journal_lock_quarantines(
 
 fn persist_journal(path: &Path, journal: &mut TransactionJournal) -> Result<(), AppError> {
     journal.updated_at = Utc::now().to_rfc3339();
+    // A snapshot covers every checkpoint appended before it. Recording the
+    // current sequence (zero before the first checkpoint) lets replay skip
+    // exactly those records without comparing wall-clock times.
+    journal.checkpoint_sequence.get_or_insert(0);
     sanitize_journal_error(journal);
     atomic_write_json(path, journal)
 }
@@ -1937,8 +1968,10 @@ fn append_operation_checkpoints(
             .get(*operation_index)
             .cloned()
             .ok_or_else(|| AppError::Transaction("operation checkpoint index is invalid".into()))?;
+        let sequence = journal.checkpoint_sequence.unwrap_or(0) + 1;
+        journal.checkpoint_sequence = Some(sequence);
         let checkpoint = OperationCheckpoint {
-            schema_version: "1.0.0".into(),
+            schema_version: OPERATION_CHECKPOINT_SCHEMA.into(),
             transaction_id: journal.transaction_id,
             operation_index: *operation_index,
             operation,
@@ -1946,6 +1979,7 @@ fn append_operation_checkpoints(
             last_checkpoint: journal.last_checkpoint.clone(),
             recovery: journal.recovery.clone(),
             updated_at: journal.updated_at.clone(),
+            sequence: Some(sequence),
         };
         let value = serde_json::to_value(&checkpoint)?;
         crate::security::reject_secret_like_keys(&value)?;
@@ -2013,6 +2047,7 @@ fn replay_operation_checkpoints(
         ));
     }
     let snapshot_updated_at = journal.updated_at.clone();
+    let snapshot_sequence = journal.checkpoint_sequence;
     let bytes = directory.read_file(name)?;
     if bytes.len() > OPERATION_CHECKPOINT_MAX_BYTES {
         return Err(AppError::Transaction(
@@ -2050,8 +2085,10 @@ fn replay_operation_checkpoints(
                 )))
             }
         };
-        if checkpoint.schema_version != "1.0.0"
-            || checkpoint.transaction_id != journal.transaction_id
+        if !matches!(
+            checkpoint.schema_version.as_str(),
+            OPERATION_CHECKPOINT_SCHEMA | LEGACY_OPERATION_CHECKPOINT_SCHEMA
+        ) || checkpoint.transaction_id != journal.transaction_id
             || checkpoint.operation_index >= journal.operations.len()
             || checkpoint.operation.id != journal.operations[checkpoint.operation_index].id
         {
@@ -2059,15 +2096,35 @@ fn replay_operation_checkpoints(
                 "operation checkpoint does not match its transaction".into(),
             ));
         }
-        if checkpoint.updated_at <= snapshot_updated_at {
+        // Sequenced records are ordered by their monotonic position, so a
+        // wall-clock step backwards cannot hide a durable intent. A snapshot
+        // always carries a sequence once this code wrote it, so an unsequenced
+        // record beside it is older. Only a journal and log written entirely
+        // before sequences existed fall back to the timestamp comparison.
+        let newer = match (checkpoint.sequence, snapshot_sequence) {
+            (Some(record), Some(snapshot)) => record > snapshot,
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => checkpoint.updated_at > snapshot_updated_at,
+        };
+        if !newer {
             continue;
         }
         journal.operations[checkpoint.operation_index] = checkpoint.operation;
-        if checkpoint.updated_at > journal.updated_at {
+        let advances = match checkpoint.sequence {
+            Some(record) => journal
+                .checkpoint_sequence
+                .is_none_or(|current| record > current),
+            None => checkpoint.updated_at > journal.updated_at,
+        };
+        if advances {
             journal.state = checkpoint.journal_state;
             journal.last_checkpoint = checkpoint.last_checkpoint;
             journal.recovery = checkpoint.recovery;
             journal.updated_at = checkpoint.updated_at;
+            if checkpoint.sequence.is_some() {
+                journal.checkpoint_sequence = checkpoint.sequence;
+            }
         }
     }
     Ok(())
@@ -3347,6 +3404,7 @@ fn apply_operations(
                 .dir()
                 .set_executable(&target.relative, operation.executable)?;
         }
+        barrier(LiveMutationBarrier::AfterPlacement);
         if options.fail_after_live_mutation == Some(index) {
             return Err(AppError::Transaction(format!(
                 "fault injected after live mutation {}",
@@ -3404,6 +3462,26 @@ fn apply_operations(
         {
             return Err(AppError::Transaction(format!(
                 "destination executable metadata mismatch after apply: {}",
+                operation.destination
+            )));
+        }
+        // Only the staged bytes, or an absent destination for a delete, may
+        // be recorded as the installed result. Anything else was written by
+        // someone else after placement. The operation keeps its `applying`
+        // intent without `after_sha256`, so rollback never treats those bytes
+        // as installed, and the reviewed original stays in its quarantine.
+        let placed_as_reviewed = if deleting {
+            !after_exists
+        } else {
+            after_hash.is_some() && after_hash == staged_hash
+        };
+        if !placed_as_reviewed {
+            let kept = held_quarantine
+                .as_deref()
+                .map(|quarantine| format!("; the reviewed original is kept at {quarantine}"))
+                .unwrap_or_default();
+            return Err(AppError::Transaction(format!(
+                "local precondition changed during apply: {} changed after the reviewed bytes were placed and the local bytes were kept{kept}",
                 operation.destination
             )));
         }
@@ -3533,6 +3611,18 @@ fn journaled_quarantine_leaf(
         )));
     }
     Ok(Some(expected))
+}
+
+/// The forward quarantine name of an operation. A journaled name must be the
+/// derived one; when the journal lacks it, for example because the intent
+/// checkpoint was not replayed, recovery still probes the derived name, which
+/// no other transaction or operation can use.
+fn forward_quarantine_leaf(
+    transaction_id: Uuid,
+    operation: &JournalOperation,
+) -> Result<String, AppError> {
+    Ok(journaled_quarantine_leaf(transaction_id, operation)?
+        .unwrap_or_else(|| quarantine_leaf_name(transaction_id, &operation.id)))
 }
 
 enum LiveRoot<'a> {
@@ -3740,6 +3830,17 @@ fn mutate_live_leaf(
             )))
         }
         Err(error) => {
+            // The rename itself may have succeeded before its directory sync
+            // or binding check failed. Report that case accurately and try to
+            // put the bytes back instead of claiming nothing changed.
+            if directory.is_regular_file(&quarantine).unwrap_or(false) {
+                return Err(restore_quarantine_after_error(
+                    directory,
+                    &quarantine,
+                    destination,
+                    error,
+                ));
+            }
             if !directory.exists(destination)? {
                 return Err(AppError::Transaction(format!(
                     "local precondition changed during apply: {destination} disappeared and nothing was changed"
@@ -3748,17 +3849,37 @@ fn mutate_live_leaf(
             return Err(error);
         }
     }
+    // Quarantine faults model a process stop, so they leave the moved bytes
+    // for recovery. Ordinary errors below move them back first.
     fault(QuarantineBoundary::AfterRename)?;
-    let observed = directory.hash_file(&quarantine)?;
+    let observed = match test_fault(&format!("{checkpoint_prefix}_quarantine_hash_error"))
+        .and_then(|()| directory.hash_file(&quarantine))
+    {
+        Ok(observed) => observed,
+        Err(error) => {
+            return Err(restore_quarantine_after_error(
+                directory,
+                &quarantine,
+                destination,
+                error,
+            ))
+        }
+    };
     if observed != expected {
-        if let Some(journal) = journal.as_mut() {
-            journal.record(
+        let recorded = match journal.as_mut() {
+            Some(journal) => journal.record(
                 quarantine_leaf,
                 Some(&observed),
                 &format!("{checkpoint_prefix}-quarantine-changed"),
-            )?;
+            ),
+            None => Ok(()),
+        };
+        if recorded.is_ok() {
+            fault(QuarantineBoundary::BeforeMoveBack)?;
         }
-        if directory.rename_file_noreplace(&quarantine, destination)? {
+        let moved_back = directory.rename_file_noreplace(&quarantine, destination);
+        recorded?;
+        if moved_back? {
             return Err(AppError::Transaction(format!(
                 "local precondition changed during apply: {destination} changed after review and was left unchanged"
             )));
@@ -3768,20 +3889,60 @@ fn mutate_live_leaf(
         )));
     }
     if let Some(journal) = journal.as_mut() {
-        journal.record(
-            quarantine_leaf,
-            Some(&observed),
-            &format!("{checkpoint_prefix}-quarantine-verified"),
-        )?;
+        if let Err(error) = test_fault(&format!("{checkpoint_prefix}_quarantine_journal_error"))
+            .and_then(|()| {
+                journal.record(
+                    quarantine_leaf,
+                    Some(&observed),
+                    &format!("{checkpoint_prefix}-quarantine-verified"),
+                )
+            })
+        {
+            return Err(restore_quarantine_after_error(
+                directory,
+                &quarantine,
+                destination,
+                error,
+            ));
+        }
     }
     fault(QuarantineBoundary::AfterVerification)?;
     barrier(LiveMutationBarrier::AfterQuarantineVerified);
-    if !place_new_leaf(directory, destination, &change)? {
-        return Err(AppError::Transaction(format!(
+    match place_new_leaf(directory, destination, &change) {
+        Ok(true) => Ok(Some(quarantine)),
+        Ok(false) => Err(AppError::Transaction(format!(
             "local precondition changed during apply: a file appeared at {destination} and was kept; the reviewed bytes are kept at {quarantine}"
-        )));
+        ))),
+        Err(error) => Err(restore_quarantine_after_error(
+            directory,
+            &quarantine,
+            destination,
+            error,
+        )),
     }
-    Ok(Some(quarantine))
+}
+
+/// Best-effort recovery after an ordinary error that followed a successful
+/// quarantine rename: move the displaced bytes back with an exclusive rename
+/// so the destination does not look deleted while recovery is pending. The
+/// journal intent stays recorded, so rollback still applies when the move
+/// back is impossible, for example because new bytes now hold the name.
+fn restore_quarantine_after_error(
+    directory: &RootedDir,
+    quarantine: &str,
+    destination: &str,
+    error: AppError,
+) -> AppError {
+    let outcome = match directory.rename_file_noreplace(quarantine, destination) {
+        Ok(true) => format!("{destination} was moved back from its quarantine"),
+        Ok(false) => format!(
+            "{destination} is occupied, so its earlier bytes are kept at {quarantine} for recovery"
+        ),
+        Err(move_error) => format!(
+            "{destination} could not be moved back ({move_error}); its bytes are kept at {quarantine} for recovery"
+        ),
+    };
+    AppError::Transaction(format!("{error}; {outcome}"))
 }
 
 /// Remove a held quarantine only while it still contains the verified bytes.
@@ -3850,6 +4011,292 @@ fn settle_lock_quarantine(
         relative: LOCK_RELATIVE_PATH.to_string(),
     };
     settle_interrupted_quarantine(&target, leaf, displaced, &[placed])
+}
+
+/// Which completed state a quarantine sweep settles against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuarantineSweep {
+    /// Every operation reached its verified result (apply or finalization).
+    Result,
+    /// Every actionable operation was rolled back.
+    Rollback,
+}
+
+enum SweepDecision {
+    Release,
+    MoveBack,
+    Keep,
+}
+
+/// Decide what to do with a leftover quarantine of `operation` by hash. Bytes
+/// equal to the destination are a redundant copy. Precondition or backup
+/// bytes beside an absent destination move back during rollback and are
+/// released beside a verified result. Planned result bytes are reproducible
+/// from staging and may be released. Any other bytes are kept.
+fn quarantine_sweep_decision(
+    operation: &JournalOperation,
+    held: &str,
+    current: Option<&str>,
+    purpose: QuarantineSweep,
+) -> SweepDecision {
+    if current == Some(held) {
+        return SweepDecision::Release;
+    }
+    let matches = |hash: &Option<String>| hash.as_deref() == Some(held);
+    let precondition = matches(&operation.before_sha256) || matches(&operation.backup_sha256);
+    let result = matches(&operation.expected_sha256)
+        || matches(&operation.result_sha256)
+        || matches(&operation.staged_sha256);
+    match purpose {
+        QuarantineSweep::Rollback if precondition && current.is_none() => SweepDecision::MoveBack,
+        QuarantineSweep::Rollback if result => SweepDecision::Release,
+        QuarantineSweep::Rollback => SweepDecision::Keep,
+        QuarantineSweep::Result => {
+            let completed = if operation.action == Some(OperationAction::DeleteManaged) {
+                current.is_none()
+            } else {
+                operation.after_sha256.is_some() && current == operation.after_sha256.as_deref()
+            };
+            if (precondition && completed) || result {
+                SweepDecision::Release
+            } else {
+                SweepDecision::Keep
+            }
+        }
+    }
+}
+
+/// Settle every leftover `.hoi4ms-quarantine-<transaction id>-*` file in the
+/// destination directories of `journal`'s operations, including the step
+/// quarantines of its rollback transaction when one is given. Each file is
+/// matched to its operation by derived name and settled by hash; bytes that
+/// match no recorded state, and names that match no operation, are kept and
+/// the sweep fails for manual review. Lock quarantines are settled
+/// separately and skipped here. The scan is bounded by directory and entry
+/// counts.
+fn sweep_transaction_quarantines(
+    project_directory: Option<&RootedDir>,
+    journal: &TransactionJournal,
+    rollback_transaction_id: Option<Uuid>,
+    purpose: QuarantineSweep,
+) -> Result<(), AppError> {
+    let mut owners = vec![(journal.transaction_id, "")];
+    if let Some(rollback_id) = rollback_transaction_id {
+        owners.push((rollback_id, "rollback-"));
+    }
+    let prefixes = owners
+        .iter()
+        .map(|(id, _)| format!("{QUARANTINE_PREFIX}{}-", id.simple()))
+        .collect::<Vec<_>>();
+    let reserved = owners
+        .iter()
+        .flat_map(|(id, _)| {
+            [
+                lock_quarantine_leaf(*id, "commit"),
+                lock_quarantine_leaf(*id, "restore"),
+            ]
+        })
+        .collect::<Vec<_>>();
+
+    // Group operations by destination directory; each group is listed once.
+    let mut groups: Vec<(bool, String, Vec<usize>)> = Vec::new();
+    let mut group_index: HashMap<(bool, String), usize> = HashMap::new();
+    for (index, operation) in journal.operations.iter().enumerate() {
+        // Skips, external actions, and legacy records without an action never
+        // change a live leaf, so they own no quarantine.
+        if matches!(
+            operation.action,
+            Some(OperationAction::Skip | OperationAction::External) | None
+        ) {
+            continue;
+        }
+        let parent = if operation.external {
+            let absolute = validate_external_destination(&operation.destination)?;
+            match absolute.parent() {
+                Some(parent) => parent.display().to_string(),
+                None => continue,
+            }
+        } else {
+            let normalized = normalize_relative_path(&operation.destination)?;
+            normalized
+                .rsplit_once('/')
+                .map(|(parent, _)| parent.to_string())
+                .unwrap_or_default()
+        };
+        let key = (
+            operation.external,
+            if cfg!(windows) {
+                parent.to_lowercase()
+            } else {
+                parent.clone()
+            },
+        );
+        match group_index.get(&key) {
+            Some(position) => groups[*position].2.push(index),
+            None => {
+                group_index.insert(key, groups.len());
+                groups.push((operation.external, parent, vec![index]));
+            }
+        }
+    }
+    if groups.len() > QUARANTINE_SWEEP_MAX_DIRECTORIES {
+        return Err(AppError::Transaction(
+            "quarantine sweep exceeds its bounded directory count; manual review is required"
+                .into(),
+        ));
+    }
+
+    let mut scanned = 0usize;
+    let mut kept = Vec::new();
+    for (external, parent, indices) in groups {
+        let directory = if external {
+            let path = PathBuf::from(&parent);
+            if !fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_dir()) {
+                continue;
+            }
+            LiveRoot::Owned(RootedDir::open(&path)?)
+        } else {
+            let Some(project) = project_directory else {
+                continue;
+            };
+            if parent.is_empty() {
+                LiveRoot::Borrowed(project)
+            } else if project.is_directory(&parent)? {
+                LiveRoot::Owned(project.open_dir(&parent)?)
+            } else {
+                continue;
+            }
+        };
+        let directory = match &directory {
+            LiveRoot::Borrowed(directory) => *directory,
+            LiveRoot::Owned(directory) => directory,
+        };
+        let mut owned_names: HashMap<String, usize> = HashMap::new();
+        for index in &indices {
+            for (id, operation_prefix) in &owners {
+                owned_names.insert(
+                    quarantine_leaf_name(
+                        *id,
+                        &format!("{operation_prefix}{}", journal.operations[*index].id),
+                    ),
+                    *index,
+                );
+            }
+        }
+        let names = directory.read_dir_names()?;
+        scanned = scanned.saturating_add(names.len());
+        if scanned > QUARANTINE_SWEEP_MAX_ENTRIES {
+            return Err(AppError::Transaction(
+                "quarantine sweep exceeds its bounded entry count; manual review is required"
+                    .into(),
+            ));
+        }
+        for name in names {
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if !prefixes.iter().any(|prefix| name.starts_with(prefix))
+                || reserved.iter().any(|leaf| leaf == name)
+                || !directory.exists(name)?
+            {
+                continue;
+            }
+            let shown = if parent.is_empty() {
+                name.to_string()
+            } else {
+                format!("{parent}/{name}")
+            };
+            let Some(index) = owned_names.get(name).copied() else {
+                kept.push(shown);
+                continue;
+            };
+            if !directory.is_regular_file(name)? {
+                kept.push(shown);
+                continue;
+            }
+            let operation = &journal.operations[index];
+            let leaf = destination_leaf(operation)?;
+            let held = directory.hash_file(name)?;
+            let current = live_leaf_hash(directory, &leaf)?;
+            match quarantine_sweep_decision(operation, &held, current.as_deref(), purpose) {
+                SweepDecision::Release => release_quarantine(directory, name, &held)?,
+                SweepDecision::MoveBack => {
+                    if !directory.rename_file_noreplace(name, &leaf)? {
+                        kept.push(shown);
+                    }
+                }
+                SweepDecision::Keep => kept.push(shown),
+            }
+        }
+    }
+    if kept.is_empty() {
+        return Ok(());
+    }
+    Err(AppError::Transaction(format!(
+        "{} quarantined file(s) of transaction {} match no recorded state and were kept for manual review, including {}",
+        kept.len(),
+        journal.transaction_id,
+        kept[0]
+    )))
+}
+
+/// The final path component of an operation destination.
+fn destination_leaf(operation: &JournalOperation) -> Result<String, AppError> {
+    let leaf = if operation.external {
+        validate_external_destination(&operation.destination)?
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+    } else {
+        let normalized = normalize_relative_path(&operation.destination)?;
+        normalized
+            .rsplit_once('/')
+            .map(|(_, leaf)| leaf.to_string())
+            .or(Some(normalized))
+    };
+    leaf.filter(|leaf| !leaf.is_empty()).ok_or_else(|| {
+        AppError::PathSecurity(format!(
+            "quarantine sweep cannot name the destination of {}",
+            operation.id
+        ))
+    })
+}
+
+/// Settle a forward quarantine that survives beside a destination rollback
+/// already considers restored. It is released only when it holds exactly the
+/// restored bytes; otherwise both files are kept and rollback stops, so an
+/// earlier local edit is never hidden behind a reported success.
+fn settle_forward_quarantine_beside_restored(
+    project_directory: Option<&RootedDir>,
+    transaction_id: Uuid,
+    operation: &JournalOperation,
+) -> Result<(), AppError> {
+    let leaf = forward_quarantine_leaf(transaction_id, operation)?;
+    let Some(target) = existing_live_target(
+        project_directory,
+        operation.external,
+        &operation.destination,
+    )?
+    else {
+        return Ok(());
+    };
+    let quarantine = quarantine_relative(&target.relative, &leaf)?;
+    if !target.dir().exists(&quarantine)? {
+        return Ok(());
+    }
+    if !target.dir().is_regular_file(&quarantine)? {
+        return Err(AppError::PathSecurity(format!(
+            "quarantine is not a regular file: {quarantine}"
+        )));
+    }
+    let held = target.dir().hash_file(&quarantine)?;
+    if target.hash()?.as_deref() == Some(held.as_str()) {
+        return release_quarantine(target.dir(), &quarantine, &held);
+    }
+    Err(AppError::Transaction(format!(
+        "{} already holds its restored bytes while different earlier bytes are kept at {quarantine}; both files were kept for manual review",
+        operation.destination
+    )))
 }
 
 #[cfg(test)]
@@ -5257,6 +5704,7 @@ fn new_rollback_journal(
         git_remote_added_url: None,
         previous_lock_backup_path: None,
         previous_lock_sha256: None,
+        checkpoint_sequence: None,
         error: None,
     }
 }
@@ -5585,6 +6033,25 @@ fn persist_rollback_checkpoint(
     status: &str,
     checkpoint: &str,
 ) -> Result<(), AppError> {
+    write_rollback_checkpoint(
+        rollback,
+        rollback_path,
+        parent_operation_id,
+        status,
+        checkpoint,
+        false,
+    )
+}
+
+/// Record the child rollback status, synced when `durable` is set.
+fn write_rollback_checkpoint(
+    rollback: &mut TransactionJournal,
+    rollback_path: &Path,
+    parent_operation_id: &str,
+    status: &str,
+    checkpoint: &str,
+    durable: bool,
+) -> Result<(), AppError> {
     let operation_index = rollback
         .operations
         .iter()
@@ -5598,7 +6065,11 @@ fn persist_rollback_checkpoint(
         operation.after_executable = operation.expected_executable;
     }
     rollback.last_checkpoint = checkpoint.into();
-    append_operation_checkpoint(rollback_path, rollback, operation_index)
+    if durable {
+        persist_operation_checkpoint_batch(rollback_path, rollback, &[operation_index])
+    } else {
+        append_operation_checkpoint(rollback_path, rollback, operation_index)
+    }
 }
 
 /// Settle the quarantine of one interrupted rollback step. A verified
@@ -6014,6 +6485,14 @@ pub fn rollback_transaction(
                     journal_path,
                 )?
             {
+                // A forward quarantine may survive beside bytes that already
+                // equal the restored state; never report success while it
+                // hides different bytes.
+                settle_forward_quarantine_beside_restored(
+                    project_directory.as_ref(),
+                    journal.transaction_id,
+                    &operation,
+                )?;
                 journal.operations[index].status = "rolled_back".into();
                 journal.last_checkpoint = format!("rollback-{}", operation.id);
                 append_operation_checkpoint(journal_path, journal, index)?;
@@ -6033,10 +6512,10 @@ pub fn rollback_transaction(
             // The forward apply stopped while this destination's displaced
             // bytes were quarantined. Those bytes are the newest bytes the
             // user saw at this path, so they are moved back instead of being
-            // overwritten with the backup copy.
-            if let Some(forward_leaf) =
-                journaled_quarantine_leaf(journal.transaction_id, &operation)?
+            // overwritten with the backup copy. The derived name is probed
+            // even when the journal does not record it.
             {
+                let forward_leaf = forward_quarantine_leaf(journal.transaction_id, &operation)?;
                 if let Some(target) = existing_live_target(
                     project_directory.as_ref(),
                     operation.external,
@@ -6058,6 +6537,19 @@ pub fn rollback_transaction(
                         if current.is_some() && !installed {
                             return Err(AppError::Transaction(format!(
                                 "{} differs from the installed bytes while its earlier bytes are quarantined at {forward_quarantine}; both files were kept for manual review",
+                                operation.destination
+                            )));
+                        }
+                        // New bytes are placed only after the displaced bytes
+                        // were verified and journaled, so beside installed
+                        // bytes the quarantine must hold exactly that hash.
+                        // Anything else is not a quarantine this transaction
+                        // can vouch for and is never moved into place.
+                        if current.is_some()
+                            && operation.quarantine_sha256.as_deref() != Some(held.as_str())
+                        {
+                            return Err(AppError::Transaction(format!(
+                                "{forward_quarantine} beside {} holds bytes that match no recorded state; both files were kept for manual review",
                                 operation.destination
                             )));
                         }
@@ -6309,20 +6801,22 @@ pub fn rollback_transaction(
             }
             journal.operations[index].status = "rolled_back".into();
             journal.last_checkpoint = format!("rollback-{}", operation.id);
-            if held_rollback_quarantine.is_some() {
+            let durable = held_rollback_quarantine.is_some();
+            if durable {
                 persist_operation_checkpoint_batch(journal_path, journal, &[index])?;
             } else {
                 append_operation_checkpoint(journal_path, journal, index)?;
             }
-            persist_rollback_checkpoint(
+            write_rollback_checkpoint(
                 &mut rollback_journal,
                 &rollback_path,
                 &operation.id,
                 "rolled_back",
                 &format!("rollback-{}", operation.id),
+                durable,
             )?;
             if let Some((target, quarantine, displaced)) = held_rollback_quarantine.take() {
-                // Both rollback records are durable; the displaced
+                // Both rollback records are synced; the displaced
                 // post-transaction bytes also remain in the child backup.
                 rollback_quarantine_fault(QuarantineBoundary::BeforeRelease)?;
                 release_quarantine(target.dir(), &quarantine, &displaced)?;
@@ -6332,6 +6826,15 @@ pub fn rollback_transaction(
                 compact_operation_checkpoints(&rollback_path, &mut rollback_journal)?;
             }
         }
+        // Every actionable operation is rolled back. A quarantine of this
+        // transaction or of its rollback that still exists is a leftover,
+        // for example from an intent that was never replayed.
+        sweep_transaction_quarantines(
+            project_directory.as_ref(),
+            journal,
+            Some(rollback_journal.transaction_id),
+            QuarantineSweep::Rollback,
+        )?;
         restore_previous_lock(
             project_directory.as_ref(),
             &project_root,
@@ -6941,6 +7444,12 @@ fn finish_finalization(
             }
         }
     }
+    sweep_transaction_quarantines(
+        Some(&project_directory),
+        journal,
+        None,
+        QuarantineSweep::Result,
+    )?;
     if let Some(stage) = journal.stages.get_mut(11) {
         stage.status = "complete".into();
         if stage.completed_at.is_none() {
@@ -11260,6 +11769,7 @@ mod tests {
                     assert_eq!(quarantined.len(), 1);
                     assert_eq!(fs::read(&quarantined[0]).unwrap(), b"old");
                 }
+                QuarantineBoundary::BeforeMoveBack => unreachable!("not in this matrix"),
             }
             assert!(!project
                 .path()
@@ -11615,5 +12125,642 @@ mod tests {
         assert!(journaled_quarantine_leaf(transaction_id, &operation).is_err());
         assert!(quarantine_leaf_name(transaction_id, "../escape").starts_with(QUARANTINE_PREFIX));
         assert!(!quarantine_leaf_name(transaction_id, "../escape").contains('/'));
+    }
+
+    fn edit_agents_after_placement(path: &Path, _index: usize, barrier: LiveMutationBarrier) {
+        if barrier == LiveMutationBarrier::AfterPlacement && is_agents_destination(path) {
+            assert_eq!(fs::read(path).unwrap(), b"safe");
+            fs::write(path, b"edit after placement").unwrap();
+        }
+    }
+
+    fn with_test_fault<T>(checkpoint: &str, run: impl FnOnce() -> T) -> T {
+        TEST_FAULT.with(|fault| *fault.borrow_mut() = Some(checkpoint.into()));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+        TEST_FAULT.with(|fault| *fault.borrow_mut() = None);
+        result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    }
+
+    #[test]
+    fn edit_after_placement_is_kept_as_a_conflict_and_never_treated_as_installed() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        let error = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                live_mutation_barrier: Some(edit_agents_after_placement),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("changed after the reviewed bytes were placed"),
+            "{error}"
+        );
+        let destination = project.path().join("AGENTS.md");
+        assert_eq!(fs::read(&destination).unwrap(), b"edit after placement");
+        let quarantined = quarantine_files(project.path());
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(fs::read(&quarantined[0]).unwrap(), b"old");
+        assert!(!project
+            .path()
+            .join(".hoi4-mod-setup/install.lock.json")
+            .exists());
+
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        assert_eq!(journal.operations[0].status, "applying");
+        assert!(journal.operations[0].after_sha256.is_none());
+        assert_eq!(
+            journal.operations[0].quarantine_sha256.as_deref(),
+            Some(sha256_bytes(b"old").as_str())
+        );
+        // Rollback must not treat the edit as installed bytes and delete it.
+        let error = rollback_transaction(project.path(), &mut journal, &journal_path).unwrap_err();
+        assert!(error.to_string().contains("manual review"), "{error}");
+        assert_eq!(fs::read(&destination).unwrap(), b"edit after placement");
+        assert_eq!(fs::read(&quarantined[0]).unwrap(), b"old");
+    }
+
+    #[test]
+    fn forward_replace_interrupted_after_placement_rolls_back_through_its_quarantine() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        let error = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                fail_after_live_mutation: Some(0),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("fault injected after live mutation"));
+        let destination = project.path().join("AGENTS.md");
+        assert_eq!(fs::read(&destination).unwrap(), b"safe");
+        let quarantined = quarantine_files(project.path());
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(fs::read(&quarantined[0]).unwrap(), b"old");
+
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        assert!(journal.operations[0].after_sha256.is_none());
+        assert!(resume_transaction(project.path(), app.path(), plan.plan_id).is_err());
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"old");
+        assert!(quarantine_files(project.path()).is_empty());
+    }
+
+    #[test]
+    fn crash_before_moving_changed_bytes_back_keeps_them_for_rollback() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        let error = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                live_mutation_barrier: Some(edit_agents_after_precondition),
+                fail_at_quarantine: Some((0, QuarantineBoundary::BeforeMoveBack)),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("fault injected"), "{error}");
+        let destination = project.path().join("AGENTS.md");
+        assert!(!destination.exists());
+        let quarantined = quarantine_files(project.path());
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(fs::read(&quarantined[0]).unwrap(), b"concurrent user edit");
+
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        assert_eq!(
+            journal.operations[0].quarantine_sha256.as_deref(),
+            Some(sha256_bytes(b"concurrent user edit").as_str())
+        );
+        // Rollback moves the changed bytes back instead of the backup copy.
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"concurrent user edit");
+        assert!(quarantine_files(project.path()).is_empty());
+    }
+
+    #[test]
+    fn rollback_restoring_a_forward_quarantine_settles_each_boundary_on_retry() {
+        for checkpoint in [
+            "rollback_quarantine_BeforeRename",
+            "rollback_quarantine_AfterRename",
+            "rollback_quarantine_AfterVerification",
+            "rollback_after_placement",
+            "rollback_quarantine_BeforeRelease",
+        ] {
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let (plan, prepared) = existing_file_fixture(project.path());
+            run_test_transaction(
+                project.path(),
+                &plan,
+                &prepared,
+                &TransactionOptions {
+                    app_data_root: Some(app.path().into()),
+                    fail_at_quarantine: Some((0, QuarantineBoundary::BeforeRelease)),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+            assert_eq!(quarantine_files(project.path()).len(), 1, "{checkpoint}");
+            let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+            let mut journal = read_journal(&journal_path).unwrap();
+            let result = with_test_fault(checkpoint, || {
+                rollback_transaction(project.path(), &mut journal, &journal_path)
+            });
+            assert!(result.is_err(), "{checkpoint}");
+
+            let mut journal = read_journal(&journal_path).unwrap();
+            rollback_transaction(project.path(), &mut journal, &journal_path)
+                .unwrap_or_else(|error| panic!("{checkpoint}: {error}"));
+            assert_eq!(
+                fs::read(project.path().join("AGENTS.md")).unwrap(),
+                b"old",
+                "{checkpoint}"
+            );
+            assert!(quarantine_files(project.path()).is_empty(), "{checkpoint}");
+        }
+    }
+
+    #[test]
+    fn rollback_removing_a_created_file_settles_each_boundary_on_retry() {
+        for checkpoint in [
+            "rollback_quarantine_BeforeRename",
+            "rollback_quarantine_AfterRename",
+            "rollback_quarantine_AfterVerification",
+            "rollback_after_placement",
+            "rollback_quarantine_BeforeRelease",
+        ] {
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let plan = ready_plan(project.path());
+            let prepared = vec![PreparedFile {
+                operation_id: "op-1".into(),
+                destination: "AGENTS.md".into(),
+                bytes: b"safe".to_vec(),
+                expected_sha256: sha256_bytes(b"safe"),
+            }];
+            run_test_transaction(
+                project.path(),
+                &plan,
+                &prepared,
+                &TransactionOptions {
+                    app_data_root: Some(app.path().into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+            let mut journal = read_journal(&journal_path).unwrap();
+            let result = with_test_fault(checkpoint, || {
+                rollback_transaction(project.path(), &mut journal, &journal_path)
+            });
+            assert!(result.is_err(), "{checkpoint}");
+
+            let mut journal = read_journal(&journal_path).unwrap();
+            rollback_transaction(project.path(), &mut journal, &journal_path)
+                .unwrap_or_else(|error| panic!("{checkpoint}: {error}"));
+            assert!(!project.path().join("AGENTS.md").exists(), "{checkpoint}");
+            assert!(quarantine_files(project.path()).is_empty(), "{checkpoint}");
+        }
+    }
+
+    #[test]
+    fn rollback_probes_the_derived_quarantine_name_when_the_journal_lacks_it() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                fail_at_quarantine: Some((0, QuarantineBoundary::AfterRename)),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        let destination = project.path().join("AGENTS.md");
+        assert!(!destination.exists());
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        journal.operations[0].quarantine_leaf = None;
+        journal.operations[0].quarantine_sha256 = None;
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"old");
+        assert!(quarantine_files(project.path()).is_empty());
+    }
+
+    #[test]
+    fn rollback_sweep_restores_the_quarantine_of_an_operation_left_pending() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                fail_at_quarantine: Some((0, QuarantineBoundary::AfterRename)),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        let destination = project.path().join("AGENTS.md");
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        // Model an apply intent and quarantine intent that recovery never
+        // saw: the operation reads as untouched and is not actionable.
+        journal.operations[0].status = "pending".into();
+        journal.operations[0].quarantine_leaf = None;
+        journal.operations[0].quarantine_sha256 = None;
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"old");
+        assert!(quarantine_files(project.path()).is_empty());
+    }
+
+    #[test]
+    fn rollback_keeps_quarantines_it_cannot_vouch_for() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let destination = project.path().join("AGENTS.md");
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+
+        // Unknown bytes under the operation's own name beside installed
+        // bytes are never moved into place.
+        let owned = project
+            .path()
+            .join(quarantine_leaf_name(plan.plan_id, "op-1"));
+        fs::write(&owned, b"mystery").unwrap();
+        let mut journal = read_journal(&journal_path).unwrap();
+        let error = rollback_transaction(project.path(), &mut journal, &journal_path).unwrap_err();
+        assert!(
+            error.to_string().contains("match no recorded state"),
+            "{error}"
+        );
+        assert_eq!(fs::read(&destination).unwrap(), b"safe");
+        assert_eq!(fs::read(&owned).unwrap(), b"mystery");
+        fs::remove_file(&owned).unwrap();
+
+        // A leftover name of this transaction that no operation owns is kept
+        // and stops rollback after the operations are restored.
+        let stray = project
+            .path()
+            .join(quarantine_leaf_name(plan.plan_id, "op-unknown"));
+        fs::write(&stray, b"stray").unwrap();
+        let mut journal = read_journal(&journal_path).unwrap();
+        let error = rollback_transaction(project.path(), &mut journal, &journal_path).unwrap_err();
+        assert!(
+            error.to_string().contains("match no recorded state"),
+            "{error}"
+        );
+        assert_eq!(fs::read(&destination).unwrap(), b"old");
+        assert_eq!(fs::read(&stray).unwrap(), b"stray");
+
+        fs::remove_file(&stray).unwrap();
+        let mut journal = read_journal(&journal_path).unwrap();
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"old");
+        assert!(quarantine_files(project.path()).is_empty());
+    }
+
+    #[test]
+    fn forward_quarantine_beside_restored_bytes_is_settled_by_hash() {
+        // Equal bytes: the quarantine is a redundant copy and is released.
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                fail_at_quarantine: Some((0, QuarantineBoundary::AfterRename)),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        let destination = project.path().join("AGENTS.md");
+        fs::write(&destination, b"old").unwrap();
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"old");
+        assert!(quarantine_files(project.path()).is_empty());
+
+        // Different bytes: a sync client re-created the reviewed bytes while
+        // the user's edit is quarantined. Both are kept for review.
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                live_mutation_barrier: Some(edit_agents_after_precondition),
+                fail_at_quarantine: Some((0, QuarantineBoundary::BeforeMoveBack)),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        let destination = project.path().join("AGENTS.md");
+        fs::write(&destination, b"old").unwrap();
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        let error = rollback_transaction(project.path(), &mut journal, &journal_path).unwrap_err();
+        assert!(error.to_string().contains("manual review"), "{error}");
+        assert_eq!(fs::read(&destination).unwrap(), b"old");
+        let quarantined = quarantine_files(project.path());
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(fs::read(&quarantined[0]).unwrap(), b"concurrent user edit");
+    }
+
+    #[test]
+    fn errors_after_the_quarantine_rename_move_the_bytes_back() {
+        for checkpoint in [
+            "apply_quarantine_hash_error",
+            "apply_quarantine_journal_error",
+        ] {
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let (plan, prepared) = existing_file_fixture(project.path());
+            let error = with_test_fault(checkpoint, || {
+                run_test_transaction(
+                    project.path(),
+                    &plan,
+                    &prepared,
+                    &TransactionOptions {
+                        app_data_root: Some(app.path().into()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap_err()
+            });
+            assert!(error.to_string().contains(checkpoint), "{error}");
+            assert!(error.to_string().contains("moved back"), "{error}");
+            let destination = project.path().join("AGENTS.md");
+            assert_eq!(fs::read(&destination).unwrap(), b"old", "{checkpoint}");
+            assert!(quarantine_files(project.path()).is_empty(), "{checkpoint}");
+
+            let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+            let mut journal = read_journal(&journal_path).unwrap();
+            rollback_transaction(project.path(), &mut journal, &journal_path)
+                .unwrap_or_else(|error| panic!("{checkpoint}: {error}"));
+            assert_eq!(fs::read(&destination).unwrap(), b"old", "{checkpoint}");
+            assert!(quarantine_files(project.path()).is_empty(), "{checkpoint}");
+        }
+    }
+
+    #[test]
+    fn checkpoint_replay_orders_records_by_sequence_not_wall_clock() {
+        let root = tempdir().unwrap();
+        let plan = plan();
+        let transaction_dir = root.path().join(plan.plan_id.to_string());
+        fs::create_dir_all(&transaction_dir).unwrap();
+        let journal_path = transaction_dir.join("journal.json");
+        let mut journal = new_journal(&plan, &plan.project_id, root.path());
+        persist_journal(&journal_path, &mut journal).unwrap();
+
+        // The clock stepped backwards after this snapshot was written.
+        journal.updated_at = "2999-01-01T00:00:00+00:00".into();
+        atomic_write_json(&journal_path, &journal).unwrap();
+        journal.operations[0].status = "applying".into();
+        journal.operations[0].quarantine_leaf = Some(quarantine_leaf_name(plan.plan_id, "op-1"));
+        journal.last_checkpoint = "apply-quarantine-intent-op-1".into();
+        persist_operation_checkpoint(&journal_path, &mut journal, 0).unwrap();
+        let replayed = read_journal(&journal_path).unwrap();
+        assert_eq!(replayed.operations[0].status, "applying");
+        assert!(replayed.operations[0].quarantine_leaf.is_some());
+        assert_eq!(replayed.last_checkpoint, "apply-quarantine-intent-op-1");
+
+        // A snapshot covers earlier records even when its timestamp is older.
+        journal.operations[0].status = "verified".into();
+        journal.last_checkpoint = "snapshot".into();
+        journal.updated_at = "2000-01-01T00:00:00+00:00".into();
+        atomic_write_json(&journal_path, &journal).unwrap();
+        let replayed = read_journal(&journal_path).unwrap();
+        assert_eq!(replayed.operations[0].status, "verified");
+        assert_eq!(replayed.last_checkpoint, "snapshot");
+
+        // Journals and records written before sequences still replay by time.
+        clear_operation_checkpoints(&journal_path).unwrap();
+        let mut legacy = journal.clone();
+        legacy.checkpoint_sequence = None;
+        legacy.operations[0].status = "pending".into();
+        atomic_write_json(&journal_path, &legacy).unwrap();
+        let mut operation = legacy.operations[0].clone();
+        operation.status = "staged".into();
+        let record = OperationCheckpoint {
+            schema_version: LEGACY_OPERATION_CHECKPOINT_SCHEMA.into(),
+            transaction_id: legacy.transaction_id,
+            operation_index: 0,
+            operation,
+            journal_state: legacy.state.clone(),
+            last_checkpoint: "legacy-record".into(),
+            recovery: legacy.recovery.clone(),
+            updated_at: "2001-01-01T00:00:00+00:00".into(),
+            sequence: None,
+        };
+        let mut line = serde_json::to_vec(&record).unwrap();
+        line.push(b'\n');
+        fs::write(operation_checkpoint_root(&journal_path).unwrap(), line).unwrap();
+        let replayed = read_journal(&journal_path).unwrap();
+        assert_eq!(replayed.operations[0].status, "staged");
+        assert_eq!(replayed.last_checkpoint, "legacy-record");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn quarantine_release_falls_back_to_the_classic_delete_disposition() {
+        struct ClassicDelete;
+        impl Drop for ClassicDelete {
+            fn drop(&mut self) {
+                crate::safe_fs::force_classic_delete_for_test(false);
+            }
+        }
+        crate::safe_fs::force_classic_delete_for_test(true);
+        let _guard = ClassicDelete;
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let destination = project.path().join("AGENTS.md");
+        assert_eq!(fs::read(&destination).unwrap(), b"safe");
+        assert!(quarantine_files(project.path()).is_empty());
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"old");
+        assert!(quarantine_files(project.path()).is_empty());
+    }
+
+    #[test]
+    fn lock_commit_interrupted_before_its_rename_rolls_back_to_the_predecessor() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared, predecessor) = maintenance_fixture(project.path(), app.path());
+        let error = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                fail_at_lock_quarantine: Some(QuarantineBoundary::BeforeRename),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("fault injected"), "{error}");
+        let lock_directory = project.path().join(".hoi4-mod-setup");
+        assert_eq!(
+            fs::read(lock_directory.join("install.lock.json")).unwrap(),
+            predecessor
+        );
+        assert!(quarantine_files(&lock_directory).is_empty());
+        // The predecessor is not the committed lock, so resume refuses.
+        assert!(resume_transaction(project.path(), app.path(), plan.plan_id).is_err());
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert_eq!(
+            fs::read(lock_directory.join("install.lock.json")).unwrap(),
+            predecessor
+        );
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"old");
+        assert!(quarantine_files(&lock_directory).is_empty());
+    }
+
+    #[test]
+    fn rollback_lock_restore_remaining_boundaries_are_settled_on_retry() {
+        for checkpoint in [
+            "rollback_lock_quarantine_BeforeRename",
+            "rollback_lock_quarantine_AfterVerification",
+        ] {
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let (plan, prepared, predecessor) = maintenance_fixture(project.path(), app.path());
+            run_test_transaction(
+                project.path(),
+                &plan,
+                &prepared,
+                &TransactionOptions {
+                    app_data_root: Some(app.path().into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+            let mut journal = read_journal(&journal_path).unwrap();
+            let result = with_test_fault(checkpoint, || {
+                rollback_transaction(project.path(), &mut journal, &journal_path)
+            });
+            assert!(result.is_err(), "{checkpoint}");
+
+            let mut journal = read_journal(&journal_path).unwrap();
+            rollback_transaction(project.path(), &mut journal, &journal_path)
+                .unwrap_or_else(|error| panic!("{checkpoint}: {error}"));
+            let lock_directory = project.path().join(".hoi4-mod-setup");
+            assert_eq!(
+                fs::read(lock_directory.join("install.lock.json")).unwrap(),
+                predecessor,
+                "{checkpoint}"
+            );
+            assert!(quarantine_files(&lock_directory).is_empty(), "{checkpoint}");
+            assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"old");
+        }
+    }
+
+    #[test]
+    fn rollback_lock_removal_after_a_first_install_is_settled_on_retry() {
+        for checkpoint in [
+            "rollback_lock_quarantine_BeforeRename",
+            "rollback_lock_quarantine_AfterRename",
+            "rollback_lock_quarantine_AfterVerification",
+            "rollback_lock_quarantine_BeforeRelease",
+        ] {
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let plan = ready_plan(project.path());
+            let prepared = vec![PreparedFile {
+                operation_id: "op-1".into(),
+                destination: "AGENTS.md".into(),
+                bytes: b"safe".to_vec(),
+                expected_sha256: sha256_bytes(b"safe"),
+            }];
+            run_test_transaction(
+                project.path(),
+                &plan,
+                &prepared,
+                &TransactionOptions {
+                    app_data_root: Some(app.path().into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let lock_directory = project.path().join(".hoi4-mod-setup");
+            assert!(lock_directory.join("install.lock.json").exists());
+            let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+            let mut journal = read_journal(&journal_path).unwrap();
+            let result = with_test_fault(checkpoint, || {
+                rollback_transaction(project.path(), &mut journal, &journal_path)
+            });
+            assert!(result.is_err(), "{checkpoint}");
+
+            let mut journal = read_journal(&journal_path).unwrap();
+            rollback_transaction(project.path(), &mut journal, &journal_path)
+                .unwrap_or_else(|error| panic!("{checkpoint}: {error}"));
+            assert!(
+                !lock_directory.join("install.lock.json").exists(),
+                "{checkpoint}"
+            );
+            if lock_directory.exists() {
+                assert!(quarantine_files(&lock_directory).is_empty(), "{checkpoint}");
+            }
+            assert!(!project.path().join("AGENTS.md").exists(), "{checkpoint}");
+        }
     }
 }
