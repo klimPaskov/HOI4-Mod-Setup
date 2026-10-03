@@ -53,7 +53,7 @@ Converted:
 
 Not converted:
 
-- `prepare_rollback_transaction` still copies the live destination into the child backup through the path-based `copy_atomic`. It writes only a new application-data backup leaf checked absent just before, never a project destination.
+- `prepare_rollback_transaction` originally copied the live destination into the child backup through the path-based `copy_atomic`. It now reads the destination through the retained project capability or the bound external parent and copies and hashes it in one pass (see `public-readiness-transaction-handles.md`, item 1).
 - `capture_previous_lock` writes the predecessor lock bytes into application data with `write_atomic`; it does not mutate a project file.
 - Journal, plan, readiness, rollback-record, and checkpoint writes in application data use their existing atomic writers; they are transaction-owned files, not user destinations.
 - The lock quarantine name and hashes are derived rather than journaled because `TransactionJournal` (outside the allowed `JournalOperation` scope) has no lock-quarantine field.

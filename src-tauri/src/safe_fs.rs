@@ -354,17 +354,6 @@ impl RootedDir {
         parent.verify_bound_to_path()
     }
 
-    pub(crate) fn copy_file_atomic_to(
-        &self,
-        source_relative: &str,
-        destination: &RootedDir,
-        destination_relative: &str,
-    ) -> Result<(), AppError> {
-        let source = self.open_regular_file(source_relative)?;
-        let permissions = source.metadata()?.permissions();
-        destination.write_atomic_from(destination_relative, &mut &source, Some(permissions))
-    }
-
     /// Copy `source_relative` into `destination_relative` through a synced
     /// temporary file and an exclusive rename. Returns `Ok(false)` without
     /// changing the destination when any entry already occupies that name.
@@ -381,6 +370,34 @@ impl RootedDir {
             &mut &source,
             Some(permissions),
         )
+    }
+
+    /// Like `copy_file_atomic_noreplace_to`, but hashes the bytes while they
+    /// are copied from the one opened source handle. Returns the SHA-256 of
+    /// exactly the bytes placed at the destination, or `Ok(None)` without
+    /// changing the destination when its name is already taken. A concurrent
+    /// edit of the source therefore cannot make the returned hash and the
+    /// copied bytes disagree.
+    pub(crate) fn copy_file_atomic_noreplace_hashed_to(
+        &self,
+        source_relative: &str,
+        destination: &RootedDir,
+        destination_relative: &str,
+    ) -> Result<Option<String>, AppError> {
+        use sha2::{Digest, Sha256};
+
+        let source = self.open_regular_file(source_relative)?;
+        let permissions = source.metadata()?.permissions();
+        let mut reader = HashingReader {
+            inner: &source,
+            hasher: Sha256::new(),
+        };
+        let placed = destination.write_atomic_noreplace_from(
+            destination_relative,
+            &mut reader,
+            Some(permissions),
+        )?;
+        Ok(placed.then(|| hex::encode(reader.hasher.finalize())))
     }
 
     /// Write `bytes` to a new leaf through a synced temporary file and an
@@ -1354,6 +1371,23 @@ fn rename_file_at(
     }
 }
 
+/// Hashes every byte that passes through `read`, so a copy and its hash come
+/// from one read of the source.
+struct HashingReader<R> {
+    inner: R,
+    hasher: sha2::Sha256,
+}
+
+impl<R: Read> Read for HashingReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        use sha2::Digest;
+
+        let read = self.inner.read(buffer)?;
+        self.hasher.update(&buffer[..read]);
+        Ok(read)
+    }
+}
+
 fn sha256_reader<R: Read>(reader: &mut R) -> Result<String, AppError> {
     use sha2::{Digest, Sha256};
 
@@ -2072,6 +2106,35 @@ mod tests {
             .expect("SystemRoot is set")
             .join("System32/WindowsPowerShell/v1.0");
         RootedDir::open_read(&path).unwrap();
+    }
+
+    #[test]
+    fn hashed_exclusive_copy_returns_the_hash_of_the_placed_bytes() {
+        let source_temp = tempfile::tempdir().unwrap();
+        let destination_temp = tempfile::tempdir().unwrap();
+        fs::write(source_temp.path().join("live.txt"), b"live bytes").unwrap();
+        let source = RootedDir::open_read(source_temp.path()).unwrap();
+        let destination = RootedDir::open(destination_temp.path()).unwrap();
+
+        let hash = source
+            .copy_file_atomic_noreplace_hashed_to("live.txt", &destination, "backup.bak")
+            .unwrap()
+            .expect("an absent backup name is placed");
+        assert_eq!(hash, destination.hash_file("backup.bak").unwrap());
+        assert_eq!(
+            fs::read(destination_temp.path().join("backup.bak")).unwrap(),
+            b"live bytes"
+        );
+
+        fs::write(source_temp.path().join("live.txt"), b"changed").unwrap();
+        assert!(source
+            .copy_file_atomic_noreplace_hashed_to("live.txt", &destination, "backup.bak")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            fs::read(destination_temp.path().join("backup.bak")).unwrap(),
+            b"live bytes"
+        );
     }
 
     #[test]

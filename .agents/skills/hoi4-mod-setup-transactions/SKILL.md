@@ -119,10 +119,16 @@ stops for inspection if a recreated root does not match the journal.
 
 Forward backup, apply, final verification, lock construction, and lock commit
 retain the reviewed project capability. Managed rollback file and lock changes
-and finalization checks also use a retained project capability. Application-data
-and external destination parents still reopen by path, created-root cleanup
-drops the root handle, and Git/external actions still use path-based cwd and
-checks. On Windows, `RootedDir::sync_directory` flushes through `ReOpenFile`
+and finalization checks also use a retained project capability.
+Application-data parents still reopen by path, created-root cleanup drops the root handle, and Git/external actions still use path-based cwd and checks.
+
+External destination parents follow the project-root pattern at journal level:
+
+- Bind `external_parent_identity` on the journal operation the first time the transaction opens the parent (`backup_existing`), and verify instead of overwriting when the operation already carries one. A resumed replay copies the interrupted journal's identities into its fresh journal, and `resume_transaction_with_options` verifies them before the replay writes that journal.
+- Open every external target through `live_target`, `existing_live_target`, or `existing_operation_target` with the bound identity. Never recreate a bound parent, and treat a link or non-directory at a bound parent's path as drift; a missing parent reads as absent.
+- Take a precondition, the mutation, and the readback from one retained target per operation or rollback step; do not hash by path and then reopen for the use.
+- A backup whose hash is recorded must come from the same read as its bytes (`copy_file_atomic_noreplace_hashed_to`), never from a separate hash and copy.
+- Rollback journals copy the identity from their parent operation, and schema `1.0.0` journals must not carry it. On Windows, `RootedDir::sync_directory` flushes through `ReOpenFile`
 and, when that reopen is denied, through an identity-verified reopen of the
 retained path; directory-entry durability across sudden power loss is still
 not proven by a native test. Keep the P1/P2 release findings open until the

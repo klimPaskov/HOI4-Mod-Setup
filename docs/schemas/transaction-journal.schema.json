@@ -429,6 +429,14 @@
               "null"
             ],
             "pattern": "^[0-9a-f]{64}$"
+          },
+          "external_parent_identity": {
+            "description": "Identity of an external destination's parent directory, bound when the transaction first opens that parent through a retained handle (normally the backup stage). Apply, post-install checks, finalization, and rollback reopen the parent only when it still has this identity, and a bound parent is never recreated. Rollback journals copy it from their parent operation. Omitted for project destinations and for operations from before the binding.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
           }
         },
         "dependentRequired": {
@@ -552,7 +560,8 @@
             "items": {
               "properties": {
                 "quarantine_leaf": false,
-                "quarantine_sha256": false
+                "quarantine_sha256": false,
+                "external_parent_identity": false
               }
             }
           },

@@ -655,6 +655,7 @@ pub fn new_journal(
                 after_executable: None,
                 quarantine_leaf: None,
                 quarantine_sha256: None,
+                external_parent_identity: None,
             })
             .collect(),
         created_directories: Vec::new(),
@@ -1231,6 +1232,7 @@ pub fn run_transaction(
             "application data root contains a symlink or junction".into(),
         ));
     }
+    let mut interrupted_journal = None;
     if let Some(journal) = find_incomplete_transaction(&app_root, &project_root)? {
         if options.resume_transaction_id != Some(journal.transaction_id) {
             return Err(AppError::Transaction(format!(
@@ -1238,6 +1240,7 @@ pub fn run_transaction(
                 journal.transaction_id
             )));
         }
+        interrupted_journal = Some(journal);
     }
     let previous_lock = if let Some(project) = project_directory.as_ref() {
         read_existing_lock_from_root(project)?
@@ -1256,6 +1259,26 @@ pub fn run_transaction(
     let plan_path = roots.transaction.join("plan.json");
     atomic_write_json(&plan_path, plan)?;
     let mut journal = new_journal(plan, &plan.project_id, &project_root);
+    // A replay writes a fresh journal, but an external parent bound by the
+    // interrupted run stays bound: the backup stage must find the same
+    // directory instead of binding whatever now occupies the path.
+    if let Some(interrupted) = interrupted_journal.as_ref() {
+        for operation in journal
+            .operations
+            .iter_mut()
+            .filter(|operation| operation.external)
+        {
+            operation.external_parent_identity = interrupted
+                .operations
+                .iter()
+                .find(|previous| {
+                    previous.id == operation.id
+                        && previous.external
+                        && previous.destination == operation.destination
+                })
+                .and_then(|previous| previous.external_parent_identity.clone());
+        }
+    }
     persist_journal(&journal_path, &mut journal)?;
 
     let result: Result<InstallationLock, AppError> = (|| {
@@ -1554,7 +1577,13 @@ pub fn run_transaction(
             options.fail_before_stage,
         )?;
         project_directory.verify_bound_to_path()?;
-        post_install_checks(&project_root, plan, &mut journal, &journal_path)?;
+        post_install_checks(
+            &project_root,
+            project_directory,
+            plan,
+            &mut journal,
+            &journal_path,
+        )?;
         project_directory.verify_bound_to_path()?;
         if let Some(runner) = options.post_install_action_runner {
             let components = [crate::mcp::COMPONENT_ID, "workflow.3d"]
@@ -1682,7 +1711,7 @@ pub fn run_transaction(
                 blocking_checks.join(", ")
             )));
         }
-        final_live_verification(&project_root, project_directory, plan, &journal)?;
+        final_live_verification(project_directory, plan, &journal)?;
         project_directory.verify_bound_to_path()?;
         let lock = build_lock(
             &effective_plan,
@@ -2690,6 +2719,28 @@ fn backup_existing(
                     AppError::PathSecurity("external backup destination name is invalid".into())
                 })?;
             let source_root = RootedDir::open(parent)?;
+            // Bind the parent the first time the transaction opens it. A
+            // resumed replay carries the identity of the interrupted run and
+            // must still find the same directory.
+            let record_index = journal
+                .operations
+                .iter()
+                .position(|record| record.id == operation.id)
+                .ok_or_else(|| AppError::Transaction("journal operation missing".into()))?;
+            let bound = journal.operations[record_index]
+                .external_parent_identity
+                .clone();
+            verify_external_parent_identity(
+                &source_root,
+                bound.as_deref(),
+                &operation.destination,
+            )?;
+            if bound.is_none() {
+                journal.operations[record_index].external_parent_identity =
+                    Some(source_root.identity_token()?);
+                journal.last_checkpoint = format!("bind-external-parent-{}", operation.id);
+                append_operation_checkpoint(journal_path, journal, record_index)?;
+            }
             let exists = source_root.exists(source_leaf)?;
             let is_file = source_root.is_regular_file(source_leaf)?;
             if exists && !is_file {
@@ -3261,29 +3312,55 @@ fn apply_operations(
         } else {
             project_root.join(&operation.destination)
         };
-        let project_root_capability = (!operation.external).then_some(project_directory);
-        let current_hash = if let Some(root) = project_root_capability {
-            let exists = root.exists(&operation.destination)?;
-            let is_file = root.is_regular_file(&operation.destination)?;
-            if exists && !is_file {
-                return Err(AppError::Transaction(format!(
-                    "destination is not a regular file: {}",
-                    operation.destination
-                )));
-            }
-            is_file
-                .then(|| root.hash_file(&operation.destination))
-                .transpose()?
+        let deleting = operation.action == OperationAction::DeleteManaged;
+        // The precondition, the live mutation, and the post-apply readback
+        // all use this one retained target. An external parent must still be
+        // the directory bound at backup, which always runs earlier in the
+        // same run, so an unbound external parent is never opened here.
+        let bound_identity = journal
+            .operations
+            .get(index)
+            .filter(|record| record.id == operation.id)
+            .and_then(|record| record.external_parent_identity.clone());
+        if operation.external && bound_identity.is_none() {
+            return Err(AppError::Transaction(format!(
+                "external destination parent was not bound before apply: {}",
+                operation.destination
+            )));
+        }
+        let target = if operation.external && deleting {
+            // A managed delete whose external parent no longer exists
+            // changes nothing.
+            existing_live_target(
+                None,
+                true,
+                &operation.destination,
+                bound_identity.as_deref(),
+            )?
         } else {
-            let is_file = destination.is_file();
-            let exists = destination.exists();
-            if exists && !is_file {
-                return Err(AppError::Transaction(format!(
-                    "destination is not a regular file: {}",
-                    operation.destination
-                )));
+            Some(live_target(
+                (!operation.external).then_some(project_directory),
+                operation.external,
+                &operation.destination,
+                true,
+                bound_identity.as_deref(),
+            )?)
+        };
+        let current_hash = match target.as_ref() {
+            Some(target) => {
+                let exists = target.dir().exists(&target.relative)?;
+                let is_file = target.dir().is_regular_file(&target.relative)?;
+                if exists && !is_file {
+                    return Err(AppError::Transaction(format!(
+                        "destination is not a regular file: {}",
+                        operation.destination
+                    )));
+                }
+                is_file
+                    .then(|| target.dir().hash_file(&target.relative))
+                    .transpose()?
             }
-            is_file.then(|| sha256_file(&destination)).transpose()?
+            None => None,
         };
         if let Some(expected) = &operation.local_sha256 {
             if current_hash.as_deref() != Some(expected.as_str()) {
@@ -3336,18 +3413,12 @@ fn apply_operations(
             record.after_exists = None;
         }
         journal.last_checkpoint = format!("apply-intent-{}", operation.id);
-        let deleting = operation.action == OperationAction::DeleteManaged;
         // A managed delete whose destination is already absent changes
-        // nothing, and its external parent may no longer exist.
-        let target = if deleting && current_hash.is_none() {
+        // nothing.
+        let mutation_target = if deleting && current_hash.is_none() {
             None
         } else {
-            Some(live_target(
-                project_root_capability,
-                operation.external,
-                &operation.destination,
-                !deleting,
-            )?)
+            target.as_ref()
         };
         let quarantine_fault_at = options
             .fail_at_quarantine
@@ -3377,7 +3448,7 @@ fn apply_operations(
             }
         };
         let quarantine_leaf = quarantine_leaf_name(journal.transaction_id, &operation.id);
-        let held_quarantine = match target.as_ref() {
+        let held_quarantine = match mutation_target {
             Some(target) => mutate_live_leaf(
                 target.dir(),
                 &target.relative,
@@ -3396,7 +3467,7 @@ fn apply_operations(
             None => None,
         };
         #[cfg(unix)]
-        if let (false, Some(target)) = (deleting, target.as_ref()) {
+        if let (false, Some(target)) = (deleting, mutation_target) {
             target
                 .dir()
                 .set_executable(&target.relative, operation.executable)?;
@@ -3408,46 +3479,21 @@ fn apply_operations(
                 operation.id
             )));
         }
-        let (after_hash, after_executable, after_exists) =
-            if let Some(root) = project_root_capability {
-                let exists = root.exists(&operation.destination)?;
-                let is_file = root.is_regular_file(&operation.destination)?;
+        let (after_hash, after_executable, after_exists) = match target.as_ref() {
+            Some(target) => {
+                let exists = target.dir().exists(&target.relative)?;
+                let is_file = target.dir().is_regular_file(&target.relative)?;
                 if exists && !is_file {
                     return Err(AppError::PathSecurity(format!(
                         "destination is not a regular file after apply: {}",
                         operation.destination
                     )));
                 }
-                (
-                    is_file
-                        .then(|| root.hash_file(&operation.destination))
-                        .transpose()?,
-                    if is_file {
-                        #[cfg(unix)]
-                        {
-                            root.observed_executable(&operation.destination)?
-                        }
-                        #[cfg(not(unix))]
-                        {
-                            None
-                        }
-                    } else {
-                        None
-                    },
-                    exists,
-                )
-            } else {
-                let is_file = destination.is_file();
-                (
-                    is_file.then(|| sha256_file(&destination)).transpose()?,
-                    if is_file {
-                        observed_executable(&destination)?
-                    } else {
-                        None
-                    },
-                    destination.exists(),
-                )
-            };
+                let (after_hash, after_executable) = target_hash_and_executable(Some(target))?;
+                (after_hash, after_executable, exists)
+            }
+            None => (None, None, false),
+        };
         if operation.action != OperationAction::DeleteManaged && after_hash.is_none() {
             return Err(AppError::Transaction(format!(
                 "destination missing after apply: {}",
@@ -3521,26 +3567,6 @@ fn apply_operations(
         }
     }
     Ok(())
-}
-
-fn copy_atomic(source: &Path, destination: &Path) -> Result<(), AppError> {
-    let source_parent = source
-        .parent()
-        .ok_or_else(|| AppError::Transaction("source has no parent".into()))?;
-    let destination_parent = destination
-        .parent()
-        .ok_or_else(|| AppError::Transaction("destination has no parent".into()))?;
-    let source_root = RootedDir::open_read(source_parent)?;
-    let destination_root = RootedDir::open_or_create(destination_parent)?;
-    let source_name = source
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::PathSecurity("source file name is not valid UTF-8".into()))?;
-    let destination_name = destination
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::PathSecurity("destination file name is not valid UTF-8".into()))?;
-    source_root.copy_file_atomic_to(source_name, &destination_root, destination_name)
 }
 
 const QUARANTINE_PREFIX: &str = ".hoi4ms-quarantine-";
@@ -3658,13 +3684,38 @@ fn live_leaf_hash(directory: &RootedDir, relative: &str) -> Result<Option<String
     directory.hash_file(relative).map(Some)
 }
 
+/// Refuse an external destination parent whose identity differs from the
+/// one bound into the journal. Path-based checks before and after an
+/// operation cannot detect a directory swapped away and back in between; the
+/// identity of the retained handle can. A journal operation without a bound
+/// identity predates the binding and keeps its earlier path-only behavior.
+fn verify_external_parent_identity(
+    directory: &RootedDir,
+    expected: Option<&str>,
+    destination: &str,
+) -> Result<(), AppError> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    if directory.identity_token()? != expected {
+        return Err(AppError::PathSecurity(format!(
+            "external destination parent is no longer the directory bound to this transaction: {destination}"
+        )));
+    }
+    Ok(())
+}
+
 /// Open the parent of a project or external destination. External parents
-/// are retained for the duration of the operation, like the project root.
+/// are retained for the duration of the operation, like the project root,
+/// and must still have `external_identity` when the journal bound one. A
+/// bound parent is never recreated: a new directory at the same path would be
+/// a different directory.
 fn live_target<'a>(
     project_directory: Option<&'a RootedDir>,
     external: bool,
     destination: &str,
     create_parent: bool,
+    external_identity: Option<&str>,
 ) -> Result<LiveTarget<'a>, AppError> {
     if external {
         let absolute = validate_external_destination(destination)?;
@@ -3676,11 +3727,12 @@ fn live_target<'a>(
             .and_then(|name| name.to_str())
             .ok_or_else(|| AppError::PathSecurity("external destination name is invalid".into()))?
             .to_string();
-        let directory = if create_parent {
+        let directory = if create_parent && external_identity.is_none() {
             RootedDir::open_or_create(parent)?
         } else {
             RootedDir::open(parent)?
         };
+        verify_external_parent_identity(&directory, external_identity, destination)?;
         Ok(LiveTarget {
             root: LiveRoot::Owned(directory),
             relative: leaf,
@@ -3696,25 +3748,94 @@ fn live_target<'a>(
     }
 }
 
+/// Whether an external destination's parent exists at its path. A missing
+/// parent reads as absent: no destination or quarantine can exist in it. A
+/// link or other non-directory at the path of a bound parent is identity
+/// drift, never an absent destination; an unbound legacy parent keeps the
+/// earlier absent reading.
+fn external_parent_present(
+    parent: &Path,
+    external_identity: Option<&str>,
+    destination: &str,
+) -> Result<bool, AppError> {
+    match fs::symlink_metadata(parent) {
+        Ok(metadata) if metadata.is_dir() && !is_link_metadata(&metadata) => Ok(true),
+        Ok(_) if external_identity.is_some() => Err(AppError::PathSecurity(format!(
+            "external destination parent is no longer the directory bound to this transaction: {destination}"
+        ))),
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) if external_identity.is_some() => Err(error.into()),
+        Err(_) => Ok(false),
+    }
+}
+
 /// Like `live_target`, but reports `None` when an external parent no longer
 /// exists. No quarantine can exist in a missing directory.
 fn existing_live_target<'a>(
     project_directory: Option<&'a RootedDir>,
     external: bool,
     destination: &str,
+    external_identity: Option<&str>,
 ) -> Result<Option<LiveTarget<'a>>, AppError> {
     if external {
         let absolute = validate_external_destination(destination)?;
-        let parent_exists = absolute.parent().is_some_and(|parent| {
-            fs::symlink_metadata(parent).is_ok_and(|metadata| metadata.is_dir())
-        });
-        if !parent_exists {
+        let Some(parent) = absolute.parent() else {
+            return Ok(None);
+        };
+        if !external_parent_present(parent, external_identity, destination)? {
             return Ok(None);
         }
     } else if project_directory.is_none() {
         return Ok(None);
     }
-    live_target(project_directory, external, destination, false).map(Some)
+    live_target(
+        project_directory,
+        external,
+        destination,
+        false,
+        external_identity,
+    )
+    .map(Some)
+}
+
+/// The retained target of one journal operation, bound to its journaled
+/// external parent identity. `None` when an external parent or the project
+/// root capability no longer exists.
+fn existing_operation_target<'a>(
+    project_directory: Option<&'a RootedDir>,
+    operation: &JournalOperation,
+) -> Result<Option<LiveTarget<'a>>, AppError> {
+    existing_live_target(
+        project_directory,
+        operation.external,
+        &operation.destination,
+        operation.external_parent_identity.as_deref(),
+    )
+}
+
+/// Hash and executable state of a live destination read through its retained
+/// target. An absent target or leaf reads as `(None, None)`.
+fn target_hash_and_executable(
+    target: Option<&LiveTarget<'_>>,
+) -> Result<(Option<String>, Option<bool>), AppError> {
+    let Some(target) = target else {
+        return Ok((None, None));
+    };
+    let current = target.hash()?;
+    let executable = if current.is_some() {
+        #[cfg(unix)]
+        {
+            target.dir().observed_executable(&target.relative)?
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    } else {
+        None
+    };
+    Ok((current, executable))
 }
 
 /// Durable journal binding for a quarantine record.
@@ -4148,10 +4269,28 @@ fn sweep_transaction_quarantines(
     for (external, parent, indices) in groups {
         let directory = if external {
             let path = PathBuf::from(&parent);
-            if !fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_dir()) {
+            let mut present = true;
+            for index in &indices {
+                let operation = &journal.operations[*index];
+                present &= external_parent_present(
+                    &path,
+                    operation.external_parent_identity.as_deref(),
+                    &operation.destination,
+                )?;
+            }
+            if !present {
                 continue;
             }
-            LiveRoot::Owned(RootedDir::open(&path)?)
+            let directory = RootedDir::open(&path)?;
+            for index in &indices {
+                let operation = &journal.operations[*index];
+                verify_external_parent_identity(
+                    &directory,
+                    operation.external_parent_identity.as_deref(),
+                    &operation.destination,
+                )?;
+            }
+            LiveRoot::Owned(directory)
         } else {
             let Some(project) = project_directory else {
                 continue;
@@ -4269,12 +4408,7 @@ fn settle_forward_quarantine_beside_restored(
     operation: &JournalOperation,
 ) -> Result<(), AppError> {
     let leaf = forward_quarantine_leaf(transaction_id, operation)?;
-    let Some(target) = existing_live_target(
-        project_directory,
-        operation.external,
-        &operation.destination,
-    )?
-    else {
+    let Some(target) = existing_operation_target(project_directory, operation)? else {
         return Ok(());
     };
     let quarantine = quarantine_relative(&target.relative, &leaf)?;
@@ -4385,8 +4519,13 @@ fn apply_executable_state(_path: &Path, _executable: bool) -> Result<(), AppErro
     Ok(())
 }
 
+/// Verify every applied destination by reading it through the retained
+/// project capability or the bound external parent. The bytes that are
+/// validated are the bytes that are hashed, and neither read re-resolves the
+/// project root or an external parent by path.
 fn post_install_checks(
     project_root: &Path,
+    project_directory: &RootedDir,
     plan: &InstallationPlan,
     journal: &mut TransactionJournal,
     journal_path: &Path,
@@ -4398,25 +4537,39 @@ fn post_install_checks(
         ) {
             continue;
         }
-        let destination = operation_destination(project_root, operation)?;
-        let actual = if operation.action == OperationAction::DeleteManaged {
-            if destination.exists() {
-                return Err(AppError::Transaction(format!(
-                    "managed delete was not completed: {}",
-                    operation.destination
-                )));
-            }
-            None
-        } else {
-            let bytes = read_file_path(&destination)?;
-            validate_managed_bytes(project_root, operation, &bytes)?;
-            Some(sha256_bytes(&bytes))
-        };
-        let record = journal
+        let record_index = journal
             .operations
-            .iter_mut()
-            .find(|record| record.id == operation.id)
+            .iter()
+            .position(|record| record.id == operation.id)
             .ok_or_else(|| AppError::Transaction("journal operation missing".into()))?;
+        let target =
+            existing_operation_target(Some(project_directory), &journal.operations[record_index])?;
+        let (actual, executable) = if operation.action == OperationAction::DeleteManaged {
+            if let Some(target) = target.as_ref() {
+                if target.dir().exists(&target.relative)? {
+                    return Err(AppError::Transaction(format!(
+                        "managed delete was not completed: {}",
+                        operation.destination
+                    )));
+                }
+            }
+            (None, None)
+        } else {
+            let target = target.as_ref().ok_or_else(|| {
+                AppError::Transaction(format!(
+                    "destination parent is missing after apply: {}",
+                    operation.destination
+                ))
+            })?;
+            let bytes = target.dir().read_file(&target.relative)?;
+            validate_managed_bytes(project_root, operation, &bytes)?;
+            #[cfg(unix)]
+            let executable = target.dir().observed_executable(&target.relative)?;
+            #[cfg(not(unix))]
+            let executable = None;
+            (Some(sha256_bytes(&bytes)), executable)
+        };
+        let record = &journal.operations[record_index];
         if record.after_sha256.as_deref() != actual.as_deref()
             || (operation.action != OperationAction::DeleteManaged
                 && actual.as_deref()
@@ -4425,8 +4578,7 @@ fn post_install_checks(
                         .as_deref()
                         .or(operation.source_sha256.as_deref()))
             || (operation.action != OperationAction::DeleteManaged
-                && observed_executable(&destination)?
-                    .is_some_and(|value| value != operation.executable))
+                && executable.is_some_and(|value: bool| value != operation.executable))
         {
             return Err(AppError::Transaction(format!(
                 "post-install hash mismatch for {}",
@@ -4444,21 +4596,19 @@ fn post_install_checks(
 /// those checkpoints. A changed live precondition fails closed instead of
 /// allowing the lock to record bytes that were never reviewed.
 fn final_live_verification(
-    project_root: &Path,
     project_directory: &RootedDir,
     plan: &InstallationPlan,
     journal: &TransactionJournal,
 ) -> Result<(), AppError> {
     for operation in &plan.operations {
         let (current, executable) = if operation.external {
-            let destination = operation_destination(project_root, operation)?;
-            let current = regular_file_hash(&destination)?;
-            let executable = if destination.is_file() {
-                observed_executable(&destination)?
-            } else {
-                None
-            };
-            (current, executable)
+            let bound = journal
+                .operations
+                .iter()
+                .find(|record| record.id == operation.id)
+                .and_then(|record| record.external_parent_identity.as_deref());
+            let target = existing_live_target(None, true, &operation.destination, bound)?;
+            target_hash_and_executable(target.as_ref())?
         } else {
             let exists = project_directory.exists(&operation.destination)?;
             let is_file = project_directory.is_regular_file(&operation.destination)?;
@@ -5443,12 +5593,11 @@ fn regular_file_hash(path: &Path) -> Result<Option<String>, AppError> {
 
 fn rollback_destination_is_restored(
     operation: &JournalOperation,
-    destination: &Path,
     project_directory: Option<&RootedDir>,
     journal: &TransactionJournal,
     journal_path: &Path,
 ) -> Result<bool, AppError> {
-    let current = rollback_live_hash(operation, destination, project_directory)?;
+    let current = rollback_live_hash(operation, project_directory)?;
     match operation.rollback {
         Some(RollbackAction::None) | None => Ok(true),
         Some(RollbackAction::RemoveCreated) => Ok(current.is_none()),
@@ -5464,16 +5613,13 @@ fn rollback_destination_is_restored(
                     if let Some(leaf) =
                         journaled_quarantine_leaf(journal.transaction_id, operation)?
                     {
-                        let quarantine_present = match existing_live_target(
-                            project_directory,
-                            operation.external,
-                            &operation.destination,
-                        )? {
-                            Some(target) => target
-                                .dir()
-                                .exists(&quarantine_relative(&target.relative, &leaf)?)?,
-                            None => false,
-                        };
+                        let quarantine_present =
+                            match existing_operation_target(project_directory, operation)? {
+                                Some(target) => target
+                                    .dir()
+                                    .exists(&quarantine_relative(&target.relative, &leaf)?)?,
+                                None => false,
+                            };
                         if !quarantine_present {
                             return Ok(true);
                         }
@@ -5519,8 +5665,7 @@ fn rollback_destination_is_restored(
                 .unwrap_or(backup_directory.hash_file(backup_leaf)?);
             let executable_matches = match (operation.before_executable, current.as_ref()) {
                 (Some(expected), Some(_)) => {
-                    rollback_live_executable(operation, destination, project_directory)?
-                        == Some(expected)
+                    rollback_live_executable(operation, project_directory)? == Some(expected)
                 }
                 (Some(_), None) => false,
                 (None, _) => true,
@@ -5530,13 +5675,18 @@ fn rollback_destination_is_restored(
     }
 }
 
+/// Live hash of a rollback destination, read through the retained project
+/// capability or through the external parent bound to the journal. An
+/// external parent that no longer exists reads as absent.
 fn rollback_live_hash(
     operation: &JournalOperation,
-    destination: &Path,
     project_directory: Option<&RootedDir>,
 ) -> Result<Option<String>, AppError> {
     if operation.external {
-        regular_file_hash(destination)
+        match existing_operation_target(None, operation)? {
+            Some(target) => target.hash(),
+            None => Ok(None),
+        }
     } else {
         let project = project_directory.ok_or_else(|| {
             AppError::PathSecurity("rollback has no retained project-root handle".into())
@@ -5557,11 +5707,11 @@ fn rollback_live_hash(
 
 fn rollback_live_executable(
     operation: &JournalOperation,
-    destination: &Path,
     project_directory: Option<&RootedDir>,
 ) -> Result<Option<bool>, AppError> {
     if operation.external {
-        observed_executable(destination)
+        let target = existing_operation_target(None, operation)?;
+        Ok(target_hash_and_executable(target.as_ref())?.1)
     } else {
         #[cfg(unix)]
         {
@@ -5685,6 +5835,8 @@ fn new_rollback_journal(
                     after_executable: None,
                     quarantine_leaf: None,
                     quarantine_sha256: None,
+                    // The inverse rollback reopens the same bound parent.
+                    external_parent_identity: operation.external_parent_identity.clone(),
                 }
             })
             .collect(),
@@ -5960,51 +6112,94 @@ fn prepare_rollback_transaction(
             }
             continue;
         }
-        let destination = rollback_operation_destination(project_root, &operation)?;
-        let backup = roots.backup.join(format!("{}.bak", operation.id));
+        rollback_operation_destination(project_root, &operation)?;
+        let backup_leaf = format!("{}.bak", operation.id);
+        let backup = roots.backup.join(&backup_leaf);
         if path_has_link_component(&backup) {
             return Err(AppError::PathSecurity(
                 "rollback backup path contains a symlink or junction".into(),
             ));
         }
-        match fs::symlink_metadata(&destination) {
-            Ok(metadata) if is_link_metadata(&metadata) => {
+        // The live destination is read through the retained project
+        // capability or the bound external parent, and its inverse backup is
+        // copied and hashed in one pass from one opened handle, so the
+        // recorded before and backup hashes describe the same bytes.
+        if !operation.external && project_directory.is_none() {
+            let root_present = match fs::symlink_metadata(project_root) {
+                Ok(_) => true,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => return Err(error.into()),
+            };
+            if root_present {
                 return Err(AppError::PathSecurity(format!(
-                    "refusing to back up rollback destination link: {}",
+                    "rollback has no retained project-root handle for {}",
                     operation.destination
                 )));
             }
-            Ok(metadata) if metadata.is_file() => {
-                let current_hash = sha256_file(&destination)?;
-                if backup.is_file() {
-                    if sha256_file(&backup)? != current_hash {
-                        return Err(AppError::Transaction(format!(
-                            "rollback backup changed before apply: {}",
-                            operation.destination
-                        )));
-                    }
-                } else {
-                    copy_atomic(&destination, &backup)?;
+        }
+        let target = existing_operation_target(project_directory, &operation)?;
+        let live_state = match target.as_ref() {
+            Some(target) if target.dir().exists(&target.relative)? => {
+                if !target.dir().is_regular_file(&target.relative)? {
+                    return Err(AppError::Transaction(format!(
+                        "rollback destination is not a regular file: {}",
+                        operation.destination
+                    )));
                 }
-                rollback.operations[index].before_sha256 = Some(current_hash.clone());
-                rollback.operations[index].before_executable = observed_executable(&destination)?;
-                rollback.operations[index].after_exists = Some(true);
-                rollback.operations[index].backup_path = Some(backup.display().to_string());
-                rollback.operations[index].backup_sha256 = Some(sha256_file(&backup)?);
+                Some(target)
             }
-            Ok(_) => {
+            _ => None,
+        };
+        if let Some(target) = live_state {
+            let captured_hash = if backup_directory.exists(&backup_leaf)? {
+                if !backup_directory.is_regular_file(&backup_leaf)? {
+                    return Err(AppError::PathSecurity(
+                        "rollback backup is not a regular file".into(),
+                    ));
+                }
+                let existing = backup_directory.hash_file(&backup_leaf)?;
+                if existing != target.dir().hash_file(&target.relative)? {
+                    return Err(AppError::Transaction(format!(
+                        "rollback backup changed before apply: {}",
+                        operation.destination
+                    )));
+                }
+                existing
+            } else {
+                target
+                    .dir()
+                    .copy_file_atomic_noreplace_hashed_to(
+                        &target.relative,
+                        &backup_directory,
+                        &backup_leaf,
+                    )?
+                    .ok_or_else(|| {
+                        AppError::Transaction(format!(
+                            "rollback backup name was taken during backup; refusing to replace it: {}",
+                            operation.destination
+                        ))
+                    })?
+            };
+            if backup_directory.hash_file(&backup_leaf)? != captured_hash {
                 return Err(AppError::Transaction(format!(
-                    "rollback destination is not a regular file: {}",
+                    "rollback backup verification failed after rooted copy: {}",
                     operation.destination
                 )));
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                rollback.operations[index].before_sha256 = None;
-                rollback.operations[index].after_exists = Some(false);
-                rollback.operations[index].backup_path = None;
-                rollback.operations[index].backup_sha256 = None;
-            }
-            Err(error) => return Err(error.into()),
+            #[cfg(unix)]
+            let before_executable = target.dir().observed_executable(&target.relative)?;
+            #[cfg(not(unix))]
+            let before_executable = None;
+            rollback.operations[index].before_sha256 = Some(captured_hash.clone());
+            rollback.operations[index].before_executable = before_executable;
+            rollback.operations[index].after_exists = Some(true);
+            rollback.operations[index].backup_path = Some(backup.display().to_string());
+            rollback.operations[index].backup_sha256 = Some(captured_hash);
+        } else {
+            rollback.operations[index].before_sha256 = None;
+            rollback.operations[index].after_exists = Some(false);
+            rollback.operations[index].backup_path = None;
+            rollback.operations[index].backup_sha256 = None;
         }
         rollback.last_checkpoint = format!("rollback-backup-{}", operation.id);
         append_operation_checkpoint(&journal_path, &mut rollback, index)?;
@@ -6082,12 +6277,7 @@ fn settle_rollback_step_quarantine(
     let Some(child_leaf) = journaled_quarantine_leaf(child_transaction_id, child)? else {
         return Ok(());
     };
-    let Some(target) = existing_live_target(
-        project_directory,
-        operation.external,
-        &operation.destination,
-    )?
-    else {
+    let Some(target) = existing_operation_target(project_directory, operation)? else {
         return Ok(());
     };
     let restore_target = if operation.backup_path.is_some() {
@@ -6389,7 +6579,6 @@ pub fn rollback_transaction(
                     if child_operation.status != "rolled_back"
                         && !rollback_destination_is_restored(
                             &operation,
-                            &rollback_operation_destination(&project_root, &operation)?,
                             project_directory.as_ref(),
                             journal,
                             journal_path,
@@ -6452,11 +6641,8 @@ pub fn rollback_transaction(
                 }
                 continue;
             }
-            let destination = if operation.external {
-                validate_external_destination(&operation.destination)?
-            } else {
-                safe_join(&project_root, &operation.destination)?
-            };
+            // Validate the journaled destination before any filesystem access.
+            rollback_operation_destination(&project_root, &operation)?;
             let child_id = format!("rollback-{}", operation.id);
             let child_index = rollback_journal
                 .operations
@@ -6476,7 +6662,6 @@ pub fn rollback_transaction(
             if operation.status == "rollback_applying"
                 && rollback_destination_is_restored(
                     &operation,
-                    &destination,
                     project_directory.as_ref(),
                     journal,
                     journal_path,
@@ -6513,11 +6698,9 @@ pub fn rollback_transaction(
             // even when the journal does not record it.
             {
                 let forward_leaf = forward_quarantine_leaf(journal.transaction_id, &operation)?;
-                if let Some(target) = existing_live_target(
-                    project_directory.as_ref(),
-                    operation.external,
-                    &operation.destination,
-                )? {
+                if let Some(target) =
+                    existing_operation_target(project_directory.as_ref(), &operation)?
+                {
                     let forward_quarantine = quarantine_relative(&target.relative, &forward_leaf)?;
                     if target.dir().exists(&forward_quarantine)? {
                         if !target.dir().is_regular_file(&forward_quarantine)? {
@@ -6603,7 +6786,29 @@ pub fn rollback_transaction(
             }
             journal.operations[index].status = "rollback_applying".into();
             journal.last_checkpoint = format!("rollback-intent-{}", operation.id);
-            let current = rollback_live_hash(&operation, &destination, project_directory.as_ref())?;
+            // One retained target serves this step's live precondition, the
+            // restore or removal, and the readback. An external parent must
+            // still be the directory bound to the transaction.
+            if !operation.external && project_directory.is_none() {
+                return Err(AppError::PathSecurity(
+                    "rollback has no retained project-root handle".into(),
+                ));
+            }
+            let step_target = if operation.backup_path.is_some() {
+                Some(live_target(
+                    project_directory.as_ref(),
+                    operation.external,
+                    &operation.destination,
+                    true,
+                    operation.external_parent_identity.as_deref(),
+                )?)
+            } else {
+                existing_operation_target(project_directory.as_ref(), &operation)?
+            };
+            let current = match step_target.as_ref() {
+                Some(target) => target.hash()?,
+                None => None,
+            };
             if let Some(after) = &operation.after_sha256 {
                 if current.as_deref() != Some(after.as_str())
                     || operation.after_exists != Some(true)
@@ -6663,7 +6868,7 @@ pub fn rollback_transaction(
                 .backup_sha256
                 .clone()
                 .or_else(|| operation.before_sha256.clone());
-            let mut held_rollback_quarantine: Option<(LiveTarget<'_>, String, String)> = None;
+            let mut held_rollback_quarantine: Option<(String, String)> = None;
             if let Some(backup) = &operation.backup_path {
                 let expected_backup =
                     expected_operation_backup(journal, journal_path, &operation.id)?;
@@ -6706,12 +6911,12 @@ pub fn rollback_transaction(
                             operation.destination
                         )));
                     }
-                    let target = live_target(
-                        project_directory.as_ref(),
-                        operation.external,
-                        &operation.destination,
-                        true,
-                    )?;
+                    let target = step_target.as_ref().ok_or_else(|| {
+                        AppError::Transaction(format!(
+                            "rollback destination has no retained target: {}",
+                            operation.destination
+                        ))
+                    })?;
                     let held = mutate_live_leaf(
                         target.dir(),
                         &target.relative,
@@ -6735,7 +6940,7 @@ pub fn rollback_transaction(
                         target.dir().set_executable(&target.relative, executable)?;
                     }
                     if let (Some(quarantine), Some(displaced)) = (held, current.clone()) {
-                        held_rollback_quarantine = Some((target, quarantine, displaced));
+                        held_rollback_quarantine = Some((quarantine, displaced));
                     }
                 } else {
                     return Err(AppError::Transaction(format!(
@@ -6743,11 +6948,7 @@ pub fn rollback_transaction(
                         operation.destination
                     )));
                 }
-            } else if let Some(target) = existing_live_target(
-                project_directory.as_ref(),
-                operation.external,
-                &operation.destination,
-            )? {
+            } else if let Some(target) = step_target.as_ref() {
                 let held = mutate_live_leaf(
                     target.dir(),
                     &target.relative,
@@ -6764,12 +6965,11 @@ pub fn rollback_transaction(
                     &no_live_barrier,
                 )?;
                 if let (Some(quarantine), Some(displaced)) = (held, current.clone()) {
-                    held_rollback_quarantine = Some((target, quarantine, displaced));
+                    held_rollback_quarantine = Some((quarantine, displaced));
                 }
             }
             test_fault("rollback_after_placement")?;
-            let restored =
-                rollback_live_hash(&operation, &destination, project_directory.as_ref())?;
+            let (restored, restored_executable) = target_hash_and_executable(step_target.as_ref())?;
             if let Some(expected) = expected_restored {
                 if restored.as_deref() != Some(expected.as_str()) {
                     return Err(AppError::Transaction(format!(
@@ -6778,12 +6978,7 @@ pub fn rollback_transaction(
                     )));
                 }
                 if let Some(expected_executable) = operation.before_executable {
-                    if rollback_live_executable(
-                        &operation,
-                        &destination,
-                        project_directory.as_ref(),
-                    )? != Some(expected_executable)
-                    {
+                    if restored_executable != Some(expected_executable) {
                         return Err(AppError::Transaction(format!(
                             "rollback executable metadata mismatch after restore: {}",
                             operation.destination
@@ -6812,10 +7007,13 @@ pub fn rollback_transaction(
                 &format!("rollback-{}", operation.id),
                 durable,
             )?;
-            if let Some((target, quarantine, displaced)) = held_rollback_quarantine.take() {
+            if let Some((quarantine, displaced)) = held_rollback_quarantine.take() {
                 // Both rollback records are synced; the displaced
                 // post-transaction bytes also remain in the child backup.
                 rollback_quarantine_fault(QuarantineBoundary::BeforeRelease)?;
+                let target = step_target.as_ref().ok_or_else(|| {
+                    AppError::Transaction("held rollback quarantine has no retained target".into())
+                })?;
                 release_quarantine(target.dir(), &quarantine, &displaced)?;
             }
             if batch_complete {
@@ -7368,14 +7566,8 @@ fn finish_finalization(
     }
     for operation in &journal.operations {
         let (current, current_executable) = if operation.external {
-            let destination = rollback_operation_destination(&project_root, operation)?;
-            let current = regular_file_hash(&destination)?;
-            let executable = if current.is_some() {
-                observed_executable(&destination)?
-            } else {
-                None
-            };
-            (current, executable)
+            let target = existing_operation_target(None, operation)?;
+            target_hash_and_executable(target.as_ref())?
         } else {
             let exists = project_directory.exists(&operation.destination)?;
             if exists && !project_directory.is_regular_file(&operation.destination)? {
@@ -7601,7 +7793,17 @@ pub fn resume_transaction_with_options(
         }
 
         let destination = operation_destination(&project_root, operation)?;
-        let current_hash = regular_file_hash(&destination)?;
+        // An external parent bound by the interrupted run must still be that
+        // directory. Refusing here, before the replay writes a fresh journal,
+        // keeps the interrupted journal resumable once the directory returns.
+        let current_hash = if operation.external && record.external_parent_identity.is_some() {
+            match existing_operation_target(None, record)? {
+                Some(target) => target.hash()?,
+                None => None,
+            }
+        } else {
+            regular_file_hash(&destination)?
+        };
         if current_hash.as_deref() != operation.local_sha256.as_deref() {
             return Err(AppError::Transaction(format!(
                 "live precondition changed before resume: {}",
@@ -12109,6 +12311,7 @@ mod tests {
             after_executable: None,
             quarantine_leaf: Some(quarantine_leaf_name(transaction_id, "op-1")),
             quarantine_sha256: None,
+            external_parent_identity: None,
         };
         assert!(journaled_quarantine_leaf(transaction_id, &operation)
             .unwrap()
@@ -12759,5 +12962,488 @@ mod tests {
             }
             assert!(!project.path().join("AGENTS.md").exists(), "{checkpoint}");
         }
+    }
+
+    /// A project plus an existing external launcher descriptor in a separate
+    /// launcher directory that the transaction replaces.
+    struct ExternalLauncherCase {
+        project: tempfile::TempDir,
+        _app: tempfile::TempDir,
+        launchers: tempfile::TempDir,
+        app_root: PathBuf,
+        launcher_parent: PathBuf,
+        launcher_path: PathBuf,
+        plan: InstallationPlan,
+        prepared: Vec<PreparedFile>,
+        old_launcher: Vec<u8>,
+        new_launcher: Vec<u8>,
+    }
+
+    impl ExternalLauncherCase {
+        fn new() -> Self {
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let launchers = tempdir().unwrap();
+            let app_root = fs::canonicalize(app.path()).unwrap();
+            let launcher_parent = fs::canonicalize(launchers.path()).unwrap().join("mod");
+            fs::create_dir(&launcher_parent).unwrap();
+            let launcher_path = launcher_parent.join("example.mod");
+            let old_launcher = b"name=\"Example\"\npath=\"elsewhere\"\n".to_vec();
+            fs::write(&launcher_path, &old_launcher).unwrap();
+            let thumbnail = crate::descriptors::placeholder_thumbnail_png().unwrap();
+            fs::write(project.path().join("thumbnail.png"), &thumbnail).unwrap();
+            let mut plan = ready_plan(project.path());
+            plan.operations.push(PlanOperation {
+                id: "thumbnail".into(),
+                component_id: "project.thumbnail".into(),
+                ownership: Some(Ownership::Generated),
+                location_scope: Some("project".into()),
+                action: OperationAction::Skip,
+                source_path: Some("generated:thumbnail.png".into()),
+                destination: "thumbnail.png".into(),
+                source_sha256: Some("c".repeat(64)),
+                source_size: Some(1),
+                platform: None,
+                executable: false,
+                result_sha256: None,
+                base_sha256: None,
+                local_sha256: Some(sha256_bytes(&thumbnail)),
+                local_state: LocalState::Modified,
+                resolution: Some("keep".into()),
+                external: false,
+                rollback: RollbackAction::None,
+            });
+            let canonical_project = validate_project_root(project.path()).unwrap();
+            let identity = ProjectIdentity {
+                display_name: "Example".into(),
+                project_id: plan.project_id.clone(),
+                author: String::new(),
+                version: "0.1.0".into(),
+                supported_game_version: "1.17.*".into(),
+                project_root: canonical_project.clone(),
+                default_branch: "main".into(),
+                script_prefix: plan.script_prefix.clone(),
+                primary_namespace: plan.primary_namespace.clone(),
+                descriptor_tags: Vec::new(),
+                launcher_descriptor_path: Some(launcher_path.clone()),
+            };
+            let new_launcher =
+                crate::descriptors::render_launcher_descriptor(&identity, &canonical_project)
+                    .unwrap()
+                    .into_bytes();
+            plan.operations.push(PlanOperation {
+                id: "launcher".into(),
+                component_id: "project.launcher_descriptor".into(),
+                ownership: Some(Ownership::Generated),
+                location_scope: Some("external_launcher".into()),
+                action: OperationAction::Replace,
+                source_path: Some("generated:example.mod".into()),
+                destination: launcher_path.display().to_string(),
+                source_sha256: Some(sha256_bytes(&new_launcher)),
+                source_size: Some(new_launcher.len() as u64),
+                platform: None,
+                executable: false,
+                result_sha256: Some(sha256_bytes(&new_launcher)),
+                base_sha256: None,
+                local_sha256: Some(sha256_bytes(&old_launcher)),
+                local_state: LocalState::Unmodified,
+                resolution: None,
+                external: true,
+                rollback: RollbackAction::RestoreBackup,
+            });
+            let prepared = vec![
+                PreparedFile {
+                    operation_id: "op-1".into(),
+                    destination: "AGENTS.md".into(),
+                    bytes: b"safe".to_vec(),
+                    expected_sha256: sha256_bytes(b"safe"),
+                },
+                PreparedFile {
+                    operation_id: "launcher".into(),
+                    destination: launcher_path.display().to_string(),
+                    bytes: new_launcher.clone(),
+                    expected_sha256: sha256_bytes(&new_launcher),
+                },
+            ];
+            Self {
+                project,
+                _app: app,
+                launchers,
+                app_root,
+                launcher_parent,
+                launcher_path,
+                plan,
+                prepared,
+                old_launcher,
+                new_launcher,
+            }
+        }
+
+        fn options(&self) -> TransactionOptions {
+            TransactionOptions {
+                app_data_root: Some(self.app_root.clone()),
+                ..Default::default()
+            }
+        }
+
+        fn journal_path(&self) -> PathBuf {
+            transaction_journal_path(&self.app_root, self.plan.plan_id)
+        }
+
+        fn away(&self) -> PathBuf {
+            self.launcher_parent.with_file_name("mod-away")
+        }
+
+        fn bound_identity(journal: &TransactionJournal) -> Option<String> {
+            journal
+                .operations
+                .iter()
+                .find(|operation| operation.id == "launcher")
+                .and_then(|operation| operation.external_parent_identity.clone())
+        }
+    }
+
+    fn link_directory(link: &Path, target: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+        #[cfg(windows)]
+        {
+            let output = Command::new("cmd.exe")
+                .args(["/d", "/c", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .expect("cmd.exe is present on Windows");
+            assert!(
+                output.status.success(),
+                "junction creation failed: {output:?}"
+            );
+        }
+    }
+
+    fn remove_directory_link(link: &Path) {
+        #[cfg(unix)]
+        fs::remove_file(link).unwrap();
+        #[cfg(windows)]
+        fs::remove_dir(link).unwrap();
+    }
+
+    #[test]
+    fn external_parent_replaced_after_backup_blocks_resume_until_the_bound_directory_returns() {
+        let case = ExternalLauncherCase::new();
+        // Stop after staged-output validation: the backup stage has bound the
+        // launcher parent and the transaction is still resumable.
+        let validation_stage = TRANSACTION_STAGES
+            .iter()
+            .position(|stage| *stage == "validation")
+            .unwrap();
+        let interrupted = run_test_transaction(
+            case.project.path(),
+            &case.plan,
+            &case.prepared,
+            &TransactionOptions {
+                fail_after_stage: Some(validation_stage),
+                ..case.options()
+            },
+        )
+        .unwrap_err();
+        assert!(
+            interrupted
+                .to_string()
+                .contains("fault injected after stage validation"),
+            "{interrupted}"
+        );
+        let bound =
+            ExternalLauncherCase::bound_identity(&read_journal(&case.journal_path()).unwrap())
+                .expect("the backup stage binds the launcher parent");
+        assert_eq!(
+            bound,
+            RootedDir::open_read(&case.launcher_parent)
+                .unwrap()
+                .identity_token()
+                .unwrap()
+        );
+
+        // Swap the reviewed parent away for a different directory that holds
+        // the same reviewed bytes, so every content precondition still passes.
+        fs::rename(&case.launcher_parent, case.away()).unwrap();
+        fs::create_dir(&case.launcher_parent).unwrap();
+        fs::write(&case.launcher_path, &case.old_launcher).unwrap();
+
+        let refused =
+            resume_transaction(case.project.path(), &case.app_root, case.plan.plan_id).unwrap_err();
+        assert!(
+            refused
+                .to_string()
+                .contains("no longer the directory bound to this transaction"),
+            "{refused}"
+        );
+        assert_eq!(fs::read(&case.launcher_path).unwrap(), case.old_launcher);
+        assert_eq!(
+            fs::read(case.away().join("example.mod")).unwrap(),
+            case.old_launcher
+        );
+        assert!(!case.project.path().join("AGENTS.md").exists());
+        assert!(!case
+            .project
+            .path()
+            .join(".hoi4-mod-setup/install.lock.json")
+            .exists());
+        assert_eq!(
+            ExternalLauncherCase::bound_identity(&read_journal(&case.journal_path()).unwrap()),
+            Some(bound.clone()),
+            "a refused replay keeps the original binding"
+        );
+
+        // Swap the bound directory back; the replay now proceeds there.
+        fs::remove_file(&case.launcher_path).unwrap();
+        fs::remove_dir(&case.launcher_parent).unwrap();
+        fs::rename(case.away(), &case.launcher_parent).unwrap();
+        let (journal, _) =
+            resume_transaction(case.project.path(), &case.app_root, case.plan.plan_id).unwrap();
+        assert_eq!(fs::read(&case.launcher_path).unwrap(), case.new_launcher);
+        assert_eq!(ExternalLauncherCase::bound_identity(&journal), Some(bound));
+    }
+
+    /// Install the launcher, then swap its parent away for an impostor that
+    /// holds the installed bytes, either as a plain directory or as a
+    /// directory link. Post-install checks, final verification, and rollback
+    /// must refuse it and leave both directories unchanged; once the bound
+    /// directory returns, rollback restores the original launcher there.
+    fn external_parent_swapped_after_apply_is_refused(use_link: bool) {
+        let case = ExternalLauncherCase::new();
+        let (journal, _) = run_test_transaction(
+            case.project.path(),
+            &case.plan,
+            &case.prepared,
+            &case.options(),
+        )
+        .unwrap();
+        assert_eq!(fs::read(&case.launcher_path).unwrap(), case.new_launcher);
+        assert!(ExternalLauncherCase::bound_identity(&journal).is_some());
+
+        let impostor = if use_link {
+            fs::canonicalize(case.launchers.path())
+                .unwrap()
+                .join("impostor")
+        } else {
+            case.launcher_parent.clone()
+        };
+        fs::rename(&case.launcher_parent, case.away()).unwrap();
+        fs::create_dir(&impostor).unwrap();
+        fs::write(impostor.join("example.mod"), &case.new_launcher).unwrap();
+        if use_link {
+            link_directory(&case.launcher_parent, &impostor);
+        }
+
+        let canonical_project = validate_project_root(case.project.path()).unwrap();
+        let project_directory =
+            open_bound_project_root(&canonical_project, &journal.project_root_lifecycle).unwrap();
+        let mut checked = journal.clone();
+        let post_install = post_install_checks(
+            &canonical_project,
+            &project_directory,
+            &case.plan,
+            &mut checked,
+            &case.journal_path(),
+        )
+        .unwrap_err();
+        let final_verification =
+            final_live_verification(&project_directory, &case.plan, &journal).unwrap_err();
+        drop(project_directory);
+        if !use_link {
+            for error in [&post_install, &final_verification] {
+                assert!(
+                    error
+                        .to_string()
+                        .contains("no longer the directory bound to this transaction"),
+                    "{error}"
+                );
+            }
+        }
+
+        let mut journal = read_journal(&case.journal_path()).unwrap();
+        let refused = rollback_transaction(case.project.path(), &mut journal, &case.journal_path())
+            .unwrap_err();
+        if !use_link {
+            assert!(
+                refused
+                    .to_string()
+                    .contains("no longer the directory bound to this transaction"),
+                "{refused}"
+            );
+        }
+        assert_eq!(
+            fs::read(impostor.join("example.mod")).unwrap(),
+            case.new_launcher
+        );
+        assert_eq!(
+            fs::read(case.away().join("example.mod")).unwrap(),
+            case.new_launcher
+        );
+        assert_eq!(
+            fs::read(case.project.path().join("AGENTS.md")).unwrap(),
+            b"safe"
+        );
+
+        if use_link {
+            remove_directory_link(&case.launcher_parent);
+        }
+        fs::remove_file(impostor.join("example.mod")).unwrap();
+        fs::remove_dir(&impostor).unwrap();
+        fs::rename(case.away(), &case.launcher_parent).unwrap();
+        let mut journal = read_journal(&case.journal_path()).unwrap();
+        rollback_transaction(case.project.path(), &mut journal, &case.journal_path()).unwrap();
+        assert_eq!(fs::read(&case.launcher_path).unwrap(), case.old_launcher);
+        assert!(!case.project.path().join("AGENTS.md").exists());
+    }
+
+    #[test]
+    fn external_parent_replaced_by_a_directory_after_apply_is_refused() {
+        external_parent_swapped_after_apply_is_refused(false);
+    }
+
+    #[test]
+    fn external_parent_replaced_by_a_link_after_apply_is_refused() {
+        external_parent_swapped_after_apply_is_refused(true);
+    }
+
+    #[derive(Debug, Default, Clone, Copy)]
+    struct ApplySwapState {
+        attempted: bool,
+        swapped: bool,
+        impostor_received_launcher: bool,
+    }
+
+    static APPLY_PARENT_SWAP: std::sync::Mutex<ApplySwapState> =
+        std::sync::Mutex::new(ApplySwapState {
+            attempted: false,
+            swapped: false,
+            impostor_received_launcher: false,
+        });
+
+    /// Swap the launcher parent away after its precondition passed and back
+    /// after placement. The swap can only succeed where the platform lets a
+    /// directory with an open handle be renamed.
+    fn swap_launcher_parent_around_apply(path: &Path, _index: usize, point: LiveMutationBarrier) {
+        if path.file_name().and_then(|name| name.to_str()) != Some("example.mod") {
+            return;
+        }
+        let parent = path.parent().unwrap().to_path_buf();
+        let away = parent.with_file_name("mod-away");
+        let mut state = APPLY_PARENT_SWAP.lock().unwrap();
+        match point {
+            LiveMutationBarrier::AfterPrecondition => {
+                state.attempted = true;
+                if fs::rename(&parent, &away).is_ok() {
+                    fs::create_dir(&parent).unwrap();
+                    state.swapped = true;
+                }
+            }
+            LiveMutationBarrier::AfterPlacement if state.swapped => {
+                state.impostor_received_launcher |= path.exists();
+                fs::remove_dir_all(&parent).unwrap();
+                fs::rename(&away, &parent).unwrap();
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn external_parent_swap_during_apply_cannot_redirect_the_launcher() {
+        let case = ExternalLauncherCase::new();
+        let result = run_test_transaction(
+            case.project.path(),
+            &case.plan,
+            &case.prepared,
+            &TransactionOptions {
+                live_mutation_barrier: Some(swap_launcher_parent_around_apply),
+                ..case.options()
+            },
+        );
+        let mut state = *APPLY_PARENT_SWAP.lock().unwrap();
+        assert!(state.attempted);
+        // An apply that stopped before placement leaves the swap in place.
+        if case.away().exists() {
+            state.impostor_received_launcher |= case.launcher_path.exists();
+            fs::remove_dir_all(&case.launcher_parent).unwrap();
+            fs::rename(case.away(), &case.launcher_parent).unwrap();
+        }
+        assert!(
+            !state.impostor_received_launcher,
+            "the launcher was written into the swapped-in directory"
+        );
+        #[cfg(windows)]
+        {
+            assert!(
+                !state.swapped,
+                "the retained launcher parent handle must refuse the rename"
+            );
+            assert!(result.is_ok(), "{:?}", result.as_ref().err());
+        }
+        match result {
+            Ok(_) => assert_eq!(fs::read(&case.launcher_path).unwrap(), case.new_launcher),
+            Err(_) => {
+                let mut journal = read_journal(&case.journal_path()).unwrap();
+                rollback_transaction(case.project.path(), &mut journal, &case.journal_path())
+                    .unwrap();
+                assert_eq!(fs::read(&case.launcher_path).unwrap(), case.old_launcher);
+            }
+        }
+    }
+
+    #[test]
+    fn project_root_swap_during_post_install_checks_cannot_redirect_the_reads() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        let (journal, _) = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().to_path_buf()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let canonical_project = validate_project_root(project.path()).unwrap();
+        let project_directory =
+            open_bound_project_root(&canonical_project, &journal.project_root_lifecycle).unwrap();
+        let away = canonical_project.with_file_name(format!(
+            "{}-away",
+            canonical_project.file_name().unwrap().to_string_lossy()
+        ));
+        let swapped = fs::rename(&canonical_project, &away).is_ok();
+        #[cfg(windows)]
+        assert!(
+            !swapped,
+            "the retained project capability must refuse a rename of the project root"
+        );
+        if swapped {
+            // An impostor root with the installed bytes at the same path.
+            fs::create_dir(&canonical_project).unwrap();
+            fs::write(canonical_project.join("AGENTS.md"), b"safe").unwrap();
+        }
+        let mut checked = journal.clone();
+        let result = post_install_checks(
+            &canonical_project,
+            &project_directory,
+            &plan,
+            &mut checked,
+            &transaction_journal_path(app.path(), plan.plan_id),
+        );
+        drop(project_directory);
+        if swapped {
+            assert!(
+                result.is_err(),
+                "post-install checks read the swapped-in project root"
+            );
+            fs::remove_dir_all(&canonical_project).unwrap();
+            fs::rename(&away, &canonical_project).unwrap();
+        } else {
+            result.unwrap();
+        }
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"safe");
     }
 }

@@ -70,6 +70,8 @@ HOI4 Mod Setup follows semantic versioning.
   identity evidence as schema 1.1.
 - Use no-follow Windows lexical root acquisition and versioned 128-bit file IDs;
   legacy identity-less journals remain inspection-only.
+- Bind the launcher descriptor's folder to its directory identity from the backup stage onward, and refuse to apply, verify, resume, or roll back into a different folder at the same path.
+- Verify installed files and capture rollback backups through retained directory handles, hashing each backup from the same read that copies it.
 
 ## 0.3.5 - 2026-09-05
 
