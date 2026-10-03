@@ -63,3 +63,15 @@ entry, publisher, and required-route checks. Its negative version test passes.
 The Codex live probe now invokes the same `app-server --stdio` arguments as the
 production bridge; the live authenticated-account and browser/device-code
 start/cancel probe passes. Managed login completion remains a separate gate.
+
+## Enforced closure prepared locally (2026-10-03, not published)
+
+Branch `fix/enforced-production-closure` in the local worktree `hoi4-agent-tools-shrinkwrap`, on top of `origin/main` `fba03d6` (the unreleased 3.7.0, which adds a 35th route, `hoi4.script_validate`), replaces `package-lock.json` with a published `npm-shrinkwrap.json`. The change adds it to `files` and the required packed files, switches the Dockerfile, and adds a metadata test that every exact direct dependency and override pin matches the shrinkwrap.
+
+Findings that shape the release gate:
+
+- npm honors a dependency's shrinkwrap only when the registry manifest carries `_hasShrinkwrap: true`, which the npm registry derives from the uploaded tarball (for example `@salesforce/cli`). Installing a local tarball ignores the shrinkwrap, so pre-publication evidence used a localhost registry shim that serves the packed tarball with that flag and redirects everything else to npmjs.
+- With the flag, two isolated `npm install --global --prefix` runs with separate caches on Windows produced the same tree, 5,294 files with tree digest `9ddcc3af…3256`. They installed `hono` 4.13.8 and `@hono/node-server` 2.1.0 as reviewed, with no dev tools, Sharp loaded, and the stdio server reporting 3.7.0 with 35 tools. Without the flag the same tarball resolved `hono` 4.13.12 and `@hono/node-server` 1.19.17.
+- npm inflates a dependency's shrinkwrap after its platform check, so all 27 optional `@img/sharp-*` packages are installed on every platform: about 298 MB, compared with 85 MB for a platform-resolved install. Sharp has no install script, so the tree is byte-identical across platforms. That allows one `package_tree_sha256` for Windows and macOS, which a platform-resolved tree cannot provide. This trade-off was accepted as the only closure npm enforces natively.
+
+Remaining steps, each needing approval: push the branch and merge, publish 3.7.0 with provenance, confirm `_hasShrinkwrap: true` on the registry, repeat the isolated installs from the registry (including on macOS), then update the workflow bootstrap to 3.7.0 and 35 routes, regenerate its manifest, and refresh the app's bundled manifest and required-route list.
