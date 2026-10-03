@@ -551,8 +551,9 @@ pub fn migrate_journal(value: Value) -> Result<TransactionJournal, AppError> {
         .and_then(Value::as_str)
         .unwrap_or("1.0.0")
         .to_string();
-    // Quarantine evidence was introduced with schema 1.1.0; a 1.0.0 journal
-    // carrying it is forged or corrupted and must not drive recovery.
+    // Quarantine evidence and external-parent identities were introduced with
+    // schema 1.1.0; a 1.0.0 journal carrying them is forged or corrupted and
+    // must not drive recovery.
     if original_version == "1.0.0"
         && (value
             .get("checkpoint_sequence")
@@ -562,16 +563,18 @@ pub fn migrate_journal(value: Value) -> Result<TransactionJournal, AppError> {
                 .and_then(Value::as_array)
                 .is_some_and(|operations| {
                     operations.iter().any(|operation| {
-                        ["quarantine_leaf", "quarantine_sha256"]
-                            .iter()
-                            .any(|field| {
-                                operation.get(*field).is_some_and(|value| !value.is_null())
-                            })
+                        [
+                            "quarantine_leaf",
+                            "quarantine_sha256",
+                            "external_parent_identity",
+                        ]
+                        .iter()
+                        .any(|field| operation.get(*field).is_some_and(|value| !value.is_null()))
                     })
                 }))
     {
         return Err(AppError::Serialization(
-            "a 1.0.0 transaction journal cannot carry quarantine evidence".into(),
+            "a 1.0.0 transaction journal cannot carry quarantine or external-parent identity evidence".into(),
         ));
     }
     let mut value = migrate_value(value, "transaction journal", CURRENT_JOURNAL_SCHEMA)?;
@@ -1088,6 +1091,10 @@ mod tests {
         with_quarantine["operations"][0]["quarantine_leaf"] =
             Value::String(".hoi4ms-quarantine-x-y.tmp".into());
         assert!(migrate_journal(with_quarantine).is_err());
+        let mut with_external_identity = value.clone();
+        with_external_identity["operations"][0]["external_parent_identity"] =
+            Value::String("unix:1:2".into());
+        assert!(migrate_journal(with_external_identity).is_err());
         let mut with_sequence = value;
         with_sequence["checkpoint_sequence"] = Value::from(3);
         assert!(migrate_journal(with_sequence).is_err());
@@ -1104,5 +1111,31 @@ mod tests {
         let journal = migrate_journal(legacy).unwrap();
         assert_eq!(journal.transaction_kind, "installation");
         assert!(journal.parent_transaction_id.is_none());
+    }
+
+    #[test]
+    fn current_journal_keeps_external_parent_identity_and_legacy_operations_omit_it() {
+        let value: Value = serde_json::from_str(include_str!(
+            "../../docs/examples/transaction-journal.example.json"
+        ))
+        .unwrap();
+        let journal = migrate_journal(value.clone()).unwrap();
+        assert!(journal
+            .operations
+            .iter()
+            .all(|operation| operation.external_parent_identity.is_none()));
+        let serialized = serde_json::to_value(&journal).unwrap();
+        assert!(serialized["operations"][0]
+            .get("external_parent_identity")
+            .is_none());
+
+        let mut bound = value;
+        let identity = format!("windows-v2:{}:{}", "0".repeat(15) + "1", "a".repeat(32));
+        bound["operations"][0]["external_parent_identity"] = Value::String(identity.clone());
+        let journal = migrate_journal(bound).unwrap();
+        assert_eq!(
+            journal.operations[0].external_parent_identity.as_deref(),
+            Some(identity.as_str())
+        );
     }
 }

@@ -1069,6 +1069,13 @@ pub struct JournalOperation {
     /// moved back here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quarantine_sha256: Option<String>,
+    /// Identity of an external destination's parent directory, bound when
+    /// the transaction first opens that parent through a retained handle.
+    /// Apply, post-install checks, finalization, and rollback reopen the
+    /// parent only when it still has this identity. Rollback journals copy it
+    /// from their parent operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_parent_identity: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

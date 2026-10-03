@@ -45,10 +45,18 @@ the recreated directory does not match the journal.
 
 Forward backup, apply, final verification, lock construction, and lock commit
 retain the reviewed project capability. Managed rollback file and lock changes
-and finalization checks retain it as well. Created-root cleanup, application-data,
-external launcher parents, Git, external actions, and readiness are not yet
-bound to retained capabilities through their complete lifetimes. Those
-cross-stage races remain release blockers. A regular destination that changes
+and finalization checks retain it as well. Post-install checks read project files through the same retained capability, and the bytes they validate are the bytes they hash.
+
+An external destination's parent directory, such as the launcher `mod` folder, is bound when the backup stage first opens it: the journal operation records its identity as `external_parent_identity`.
+A resumed replay carries that identity forward, and the pre-replay check refuses a different directory before a new journal is written, so the interrupted journal stays resumable once the bound directory returns.
+Apply takes the precondition hash, performs the quarantine and placement, and reads the result back through one retained parent handle whose identity must match; an external operation without a bound identity is refused at apply.
+Post-install checks, final verification, finalization resume, rollback, the rollback child backup, quarantine settlement, and the quarantine sweep reopen the parent only when it still has the bound identity, and a bound parent is never recreated.
+A link or other non-directory at the path of a bound parent is identity drift, while a missing parent still reads as an absent destination.
+The rollback child backup is copied and hashed in one pass from one opened handle, so its `before_sha256` and `backup_sha256` describe the same bytes.
+Journal operations from before the binding keep the earlier path-only behavior in rollback.
+
+Created-root cleanup, application-data, Git, external actions, and readiness are not yet bound to retained capabilities through their complete lifetimes, and the reviewed plan does not carry an external parent identity, so the binding starts at the backup stage rather than at review.
+Those cross-stage races remain release blockers. A regular destination that changes
 after its precondition hash is no longer replaced or deleted blindly; the
 destination quarantine below keeps those bytes and records them in the journal.
 

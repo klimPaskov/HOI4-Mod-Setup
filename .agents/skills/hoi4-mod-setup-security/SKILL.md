@@ -118,8 +118,10 @@ replacing existing bytes, and a redacted assignment at the end of a message.
 - Existing-project scans, plans, and journals bind the project-root identity;
   new projects bind the parent and journal the created root. Schema 1.0
   identity-less journals remain inspect-only. Identity checks still do not
-  retain the verified handle through every transaction call. Application-data
-  and external launcher parents are not identity-bound end to end. Live
+  retain the verified handle through every transaction call.
+  Application-data parents are not identity-bound end to end.
+  External destination parents are bound in the journal from the backup stage onward (not yet in the reviewed plan) and are read and changed only through retained handles with that identity.
+  Live
   replace and delete go through `mutate_live_leaf`: a journaled same-folder
   quarantine, hash verification against the precondition, a no-replace
   placement, and removal only after the success checkpoint (see
