@@ -622,8 +622,7 @@ pub fn initialize_health(
     )?;
     let mut protocol = McpProtocol::new(transport, Duration::from_secs(10));
     let initialized = protocol.initialize()?;
-    let evidence = validate_initialize_result(&initialized)?;
-    require_tools_capability(&initialized)?;
+    let evidence = validate_verified_initialize_result(&initialized, &target.package_version)?;
     let listing = protocol.request("tools/list", json!({}))?;
     let tool_count = validate_tools_result(&listing, &target.required_tools)?;
     Ok(HealthEvidence {
@@ -631,6 +630,20 @@ pub fn initialize_health(
         required_tools: target.required_tools.clone(),
         ..evidence
     })
+}
+
+fn validate_verified_initialize_result(
+    initialized: &Value,
+    expected_version: &str,
+) -> Result<HealthEvidence, AppError> {
+    let evidence = validate_initialize_result(initialized)?;
+    if evidence.server_version != expected_version {
+        return Err(AppError::Process(
+            "MCP server version does not match the reviewed package identity".into(),
+        ));
+    }
+    require_tools_capability(initialized)?;
+    Ok(evidence)
 }
 
 fn require_tools_capability(initialized: &Value) -> Result<(), AppError> {
@@ -1008,6 +1021,33 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("required tools capability"));
+    }
+
+    #[test]
+    fn running_server_must_advertise_the_reviewed_package_version() {
+        let manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+        ))
+        .unwrap();
+        let target = manifest_target(&manifest).unwrap();
+        let mut initialized = json!({
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "serverInfo": {
+                "name": "hoi4-agent-tools",
+                "version": target.package_version.clone()
+            },
+            "capabilities": {"tools": {}}
+        });
+        let evidence =
+            validate_verified_initialize_result(&initialized, &target.package_version).unwrap();
+        assert_eq!(evidence.server_version, target.package_version);
+        initialized["serverInfo"]["version"] = json!("unreviewed-version");
+        assert!(
+            validate_verified_initialize_result(&initialized, &target.package_version)
+                .unwrap_err()
+                .to_string()
+                .contains("reviewed package identity")
+        );
     }
 
     #[test]

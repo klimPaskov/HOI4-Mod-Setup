@@ -150,6 +150,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   min-width: 0;
   margin: 0;
 }
+.provider-access { display: grid; gap: 10px; min-width: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; }
+.provider-access > p { margin: 0; overflow-wrap: anywhere; }
+.provider-access > .button-row { justify-content: flex-start; }
+.provider-access > .text-button { width: fit-content; }
 .provider-help {
   width: 100%;
   max-width: 62ch;

@@ -26,23 +26,92 @@ Large transactions append bounded per-operation records to one checkpoint log du
 
 ## Rooted filesystem operations
 
-Production transaction file reads, writes, copies, appends, deletes,
-executable-mode changes, and staging-tree discard use
-`src-tauri/src/safe_fs.rs::RootedDir`. Unix opens each path component with
-`openat` and no-follow flags, then performs file operations relative to the
-retained directory descriptor. Windows retains the ancestor directory handles,
-opens leaves with `FILE_FLAG_OPEN_REPARSE_POINT`, and rejects the reparse
-attribute. Deletion and new-target rename use opened handles; replacement of
-an existing file still uses `ReplaceFileW` while the retained parent chain is
-open. A source regression test rejects ambient `std::fs` mutations and reads
-in production `transaction.rs`.
+`src-tauri/src/safe_fs.rs::RootedDir` provides no-follow primitives for many
+transaction reads and mutations. Unix child operations use `openat`; Windows
+root acquisition walks lexical components from the volume or share root,
+rejects reparse points at each opened component, and uses a 128-bit file ID.
+The transaction orchestration still reopens roots through path-based wrappers
+between many operations. The source regression catches selected direct
+`std::fs` calls, but is not a complete proof of the transaction boundary.
 
-The current facade establishes containment for each rooted operation. It does
-not yet preserve one project and application-data identity from preflight
-through every transaction stage and later recovery. It also does not preserve a
-regular destination that changes after its precondition hash and before commit.
-Those remain release blockers. Recovery must persist root identities and
-displaced-leaf evidence before treating path-swap safety as complete.
+Existing-project scans capture the root identity, and semantic review and plan
+construction require the same directory. Plans and journals persist that
+identity; a create-leaf plan binds its existing parent and later records the
+created directory. Recovery rejects drift and root creation uses the reviewed
+parent handle. Schema 1.0 journals without identity evidence remain
+inspect-only. A root left before its identity checkpoint is retained with its
+observed identity and stays unowned. Inverse rollback stops for inspection if
+the recreated directory does not match the journal.
+
+Forward backup, apply, final verification, lock construction, and lock commit
+retain the reviewed project capability. Managed rollback file and lock changes
+and finalization checks retain it as well. Created-root cleanup, application-data,
+external launcher parents, Git, external actions, and readiness are not yet
+bound to retained capabilities through their complete lifetimes. Those
+cross-stage races remain release blockers. A regular destination that changes
+after its precondition hash is no longer replaced or deleted blindly; the
+destination quarantine below keeps those bytes and records them in the journal.
+
+On Windows, `RootedDir::sync_directory` flushes the retained directory through a write handle obtained with `ReOpenFile`.
+When Windows denies that reopen, the directory is opened by its retained path, whose ancestors cannot be renamed while their delete-denying handles are held, and the flush proceeds only when the opened object has the same 128-bit file identity.
+Only `ERROR_INVALID_FUNCTION` and `ERROR_NOT_SUPPORTED` from the flush itself are accepted as a filesystem without directory flush; every other failure is reported.
+Directory-entry durability across a sudden power loss is still not proven by a native power-loss test.
+
+## Destination quarantine
+
+Every forward apply, managed rollback step, success-lock commit, and rollback lock restore that changes an existing regular file uses the same sequence in `mutate_live_leaf`.
+
+1. The precondition hash is taken through the retained parent handle.
+2. For a journaled operation, a synced operation checkpoint records `quarantine_leaf`, the deterministic same-directory name `.hoi4ms-quarantine-<transaction id>-<operation id>.tmp`, with no `quarantine_sha256`.
+3. The destination leaf is moved to that name with an exclusive same-directory rename through the retained parent handle, and the directory is synced. No cross-volume copy happens.
+4. The moved bytes are hashed. When they differ from the precondition, the observed hash is journaled and the file is moved back with an exclusive rename. If a new file took the destination name in the meantime, both files are kept, the quarantine stays recorded, and the operation fails for manual review.
+5. When the bytes match, the observed hash is journaled as `quarantine_sha256`, and the new bytes are placed with a synced temporary file plus an exclusive rename. A file created at the destination in the window is never replaced; the operation fails and the verified original stays in its quarantine. A managed delete places nothing.
+6. After the operation result checkpoint is synced, the quarantine is removed only while it still holds the verified bytes. On Windows the hashed handle denies write and delete sharing and performs the delete; on Unix the leaf identity is rechecked before `unlinkat`.
+
+A destination that was absent at review is created with an exclusive rename, so a file that appears in the window is kept and the operation fails.
+
+The exclusive rename uses `renameat2(RENAME_NOREPLACE)` on Linux, `renameatx_np(RENAME_EXCL)` on macOS, and a `FILE_RENAME_INFO` rename with `ReplaceIfExists = 0` on Windows. A Unix filesystem without an exclusive rename falls back to exclusive `linkat` followed by `unlinkat`.
+
+Recovery handles every crash point:
+
+| Stop point | Live state | Recovery |
+| --- | --- | --- |
+| Before the rename | Destination unchanged, quarantine absent | Rollback sees the predecessor bytes as already restored. |
+| After the rename, before verification | Destination absent, quarantine unverified | Rollback moves the quarantine back without replacing anything. |
+| After verification, before placement | Destination absent, quarantine verified | Rollback moves the quarantine back. |
+| After placement, before the result checkpoint | New bytes, verified quarantine | Rollback moves the installed bytes into its own quarantine, moves the original bytes back, and releases its quarantine after both rollback records are durable. |
+| After the result checkpoint, before release | New bytes, verified quarantine | Same as the previous row. |
+| Changed bytes moved back | Local bytes at the destination, quarantine absent, `quarantine_sha256` differs from the predecessor | Rollback treats the local bytes as the restored state and does not replace them. |
+| Changed bytes and a new destination file | Both files present | Rollback refuses and keeps both files. |
+
+Once project apply has started, resume remains refused and rollback is the recovery route for file operations.
+Rollback restores the quarantined bytes rather than the backup copy because they are the newest bytes the user saw at that path.
+It never deletes a quarantine whose hash differs from both the reviewed precondition and the backup.
+An unverified forward operation is recognized by its missing result evidence, so rollback refuses a destination whose bytes match neither the predecessor nor the planned result instead of removing or replacing it.
+
+Rollback steps journal their own quarantine on the child rollback operation, named with the child transaction ID.
+A retry first settles that quarantine: a verified quarantine beside the completed destination is released, and a quarantine beside an absent destination moves back so the step starts again.
+A child operation that already reached its quarantine intent keeps its compacted inverse-backup evidence instead of re-capturing a quarantined destination.
+
+The lock quarantine names are derived from the transaction ID with the `install-lock-commit` and `install-lock-restore` suffixes, and the expected displaced and placed hashes come from `previous_lock_sha256` and `result_lock_sha256`.
+The success-lock commit also refuses to write when the live lock no longer matches the journaled predecessor.
+Resume of a `finalizing` journal releases a verified commit quarantine beside the exact committed lock; beside an absent lock it moves the predecessor back and leaves rollback as the recovery route.
+Rollback settles both lock quarantines before it validates the lock precondition.
+
+A populated operation record looks like this:
+
+```json
+{
+  "id": "op-001",
+  "status": "verified",
+  "before_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+  "after_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+  "quarantine_leaf": ".hoi4ms-quarantine-960ccbb7c36a41b09d760105bcd83b05-op-001.tmp",
+  "quarantine_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+}
+```
+
+Both fields are optional. Journals written before quarantine support remain readable, and schema version `1.0.0` journals must not contain them.
 
 ## Twelve stages
 
@@ -83,6 +152,10 @@ If the reviewed parent or leaf changes before apply, or the leaf already
 exists, the transaction stops for revalidation rather than adopting or
 overwriting it. The journal records whether the leaf was created by this
 transaction and checkpoints its create/cleanup state.
+
+If inverse rollback is interrupted after a new directory is created but before
+its identity is journaled, recovery stops for inspection instead of adopting
+the directory based only on its empty state.
 
 Rollback removes the created leaf only when it is still the transaction's
 reviewed leaf, all removable managed content has been verified, and the leaf is
@@ -139,7 +212,7 @@ validation observes the same `/private/var` root.
 
 ### 9. Apply
 
-Use same-volume atomic replacement where possible. Apply in deterministic order and checkpoint every operation.
+Apply in deterministic order and checkpoint every operation. An existing destination is replaced or deleted only through the destination quarantine; a new destination is created with an exclusive rename.
 
 ### 10. Post-install checks
 
@@ -262,4 +335,4 @@ Detect common OneDrive and iCloud paths. Warn about synchronization ordering. Pe
 
 ## Fault tests
 
-Crash and fail at every stage and operation, including disk full, permission loss, antivirus lock, network loss, checksum mismatch, user edits during dry run or staging, external health failure, and rollback after Git initialization. The checked-in fault suite covers stage and apply-operation injection, subprocess termination during finalization and rollback backup creation, inverse rollback refusal after a user file or lock edit, plus targeted skipped-file, ownership, remote-approval, reanalysis binding, exact success-lock, predecessor-lock, and separate rollback-transaction backup regressions. Native disk-full, antivirus, network-loss, timeout, cancellation, and journal-write-failure adapters remain release-gate work and must not be represented as passing until exercised on Windows and macOS.
+Crash and fail at every stage and operation, including disk full, permission loss, antivirus lock, network loss, checksum mismatch, user edits during dry run or staging, external health failure, and rollback after Git initialization. The checked-in fault suite covers stage and apply-operation injection, subprocess termination during finalization and rollback backup creation, inverse rollback refusal after a user file or lock edit, deterministic concurrent-edit barriers and every destination-quarantine boundary for forward apply, managed delete, rollback steps, success-lock commit, and rollback lock restore, plus targeted skipped-file, ownership, remote-approval, reanalysis binding, exact success-lock, predecessor-lock, and separate rollback-transaction backup regressions. Native disk-full, antivirus, network-loss, timeout, cancellation, and journal-write-failure adapters remain release-gate work and must not be represented as passing until exercised on Windows and macOS.

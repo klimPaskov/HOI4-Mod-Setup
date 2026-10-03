@@ -58,6 +58,12 @@ Pinned commit uses the supplied commit for every step. Pinned release resolves a
   them; they never enter download, destination, staging, lock, or flattened
   output evidence.
 
+- Reject an unresolved Git LFS pointer in `verify_download` even when its
+  hash matches: manifest evidence hashes committed Git blobs, so a pointer
+  passes the checksum but installs a placeholder. Map it to the dedicated
+  "placeholder instead of a real file" plan error. The source generator
+  (`scripts/generate_manifest_evidence.py`) fails closed on the same prefix.
+
 ## Manifest change workflow
 
 1. Update schema and examples.
@@ -125,7 +131,8 @@ Never bless the current machine's changed hash or relax installed-tree checks.
 - Release tags are resolved through typed GitHub objects, including annotated-tag dereferencing, and pinned revisions are verified as commit objects before manifest or file access.
 - The MCP component is optional, Windows-only, and provider-neutral; it depends on its verified bootstrap rather than `codex.config`. The setup-assistant choice does not change component selection or generated Codex TOML. Installed `codex.config` and MCP declarations independently control their later-development integrations. macOS retains an explicit unsupported state and never receives a substitute command. Its package-backed route requires exact npm integrity, canonical full-package-tree SHA-256/file count, runtime-entry identity, and required tools. The wrapper locates the current-user npm prefix but is never executed. Require an OpenJS Foundation-signed Node executable, capture its local SHA-256, and recheck it at spawn. Any missing evidence blocks execution. The offline wiki is always rooted at `paradox_wiki/`; the plan and lock copy the exact manifest `wiki.required_pages` list plus snapshot/media/provenance/license metadata for the resolved revision, and readiness blocks legacy locks that lack that evidence instead of using a newer bundle.
 - The MCP health probe requires exact protocol negotiation, an advertised
-  `tools` capability, and a `tools/list` result containing every declared
+  server version matching the reviewed package version, a `tools` capability,
+  and a `tools/list` result containing every declared
   route. It executes only a private copy materialized from the verified
   package-tree bytes, so a global-package mutation after verification cannot
   change the entry that runs. Keep package inspection bounded to 32 MiB per

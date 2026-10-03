@@ -741,6 +741,11 @@ pub struct TransactionPlanInfo {
     pub project_root_parent: Option<String>,
     #[serde(default)]
     pub project_root_leaf: Option<String>,
+    /// Stable identity captured when the project plan is reviewed. For an
+    /// existing project this identifies the project directory; for a new
+    /// project it identifies the existing parent directory.
+    #[serde(default)]
+    pub project_root_identity: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1050,6 +1055,18 @@ pub struct JournalOperation {
     pub after_exists: Option<bool>,
     #[serde(default)]
     pub after_executable: Option<bool>,
+    /// Same-directory name that holds the displaced destination while the
+    /// operation replaces or deletes it. It is durable before the namespace
+    /// change, and recovery derives and checks the expected name from the
+    /// transaction and operation IDs before using it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quarantine_leaf: Option<String>,
+    /// Observed SHA-256 of the quarantined bytes after the namespace change.
+    /// Absent while the quarantine is planned but not yet verified. A value
+    /// different from `before_sha256` records local bytes that changed after
+    /// review and were preserved instead of replaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quarantine_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1069,6 +1086,13 @@ pub struct ProjectRootLifecycle {
     pub canonical_parent: Option<String>,
     #[serde(default)]
     pub leaf: Option<String>,
+    /// Identity of the project directory once it exists. Existing roots bind
+    /// this at review; create-leaf roots bind it immediately after creation.
+    #[serde(default)]
+    pub root_identity: Option<String>,
+    /// Identity of the reviewed parent for a create-leaf project root.
+    #[serde(default)]
+    pub parent_identity: Option<String>,
     #[serde(default = "default_root_checkpoint")]
     pub checkpoint: String,
     #[serde(default)]
@@ -1085,6 +1109,8 @@ impl Default for ProjectRootLifecycle {
             mode: ProjectRootMode::Existing,
             canonical_parent: None,
             leaf: None,
+            root_identity: None,
+            parent_identity: None,
             checkpoint: default_root_checkpoint(),
             created_by_transaction: false,
             observed_exists: true,

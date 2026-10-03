@@ -189,7 +189,7 @@ const operations: InstallationPlan["operations"] = [
 }));
 
 const plan: InstallationPlan = {
-  schema_version: "1.0.0",
+  schema_version: "1.1.0",
   plan_id: "documentation-preview",
   project_id: "atlantis_rising",
   source,
@@ -227,6 +227,7 @@ const plan: InstallationPlan = {
     project_root_mode: "create_leaf",
     project_root_parent: "C:\\Users\\Player\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod",
     project_root_leaf: "atlantis_rising",
+    project_root_identity: "windows-v2:0000000000000001:00000000000000000000000000000001",
   },
   approvals: { dry_run_reviewed: true, external_actions_reviewed: true, git_remote_approved: false, push_approved: false },
 };
@@ -276,6 +277,7 @@ export function documentationFixture(base: WizardState): WizardState {
     projectPathStatus: "ready",
     projectPathMessage: "The project folder and launcher file were found automatically.",
     codexAccount: { available: true, authenticated: true, auth_mode: "chatgpt", usage_limited: false },
+    aiAccount: { available: true, authenticated: true, provider: "claude_account", model: "claude-haiku-4-5-20251001", auth_mode: "claude_account", usage_limited: false },
     manifestPreview: manifest,
     components: manifestComponents.map((item) => ({
       id: item.id,
@@ -305,9 +307,9 @@ export function documentationFixture(base: WizardState): WizardState {
       ...common,
       screen: "welcome",
       aiProvider: "claude",
-      aiModel: "claude-sonnet-5",
+      aiModel: "claude-haiku-4-5-20251001",
       aiEndpoint: "https://api.anthropic.com/v1/messages",
-      aiAccount: { available: true, authenticated: true, provider: "claude", model: "claude-sonnet-5", auth_mode: "api_key", usage_limited: false },
+      aiAccount: { available: true, authenticated: true, provider: "claude", model: "claude-haiku-4-5-20251001", auth_mode: "api_key", usage_limited: false },
     };
   }
   if (scenario === "description") return { ...common, screen: "description", mode: "new", codexAnalysis: undefined, codexAnalysisRecord: undefined };

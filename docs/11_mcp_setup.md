@@ -20,7 +20,7 @@ spawn. The `.cmd` wrapper is used only to locate the current-user npm
 prefix and is never executed. Node must be a regular link-free executable with
 a valid OpenJS Foundation signature; its actual SHA-256 is captured and
 rechecked immediately at spawn. The 3.6.0 source snapshot declares 5,099
-package files and the current 33 required MCP routes. The application reads
+package files and the current 34 required MCP routes. The application reads
 the exact route list from the resolved manifest; no package, command, version,
 tool, or macOS route is invented.
 
@@ -65,8 +65,8 @@ Security-sensitive root values such as `approval_policy` and `sandbox_mode` rece
    its SHA-256, and recheck that identity immediately at spawn.
 5. Send the MCP JSON-RPC initialize request with protocol version, empty client
    capabilities, and client info, followed by `notifications/initialized`.
-6. Require the exact negotiated protocol version and an advertised `tools`
-   capability.
+6. Require the exact negotiated protocol version, the reviewed package version
+   advertised by the server, and a `tools` capability.
 7. Call `tools/list` and require every source-advertised route, including all
    three Technology Tree routes.
 8. Stop cleanly.

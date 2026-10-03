@@ -1,7 +1,8 @@
 # Public-readiness transaction filesystem handoff
 
-Status: ancestor link redirection is partially mitigated; the P1 transaction
-race finding remains open and blocks a public release.
+Status: ancestor link redirection is partially mitigated and project-root
+identity is now persisted and checked; the P1 transaction race finding remains
+open and blocks a public release.
 
 ## Implemented in the current candidate
 
@@ -20,25 +21,40 @@ race finding remains open and blocks a public release.
   and mutations from production transaction code.
 - Added native Windows link/junction checks for final leaves, ancestor swaps,
   and recursive staging removal. The same tests use symlinks on Unix.
+- Added platform-scoped directory identity tokens. Plans bind existing project
+  roots or the existing parent of a new root; journals retain those identities
+  and the identity of a created root. Recovery rejects identity drift, and
+  apply rechecks the root before each operation.
+- Existing-project scans record the opened root identity, and semantic review
+  and plan construction reject a different directory at the same path.
+- Windows `RootedDir` acquisition walks lexical components without
+  canonicalizing through a possible junction and uses versioned 128-bit
+  `FILE_ID_INFO` identities. Plan and journal schemas are version 1.1; legacy
+  identity-less journals remain inspect-only.
+- New project roots are created through the reviewed parent handle. An
+  interrupted create before the root identity checkpoint is treated as
+  ambiguous; rollback retains the empty root for inspection.
+- Added tests that replace an existing project root and a reviewed parent at
+  the same path, plus the crash-safe behavior for ambiguous new roots.
+- Forward backup, apply, final verification, lock construction, and lock commit
+  retain one reviewed project capability. Managed rollback file/lock operations
+  and finalization's project-file and success-lock checks retain it as well.
 
 ## Verification
 
-The Windows suite passed 422 Rust tests with one existing opt-in scan fixture
-ignored. The new path tests preserve outside sentinels during static link,
-ancestor junction, and staging-tree cases. `cargo clippy` passed before the
-last filesystem refinements and must be rerun against the final candidate.
+On 2026-10-03 the Windows all-feature suite passed 432 Rust tests with one
+existing opt-in scan fixture ignored. The path tests preserve outside
+sentinels during static link, ancestor junction, and staging-tree cases.
+`cargo clippy` must be rerun against the final candidate.
 
 ## Remaining P1 work
 
-1. A transaction opens rooted paths per operation rather than retaining one
-   project, app-data, transaction, backup, staging, and external-descriptor
-   identity through the complete transaction and recovery lifecycle. Persist
-   root identities in the journal and reject drift before apply, lock commit,
-   and recovery.
-2. A regular destination can still be changed after its precondition hash and
-   before replacement or deletion. Quarantine the displaced leaf, verify its
-   bytes after namespace movement, and persist the quarantine name/hash and
-   commit checkpoint so interruptions recover without losing user data.
+1. Application-data, external destinations, created-root cleanup, Git,
+   external actions, and readiness still have path-based boundaries. Retain
+   and persist their identities for the complete transaction and recovery
+   lifecycle. Checks before and after a path-based operation do not prevent
+   a swap-away-and-back race.
+2. Implemented on Windows for forward apply, managed delete, managed rollback restore and removal, the success-lock commit, and the rollback lock restore; see `public-readiness-transaction-quarantine.md`. The displaced leaf moves to a journaled same-directory quarantine through the retained parent handle, its bytes are verified before an exclusive placement, and every crash point recovers without losing user bytes. The Linux and macOS exclusive-rename routes are not yet compiled or run natively, so this item stays open until the native matrix in item 4 passes.
 3. The successful local path-swap tests prove ancestor containment for selected
    cases; they do not cover every transaction stage or concurrent final-leaf
    edit. Add deterministic barriers for app-root, transaction, backup, staging,

@@ -62,6 +62,11 @@ README pinned wording differs from latest-at-bootstrap resolution. Choose and en
 - Git push and online creation require separate approval
 - no invented platform commands
 - all semantic setup fields use the selected setup assistant; Codex uses ChatGPT authentication and App Server
+- the default setup assistant is Claude through the user's own installed,
+  unmodified Claude Code and its sign-in, with Claude Haiku 4.5 as the default
+  model (user decision of 2026-10-03); the app never offers its own Claude.ai
+  login or handles Claude credentials, as required by Anthropic's Claude Code
+  legal and compliance terms
 - App Server managed browser login is primary with device-code fallback
 - the external launcher descriptor and generated thumbnail are lock-managed
 - Windows and macOS resolve the HOI4 user `mod` directory from native redirected
@@ -74,8 +79,8 @@ README pinned wording differs from latest-at-bootstrap resolution. Choose and en
   removes it only when empty and preserves unknown content
 - the Ready-screen portrait link is a fixed HTTPS GitHub destination opened by
   the typed browser action
-- the bounded provider registry uses Codex by default plus Claude, Kimi, GLM,
-  DeepSeek, local, and custom profiles
+- the bounded provider registry uses the Claude account route by default plus
+  Codex, Claude API key, Kimi, GLM, DeepSeek, local, and custom profiles
 
 ## Open-source governance decisions
 

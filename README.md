@@ -6,8 +6,9 @@ HOI4 Mod Setup is a desktop wizard for preparing a Hearts of Iron IV mod for
 AI-assisted development. Start a new mod from its name and description, or
 choose an existing mod to add, update, or repair its development setup.
 
-The setup assistant can use Codex, Claude, Kimi, GLM, DeepSeek, a local model,
-or a custom provider. Codex is selected by default. This choice is only for
+The setup assistant can use Claude, Codex, Kimi, GLM, DeepSeek, a local model,
+or a custom provider. Claude is selected by default and signs in through your
+own Claude Code. This choice is only for
 analyzing and preparing the mod; it does not choose the AI client you use later
 for Agentic HOI4 Modding.
 
@@ -32,13 +33,18 @@ reviewed the changes and started installation.
 
 ![Create a new mod or import an existing one](docs/screenshots/01-welcome.jpg)
 
-Choose **Create new mod** or **Import existing mod**. For Codex, sign in with
-ChatGPT. For Claude, Kimi, GLM, or DeepSeek, paste an API key from the provider;
+Choose **Create new mod** or **Import existing mod**. For Claude, choose
+**Sign in to Claude**: your installed Claude Code opens the browser and signs
+you in with your Claude account, and the app never sees your Claude
+credentials. If Claude Code is not installed yet, the app links to Anthropic's
+setup page. For Codex, sign in with ChatGPT. For Kimi, GLM, DeepSeek, or
+**Claude API key**, paste an API key from the provider;
 the app fills the normal connection details automatically. Local and custom
 models let you enter the address supplied by that model service. Once connected,
 choose from the provider's live model list and select one of the reasoning
-levels that model supports, from **Light** through **Max**. Codex defaults to
-GPT-5.6 Luna with Extra high reasoning; DeepSeek defaults to its Flash model.
+levels that model supports, from **Light** through **Max**. Claude defaults to
+Claude Haiku 4.5; Codex defaults to GPT-5.6 Luna with Extra high reasoning;
+DeepSeek defaults to its Flash model.
 
 **Manage an existing project** scans any selected mod before changing it. If the
 scan finds app-managed setup, the view also offers repair, update, optional

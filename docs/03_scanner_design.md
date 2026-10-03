@@ -76,6 +76,10 @@ provider has write access.
 2. **Descriptors and thumbnail:** internal and launcher descriptor fields,
    duplicate keys, quoting, supported versions, path agreement, thumbnail
    existence, decoding, dimensions, color mode, hash, and replacement state.
+   The parser accepts real launcher-written descriptors: multi-line `{ ... }`
+   blocks such as `tags={`, repeated `replace_path` lines, a UTF-8 BOM, and
+   `#` comments outside quotes. An unclosed block or another duplicated key
+   remains a malformed descriptor.
 3. **Targeted setup inventory:** root `AGENTS.md` and `README.md`, `.agents/skills`,
    `.codex/agents`, `.codex/config.toml`, approved documentation, descriptors,
    thumbnail, Git metadata, and the managed setup lock. Ordinary HOI4 gameplay,

@@ -102,16 +102,51 @@ retains ancestor handles, and provides atomic writes, copy, append, delete,
 executable-mode updates, and bounded staging-tree removal. Use
 `RootedDir::open_read` for read-only roots and `RootedDir::open` or
 `open_or_create` for mutation roots. Do not add ambient `std::fs` mutation or
-read calls to production transaction code; the source regression test checks
-this boundary.
+read calls to production transaction code. The current source regression only
+catches selected direct calls; it does not prove that path-helper wrappers
+retain the same project/app-data identity through the mutation.
 
-This facade closes ancestor symlink/junction redirection for migrated calls,
-but it does not yet bind one project/app-data root identity across every
-transaction stage and recovery process. Replacing an existing leaf between
-its reviewed hash and commit can still lose concurrent user edits. Keep the P1
-release finding open until root identity is journal-bound, displaced leaf
-content is quarantined and recoverable, and native Windows/macOS swap tests
-cover backup, staging, apply, rollback, journal, lock, and recursive discard.
+Existing-project scans capture a project-root identity, and semantic review
+and plan construction must confirm that same directory. Plans bind an
+existing project by its directory identity and a new project by its existing
+parent identity. Journals retain parent and created-root identities; recovery
+rejects drift and project-root creation uses the reviewed parent handle. The
+identity-checked handle is not yet retained through every transaction
+operation. Schema 1.0 journals without identity evidence are inspect-only. A
+crash after creating an empty root but before journaling its identity records
+the observed identity and preserves the unowned directory. Inverse rollback
+stops for inspection if a recreated root does not match the journal.
+
+Forward backup, apply, final verification, lock construction, and lock commit
+retain the reviewed project capability. Managed rollback file and lock changes
+and finalization checks also use a retained project capability. Application-data
+and external destination parents still reopen by path, created-root cleanup
+drops the root handle, and Git/external actions still use path-based cwd and
+checks. On Windows, `RootedDir::sync_directory` flushes through `ReOpenFile`
+and, when that reopen is denied, through an identity-verified reopen of the
+retained path; directory-entry durability across sudden power loss is still
+not proven by a native test. Keep the P1/P2 release findings open until the
+same verified handles perform every operation, the Windows durability
+guarantee is proven or narrowed, and native Windows/macOS swap tests cover
+backup, staging, apply, rollback, journal, lock, and recursive discard.
+
+### Destination quarantine
+
+Never replace or delete an existing live regular file with a plain atomic replace or `remove_file`.
+Route every such change through `mutate_live_leaf` in `transaction.rs`:
+
+- Persist a synced operation checkpoint with `quarantine_leaf` before the namespace change. The name is `.hoi4ms-quarantine-<transaction id>-<operation id>.tmp` in the destination's own directory, and recovery accepts only that derived name.
+- Move the destination to the quarantine with `RootedDir::rename_file_noreplace` through the retained parent handle, then hash the moved bytes and journal them as `quarantine_sha256`.
+- On a mismatch, move the bytes back with an exclusive rename and fail as a changed-local-file conflict. If a new file took the name, keep both and leave the quarantine recorded.
+- Place new bytes only with `copy_file_atomic_noreplace_to`, `write_atomic_noreplace`, or an exclusive same-directory move. A destination absent at review is created the same way, so a file that appears in the window is never clobbered.
+- Release the quarantine with `remove_file_if_hash` only after the operation result checkpoint is synced.
+- Rollback restores a surviving forward quarantine instead of the backup copy, journals its own step quarantine on the child operation, settles an interrupted step quarantine before retrying, and never deletes a quarantine whose hash differs from both the reviewed precondition and the backup.
+- Lock quarantines use derived `install-lock-commit` and `install-lock-restore` names with expected hashes from `previous_lock_sha256` and `result_lock_sha256`. Finalization resume and rollback settle them before checking the lock.
+- Once project apply has started, recovery remains rollback-only; do not add resume of a partly applied file set to finish a quarantine.
+- The batch rollback intent marks operations `rollback_applying` before inspection, so recognize an unverified forward operation by its missing result evidence, never by its pre-rollback status.
+
+New fault coverage must exercise `fail_at_quarantine`, `fail_at_lock_quarantine`, the `live_mutation_barrier` test hook, and the thread-local rollback faults named `rollback_quarantine_<boundary>`, `rollback_after_placement`, and `rollback_lock_quarantine_<boundary>`.
+Unix exclusive rename uses `renameat2(RENAME_NOREPLACE)` on Linux and `renameatx_np(RENAME_EXCL)` on macOS with an exclusive `linkat` fallback; those routes have only been compiled for Windows here, so run the native Linux and macOS suites before relying on them.
 
 - Backup all replace or delete targets before mutation.
 - Stage files outside live destinations.
@@ -146,7 +181,7 @@ cover backup, staging, apply, rollback, journal, lock, and recursive discard.
   in its action outcome. A failed MCP readiness check copies that journaled
   cause into the readiness message and final failure so Recovery can explain
   the failure without rerunning the external action or weakening integrity.
-- Persist an `applying` operation intent before replacing or deleting a live destination. Use the platform atomic replace route where available and verify the expected incoming hash, not only an observed self-hash.
+- Persist an `applying` operation intent before replacing or deleting a live destination. Replace or delete an existing destination only through the destination quarantine, create a new one with an exclusive rename, and verify the expected incoming hash, not only an observed self-hash.
 - Bind UI apply to a core-owned reviewed plan session and prepared bytes. The renderer sends only the approved plan ID and project root when installation starts; never reserialize or accept a renderer-edited plan as authoritative.
 - Track source hash separately from result hash: generated files, structured merges, and optional MCP TOML adaptation may have a verified incoming source hash and a different deterministic installed hash. The generated `.hoi4-mod-setup/state.json` must validate against `project-state.schema.json`, including provider, model, reasoning effort, and optimization-profile provenance.
 - The Super Events source package uses stable `hoi4ms_*` names for manifest
@@ -373,6 +408,9 @@ Inject failure at every stage and operation boundary:
 - journal write failure
 - immediately after a live file or metadata mutation but before the operation
   result is observed and journaled
+- each destination-quarantine boundary: before the rename, after the rename,
+  after verification, and after the result checkpoint before release, plus a
+  concurrent edit or new file inside the precondition and placement windows
 
 Verify that recovery never creates a false success lock and rollback restores expected hashes.
 

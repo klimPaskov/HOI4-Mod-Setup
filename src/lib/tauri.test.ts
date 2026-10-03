@@ -79,7 +79,7 @@ describe("typed scanner bridge", () => {
     const result = await scanProject("C:/mods/example");
 
     expect(result?.findings).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "agents.present", label: "Detected · project_instructions", origin: "deterministic" }),
+      expect.objectContaining({ id: "agents.present", label: "Detected · Project instructions", origin: "deterministic" }),
       expect.objectContaining({ id: "conflict.git.inspection", label: "Blocking conflict · unsafe git configuration", status: "blocking" }),
     ]));
   });

@@ -2,7 +2,10 @@
 
 ## Decision
 
-Codex is the default setup-time semantic provider. HOI4 Mod Setup uses the user's Codex
+The default setup-time semantic provider is Claude through the user's own
+Claude Code sign-in (`claude_account`); its boundary is documented in
+`31_ai_provider_profiles_and_chat_sources.md`. Codex remains a first-class
+route. HOI4 Mod Setup uses the user's Codex
 access through their ChatGPT account for the Codex route. The application does
 not use an application-owned OpenAI API key, does not request an API key for
 Codex, and does not implement a separate token service. Users may instead
@@ -10,8 +13,8 @@ select a bounded non-Codex provider profile. Known hosted providers fill their
 verified model and address automatically and ask only for a provider API key,
 which is stored in the OS vault. Advanced users may review or change those
 defaults. The
-bounded non-Codex registry uses Claude, Kimi, GLM, DeepSeek, local, and
-`custom` profiles. This selection chooses only the assistant used by HOI4 Mod
+bounded non-Codex registry uses the Claude account route plus Claude API key,
+Kimi, GLM, DeepSeek, local, and `custom` profiles. This selection chooses only the assistant used by HOI4 Mod
 Setup for semantic planning. It does not choose or restrict the AI client the
 user later uses for Agentic HOI4 Modding.
 
@@ -55,7 +58,9 @@ Recovery, rollback, backup inspection, and local removal of managed files remain
 
 ### Non-Codex provider route
 
-Claude uses an Anthropic messages envelope. Kimi, GLM, DeepSeek, local, and
+The Claude account route runs the user's own Claude Code and is described in
+`31_ai_provider_profiles_and_chat_sources.md`. The Claude API-key route uses an
+Anthropic messages envelope. Kimi, GLM, DeepSeek, local, and
 the `custom` provider use the OpenAI-compatible envelope. Known hosted routes
 use checked-in provider defaults and a provider-keyed OS-vault reference. Their
 fixed account link opens the provider's official API-key page. Custom hosted

@@ -4,6 +4,43 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Make Claude the default setup assistant. **Sign in to Claude** runs your own
+  installed Claude Code's sign-in, so the app never handles Claude credentials,
+  and setup analysis uses Claude Haiku 4.5 in an isolated, tool-free Claude
+  Code turn. The Anthropic API-key route remains available as Claude API key
+  and also defaults to Haiku 4.5. Codex remains fully supported.
+- Hide the reasoning-effort control for models that have no adjustable effort.
+- Fix Codex planning failing as "temporarily unavailable" when current Codex
+  releases stream many reasoning and message deltas during one turn.
+- Import existing mods whose descriptors spread `tags` or `dependencies` over
+  several lines, repeat `replace_path`, or carry `#` comments, instead of
+  reporting the descriptor as unreadable.
+- Check skill frontmatter with a bounded parser that rejects unterminated
+  blocks, duplicate keys, and empty names or descriptions.
+- Keep local ComfyUI folders and RunPod addresses on the computer: they restore
+  portrait settings during import but are never sent to the setup assistant.
+- Flush Windows directory entries after file replacements instead of treating
+  a denied directory flush as success.
+- Stop preparing an installation as soon as the source provides a Git LFS
+  placeholder instead of a real file, with a clear explanation, instead of
+  failing late during validation.
+- Show plain next steps instead of internal error text when the installation
+  plan cannot be prepared.
+- Prepare the reviewed changes automatically when the dry run opens.
+- Keep the mod name you typed for a new mod, keep suggested tags when you
+  rename it, and let you confirm suggestions after editing them.
+- Default new mods to supported game version 1.19.*.
+- Check Codex and Claude Code signatures once per app run for unchanged
+  binaries, cutting the first account check from about a minute to seconds.
+- Download setup source files in parallel before preparing the plan.
+- Retry setup analysis once with the exact validation problem when the setup
+  assistant returns an incomplete proposal set, instead of failing the review.
+- Show readable names and short summaries for scan findings instead of raw keys
+  and JSON.
+- Collapse integration technical details by default.
+- Refresh the bundled audit snapshot from exact published Git bytes, including
+  the Python 3.13 3D compatibility files, and require the MCP server to advertise
+  the reviewed package version during health checks.
 - Fix existing-project review rejecting approved launcher descriptors, Git
   summaries, and aggregate scan findings as invalid evidence paths.
 - Preserve bounded, redacted MCP bootstrap failure details through readiness
@@ -14,6 +51,14 @@ HOI4 Mod Setup follows semantic versioning.
   the test dependency tree.
 - Route transaction file reads and mutations through retained, no-follow
   directory handles to prevent ancestor link swaps from redirecting them.
+- Bind reviewed plans and transaction journals to project-root identities,
+  create new roots through the reviewed parent handle, and retain ambiguous
+  roots safely after a crash before the identity checkpoint.
+- Capture project identity during existing-project scan and require it again
+  during semantic review and plan construction; version plan and journal
+  identity evidence as schema 1.1.
+- Use no-follow Windows lexical root acquisition and versioned 128-bit file IDs;
+  legacy identity-less journals remain inspection-only.
 
 ## 0.3.5 - 2026-09-05
 
