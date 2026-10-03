@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "plan_id": "960ccbb7-c36a-41b0-9d76-0105bcd83b05",
   "project_id": "cold_war_curtain",
   "script_prefix": "cwsea",
@@ -323,7 +323,8 @@
     "atomic_apply_expected": true,
     "project_root_mode": "create_leaf",
     "project_root_parent": "C:\\Users\\example\\OneDrive\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod",
-    "project_root_leaf": "cold_war_curtain"
+    "project_root_leaf": "cold_war_curtain",
+    "project_root_identity": "windows-v2:0000000000000001:00000000000000000000000000000001"
   },
   "approvals": {
     "dry_run_reviewed": true,

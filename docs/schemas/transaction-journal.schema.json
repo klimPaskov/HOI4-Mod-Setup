@@ -33,7 +33,7 @@
   ],
   "properties": {
     "schema_version": {
-      "type": "string"
+      "enum": ["1.0.0", "1.1.0"]
     },
     "transaction_id": {
       "type": "string",
@@ -95,6 +95,20 @@
             "string",
             "null"
           ]
+        },
+        "root_identity": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
+        },
+        "parent_identity": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
         },
         "checkpoint": {
           "enum": [
@@ -399,7 +413,26 @@
               "boolean",
               "null"
             ]
+          },
+          "quarantine_leaf": {
+            "description": "Same-directory name that holds the displaced destination while the operation replaces or deletes it. Recovery accepts only the name derived from the transaction and operation IDs.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\.hoi4ms-quarantine-[0-9a-f]{32}-[A-Za-z0-9_-]{1,64}\\.tmp$"
+          },
+          "quarantine_sha256": {
+            "description": "Observed SHA-256 of the quarantined bytes. Null or absent while the quarantine is planned but not verified; a value different from before_sha256 records local bytes that changed after review and were preserved.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
           }
+        },
+        "dependentRequired": {
+          "quarantine_sha256": ["quarantine_leaf"]
         }
       }
     },
@@ -498,6 +531,66 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "schema_version": { "const": "1.0.0" } } },
+      "then": {
+        "properties": {
+          "operations": {
+            "items": {
+              "properties": {
+                "quarantine_leaf": false,
+                "quarantine_sha256": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "schema_version": { "const": "1.1.0" } } },
+      "then": {
+        "properties": {
+          "project_root_lifecycle": {
+            "required": ["root_identity", "parent_identity"],
+            "allOf": [
+              {
+                "if": { "properties": { "mode": { "const": "existing" } } },
+                "then": {
+                  "properties": {
+                    "root_identity": { "type": "string" },
+                    "parent_identity": { "type": "null" }
+                  }
+                }
+              },
+              {
+                "if": { "properties": { "mode": { "const": "create_leaf" } } },
+                "then": {
+                  "properties": { "parent_identity": { "type": "string" } },
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "checkpoint": {
+                            "enum": ["created", "removing", "removed", "retained_user_content"]
+                          }
+                        }
+                      },
+                      "then": { "properties": { "root_identity": { "type": "string" } } }
+                    },
+                    {
+                      "if": { "properties": { "checkpoint": { "const": "pending" } } },
+                      "then": { "properties": { "root_identity": { "type": "null" } } }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "stage": {
       "type": "object",

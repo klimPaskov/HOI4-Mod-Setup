@@ -112,16 +112,16 @@
       ],
       "properties": {
         "provider": {
-          "enum": ["codex", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+          "enum": ["codex", "claude_account", "claude", "kimi", "glm", "deepseek", "local", "custom"]
         },
         "model": {
           "type": "string"
         },
         "integration": {
-          "enum": ["codex_app_server", "provider_api"]
+          "enum": ["codex_app_server", "claude_code_cli", "provider_api"]
         },
         "auth_mode": {
-          "enum": ["chatgpt", "api_key", "local_endpoint"]
+          "enum": ["chatgpt", "claude_account", "api_key", "local_endpoint"]
         },
         "authenticated_during_setup": {
           "type": "boolean"

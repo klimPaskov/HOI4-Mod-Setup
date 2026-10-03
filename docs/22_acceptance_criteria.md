@@ -67,7 +67,16 @@
 
 ## Provider profiles and flattened Chat sources
 
-- AI-01: Codex, Claude, Kimi, GLM, DeepSeek, local, and custom provider profiles are selectable at the start.
+- AI-01: Claude account (default), Codex, Claude API key, Kimi, GLM, DeepSeek, local, and custom provider profiles are selectable at the start.
+- AI-01B: The default Claude account route uses the user's own Anthropic-signed
+  Claude Code with Claude Haiku 4.5. **Sign in to Claude** runs Claude Code's
+  own `auth login` flow with closed standard input; the app never receives a
+  sign-in URL, code, or token. Sign-in shows one busy state, can be cancelled,
+  and times out. A missing Claude Code links to the official setup page; an
+  outdated one asks for `claude update`. Status keeps only non-identifying
+  fields, Sign out runs Claude Code's logout and clears pending analysis, and
+  analysis runs in an empty working directory with tools, MCP servers,
+  customizations, and session persistence disabled.
 - AI-01A: The first screen labels that choice as the setup assistant and states
   that it does not select or restrict the AI client used for later development.
 - AI-02: The selected setup profile changes semantic analysis only. Provider/model/profile provenance is retained in app-managed state, plan, lock, and maintenance review, but generated `AGENTS.md`, README, installed development-client components, and readiness remain provider-neutral.
@@ -78,7 +87,7 @@
 - AI-03C: Changing the setup assistant does not add, remove, select, or clear
   `codex.config`, MCP components, flattened ChatGPT sources, Open in Codex, or
   another development-client integration.
-- AI-03A: Claude, Kimi, GLM, and DeepSeek fill verified model and address defaults automatically; their normal path shows an official API-key link, key field, and Connect action, while overrides remain under Advanced.
+- AI-03A: Claude API key, Kimi, GLM, and DeepSeek fill verified model and address defaults automatically; their normal path shows an official API-key link, key field, and Connect action, while overrides remain under Advanced.
 - AI-03B: The app fetches the authenticated provider's live model catalog, shows
   the selected model's supported effort levels from Light through Max, defaults
   Codex to `gpt-5.6-luna`/`xhigh`, defaults DeepSeek to

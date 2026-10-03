@@ -28,7 +28,23 @@
   ],
   "allOf": [
     {
-      "if": { "properties": { "ai_provider": { "const": "codex" } } },
+      "if": { "properties": { "schema_version": { "const": "1.1.0" } } },
+      "then": {
+        "properties": {
+          "transaction": {
+            "required": ["project_root_identity"],
+            "properties": {
+              "project_root_identity": {
+                "type": "string",
+                "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "ai_provider": { "enum": ["codex", "claude_account"] } } },
       "then": { "properties": { "ai_endpoint": { "type": ["null", "string"], "maxLength": 0 } } }
     },
     {
@@ -38,7 +54,7 @@
   ],
   "properties": {
     "schema_version": {
-      "type": "string"
+      "enum": ["1.0.0", "1.1.0"]
     },
     "plan_id": {
       "type": "string",
@@ -56,7 +72,7 @@
       "pattern": "^[a-z_][a-z0-9_]{0,63}$"
     },
     "ai_provider": {
-      "enum": ["codex", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+      "enum": ["codex", "claude_account", "claude", "kimi", "glm", "deepseek", "local", "custom"]
     },
     "ai_model": {
       "type": "string",
@@ -345,6 +361,10 @@
             "string",
             "null"
           ]
+        },
+        "project_root_identity": {
+          "type": ["string", "null"],
+          "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
         }
       }
     },
@@ -391,13 +411,13 @@
       ],
       "properties": {
         "engine": {
-          "enum": ["codex_app_server", "provider_api"]
+          "enum": ["codex_app_server", "claude_code_cli", "provider_api"]
         },
         "auth_mode": {
-          "enum": ["chatgpt", "api_key", "local_endpoint"]
+          "enum": ["chatgpt", "claude_account", "api_key", "local_endpoint"]
         },
         "provider": {
-          "enum": ["codex", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+          "enum": ["codex", "claude_account", "claude", "kimi", "glm", "deepseek", "local", "custom"]
         },
         "model": {
           "type": ["string", "null"]

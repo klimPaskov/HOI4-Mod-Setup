@@ -5,7 +5,7 @@ description: Use when implementing or changing provider authentication, model pr
 
 # HOI4 Mod Setup Codex Integration
 
-Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The user selects a setup assistant, live-catalog model, and model-supported reasoning effort at the start; Codex is the default profile. This choice is never the later Agentic HOI4 Modding development-client selection.
+Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The user selects a setup assistant, model, and model-supported reasoning effort at the start; the Claude account route (`claude_account`, Claude Haiku 4.5) is the default profile and Codex remains first-class. This choice is never the later Agentic HOI4 Modding development-client selection.
 
 ## Product rule
 
@@ -22,7 +22,8 @@ detail to the renderer.
 Fetch Codex models through App Server `model/list` and provider models through
 the authenticated official Models API. Bind model plus reasoning effort to the
 analysis record, plan, and lock. The checked-in fallback defaults are
-`gpt-5.6-luna`/`xhigh` for Codex and `deepseek-v4-flash` for DeepSeek. Persist
+`claude-haiku-4-5-20251001` for both Claude routes, `gpt-5.6-luna`/`xhigh` for
+Codex, and `deepseek-flash` for DeepSeek. Persist
 these only as setup-analysis provenance; do not write them into generated
 AGENTS/README guidance or use them to select development components.
 
@@ -69,6 +70,36 @@ not report an exact total, the visible percentage and time remaining are
 explicit elapsed-time estimates within those stages.
 
 Recovery, rollback, backup inspection, and managed removal remain locally usable while signed out.
+
+## Claude account route
+
+`claude_account` runs the user's own installed, unmodified Claude Code through
+`src-tauri/src/claude_code.rs`; the full boundary is in
+`docs/31_ai_provider_profiles_and_chat_sources.md`.
+
+- Discover `claude` from PATH, `~/.local/bin`, and (macOS) Homebrew prefixes,
+  then require the Anthropic signature before any run. Never download, bundle,
+  or patch it; link to `https://code.claude.com/docs/en/setup` when missing.
+- Probe `claude --help` for every isolation flag in `REQUIRED_PRINT_FLAGS`.
+  A missing flag is a "needs an update" state, never a weaker invocation.
+- Sign-in is `claude auth login --claudeai` with closed stdin, cancellable,
+  ten-minute timeout. The renderer never receives a URL, code, or token.
+- Status reads only `loggedIn`, a bounded `authMethod`, and `apiProvider`.
+  A non-first-party Claude Code session is not a Claude account sign-in.
+- Analysis is `--print --output-format json --json-schema <schema> --model
+  <model> --tools "" --strict-mcp-config --safe-mode --no-session-persistence
+  --system-prompt <bounded>`, prompt on stdin, cwd a fresh empty temp
+  directory. Read `structured_output`; map `is_error` results to sanitized
+  sign-in, usage-limited, model, or generic categories without forwarding raw
+  result text.
+- Haiku 4.5 does not accept effort: do not forward `--effort` for it, and hide
+  the effort control when a model offers a single effort level.
+- Persist provider `claude_account`, engine/integration `claude_code_cli`, auth
+  mode `claude_account`. A legacy record with no provider still means Codex.
+- `claude_logout` clears pending proposals and approved scan evidence.
+
+Claude Code exposes no remaining-usage reading; describe usage as coming from
+the user's Claude plan and surface a usage-limit result only after it occurs.
 
 ## Required contract
 
@@ -259,6 +290,17 @@ by the selected setup assistant,” and requires an explicit confirmation action
 remain unchanged on process, login, usage-limit, or schema failure. The new-project
 renderer separately validates the user-confirmed launcher filename, descriptor
 agreement, and replaceable PNG placeholder; these are deterministic Rust checks.
+
+## Corrective retry
+
+Every adapter (Codex App Server, provider API, Claude Code) allows
+`ANALYSIS_ATTEMPTS` = 2 turns. When `validate_analysis_output` rejects a
+response with a serialization error, one corrective turn is sent with
+`corrective_analysis_prompt` (the validator's bounded reason plus the input
+hash; Codex reuses the same thread). Validation is never relaxed, other error
+categories are not retried, and the record binds only the accepted response.
+Validator messages name the failing proposal and rule so live probes can
+diagnose rejections; the renderer still sees only sanitized categories.
 
 ## Failure handling
 

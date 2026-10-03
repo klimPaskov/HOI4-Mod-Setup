@@ -18,7 +18,7 @@ use std::fs;
 use std::fs::OpenOptions;
 #[cfg(test)]
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
 const OPERATION_INTENT_BATCH: usize = 64;
@@ -56,6 +56,15 @@ pub struct TransactionOptions {
     /// operation result is observed and journaled.
     pub fail_after_live_mutation: Option<usize>,
     pub fail_after_operation: Option<usize>,
+    /// Inject failure at one same-directory quarantine boundary of the
+    /// operation with this index. Placement itself is covered by
+    /// `fail_after_live_mutation`.
+    pub fail_at_quarantine: Option<(usize, QuarantineBoundary)>,
+    /// Inject failure at one quarantine boundary of the success-lock commit.
+    pub fail_at_lock_quarantine: Option<QuarantineBoundary>,
+    /// Test barrier that models a concurrent local change inside the window
+    /// between the precondition check and the live namespace change.
+    pub live_mutation_barrier: Option<LiveMutationHook>,
     pub fail_before_git: bool,
     pub fail_after_git: bool,
     /// Deterministic fault boundaries around reviewed external actions. The
@@ -70,6 +79,32 @@ pub struct TransactionOptions {
     /// tests inject a deterministic fake.
     pub post_install_action_runner: Option<PostInstallActionRunner>,
 }
+
+/// A deterministic crash boundary around the quarantine of an existing live
+/// destination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuarantineBoundary {
+    /// The quarantine intent is durable and the destination has not moved.
+    BeforeRename,
+    /// The destination moved to its quarantine name and is not yet verified.
+    AfterRename,
+    /// The quarantined bytes matched the precondition and nothing is placed.
+    AfterVerification,
+    /// The operation result is durable and the quarantine still exists.
+    BeforeRelease,
+}
+
+/// Points where a test barrier may change the live destination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveMutationBarrier {
+    /// The precondition hash matched and no namespace change happened yet.
+    AfterPrecondition,
+    /// The displaced bytes were verified and the new bytes are not placed.
+    AfterQuarantineVerified,
+}
+
+/// Receives the absolute live destination and the operation index.
+pub type LiveMutationHook = fn(&Path, usize, LiveMutationBarrier);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PostInstallActionOutcome {
@@ -487,8 +522,41 @@ pub fn new_journal(
     project_root: &Path,
 ) -> TransactionJournal {
     let now = Utc::now().to_rfc3339();
+    let root_identity = match plan.transaction.project_root_mode {
+        ProjectRootMode::Existing => plan.transaction.project_root_identity.clone().or_else(|| {
+            RootedDir::open_read(project_root)
+                .ok()?
+                .identity_token()
+                .ok()
+        }),
+        ProjectRootMode::CreateLeaf => {
+            if project_root.exists() {
+                RootedDir::open_read(project_root)
+                    .ok()
+                    .and_then(|directory| directory.identity_token().ok())
+            } else {
+                None
+            }
+        }
+    };
+    let parent_identity = (plan.transaction.project_root_mode == ProjectRootMode::CreateLeaf)
+        .then(|| plan.transaction.project_root_identity.clone())
+        .flatten()
+        .or_else(|| {
+            (plan.transaction.project_root_mode == ProjectRootMode::CreateLeaf)
+                .then(|| {
+                    plan.transaction
+                        .project_root_parent
+                        .as_deref()
+                        .map(Path::new)
+                        .or_else(|| project_root.parent())
+                        .and_then(|path| RootedDir::open_read(path).ok())
+                        .and_then(|directory| directory.identity_token().ok())
+                })
+                .flatten()
+        });
     TransactionJournal {
-        schema_version: "1.0.0".into(),
+        schema_version: crate::migrations::CURRENT_JOURNAL_SCHEMA.into(),
         transaction_id: plan.plan_id,
         transaction_kind: "installation".into(),
         parent_transaction_id: None,
@@ -502,6 +570,8 @@ pub fn new_journal(
             mode: plan.transaction.project_root_mode,
             canonical_parent: plan.transaction.project_root_parent.clone(),
             leaf: plan.transaction.project_root_leaf.clone(),
+            root_identity,
+            parent_identity,
             checkpoint: if plan.transaction.project_root_mode == ProjectRootMode::CreateLeaf {
                 "pending".into()
             } else {
@@ -568,6 +638,8 @@ pub fn new_journal(
                 after_sha256: None,
                 after_exists: None,
                 after_executable: None,
+                quarantine_leaf: None,
+                quarantine_sha256: None,
             })
             .collect(),
         created_directories: Vec::new(),
@@ -609,6 +681,7 @@ fn validate_journal_project_root(
             "requested project root does not match the journal binding".into(),
         ));
     }
+    validate_project_root_lifecycle_identity(&requested_root, &journal.project_root_lifecycle)?;
     let journal_file = journal_path.file_name().and_then(|name| name.to_str());
     let transaction_directory = journal_path
         .parent()
@@ -623,6 +696,175 @@ fn validate_journal_project_root(
         ));
     }
     Ok(requested_root)
+}
+
+fn validate_project_root_lifecycle_identity(
+    project_root: &Path,
+    lifecycle: &ProjectRootLifecycle,
+) -> Result<(), AppError> {
+    match lifecycle.mode {
+        ProjectRootMode::Existing => {
+            let expected = lifecycle.root_identity.as_deref().ok_or_else(|| {
+                AppError::PathSecurity(
+                    "transaction journal has no identity binding for the existing project root"
+                        .into(),
+                )
+            })?;
+            let observed = RootedDir::open_read(project_root)?.identity_token()?;
+            if observed != expected {
+                return Err(AppError::PathSecurity(
+                    "project root directory identity changed after review".into(),
+                ));
+            }
+        }
+        ProjectRootMode::CreateLeaf => {
+            let parent = lifecycle.canonical_parent.as_deref().ok_or_else(|| {
+                AppError::PathSecurity("create-root journal has no canonical parent".into())
+            })?;
+            let expected_parent = lifecycle.parent_identity.as_deref().ok_or_else(|| {
+                AppError::PathSecurity(
+                    "create-root journal has no identity binding for its parent".into(),
+                )
+            })?;
+            let observed_parent = RootedDir::open_read(Path::new(parent))?.identity_token()?;
+            if observed_parent != expected_parent {
+                return Err(AppError::PathSecurity(
+                    "project root parent directory identity changed after review".into(),
+                ));
+            }
+
+            match fs::symlink_metadata(project_root) {
+                Ok(_) => {
+                    let root = RootedDir::open_read(project_root)?;
+                    let Some(expected_root) = lifecycle.root_identity.as_deref() else {
+                        // A process can stop after mkdir succeeds and before its
+                        // identity reaches the journal. Recovery may inspect and
+                        // preserve this root, but must never claim it as managed.
+                        if lifecycle.checkpoint == "applying" && !lifecycle.created_by_transaction {
+                            return Ok(());
+                        }
+                        return Err(AppError::PathSecurity(
+                            "project root appeared before its identity was journaled; manual inspection is required".into(),
+                        ));
+                    };
+                    if root.identity_token()? != expected_root {
+                        return Err(AppError::PathSecurity(
+                            "created project root directory identity changed".into(),
+                        ));
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    if lifecycle.observed_exists
+                        && !matches!(lifecycle.checkpoint.as_str(), "removing" | "removed")
+                    {
+                        return Err(AppError::PathSecurity(
+                            "journaled project root directory is missing".into(),
+                        ));
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn open_bound_project_root(
+    project_root: &Path,
+    lifecycle: &ProjectRootLifecycle,
+) -> Result<RootedDir, AppError> {
+    let root = match lifecycle.mode {
+        ProjectRootMode::Existing => RootedDir::open(project_root)?,
+        ProjectRootMode::CreateLeaf => {
+            let parent_path = lifecycle.canonical_parent.as_deref().ok_or_else(|| {
+                AppError::PathSecurity("create-root journal has no canonical parent".into())
+            })?;
+            let leaf = lifecycle.leaf.as_deref().ok_or_else(|| {
+                AppError::PathSecurity("create-root journal has no validated leaf".into())
+            })?;
+            crate::security::normalize_relative_path(leaf)?;
+            let parent = RootedDir::open(Path::new(parent_path))?;
+            if Some(parent.identity_token()?.as_str()) != lifecycle.parent_identity.as_deref() {
+                return Err(AppError::PathSecurity(
+                    "project root parent directory identity changed".into(),
+                ));
+            }
+            parent.open_dir(leaf)?
+        }
+    };
+    let expected_root = lifecycle.root_identity.as_deref().ok_or_else(|| {
+        AppError::PathSecurity("transaction has no identity binding for the project root".into())
+    })?;
+    if root.identity_token()? != expected_root {
+        return Err(AppError::PathSecurity(
+            "project root directory identity changed before the rooted operation".into(),
+        ));
+    }
+    Ok(root)
+}
+
+fn reviewed_project_root_identity(
+    plan: &InstallationPlan,
+    project_root: &Path,
+) -> Result<String, AppError> {
+    let anchor = match plan.transaction.project_root_mode {
+        ProjectRootMode::Existing => project_root.to_path_buf(),
+        ProjectRootMode::CreateLeaf => plan
+            .transaction
+            .project_root_parent
+            .as_deref()
+            .map(PathBuf::from)
+            .or_else(|| project_root.parent().map(Path::to_path_buf))
+            .ok_or_else(|| {
+                AppError::PathSecurity("new project root has no identity-bound parent".into())
+            })?,
+    };
+    RootedDir::open_read(&anchor)?.identity_token()
+}
+
+fn validate_plan_project_root_identity(
+    plan: &InstallationPlan,
+    project_root: &Path,
+) -> Result<(), AppError> {
+    let expected = plan
+        .transaction
+        .project_root_identity
+        .as_deref()
+        .ok_or_else(|| {
+            AppError::PathSecurity("installation plan has no project-root identity binding".into())
+        })?;
+    let observed = reviewed_project_root_identity(plan, project_root)?;
+    if observed != expected {
+        return Err(AppError::PathSecurity(
+            "project root or its reviewed parent changed after planning".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn open_plan_bound_project_root(
+    plan: &InstallationPlan,
+    project_root: &Path,
+) -> Result<RootedDir, AppError> {
+    if plan.transaction.project_root_mode != ProjectRootMode::Existing {
+        return Err(AppError::PathSecurity(
+            "an absent project root cannot be opened before apply".into(),
+        ));
+    }
+    let expected = plan
+        .transaction
+        .project_root_identity
+        .as_deref()
+        .ok_or_else(|| {
+            AppError::PathSecurity("installation plan has no project-root identity binding".into())
+        })?;
+    let root = RootedDir::open(project_root)?;
+    if root.identity_token()? != expected {
+        return Err(AppError::PathSecurity(
+            "project root changed while acquiring the transaction handle".into(),
+        ));
+    }
+    Ok(root)
 }
 
 fn same_root_path(left: &Path, right: &Path) -> bool {
@@ -680,7 +922,28 @@ pub fn transaction_state_is_terminal(state: &str) -> bool {
 }
 
 fn normalize_incomplete_recovery(journal: &mut TransactionJournal) {
-    if transaction_state_is_terminal(&journal.state) || journal.state == "finalizing" {
+    if transaction_state_is_terminal(&journal.state) {
+        return;
+    }
+    let identity_binding_present = match journal.project_root_lifecycle.mode {
+        ProjectRootMode::Existing => journal.project_root_lifecycle.root_identity.is_some(),
+        ProjectRootMode::CreateLeaf => {
+            let lifecycle = &journal.project_root_lifecycle;
+            lifecycle.parent_identity.is_some()
+                && (!lifecycle.observed_exists
+                    || lifecycle.root_identity.is_some()
+                    || (lifecycle.checkpoint == "applying" && !lifecycle.created_by_transaction)
+                    || matches!(lifecycle.checkpoint.as_str(), "removing" | "removed"))
+        }
+    };
+    if !identity_binding_present {
+        journal.recovery.resume_allowed = false;
+        journal.recovery.rollback_allowed = false;
+        journal.recovery.discard_staging_allowed = false;
+        journal.recovery.recommended_action = "inspect".into();
+        return;
+    }
+    if journal.state == "finalizing" {
         return;
     }
     if journal.state == "rolling_back" {
@@ -865,24 +1128,7 @@ fn expected_operation_backup(
         .join(format!("{operation_id}.bak")))
 }
 
-fn read_existing_lock(project_root: &Path) -> Result<Option<InstallationLock>, AppError> {
-    let parent = project_root
-        .parent()
-        .ok_or_else(|| AppError::PathSecurity("project root has no parent".into()))?;
-    let leaf = project_root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::PathSecurity("project root name is invalid".into()))?;
-    let parent = RootedDir::open_read(parent)?;
-    if !parent.exists(leaf)? {
-        return Ok(None);
-    }
-    if !parent.is_directory(leaf)? {
-        return Err(AppError::PathSecurity(
-            "selected project root is not a directory".into(),
-        ));
-    }
-    let project = parent.open_dir(leaf)?;
+fn read_existing_lock_from_root(project: &RootedDir) -> Result<Option<InstallationLock>, AppError> {
     let lock_relative = ".hoi4-mod-setup/install.lock.json";
     if !project.exists(lock_relative)? {
         return Ok(None);
@@ -892,35 +1138,48 @@ fn read_existing_lock(project_root: &Path) -> Result<Option<InstallationLock>, A
             "installation lock is not a regular file".into(),
         ));
     }
-    let bytes = project.read_file(lock_relative)?;
-    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
-        AppError::Transaction(format!("invalid existing installation lock: {error}"))
-    })?;
+    let value: serde_json::Value = serde_json::from_slice(&project.read_file(lock_relative)?)
+        .map_err(|error| {
+            AppError::Transaction(format!("invalid existing installation lock: {error}"))
+        })?;
     crate::migrations::migrate_lock(value).map(Some)
 }
 
 fn capture_previous_lock(
-    project_root: &Path,
+    project_directory: Option<&RootedDir>,
     backup_root: &Path,
+    backup_directory: &RootedDir,
     journal: &mut TransactionJournal,
     journal_path: &Path,
 ) -> Result<(), AppError> {
-    let lock_path = safe_join(project_root, ".hoi4-mod-setup/install.lock.json")?;
-    let metadata = match fs::symlink_metadata(&lock_path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
+    let Some(project_directory) = project_directory else {
+        return Ok(());
     };
-    if is_link_metadata(&metadata) || !metadata.is_file() {
+    let lock_relative = ".hoi4-mod-setup/install.lock.json";
+    if !project_directory.exists(lock_relative)? {
+        return Ok(());
+    }
+    if !project_directory.is_regular_file(lock_relative)? {
         return Err(AppError::PathSecurity(
             "installation lock is not a regular file".into(),
         ));
     }
-    let bytes = read_file_path(&lock_path)?;
-    let backup = backup_root.join("install.lock.json.bak");
-    atomic_write(&backup, &bytes)?;
+    let bytes = project_directory.read_file(lock_relative)?;
+    let backup_leaf = "install.lock.json.bak";
+    let backup = backup_root.join(backup_leaf);
     let digest = sha256_bytes(&bytes);
-    if sha256_file(&backup)? != digest {
+    if backup_directory.exists(backup_leaf)? {
+        if !backup_directory.is_regular_file(backup_leaf)?
+            || backup_directory.hash_file(backup_leaf)? != digest
+        {
+            return Err(AppError::Transaction(
+                "existing predecessor-lock backup does not match the reviewed lock".into(),
+            ));
+        }
+    } else {
+        backup_directory.write_atomic(backup_leaf, &bytes)?;
+    }
+    if backup_directory.hash_file(backup_leaf)? != digest {
         return Err(AppError::Transaction(
             "installation lock backup verification failed".into(),
         ));
@@ -936,11 +1195,17 @@ pub fn run_transaction(
     prepared_files: &[PreparedFile],
     options: &TransactionOptions,
 ) -> Result<(TransactionJournal, InstallationLock), AppError> {
-    validate_plan(plan)?;
-    let mut effective_plan = plan.clone();
     let (project_root, root_exists) = validate_project_root_or_destination(project_root)?;
+    validate_plan(plan)?;
     validate_plan_project_root(plan, &project_root, root_exists)?;
+    validate_plan_project_root_identity(plan, &project_root)?;
     validate_flatten_transaction_inputs(plan, prepared_files, &project_root)?;
+    let mut effective_plan = plan.clone();
+    let mut project_directory = if plan.transaction.project_root_mode == ProjectRootMode::Existing {
+        Some(open_plan_bound_project_root(plan, &project_root)?)
+    } else {
+        None
+    };
     let app_root = match options.app_data_root.clone() {
         Some(root) => root,
         None => application_data_root()?,
@@ -958,7 +1223,11 @@ pub fn run_transaction(
             )));
         }
     }
-    let previous_lock = read_existing_lock(&project_root)?;
+    let previous_lock = if let Some(project) = project_directory.as_ref() {
+        read_existing_lock_from_root(project)?
+    } else {
+        None
+    };
     let roots = transaction_root(&app_root, plan.plan_id);
     RootedDir::open_or_create(&roots.transaction)?;
     if path_has_link_component(&roots.transaction) {
@@ -1074,11 +1343,19 @@ pub fn run_transaction(
                 roots.backup.display()
             )));
         }
-        capture_previous_lock(&project_root, &roots.backup, &mut journal, &journal_path)?;
+        let backup_directory = RootedDir::open(&roots.backup)?;
+        capture_previous_lock(
+            project_directory.as_ref(),
+            &roots.backup,
+            &backup_directory,
+            &mut journal,
+            &journal_path,
+        )?;
         backup_existing(
             &project_root,
             plan,
             &roots.backup,
+            project_directory.as_ref(),
             &mut journal,
             &journal_path,
         )?;
@@ -1143,16 +1420,27 @@ pub fn run_transaction(
             options.fail_before_stage,
         )?;
         ensure_project_root_for_apply(&project_root, plan, &mut journal, &journal_path)?;
-        apply_profile_directories(&project_root, plan, &mut journal, &journal_path)?;
+        if project_directory.is_none() {
+            project_directory = Some(open_bound_project_root(
+                &project_root,
+                &journal.project_root_lifecycle,
+            )?);
+        }
+        let project_directory = project_directory.as_ref().ok_or_else(|| {
+            AppError::PathSecurity("transaction has no retained project-root handle".into())
+        })?;
+        apply_profile_directories_rooted(project_directory, plan, &mut journal, &journal_path)?;
         apply_operations(
             &project_root,
             plan,
             &roots.staging,
+            project_directory,
             &mut journal,
             &journal_path,
             options,
         )?;
         compact_operation_checkpoints(&journal_path, &mut journal)?;
+        project_directory.verify_bound_to_path()?;
         if let Some(setup) = &plan.git_setup {
             journal.git_initialized = setup.mode == crate::git::GitMode::Initialize;
             if setup.mode == crate::git::GitMode::Preserve && setup.remote_url.is_some() {
@@ -1210,8 +1498,10 @@ pub fn run_transaction(
                     })
                 })
                 .collect::<Result<Vec<_>, AppError>>()?;
+            project_directory.verify_bound_to_path()?;
             let git_result =
                 crate::git::apply_git_setup(project_root.as_path(), setup, &managed_paths)?;
+            project_directory.verify_bound_to_path()?;
             if options.fail_after_git {
                 return Err(AppError::Transaction(
                     "fault injected after Git setup".into(),
@@ -1239,7 +1529,9 @@ pub fn run_transaction(
             &journal_path,
             options.fail_before_stage,
         )?;
+        project_directory.verify_bound_to_path()?;
         post_install_checks(&project_root, plan, &mut journal, &journal_path)?;
+        project_directory.verify_bound_to_path()?;
         if let Some(runner) = options.post_install_action_runner {
             let components = [crate::mcp::COMPONENT_ID, "workflow.3d"]
                 .into_iter()
@@ -1271,7 +1563,9 @@ pub fn run_transaction(
                         "fault injected before reviewed post-install action {component_id}"
                     )));
                 }
+                project_directory.verify_bound_to_path()?;
                 let outcome = runner(&project_root, plan, component_id)?;
+                project_directory.verify_bound_to_path()?;
                 if outcome.component_id != component_id {
                     return Err(AppError::Transaction(format!(
                         "post-install action for {component_id} returned result for {}",
@@ -1334,7 +1628,9 @@ pub fn run_transaction(
             &journal_path,
             options.fail_before_stage,
         )?;
+        project_directory.verify_bound_to_path()?;
         let readiness = build_transaction_readiness(&project_root, &effective_plan, &journal)?;
+        project_directory.verify_bound_to_path()?;
         let readiness_path = roots.transaction.join("readiness-report.json");
         atomic_write_json(&readiness_path, &readiness)?;
         if let Some(stage) = journal.stages.get_mut(10) {
@@ -1362,13 +1658,15 @@ pub fn run_transaction(
                 blocking_checks.join(", ")
             )));
         }
-        final_live_verification(&project_root, plan, &journal)?;
+        final_live_verification(&project_root, project_directory, plan, &journal)?;
+        project_directory.verify_bound_to_path()?;
         let lock = build_lock(
             &effective_plan,
             prepared_files,
             &journal,
             previous_lock.as_ref(),
             &project_root,
+            project_directory,
         )?;
         let lock_bytes = serialized_json_bytes(&lock)?;
         journal.result_lock_exists = Some(true);
@@ -1404,12 +1702,11 @@ pub fn run_transaction(
                 "fault injected after stage rollback record".into(),
             ));
         }
-        let metadata_root = project_root.join(".hoi4-mod-setup");
-        RootedDir::open_or_create(&metadata_root)?;
+        project_directory.ensure_dir(".hoi4-mod-setup")?;
         // The lock is the final success artifact. Journal finalization after
         // this point is best-effort: a stale `finalizing` journal is safely
         // reconciled by resume only after the lock and rollback record verify.
-        atomic_write_json(&metadata_root.join("install.lock.json"), &lock)?;
+        commit_success_lock(project_directory, &journal, &lock_bytes, options)?;
         maybe_abort_for_test("after_lock_write");
         stage_complete(&mut journal, 11, "rollback record", &journal_path, None)?;
         journal.state = "completed".into();
@@ -1469,6 +1766,90 @@ pub fn run_transaction(
             Err(error)
         }
     }
+}
+
+/// Write the success lock without replacing a lock that changed after the
+/// predecessor backup. An existing predecessor is quarantined under a name
+/// derived from the transaction, verified against the journaled predecessor
+/// hash, and released only after the new lock verifies. Finalization and
+/// rollback settle that quarantine after an interruption.
+fn commit_success_lock(
+    project: &RootedDir,
+    journal: &TransactionJournal,
+    lock_bytes: &[u8],
+    options: &TransactionOptions,
+) -> Result<(), AppError> {
+    let current = live_leaf_hash(project, LOCK_RELATIVE_PATH)?;
+    if current.as_deref() != journal.previous_lock_sha256.as_deref() {
+        return Err(AppError::Transaction(
+            "installation lock changed after its backup; the success lock was not written".into(),
+        ));
+    }
+    let fault = |boundary: QuarantineBoundary| -> Result<(), AppError> {
+        if options.fail_at_lock_quarantine == Some(boundary) {
+            Err(AppError::Transaction(format!(
+                "fault injected at lock quarantine boundary {boundary:?}"
+            )))
+        } else {
+            Ok(())
+        }
+    };
+    let held = mutate_live_leaf(
+        project,
+        LOCK_RELATIVE_PATH,
+        current.as_deref(),
+        LiveChange::Bytes(lock_bytes),
+        &lock_quarantine_leaf(journal.transaction_id, "commit"),
+        None,
+        "lock-commit",
+        &fault,
+        &no_live_barrier,
+    )?;
+    if project.hash_file(LOCK_RELATIVE_PATH)?
+        != journal.result_lock_sha256.as_deref().unwrap_or_default()
+    {
+        return Err(AppError::Transaction(
+            "success lock verification failed after rooted write".into(),
+        ));
+    }
+    if let (Some(quarantine), Some(previous)) = (held, current) {
+        fault(QuarantineBoundary::BeforeRelease)?;
+        release_quarantine(project, &quarantine, &previous)?;
+    }
+    Ok(())
+}
+
+/// Settle both lock quarantines that this journal may own: the success-lock
+/// commit and the rollback restore of the predecessor lock.
+fn settle_journal_lock_quarantines(
+    project: &RootedDir,
+    journal: &TransactionJournal,
+) -> Result<(), AppError> {
+    let result = match (
+        journal.result_lock_exists,
+        journal.result_lock_sha256.as_deref(),
+    ) {
+        (Some(true), Some(hash)) => Some(hash),
+        _ => None,
+    };
+    let previous = journal.previous_lock_sha256.as_deref();
+    if previous.is_some() && result.is_some() {
+        settle_lock_quarantine(
+            project,
+            &lock_quarantine_leaf(journal.transaction_id, "commit"),
+            previous,
+            result,
+        )?;
+    }
+    if result.is_some() {
+        settle_lock_quarantine(
+            project,
+            &lock_quarantine_leaf(journal.transaction_id, "restore"),
+            result,
+            previous,
+        )?;
+    }
+    Ok(())
 }
 
 fn persist_journal(path: &Path, journal: &mut TransactionJournal) -> Result<(), AppError> {
@@ -2174,10 +2555,56 @@ pub(crate) fn validate_flatten_transaction_inputs(
     Ok(())
 }
 
+fn copy_backup_from_root(
+    source_root: &RootedDir,
+    source_relative: &str,
+    backup_root: &RootedDir,
+    backup_relative: &str,
+    expected_sha256: &str,
+) -> Result<Option<bool>, AppError> {
+    if backup_root.exists(backup_relative)? {
+        if !backup_root.is_regular_file(backup_relative)?
+            || backup_root.hash_file(backup_relative)? != expected_sha256
+        {
+            return Err(AppError::Transaction(
+                "existing backup does not match the reviewed source file".into(),
+            ));
+        }
+    } else if !source_root.copy_file_atomic_noreplace_to(
+        source_relative,
+        backup_root,
+        backup_relative,
+    )? {
+        return Err(AppError::Transaction(
+            "backup name was taken during backup; refusing to replace it".into(),
+        ));
+    }
+    if backup_root.hash_file(backup_relative)? != expected_sha256 {
+        return Err(AppError::Transaction(
+            "backup verification failed after rooted copy".into(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        let source_executable = source_root.observed_executable(source_relative)?;
+        if backup_root.observed_executable(backup_relative)? != source_executable {
+            return Err(AppError::Transaction(
+                "backup executable metadata verification failed".into(),
+            ));
+        }
+        Ok(source_executable)
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(None)
+    }
+}
+
 fn backup_existing(
     project_root: &Path,
     plan: &InstallationPlan,
     backup_root: &Path,
+    project_directory: Option<&RootedDir>,
     journal: &mut TransactionJournal,
     journal_path: &Path,
 ) -> Result<(), AppError> {
@@ -2186,6 +2613,7 @@ fn backup_existing(
             "backup root contains a symlink or junction".into(),
         ));
     }
+    let backup_directory = RootedDir::open(backup_root)?;
     let mut checkpointed = 0usize;
     for (operation_index, operation) in plan.operations.iter().enumerate() {
         if matches!(
@@ -2194,77 +2622,91 @@ fn backup_existing(
         ) {
             continue;
         }
-        let destination = operation_destination(project_root, operation)?;
-        if !destination.exists() {
-            continue;
-        }
-        let metadata = fs::symlink_metadata(&destination)?;
-        if is_link_metadata(&metadata) {
-            return Err(AppError::PathSecurity(format!(
-                "refusing to back up symlink: {}",
-                operation.destination
-            )));
-        }
-        let backup = backup_root.join(format!("{}.bak", operation.id));
+        let backup_leaf = format!("{}.bak", operation.id);
+        let backup = backup_root.join(&backup_leaf);
+        let (source_hash, before_executable) = if operation.external {
+            let destination = operation_destination(project_root, operation)?;
+            let parent = destination.parent().ok_or_else(|| {
+                AppError::PathSecurity("external backup destination has no parent".into())
+            })?;
+            let source_leaf = destination
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| {
+                    AppError::PathSecurity("external backup destination name is invalid".into())
+                })?;
+            let source_root = RootedDir::open(parent)?;
+            let exists = source_root.exists(source_leaf)?;
+            let is_file = source_root.is_regular_file(source_leaf)?;
+            if exists && !is_file {
+                return Err(AppError::PathSecurity(format!(
+                    "external backup source is not a regular file: {}",
+                    operation.destination
+                )));
+            }
+            if !is_file {
+                continue;
+            }
+            let hash = source_root.hash_file(source_leaf)?;
+            if operation.local_sha256.as_deref() != Some(hash.as_str()) {
+                return Err(AppError::Transaction(format!(
+                    "live precondition changed before backup: {}",
+                    operation.destination
+                )));
+            }
+            let executable = copy_backup_from_root(
+                &source_root,
+                source_leaf,
+                &backup_directory,
+                &backup_leaf,
+                &hash,
+            )?;
+            (hash, executable)
+        } else {
+            let Some(source_root) = project_directory.as_ref() else {
+                continue;
+            };
+            let exists = source_root.exists(&operation.destination)?;
+            let is_file = source_root.is_regular_file(&operation.destination)?;
+            if exists && !is_file {
+                return Err(AppError::Transaction(format!(
+                    "directory or special-file replacement requires an explicit plan: {}",
+                    operation.destination
+                )));
+            }
+            if !is_file {
+                continue;
+            }
+            let hash = source_root.hash_file(&operation.destination)?;
+            if operation.local_sha256.as_deref() != Some(hash.as_str()) {
+                return Err(AppError::Transaction(format!(
+                    "live precondition changed before backup: {}",
+                    operation.destination
+                )));
+            }
+            let executable = copy_backup_from_root(
+                source_root,
+                &operation.destination,
+                &backup_directory,
+                &backup_leaf,
+                &hash,
+            )?;
+            (hash, executable)
+        };
         if path_has_link_component(&backup) {
             return Err(AppError::PathSecurity(format!(
                 "backup path contains a symlink or junction: {}",
                 backup.display()
             )));
         }
-        if metadata.is_file() {
-            let current_hash = sha256_file(&destination)?;
-            if operation.local_sha256.as_deref() != Some(current_hash.as_str()) {
-                return Err(AppError::Transaction(format!(
-                    "live precondition changed before backup: {}",
-                    operation.destination
-                )));
-            }
-            copy_atomic(&destination, &backup)?;
-            if sha256_file(&backup)? != current_hash {
-                return Err(AppError::Transaction(format!(
-                    "backup verification failed: {}",
-                    operation.destination
-                )));
-            }
-            let before_executable = observed_executable(&destination)?;
-            if observed_executable(&backup)? != before_executable {
-                return Err(AppError::Transaction(format!(
-                    "backup executable metadata verification failed: {}",
-                    operation.destination
-                )));
-            }
-            if let Some(record) = journal
-                .operations
-                .iter_mut()
-                .find(|record| record.id == operation.id)
-            {
-                record.before_executable = before_executable;
-            }
-        } else if metadata.is_dir() {
-            return Err(AppError::Transaction(format!(
-                "directory replacement requires an explicit removal plan: {}",
-                operation.destination
-            )));
-        }
-        let recorded = if let Some(record) = journal
+        if let Some(record) = journal
             .operations
             .iter_mut()
             .find(|record| record.id == operation.id)
         {
+            record.before_executable = before_executable;
             record.backup_path = Some(backup.display().to_string());
-            true
-        } else {
-            false
-        };
-        if recorded {
-            if let Some(record) = journal
-                .operations
-                .iter_mut()
-                .find(|record| record.id == operation.id)
-            {
-                record.backup_sha256 = Some(sha256_file(&backup)?);
-            }
+            record.backup_sha256 = Some(source_hash);
             journal.last_checkpoint = format!("backup-file-{}", operation.id);
             append_operation_checkpoint(journal_path, journal, operation_index)?;
             checkpointed += 1;
@@ -2577,6 +3019,10 @@ fn ensure_project_root_for_apply(
     match plan.transaction.project_root_mode {
         ProjectRootMode::Existing => {
             validate_project_root(project_root)?;
+            validate_project_root_lifecycle_identity(
+                project_root,
+                &journal.project_root_lifecycle,
+            )?;
             Ok(())
         }
         ProjectRootMode::CreateLeaf => {
@@ -2585,6 +3031,10 @@ fn ensure_project_root_for_apply(
                     "journal root lifecycle does not match the reviewed plan".into(),
                 ));
             }
+            validate_project_root_lifecycle_identity(
+                project_root,
+                &journal.project_root_lifecycle,
+            )?;
             let (validated, exists) = validate_project_root_or_destination(project_root)?;
             if exists {
                 return Err(AppError::Transaction(
@@ -2602,9 +3052,27 @@ fn ensure_project_root_for_apply(
             journal.last_checkpoint = "apply-project-root-intent".into();
             persist_journal(journal_path, journal)?;
             maybe_abort_for_test("before_project_root_create");
-            create_directory_path(project_root)?;
+            let parent_path = journal
+                .project_root_lifecycle
+                .canonical_parent
+                .as_deref()
+                .ok_or_else(|| AppError::PathSecurity("new project root has no parent".into()))?;
+            let leaf = journal
+                .project_root_lifecycle
+                .leaf
+                .as_deref()
+                .ok_or_else(|| AppError::PathSecurity("new project root has no leaf".into()))?;
+            let parent = RootedDir::open(Path::new(parent_path))?;
+            if Some(parent.identity_token()?.as_str())
+                != journal.project_root_lifecycle.parent_identity.as_deref()
+            {
+                return Err(AppError::PathSecurity(
+                    "project root parent changed before directory creation".into(),
+                ));
+            }
+            let created = parent.create_dir(leaf)?;
             maybe_abort_for_test("after_project_root_create");
-            RootedDir::open(project_root)?;
+            journal.project_root_lifecycle.root_identity = Some(created.identity_token()?);
             journal.project_root_lifecycle.checkpoint = "created".into();
             journal.project_root_lifecycle.created_by_transaction = true;
             journal.project_root_lifecycle.observed_exists = true;
@@ -2614,46 +3082,58 @@ fn ensure_project_root_for_apply(
     }
 }
 
+#[cfg(test)]
 fn apply_profile_directories(
     project_root: &Path,
     plan: &InstallationPlan,
     journal: &mut TransactionJournal,
     journal_path: &Path,
 ) -> Result<(), AppError> {
+    let root = open_bound_project_root(project_root, &journal.project_root_lifecycle)?;
+    apply_profile_directories_rooted(&root, plan, journal, journal_path)
+}
+
+fn apply_profile_directories_rooted(
+    root: &RootedDir,
+    plan: &InstallationPlan,
+    journal: &mut TransactionJournal,
+    journal_path: &Path,
+) -> Result<(), AppError> {
     let mut missing = std::collections::BTreeSet::new();
     for directory in &plan.transaction.directories {
-        let destination = safe_join(project_root, directory)?;
-        if destination == project_root {
+        if crate::security::normalize_relative_path(directory)?.is_empty() {
             return Err(AppError::PathSecurity(
                 "profile directory cannot be the project root".into(),
             ));
         }
-        let mut current = project_root.to_path_buf();
+        let mut current = String::new();
         for component in Path::new(directory).components() {
-            current.push(component.as_os_str());
-            match fs::symlink_metadata(&current) {
-                Ok(metadata) if is_link_metadata(&metadata) || !metadata.is_dir() => {
-                    return Err(AppError::PathSecurity(format!(
-                        "profile destination is not a regular directory: {directory}"
-                    )))
-                }
-                Ok(_) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    let relative = current.strip_prefix(project_root).map_err(|_| {
-                        AppError::PathSecurity("profile directory escaped the project root".into())
-                    })?;
-                    missing.insert(relative.to_string_lossy().replace('\\', "/"));
-                }
-                Err(error) => return Err(error.into()),
+            let Component::Normal(component) = component else {
+                return Err(AppError::PathSecurity(
+                    "profile directory contains an invalid path component".into(),
+                ));
+            };
+            if !current.is_empty() {
+                current.push('/');
             }
+            current.push_str(&component.to_string_lossy());
+            if root.is_directory(&current)? {
+                continue;
+            }
+            if root.exists(&current)? {
+                return Err(AppError::PathSecurity(format!(
+                    "profile destination is not a regular directory: {directory}"
+                )));
+            }
+            missing.insert(current.clone());
         }
     }
     journal.created_directories = missing.into_iter().collect();
     journal.last_checkpoint = "apply-profile-directories-intent".into();
     persist_journal(journal_path, journal)?;
     for directory in &plan.transaction.directories {
-        RootedDir::open(project_root)?.ensure_dir(directory)?;
-        RootedDir::open(project_root)?.open_dir(directory)?;
+        root.ensure_dir(directory)?;
+        root.open_dir(directory)?;
     }
     journal.last_checkpoint = "apply-profile-directories-created".into();
     persist_journal(journal_path, journal)
@@ -2663,12 +3143,14 @@ fn apply_operations(
     project_root: &Path,
     plan: &InstallationPlan,
     staging_root: &Path,
+    project_directory: &RootedDir,
     journal: &mut TransactionJournal,
     journal_path: &Path,
     options: &TransactionOptions,
 ) -> Result<(), AppError> {
     mark_project_apply_started(journal);
     persist_journal(journal_path, journal)?;
+    let staging_directory = RootedDir::open(staging_root)?;
     for (index, operation) in plan.operations.iter().enumerate() {
         if index % OPERATION_INTENT_BATCH == 0 {
             let batch_end = (index + OPERATION_INTENT_BATCH).min(plan.operations.len());
@@ -2720,18 +3202,35 @@ fn apply_operations(
             }
             continue;
         }
-        let destination = operation_destination(project_root, operation)?;
-        let current_hash = if destination.is_file() {
-            Some(sha256_file(&destination)?)
+        let destination = if operation.external {
+            operation_destination(project_root, operation)?
         } else {
-            None
+            project_root.join(&operation.destination)
         };
-        if destination.exists() && !destination.is_file() {
-            return Err(AppError::Transaction(format!(
-                "destination is not a regular file: {}",
-                operation.destination
-            )));
-        }
+        let project_root_capability = (!operation.external).then_some(project_directory);
+        let current_hash = if let Some(root) = project_root_capability {
+            let exists = root.exists(&operation.destination)?;
+            let is_file = root.is_regular_file(&operation.destination)?;
+            if exists && !is_file {
+                return Err(AppError::Transaction(format!(
+                    "destination is not a regular file: {}",
+                    operation.destination
+                )));
+            }
+            is_file
+                .then(|| root.hash_file(&operation.destination))
+                .transpose()?
+        } else {
+            let is_file = destination.is_file();
+            let exists = destination.exists();
+            if exists && !is_file {
+                return Err(AppError::Transaction(format!(
+                    "destination is not a regular file: {}",
+                    operation.destination
+                )));
+            }
+            is_file.then(|| sha256_file(&destination)).transpose()?
+        };
         if let Some(expected) = &operation.local_sha256 {
             if current_hash.as_deref() != Some(expected.as_str()) {
                 return Err(AppError::Transaction(format!(
@@ -2746,21 +3245,19 @@ fn apply_operations(
             )));
         }
         let staged = staging_destination(staging_root, operation)?;
-        if path_has_link_component(&staged) {
-            return Err(AppError::PathSecurity(format!(
-                "staging path contains a symlink or junction: {}",
-                staged.display()
-            )));
-        }
+        let staged_relative = if operation.external {
+            format!("external/{}", operation.id)
+        } else {
+            operation.destination.clone()
+        };
         let staged_hash = if operation.action != OperationAction::DeleteManaged {
-            let staged_metadata = fs::symlink_metadata(&staged)?;
-            if is_link_metadata(&staged_metadata) || !staged_metadata.is_file() {
+            if !staging_directory.is_regular_file(&staged_relative)? {
                 return Err(AppError::PathSecurity(format!(
                     "staging destination is not a regular file: {}",
                     staged.display()
                 )));
             }
-            let staged_hash = sha256_file(&staged)?;
+            let staged_hash = staging_directory.hash_file(&staged_relative)?;
             let expected = operation
                 .result_sha256
                 .as_deref()
@@ -2785,16 +3282,70 @@ fn apply_operations(
             record.after_exists = None;
         }
         journal.last_checkpoint = format!("apply-intent-{}", operation.id);
-        match operation.action {
-            OperationAction::DeleteManaged => {
-                if current_hash.is_some() {
-                    remove_file_path(&destination)?;
-                }
+        let deleting = operation.action == OperationAction::DeleteManaged;
+        // A managed delete whose destination is already absent changes
+        // nothing, and its external parent may no longer exist.
+        let target = if deleting && current_hash.is_none() {
+            None
+        } else {
+            Some(live_target(
+                project_root_capability,
+                operation.external,
+                &operation.destination,
+                !deleting,
+            )?)
+        };
+        let quarantine_fault_at = options
+            .fail_at_quarantine
+            .and_then(|(fault_index, boundary)| (fault_index == index).then_some(boundary));
+        let quarantine_fault = |boundary: QuarantineBoundary| -> Result<(), AppError> {
+            if quarantine_fault_at == Some(boundary) {
+                Err(AppError::Transaction(format!(
+                    "fault injected at quarantine boundary {boundary:?} for operation {}",
+                    operation.id
+                )))
+            } else {
+                Ok(())
             }
-            _ => {
-                copy_atomic(&staged, &destination)?;
-                apply_executable_state(&destination, operation.executable)?;
+        };
+        let barrier = |point: LiveMutationBarrier| {
+            if let Some(hook) = options.live_mutation_barrier {
+                hook(&destination, index, point);
             }
+        };
+        barrier(LiveMutationBarrier::AfterPrecondition);
+        let change = if deleting {
+            LiveChange::Delete
+        } else {
+            LiveChange::Copy {
+                source: &staging_directory,
+                source_relative: &staged_relative,
+            }
+        };
+        let quarantine_leaf = quarantine_leaf_name(journal.transaction_id, &operation.id);
+        let held_quarantine = match target.as_ref() {
+            Some(target) => mutate_live_leaf(
+                target.dir(),
+                &target.relative,
+                current_hash.as_deref(),
+                change,
+                &quarantine_leaf,
+                Some(QuarantineJournal {
+                    journal: &mut *journal,
+                    journal_path,
+                    index,
+                }),
+                "apply",
+                &quarantine_fault,
+                &barrier,
+            )?,
+            None => None,
+        };
+        #[cfg(unix)]
+        if let (false, Some(target)) = (deleting, target.as_ref()) {
+            target
+                .dir()
+                .set_executable(&target.relative, operation.executable)?;
         }
         if options.fail_after_live_mutation == Some(index) {
             return Err(AppError::Transaction(format!(
@@ -2802,16 +3353,46 @@ fn apply_operations(
                 operation.id
             )));
         }
-        let after_hash = if destination.is_file() {
-            Some(sha256_file(&destination)?)
-        } else {
-            None
-        };
-        let after_executable = if destination.is_file() {
-            observed_executable(&destination)?
-        } else {
-            None
-        };
+        let (after_hash, after_executable, after_exists) =
+            if let Some(root) = project_root_capability {
+                let exists = root.exists(&operation.destination)?;
+                let is_file = root.is_regular_file(&operation.destination)?;
+                if exists && !is_file {
+                    return Err(AppError::PathSecurity(format!(
+                        "destination is not a regular file after apply: {}",
+                        operation.destination
+                    )));
+                }
+                (
+                    is_file
+                        .then(|| root.hash_file(&operation.destination))
+                        .transpose()?,
+                    if is_file {
+                        #[cfg(unix)]
+                        {
+                            root.observed_executable(&operation.destination)?
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            None
+                        }
+                    } else {
+                        None
+                    },
+                    exists,
+                )
+            } else {
+                let is_file = destination.is_file();
+                (
+                    is_file.then(|| sha256_file(&destination)).transpose()?,
+                    if is_file {
+                        observed_executable(&destination)?
+                    } else {
+                        None
+                    },
+                    destination.exists(),
+                )
+            };
         if operation.action != OperationAction::DeleteManaged && after_hash.is_none() {
             return Err(AppError::Transaction(format!(
                 "destination missing after apply: {}",
@@ -2834,11 +3415,26 @@ fn apply_operations(
             record.status = "verified".into();
             record.staged_sha256 = staged_hash;
             record.after_sha256 = after_hash;
-            record.after_exists = Some(destination.is_file());
+            record.after_exists = Some(after_exists);
             record.after_executable = after_executable;
         }
         journal.last_checkpoint = format!("apply-{}", operation.id);
-        append_operation_checkpoint(journal_path, journal, index)?;
+        if let Some(quarantine) = held_quarantine.as_deref() {
+            // The displaced bytes are released only after this result is
+            // durable, so every interruption leaves either the quarantine or
+            // a synced result checkpoint that explains its absence.
+            persist_operation_checkpoint_batch(journal_path, journal, &[index])?;
+            quarantine_fault(QuarantineBoundary::BeforeRelease)?;
+            let verified = current_hash.as_deref().ok_or_else(|| {
+                AppError::Transaction("held quarantine has no verified precondition".into())
+            })?;
+            let target = target.as_ref().ok_or_else(|| {
+                AppError::Transaction("held quarantine has no retained destination".into())
+            })?;
+            release_quarantine(target.dir(), quarantine, verified)?;
+        } else {
+            append_operation_checkpoint(journal_path, journal, index)?;
+        }
         if options.fail_after_operation == Some(index) {
             return Err(AppError::Transaction(format!(
                 "fault injected after operation {}",
@@ -2872,15 +3468,421 @@ fn copy_atomic(source: &Path, destination: &Path) -> Result<(), AppError> {
     source_root.copy_file_atomic_to(source_name, &destination_root, destination_name)
 }
 
-fn remove_file_path(path: &Path) -> Result<(), AppError> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| AppError::PathSecurity("removed file has no parent directory".into()))?;
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::PathSecurity("removed file name is invalid".into()))?;
-    RootedDir::open(parent)?.remove_file(name)
+const QUARANTINE_PREFIX: &str = ".hoi4ms-quarantine-";
+const LOCK_RELATIVE_PATH: &str = ".hoi4-mod-setup/install.lock.json";
+
+/// Deterministic same-directory quarantine name for one operation. The
+/// transaction ID keeps names from different transactions apart, so an older
+/// retained quarantine is never reused or replaced.
+fn quarantine_leaf_name(transaction_id: Uuid, operation_id: &str) -> String {
+    let readable = !operation_id.is_empty()
+        && operation_id.len() <= 64
+        && operation_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
+    let suffix = if readable {
+        operation_id.to_string()
+    } else {
+        format!("op-{}", &sha256_bytes(operation_id.as_bytes())[..32])
+    };
+    format!(
+        "{QUARANTINE_PREFIX}{}-{suffix}.tmp",
+        transaction_id.simple()
+    )
+}
+
+/// Quarantine names for the success-lock commit and the rollback lock restore.
+fn lock_quarantine_leaf(transaction_id: Uuid, purpose: &str) -> String {
+    quarantine_leaf_name(transaction_id, &format!("install-lock-{purpose}"))
+}
+
+fn quarantine_relative(destination: &str, leaf: &str) -> Result<String, AppError> {
+    let normalized = normalize_relative_path(destination)?;
+    let relative = match normalized.rsplit_once('/') {
+        Some((parent, _)) => format!("{parent}/{leaf}"),
+        None => leaf.to_string(),
+    };
+    normalize_relative_path(&relative)
+}
+
+/// Return the journaled quarantine name only when it is exactly the name this
+/// transaction derives for the operation. A journal cannot point recovery at
+/// an arbitrary sibling file.
+fn journaled_quarantine_leaf(
+    transaction_id: Uuid,
+    operation: &JournalOperation,
+) -> Result<Option<String>, AppError> {
+    let Some(leaf) = operation.quarantine_leaf.as_deref() else {
+        return Ok(None);
+    };
+    let expected = quarantine_leaf_name(transaction_id, &operation.id);
+    if leaf != expected {
+        return Err(AppError::PathSecurity(format!(
+            "journal quarantine name is not bound to operation {}",
+            operation.id
+        )));
+    }
+    if operation
+        .quarantine_sha256
+        .as_deref()
+        .is_some_and(|hash| hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
+        return Err(AppError::Transaction(format!(
+            "journal quarantine checksum is invalid for operation {}",
+            operation.id
+        )));
+    }
+    Ok(Some(expected))
+}
+
+enum LiveRoot<'a> {
+    Borrowed(&'a RootedDir),
+    Owned(RootedDir),
+}
+
+/// The retained directory and leaf-relative path of one live destination.
+struct LiveTarget<'a> {
+    root: LiveRoot<'a>,
+    relative: String,
+}
+
+impl LiveTarget<'_> {
+    fn dir(&self) -> &RootedDir {
+        match &self.root {
+            LiveRoot::Borrowed(directory) => directory,
+            LiveRoot::Owned(directory) => directory,
+        }
+    }
+
+    fn hash(&self) -> Result<Option<String>, AppError> {
+        live_leaf_hash(self.dir(), &self.relative)
+    }
+}
+
+fn live_leaf_hash(directory: &RootedDir, relative: &str) -> Result<Option<String>, AppError> {
+    if !directory.exists(relative)? {
+        return Ok(None);
+    }
+    if !directory.is_regular_file(relative)? {
+        return Err(AppError::PathSecurity(format!(
+            "live destination is not a regular file: {relative}"
+        )));
+    }
+    directory.hash_file(relative).map(Some)
+}
+
+/// Open the parent of a project or external destination. External parents
+/// are retained for the duration of the operation, like the project root.
+fn live_target<'a>(
+    project_directory: Option<&'a RootedDir>,
+    external: bool,
+    destination: &str,
+    create_parent: bool,
+) -> Result<LiveTarget<'a>, AppError> {
+    if external {
+        let absolute = validate_external_destination(destination)?;
+        let parent = absolute.parent().ok_or_else(|| {
+            AppError::PathSecurity("external destination has no parent directory".into())
+        })?;
+        let leaf = absolute
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| AppError::PathSecurity("external destination name is invalid".into()))?
+            .to_string();
+        let directory = if create_parent {
+            RootedDir::open_or_create(parent)?
+        } else {
+            RootedDir::open(parent)?
+        };
+        Ok(LiveTarget {
+            root: LiveRoot::Owned(directory),
+            relative: leaf,
+        })
+    } else {
+        let directory = project_directory.ok_or_else(|| {
+            AppError::PathSecurity("operation has no retained project-root handle".into())
+        })?;
+        Ok(LiveTarget {
+            root: LiveRoot::Borrowed(directory),
+            relative: destination.to_string(),
+        })
+    }
+}
+
+/// Like `live_target`, but reports `None` when an external parent no longer
+/// exists. No quarantine can exist in a missing directory.
+fn existing_live_target<'a>(
+    project_directory: Option<&'a RootedDir>,
+    external: bool,
+    destination: &str,
+) -> Result<Option<LiveTarget<'a>>, AppError> {
+    if external {
+        let absolute = validate_external_destination(destination)?;
+        let parent_exists = absolute.parent().is_some_and(|parent| {
+            fs::symlink_metadata(parent).is_ok_and(|metadata| metadata.is_dir())
+        });
+        if !parent_exists {
+            return Ok(None);
+        }
+    } else if project_directory.is_none() {
+        return Ok(None);
+    }
+    live_target(project_directory, external, destination, false).map(Some)
+}
+
+/// Durable journal binding for a quarantine record.
+struct QuarantineJournal<'a> {
+    journal: &'a mut TransactionJournal,
+    journal_path: &'a Path,
+    index: usize,
+}
+
+impl QuarantineJournal<'_> {
+    fn record(
+        &mut self,
+        leaf: &str,
+        observed: Option<&str>,
+        checkpoint: &str,
+    ) -> Result<(), AppError> {
+        let operation = self.journal.operations.get_mut(self.index).ok_or_else(|| {
+            AppError::Transaction("quarantine checkpoint operation is missing".into())
+        })?;
+        operation.quarantine_leaf = Some(leaf.to_string());
+        operation.quarantine_sha256 = observed.map(str::to_string);
+        self.journal.last_checkpoint = format!("{checkpoint}-{}", operation.id);
+        persist_operation_checkpoint_batch(self.journal_path, self.journal, &[self.index])
+    }
+}
+
+/// The new state of a live leaf after the displaced bytes are safe.
+enum LiveChange<'a> {
+    /// Copy a verified staged or backup file into the destination.
+    Copy {
+        source: &'a RootedDir,
+        source_relative: &'a str,
+    },
+    /// Write exact bytes into the destination.
+    Bytes(&'a [u8]),
+    /// Move another file from the same directory into the destination.
+    MoveFrom(&'a str),
+    /// Leave the destination absent; the quarantine holds the removed bytes.
+    Delete,
+}
+
+fn place_new_leaf(
+    directory: &RootedDir,
+    destination: &str,
+    change: &LiveChange<'_>,
+) -> Result<bool, AppError> {
+    match change {
+        LiveChange::Copy {
+            source,
+            source_relative,
+        } => source.copy_file_atomic_noreplace_to(source_relative, directory, destination),
+        LiveChange::Bytes(bytes) => directory.write_atomic_noreplace(destination, bytes),
+        LiveChange::MoveFrom(from) => directory.rename_file_noreplace(from, destination),
+        LiveChange::Delete => Ok(true),
+    }
+}
+
+fn no_live_barrier(_barrier: LiveMutationBarrier) {}
+
+/// Replace or delete one live leaf without losing bytes that changed after
+/// the precondition hash was taken.
+///
+/// An absent precondition places the new bytes with an exclusive rename, so a
+/// file created in the meantime is kept and the operation fails. An existing
+/// precondition first records the quarantine intent, then moves the leaf to
+/// its quarantine name through the retained parent handle, verifies the moved
+/// bytes, and only then places the new bytes with an exclusive rename. Changed
+/// bytes are moved back unless a new file took the name, in which case both
+/// are kept and the quarantine stays recorded. On success the caller receives
+/// the held quarantine path and releases it after its own result checkpoint.
+#[allow(clippy::too_many_arguments)]
+fn mutate_live_leaf(
+    directory: &RootedDir,
+    destination: &str,
+    expected_current: Option<&str>,
+    change: LiveChange<'_>,
+    quarantine_leaf: &str,
+    mut journal: Option<QuarantineJournal<'_>>,
+    checkpoint_prefix: &str,
+    fault: &dyn Fn(QuarantineBoundary) -> Result<(), AppError>,
+    barrier: &dyn Fn(LiveMutationBarrier),
+) -> Result<Option<String>, AppError> {
+    let Some(expected) = expected_current else {
+        if !place_new_leaf(directory, destination, &change)? {
+            return Err(AppError::Transaction(format!(
+                "local precondition changed during apply: a file appeared at {destination} and was kept"
+            )));
+        }
+        return Ok(None);
+    };
+    let quarantine = quarantine_relative(destination, quarantine_leaf)?;
+    if directory.exists(&quarantine)? {
+        return Err(AppError::Transaction(format!(
+            "quarantine name for {destination} is already in use; manual review is required"
+        )));
+    }
+    if let Some(journal) = journal.as_mut() {
+        journal.record(
+            quarantine_leaf,
+            None,
+            &format!("{checkpoint_prefix}-quarantine-intent"),
+        )?;
+    }
+    fault(QuarantineBoundary::BeforeRename)?;
+    match directory.rename_file_noreplace(destination, &quarantine) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(AppError::Transaction(format!(
+                "quarantine name for {destination} appeared during apply; manual review is required"
+            )))
+        }
+        Err(error) => {
+            if !directory.exists(destination)? {
+                return Err(AppError::Transaction(format!(
+                    "local precondition changed during apply: {destination} disappeared and nothing was changed"
+                )));
+            }
+            return Err(error);
+        }
+    }
+    fault(QuarantineBoundary::AfterRename)?;
+    let observed = directory.hash_file(&quarantine)?;
+    if observed != expected {
+        if let Some(journal) = journal.as_mut() {
+            journal.record(
+                quarantine_leaf,
+                Some(&observed),
+                &format!("{checkpoint_prefix}-quarantine-changed"),
+            )?;
+        }
+        if directory.rename_file_noreplace(&quarantine, destination)? {
+            return Err(AppError::Transaction(format!(
+                "local precondition changed during apply: {destination} changed after review and was left unchanged"
+            )));
+        }
+        return Err(AppError::Transaction(format!(
+            "local precondition changed during apply: {destination} changed after review and a new file took its name; the changed bytes are kept at {quarantine}"
+        )));
+    }
+    if let Some(journal) = journal.as_mut() {
+        journal.record(
+            quarantine_leaf,
+            Some(&observed),
+            &format!("{checkpoint_prefix}-quarantine-verified"),
+        )?;
+    }
+    fault(QuarantineBoundary::AfterVerification)?;
+    barrier(LiveMutationBarrier::AfterQuarantineVerified);
+    if !place_new_leaf(directory, destination, &change)? {
+        return Err(AppError::Transaction(format!(
+            "local precondition changed during apply: a file appeared at {destination} and was kept; the reviewed bytes are kept at {quarantine}"
+        )));
+    }
+    Ok(Some(quarantine))
+}
+
+/// Remove a held quarantine only while it still contains the verified bytes.
+fn release_quarantine(
+    directory: &RootedDir,
+    quarantine: &str,
+    verified_sha256: &str,
+) -> Result<(), AppError> {
+    if !directory.exists(quarantine)? {
+        return Ok(());
+    }
+    if directory.remove_file_if_hash(quarantine, verified_sha256)? {
+        Ok(())
+    } else {
+        Err(AppError::Transaction(format!(
+            "quarantined bytes changed after verification and were kept at {quarantine}; manual review is required"
+        )))
+    }
+}
+
+/// Settle a quarantine left by an interrupted rollback step before the step
+/// is retried. A verified quarantine beside a completed destination is
+/// released; a quarantine beside an absent destination is moved back so the
+/// step can start again. Any other state keeps both files for review.
+fn settle_interrupted_quarantine(
+    target: &LiveTarget<'_>,
+    quarantine_leaf: &str,
+    verified_sha256: Option<&str>,
+    completed_states: &[Option<&str>],
+) -> Result<(), AppError> {
+    let directory = target.dir();
+    let quarantine = quarantine_relative(&target.relative, quarantine_leaf)?;
+    if !directory.exists(&quarantine)? {
+        return Ok(());
+    }
+    if !directory.is_regular_file(&quarantine)? {
+        return Err(AppError::PathSecurity(format!(
+            "quarantine is not a regular file: {quarantine}"
+        )));
+    }
+    let held = directory.hash_file(&quarantine)?;
+    let current = target.hash()?;
+    if verified_sha256 == Some(held.as_str()) && completed_states.contains(&current.as_deref()) {
+        return release_quarantine(directory, &quarantine, &held);
+    }
+    if current.is_none() && directory.rename_file_noreplace(&quarantine, &target.relative)? {
+        return Ok(());
+    }
+    Err(AppError::Transaction(format!(
+        "an interrupted operation left {quarantine} beside {}; both files were kept for manual review",
+        target.relative
+    )))
+}
+
+/// Reconcile a lock quarantine whose name is derived from the transaction.
+/// `displaced` is the lock hash that the quarantine must hold and `placed` is
+/// the lock state that completes the step.
+fn settle_lock_quarantine(
+    project: &RootedDir,
+    leaf: &str,
+    displaced: Option<&str>,
+    placed: Option<&str>,
+) -> Result<(), AppError> {
+    let target = LiveTarget {
+        root: LiveRoot::Borrowed(project),
+        relative: LOCK_RELATIVE_PATH.to_string(),
+    };
+    settle_interrupted_quarantine(&target, leaf, displaced, &[placed])
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_FAULT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Return an error at a named recovery checkpoint in tests. The fault is
+/// thread-local, so parallel tests do not observe each other's faults.
+#[cfg(test)]
+fn test_fault(checkpoint: &str) -> Result<(), AppError> {
+    TEST_FAULT.with(|fault| {
+        if fault.borrow().as_deref() == Some(checkpoint) {
+            Err(AppError::Transaction(format!(
+                "fault injected at {checkpoint}"
+            )))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+#[cfg(not(test))]
+fn test_fault(_checkpoint: &str) -> Result<(), AppError> {
+    Ok(())
+}
+
+fn rollback_quarantine_fault(boundary: QuarantineBoundary) -> Result<(), AppError> {
+    test_fault(&format!("rollback_quarantine_{boundary:?}"))
+}
+
+fn rollback_lock_quarantine_fault(boundary: QuarantineBoundary) -> Result<(), AppError> {
+    test_fault(&format!("rollback_lock_quarantine_{boundary:?}"))
 }
 
 fn read_file_path(path: &Path) -> Result<Vec<u8>, AppError> {
@@ -2892,17 +3894,6 @@ fn read_file_path(path: &Path) -> Result<Vec<u8>, AppError> {
         .and_then(|name| name.to_str())
         .ok_or_else(|| AppError::PathSecurity("read file name is invalid".into()))?;
     RootedDir::open_read(parent)?.read_file(name)
-}
-
-fn create_directory_path(path: &Path) -> Result<(), AppError> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| AppError::PathSecurity("created directory has no parent".into()))?;
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::PathSecurity("created directory name is invalid".into()))?;
-    RootedDir::open(parent)?.create_dir(name).map(|_| ())
 }
 
 fn remove_directory_path_if_empty(path: &Path) -> Result<bool, AppError> {
@@ -3010,12 +4001,46 @@ fn post_install_checks(
 /// allowing the lock to record bytes that were never reviewed.
 fn final_live_verification(
     project_root: &Path,
+    project_directory: &RootedDir,
     plan: &InstallationPlan,
     journal: &TransactionJournal,
 ) -> Result<(), AppError> {
     for operation in &plan.operations {
-        let destination = operation_destination(project_root, operation)?;
-        let current = regular_file_hash(&destination)?;
+        let (current, executable) = if operation.external {
+            let destination = operation_destination(project_root, operation)?;
+            let current = regular_file_hash(&destination)?;
+            let executable = if destination.is_file() {
+                observed_executable(&destination)?
+            } else {
+                None
+            };
+            (current, executable)
+        } else {
+            let exists = project_directory.exists(&operation.destination)?;
+            let is_file = project_directory.is_regular_file(&operation.destination)?;
+            if exists && !is_file {
+                return Err(AppError::PathSecurity(format!(
+                    "final destination is not a regular file: {}",
+                    operation.destination
+                )));
+            }
+            let current = is_file
+                .then(|| project_directory.hash_file(&operation.destination))
+                .transpose()?;
+            let executable = if is_file {
+                #[cfg(unix)]
+                {
+                    project_directory.observed_executable(&operation.destination)?
+                }
+                #[cfg(not(unix))]
+                {
+                    None
+                }
+            } else {
+                None
+            };
+            (current, executable)
+        };
         let journal_operation = journal
             .operations
             .iter()
@@ -3057,8 +4082,7 @@ fn final_live_verification(
                 if current.as_deref() != Some(expected)
                     || journal_operation.after_sha256.as_deref() != Some(expected)
                     || journal_operation.after_exists != Some(true)
-                    || observed_executable(&destination)?
-                        .is_some_and(|value| value != operation.executable)
+                    || executable.is_some_and(|value| value != operation.executable)
                     || journal_operation
                         .after_executable
                         .is_some_and(|value| value != operation.executable)
@@ -3088,7 +4112,7 @@ fn build_transaction_readiness(
             )
         });
     if removing {
-        let provider_is_codex = plan.ai_provider == "codex";
+        let (integration, auth_mode) = crate::ai::integration_and_auth_mode(&plan.ai_provider);
         let confirmed_field_count = plan
             .codex_analysis
             .as_ref()
@@ -3102,15 +4126,8 @@ fn build_transaction_readiness(
             codex: ReadinessCodexSummary {
                 provider: plan.ai_provider.clone(),
                 model: plan.ai_model.clone(),
-                integration: if provider_is_codex { "codex_app_server" } else { "provider_api" }.into(),
-                auth_mode: if provider_is_codex {
-                    "chatgpt"
-                } else if plan.ai_provider == "local" {
-                    "local_endpoint"
-                } else {
-                    "api_key"
-                }
-                .into(),
+                integration: integration.into(),
+                auth_mode: auth_mode.into(),
                 authenticated_during_setup: plan.codex_analysis.is_some(),
                 analysis_status: if plan.codex_analysis.is_some() { "confirmed" } else { "block" }.into(),
                 confirmed_field_count,
@@ -3533,6 +4550,7 @@ fn build_lock(
     journal: &TransactionJournal,
     previous_lock: Option<&InstallationLock>,
     project_root: &Path,
+    project_directory: &RootedDir,
 ) -> Result<InstallationLock, AppError> {
     let removing = plan.maintenance_mode.as_deref() == Some("remove")
         && !plan.operations.is_empty()
@@ -3596,8 +4614,13 @@ fn build_lock(
                     // file (most importantly an existing thumbnail). It must
                     // still be represented in the lock so readiness can hash
                     // it and future maintenance cannot treat it as absent.
-                    let destination = operation_destination(project_root, operation)?;
-                    let bytes = read_file_path(&destination).map_err(|error| {
+                    let bytes = if operation.external {
+                        let destination = operation_destination(project_root, operation)?;
+                        read_file_path(&destination)
+                    } else {
+                        project_directory.read_file(&operation.destination)
+                    }
+                    .map_err(|error| {
                         AppError::Transaction(format!(
                             "cannot lock preserved file {}: {error}",
                             operation.destination
@@ -3871,7 +4894,7 @@ fn build_lock(
         .unwrap_or_else(|| now.clone());
     let updated_at = previous_lock.map(|_| now);
     Ok(InstallationLock {
-        schema_version: "1.0.0".into(),
+        schema_version: crate::migrations::CURRENT_LOCK_SCHEMA.into(),
         project_id: plan.project_id.clone(),
         script_prefix: plan
             .script_prefix
@@ -3977,14 +5000,42 @@ fn regular_file_hash(path: &Path) -> Result<Option<String>, AppError> {
 fn rollback_destination_is_restored(
     operation: &JournalOperation,
     destination: &Path,
+    project_directory: Option<&RootedDir>,
     journal: &TransactionJournal,
     journal_path: &Path,
 ) -> Result<bool, AppError> {
-    let current = regular_file_hash(destination)?;
+    let current = rollback_live_hash(operation, destination, project_directory)?;
     match operation.rollback {
         Some(RollbackAction::None) | None => Ok(true),
         Some(RollbackAction::RemoveCreated) => Ok(current.is_none()),
         Some(RollbackAction::RestoreBackup | RollbackAction::ReverseMerge) => {
+            // Local bytes that changed after review are kept at the
+            // destination, either by the forward apply or by a rollback that
+            // moved its quarantine back. Once no quarantine remains, those
+            // bytes are the restored state and must not be replaced.
+            if let Some(kept) = operation.quarantine_sha256.as_deref() {
+                if operation.backup_sha256.as_deref() != Some(kept)
+                    && current.as_deref() == Some(kept)
+                {
+                    if let Some(leaf) =
+                        journaled_quarantine_leaf(journal.transaction_id, operation)?
+                    {
+                        let quarantine_present = match existing_live_target(
+                            project_directory,
+                            operation.external,
+                            &operation.destination,
+                        )? {
+                            Some(target) => target
+                                .dir()
+                                .exists(&quarantine_relative(&target.relative, &leaf)?)?,
+                            None => false,
+                        };
+                        if !quarantine_present {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
             let Some(backup_path) = operation.backup_path.as_ref() else {
                 return Err(AppError::Transaction(format!(
                     "rollback backup metadata is missing for {}",
@@ -4005,13 +5056,15 @@ fn rollback_destination_is_restored(
                     "journal backup path is outside the transaction backup root".into(),
                 ));
             }
-            let metadata = fs::symlink_metadata(&expected_backup).map_err(|error| {
-                AppError::Transaction(format!(
-                    "rollback backup is unavailable for {}: {error}",
-                    operation.destination
-                ))
+            let backup_parent = expected_backup.parent().ok_or_else(|| {
+                AppError::PathSecurity("rollback backup has no parent directory".into())
             })?;
-            if is_link_metadata(&metadata) || !metadata.is_file() {
+            let backup_leaf = expected_backup
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| AppError::PathSecurity("rollback backup name is invalid".into()))?;
+            let backup_directory = RootedDir::open_read(backup_parent)?;
+            if !backup_directory.is_regular_file(backup_leaf)? {
                 return Err(AppError::PathSecurity(
                     "rollback backup is not a regular file".into(),
                 ));
@@ -4019,13 +5072,64 @@ fn rollback_destination_is_restored(
             let expected = operation
                 .backup_sha256
                 .clone()
-                .unwrap_or(sha256_file(&expected_backup)?);
+                .unwrap_or(backup_directory.hash_file(backup_leaf)?);
             let executable_matches = match (operation.before_executable, current.as_ref()) {
-                (Some(expected), Some(_)) => observed_executable(destination)? == Some(expected),
+                (Some(expected), Some(_)) => {
+                    rollback_live_executable(operation, destination, project_directory)?
+                        == Some(expected)
+                }
                 (Some(_), None) => false,
                 (None, _) => true,
             };
             Ok(current.as_deref() == Some(expected.as_str()) && executable_matches)
+        }
+    }
+}
+
+fn rollback_live_hash(
+    operation: &JournalOperation,
+    destination: &Path,
+    project_directory: Option<&RootedDir>,
+) -> Result<Option<String>, AppError> {
+    if operation.external {
+        regular_file_hash(destination)
+    } else {
+        let project = project_directory.ok_or_else(|| {
+            AppError::PathSecurity("rollback has no retained project-root handle".into())
+        })?;
+        let exists = project.exists(&operation.destination)?;
+        let is_file = project.is_regular_file(&operation.destination)?;
+        if exists && !is_file {
+            return Err(AppError::PathSecurity(format!(
+                "rollback destination is not a regular file: {}",
+                operation.destination
+            )));
+        }
+        is_file
+            .then(|| project.hash_file(&operation.destination))
+            .transpose()
+    }
+}
+
+fn rollback_live_executable(
+    operation: &JournalOperation,
+    destination: &Path,
+    project_directory: Option<&RootedDir>,
+) -> Result<Option<bool>, AppError> {
+    if operation.external {
+        observed_executable(destination)
+    } else {
+        #[cfg(unix)]
+        {
+            let project = project_directory.ok_or_else(|| {
+                AppError::PathSecurity("rollback has no retained project-root handle".into())
+            })?;
+            project.observed_executable(&operation.destination)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = project_directory;
+            Ok(None)
         }
     }
 }
@@ -4052,7 +5156,7 @@ fn new_rollback_journal(
 ) -> TransactionJournal {
     let now = Utc::now().to_rfc3339();
     TransactionJournal {
-        schema_version: "1.0.0".into(),
+        schema_version: crate::migrations::CURRENT_JOURNAL_SCHEMA.into(),
         transaction_id,
         transaction_kind: "rollback".into(),
         parent_transaction_id: Some(parent.transaction_id),
@@ -4135,6 +5239,8 @@ fn new_rollback_journal(
                     after_sha256: None,
                     after_exists: None,
                     after_executable: None,
+                    quarantine_leaf: None,
+                    quarantine_sha256: None,
                 }
             })
             .collect(),
@@ -4166,8 +5272,18 @@ fn rollback_operation_destination(
     }
 }
 
-fn rollback_lock_hash(project_root: &Path) -> Result<Option<String>, AppError> {
-    let lock_path = safe_join(project_root, ".hoi4-mod-setup/install.lock.json")?;
+fn rollback_lock_hash(
+    project_root: &Path,
+    project_directory: Option<&RootedDir>,
+) -> Result<Option<String>, AppError> {
+    const LOCK_RELATIVE: &str = ".hoi4-mod-setup/install.lock.json";
+    if let Some(project) = project_directory {
+        return project
+            .is_regular_file(LOCK_RELATIVE)?
+            .then(|| project.hash_file(LOCK_RELATIVE))
+            .transpose();
+    }
+    let lock_path = safe_join(project_root, LOCK_RELATIVE)?;
     regular_file_hash(&lock_path)
 }
 
@@ -4178,8 +5294,9 @@ fn rollback_lock_hash(project_root: &Path) -> Result<Option<String>, AppError> {
 fn validate_rollback_lock_precondition(
     project_root: &Path,
     parent: &TransactionJournal,
+    project_directory: Option<&RootedDir>,
 ) -> Result<(), AppError> {
-    let current = rollback_lock_hash(project_root)?;
+    let current = rollback_lock_hash(project_root, project_directory)?;
     if parent.transaction_kind == "rollback" {
         let expected =
             match (
@@ -4226,57 +5343,73 @@ fn validate_rollback_lock_precondition(
 }
 
 fn capture_rollback_lock_backup(
-    project_root: &Path,
+    project_directory: Option<&RootedDir>,
     backup_root: &Path,
+    backup_directory: &RootedDir,
     rollback: &mut TransactionJournal,
     parent: &TransactionJournal,
 ) -> Result<(), AppError> {
-    let lock_path = safe_join(project_root, ".hoi4-mod-setup/install.lock.json")?;
-    let backup_path = backup_root.join("install.lock.json.bak");
+    const LOCK_RELATIVE: &str = ".hoi4-mod-setup/install.lock.json";
+    let Some(project) = project_directory else {
+        rollback.previous_lock_backup_path = None;
+        rollback.previous_lock_sha256 = None;
+        return Ok(());
+    };
+    let backup_leaf = "install.lock.json.bak";
+    let backup_path = backup_root.join(backup_leaf);
     if path_has_link_component(&backup_path) {
         return Err(AppError::PathSecurity(
             "rollback lock backup path contains a symlink or junction".into(),
         ));
     }
-    match fs::symlink_metadata(&lock_path) {
-        Ok(metadata) if is_link_metadata(&metadata) || !metadata.is_file() => Err(
-            AppError::PathSecurity("installation lock is not a regular file".into()),
-        ),
-        Ok(_) => {
-            let current_hash = sha256_file(&lock_path)?;
-            if backup_path.is_file() {
-                let backup_hash = sha256_file(&backup_path)?;
-                if rollback.previous_lock_sha256.as_deref() != Some(backup_hash.as_str()) {
-                    return Err(AppError::Transaction(
-                        "rollback lock backup checksum changed before apply".into(),
-                    ));
-                }
-                let restored_hash = parent.previous_lock_sha256.as_deref();
-                if current_hash != backup_hash && restored_hash != Some(current_hash.as_str()) {
-                    return Err(AppError::Transaction(
-                        "rollback lock changed after the rollback checkpoint".into(),
-                    ));
-                }
-            } else {
-                copy_atomic(&lock_path, &backup_path)?;
+    if project.exists(LOCK_RELATIVE)? {
+        if !project.is_regular_file(LOCK_RELATIVE)? {
+            return Err(AppError::PathSecurity(
+                "installation lock is not a regular file".into(),
+            ));
+        }
+        let current_hash = project.hash_file(LOCK_RELATIVE)?;
+        if backup_directory.exists(backup_leaf)? {
+            if !backup_directory.is_regular_file(backup_leaf)? {
+                return Err(AppError::PathSecurity(
+                    "rollback lock backup is not a regular file".into(),
+                ));
             }
-            rollback.previous_lock_backup_path = Some(backup_path.display().to_string());
-            rollback.previous_lock_sha256 = Some(sha256_file(&backup_path)?);
-            Ok(())
+            let backup_hash = backup_directory.hash_file(backup_leaf)?;
+            if rollback.previous_lock_sha256.as_deref() != Some(backup_hash.as_str()) {
+                return Err(AppError::Transaction(
+                    "rollback lock backup checksum changed before apply".into(),
+                ));
+            }
+            let restored_hash = parent.previous_lock_sha256.as_deref();
+            if current_hash != backup_hash && restored_hash != Some(current_hash.as_str()) {
+                return Err(AppError::Transaction(
+                    "rollback lock changed after the rollback checkpoint".into(),
+                ));
+            }
+        } else if !project.copy_file_atomic_noreplace_to(
+            LOCK_RELATIVE,
+            backup_directory,
+            backup_leaf,
+        )? {
+            return Err(AppError::Transaction(
+                "rollback lock backup name was taken; refusing to replace it".into(),
+            ));
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            rollback.previous_lock_backup_path = None;
-            rollback.previous_lock_sha256 = None;
-            Ok(())
-        }
-        Err(error) => Err(error.into()),
+        rollback.previous_lock_backup_path = Some(backup_path.display().to_string());
+        rollback.previous_lock_sha256 = Some(backup_directory.hash_file(backup_leaf)?);
+    } else {
+        rollback.previous_lock_backup_path = None;
+        rollback.previous_lock_sha256 = None;
     }
+    Ok(())
 }
 
 fn prepare_rollback_transaction(
     project_root: &Path,
     parent: &TransactionJournal,
     parent_journal_path: &Path,
+    project_directory: Option<&RootedDir>,
 ) -> Result<(TransactionJournal, PathBuf), AppError> {
     let app_root = journal_app_root(parent_journal_path)?;
     if path_has_link_component(&app_root) {
@@ -4293,6 +5426,7 @@ fn prepare_rollback_transaction(
     }
     RootedDir::open_or_create(&roots.transaction)?;
     RootedDir::open_or_create(&roots.backup)?;
+    let backup_directory = RootedDir::open(&roots.backup)?;
     let journal_path = roots.transaction.join("journal.json");
     let mut rollback = if journal_path.is_file() {
         let journal = read_journal(&journal_path)?;
@@ -4311,14 +5445,26 @@ fn prepare_rollback_transaction(
         journal
     };
 
-    validate_rollback_lock_precondition(project_root, parent)?;
-    capture_rollback_lock_backup(project_root, &roots.backup, &mut rollback, parent)?;
+    validate_rollback_lock_precondition(project_root, parent, project_directory)?;
+    capture_rollback_lock_backup(
+        project_directory,
+        &roots.backup,
+        &backup_directory,
+        &mut rollback,
+        parent,
+    )?;
     compact_operation_checkpoints(&journal_path, &mut rollback)?;
 
     let mut checkpointed = 0usize;
     for index in 0..rollback.operations.len() {
         let operation = rollback.operations[index].clone();
         if operation.status == "rolled_back" || operation.action == Some(OperationAction::Skip) {
+            continue;
+        }
+        if operation.quarantine_leaf.is_some() {
+            // This rollback step already reached its quarantine intent. Its
+            // inverse backup evidence was compacted before that point, and the
+            // live destination may be quarantined, so it is not re-captured.
             continue;
         }
         if operation.status == "rollback_applying" {
@@ -4455,6 +5601,72 @@ fn persist_rollback_checkpoint(
     append_operation_checkpoint(rollback_path, rollback, operation_index)
 }
 
+/// Settle the quarantine of one interrupted rollback step. A verified
+/// quarantine beside the completed destination is released; a quarantine
+/// beside an absent destination moves back so the step starts again from
+/// known bytes. Any other state keeps both files for review.
+fn settle_rollback_step_quarantine(
+    project_directory: Option<&RootedDir>,
+    operation: &JournalOperation,
+    child_transaction_id: Uuid,
+    child: &JournalOperation,
+) -> Result<(), AppError> {
+    let Some(child_leaf) = journaled_quarantine_leaf(child_transaction_id, child)? else {
+        return Ok(());
+    };
+    let Some(target) = existing_live_target(
+        project_directory,
+        operation.external,
+        &operation.destination,
+    )?
+    else {
+        return Ok(());
+    };
+    let restore_target = if operation.backup_path.is_some() {
+        operation
+            .backup_sha256
+            .as_deref()
+            .or(operation.before_sha256.as_deref())
+    } else {
+        None
+    };
+    let mut completed = vec![restore_target];
+    if let Some(forward) = operation.quarantine_sha256.as_deref() {
+        completed.push(Some(forward));
+    }
+    settle_interrupted_quarantine(
+        &target,
+        &child_leaf,
+        child.quarantine_sha256.as_deref(),
+        &completed,
+    )
+}
+
+/// Record a rollback step that restored bytes other than the planned
+/// predecessor, such as local bytes moved back from a forward quarantine.
+fn persist_rollback_result(
+    rollback: &mut TransactionJournal,
+    rollback_path: &Path,
+    index: usize,
+    observed: Option<String>,
+    checkpoint: &str,
+) -> Result<(), AppError> {
+    let operation = rollback
+        .operations
+        .get_mut(index)
+        .ok_or_else(|| AppError::Transaction("rollback checkpoint operation is missing".into()))?;
+    operation.status = "rolled_back".into();
+    operation.after_executable = if observed == operation.expected_sha256 {
+        operation.expected_executable
+    } else {
+        None
+    };
+    operation.after_exists = Some(observed.is_some());
+    operation.after_sha256 = observed;
+    rollback.last_checkpoint = checkpoint.into();
+    persist_operation_checkpoint_batch(rollback_path, rollback, &[index])
+}
+
 fn ensure_project_root_for_inverse_rollback(
     project_root: &Path,
     journal: &mut TransactionJournal,
@@ -4471,6 +5683,10 @@ fn ensure_project_root_for_inverse_rollback(
     let checkpoint = journal.project_root_lifecycle.checkpoint.clone();
     match checkpoint.as_str() {
         "removed" | "applying" => {
+            validate_project_root_lifecycle_identity(
+                project_root,
+                &journal.project_root_lifecycle,
+            )?;
             let (validated, exists) = validate_project_root_or_destination(project_root)?;
             if !same_root_path(&validated, project_root) {
                 return Err(AppError::PathSecurity(
@@ -4501,10 +5717,33 @@ fn ensure_project_root_for_inverse_rollback(
                 persist_journal(journal_path, journal)?;
                 persist_journal(rollback_path, rollback_journal)?;
                 maybe_abort_for_test("before_inverse_project_root_create");
-                create_directory_path(project_root)?;
+                let parent_path = journal
+                    .project_root_lifecycle
+                    .canonical_parent
+                    .as_deref()
+                    .ok_or_else(|| {
+                        AppError::PathSecurity("inverse rollback root has no parent".into())
+                    })?;
+                let leaf = journal
+                    .project_root_lifecycle
+                    .leaf
+                    .as_deref()
+                    .ok_or_else(|| {
+                        AppError::PathSecurity("inverse rollback root has no leaf".into())
+                    })?;
+                let parent = RootedDir::open(Path::new(parent_path))?;
+                let expected_parent = journal.project_root_lifecycle.parent_identity.as_deref();
+                if Some(parent.identity_token()?.as_str()) != expected_parent {
+                    return Err(AppError::PathSecurity(
+                        "project root parent changed before inverse rollback".into(),
+                    ));
+                }
+                let created = parent.create_dir(leaf)?;
+                journal.project_root_lifecycle.root_identity = Some(created.identity_token()?);
                 maybe_abort_for_test("after_inverse_project_root_create");
             }
-            RootedDir::open(project_root)?;
+            let root = RootedDir::open(project_root)?;
+            journal.project_root_lifecycle.root_identity = Some(root.identity_token()?);
             journal.project_root_lifecycle.checkpoint = "created".into();
             journal.project_root_lifecycle.created_by_transaction = true;
             journal.project_root_lifecycle.observed_exists = true;
@@ -4545,6 +5784,22 @@ pub fn rollback_transaction(
     journal_path: &Path,
 ) -> Result<(), AppError> {
     let project_root = validate_journal_project_root(project_root, journal, journal_path)?;
+    let mut project_directory = match journal.project_root_lifecycle.mode {
+        ProjectRootMode::Existing => Some(open_bound_project_root(
+            &project_root,
+            &journal.project_root_lifecycle,
+        )?),
+        ProjectRootMode::CreateLeaf
+            if journal.project_root_lifecycle.root_identity.is_some()
+                && fs::symlink_metadata(&project_root).is_ok() =>
+        {
+            Some(open_bound_project_root(
+                &project_root,
+                &journal.project_root_lifecycle,
+            )?)
+        }
+        ProjectRootMode::CreateLeaf => None,
+    };
     if !journal.recovery.rollback_allowed {
         return Err(AppError::Transaction(
             "rollback is not allowed by the journal".into(),
@@ -4562,8 +5817,15 @@ pub fn rollback_transaction(
         recommended_action: "rollback".into(),
     };
     compact_operation_checkpoints(journal_path, journal)?;
-    let (mut rollback_journal, rollback_path) =
-        prepare_rollback_transaction(&project_root, journal, journal_path)?;
+    if let Some(project) = project_directory.as_ref() {
+        settle_journal_lock_quarantines(project, journal)?;
+    }
+    let (mut rollback_journal, rollback_path) = prepare_rollback_transaction(
+        &project_root,
+        journal,
+        journal_path,
+        project_directory.as_ref(),
+    )?;
     maybe_abort_for_test(if journal.transaction_kind == "rollback" {
         "inverse_rollback_after_backup"
     } else {
@@ -4576,12 +5838,27 @@ pub fn rollback_transaction(
         &mut rollback_journal,
         &rollback_path,
     )?;
+    if project_directory.is_none()
+        && journal.project_root_lifecycle.root_identity.is_some()
+        && fs::symlink_metadata(&project_root).is_ok()
+    {
+        project_directory = Some(open_bound_project_root(
+            &project_root,
+            &journal.project_root_lifecycle,
+        )?);
+    }
     let result = (|| -> Result<(), AppError> {
         // Remove transaction-created Git metadata before restoring files. The
         // newly initialized index would otherwise record the transaction's
         // applied files as user changes and make safe Git cleanup impossible.
         if journal.git_initialized {
+            if let Some(project) = project_directory.as_ref() {
+                project.verify_bound_to_path()?;
+            }
             crate::git::rollback_initialized_git(&project_root)?;
+            if let Some(project) = project_directory.as_ref() {
+                project.verify_bound_to_path()?;
+            }
             journal.git_initialized = false;
             persist_journal(journal_path, journal)?;
             rollback_journal.last_checkpoint = "rollback-git-cleanup".into();
@@ -4590,7 +5867,13 @@ pub fn rollback_transaction(
             journal.git_remote_added_name.as_deref(),
             journal.git_remote_added_url.as_deref(),
         ) {
+            if let Some(project) = project_directory.as_ref() {
+                project.verify_bound_to_path()?;
+            }
             crate::git::rollback_added_remote(&project_root, name, url)?;
+            if let Some(project) = project_directory.as_ref() {
+                project.verify_bound_to_path()?;
+            }
             journal.git_remote_added_name = None;
             journal.git_remote_added_url = None;
             persist_journal(journal_path, journal)?;
@@ -4626,10 +5909,20 @@ pub fn rollback_transaction(
                     .iter()
                     .find(|entry| entry.id == format!("rollback-{}", operation.id))
                 {
+                    // A stop after both rollback records but before the
+                    // displaced bytes were released leaves a verified
+                    // quarantine beside the restored destination.
+                    settle_rollback_step_quarantine(
+                        project_directory.as_ref(),
+                        &operation,
+                        rollback_journal.transaction_id,
+                        child_operation,
+                    )?;
                     if child_operation.status != "rolled_back"
                         && !rollback_destination_is_restored(
                             &operation,
                             &rollback_operation_destination(&project_root, &operation)?,
+                            project_directory.as_ref(),
                             journal,
                             journal_path,
                         )?
@@ -4696,10 +5989,27 @@ pub fn rollback_transaction(
             } else {
                 safe_join(&project_root, &operation.destination)?
             };
+            let child_id = format!("rollback-{}", operation.id);
+            let child_index = rollback_journal
+                .operations
+                .iter()
+                .position(|entry| entry.id == child_id)
+                .ok_or_else(|| {
+                    AppError::Transaction("rollback checkpoint operation is missing".into())
+                })?;
+            // An earlier rollback attempt may have stopped while this step's
+            // displaced bytes were quarantined.
+            settle_rollback_step_quarantine(
+                project_directory.as_ref(),
+                &operation,
+                rollback_journal.transaction_id,
+                &rollback_journal.operations[child_index],
+            )?;
             if operation.status == "rollback_applying"
                 && rollback_destination_is_restored(
                     &operation,
                     &destination,
+                    project_directory.as_ref(),
                     journal,
                     journal_path,
                 )?
@@ -4720,9 +6030,91 @@ pub fn rollback_transaction(
                 }
                 continue;
             }
+            // The forward apply stopped while this destination's displaced
+            // bytes were quarantined. Those bytes are the newest bytes the
+            // user saw at this path, so they are moved back instead of being
+            // overwritten with the backup copy.
+            if let Some(forward_leaf) =
+                journaled_quarantine_leaf(journal.transaction_id, &operation)?
+            {
+                if let Some(target) = existing_live_target(
+                    project_directory.as_ref(),
+                    operation.external,
+                    &operation.destination,
+                )? {
+                    let forward_quarantine = quarantine_relative(&target.relative, &forward_leaf)?;
+                    if target.dir().exists(&forward_quarantine)? {
+                        if !target.dir().is_regular_file(&forward_quarantine)? {
+                            return Err(AppError::PathSecurity(format!(
+                                "quarantine is not a regular file: {forward_quarantine}"
+                            )));
+                        }
+                        let held = target.dir().hash_file(&forward_quarantine)?;
+                        let current = target.hash()?;
+                        let installed = current.is_some()
+                            && (current == operation.expected_sha256
+                                || (operation.after_sha256.is_some()
+                                    && current == operation.after_sha256));
+                        if current.is_some() && !installed {
+                            return Err(AppError::Transaction(format!(
+                                "{} differs from the installed bytes while its earlier bytes are quarantined at {forward_quarantine}; both files were kept for manual review",
+                                operation.destination
+                            )));
+                        }
+                        journal.operations[index].status = "rollback_applying".into();
+                        journal.operations[index].quarantine_sha256 = Some(held.clone());
+                        journal.last_checkpoint =
+                            format!("rollback-quarantine-restore-{}", operation.id);
+                        persist_operation_checkpoint_batch(journal_path, journal, &[index])?;
+                        let held_child = mutate_live_leaf(
+                            target.dir(),
+                            &target.relative,
+                            current.as_deref(),
+                            LiveChange::MoveFrom(&forward_quarantine),
+                            &quarantine_leaf_name(rollback_journal.transaction_id, &child_id),
+                            Some(QuarantineJournal {
+                                journal: &mut rollback_journal,
+                                journal_path: &rollback_path,
+                                index: child_index,
+                            }),
+                            "rollback",
+                            &rollback_quarantine_fault,
+                            &no_live_barrier,
+                        )?;
+                        test_fault("rollback_after_placement")?;
+                        if target.hash()?.as_deref() != Some(held.as_str()) {
+                            return Err(AppError::Transaction(format!(
+                                "rollback destination checksum mismatch after quarantine restore: {}",
+                                operation.destination
+                            )));
+                        }
+                        journal.operations[index].status = "rolled_back".into();
+                        journal.last_checkpoint = format!("rollback-{}", operation.id);
+                        persist_operation_checkpoint_batch(journal_path, journal, &[index])?;
+                        persist_rollback_result(
+                            &mut rollback_journal,
+                            &rollback_path,
+                            child_index,
+                            Some(held),
+                            &format!("rollback-{}", operation.id),
+                        )?;
+                        if let (Some(quarantine), Some(displaced)) =
+                            (held_child, current.as_deref())
+                        {
+                            rollback_quarantine_fault(QuarantineBoundary::BeforeRelease)?;
+                            release_quarantine(target.dir(), &quarantine, displaced)?;
+                        }
+                        if batch_complete {
+                            compact_operation_checkpoints(journal_path, journal)?;
+                            compact_operation_checkpoints(&rollback_path, &mut rollback_journal)?;
+                        }
+                        continue;
+                    }
+                }
+            }
             journal.operations[index].status = "rollback_applying".into();
             journal.last_checkpoint = format!("rollback-intent-{}", operation.id);
-            let current = regular_file_hash(&destination)?;
+            let current = rollback_live_hash(&operation, &destination, project_directory.as_ref())?;
             if let Some(after) = &operation.after_sha256 {
                 if current.as_deref() != Some(after.as_str())
                     || operation.after_exists != Some(true)
@@ -4742,7 +6134,12 @@ pub fn rollback_transaction(
                     "managed destination was deleted after apply; refusing rollback of {}",
                     operation.destination
                 )));
-            } else if operation.status == "applying" {
+            } else if matches!(operation.status.as_str(), "applying" | "rollback_applying") {
+                // The batch intent above marks every actionable operation
+                // `rollback_applying` before this point, so an unverified
+                // forward operation is recognized by its missing result
+                // evidence rather than by its pre-rollback status.
+                //
                 // Delete intent is durable before the live removal. If the
                 // process stops after removal but before the observed
                 // `after_exists=false` checkpoint, an absent destination plus
@@ -4777,6 +6174,7 @@ pub fn rollback_transaction(
                 .backup_sha256
                 .clone()
                 .or_else(|| operation.before_sha256.clone());
+            let mut held_rollback_quarantine: Option<(LiveTarget<'_>, String, String)> = None;
             if let Some(backup) = &operation.backup_path {
                 let expected_backup =
                     expected_operation_backup(journal, journal_path, &operation.id)?;
@@ -4793,14 +6191,18 @@ pub fn rollback_transaction(
                         "journal backup path is outside the transaction backup root".into(),
                     ));
                 }
-                let backup_metadata = fs::symlink_metadata(&expected_backup).ok();
-                if backup_metadata.as_ref().is_some_and(is_link_metadata) {
-                    return Err(AppError::PathSecurity(
-                        "refusing to restore a backup symlink".into(),
-                    ));
-                }
-                if expected_backup.is_file() {
-                    let actual_backup = sha256_file(&expected_backup)?;
+                let backup_parent = expected_backup.parent().ok_or_else(|| {
+                    AppError::PathSecurity("rollback backup has no parent directory".into())
+                })?;
+                let backup_leaf = expected_backup
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| {
+                        AppError::PathSecurity("rollback backup name is invalid".into())
+                    })?;
+                let backup_directory = RootedDir::open_read(backup_parent)?;
+                if backup_directory.is_regular_file(backup_leaf)? {
+                    let actual_backup = backup_directory.hash_file(backup_leaf)?;
                     if operation
                         .backup_sha256
                         .as_deref()
@@ -4815,9 +6217,36 @@ pub fn rollback_transaction(
                             operation.destination
                         )));
                     }
-                    copy_atomic(&expected_backup, &destination)?;
+                    let target = live_target(
+                        project_directory.as_ref(),
+                        operation.external,
+                        &operation.destination,
+                        true,
+                    )?;
+                    let held = mutate_live_leaf(
+                        target.dir(),
+                        &target.relative,
+                        current.as_deref(),
+                        LiveChange::Copy {
+                            source: &backup_directory,
+                            source_relative: backup_leaf,
+                        },
+                        &quarantine_leaf_name(rollback_journal.transaction_id, &child_id),
+                        Some(QuarantineJournal {
+                            journal: &mut rollback_journal,
+                            journal_path: &rollback_path,
+                            index: child_index,
+                        }),
+                        "rollback",
+                        &rollback_quarantine_fault,
+                        &no_live_barrier,
+                    )?;
+                    #[cfg(unix)]
                     if let Some(executable) = operation.before_executable {
-                        apply_executable_state(&destination, executable)?;
+                        target.dir().set_executable(&target.relative, executable)?;
+                    }
+                    if let (Some(quarantine), Some(displaced)) = (held, current.clone()) {
+                        held_rollback_quarantine = Some((target, quarantine, displaced));
                     }
                 } else {
                     return Err(AppError::Transaction(format!(
@@ -4825,10 +6254,33 @@ pub fn rollback_transaction(
                         operation.destination
                     )));
                 }
-            } else if destination.is_file() {
-                remove_file_path(&destination)?;
+            } else if let Some(target) = existing_live_target(
+                project_directory.as_ref(),
+                operation.external,
+                &operation.destination,
+            )? {
+                let held = mutate_live_leaf(
+                    target.dir(),
+                    &target.relative,
+                    current.as_deref(),
+                    LiveChange::Delete,
+                    &quarantine_leaf_name(rollback_journal.transaction_id, &child_id),
+                    Some(QuarantineJournal {
+                        journal: &mut rollback_journal,
+                        journal_path: &rollback_path,
+                        index: child_index,
+                    }),
+                    "rollback",
+                    &rollback_quarantine_fault,
+                    &no_live_barrier,
+                )?;
+                if let (Some(quarantine), Some(displaced)) = (held, current.clone()) {
+                    held_rollback_quarantine = Some((target, quarantine, displaced));
+                }
             }
-            let restored = regular_file_hash(&destination)?;
+            test_fault("rollback_after_placement")?;
+            let restored =
+                rollback_live_hash(&operation, &destination, project_directory.as_ref())?;
             if let Some(expected) = expected_restored {
                 if restored.as_deref() != Some(expected.as_str()) {
                     return Err(AppError::Transaction(format!(
@@ -4837,7 +6289,12 @@ pub fn rollback_transaction(
                     )));
                 }
                 if let Some(expected_executable) = operation.before_executable {
-                    if observed_executable(&destination)? != Some(expected_executable) {
+                    if rollback_live_executable(
+                        &operation,
+                        &destination,
+                        project_directory.as_ref(),
+                    )? != Some(expected_executable)
+                    {
                         return Err(AppError::Transaction(format!(
                             "rollback executable metadata mismatch after restore: {}",
                             operation.destination
@@ -4852,7 +6309,11 @@ pub fn rollback_transaction(
             }
             journal.operations[index].status = "rolled_back".into();
             journal.last_checkpoint = format!("rollback-{}", operation.id);
-            append_operation_checkpoint(journal_path, journal, index)?;
+            if held_rollback_quarantine.is_some() {
+                persist_operation_checkpoint_batch(journal_path, journal, &[index])?;
+            } else {
+                append_operation_checkpoint(journal_path, journal, index)?;
+            }
             persist_rollback_checkpoint(
                 &mut rollback_journal,
                 &rollback_path,
@@ -4860,14 +6321,30 @@ pub fn rollback_transaction(
                 "rolled_back",
                 &format!("rollback-{}", operation.id),
             )?;
+            if let Some((target, quarantine, displaced)) = held_rollback_quarantine.take() {
+                // Both rollback records are durable; the displaced
+                // post-transaction bytes also remain in the child backup.
+                rollback_quarantine_fault(QuarantineBoundary::BeforeRelease)?;
+                release_quarantine(target.dir(), &quarantine, &displaced)?;
+            }
             if batch_complete {
                 compact_operation_checkpoints(journal_path, journal)?;
                 compact_operation_checkpoints(&rollback_path, &mut rollback_journal)?;
             }
         }
-        restore_previous_lock(&project_root, journal, journal_path)?;
-        cleanup_created_profile_directories(&project_root, journal, journal_path)?;
+        restore_previous_lock(
+            project_directory.as_ref(),
+            &project_root,
+            journal,
+            journal_path,
+        )?;
+        if let Some(project) = project_directory.as_ref() {
+            cleanup_created_profile_directories_rooted(project, journal, journal_path)?;
+        }
         if journal.transaction_kind != "rollback" {
+            if journal.project_root_lifecycle.mode == ProjectRootMode::CreateLeaf {
+                drop(project_directory.take());
+            }
             cleanup_created_project_root(
                 &project_root,
                 journal,
@@ -4878,22 +6355,23 @@ pub fn rollback_transaction(
         }
         rollback_journal.last_checkpoint = "rollback-lock-restored".into();
         persist_journal(&rollback_path, &mut rollback_journal)?;
-        let result_lock_path = safe_join(&project_root, ".hoi4-mod-setup/install.lock.json")?;
-        match fs::symlink_metadata(&result_lock_path) {
-            Ok(metadata) if is_link_metadata(&metadata) || !metadata.is_file() => {
-                return Err(AppError::PathSecurity(
-                    "rollback result lock is not a regular file".into(),
-                ));
-            }
-            Ok(_) => {
+        if let Some(project) = project_directory.as_ref() {
+            let lock_relative = ".hoi4-mod-setup/install.lock.json";
+            if project.exists(lock_relative)? {
+                if !project.is_regular_file(lock_relative)? {
+                    return Err(AppError::PathSecurity(
+                        "rollback result lock is not a regular file".into(),
+                    ));
+                }
                 rollback_journal.result_lock_exists = Some(true);
-                rollback_journal.result_lock_sha256 = Some(sha256_file(&result_lock_path)?);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                rollback_journal.result_lock_sha256 = Some(project.hash_file(lock_relative)?);
+            } else {
                 rollback_journal.result_lock_exists = Some(false);
                 rollback_journal.result_lock_sha256 = None;
             }
-            Err(error) => return Err(error.into()),
+        } else {
+            rollback_journal.result_lock_exists = Some(false);
+            rollback_journal.result_lock_sha256 = None;
         }
         let child_record_path = rollback_path
             .parent()
@@ -4970,23 +6448,28 @@ pub fn rollback_transaction(
     result
 }
 
+#[cfg(test)]
 fn cleanup_created_profile_directories(
     project_root: &Path,
+    journal: &mut TransactionJournal,
+    journal_path: &Path,
+) -> Result<(), AppError> {
+    let root = open_bound_project_root(project_root, &journal.project_root_lifecycle)?;
+    cleanup_created_profile_directories_rooted(&root, journal, journal_path)
+}
+
+fn cleanup_created_profile_directories_rooted(
+    root: &RootedDir,
     journal: &mut TransactionJournal,
     journal_path: &Path,
 ) -> Result<(), AppError> {
     let mut directories = journal.created_directories.clone();
     directories.sort_by_key(|path| std::cmp::Reverse(Path::new(path).components().count()));
     for directory in directories {
-        let destination = safe_join(project_root, &directory)?;
-        match remove_directory_path_if_empty(&destination) {
-            Ok(_) => {}
-            Err(error) => {
-                return Err(AppError::Transaction(format!(
-                    "could not remove empty profile directory {}: {error}",
-                    destination.display()
-                )))
-            }
+        if let Err(error) = root.remove_dir_if_empty(&directory) {
+            return Err(AppError::Transaction(format!(
+                "could not remove empty profile directory {directory}: {error}"
+            )));
         }
     }
     journal.last_checkpoint = "rollback-profile-directories-checked".into();
@@ -5013,6 +6496,17 @@ fn cleanup_created_project_root(
         journal.project_root_lifecycle.checkpoint = "removed".into();
         journal.project_root_lifecycle.observed_exists = false;
         journal.project_root_lifecycle.cleanup_result = Some("removed".into());
+        rollback_journal.project_root_lifecycle = journal.project_root_lifecycle.clone();
+        persist_journal(journal_path, journal)?;
+        persist_journal(rollback_path, rollback_journal)?;
+        return Ok(());
+    }
+    if !lifecycle.created_by_transaction {
+        journal.project_root_lifecycle.root_identity =
+            Some(RootedDir::open_read(project_root)?.identity_token()?);
+        journal.project_root_lifecycle.checkpoint = "retained_user_content".into();
+        journal.project_root_lifecycle.observed_exists = true;
+        journal.project_root_lifecycle.cleanup_result = Some("retained_user_content".into());
         rollback_journal.project_root_lifecycle = journal.project_root_lifecycle.clone();
         persist_journal(journal_path, journal)?;
         persist_journal(rollback_path, rollback_journal)?;
@@ -5077,12 +6571,29 @@ fn cleanup_created_project_root(
 }
 
 fn restore_previous_lock(
+    project_directory: Option<&RootedDir>,
     project_root: &Path,
     journal: &TransactionJournal,
     journal_path: &Path,
 ) -> Result<(), AppError> {
-    let lock_path = safe_join(project_root, ".hoi4-mod-setup/install.lock.json")?;
-    let current = rollback_lock_hash(project_root)?;
+    const LOCK_RELATIVE: &str = ".hoi4-mod-setup/install.lock.json";
+    let lock_path = safe_join(project_root, LOCK_RELATIVE)?;
+    let current = if let Some(project) = project_directory {
+        if project.is_regular_file(LOCK_RELATIVE)? {
+            Some(project.hash_file(LOCK_RELATIVE)?)
+        } else {
+            None
+        }
+    } else if journal.previous_lock_sha256.is_none()
+        && journal.result_lock_exists != Some(true)
+        && journal.result_lock_sha256.is_none()
+    {
+        None
+    } else {
+        return Err(AppError::PathSecurity(
+            "rollback has no retained project-root handle for lock recovery".into(),
+        ));
+    };
     let previous = journal.previous_lock_sha256.as_deref();
     let current_is_previous = current.as_deref() == previous;
     let current_is_result = match (
@@ -5129,12 +6640,15 @@ fn restore_previous_lock(
         None
     };
     if let Some(backup_path) = backup_path {
-        let metadata = fs::symlink_metadata(&backup_path).map_err(|error| {
-            AppError::Transaction(format!(
-                "previous installation lock backup is unavailable: {error}"
-            ))
+        let backup_parent = backup_path.parent().ok_or_else(|| {
+            AppError::PathSecurity("previous lock backup has no parent directory".into())
         })?;
-        if is_link_metadata(&metadata) || !metadata.is_file() {
+        let backup_leaf = backup_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| AppError::PathSecurity("previous lock backup name is invalid".into()))?;
+        let backup_directory = RootedDir::open_read(backup_parent)?;
+        if !backup_directory.is_regular_file(backup_leaf)? {
             return Err(AppError::PathSecurity(
                 "previous installation lock backup is not a regular file".into(),
             ));
@@ -5143,28 +6657,63 @@ fn restore_previous_lock(
             .previous_lock_sha256
             .as_deref()
             .ok_or_else(|| AppError::Transaction("lock backup has no recorded checksum".into()))?;
-        if sha256_file(&backup_path)? != expected_hash {
+        if backup_directory.hash_file(backup_leaf)? != expected_hash {
             return Err(AppError::Transaction(
                 "previous installation lock backup checksum mismatch".into(),
             ));
         }
-        copy_atomic(&backup_path, &lock_path)?;
-        if sha256_file(&lock_path)? != expected_hash {
+        let project = project_directory.ok_or_else(|| {
+            AppError::PathSecurity("rollback has no retained project-root handle".into())
+        })?;
+        let held = mutate_live_leaf(
+            project,
+            LOCK_RELATIVE,
+            current.as_deref(),
+            LiveChange::Copy {
+                source: &backup_directory,
+                source_relative: backup_leaf,
+            },
+            &lock_quarantine_leaf(journal.transaction_id, "restore"),
+            None,
+            "rollback-lock",
+            &rollback_lock_quarantine_fault,
+            &no_live_barrier,
+        )?;
+        if project.hash_file(LOCK_RELATIVE)? != expected_hash {
             return Err(AppError::Transaction(
                 "restored installation lock checksum mismatch".into(),
             ));
         }
+        if let (Some(quarantine), Some(displaced)) = (held, current.as_deref()) {
+            rollback_lock_quarantine_fault(QuarantineBoundary::BeforeRelease)?;
+            release_quarantine(project, &quarantine, displaced)?;
+        }
     } else if previous.is_none() {
-        if let Ok(metadata) = fs::symlink_metadata(&lock_path) {
-            if is_link_metadata(&metadata) || !metadata.is_file() {
+        if let Some(project) = project_directory {
+            if project.is_regular_file(LOCK_RELATIVE)? {
+                let held = mutate_live_leaf(
+                    project,
+                    LOCK_RELATIVE,
+                    current.as_deref(),
+                    LiveChange::Delete,
+                    &lock_quarantine_leaf(journal.transaction_id, "restore"),
+                    None,
+                    "rollback-lock",
+                    &rollback_lock_quarantine_fault,
+                    &no_live_barrier,
+                )?;
+                if let (Some(quarantine), Some(displaced)) = (held, current.as_deref()) {
+                    rollback_lock_quarantine_fault(QuarantineBoundary::BeforeRelease)?;
+                    release_quarantine(project, &quarantine, displaced)?;
+                }
+            } else if project.exists(LOCK_RELATIVE)? {
                 return Err(AppError::PathSecurity(
                     "refusing to remove an installation lock link during rollback".into(),
                 ));
             }
-            remove_file_path(&lock_path)?;
         } else if lock_path.exists() {
-            return Err(AppError::Transaction(
-                "installation lock could not be inspected during rollback".into(),
+            return Err(AppError::PathSecurity(
+                "rollback cannot inspect an unbound installation lock".into(),
             ));
         }
     } else {
@@ -5206,6 +6755,8 @@ fn finish_finalization(
     journal_path: &Path,
 ) -> Result<(TransactionJournal, InstallationLock), AppError> {
     let project_root = validate_journal_project_root(project_root, journal, journal_path)?;
+    let project_directory =
+        open_bound_project_root(&project_root, &journal.project_root_lifecycle)?;
     if journal.transaction_id != transaction_id || journal.state != "finalizing" {
         return Err(AppError::Transaction(
             "transaction is not in the finalization state".into(),
@@ -5216,12 +6767,17 @@ fn finish_finalization(
             "application data root contains a symlink or junction".into(),
         ));
     }
-    let lock_path = safe_join(&project_root, ".hoi4-mod-setup/install.lock.json")?;
-    let lock_bytes = read_file_path(&lock_path).map_err(|error| {
-        AppError::Transaction(format!(
-            "finalization lock is unavailable; rollback or manual review is required: {error}"
-        ))
-    })?;
+    // A process stop inside the success-lock commit can leave the displaced
+    // predecessor lock in its quarantine. Release it only beside the exact
+    // committed lock; beside an absent lock it moves back for rollback.
+    settle_journal_lock_quarantines(&project_directory, journal)?;
+    let lock_bytes = project_directory
+        .read_file(".hoi4-mod-setup/install.lock.json")
+        .map_err(|error| {
+            AppError::Transaction(format!(
+                "finalization lock is unavailable; rollback or manual review is required: {error}"
+            ))
+        })?;
     if journal.result_lock_exists != Some(true) {
         return Err(AppError::Transaction(
             "finalization journal has no committed success-lock expectation; manual review is required"
@@ -5311,12 +6867,41 @@ fn finish_finalization(
         ));
     }
     for operation in &journal.operations {
-        let destination = rollback_operation_destination(&project_root, operation)?;
-        let current = regular_file_hash(&destination)?;
-        let current_executable = if current.is_some() {
-            observed_executable(&destination)?
+        let (current, current_executable) = if operation.external {
+            let destination = rollback_operation_destination(&project_root, operation)?;
+            let current = regular_file_hash(&destination)?;
+            let executable = if current.is_some() {
+                observed_executable(&destination)?
+            } else {
+                None
+            };
+            (current, executable)
         } else {
-            None
+            let exists = project_directory.exists(&operation.destination)?;
+            if exists && !project_directory.is_regular_file(&operation.destination)? {
+                return Err(AppError::PathSecurity(format!(
+                    "finalization destination is not a regular file: {}",
+                    operation.destination
+                )));
+            }
+            let current = if exists {
+                Some(project_directory.hash_file(&operation.destination)?)
+            } else {
+                None
+            };
+            let executable = if exists {
+                #[cfg(unix)]
+                {
+                    project_directory.observed_executable(&operation.destination)?
+                }
+                #[cfg(not(unix))]
+                {
+                    None
+                }
+            } else {
+                None
+            };
+            (current, executable)
         };
         match operation.action {
             Some(OperationAction::Skip | OperationAction::External) => {
@@ -5997,6 +7582,22 @@ pub fn update_operations(
 
 #[cfg(test)]
 mod tests {
+    fn run_test_transaction(
+        project_root: &Path,
+        plan: &InstallationPlan,
+        prepared: &[PreparedFile],
+        options: &TransactionOptions,
+    ) -> Result<(TransactionJournal, InstallationLock), AppError> {
+        let mut reviewed_plan = plan.clone();
+        if reviewed_plan.transaction.project_root_identity.is_none() {
+            reviewed_plan.transaction.project_root_identity = Some(reviewed_project_root_identity(
+                &reviewed_plan,
+                project_root,
+            )?);
+        }
+        run_transaction(project_root, &reviewed_plan, prepared, options)
+    }
+
     use super::*;
     use crate::readiness::manifest_wiki_pages;
     use std::process::Command;
@@ -6127,6 +7728,7 @@ mod tests {
                 project_root_mode: ProjectRootMode::Existing,
                 project_root_parent: None,
                 project_root_leaf: None,
+                project_root_identity: None,
             },
             approvals: PlanApprovals {
                 dry_run_reviewed: true,
@@ -6296,7 +7898,16 @@ mod tests {
             rollback: RollbackAction::RestoreBackup,
         }];
         let journal = new_journal(&plan, &plan.project_id, project.path());
-        let lock = build_lock(&plan, &[], &journal, Some(&predecessor), project.path()).unwrap();
+        let project_directory = RootedDir::open_read(project.path()).unwrap();
+        let lock = build_lock(
+            &plan,
+            &[],
+            &journal,
+            Some(&predecessor),
+            project.path(),
+            &project_directory,
+        )
+        .unwrap();
         assert!(!lock
             .components
             .iter()
@@ -6532,7 +8143,7 @@ mod tests {
             "platform":"windows",
             "wizard":{"current_step":"ready","completed_steps":[]},
             "preferences":{"telemetry":false},
-            "ai":{"provider":"deepseek","model":"deepseek-chat","optimization_profile":"DeepSeek setup analysis"},
+            "ai":{"provider":"deepseek","model":"deepseek-flash","optimization_profile":"DeepSeek setup analysis"},
             "codex":{"integration":"provider_api","auth_mode":"api_key","auth_status":"configured","analysis_required":true,"analysis_status":"confirmed","account_values_persisted":false},
             "credential_references":[]
         }"#;
@@ -6585,13 +8196,131 @@ mod tests {
     }
 
     #[test]
+    fn project_root_identity_binding_rejects_replacement_at_the_reviewed_path() {
+        let container = tempdir().unwrap();
+        let project_root = container.path().join("project");
+        fs::create_dir(&project_root).unwrap();
+        let reviewed_identity = RootedDir::open_read(&project_root)
+            .unwrap()
+            .identity_token()
+            .unwrap();
+        let mut plan = plan();
+        plan.transaction.project_root_identity = Some(reviewed_identity);
+        let journal = new_journal(&plan, &plan.project_id, &project_root);
+
+        let moved_root = container.path().join("project-reviewed");
+        fs::rename(&project_root, &moved_root).unwrap();
+        fs::create_dir(&project_root).unwrap();
+
+        assert!(validate_project_root_lifecycle_identity(
+            &project_root,
+            &journal.project_root_lifecycle
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn create_leaf_binding_rejects_replacement_of_the_reviewed_parent() {
+        let container = tempdir().unwrap();
+        let parent = container.path().join("mods");
+        fs::create_dir(&parent).unwrap();
+        let reviewed_identity = RootedDir::open_read(&parent)
+            .unwrap()
+            .identity_token()
+            .unwrap();
+        let project_root = parent.join("example");
+        let mut plan = plan();
+        plan.transaction.project_root_mode = ProjectRootMode::CreateLeaf;
+        plan.transaction.project_root_parent = Some(parent.display().to_string());
+        plan.transaction.project_root_leaf = Some("example".into());
+        plan.transaction.project_root_identity = Some(reviewed_identity);
+        let journal = new_journal(&plan, &plan.project_id, &project_root);
+
+        let moved_parent = container.path().join("mods-reviewed");
+        fs::rename(&parent, &moved_parent).unwrap();
+        fs::create_dir(&parent).unwrap();
+
+        assert!(validate_project_root_lifecycle_identity(
+            &project_root,
+            &journal.project_root_lifecycle
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn transaction_rejects_plans_without_reviewed_root_identity() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let plan = plan();
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+
+        let error = run_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().to_path_buf()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("no project-root identity binding"));
+        assert!(!app.path().join("transactions").exists());
+        assert!(!project.path().join("AGENTS.md").exists());
+    }
+
+    #[test]
+    fn transaction_rejects_a_root_replaced_after_plan_review() {
+        let container = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let project_root = container.path().join("project");
+        fs::create_dir(&project_root).unwrap();
+        let mut plan = plan();
+        plan.transaction.project_root_identity = Some(
+            RootedDir::open_read(&project_root)
+                .unwrap()
+                .identity_token()
+                .unwrap(),
+        );
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        fs::rename(&project_root, container.path().join("project-reviewed")).unwrap();
+        fs::create_dir(&project_root).unwrap();
+
+        let error = run_transaction(
+            &project_root,
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().to_path_buf()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("changed after planning"));
+        assert!(!project_root.join("AGENTS.md").exists());
+        assert!(!app.path().join("transactions").exists());
+    }
+
+    #[test]
     fn absent_project_root_is_created_only_at_apply_and_removed_by_rollback() {
         let parent = tempdir().unwrap();
         let app = tempdir().unwrap();
         let (project_root, plan, prepared) = absent_root_fixture(parent.path());
         assert!(!project_root.exists());
 
-        let error = run_transaction(
+        let error = run_test_transaction(
             &project_root,
             &plan,
             &prepared,
@@ -6632,7 +8361,7 @@ mod tests {
         let parent = tempdir().unwrap();
         let app = tempdir().unwrap();
         let (project_root, plan, prepared) = absent_root_fixture(parent.path());
-        assert!(run_transaction(
+        assert!(run_test_transaction(
             &project_root,
             &plan,
             &prepared,
@@ -6672,7 +8401,7 @@ mod tests {
         let parent = tempdir().unwrap();
         let app = tempdir().unwrap();
         let (project_root, plan, prepared) = absent_root_fixture(parent.path());
-        assert!(run_transaction(
+        assert!(run_test_transaction(
             &project_root,
             &plan,
             &prepared,
@@ -6698,7 +8427,7 @@ mod tests {
         let parent = tempdir().unwrap();
         let app = tempdir().unwrap();
         let (project_root, plan, prepared) = absent_root_fixture(parent.path());
-        assert!(run_transaction(
+        assert!(run_test_transaction(
             &project_root,
             &plan,
             &prepared,
@@ -6794,13 +8523,30 @@ mod tests {
     }
 
     #[test]
+    fn identityless_legacy_journal_is_inspect_only() {
+        let project = tempdir().unwrap();
+        let base = plan();
+        let mut journal = new_journal(&base, &base.project_id, project.path());
+        journal.schema_version = "1.0.0".into();
+        journal.project_root_lifecycle.root_identity = None;
+        journal.state = "interrupted".into();
+
+        normalize_incomplete_recovery(&mut journal);
+
+        assert!(!journal.recovery.resume_allowed);
+        assert!(!journal.recovery.rollback_allowed);
+        assert!(!journal.recovery.discard_staging_allowed);
+        assert_eq!(journal.recovery.recommended_action, "inspect");
+    }
+
+    #[test]
     fn transaction_revalidates_prepared_bytes_before_backup() {
         let project = tempdir().unwrap();
         let app = tempdir().unwrap();
         let (plan, mut prepared) = existing_file_fixture(project.path());
         prepared[0].bytes = b"tampered after review".to_vec();
 
-        let error = run_transaction(
+        let error = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -6833,7 +8579,7 @@ mod tests {
         bind_first_operation_to_remote_download(&mut plan);
         plan.download_ledger.clear();
 
-        let error = run_transaction(
+        let error = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -6875,7 +8621,7 @@ mod tests {
                 }
             }
 
-            let error = run_transaction(
+            let error = run_test_transaction(
                 project.path(),
                 &plan,
                 &prepared,
@@ -6918,7 +8664,7 @@ mod tests {
                 expected_sha256: sha256_bytes(b"safe"),
             }];
 
-            let result = run_transaction(
+            let result = run_test_transaction(
                 project.path(),
                 &plan,
                 &prepared,
@@ -7017,7 +8763,7 @@ mod tests {
             .iter()
             .position(|stage| *stage == "validation")
             .unwrap();
-        let interrupted = run_transaction(
+        let interrupted = run_test_transaction(
             project.path(),
             &plan,
             &[
@@ -7122,7 +8868,7 @@ mod tests {
             rollback: RollbackAction::RemoveCreated,
         });
 
-        let error = run_transaction(
+        let error = run_test_transaction(
             project.path(),
             &plan,
             &[
@@ -7168,7 +8914,7 @@ mod tests {
         fs::create_dir_all(&project_root).unwrap();
         fs::create_dir_all(&app_root).unwrap();
         let (plan, prepared) = existing_file_fixture(&project_root);
-        let (mut journal, _) = run_transaction(
+        let (mut journal, _) = run_test_transaction(
             &project_root,
             &plan,
             &prepared,
@@ -7199,7 +8945,7 @@ mod tests {
         fs::create_dir_all(&project_root).unwrap();
         fs::create_dir_all(&app_root).unwrap();
         let (plan, prepared) = existing_file_fixture(&project_root);
-        let (mut installation, _) = run_transaction(
+        let (mut installation, _) = run_test_transaction(
             &project_root,
             &plan,
             &prepared,
@@ -7241,7 +8987,7 @@ mod tests {
             mode.as_str(),
             "before_project_root_create" | "after_project_root_create"
         ) {
-            let _ = run_transaction(
+            let _ = run_test_transaction(
                 &project_root,
                 &plan,
                 &prepared,
@@ -7253,7 +8999,7 @@ mod tests {
             return;
         }
 
-        assert!(run_transaction(
+        assert!(run_test_transaction(
             &project_root,
             &plan,
             &prepared,
@@ -7524,10 +9270,22 @@ mod tests {
             if mode.ends_with("project_root_create") && !mode.contains("inverse") {
                 let mut installation = installation;
                 rollback_transaction(&project_root, &mut installation, &installation_path).unwrap();
-                assert!(
-                    !project_root.exists(),
-                    "root remained after recovering {mode}"
-                );
+                if mode == "after_project_root_create" {
+                    assert!(project_root.is_dir());
+                    assert!(fs::read_dir(&project_root).unwrap().next().is_none());
+                    assert_eq!(
+                        installation
+                            .project_root_lifecycle
+                            .cleanup_result
+                            .as_deref(),
+                        Some("retained_user_content")
+                    );
+                } else {
+                    assert!(
+                        !project_root.exists(),
+                        "root remained after recovering {mode}"
+                    );
+                }
                 continue;
             }
 
@@ -7549,6 +9307,27 @@ mod tests {
                 })
                 .cloned()
                 .expect("ordinary rollback journal");
+            if mode == "after_inverse_project_root_create" {
+                let (mut inverse, inverse_path) = journals
+                    .iter()
+                    .find(|(journal, _)| {
+                        journal.transaction_kind == "rollback"
+                            && journal.parent_transaction_id == Some(rollback.transaction_id)
+                    })
+                    .cloned()
+                    .expect("interrupted inverse rollback journal");
+                assert!(rollback_transaction(&project_root, &mut inverse, &inverse_path).is_err());
+                assert!(project_root.is_dir());
+                assert!(fs::read_dir(&project_root).unwrap().next().is_none());
+                assert_eq!(
+                    read_journal(&inverse_path)
+                        .unwrap()
+                        .recovery
+                        .recommended_action,
+                    "inspect"
+                );
+                continue;
+            }
             let mut rollback = rollback;
             rollback_transaction(&project_root, &mut rollback, &rollback_path).unwrap();
             assert!(project_root.is_dir(), "root was not restored after {mode}");
@@ -7584,7 +9363,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        let (_, mut installed_lock) = run_transaction(
+        let (_, mut installed_lock) = run_test_transaction(
             project.path(),
             &initial_plan,
             &initial_prepared,
@@ -7629,7 +9408,7 @@ mod tests {
         removal_plan.operations =
             managed_removal_operations(&installed_lock, project.path()).unwrap();
 
-        let (_, removal_lock) = run_transaction(
+        let (_, removal_lock) = run_test_transaction(
             project.path(),
             &removal_plan,
             &[],
@@ -7764,7 +9543,7 @@ mod tests {
             expected_sha256: sha256_bytes(b"safe"),
         }];
 
-        let (journal, lock) = run_transaction(
+        let (journal, lock) = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -7813,7 +9592,7 @@ mod tests {
                 expected_sha256: sha256_bytes(b"safe"),
             }];
 
-            let error = run_transaction(
+            let error = run_test_transaction(
                 project.path(),
                 &plan,
                 &prepared,
@@ -7873,7 +9652,7 @@ mod tests {
                 let project = tempdir().unwrap();
                 let app = tempdir().unwrap();
                 plan.plan_id = uuid::Uuid::new_v4();
-                let error = run_transaction(
+                let error = run_test_transaction(
                     project.path(),
                     &plan,
                     &prepared,
@@ -7926,7 +9705,7 @@ mod tests {
             expected_sha256: sha256_bytes(b"safe"),
         }];
 
-        let error = run_transaction(
+        let error = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -7973,7 +9752,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        let error = run_transaction(
+        let error = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8002,7 +9781,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        let (_, lock) = run_transaction(
+        let (_, lock) = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8039,7 +9818,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        let (_, lock) = run_transaction(
+        let (_, lock) = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8077,7 +9856,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        let (mut journal, _) = run_transaction(
+        let (mut journal, _) = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8148,7 +9927,7 @@ mod tests {
         let project = tempdir().unwrap();
         let app = tempdir().unwrap();
         let (plan, prepared) = existing_file_fixture(project.path());
-        let (mut installation, _) = run_transaction(
+        let (mut installation, _) = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8188,7 +9967,7 @@ mod tests {
         let project = tempdir().unwrap();
         let app = tempdir().unwrap();
         let (plan, prepared) = existing_file_fixture(project.path());
-        let (mut installation, _) = run_transaction(
+        let (mut installation, _) = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8260,7 +10039,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        let (mut journal, _) = run_transaction(
+        let (mut journal, _) = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8295,7 +10074,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        let (mut journal, _) = run_transaction(
+        let (mut journal, _) = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8333,7 +10112,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        let (_, first_lock) = run_transaction(
+        let (_, first_lock) = run_test_transaction(
             project.path(),
             &first_plan,
             &first_prepared,
@@ -8365,7 +10144,7 @@ mod tests {
             bytes: b"new".to_vec(),
             expected_sha256: sha256_bytes(b"new"),
         }];
-        let (_, second_lock) = run_transaction(
+        let (_, second_lock) = run_test_transaction(
             project.path(),
             &second_plan,
             &second_prepared,
@@ -8449,7 +10228,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        let (mut journal, _) = run_transaction(
+        let (mut journal, _) = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8483,7 +10262,7 @@ mod tests {
             bytes: b"old".to_vec(),
             expected_sha256: sha256_bytes(b"old"),
         }];
-        let (_, _) = run_transaction(
+        let (_, _) = run_test_transaction(
             project.path(),
             &first_plan,
             &first_prepared,
@@ -8508,7 +10287,7 @@ mod tests {
             bytes: b"new".to_vec(),
             expected_sha256: sha256_bytes(b"new"),
         }];
-        let (mut journal, _) = run_transaction(
+        let (mut journal, _) = run_test_transaction(
             project.path(),
             &second_plan,
             &second_prepared,
@@ -8540,7 +10319,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        let error = run_transaction(
+        let error = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8585,7 +10364,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        let error = run_transaction(
+        let error = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8636,7 +10415,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        let result = run_transaction(
+        let result = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8672,7 +10451,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        let result = run_transaction(
+        let result = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8716,7 +10495,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        assert!(run_transaction(
+        assert!(run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8743,7 +10522,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        let (_, lock) = run_transaction(
+        let (_, lock) = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8783,7 +10562,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        run_transaction(
+        run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8819,7 +10598,7 @@ mod tests {
         let project = tempdir().unwrap();
         let app = tempdir().unwrap();
         let (plan, prepared) = existing_file_fixture(project.path());
-        let (mut journal, _) = run_transaction(
+        let (mut journal, _) = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8851,7 +10630,7 @@ mod tests {
         let project = tempdir().unwrap();
         let app = tempdir().unwrap();
         let (first_plan, first_prepared) = existing_file_fixture(project.path());
-        run_transaction(
+        run_test_transaction(
             project.path(),
             &first_plan,
             &first_prepared,
@@ -8873,7 +10652,7 @@ mod tests {
             bytes: b"new".to_vec(),
             expected_sha256: sha256_bytes(b"new"),
         }];
-        assert!(run_transaction(
+        assert!(run_test_transaction(
             project.path(),
             &second_plan,
             &second_prepared,
@@ -8901,7 +10680,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        assert!(run_transaction(
+        assert!(run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8939,7 +10718,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        assert!(run_transaction(
+        assert!(run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -8970,7 +10749,7 @@ mod tests {
             bytes: b"safe".to_vec(),
             expected_sha256: sha256_bytes(b"safe"),
         }];
-        let result = run_transaction(
+        let result = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -9140,7 +10919,7 @@ mod tests {
                 } else {
                     options.fail_before_stage = Some(stage);
                 }
-                assert!(run_transaction(project.path(), &plan, &prepared, &options).is_err());
+                assert!(run_test_transaction(project.path(), &plan, &prepared, &options).is_err());
                 assert!(!project
                     .path()
                     .join(".hoi4-mod-setup/install.lock.json")
@@ -9163,7 +10942,7 @@ mod tests {
                 fail_after_operation: after.then_some(0),
                 ..Default::default()
             };
-            assert!(run_transaction(project.path(), &plan, &prepared, &options).is_err());
+            assert!(run_test_transaction(project.path(), &plan, &prepared, &options).is_err());
             assert!(!project
                 .path()
                 .join(".hoi4-mod-setup/install.lock.json")
@@ -9185,7 +10964,7 @@ mod tests {
             fail_after_live_mutation: Some(0),
             ..Default::default()
         };
-        assert!(run_transaction(project.path(), &plan, &prepared, &options).is_err());
+        assert!(run_test_transaction(project.path(), &plan, &prepared, &options).is_err());
         assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"safe");
         assert!(!project
             .path()
@@ -9239,7 +11018,7 @@ mod tests {
         fs::set_permissions(&original, fs::Permissions::from_mode(0o644)).unwrap();
         plan.operations[0].executable = true;
 
-        let completed = run_transaction(
+        let completed = run_test_transaction(
             project.path(),
             &plan,
             &prepared,
@@ -9266,5 +11045,575 @@ mod tests {
             fs::metadata(&original).unwrap().permissions().mode() & 0o111,
             0
         );
+    }
+
+    fn quarantine_files(directory: &Path) -> Vec<PathBuf> {
+        let mut files = fs::read_dir(directory)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(QUARANTINE_PREFIX))
+            })
+            .collect::<Vec<_>>();
+        files.sort();
+        files
+    }
+
+    fn is_agents_destination(path: &Path) -> bool {
+        path.file_name().and_then(|name| name.to_str()) == Some("AGENTS.md")
+    }
+
+    fn edit_agents_after_precondition(path: &Path, _index: usize, barrier: LiveMutationBarrier) {
+        if barrier == LiveMutationBarrier::AfterPrecondition && is_agents_destination(path) {
+            fs::write(path, b"concurrent user edit").unwrap();
+        }
+    }
+
+    fn create_agents_after_precondition(path: &Path, _index: usize, barrier: LiveMutationBarrier) {
+        if barrier == LiveMutationBarrier::AfterPrecondition && is_agents_destination(path) {
+            assert!(!path.exists(), "the reviewed destination must be absent");
+            fs::write(path, b"user created").unwrap();
+        }
+    }
+
+    fn create_agents_after_quarantine(path: &Path, _index: usize, barrier: LiveMutationBarrier) {
+        if barrier == LiveMutationBarrier::AfterQuarantineVerified && is_agents_destination(path) {
+            assert!(
+                !path.exists(),
+                "the verified destination must be quarantined"
+            );
+            fs::write(path, b"user created").unwrap();
+        }
+    }
+
+    fn transaction_journal_path(app: &Path, transaction_id: Uuid) -> PathBuf {
+        transaction_root(app, transaction_id)
+            .transaction
+            .join("journal.json")
+    }
+
+    #[test]
+    fn concurrent_edit_after_precondition_is_preserved_as_a_conflict() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        let error = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                live_mutation_barrier: Some(edit_agents_after_precondition),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("local precondition changed"));
+        assert_eq!(
+            fs::read(project.path().join("AGENTS.md")).unwrap(),
+            b"concurrent user edit"
+        );
+        assert!(quarantine_files(project.path()).is_empty());
+        assert!(!project
+            .path()
+            .join(".hoi4-mod-setup/install.lock.json")
+            .exists());
+
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        assert_eq!(
+            journal.operations[0].quarantine_leaf.as_deref(),
+            Some(quarantine_leaf_name(plan.plan_id, "op-1").as_str())
+        );
+        assert_eq!(
+            journal.operations[0].quarantine_sha256.as_deref(),
+            Some(sha256_bytes(b"concurrent user edit").as_str())
+        );
+        // Rollback treats the preserved local bytes as the restored state.
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert_eq!(
+            fs::read(project.path().join("AGENTS.md")).unwrap(),
+            b"concurrent user edit"
+        );
+        assert!(quarantine_files(project.path()).is_empty());
+    }
+
+    #[test]
+    fn file_created_in_the_apply_window_is_never_clobbered() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let plan = ready_plan(project.path());
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        let error = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                live_mutation_barrier: Some(create_agents_after_precondition),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("a file appeared"));
+        assert_eq!(
+            fs::read(project.path().join("AGENTS.md")).unwrap(),
+            b"user created"
+        );
+        assert!(quarantine_files(project.path()).is_empty());
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        // The unreviewed file is not removed by rollback either.
+        let error = rollback_transaction(project.path(), &mut journal, &journal_path).unwrap_err();
+        assert!(error.to_string().contains("uncertain live state"));
+        assert_eq!(
+            fs::read(project.path().join("AGENTS.md")).unwrap(),
+            b"user created"
+        );
+    }
+
+    #[test]
+    fn file_created_after_quarantine_keeps_both_user_files() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        let error = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                live_mutation_barrier: Some(create_agents_after_quarantine),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("a file appeared"));
+        assert_eq!(
+            fs::read(project.path().join("AGENTS.md")).unwrap(),
+            b"user created"
+        );
+        let quarantined = quarantine_files(project.path());
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(fs::read(&quarantined[0]).unwrap(), b"old");
+
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        assert_eq!(
+            journal.operations[0].quarantine_sha256.as_deref(),
+            Some(sha256_bytes(b"old").as_str())
+        );
+        let error = rollback_transaction(project.path(), &mut journal, &journal_path).unwrap_err();
+        assert!(error.to_string().contains("manual review"));
+        assert_eq!(
+            fs::read(project.path().join("AGENTS.md")).unwrap(),
+            b"user created"
+        );
+        assert_eq!(fs::read(&quarantined[0]).unwrap(), b"old");
+    }
+
+    #[test]
+    fn crash_at_each_quarantine_boundary_rolls_back_to_the_original_bytes() {
+        for boundary in [
+            QuarantineBoundary::BeforeRename,
+            QuarantineBoundary::AfterRename,
+            QuarantineBoundary::AfterVerification,
+            QuarantineBoundary::BeforeRelease,
+        ] {
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let (plan, prepared) = existing_file_fixture(project.path());
+            let error = run_test_transaction(
+                project.path(),
+                &plan,
+                &prepared,
+                &TransactionOptions {
+                    app_data_root: Some(app.path().into()),
+                    fail_at_quarantine: Some((0, boundary)),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("fault injected"));
+            let destination = project.path().join("AGENTS.md");
+            let quarantined = quarantine_files(project.path());
+            match boundary {
+                QuarantineBoundary::BeforeRename => {
+                    assert_eq!(fs::read(&destination).unwrap(), b"old");
+                    assert!(quarantined.is_empty());
+                }
+                QuarantineBoundary::AfterRename | QuarantineBoundary::AfterVerification => {
+                    assert!(!destination.exists(), "{boundary:?}");
+                    assert_eq!(quarantined.len(), 1);
+                    assert_eq!(fs::read(&quarantined[0]).unwrap(), b"old");
+                }
+                QuarantineBoundary::BeforeRelease => {
+                    assert_eq!(fs::read(&destination).unwrap(), b"safe");
+                    assert_eq!(quarantined.len(), 1);
+                    assert_eq!(fs::read(&quarantined[0]).unwrap(), b"old");
+                }
+            }
+            assert!(!project
+                .path()
+                .join(".hoi4-mod-setup/install.lock.json")
+                .exists());
+
+            let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+            let mut journal = read_journal(&journal_path).unwrap();
+            assert!(journal.operations[0].quarantine_leaf.is_some());
+            assert!(resume_transaction(project.path(), app.path(), plan.plan_id).is_err());
+            rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+            assert_eq!(fs::read(&destination).unwrap(), b"old", "{boundary:?}");
+            assert!(quarantine_files(project.path()).is_empty(), "{boundary:?}");
+        }
+    }
+
+    #[test]
+    fn managed_delete_preserves_a_concurrent_edit() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let initial_plan = ready_plan(project.path());
+        let initial_prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        let (_, installed_lock) = run_test_transaction(
+            project.path(),
+            &initial_plan,
+            &initial_prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut removal_plan = ready_plan(project.path());
+        removal_plan.maintenance_mode = Some("remove".into());
+        removal_plan.plan_id = Uuid::new_v4();
+        removal_plan.codex_analysis = None;
+        removal_plan.generated_artifacts.clear();
+        removal_plan.external_actions.clear();
+        removal_plan.git_setup = None;
+        removal_plan.optional_workflows.clear();
+        removal_plan.operations =
+            managed_removal_operations(&installed_lock, project.path()).unwrap();
+        assert!(removal_plan.operations.iter().any(|operation| {
+            operation.destination == "AGENTS.md"
+                && operation.action == OperationAction::DeleteManaged
+        }));
+
+        let error = run_test_transaction(
+            project.path(),
+            &removal_plan,
+            &[],
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                live_mutation_barrier: Some(edit_agents_after_precondition),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("local precondition changed"));
+        assert_eq!(
+            fs::read(project.path().join("AGENTS.md")).unwrap(),
+            b"concurrent user edit"
+        );
+        assert!(quarantine_files(project.path()).is_empty());
+
+        // A delete interrupted after its quarantine rename restores the
+        // displaced bytes on rollback.
+        let mut retry_plan = removal_plan.clone();
+        retry_plan.plan_id = Uuid::new_v4();
+        let journal_path = transaction_journal_path(app.path(), removal_plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        fs::write(project.path().join("AGENTS.md"), b"safe").unwrap();
+        let error = run_test_transaction(
+            project.path(),
+            &retry_plan,
+            &[],
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                fail_at_quarantine: Some((
+                    retry_plan
+                        .operations
+                        .iter()
+                        .position(|operation| operation.destination == "AGENTS.md")
+                        .unwrap(),
+                    QuarantineBoundary::AfterVerification,
+                )),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("fault injected"));
+        assert!(!project.path().join("AGENTS.md").exists());
+        let journal_path = transaction_journal_path(app.path(), retry_plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"safe");
+        assert!(quarantine_files(project.path()).is_empty());
+    }
+
+    #[test]
+    fn rollback_quarantine_interruptions_are_settled_on_retry() {
+        for checkpoint in [
+            "rollback_quarantine_BeforeRename",
+            "rollback_quarantine_AfterRename",
+            "rollback_quarantine_AfterVerification",
+            "rollback_after_placement",
+            "rollback_quarantine_BeforeRelease",
+        ] {
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let (plan, prepared) = existing_file_fixture(project.path());
+            run_test_transaction(
+                project.path(),
+                &plan,
+                &prepared,
+                &TransactionOptions {
+                    app_data_root: Some(app.path().into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+            let mut journal = read_journal(&journal_path).unwrap();
+            TEST_FAULT.with(|fault| *fault.borrow_mut() = Some(checkpoint.into()));
+            let result = rollback_transaction(project.path(), &mut journal, &journal_path);
+            TEST_FAULT.with(|fault| *fault.borrow_mut() = None);
+            assert!(result.is_err(), "{checkpoint}");
+
+            let mut journal = read_journal(&journal_path).unwrap();
+            rollback_transaction(project.path(), &mut journal, &journal_path)
+                .unwrap_or_else(|error| panic!("{checkpoint}: {error}"));
+            assert_eq!(
+                fs::read(project.path().join("AGENTS.md")).unwrap(),
+                b"old",
+                "{checkpoint}"
+            );
+            assert!(quarantine_files(project.path()).is_empty(), "{checkpoint}");
+            assert!(!project
+                .path()
+                .join(".hoi4-mod-setup/install.lock.json")
+                .exists());
+        }
+    }
+
+    fn maintenance_fixture(
+        project_root: &Path,
+        app_root: &Path,
+    ) -> (InstallationPlan, Vec<PreparedFile>, Vec<u8>) {
+        let mut first_plan = ready_plan(project_root);
+        first_plan.operations[0].source_sha256 = Some(sha256_bytes(b"old"));
+        first_plan.operations[0].source_size = Some(3);
+        let first_prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"old".to_vec(),
+            expected_sha256: sha256_bytes(b"old"),
+        }];
+        run_test_transaction(
+            project_root,
+            &first_plan,
+            &first_prepared,
+            &TransactionOptions {
+                app_data_root: Some(app_root.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let predecessor = fs::read(project_root.join(".hoi4-mod-setup/install.lock.json")).unwrap();
+        let mut second_plan = ready_plan(project_root);
+        second_plan.operations[0].action = OperationAction::Replace;
+        second_plan.operations[0].local_state = LocalState::Unmodified;
+        second_plan.operations[0].local_sha256 = Some(sha256_bytes(b"old"));
+        second_plan.operations[0].result_sha256 = Some(sha256_bytes(b"new"));
+        second_plan.operations[0].source_size = Some(3);
+        let second_prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"new".to_vec(),
+            expected_sha256: sha256_bytes(b"new"),
+        }];
+        (second_plan, second_prepared, predecessor)
+    }
+
+    #[test]
+    fn crash_before_lock_quarantine_release_is_finished_by_resume() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared, predecessor) = maintenance_fixture(project.path(), app.path());
+        let error = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                fail_at_lock_quarantine: Some(QuarantineBoundary::BeforeRelease),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("fault injected"));
+        let lock_directory = project.path().join(".hoi4-mod-setup");
+        let quarantined = quarantine_files(&lock_directory);
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(fs::read(&quarantined[0]).unwrap(), predecessor);
+        let journal = read_journal(&transaction_journal_path(app.path(), plan.plan_id)).unwrap();
+        assert_eq!(journal.state, "finalizing");
+        let committed = fs::read(lock_directory.join("install.lock.json")).unwrap();
+        assert_eq!(
+            Some(sha256_bytes(&committed)),
+            journal.result_lock_sha256.clone()
+        );
+
+        let (completed, _) = resume_transaction(project.path(), app.path(), plan.plan_id).unwrap();
+        assert_eq!(completed.state, "completed");
+        assert!(quarantine_files(&lock_directory).is_empty());
+        assert_eq!(
+            fs::read(lock_directory.join("install.lock.json")).unwrap(),
+            committed
+        );
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"new");
+    }
+
+    #[test]
+    fn crash_inside_lock_commit_restores_the_predecessor_for_rollback() {
+        for boundary in [
+            QuarantineBoundary::AfterRename,
+            QuarantineBoundary::AfterVerification,
+        ] {
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let (plan, prepared, predecessor) = maintenance_fixture(project.path(), app.path());
+            run_test_transaction(
+                project.path(),
+                &plan,
+                &prepared,
+                &TransactionOptions {
+                    app_data_root: Some(app.path().into()),
+                    fail_at_lock_quarantine: Some(boundary),
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+            let lock_directory = project.path().join(".hoi4-mod-setup");
+            assert!(!lock_directory.join("install.lock.json").exists());
+            assert_eq!(quarantine_files(&lock_directory).len(), 1);
+
+            // Resume moves the predecessor back and then requires rollback.
+            assert!(resume_transaction(project.path(), app.path(), plan.plan_id).is_err());
+            assert_eq!(
+                fs::read(lock_directory.join("install.lock.json")).unwrap(),
+                predecessor
+            );
+            assert!(quarantine_files(&lock_directory).is_empty());
+            let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+            let mut journal = read_journal(&journal_path).unwrap();
+            rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+            assert_eq!(
+                fs::read(lock_directory.join("install.lock.json")).unwrap(),
+                predecessor
+            );
+            assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"old");
+        }
+    }
+
+    #[test]
+    fn rollback_lock_restore_interruptions_are_settled_on_retry() {
+        for checkpoint in [
+            "rollback_lock_quarantine_AfterRename",
+            "rollback_lock_quarantine_BeforeRelease",
+        ] {
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let (plan, prepared, predecessor) = maintenance_fixture(project.path(), app.path());
+            run_test_transaction(
+                project.path(),
+                &plan,
+                &prepared,
+                &TransactionOptions {
+                    app_data_root: Some(app.path().into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+            let mut journal = read_journal(&journal_path).unwrap();
+            TEST_FAULT.with(|fault| *fault.borrow_mut() = Some(checkpoint.into()));
+            let result = rollback_transaction(project.path(), &mut journal, &journal_path);
+            TEST_FAULT.with(|fault| *fault.borrow_mut() = None);
+            assert!(result.is_err(), "{checkpoint}");
+            let lock_directory = project.path().join(".hoi4-mod-setup");
+            assert_eq!(quarantine_files(&lock_directory).len(), 1, "{checkpoint}");
+
+            let mut journal = read_journal(&journal_path).unwrap();
+            rollback_transaction(project.path(), &mut journal, &journal_path)
+                .unwrap_or_else(|error| panic!("{checkpoint}: {error}"));
+            assert_eq!(
+                fs::read(lock_directory.join("install.lock.json")).unwrap(),
+                predecessor,
+                "{checkpoint}"
+            );
+            assert!(quarantine_files(&lock_directory).is_empty(), "{checkpoint}");
+            assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"old");
+        }
+    }
+
+    #[test]
+    fn journaled_quarantine_names_are_bound_to_their_operation() {
+        let transaction_id = Uuid::new_v4();
+        let mut operation = JournalOperation {
+            id: "op-1".into(),
+            status: "applying".into(),
+            destination: "AGENTS.md".into(),
+            ownership: Some(Ownership::Managed),
+            component_id: None,
+            source_path: None,
+            source_size: None,
+            action: Some(OperationAction::Replace),
+            location_scope: None,
+            external: false,
+            backup_path: None,
+            before_sha256: None,
+            before_executable: None,
+            expected_sha256: None,
+            source_sha256: None,
+            result_sha256: None,
+            expected_executable: None,
+            rollback: Some(RollbackAction::RestoreBackup),
+            rollback_source_path: None,
+            resolution: None,
+            backup_sha256: None,
+            staged_sha256: None,
+            after_sha256: None,
+            after_exists: None,
+            after_executable: None,
+            quarantine_leaf: Some(quarantine_leaf_name(transaction_id, "op-1")),
+            quarantine_sha256: None,
+        };
+        assert!(journaled_quarantine_leaf(transaction_id, &operation)
+            .unwrap()
+            .is_some());
+        operation.quarantine_leaf = Some("descriptor.mod".into());
+        assert!(matches!(
+            journaled_quarantine_leaf(transaction_id, &operation),
+            Err(AppError::PathSecurity(_))
+        ));
+        operation.quarantine_leaf = Some(quarantine_leaf_name(Uuid::new_v4(), "op-1"));
+        assert!(journaled_quarantine_leaf(transaction_id, &operation).is_err());
+        assert!(quarantine_leaf_name(transaction_id, "../escape").starts_with(QUARANTINE_PREFIX));
+        assert!(!quarantine_leaf_name(transaction_id, "../escape").contains('/'));
     }
 }

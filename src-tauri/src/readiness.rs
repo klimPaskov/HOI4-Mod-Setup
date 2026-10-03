@@ -623,19 +623,28 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
     } else {
         "ai.authenticated"
     };
+    let provider_label = crate::ai::profile(ai_provider)
+        .map(|profile| profile.display_name)
+        .unwrap_or_else(|| ai_provider.to_string());
     let auth_label = if ai_provider == "codex" {
         "ChatGPT Codex authentication".to_string()
+    } else if ai_provider == crate::claude_code::PROVIDER_ID {
+        "Claude account sign-in".to_string()
     } else {
-        format!("{ai_provider} connection")
+        format!("{provider_label} connection")
     };
     let auth_message = if ai_provider == "codex" {
         "The official Codex App Server reported an authenticated ChatGPT account during setup."
             .to_string()
+    } else if ai_provider == crate::claude_code::PROVIDER_ID {
+        "Claude Code reported a signed-in Claude account during setup.".to_string()
     } else {
-        format!("The {ai_provider} provider connection is available for semantic planning.")
+        format!("The {provider_label} provider connection is available for semantic planning.")
     };
     let auth_path = if ai_provider == "codex" {
         "codex app-server account/read"
+    } else if ai_provider == crate::claude_code::PROVIDER_ID {
+        "claude auth status"
     } else {
         "OS credential vault or local endpoint"
     };
@@ -657,13 +666,13 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
     let analysis_label = if ai_provider == "codex" {
         "ChatGPT Codex analysis".to_string()
     } else {
-        format!("{ai_provider} semantic analysis")
+        format!("{provider_label} semantic analysis")
     };
     let analysis_message = if ai_provider == "codex" {
         "Required schema-constrained Codex proposals were confirmed before planning.".to_string()
     } else {
         format!(
-            "Required schema-constrained {ai_provider} proposals were confirmed before planning."
+            "Required schema-constrained {provider_label} proposals were confirmed before planning."
         )
     };
     add_bool_check(
@@ -803,18 +812,8 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         codex: ReadinessCodexSummary {
             provider: ai_provider.into(),
             model: ai_model.into(),
-            integration: if ai_provider == "codex" {
-                "codex_app_server".into()
-            } else {
-                "provider_api".into()
-            },
-            auth_mode: if ai_provider == "codex" {
-                "chatgpt".into()
-            } else if ai_provider == "local" {
-                "local_endpoint".into()
-            } else {
-                "api_key".into()
-            },
+            integration: crate::ai::integration_and_auth_mode(ai_provider).0.into(),
+            auth_mode: crate::ai::integration_and_auth_mode(ai_provider).1.into(),
             authenticated_during_setup: authenticated,
             analysis_status: persisted_analysis_status.into(),
             confirmed_field_count,

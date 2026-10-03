@@ -10,7 +10,8 @@ use uuid::Uuid;
 
 pub const CURRENT_STATE_SCHEMA: &str = "1.0.0";
 pub const CURRENT_LOCK_SCHEMA: &str = "1.0.0";
-pub const CURRENT_JOURNAL_SCHEMA: &str = "1.0.0";
+pub const CURRENT_JOURNAL_SCHEMA: &str = "1.1.0";
+pub const CURRENT_PLAN_SCHEMA: &str = "1.1.0";
 
 fn major(schema: &str) -> Result<u64, AppError> {
     schema
@@ -73,7 +74,7 @@ pub fn migrate_state(value: Value) -> Result<Value, AppError> {
         .to_owned();
     if !matches!(
         provider.as_str(),
-        "codex" | "claude" | "kimi" | "glm" | "deepseek" | "local" | "custom"
+        "codex" | "claude_account" | "claude" | "kimi" | "glm" | "deepseek" | "local" | "custom"
     ) {
         return Err(AppError::InvalidInput(
             "project state uses an unsupported AI provider".into(),
@@ -545,6 +546,11 @@ fn normalize_legacy_portrait_workflow(value: &mut Value) {
 }
 
 pub fn migrate_journal(value: Value) -> Result<TransactionJournal, AppError> {
+    let original_version = value
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .unwrap_or("1.0.0")
+        .to_string();
     let mut value = migrate_value(value, "transaction journal", CURRENT_JOURNAL_SCHEMA)?;
     normalize_coding_environments(&mut value)?;
     if let Some(object) = value.as_object_mut() {
@@ -556,12 +562,35 @@ pub fn migrate_journal(value: Value) -> Result<TransactionJournal, AppError> {
                 "mode": "existing",
                 "canonical_parent": null,
                 "leaf": null,
+                "root_identity": null,
+                "parent_identity": null,
                 "checkpoint": "not_required",
                 "created_by_transaction": false,
                 "observed_exists": true,
                 "cleanup_result": null
             })
         });
+        let lifecycle = object
+            .get("project_root_lifecycle")
+            .and_then(Value::as_object);
+        let has_identity_binding = lifecycle.is_some_and(|lifecycle| {
+            match lifecycle.get("mode").and_then(Value::as_str) {
+                Some("existing") => lifecycle
+                    .get("root_identity")
+                    .and_then(Value::as_str)
+                    .is_some(),
+                Some("create_leaf") => lifecycle
+                    .get("parent_identity")
+                    .and_then(Value::as_str)
+                    .is_some(),
+                _ => false,
+            }
+        });
+        if !has_identity_binding {
+            // Preserve the old schema marker on inspect-only journals. They
+            // remain readable but cannot claim the new recovery contract.
+            object.insert("schema_version".into(), Value::String(original_version));
+        }
     }
     serde_json::from_value(value).map_err(AppError::from)
 }

@@ -29,19 +29,21 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, FileDispositionInfoEx, FileRenameInfo, FindClose, FindFirstFileW, FindNextFileW,
-    GetFileInformationByHandle, ReplaceFileW, SetFileInformationByHandle,
-    BY_HANDLE_FILE_INFORMATION, CREATE_NEW, DELETE, FILE_APPEND_DATA, FILE_ATTRIBUTE_DIRECTORY,
-    FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TEMPORARY, FILE_DISPOSITION_FLAG_DELETE,
-    FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_LIST_DIRECTORY,
-    FILE_READ_ATTRIBUTES, FILE_RENAME_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    OPEN_EXISTING, SYNCHRONIZE, WIN32_FIND_DATAW,
+    CreateFileW, FileDispositionInfoEx, FileIdInfo, FileRenameInfo, FindClose, FindFirstFileW,
+    FindNextFileW, GetFileInformationByHandle, GetFileInformationByHandleEx, ReplaceFileW,
+    SetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, CREATE_NEW, DELETE, FILE_APPEND_DATA,
+    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TEMPORARY,
+    FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
+    FILE_GENERIC_WRITE, FILE_ID_INFO, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, SYNCHRONIZE,
+    WIN32_FIND_DATAW,
 };
 
-/// A directory capability rooted at one canonical directory. The retained
-/// ancestor handles prevent Windows path components from being renamed while
-/// operations are in flight; Unix operations resolve every child with `*at`.
+/// A directory capability rooted at one absolute, link-free directory. The
+/// retained ancestor handles prevent Windows path components from being
+/// renamed while operations are in flight; Unix operations resolve every
+/// child with `*at`.
 pub(crate) struct RootedDir {
     handle: File,
     ancestors: Vec<File>,
@@ -58,25 +60,50 @@ impl RootedDir {
         Self::open_with_share_policy(path, false)
     }
 
+    /// Return a platform-scoped token for the directory held by this object.
+    /// The token is suitable for binding a reviewed project root to a durable
+    /// transaction journal; it contains no path or user data.
+    pub(crate) fn identity_token(&self) -> Result<String, AppError> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let metadata = self.handle.metadata()?;
+            Ok(format!("unix:{:x}:{:x}", metadata.dev(), metadata.ino()))
+        }
+        #[cfg(windows)]
+        {
+            let (volume, file_id) = windows_file_identity(&self.handle)?;
+            Ok(format!("windows-v2:{volume:016x}:{}", hex::encode(file_id)))
+        }
+    }
+
     fn open_with_share_policy(path: &Path, deny_delete_share: bool) -> Result<Self, AppError> {
         if !path.is_absolute() {
             return Err(AppError::PathSecurity(
                 "filesystem root must be absolute".into(),
             ));
         }
+        #[cfg(unix)]
         let observed = fs::symlink_metadata(path)?;
+        #[cfg(unix)]
         if is_link_metadata(&observed) || !observed.is_dir() || path_has_link_component(path) {
             return Err(AppError::PathSecurity(
                 "filesystem root is not a link-free directory".into(),
             ));
         }
-        let canonical = fs::canonicalize(path)?;
-        if path_has_link_component(&canonical) {
-            return Err(AppError::PathSecurity(
-                "canonical filesystem root contains a link".into(),
-            ));
-        }
-        let filesystem_root = absolute_filesystem_root(&canonical)?;
+        #[cfg(unix)]
+        let filesystem_path = {
+            let canonical = fs::canonicalize(path)?;
+            if path_has_link_component(&canonical) {
+                return Err(AppError::PathSecurity(
+                    "canonical filesystem root contains a link".into(),
+                ));
+            }
+            canonical
+        };
+        #[cfg(windows)]
+        let filesystem_path = lexical_absolute_path(path)?;
+        let filesystem_root = absolute_filesystem_root(&filesystem_path)?;
         let root_handle = open_directory_path(&filesystem_root, deny_delete_share)?;
         validate_directory_handle(&root_handle)?;
         let mut current = Self {
@@ -86,7 +113,7 @@ impl RootedDir {
             deny_delete_share,
         };
 
-        let remainder = canonical
+        let remainder = filesystem_path
             .strip_prefix(&filesystem_root)
             .map_err(|_| AppError::PathSecurity("filesystem root changed during open".into()))?;
         for component in remainder.components() {
@@ -303,19 +330,8 @@ impl RootedDir {
     }
 
     pub(crate) fn hash_file(&self, relative: &str) -> Result<String, AppError> {
-        use sha2::{Digest, Sha256};
-
         let mut file = self.open_regular_file(relative)?;
-        let mut hasher = Sha256::new();
-        let mut buffer = [0_u8; 64 * 1024];
-        loop {
-            let read = file.read(&mut buffer)?;
-            if read == 0 {
-                break;
-            }
-            hasher.update(&buffer[..read]);
-        }
-        Ok(hex::encode(hasher.finalize()))
+        sha256_reader(&mut file)
     }
 
     pub(crate) fn write_atomic(&self, relative: &str, bytes: &[u8]) -> Result<(), AppError> {
@@ -347,6 +363,98 @@ impl RootedDir {
         let source = self.open_regular_file(source_relative)?;
         let permissions = source.metadata()?.permissions();
         destination.write_atomic_from(destination_relative, &mut &source, Some(permissions))
+    }
+
+    /// Copy `source_relative` into `destination_relative` through a synced
+    /// temporary file and an exclusive rename. Returns `Ok(false)` without
+    /// changing the destination when any entry already occupies that name.
+    pub(crate) fn copy_file_atomic_noreplace_to(
+        &self,
+        source_relative: &str,
+        destination: &RootedDir,
+        destination_relative: &str,
+    ) -> Result<bool, AppError> {
+        let source = self.open_regular_file(source_relative)?;
+        let permissions = source.metadata()?.permissions();
+        destination.write_atomic_noreplace_from(
+            destination_relative,
+            &mut &source,
+            Some(permissions),
+        )
+    }
+
+    /// Write `bytes` to a new leaf through a synced temporary file and an
+    /// exclusive rename. Returns `Ok(false)` when the name is already taken.
+    pub(crate) fn write_atomic_noreplace(
+        &self,
+        relative: &str,
+        bytes: &[u8],
+    ) -> Result<bool, AppError> {
+        self.write_atomic_noreplace_from(relative, &mut &bytes[..], None)
+    }
+
+    /// Move a regular file to another name in the same directory without
+    /// replacing an existing entry. The retained parent handle performs the
+    /// namespace change, so no cross-volume copy or ancestor re-resolution
+    /// occurs. Returns `Ok(false)` when `to_relative` already exists; the
+    /// source is then left untouched.
+    pub(crate) fn rename_file_noreplace(
+        &self,
+        from_relative: &str,
+        to_relative: &str,
+    ) -> Result<bool, AppError> {
+        let from = normalize_relative_path(from_relative)?;
+        let to = normalize_relative_path(to_relative)?;
+        let (from_parent, _) = from.rsplit_once('/').unwrap_or(("", &from));
+        let (to_parent, to_leaf) = to.rsplit_once('/').unwrap_or(("", &to));
+        if from_parent != to_parent {
+            return Err(AppError::PathSecurity(
+                "no-replace rename must stay inside one directory".into(),
+            ));
+        }
+        let to_leaf = OsString::from(to_leaf);
+        let (parent, from_leaf) = self.open_parent(&from, false)?;
+        parent.verify_bound_to_path()?;
+        let metadata = entry_metadata(&parent, &from_leaf)?;
+        if metadata.is_link || !metadata.is_file {
+            return Err(AppError::PathSecurity(
+                "refusing to rename a link or non-regular file".into(),
+            ));
+        }
+        validate_component(&from_leaf)?;
+        validate_component(&to_leaf)?;
+        let moved = rename_file_noreplace_impl(&parent, &from_leaf, &to_leaf)?;
+        if moved {
+            parent.sync_directory()?;
+        }
+        parent.verify_bound_to_path()?;
+        Ok(moved)
+    }
+
+    /// Remove a regular file only when its bytes still hash to
+    /// `expected_sha256`. On Windows the handle that was hashed, opened
+    /// without write or delete sharing, also performs the delete. On Unix the
+    /// leaf is reopened and its identity compared before `unlinkat`. Returns
+    /// `Ok(false)` and keeps the file when the bytes or identity differ.
+    pub(crate) fn remove_file_if_hash(
+        &self,
+        relative: &str,
+        expected_sha256: &str,
+    ) -> Result<bool, AppError> {
+        let (parent, leaf) = self.open_parent(relative, false)?;
+        parent.verify_bound_to_path()?;
+        let metadata = entry_metadata(&parent, &leaf)?;
+        if metadata.is_link || !metadata.is_file {
+            return Err(AppError::PathSecurity(
+                "refusing to remove a link or non-regular file".into(),
+            ));
+        }
+        let removed = remove_file_if_hash_impl(&parent, &leaf, expected_sha256)?;
+        if removed {
+            parent.sync_directory()?;
+        }
+        parent.verify_bound_to_path()?;
+        Ok(removed)
     }
 
     pub(crate) fn remove_file(&self, relative: &str) -> Result<(), AppError> {
@@ -389,6 +497,7 @@ impl RootedDir {
         let (parent, leaf) = self.open_parent(relative, false)?;
         parent.verify_bound_to_path()?;
         create_directory_at(&parent, &leaf)?;
+        parent.sync_directory()?;
         parent.open_child_dir(&leaf)
     }
 
@@ -477,6 +586,47 @@ impl RootedDir {
         result
     }
 
+    fn write_atomic_noreplace_from<R: Read>(
+        &self,
+        relative: &str,
+        reader: &mut R,
+        permissions: Option<Permissions>,
+    ) -> Result<bool, AppError> {
+        let (parent, leaf) = self.open_parent(relative, true)?;
+        parent.verify_bound_to_path()?;
+        match entry_metadata(&parent, &leaf) {
+            Ok(_) => return Ok(false),
+            Err(error) if error_is_missing(&error) => {}
+            Err(error) => return Err(error),
+        }
+        let temporary = OsString::from(format!(".hoi4ms-{}.tmp", Uuid::new_v4()));
+        let mut file = open_new_file_at(&parent, &temporary)?;
+        let mut result = (|| {
+            io::copy(reader, &mut file)?;
+            if let Some(permissions) = permissions {
+                file.set_permissions(permissions)?;
+            }
+            file.sync_all()?;
+            parent.verify_bound_to_path()
+        })();
+        drop(file);
+        let mut placed = false;
+        if result.is_ok() {
+            result = (|| {
+                validate_component(&leaf)?;
+                placed = rename_file_noreplace_impl(&parent, &temporary, &leaf)?;
+                if placed {
+                    parent.sync_directory()?;
+                }
+                parent.verify_bound_to_path()
+            })();
+        }
+        if result.is_err() || !placed {
+            let _ = remove_file_at(&parent, &temporary);
+        }
+        result.map(|()| placed)
+    }
+
     fn open_regular_file(&self, relative: &str) -> Result<File, AppError> {
         let (parent, leaf) = self.open_parent(relative, false)?;
         parent.verify_bound_to_path()?;
@@ -537,7 +687,10 @@ impl RootedDir {
             Ok(dir) => Ok(dir),
             Err(open_error) => match entry_metadata(self, name) {
                 Err(error) if error_is_missing(&error) => match create_directory_at(self, name) {
-                    Ok(()) => self.open_child_dir(name),
+                    Ok(()) => {
+                        self.sync_directory()?;
+                        self.open_child_dir(name)
+                    }
                     Err(error) if error_is_exists(&error) => self.open_child_dir(name),
                     Err(error) => Err(error),
                 },
@@ -566,14 +719,114 @@ impl RootedDir {
     }
 
     fn sync_directory(&self) -> Result<(), AppError> {
-        match self.handle.sync_all() {
-            Ok(()) => Ok(()),
-            Err(error) if cfg!(windows) && error.kind() == io::ErrorKind::PermissionDenied => {
-                Ok(())
-            }
-            Err(error) => Err(error.into()),
+        #[cfg(windows)]
+        {
+            sync_windows_directory(&self.handle, &self.path)
+        }
+        #[cfg(not(windows))]
+        {
+            self.handle.sync_all().map_err(Into::into)
         }
     }
+}
+
+/// Flush a directory's entries after a namespace change. Retained directory
+/// handles are opened without write access, and `FlushFileBuffers` requires
+/// it, so the same object is reopened through `ReOpenFile`: no path lookup
+/// happens, so a swapped path cannot redirect the flush. A filesystem that
+/// has no directory flush (`ERROR_INVALID_FUNCTION` or
+/// `ERROR_NOT_SUPPORTED`) cannot offer stronger durability and is accepted;
+/// any other failure is reported.
+///
+/// Some Windows directory handles refuse a write reopen through `ReOpenFile`
+/// with `ERROR_ACCESS_DENIED` even when the caller may open the directory for
+/// write. In that case the directory is opened by its retained path, whose
+/// ancestors cannot be renamed while their delete-denying handles are held,
+/// and the flush proceeds only when the opened object has the same 128-bit
+/// file identity as the retained handle.
+#[cfg(windows)]
+fn sync_windows_directory(directory: &File, path: &Path) -> Result<(), AppError> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    const ERROR_ACCESS_DENIED: i32 = 5;
+    const ERROR_INVALID_FUNCTION: i32 = 1;
+    const ERROR_NOT_SUPPORTED: i32 = 50;
+    // SAFETY: the retained handle is valid for the duration of the call, and
+    // the returned handle is owned by the new `File` below.
+    let reopened = unsafe {
+        windows_sys::Win32::Storage::FileSystem::ReOpenFile(
+            directory.as_raw_handle() as HANDLE,
+            FILE_GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            FILE_FLAG_BACKUP_SEMANTICS,
+        )
+    };
+    let reopened = if reopened == INVALID_HANDLE_VALUE {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(ERROR_ACCESS_DENIED) {
+            return Err(AppError::Transaction(format!(
+                "directory durability flush could not reopen the reviewed directory: {error}"
+            )));
+        }
+        let by_path = create_windows_file(
+            path,
+            FILE_GENERIC_WRITE,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        )
+        .map_err(|error| {
+            AppError::Transaction(format!(
+                "directory durability flush could not reopen the reviewed directory: {error}"
+            ))
+        })?;
+        if windows_file_identity(&by_path)? != windows_file_identity(directory)? {
+            return Err(AppError::PathSecurity(
+                "directory durability flush reached a different directory".into(),
+            ));
+        }
+        by_path
+    } else {
+        // SAFETY: `ReOpenFile` returned a new handle that nothing else owns.
+        unsafe { File::from_raw_handle(reopened as _) }
+    };
+    match reopened.sync_all() {
+        Ok(()) => Ok(()),
+        Err(error)
+            if matches!(
+                error.raw_os_error(),
+                Some(ERROR_INVALID_FUNCTION) | Some(ERROR_NOT_SUPPORTED)
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(AppError::Transaction(format!(
+            "directory durability flush failed: {error}"
+        ))),
+    }
+}
+
+#[cfg(windows)]
+fn lexical_absolute_path(path: &Path) -> Result<PathBuf, AppError> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::Normal(name) => normalized.push(name),
+            Component::ParentDir => {
+                return Err(AppError::PathSecurity(
+                    "filesystem root contains parent traversal".into(),
+                ))
+            }
+        }
+    }
+    if !normalized.is_absolute() {
+        return Err(AppError::PathSecurity(
+            "filesystem root must be lexically absolute".into(),
+        ));
+    }
+    Ok(normalized)
 }
 
 fn error_is_missing(error: &AppError) -> bool {
@@ -606,7 +859,7 @@ fn absolute_filesystem_root(path: &Path) -> Result<PathBuf, AppError> {
             Component::CurDir => {}
             Component::ParentDir => {
                 return Err(AppError::PathSecurity(
-                    "canonical path contains parent traversal".into(),
+                    "normalized path contains parent traversal".into(),
                 ))
             }
         }
@@ -1120,7 +1373,202 @@ fn rename_file_at(
 ) -> Result<(), AppError> {
     validate_component(source)?;
     validate_component(destination)?;
-    rename_file_impl(parent, source, destination, replace)
+    if replace {
+        rename_file_impl(parent, source, destination, true)
+    } else if rename_file_noreplace_impl(parent, source, destination)? {
+        Ok(())
+    } else {
+        Err(AppError::Transaction(
+            "rename destination already exists".into(),
+        ))
+    }
+}
+
+fn sha256_reader<R: Read>(reader: &mut R) -> Result<String, AppError> {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Exclusive same-directory rename. `Ok(false)` means the destination name
+/// was already taken and nothing moved.
+#[cfg(unix)]
+fn rename_file_noreplace_impl(
+    parent: &RootedDir,
+    source: &OsStr,
+    destination: &OsStr,
+) -> Result<bool, AppError> {
+    let source = CString::new(source.as_bytes())
+        .map_err(|_| AppError::PathSecurity("filesystem component contains NUL".into()))?;
+    let destination = CString::new(destination.as_bytes())
+        .map_err(|_| AppError::PathSecurity("filesystem component contains NUL".into()))?;
+    let directory = parent.handle.as_raw_fd();
+    #[cfg(target_os = "linux")]
+    {
+        let result = unsafe {
+            libc::renameat2(
+                directory,
+                source.as_ptr(),
+                directory,
+                destination.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        if result == 0 {
+            return Ok(true);
+        }
+        let error = io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(libc::EEXIST) => return Ok(false),
+            Some(libc::EINVAL) | Some(libc::ENOSYS) | Some(libc::EOPNOTSUPP) => {}
+            _ => return Err(error.into()),
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let result = unsafe {
+            libc::renameatx_np(
+                directory,
+                source.as_ptr(),
+                directory,
+                destination.as_ptr(),
+                libc::RENAME_EXCL,
+            )
+        };
+        if result == 0 {
+            return Ok(true);
+        }
+        let error = io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(libc::EEXIST) => return Ok(false),
+            Some(libc::EINVAL) | Some(libc::ENOTSUP) => {}
+            _ => return Err(error.into()),
+        }
+    }
+    // A filesystem without an exclusive rename still offers exclusive link
+    // creation. The second name is created only when it is absent, and the
+    // original name is removed afterwards.
+    let result = unsafe {
+        libc::linkat(
+            directory,
+            source.as_ptr(),
+            directory,
+            destination.as_ptr(),
+            0,
+        )
+    };
+    if result != 0 {
+        let error = io::Error::last_os_error();
+        return if error.raw_os_error() == Some(libc::EEXIST) {
+            Ok(false)
+        } else {
+            Err(error.into())
+        };
+    }
+    let result = unsafe { libc::unlinkat(directory, source.as_ptr(), 0) };
+    if result != 0 {
+        return Err(io::Error::last_os_error().into());
+    }
+    Ok(true)
+}
+
+#[cfg(windows)]
+fn rename_file_noreplace_impl(
+    parent: &RootedDir,
+    source: &OsStr,
+    destination: &OsStr,
+) -> Result<bool, AppError> {
+    const ERROR_FILE_EXISTS: i32 = 80;
+    const ERROR_ALREADY_EXISTS: i32 = 183;
+    let source_file = open_windows_rename_source(parent, source)?;
+    match windows_rename_by_handle(&source_file, &parent.path.join(destination)) {
+        Ok(()) => Ok(true),
+        Err(error)
+            if matches!(
+                error.raw_os_error(),
+                Some(ERROR_FILE_EXISTS | ERROR_ALREADY_EXISTS)
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(AppError::Transaction(format!(
+            "handle-relative no-replace rename failed: {error}"
+        ))),
+    }
+}
+
+#[cfg(unix)]
+fn remove_file_if_hash_impl(
+    parent: &RootedDir,
+    name: &OsStr,
+    expected_sha256: &str,
+) -> Result<bool, AppError> {
+    let mut file = open_regular_file_at(parent, name)?;
+    if sha256_reader(&mut file)? != expected_sha256 {
+        return Ok(false);
+    }
+    let hashed = file.metadata()?;
+    let current = open_regular_file_at(parent, name)?.metadata()?;
+    if !same_file_identity(&hashed, &current) {
+        return Ok(false);
+    }
+    remove_file_impl(parent, name)?;
+    Ok(true)
+}
+
+#[cfg(windows)]
+fn remove_file_if_hash_impl(
+    parent: &RootedDir,
+    name: &OsStr,
+    expected_sha256: &str,
+) -> Result<bool, AppError> {
+    validate_component(name)?;
+    let path = parent.path.join(name);
+    // Deny write and delete sharing so the hashed bytes cannot change before
+    // the delete disposition is applied through this same handle.
+    let mut file = create_windows_file(
+        &path,
+        FILE_GENERIC_READ | DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_SHARE_READ,
+    )?;
+    let information = windows_file_information(&file)?;
+    if information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        || information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0
+    {
+        return Err(AppError::PathSecurity(
+            "refusing to remove a reparse point or directory as a file".into(),
+        ));
+    }
+    if sha256_reader(&mut file)? != expected_sha256 {
+        return Ok(false);
+    }
+    let disposition = FILE_DISPOSITION_INFO_EX {
+        Flags: FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+    };
+    let result = unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle() as HANDLE,
+            FileDispositionInfoEx,
+            &disposition as *const _ as *const _,
+            std::mem::size_of_val(&disposition) as u32,
+        )
+    };
+    if result == 0 {
+        Err(io::Error::last_os_error().into())
+    } else {
+        Ok(true)
+    }
 }
 
 #[cfg(unix)]
@@ -1158,21 +1606,7 @@ fn rename_file_impl(
 ) -> Result<(), AppError> {
     let source_path = parent.path.join(source);
     let destination_path = parent.path.join(destination);
-    let source_file = create_windows_file(
-        &source_path,
-        DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
-        OPEN_EXISTING,
-        FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_SHARE_READ | FILE_SHARE_WRITE,
-    )?;
-    let information = windows_file_information(&source_file)?;
-    if information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
-        || information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0
-    {
-        return Err(AppError::PathSecurity(
-            "refusing to rename a reparse point or directory as a file".into(),
-        ));
-    }
+    let source_file = open_windows_rename_source(parent, source)?;
     let destination_exists = match entry_metadata(parent, destination) {
         Ok(metadata) if metadata.is_link || !metadata.is_file => {
             return Err(AppError::PathSecurity(
@@ -1210,6 +1644,33 @@ fn rename_file_impl(
         }
         return Ok(());
     }
+    windows_rename_by_handle(&source_file, &destination_path)
+        .map_err(|error| AppError::Transaction(format!("handle-relative rename failed: {error}")))
+}
+
+#[cfg(windows)]
+fn open_windows_rename_source(parent: &RootedDir, source: &OsStr) -> Result<File, AppError> {
+    let source_file = create_windows_file(
+        &parent.path.join(source),
+        DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+    )?;
+    let information = windows_file_information(&source_file)?;
+    if information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        || information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0
+    {
+        return Err(AppError::PathSecurity(
+            "refusing to rename a reparse point or directory as a file".into(),
+        ));
+    }
+    Ok(source_file)
+}
+
+/// Rename an opened file without replacing an existing destination.
+#[cfg(windows)]
+fn windows_rename_by_handle(source_file: &File, destination_path: &Path) -> io::Result<()> {
     let destination = destination_path
         .as_os_str()
         .encode_wide()
@@ -1218,13 +1679,13 @@ fn rename_file_impl(
     let name_bytes = destination
         .len()
         .checked_mul(std::mem::size_of::<u16>())
-        .ok_or_else(|| AppError::PathSecurity("rename target name is too long".into()))?;
+        .ok_or_else(|| io::Error::other("rename target name is too long"))?;
     // FILE_RENAME_INFO declares one WCHAR in its trailing array. Windows
     // requires sizeof(struct) plus the complete filename byte count, while
     // the data itself starts at the array offset.
     let total_size = std::mem::size_of::<FILE_RENAME_INFO>()
         .checked_add(name_bytes)
-        .ok_or_else(|| AppError::PathSecurity("rename target name is too long".into()))?;
+        .ok_or_else(|| io::Error::other("rename target name is too long"))?;
     let mut buffer = vec![0_u64; total_size.div_ceil(std::mem::size_of::<u64>())];
     unsafe {
         let buffer_pointer = buffer.as_mut_ptr() as *mut u8;
@@ -1244,10 +1705,7 @@ fn rename_file_impl(
             total_size as u32,
         );
         if result == 0 {
-            let error = io::Error::last_os_error();
-            return Err(AppError::Transaction(format!(
-                "handle-relative rename failed (name bytes {name_bytes}, structure bytes {total_size}): {error}"
-            )));
+            return Err(io::Error::last_os_error());
         }
     }
     Ok(())
@@ -1401,10 +1859,48 @@ fn windows_file_information(file: &File) -> Result<BY_HANDLE_FILE_INFORMATION, A
 }
 
 #[cfg(windows)]
-fn windows_file_identity(file: &File) -> Result<(u32, u64), AppError> {
-    let information = windows_file_information(file)?;
-    let index = ((information.nFileIndexHigh as u64) << 32) | information.nFileIndexLow as u64;
-    Ok((information.dwVolumeSerialNumber, index))
+fn windows_file_identity(file: &File) -> Result<(u64, [u8; 16]), AppError> {
+    let mut information = unsafe { std::mem::zeroed::<FILE_ID_INFO>() };
+    let result = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle() as HANDLE,
+            FileIdInfo,
+            &mut information as *mut _ as *mut _,
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    if result == 0 {
+        return Err(AppError::PathSecurity(format!(
+            "filesystem does not expose a stable 128-bit file identity: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    let file_id = information.FileId.Identifier;
+    if information.VolumeSerialNumber == 0 || file_id.iter().all(|byte| *byte == 0) {
+        return Err(AppError::PathSecurity(
+            "filesystem returned an unavailable file identity".into(),
+        ));
+    }
+    Ok((information.VolumeSerialNumber, file_id))
+}
+
+#[cfg(test)]
+mod directory_sync_tests {
+    use super::*;
+
+    #[test]
+    fn retained_directory_handle_flushes_after_a_rename() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = RootedDir::open(temp.path()).unwrap();
+        root.write_atomic("durable.txt", b"bytes").unwrap();
+        root.sync_directory().unwrap();
+        let read_only = RootedDir::open_read(temp.path()).unwrap();
+        read_only.sync_directory().unwrap();
+        assert_eq!(
+            std::fs::read(temp.path().join("durable.txt")).unwrap(),
+            b"bytes"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1426,6 +1922,52 @@ mod tests {
 
         assert!(project.write_atomic("managed.txt", b"replacement").is_err());
         assert_eq!(fs::read(&sentinel).unwrap(), b"user bytes");
+    }
+
+    #[test]
+    fn root_open_rejects_a_linked_ancestor_without_canonicalizing_through_it() {
+        let container = tempfile::tempdir().unwrap();
+        let real_parent = container.path().join("real");
+        let linked_parent = container.path().join("linked");
+        fs::create_dir_all(real_parent.join("project")).unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real_parent, &linked_parent).unwrap();
+        #[cfg(windows)]
+        {
+            let output = std::process::Command::new("cmd.exe")
+                .args(["/d", "/c", "mklink", "/J"])
+                .arg(&linked_parent)
+                .arg(&real_parent)
+                .output()
+                .expect("cmd.exe is present on Windows");
+            assert!(
+                output.status.success(),
+                "junction creation failed: {output:?}"
+            );
+        }
+
+        assert!(RootedDir::open(&linked_parent.join("project")).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn lexical_absolute_path_rejects_parent_traversal() {
+        assert!(lexical_absolute_path(Path::new(r"C:\mods\..\outside")).is_err());
+        assert_eq!(
+            lexical_absolute_path(Path::new(r"C:\mods\.\example")).unwrap(),
+            PathBuf::from(r"C:\mods\example")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_identity_token_uses_a_nonzero_128_bit_file_id() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = RootedDir::open_read(root.path()).unwrap();
+        let identity = directory.identity_token().unwrap();
+        assert!(identity.starts_with("windows-v2:"));
+        assert_eq!(identity.split(':').nth(2).unwrap().len(), 32);
     }
 
     #[test]

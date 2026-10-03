@@ -23,6 +23,7 @@ use crate::paths::{
     validate_project_root, validate_project_root_or_destination,
 };
 use crate::readiness::ReadinessInput;
+use crate::safe_fs::RootedDir;
 #[cfg(test)]
 use crate::scanner::discover_launcher_descriptor_with_check;
 use crate::scanner::{
@@ -148,6 +149,8 @@ static CODEX_SESSION: OnceLock<Mutex<Option<AppServerProtocol<ProcessJsonlTransp
     OnceLock::new();
 static CODEX_ANALYSES: OnceLock<Mutex<HashMap<Uuid, PendingCodexAnalysis>>> = OnceLock::new();
 static CODEX_APPROVED_EVIDENCE: OnceLock<Mutex<ApprovedScanEvidence>> = OnceLock::new();
+static CLAUDE_LOGIN_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> =
+    OnceLock::new();
 static CODEX_LOGIN_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> =
     OnceLock::new();
 static SCAN_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
@@ -169,11 +172,34 @@ struct PendingCodexAnalysis {
 #[derive(Default)]
 struct ApprovedScanEvidence {
     project_root: Option<PathBuf>,
+    project_root_identity: Option<String>,
     scan_id: Option<Uuid>,
     entries: HashMap<String, Vec<(String, String)>>,
     /// Hash of the exact evidence vector the user approved for the next
     /// semantic turn. A completed scan is not itself an approval.
     evidence_sha256: Option<String>,
+}
+
+fn validate_approved_project_root_identity(
+    project_root: &Path,
+    approved: &ApprovedScanEvidence,
+    expected_scan_id: Option<Uuid>,
+) -> Result<String, AppError> {
+    if expected_scan_id.is_some_and(|scan_id| approved.scan_id != Some(scan_id)) {
+        return Err(AppError::PathSecurity(
+            "approved project-root identity belongs to a different scan".into(),
+        ));
+    }
+    let expected = approved.project_root_identity.as_deref().ok_or_else(|| {
+        AppError::PathSecurity("approved scan has no project-root identity".into())
+    })?;
+    let observed = RootedDir::open_read(project_root)?.identity_token()?;
+    if observed != expected {
+        return Err(AppError::PathSecurity(
+            "project root changed after the approved read-only scan".into(),
+        ));
+    }
+    Ok(observed)
 }
 
 fn prepared_plans() -> &'static Mutex<std::collections::HashMap<Uuid, PreparedPlan>> {
@@ -223,6 +249,19 @@ fn cancel_all_codex_logins() {
         for cancellation in cancellations.values() {
             cancellation.store(true, Ordering::SeqCst);
         }
+    }
+}
+
+fn claude_login_cancellations() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+    CLAUDE_LOGIN_CANCELLATIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cancel_all_claude_logins() {
+    if let Ok(mut cancellations) = claude_login_cancellations().lock() {
+        for cancellation in cancellations.values() {
+            cancellation.store(true, Ordering::SeqCst);
+        }
+        cancellations.clear();
     }
 }
 
@@ -575,12 +614,54 @@ fn provider_analysis_user_error(error: AppError) -> String {
     }
 }
 
+/// Renderer-facing plan errors. Validation messages that ask the user to
+/// change a choice stay readable; source, filesystem, transaction, and tool
+/// failures are replaced with a next step so internal paths, URLs, and OS
+/// error text never reach the screen.
 fn planning_command_error(error: AppError) -> String {
     match error {
         provider_error @ (AppError::Credential(_)
         | AppError::Protocol(_)
         | AppError::Serialization(_)) => provider_analysis_user_error(provider_error),
-        other => command_error(other),
+        AppError::Source(message) => {
+            let lower = message.to_ascii_lowercase();
+            if lower.contains("git lfs pointer") {
+                "The setup source contains a placeholder instead of a real file. Nothing was changed; try again after the source is fixed."
+                    .into()
+            } else if lower.contains("checksum") || lower.contains("sha-256") {
+                "The setup source did not pass verification. Nothing was changed; try again later."
+                    .into()
+            } else {
+                "The setup source could not be downloaded or prepared. Check your connection and try again; nothing was changed."
+                    .into()
+            }
+        }
+        AppError::Transaction(_) | AppError::Merge(_) => {
+            "The changes could not be prepared safely. Nothing was changed; try again.".into()
+        }
+        AppError::PathSecurity(_) => {
+            "A project path changed or is not safe to use. Check the project folder and try again."
+                .into()
+        }
+        AppError::Process(_) => {
+            "A required tool could not run while preparing the changes. Try again.".into()
+        }
+        AppError::Scan(_) => {
+            "The project scan is out of date. Scan the project again before preparing changes."
+                .into()
+        }
+        AppError::UnsupportedPlatform(_) => {
+            "A selected component is not supported on this computer. Deselect it and try again."
+                .into()
+        }
+        AppError::InvalidInput(message) => {
+            let message = crate::security::redact_secrets(&message, &[]);
+            let mut characters = message.chars();
+            match characters.next() {
+                Some(first) => format!("{}{}", first.to_uppercase(), characters.as_str()),
+                None => "The selected options are not valid. Review them and try again.".into(),
+            }
+        }
     }
 }
 
@@ -592,6 +673,55 @@ where
     tauri::async_runtime::spawn_blocking(work)
         .await
         .map_err(|_| format!("{name} stopped unexpectedly"))?
+}
+
+/// Renderer-facing messages for the Claude account route. Claude Code's raw
+/// output never reaches the UI; only these sanitized categories do.
+fn claude_user_error(error: AppError) -> String {
+    match error {
+        AppError::Process(message) if message.contains("was not found") => {
+            "Claude Code is not installed. Install it, then choose Check again.".into()
+        }
+        AppError::Process(message) if message.contains("needs an update") => {
+            "Claude Code needs an update. Run claude update, then choose Check again.".into()
+        }
+        AppError::Process(message) if message.contains("cancelled") => {
+            "Claude sign-in was cancelled.".into()
+        }
+        AppError::Process(message) if message.contains("timed out") => {
+            "Claude Code took too long to respond. Your draft is unchanged; try again.".into()
+        }
+        AppError::Process(_) | AppError::Protocol(_) => {
+            "Claude Code could not complete this request. Your draft is unchanged; try again."
+                .into()
+        }
+        AppError::Credential(message) => {
+            let category = message.to_ascii_lowercase();
+            if category.contains("usage") && category.contains("limited") {
+                "Claude usage is currently limited. Your draft is unchanged; try again when usage is available.".into()
+            } else if category.contains("timed out") {
+                "Claude sign-in timed out. Choose Sign in to Claude to try again.".into()
+            } else if category.contains("credential-shaped") {
+                "Private-looking information was blocked. Remove secrets from the description or selected evidence, then try again.".into()
+            } else if category.contains("did not finish") {
+                "Claude sign-in did not finish. Try again, or sign in from a terminal with claude auth login and choose Check again.".into()
+            } else {
+                "Sign in to Claude before continuing.".into()
+            }
+        }
+        AppError::Serialization(_) => {
+            "Claude returned a response that did not match the required proposal format. Try the analysis again."
+                .into()
+        }
+        AppError::InvalidInput(message) if message.contains("model") => {
+            "Claude Code did not accept the selected model. Choose another model and try again."
+                .into()
+        }
+        AppError::UnsupportedPlatform(_) => {
+            "Claude sign-in is not available on this computer.".into()
+        }
+        other => provider_analysis_user_error(other),
+    }
 }
 
 fn codex_user_error(error: AppError) -> String {
@@ -656,12 +786,21 @@ fn journal_bound_to_root(
 }
 
 pub fn run() {
+    // Verify the setup-assistant clients' signatures in the background while
+    // the first screen renders. Platform signature checks of these large
+    // binaries take tens of seconds; a remembered result makes the first
+    // account check fast. Nothing is started or read from an account here.
+    std::thread::spawn(|| {
+        crate::claude_code::warm_executable();
+        let _ = find_codex_executable();
+    });
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|_window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 cancel_all_codex_logins();
+                cancel_all_claude_logins();
                 if let Ok(mut session) = codex_session().lock() {
                     *session = None;
                 }
@@ -676,6 +815,10 @@ pub fn run() {
             ai_account_read,
             store_ai_provider_credential,
             remove_ai_provider_credential,
+            claude_login_start,
+            claude_login_wait,
+            claude_login_cancel,
+            claude_logout,
             codex_account_read,
             codex_login_start,
             codex_login_wait,
@@ -799,23 +942,37 @@ async fn ai_model_list(provider: String, endpoint: String) -> Result<Vec<AiModel
 }
 
 #[tauri::command(async)]
-fn ai_account_read(
+async fn ai_account_read(
     provider: String,
     model: String,
     reasoning_effort: String,
     endpoint: String,
 ) -> AiAccountStatus {
-    let credential_reference = ai_credential_reference(&provider);
-    ai::account_status(
-        &OsCredentialStore,
-        &AiProviderConfig {
-            provider,
-            model,
-            reasoning_effort,
-            endpoint,
-            credential_reference,
-        },
-    )
+    let fallback_provider = provider.clone();
+    let fallback_model = model.clone();
+    run_blocking_command("provider-account-read", move || {
+        let credential_reference = ai_credential_reference(&provider);
+        Ok(ai::account_status(
+            &OsCredentialStore,
+            &AiProviderConfig {
+                provider,
+                model,
+                reasoning_effort,
+                endpoint,
+                credential_reference,
+            },
+        ))
+    })
+    .await
+    .unwrap_or_else(|_| AiAccountStatus {
+        available: false,
+        authenticated: false,
+        provider: fallback_provider,
+        model: fallback_model,
+        auth_mode: "unconfigured".into(),
+        usage_limited: false,
+        error: Some("The selected provider status could not be read. Choose Check again.".into()),
+    })
 }
 
 #[tauri::command(async)]
@@ -849,6 +1006,70 @@ fn remove_ai_provider_credential(provider: String) -> Result<bool, String> {
         .delete(&reference)
         .map_err(command_error)?;
     Ok(true)
+}
+
+#[tauri::command(async)]
+fn claude_login_start() -> Result<String, String> {
+    cancel_all_claude_logins();
+    let login_id = Uuid::new_v4().to_string();
+    claude_login_cancellations()
+        .lock()
+        .map_err(|_| "Claude sign-in store is unavailable".to_string())?
+        .insert(login_id.clone(), Arc::new(AtomicBool::new(false)));
+    Ok(login_id)
+}
+
+/// Run Claude Code's own browser sign-in for one registered attempt and
+/// return the refreshed non-secret status. The renderer never receives a
+/// sign-in URL, code, or token: Claude Code opens the browser itself.
+#[tauri::command(async)]
+async fn claude_login_wait(login_id: String, model: String) -> Result<AiAccountStatus, String> {
+    run_blocking_command("claude-login-wait", move || {
+        let cancellation = claude_login_cancellations()
+            .lock()
+            .map_err(|_| "Claude sign-in store is unavailable".to_string())?
+            .get(&login_id)
+            .cloned()
+            .ok_or_else(|| "Claude sign-in is not active or was already cancelled".to_string())?;
+        let mut should_stop = || cancellation.load(Ordering::SeqCst);
+        let result = crate::claude_code::run_login(&mut should_stop);
+        let cancelled = cancellation.load(Ordering::SeqCst);
+        if let Ok(mut cancellations) = claude_login_cancellations().lock() {
+            cancellations.remove(&login_id);
+        }
+        if cancelled {
+            return Err("Claude sign-in was cancelled.".into());
+        }
+        result.map_err(claude_user_error)?;
+        Ok(crate::claude_code::account_status(&model))
+    })
+    .await
+}
+
+#[tauri::command(async)]
+fn claude_login_cancel(login_id: String) -> Result<(), String> {
+    let cancellation = claude_login_cancellations()
+        .lock()
+        .map_err(|_| "Claude sign-in store is unavailable".to_string())?
+        .get(&login_id)
+        .cloned()
+        .ok_or_else(|| "Claude sign-in is not active or was already cancelled".to_string())?;
+    cancellation.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command(async)]
+async fn claude_logout() -> Result<(), String> {
+    run_blocking_command("claude-logout", || {
+        cancel_all_claude_logins();
+        let result = crate::claude_code::logout().map_err(claude_user_error);
+        if let Ok(mut projects) = ready_projects().lock() {
+            projects.clear();
+        }
+        clear_codex_local_state()?;
+        result
+    })
+    .await
 }
 
 #[tauri::command(async)]
@@ -1258,7 +1479,13 @@ fn ai_analyze_blocking(mut request: AiAnalysisRequest) -> Result<CodexAnalysisRe
         },
         &request,
     )
-    .map_err(provider_analysis_user_error)?;
+    .map_err(|error| {
+        if request.provider == crate::claude_code::PROVIDER_ID {
+            claude_user_error(error)
+        } else {
+            provider_analysis_user_error(error)
+        }
+    })?;
     bind_analysis_record_to_source(&mut result.record, &source);
     let mut analyses = codex_analyses()
         .lock()
@@ -1291,6 +1518,14 @@ fn approve_scan_evidence(
 ) -> Result<(), String> {
     let project_root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
     let scan_id = Uuid::parse_str(&scan_id).map_err(|_| "scan ID is invalid".to_string())?;
+    if evidence
+        .iter()
+        .any(|item| item.reference == crate::scanner::LOCAL_ONLY_PORTRAIT_ROUTES_FINDING)
+    {
+        return Err(
+            "local portrait routes stay on this computer and cannot be sent for analysis".into(),
+        );
+    }
     crate::codex::validate_analysis_evidence(&evidence).map_err(command_error)?;
     let mut approved = codex_approved_evidence()
         .lock()
@@ -1303,6 +1538,8 @@ fn approve_scan_evidence(
     {
         return Err("scan evidence is stale or belongs to a different project".into());
     }
+    validate_approved_project_root_identity(&project_root, &approved, Some(scan_id))
+        .map_err(command_error)?;
     let approved_sha256 =
         crate::codex::evidence_manifest_sha256(&evidence).map_err(command_error)?;
     for item in &evidence {
@@ -1362,6 +1599,7 @@ fn validate_codex_evidence_approval(request: &CodexAnalysisRequest) -> Result<()
                 "existing-project analysis is not bound to the latest read-only scan".into(),
             ));
         }
+        validate_approved_project_root_identity(&requested_root, &approved, request.scan_id)?;
     }
     let requested_evidence_sha256 = crate::codex::evidence_manifest_sha256(&request.evidence)?;
     if approved.evidence_sha256.as_deref() != Some(requested_evidence_sha256.as_str()) {
@@ -1844,7 +2082,16 @@ fn scan_project_blocking(
         }
     }
     let scan_attempt = (|| {
+        let scanned_root_identity = RootedDir::open_read(Path::new(&root))
+            .and_then(|directory| directory.identity_token())
+            .map_err(command_error)?;
         let root = validate_project_root(Path::new(&root)).map_err(command_error)?;
+        let validated_root_identity = RootedDir::open_read(&root)
+            .and_then(|directory| directory.identity_token())
+            .map_err(command_error)?;
+        if validated_root_identity != scanned_root_identity {
+            return Err("project root changed while the read-only scan was starting".into());
+        }
         let launcher_descriptor = launcher_descriptor_path
             .as_deref()
             .filter(|value| !value.trim().is_empty())
@@ -1871,12 +2118,18 @@ fn scan_project_blocking(
             },
         )
         .map_err(command_error)?;
-        Ok::<_, String>((root, result))
+        let completed_root_identity = RootedDir::open_read(&root)
+            .and_then(|directory| directory.identity_token())
+            .map_err(command_error)?;
+        if completed_root_identity != scanned_root_identity {
+            return Err("project root changed during the read-only scan".into());
+        }
+        Ok::<_, String>((root, scanned_root_identity, result))
     })();
     if let Ok(mut active) = scan_cancellations().lock() {
         active.remove(&request_id);
     }
-    let (root, result) = scan_attempt?;
+    let (root, project_root_identity, result) = scan_attempt?;
     let active_generation = scan_generation()
         .lock()
         .map_err(|_| "scan generation store is unavailable".to_string())?;
@@ -1894,6 +2147,7 @@ fn scan_project_blocking(
         // replayed after the user switches projects in the same desktop session.
         let entries = scan_evidence_entries(&result)?;
         approved.project_root = Some(root);
+        approved.project_root_identity = Some(project_root_identity);
         approved.scan_id = Some(result.scan_id);
         approved.entries = entries;
         approved.evidence_sha256 = None;
@@ -4807,6 +5061,21 @@ fn codex_analysis_from_state(
                 .into(),
         ));
     }
+    // The project root and scan ID are core-only bindings that never cross
+    // the renderer; restore them from the confirmed session entry so plan
+    // construction can bind the plan to the same scan.
+    let mut record = record;
+    if let Some(pending) = codex_analyses()
+        .lock()
+        .map_err(|_| AppError::Process("Codex analysis store is unavailable".into()))?
+        .get(&record.analysis_id)
+    {
+        record.scan_id = pending.scan_id;
+        record.project_root = pending
+            .project_root
+            .as_ref()
+            .map(|root| root.display().to_string());
+    }
     Ok(record)
 }
 
@@ -4886,9 +5155,36 @@ fn git_setup_from_state(
 
 fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), AppError> {
     let root = project_root_from_state(state)?;
+    let root_exists = root.exists();
+    let root_mode = if root_exists {
+        ProjectRootMode::Existing
+    } else {
+        ProjectRootMode::CreateLeaf
+    };
     let identity = project_identity_from_state(state, &root)?;
     let conventions = project_conventions_from_state(state)?;
     let codex_analysis = codex_analysis_from_state(state, &root)?;
+    let project_root_identity = if root_exists {
+        let approved = codex_approved_evidence().lock().map_err(|_| {
+            AppError::Serialization("approved scan evidence store is unavailable".into())
+        })?;
+        if approved
+            .project_root
+            .as_ref()
+            .is_none_or(|approved_root| !same_project_root(approved_root, &root))
+            || approved.scan_id != codex_analysis.scan_id
+        {
+            return Err(AppError::PathSecurity(
+                "project plan is not bound to the latest scan of this root".into(),
+            ));
+        }
+        validate_approved_project_root_identity(&root, &approved, codex_analysis.scan_id)?
+    } else {
+        let parent = root.parent().ok_or_else(|| {
+            AppError::PathSecurity("new project root has no existing parent".into())
+        })?;
+        RootedDir::open_read(parent)?.identity_token()?
+    };
     let ai_provider = ai_provider_from_state(state)?;
     let ai_model = ai_model_from_state(state);
     let portrait_pipeline = portrait_pipeline_from_state(state)?;
@@ -4962,6 +5258,21 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     let mut prepared = Vec::new();
     let mut download_ledger = Vec::new();
     let mut adapted_destinations = BTreeSet::new();
+    client.prefetch_verified_files(
+        &resolution.identity.resolved_revision,
+        &selections
+            .iter()
+            .filter_map(|selection| {
+                selection.expected_sha256.clone().map(|sha256| {
+                    (
+                        selection.source_path.clone(),
+                        sha256,
+                        selection.expected_size,
+                    )
+                })
+            })
+            .collect::<Vec<_>>(),
+    );
     for (index, selection) in selections.iter().enumerate() {
         let adapted_destination = adapt_super_events_destination(
             &selection.component_id,
@@ -5169,6 +5480,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             AppError::InvalidInput(format!("unsupported AI provider: {ai_provider}"))
         })?;
         let provider_is_codex = ai_provider == "codex";
+        let provider_is_claude_account = ai_provider == crate::claude_code::PROVIDER_ID;
         let state_content = serde_json::to_string_pretty(&serde_json::json!({
             "schema_version": "1.0.0",
             "project_id": identity.project_id.clone(),
@@ -5190,9 +5502,9 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                     .unwrap_or_else(|| "provider conventions".into())
             },
             "codex": {
-                "integration": if provider_is_codex { "codex_app_server" } else { "provider_api" },
-                "auth_mode": if provider_is_codex { "chatgpt" } else if provider_profile.requires_credential { "api_key" } else { "local_endpoint" },
-                "auth_status": if provider_is_codex { "signed_in" } else { "configured" },
+                "integration": if provider_is_codex { "codex_app_server" } else if provider_is_claude_account { crate::claude_code::ENGINE } else { "provider_api" },
+                "auth_mode": if provider_is_codex { "chatgpt" } else if provider_is_claude_account { crate::claude_code::AUTH_MODE } else if provider_profile.requires_credential { "api_key" } else { "local_endpoint" },
+                "auth_status": if provider_is_codex || provider_is_claude_account { "signed_in" } else { "configured" },
                 "analysis_required": true,
                 "analysis_status": "confirmed",
                 "account_values_persisted": false
@@ -5391,7 +5703,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         },
     );
     let plan = InstallationPlan {
-        schema_version: "1.0.0".into(),
+        schema_version: crate::migrations::CURRENT_PLAN_SCHEMA.into(),
         plan_id: Uuid::new_v4(),
         project_id: state
             .pointer("/identity/projectId")
@@ -5439,20 +5751,17 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                 .to_string(),
             directories: transaction_directories(state, &mode)?,
             atomic_apply_expected: true,
-            project_root_mode: if root.exists() {
-                ProjectRootMode::Existing
-            } else {
-                ProjectRootMode::CreateLeaf
-            },
-            project_root_parent: (!root.exists())
+            project_root_mode: root_mode,
+            project_root_parent: (!root_exists)
                 .then(|| root.parent().map(|path| path.display().to_string()))
                 .flatten(),
-            project_root_leaf: (!root.exists())
+            project_root_leaf: (!root_exists)
                 .then(|| {
                     root.file_name()
                         .map(|name| name.to_string_lossy().into_owned())
                 })
                 .flatten(),
+            project_root_identity: Some(project_root_identity),
         },
         approvals: PlanApprovals {
             dry_run_reviewed: false,
@@ -6429,6 +6738,21 @@ fn build_maintenance_plan_blocking(
         if mcp_selected {
             maintenance_mcp_manifest = Some(resolution.manifest.clone());
         }
+        client.prefetch_verified_files(
+            &resolution.identity.resolved_revision,
+            &selections
+                .iter()
+                .filter_map(|selection| {
+                    selection.expected_sha256.clone().map(|sha256| {
+                        (
+                            selection.source_path.clone(),
+                            sha256,
+                            selection.expected_size,
+                        )
+                    })
+                })
+                .collect::<Vec<_>>(),
+        );
         let incoming = selections
             .iter()
             .map(|selection| {
@@ -7342,8 +7666,25 @@ fn build_maintenance_plan_blocking(
     if let Some(record) = codex_analysis.as_ref() {
         validate_analysis_source_binding(record, &plan_source).map_err(command_error)?;
     }
+    let project_root_identity = {
+        let approved = codex_approved_evidence()
+            .lock()
+            .map_err(|_| "approved scan evidence store is unavailable".to_string())?;
+        if approved
+            .project_root
+            .as_ref()
+            .is_none_or(|approved_root| !same_project_root(approved_root, &root))
+        {
+            return Err("maintenance planning requires a fresh scan of this project".into());
+        }
+        let expected_scan = (mode == "update")
+            .then(|| analysis_override.as_ref().and_then(|record| record.scan_id))
+            .flatten();
+        validate_approved_project_root_identity(&root, &approved, expected_scan)
+            .map_err(command_error)?
+    };
     let plan = InstallationPlan {
-        schema_version: "1.0.0".into(),
+        schema_version: crate::migrations::CURRENT_PLAN_SCHEMA.into(),
         plan_id: Uuid::new_v4(),
         project_id: lock.project_id.clone(),
         script_prefix: lock.script_prefix.clone(),
@@ -7392,6 +7733,7 @@ fn build_maintenance_plan_blocking(
             project_root_mode: ProjectRootMode::Existing,
             project_root_parent: None,
             project_root_leaf: None,
+            project_root_identity: Some(project_root_identity),
         },
         approvals: PlanApprovals {
             dry_run_reviewed: false,
@@ -9040,6 +9382,25 @@ developer_instructions = "Work on the named files."
             assert!(message.len() <= 160);
         }
 
+        for error in [
+            AppError::Source(format!("write verified cache: {sentinel}")),
+            AppError::Transaction(format!("directory durability flush failed: {sentinel}")),
+            AppError::PathSecurity(sentinel.into()),
+            AppError::Process(sentinel.into()),
+            AppError::Merge(sentinel.into()),
+        ] {
+            let message = planning_command_error(error);
+            assert!(!message.contains("provider-private-sentinel"));
+            assert!(!message.contains("private"));
+            assert!(message.len() <= 160);
+        }
+        assert_eq!(
+            planning_command_error(AppError::InvalidInput(
+                "select at least one manifest component".into()
+            )),
+            "Select at least one manifest component"
+        );
+
         let source = include_str!("commands.rs");
         assert!(source.contains(
             "with_codex_session(AppServerProtocol::model_list)\n                .map_err(provider_analysis_user_error)"
@@ -9120,6 +9481,7 @@ developer_instructions = "Work on the named files."
         let _state_guard = test_state_guard();
         *codex_approved_evidence().lock().unwrap() = ApprovedScanEvidence {
             project_root: Some(PathBuf::from("C:/mods/example")),
+            project_root_identity: None,
             scan_id: Some(Uuid::new_v4()),
             entries: HashMap::from([("finding".into(), Vec::new())]),
             evidence_sha256: None,
@@ -9131,6 +9493,31 @@ developer_instructions = "Work on the named files."
         assert!(evidence.project_root.is_none());
         assert!(evidence.scan_id.is_none());
         assert!(evidence.entries.is_empty());
+    }
+
+    #[test]
+    fn approved_scan_identity_rejects_a_replacement_at_the_same_path() {
+        let _state_guard = test_state_guard();
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path().join("mod");
+        std::fs::create_dir(&root).unwrap();
+        let scan_id = Uuid::new_v4();
+        let identity = RootedDir::open_read(&root)
+            .unwrap()
+            .identity_token()
+            .unwrap();
+        let approved = ApprovedScanEvidence {
+            project_root: Some(root.clone()),
+            project_root_identity: Some(identity),
+            scan_id: Some(scan_id),
+            entries: HashMap::new(),
+            evidence_sha256: None,
+        };
+
+        std::fs::rename(&root, project.path().join("mod-reviewed")).unwrap();
+        std::fs::create_dir(&root).unwrap();
+
+        assert!(validate_approved_project_root_identity(&root, &approved, Some(scan_id)).is_err());
     }
 
     #[test]
@@ -9176,6 +9563,12 @@ developer_instructions = "Work on the named files."
         let scan_id = Uuid::new_v4();
         *codex_approved_evidence().lock().unwrap() = ApprovedScanEvidence {
             project_root: Some(root.clone()),
+            project_root_identity: Some(
+                RootedDir::open_read(&root)
+                    .unwrap()
+                    .identity_token()
+                    .unwrap(),
+            ),
             scan_id: Some(scan_id),
             entries: HashMap::from([(
                 "finding".into(),
@@ -9197,6 +9590,53 @@ developer_instructions = "Work on the named files."
         )
         .unwrap_err();
         assert!(error.contains("exact core-scanned value"));
+        clear_approved_scan_evidence().unwrap();
+    }
+
+    #[test]
+    fn local_only_portrait_routes_are_never_approved_as_semantic_evidence() {
+        let _state_guard = test_state_guard();
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        let scan_id = Uuid::new_v4();
+        let excerpt = r#"{"local_root":"C:/ComfyUI"}"#;
+        *codex_approved_evidence().lock().unwrap() = ApprovedScanEvidence {
+            project_root: Some(root.clone()),
+            project_root_identity: Some(
+                RootedDir::open_read(&root)
+                    .unwrap()
+                    .identity_token()
+                    .unwrap(),
+            ),
+            scan_id: Some(scan_id),
+            entries: HashMap::from([(
+                crate::scanner::LOCAL_ONLY_PORTRAIT_ROUTES_FINDING.into(),
+                vec![(
+                    ".hoi4-mod-setup/install.lock.json".into(),
+                    sha256_bytes(excerpt.as_bytes()),
+                )],
+            )]),
+            evidence_sha256: None,
+        };
+
+        let error = approve_scan_evidence(
+            root.display().to_string(),
+            scan_id.to_string(),
+            vec![ApprovedEvidence {
+                reference: crate::scanner::LOCAL_ONLY_PORTRAIT_ROUTES_FINDING.into(),
+                path: ".hoi4-mod-setup/install.lock.json".into(),
+                excerpt: excerpt.into(),
+                excerpt_sha256: sha256_bytes(excerpt.as_bytes()),
+                confidence: Some(1.0),
+            }],
+        )
+        .unwrap_err();
+        assert!(error.contains("stay on this computer"));
+        assert!(codex_approved_evidence()
+            .lock()
+            .unwrap()
+            .evidence_sha256
+            .is_none());
         clear_approved_scan_evidence().unwrap();
     }
 
@@ -9295,6 +9735,12 @@ developer_instructions = "Work on the named files."
         }
         *codex_approved_evidence().lock().unwrap() = ApprovedScanEvidence {
             project_root: Some(root.clone()),
+            project_root_identity: Some(
+                RootedDir::open_read(&root)
+                    .unwrap()
+                    .identity_token()
+                    .unwrap(),
+            ),
             scan_id: Some(result.scan_id),
             entries: scan_evidence_entries(&result).unwrap(),
             evidence_sha256: None,
@@ -9364,6 +9810,12 @@ developer_instructions = "Work on the named files."
         }];
         *codex_approved_evidence().lock().unwrap() = ApprovedScanEvidence {
             project_root: Some(root.clone()),
+            project_root_identity: Some(
+                RootedDir::open_read(&root)
+                    .unwrap()
+                    .identity_token()
+                    .unwrap(),
+            ),
             scan_id: Some(scan_id),
             entries: HashMap::from([(
                 "finding".into(),
@@ -9673,6 +10125,12 @@ developer_instructions = "Work on the named files."
         let scan_id = Uuid::new_v4();
         *codex_approved_evidence().lock().unwrap() = ApprovedScanEvidence {
             project_root: Some(root.clone()),
+            project_root_identity: Some(
+                RootedDir::open_read(&root)
+                    .unwrap()
+                    .identity_token()
+                    .unwrap(),
+            ),
             scan_id: Some(scan_id),
             entries: HashMap::from([(
                 "git.repository".into(),
@@ -9766,6 +10224,96 @@ developer_instructions = "Work on the named files."
         .is_err());
         codex_analyses().lock().unwrap().clear();
         codex_approved_evidence().lock().unwrap().entries.clear();
+    }
+
+    #[test]
+    fn import_record_from_the_renderer_regains_its_core_scan_binding() {
+        let _state_guard = test_state_guard();
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        let scan_id = Uuid::new_v4();
+        let analysis_id = Uuid::new_v4();
+        let record = CodexAnalysisRecord {
+            engine: "codex_app_server".into(),
+            auth_mode: "chatgpt".into(),
+            provider: Some("codex".into()),
+            model: Some("gpt-5.6-luna".into()),
+            reasoning_effort: Some("xhigh".into()),
+            optimization_profile: Some("Codex setup analysis".into()),
+            analysis_id,
+            schema_version: "1.0.0".into(),
+            input_sha256: "a".repeat(64),
+            output_sha256: "b".repeat(64),
+            confirmed_fields: crate::codex::REQUIRED_ANALYSIS_PROPOSAL_KEYS
+                .iter()
+                .map(|field| (*field).into())
+                .collect(),
+            confirmed_at: "2026-10-03T00:00:00Z".into(),
+            account_identity_persisted: false,
+            analysis_purpose: Some("existing_project_import".into()),
+            project_root: Some(root.display().to_string()),
+            scan_id: Some(scan_id),
+            evidence_sha256: Some("c".repeat(64)),
+            source_revision: Some("a".repeat(40)),
+            source_manifest_sha256: Some("d".repeat(64)),
+        };
+        let state = serde_json::json!({
+            "aiProvider": "codex",
+            "aiModel": "gpt-5.6-luna",
+            "aiReasoningEffort": "xhigh",
+            "scanContext": {"scanId": scan_id.to_string()},
+            // The renderer receives the record without core-only bindings.
+            "codexAnalysisRecord": serde_json::to_value(&record).unwrap(),
+            "description": "A focused project.",
+            "folderProfile": [],
+            "identity": {
+                "displayName": "Project",
+                "projectId": "project",
+                "author": "Author",
+                "version": "0.1.0",
+                "supportedGameVersion": "1.19.*",
+                "projectRoot": root.display().to_string(),
+                "defaultBranch": "main"
+            },
+            "conventions": {
+                "agents_profile": "default",
+                "localisation_convention": "english",
+                "documentation_convention": "markdown"
+            },
+        });
+        assert!(state["codexAnalysisRecord"].get("scan_id").is_none());
+        let confirmation_hash =
+            confirmation_values_sha256(&confirmation_values_from_state(&state).unwrap()).unwrap();
+        codex_analyses().lock().unwrap().insert(
+            analysis_id,
+            PendingCodexAnalysis {
+                analysis: CodexAnalysis {
+                    schema_version: "1.0.0".into(),
+                    analysis_id,
+                    mode: crate::codex::AnalysisMode::ExistingProjectSemantics,
+                    input_sha256: "a".repeat(64),
+                    project_summary: "summary".into(),
+                    proposals: Vec::new(),
+                    component_recommendations: Vec::new(),
+                    warnings: Vec::new(),
+                },
+                record: record.clone(),
+                confirmed: Some(record.clone()),
+                project_root: Some(root.clone()),
+                scan_id: Some(scan_id),
+                endpoint_fingerprint: None,
+                confirmed_values_sha256: Some(confirmation_hash),
+            },
+        );
+
+        let restored = codex_analysis_from_state(&state, &root).unwrap();
+
+        assert_eq!(restored.scan_id, Some(scan_id));
+        assert!(restored
+            .project_root
+            .as_deref()
+            .is_some_and(|value| same_project_root(Path::new(value), &root)));
+        codex_analyses().lock().unwrap().remove(&analysis_id);
     }
 
     #[test]
@@ -10018,6 +10566,7 @@ developer_instructions = "Work on the named files."
                     project_root_mode: ProjectRootMode::Existing,
                     project_root_parent: None,
                     project_root_leaf: None,
+                    project_root_identity: None,
                 },
                 approvals: PlanApprovals {
                     dry_run_reviewed: false,
@@ -10255,6 +10804,7 @@ developer_instructions = "Work on the named files."
         );
         *codex_approved_evidence().lock().unwrap() = ApprovedScanEvidence {
             project_root: Some(PathBuf::from("C:/mods/example")),
+            project_root_identity: None,
             scan_id: Some(Uuid::new_v4()),
             entries: HashMap::from([("finding".into(), Vec::new())]),
             evidence_sha256: None,

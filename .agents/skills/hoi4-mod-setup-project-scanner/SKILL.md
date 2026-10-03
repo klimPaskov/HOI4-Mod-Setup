@@ -117,6 +117,13 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
 ## Detection rules
 
 - Prefer exact parser evidence over filename heuristics.
+- Descriptor parsing must accept real HOI4 descriptors: multi-line `{ ... }`
+  blocks such as `tags={` or `dependencies={`, repeated `replace_path`, a
+  UTF-8 BOM, and `#` comments outside quotes. Unclosed or oversized blocks and
+  other duplicate keys stay malformed.
+- Skill validity uses `skill_frontmatter_is_valid`: an opening and closing
+  `---` line with exactly one non-empty top-level `name` and `description`
+  (plain or quoted keys, block scalars allowed) and no duplicate keys.
 - For Git, use bounded read-only commands with `--no-optional-locks` and
   record branch, detached state, commit, dirty/staged/unstaged/untracked
   counts, remote names, submodule paths, hook names, ignore files, and
@@ -136,6 +143,10 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
   `installation` category for the `installation.managed` finding. This lock summary is the
   remembered installed state used to repopulate scan/maintenance choices;
   readiness later re-reads the lock rather than trusting transient UI state.
+  Machine-local portrait routes (local ComfyUI root, local server, RunPod URL
+  and workspace) go only into the separate `installation.portrait_routes`
+  finding (`LOCAL_ONLY_PORTRAIT_ROUTES_FINDING`). The renderer excludes it from
+  setup-assistant input and `approve_scan_evidence` refuses it.
   Ignore the retired portrait-interest field in a legacy lock; it is not an
   installed feature or current scan finding. A missing lock is
   absent/non-blocking; link, size, read, parse, or schema failures are blocking

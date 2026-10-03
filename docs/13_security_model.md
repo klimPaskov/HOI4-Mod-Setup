@@ -68,19 +68,42 @@ secret-shaped text remains rejected, preserving the previous file on failure.
 
 Normalize Unicode and separators, reject absolute managed destinations and parent traversal, resolve links, verify final parent containment, detect case collisions, reject Windows device names and alternate data streams, and block archive-link escapes.
 
-Production transaction reads and mutations use `RootedDir` in
-`src-tauri/src/safe_fs.rs`. Unix operations use retained directory descriptors
-and no-follow `*at` calls. Windows retains the ancestor directory handles,
-opens leaves with `FILE_FLAG_OPEN_REPARSE_POINT`, checks
-`FILE_ATTRIBUTE_REPARSE_POINT`, and applies deletion to opened file handles.
-Read-only roots permit delete sharing; mutation roots hold stricter directory
-handles.
+`src-tauri/src/safe_fs.rs` provides no-follow rooted filesystem operations.
+Unix child operations use retained directory descriptors and `*at` calls.
+Windows root acquisition now walks the selected path lexically from its volume
+or share root, rejects reparse points at each opened component, and uses the
+128-bit `FILE_ID_INFO` identifier. Mutation roots retain stricter directory
+handles. Transaction orchestration still reopens roots through path-based
+wrappers between many operations, so this is not an end-to-end capability
+boundary.
 
-This currently closes ancestor symlink/junction redirection for migrated
-transaction operations. It does not yet bind one project/application root
-identity across all stages and recovery. Replacing a regular final leaf after
-the precondition hash can still lose concurrent user content; both remain
-release gates.
+Existing-project scans record the opened root identity; semantic review and
+plan construction reject a different directory at the same path. Reviewed
+plans record that identity, or the existing parent identity for a new project.
+Journals retain root and parent identities; recovery rejects identity drift,
+and project-root creation uses the reviewed parent handle. A root identity is
+not proof of ownership: an empty root whose creation was interrupted before
+the identity checkpoint is retained with its observed identity and is never
+deleted by rollback. Schema 1.0 journals without identity remain inspect-only.
+
+Forward project-file backup, apply, verification, lock construction, and lock
+commit retain one reviewed project handle. Managed rollback file/lock changes
+and finalization's project-file and success-lock checks retain it as well.
+Created-root cleanup, application-data, external destinations, Git, external
+actions, and readiness still have path-based boundaries. A regular
+destination that is replaced or deleted is first moved, through the retained
+parent handle, to a journaled quarantine name in the same folder, hashed, and
+compared with the reviewed precondition. Changed bytes are moved back and the
+operation fails as a conflict; matching bytes are replaced with a no-replace
+rename and the quarantine is removed only after the success checkpoint.
+Rollback restores surviving quarantined bytes instead of overwriting them.
+The application-data and external launcher parents are not bound throughout
+the transaction, and on Unix a writer that already held the file open can
+still write to the quarantined copy after verification. These cross-stage
+races remain release gates. Windows directory entries are flushed through a
+second write handle whose 128-bit file identity must match the retained
+handle; only filesystems without directory flush support are accepted
+without it.
 
 ## Portrait provider security
 

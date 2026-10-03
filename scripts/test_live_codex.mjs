@@ -92,7 +92,7 @@ function codexEnvironment({ home, userProfile, appData, localAppData }) {
 }
 
 function startServer(environment, cwd) {
-  const child = spawn(executable, ["app-server"], {
+  const child = spawn(executable, ["app-server", "--stdio"], {
     cwd,
     env: environment,
     stdio: ["pipe", "pipe", "ignore"],

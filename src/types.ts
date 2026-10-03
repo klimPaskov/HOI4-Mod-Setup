@@ -22,7 +22,7 @@ export type PhaseId = "project" | "review" | "components" | "integrations" | "gi
 
 export type SourceMode = "latest" | "pinned_commit" | "pinned_release";
 
-export type AiProviderId = "codex" | "claude" | "kimi" | "glm" | "deepseek" | "local" | "custom";
+export type AiProviderId = "claude_account" | "codex" | "claude" | "kimi" | "glm" | "deepseek" | "local" | "custom";
 
 export type CodingEnvironmentId = "codex" | "claude_code" | "cursor" | "qoder" | "opencode";
 
@@ -289,6 +289,8 @@ export interface ScanFinding {
   category?: string;
   label: string;
   value: string;
+  /** Readable summary of the scanned value for the review list. */
+  displayValue?: string;
   /** Immutable value returned by the completed core scan; edits stay review-only. */
   evidenceExcerpt?: string;
   confidence: number;
@@ -565,6 +567,7 @@ export interface InstallationPlan {
     project_root_mode: "existing" | "create_leaf";
     project_root_parent?: string | null;
     project_root_leaf?: string | null;
+    project_root_identity: string;
   };
   approvals: {
     dry_run_reviewed: boolean;

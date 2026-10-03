@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "transaction_id": "960ccbb7-c36a-41b0-9d76-0105bcd83b05",
   "transaction_kind": "installation",
   "parent_transaction_id": null,
@@ -13,6 +13,8 @@
     "mode": "create_leaf",
     "canonical_parent": "C:\\Users\\example\\OneDrive\\Documents\\Paradox Interactive\\Hearts of Iron IV\\mod",
     "leaf": "cold_war_curtain",
+    "root_identity": null,
+    "parent_identity": "windows-v2:0000000000000001:00000000000000000000000000000001",
     "checkpoint": "pending",
     "created_by_transaction": false,
     "observed_exists": false,
@@ -149,7 +151,9 @@
       "expected_executable": false,
       "after_sha256": null,
       "after_exists": null,
-      "after_executable": null
+      "after_executable": null,
+      "quarantine_leaf": null,
+      "quarantine_sha256": null
     },
     {
       "id": "op-002",

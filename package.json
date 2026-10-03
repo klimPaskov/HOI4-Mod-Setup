@@ -19,6 +19,7 @@
     "test:e2e": "node scripts/run_e2e_smoke.mjs",
     "test:mcp-live": "node scripts/test_live_mcp.mjs",
     "test:codex-live": "node scripts/test_live_codex.mjs",
+    "test:claude-live": "cargo test -p hoi4-mod-setup --all-features --lib claude_code::tests::live_claude_code_route -- --ignored --nocapture",
     "test:e2e:install": "playwright install --with-deps chromium",
     "desktop:e2e": "node scripts/run_desktop_e2e.mjs",
     "installer:e2e": "node scripts/run_installer_e2e.mjs",

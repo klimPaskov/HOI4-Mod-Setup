@@ -60,6 +60,9 @@ const MAX_BUFFERED_NOTIFICATIONS: usize = 128;
 const MAX_BUFFERED_NOTIFICATION_BYTES: usize = 2 * 1024 * 1024;
 const MAX_CORRELATED_NOTIFICATIONS: usize = 256;
 const MAX_CORRELATED_NOTIFICATION_BYTES: usize = 4 * 1024 * 1024;
+/// Upper bound on streamed progress deltas observed for one turn. Deltas are
+/// counted but never retained, so this bounds work rather than memory.
+const MAX_TRANSIENT_PROGRESS_NOTIFICATIONS: usize = 200_000;
 const MAX_PROTOCOL_ERROR_CODE_CHARS: usize = 64;
 const MAX_PROTOCOL_ERROR_DETAIL_CHARS: usize = 512;
 const MAX_BRIEF_BYTES: usize = 32 * 1024;
@@ -585,45 +588,61 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
         let schema: Value = serde_json::from_slice(include_bytes!(
             "../../docs/schemas/codex-analysis.schema.json"
         ))?;
-        let turn = self.request(
-            "turn/start",
-            json!({
-                "threadId": thread_id,
-                "input": [{"type": "text", "text": prompt}],
-                "outputSchema": schema,
-                "sandboxPolicy": read_only_no_project_access(),
-                "approvalPolicy": "never",
-                "model": model,
-                "reasoningEffort": reasoning_effort
-            }),
-        )?;
-        let turn_id = turn_id_from_start_response(&turn);
-        let mut messages = Vec::new();
-        messages.extend(self.drain_notifications(
-            Duration::from_secs(120),
-            &thread_id,
-            turn_id.as_deref(),
-        )?);
-        let turn_completed = messages
-            .iter()
-            .any(|message| event_completes_turn(message, &thread_id, turn_id.as_deref()));
-        if let Some(error) = messages
-            .iter()
-            .find_map(|message| completed_turn_error(message, &thread_id, turn_id.as_deref()))
-        {
-            return Err(AppError::Process(format!(
-                "Codex planning turn failed: {error}"
-            )));
-        }
-        let output = turn_completed
-            .then(|| messages.iter().rev().find_map(structured_output))
-            .flatten()
-            .ok_or_else(|| {
-                AppError::Serialization(
-                    "Codex returned no schema-constrained analysis output".into(),
-                )
-            })?;
-        let analysis = validate_analysis_output(output, request, &input_sha256, &request.evidence)?;
+        // A rejected proposal set gets one corrective turn in the same thread;
+        // the deterministic validator is never relaxed.
+        let mut turn_text = prompt;
+        let mut attempt = 0;
+        let analysis = loop {
+            attempt += 1;
+            let turn = self.request(
+                "turn/start",
+                json!({
+                    "threadId": thread_id,
+                    "input": [{"type": "text", "text": turn_text}],
+                    "outputSchema": schema,
+                    "sandboxPolicy": read_only_no_project_access(),
+                    "approvalPolicy": "never",
+                    "model": model,
+                    "reasoningEffort": reasoning_effort
+                }),
+            )?;
+            let turn_id = turn_id_from_start_response(&turn);
+            let mut messages = Vec::new();
+            messages.extend(self.drain_notifications(
+                Duration::from_secs(120),
+                &thread_id,
+                turn_id.as_deref(),
+            )?);
+            let turn_completed = messages
+                .iter()
+                .any(|message| event_completes_turn(message, &thread_id, turn_id.as_deref()));
+            if let Some(error) = messages
+                .iter()
+                .find_map(|message| completed_turn_error(message, &thread_id, turn_id.as_deref()))
+            {
+                return Err(AppError::Process(format!(
+                    "Codex planning turn failed: {error}"
+                )));
+            }
+            let validated = turn_completed
+                .then(|| messages.iter().rev().find_map(structured_output))
+                .flatten()
+                .ok_or_else(|| {
+                    AppError::Serialization(
+                        "Codex returned no schema-constrained analysis output".into(),
+                    )
+                })
+                .and_then(|output| {
+                    validate_analysis_output(output, request, &input_sha256, &request.evidence)
+                });
+            match validated {
+                Ok(analysis) => break analysis,
+                Err(AppError::Serialization(reason)) if attempt < ANALYSIS_ATTEMPTS => {
+                    turn_text = corrective_analysis_prompt(&reason, &input_sha256);
+                }
+                Err(error) => return Err(error),
+            }
+        };
         let output_bytes = serde_json::to_vec(&analysis)?;
         let record = CodexAnalysisRecord {
             engine: "codex_app_server".into(),
@@ -732,12 +751,23 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
             }
         }
         let started = std::time::Instant::now();
+        let mut transient = 0_usize;
         while started.elapsed() < max_wait {
             match self.transport.receive(Duration::from_millis(200)) {
                 Ok(Some(message)) => {
                     let correlated = event_matches_turn(&message, thread_id, turn_id);
                     let complete = event_completes_turn(&message, thread_id, turn_id);
-                    if correlated {
+                    if correlated && is_transient_progress_notification(&message) {
+                        // Streaming deltas carry no completion, error, or final
+                        // output; count them against a separate bound instead
+                        // of retaining them.
+                        transient += 1;
+                        if transient > MAX_TRANSIENT_PROGRESS_NOTIFICATIONS {
+                            return Err(AppError::Process(
+                                "Codex App Server exceeded the progress notification limit".into(),
+                            ));
+                        }
+                    } else if correlated {
                         push_bounded_notification(
                             &mut messages,
                             message,
@@ -788,6 +818,21 @@ fn safe_protocol_error_code(value: Option<&Value>) -> String {
     } else {
         bounded
     }
+}
+
+/// App Server streams incremental agent-message, reasoning, and tool-output
+/// deltas plus token-usage updates during a turn. None of them carries the
+/// final structured output, a completion, or an error.
+fn is_transient_progress_notification(value: &Value) -> bool {
+    value
+        .get("method")
+        .and_then(Value::as_str)
+        .is_some_and(|method| {
+            method.ends_with("Delta")
+                || method.ends_with("/delta")
+                || method == "thread/tokenUsage/updated"
+                || method == "item/reasoning/summaryPartAdded"
+        })
 }
 
 fn push_bounded_notification(
@@ -1223,6 +1268,24 @@ pub fn validate_analysis_payload(bytes: &[u8]) -> Result<(), AppError> {
     validate_analysis_output(value, &request, &input_sha256, &[]).map(|_| ())
 }
 
+/// Total turns allowed for one analysis: the first turn plus one corrective
+/// turn after a deterministic rejection of the returned proposal set.
+pub(crate) const ANALYSIS_ATTEMPTS: u32 = 2;
+
+/// Follow-up instruction after the validator rejected a response. The reason
+/// is the validator's own bounded internal message (proposal names and rule
+/// only), never user content.
+pub(crate) fn corrective_analysis_prompt(reason: &str, input_sha256: &str) -> String {
+    let reason = redact_secrets(reason, &[])
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(300)
+        .collect::<String>();
+    format!(
+        "The previous response was rejected by deterministic validation: {reason}. Return the complete corrected object that matches the same output schema and every earlier rule. Copy input_sha256={input_sha256} exactly."
+    )
+}
+
 pub(crate) fn analysis_prompt_for_provider(
     request: &CodexAnalysisRequest,
     input_sha256: &str,
@@ -1230,7 +1293,7 @@ pub(crate) fn analysis_prompt_for_provider(
 ) -> Result<String, AppError> {
     let input = serde_json::to_string(&model_visible_analysis_input(request))?;
     Ok(format!(
-        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Set analysis_id to a fresh RFC 4122 UUID. Return every required proposal key exactly once. descriptor_tags and folder_profile proposal values must be JSON arrays of strings; every other proposal value must be a string. Descriptor tags may use only these official categories: Alternative History, Balance, Events, Fixes, Gameplay, Graphics, Historical, Ideologies, Map, Military, National Focuses, Sound, Technologies, Translation, Utilities. Propose concise, user-facing reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs; never invent paths or references. Keep project_summary, proposal values, reasons, and warnings focused on the mod; never attribute them to the setup assistant, provider, model, or analysis process, and never mention schemas, constraints, evidence fields, operating systems, platforms, or Workshop ID rules. Return warnings only when the user must make a decision or correct something. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
+        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Set analysis_id to a fresh RFC 4122 UUID. Return every required proposal key exactly once. When input.constraints.requested_mod_name is present, the display_name proposal must be exactly that name, and project_id, script_prefix, and primary_namespace must be derived from it. descriptor_tags and folder_profile proposal values must be JSON arrays of strings; every other proposal value must be a string. Descriptor tags may use only these official categories: Alternative History, Balance, Events, Fixes, Gameplay, Graphics, Historical, Ideologies, Map, Military, National Focuses, Sound, Technologies, Translation, Utilities. Propose concise, user-facing reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs (input.evidence[].reference); never invent paths or references. When input.evidence is not empty, every proposal must cite at least one of those IDs; when it is empty, every evidence_refs array must be empty. Keep project_summary, proposal values, reasons, and warnings focused on the mod; never attribute them to the setup assistant, provider, model, or analysis process, and never mention schemas, constraints, evidence fields, operating systems, platforms, or Workshop ID rules. Return warnings only when the user must make a decision or correct something. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
     ))
 }
 
@@ -1333,21 +1396,29 @@ pub(crate) fn validate_analysis_output(
                 "Codex analysis contains duplicate proposal keys".into(),
             ));
         }
-        if !(0.0..=1.0).contains(&proposal.confidence)
-            || proposal.reason.chars().count() > 500
-            || proposal
-                .evidence_refs
-                .iter()
-                .any(|reference| reference.trim().is_empty())
+        let proposal_name = serde_json::to_string(&proposal.key)?;
+        if !(0.0..=1.0).contains(&proposal.confidence) || proposal.reason.chars().count() > 500 {
+            return Err(AppError::Serialization(format!(
+                "Codex proposal {proposal_name} failed schema validation: confidence or reason is out of range"
+            )));
+        }
+        if proposal
+            .evidence_refs
+            .iter()
+            .any(|reference| reference.trim().is_empty())
             || proposal
                 .evidence_refs
                 .iter()
                 .any(|reference| !approved_references.contains(reference.as_str()))
-            || (!approved_references.is_empty() && proposal.evidence_refs.is_empty())
         {
-            return Err(AppError::Serialization(
-                "Codex proposal failed schema validation".into(),
-            ));
+            return Err(AppError::Serialization(format!(
+                "Codex proposal {proposal_name} failed schema validation: it cites an unapproved evidence reference"
+            )));
+        }
+        if !approved_references.is_empty() && proposal.evidence_refs.is_empty() {
+            return Err(AppError::Serialization(format!(
+                "Codex proposal {proposal_name} failed schema validation: it cites no approved evidence"
+            )));
         }
         validate_output_text(&proposal.reason, "Codex proposal reason")?;
         validate_user_facing_analysis_text(&proposal.reason, "Codex proposal reason")?;
@@ -1392,7 +1463,43 @@ pub(crate) fn validate_analysis_output(
         validate_output_text(&recommendation.reason, "Codex recommendation reason")?;
         validate_user_facing_analysis_text(&recommendation.reason, "Codex recommendation reason")?;
     }
-    Ok(analysis)
+    Ok(keep_requested_mod_name(analysis, request))
+}
+
+/// A mod name the user typed for a new project is theirs: the display-name
+/// proposal always carries it, whatever the setup assistant suggested.
+fn keep_requested_mod_name(
+    mut analysis: CodexAnalysis,
+    request: &CodexAnalysisRequest,
+) -> CodexAnalysis {
+    if request.mode != "new_project_identity" {
+        return analysis;
+    }
+    let Some(requested) = request
+        .constraints
+        .get("requested_mod_name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| {
+            !name.is_empty()
+                && name.chars().count() <= 128
+                && crate::descriptors::validate_field(name, "mod name").is_ok()
+        })
+    else {
+        return analysis;
+    };
+    if let Some(proposal) = analysis
+        .proposals
+        .iter_mut()
+        .find(|proposal| matches!(proposal.key, ProposalKey::DisplayName))
+    {
+        if proposal.value.as_str() != Some(requested) {
+            proposal.value = Value::String(requested.to_owned());
+            proposal.confidence = 1.0;
+            proposal.reason = "Kept the mod name you entered.".into();
+        }
+    }
+    analysis
 }
 
 fn analysis_component_registry_ids(
@@ -2351,6 +2458,12 @@ fn codex_executable_candidates(
     candidates
 }
 
+/// Resolve a reviewed launcher candidate to its final regular-file path with
+/// the same platform rules used for Codex discovery.
+pub(crate) fn resolve_reviewed_executable_path(candidate: &std::path::Path) -> Option<PathBuf> {
+    resolve_codex_executable_path(candidate)
+}
+
 #[cfg(not(target_os = "windows"))]
 fn resolve_codex_executable_path(candidate: &std::path::Path) -> Option<PathBuf> {
     std::fs::canonicalize(candidate).ok()
@@ -2427,7 +2540,14 @@ pub fn validate_confirmed_record(record: &CodexAnalysisRecord) -> Result<(), App
             && record
                 .model
                 .as_deref()
-                .is_some_and(|model| !model.trim().is_empty()));
+                .is_some_and(|model| !model.trim().is_empty()))
+        || (record.engine == crate::claude_code::ENGINE
+            && provider == crate::claude_code::PROVIDER_ID
+            && record.auth_mode == crate::claude_code::AUTH_MODE
+            && record
+                .model
+                .as_deref()
+                .is_some_and(|model| crate::claude_code::validate_model(model).is_ok()));
     if !valid_engine
         || record.schema_version != CODEX_SCHEMA_VERSION
         || record.account_identity_persisted
@@ -2537,6 +2657,13 @@ pub fn confirm_analysis_record(
                 || record.provider.as_deref().unwrap_or("codex") != "codex"))
         || (record.engine == "provider_api"
             && !matches!(record.auth_mode.as_str(), "api_key" | "local_endpoint"))
+        || (record.engine == crate::claude_code::ENGINE
+            && (record.auth_mode != crate::claude_code::AUTH_MODE
+                || record.provider.as_deref() != Some(crate::claude_code::PROVIDER_ID)))
+        || !matches!(
+            record.engine.as_str(),
+            "codex_app_server" | "provider_api" | crate::claude_code::ENGINE
+        )
         || record.account_identity_persisted
         || record.output_sha256 != sha256_bytes(&serde_json::to_vec(analysis)?)
     {
@@ -2574,6 +2701,81 @@ pub fn confirm_analysis_record(
     confirmed.confirmed_at = Utc::now().to_rfc3339();
     validate_confirmed_record(&confirmed)?;
     Ok(confirmed)
+}
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+
+    /// Opt-in probe of the installed, signed-in Codex: one real new-project
+    /// analysis turn through the production App Server route. Prints the raw
+    /// internal error so failures hidden behind the renderer map can be
+    /// diagnosed.
+    #[test]
+    #[ignore = "requires an installed, ChatGPT-signed-in Codex; run with pnpm test:codex-analysis-live"]
+    fn live_codex_new_project_analysis() {
+        let executable = find_codex_executable().expect("official Codex executable");
+        let version = codex_executable_version(&executable).expect("Codex version");
+        let transport = ProcessJsonlTransport::start(executable).expect("App Server start");
+        let mut protocol = AppServerProtocol::with_expected_server_version(transport, version);
+        protocol.initialize().expect("initialize");
+        let model =
+            std::env::var("HOI4_CODEX_LIVE_MODEL").unwrap_or_else(|_| "gpt-5.6-luna".into());
+        let effort = std::env::var("HOI4_CODEX_LIVE_EFFORT").unwrap_or_else(|_| "xhigh".into());
+        let request = CodexAnalysisRequest {
+            mode: "new_project_identity".into(),
+            brief: "Setup Test Iron Dawn: an alternate-history scenario where a reformed Austro-Hungarian federation survives into 1936, with new national focuses, decisions, and events.".into(),
+            evidence: Vec::new(),
+            constraints: json!({}),
+            analysis_purpose: None,
+            project_root: None,
+            scan_id: None,
+        };
+        let request = if std::env::var("HOI4_CODEX_LIVE_EXISTING").as_deref() == Ok("1") {
+            let excerpts = [
+                ("agents.present", "AGENTS.md", "true"),
+                ("descriptor.name", "descriptor.mod", "Legacy Test Mod"),
+                ("docs.inventory", "README.md", "1"),
+                (
+                    "managed.installation",
+                    ".hoi4-mod-setup/install.lock.json",
+                    "{\"present\":false}",
+                ),
+            ];
+            CodexAnalysisRequest {
+                mode: "existing_project_semantics".into(),
+                brief: "Review the existing HOI4 project and propose its setup conventions.".into(),
+                evidence: excerpts
+                    .iter()
+                    .map(|(reference, path, excerpt)| ApprovedEvidence {
+                        reference: (*reference).into(),
+                        path: (*path).into(),
+                        excerpt: (*excerpt).into(),
+                        excerpt_sha256: sha256_bytes(excerpt.as_bytes()),
+                        confidence: Some(1.0),
+                    })
+                    .collect(),
+                constraints: json!({"project_id_pattern": "^[a-z][a-z0-9_]{1,63}$"}),
+                analysis_purpose: Some("existing_project_import".into()),
+                project_root: Some(std::env::temp_dir().display().to_string()),
+                scan_id: Some(Uuid::new_v4()),
+            }
+        } else {
+            request
+        };
+        let started = std::time::Instant::now();
+        match protocol.analyze(&request, &model, &effort) {
+            Ok(result) => eprintln!(
+                "codex analysis ok in {:?}: {} proposals",
+                started.elapsed(),
+                result.analysis.proposals.len()
+            ),
+            Err(error) => panic!(
+                "codex analysis failed after {:?}: {error}",
+                started.elapsed()
+            ),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3595,6 +3797,99 @@ mod tests {
     }
 
     #[test]
+    fn streamed_progress_deltas_are_counted_but_not_retained() {
+        for method in [
+            "item/agentMessage/delta",
+            "item/reasoning/textDelta",
+            "item/reasoning/summaryTextDelta",
+            "item/commandExecution/outputDelta",
+            "thread/tokenUsage/updated",
+        ] {
+            assert!(
+                is_transient_progress_notification(&json!({"method": method})),
+                "{method}"
+            );
+        }
+        for method in ["turn/completed", "item/completed", "item/started", "error"] {
+            assert!(
+                !is_transient_progress_notification(&json!({"method": method})),
+                "{method}"
+            );
+        }
+        assert!(!is_transient_progress_notification(&json!({"result": {}})));
+    }
+
+    #[test]
+    fn a_requested_new_project_name_is_kept_in_the_display_name_proposal() {
+        let request = CodexAnalysisRequest {
+            mode: "new_project_identity".into(),
+            brief: "A test mod.".into(),
+            evidence: Vec::new(),
+            constraints: json!({"requested_mod_name": "  Setup Test Iron Dawn "}),
+            analysis_purpose: None,
+            project_root: None,
+            scan_id: None,
+        };
+        let analysis: CodexAnalysis = serde_json::from_value(json!({
+            "schema_version": CODEX_SCHEMA_VERSION,
+            "analysis_id": Uuid::new_v4(),
+            "mode": "new_project_identity",
+            "input_sha256": "a".repeat(64),
+            "project_summary": "Summary.",
+            "proposals": [{"key": "display_name", "value": "Danubian Federation", "confidence": 0.9, "reason": "Fits.", "evidence_refs": []}],
+            "component_recommendations": [],
+            "warnings": []
+        }))
+        .unwrap();
+        let kept = keep_requested_mod_name(analysis.clone(), &request);
+        assert_eq!(kept.proposals[0].value, json!("Setup Test Iron Dawn"));
+        let mut existing = request.clone();
+        existing.mode = "existing_project_semantics".into();
+        assert_eq!(
+            keep_requested_mod_name(analysis, &existing).proposals[0].value,
+            json!("Danubian Federation")
+        );
+    }
+
+    #[test]
+    fn a_long_streamed_turn_completes_without_hitting_the_retained_limit() {
+        let mut incoming = (0..(MAX_CORRELATED_NOTIFICATIONS * 8))
+            .map(|index| {
+                json!({
+                    "method": if index % 2 == 0 { "item/reasoning/textDelta" } else { "item/agentMessage/delta" },
+                    "params": {"threadId": "thread-1", "turnId": "turn-1", "delta": "x"}
+                })
+            })
+            .collect::<VecDeque<_>>();
+        incoming.push_back(json!({
+            "method": "item/completed",
+            "params": {"threadId": "thread-1", "turnId": "turn-1", "item": {"type": "agentMessage", "text": "{\"schema_version\":\"1.0.0\"}"}}
+        }));
+        incoming.push_back(json!({
+            "method": "turn/completed",
+            "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed"}}
+        }));
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming,
+            alive: true,
+        };
+        let mut protocol = AppServerProtocol::new(transport);
+
+        let messages = protocol
+            .drain_notifications(Duration::from_secs(30), "thread-1", Some("turn-1"))
+            .unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert!(messages.iter().any(|message| event_completes_turn(
+            message,
+            "thread-1",
+            Some("turn-1")
+        )));
+        assert!(messages.iter().rev().find_map(structured_output).is_some());
+    }
+
+    #[test]
     fn correlated_turn_notifications_have_aggregate_count_and_size_limits() {
         let incoming = (0..=MAX_CORRELATED_NOTIFICATIONS)
             .map(|index| {
@@ -3800,6 +4095,8 @@ mod tests {
                 response(2, json!({"rateLimits": {"primary": {"usedPercent": 1}}})),
                 response(3, json!({"threadId": "thread-1"})),
                 response(4, json!({"status": "started"})),
+                json!({"method": "turn/completed", "params": {"threadId": "thread-1", "turn": {"status": "completed"}}}),
+                response(5, json!({"status": "started"})),
             ]),
             alive: true,
         };
@@ -3812,6 +4109,13 @@ mod tests {
             .to_string();
 
         assert!(error.contains("no schema-constrained analysis output"));
+        // One corrective turn follows a rejected response, in the same thread.
+        assert_eq!(protocol.transport.sent[4]["method"], "turn/start");
+        assert_eq!(protocol.transport.sent[4]["params"]["threadId"], "thread-1");
+        assert!(protocol.transport.sent[4]["params"]["input"][0]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("rejected by deterministic validation")));
+        assert_eq!(protocol.transport.sent.len(), 5);
         assert_eq!(protocol.transport.sent[2]["method"], "thread/start");
         assert_eq!(
             protocol.transport.sent[2]["params"]["sandbox"],

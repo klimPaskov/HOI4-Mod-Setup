@@ -128,9 +128,11 @@ launcher parents, executable metadata, and recursive staging discard. Use
 deterministic barriers after root/parent acquisition and immediately before
 namespace changes. Assert outside sentinels remain byte-for-byte unchanged,
 root identity drift cannot produce a success lock, and displaced user bytes
-remain recoverable. Current `safe_fs` unit tests cover static link leaves,
-ancestor swaps, and recursive staging links on Windows and Unix; they do not
-cover concurrent final-leaf changes or macOS native execution.
+remain recoverable. The source regression catches selected direct ambient
+filesystem calls; it does not prove helper wrappers use the same verified root
+handle. Current `safe_fs` unit tests cover static link leaves, linked-root
+acquisition, ancestor swaps, and recursive staging links on Windows and Unix;
+they do not cover concurrent final-leaf changes or macOS native execution.
 
 ## End-to-end cases
 
