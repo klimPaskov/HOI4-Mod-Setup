@@ -647,12 +647,12 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
                 Ok(analysis) => break analysis,
                 // A corrective turn needs the completed turn's ID so its
                 // output cannot be confused with this one.
-                Err(AppError::Serialization(reason))
-                    if attempt < ANALYSIS_ATTEMPTS && turn_id.is_some() =>
-                {
-                    turn_text = corrective_analysis_prompt(&reason, &input_sha256);
-                }
-                Err(error) => return Err(error),
+                Err(error) => match correctable_output_error(&error) {
+                    Some(reason) if attempt < ANALYSIS_ATTEMPTS && turn_id.is_some() => {
+                        turn_text = corrective_analysis_prompt(reason, &input_sha256);
+                    }
+                    _ => return Err(error),
+                },
             }
         };
         let output_bytes = serde_json::to_vec(&analysis)?;
@@ -1283,6 +1283,19 @@ pub fn validate_analysis_payload(bytes: &[u8]) -> Result<(), AppError> {
 /// Total turns allowed for one analysis: the first turn plus one corrective
 /// turn after a deterministic rejection of the returned proposal set.
 pub(crate) const ANALYSIS_ATTEMPTS: u32 = 2;
+
+/// The validator's reason when a returned analysis was rejected for content
+/// the model can correct: schema shape, identifier or value rules, or an
+/// unsafe path. Credential-shaped content and every transport, sign-in, or
+/// usage failure return `None` and are never retried.
+pub(crate) fn correctable_output_error(error: &AppError) -> Option<&str> {
+    match error {
+        AppError::Serialization(reason)
+        | AppError::InvalidInput(reason)
+        | AppError::PathSecurity(reason) => Some(reason.as_str()),
+        _ => None,
+    }
+}
 
 /// Follow-up instruction after the validator rejected a response. The reason
 /// is the validator's own bounded internal message (proposal names and rule

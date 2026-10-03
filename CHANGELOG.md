@@ -43,6 +43,10 @@ HOI4 Mod Setup follows semantic versioning.
   setup, and discard an analysis that finishes after sign-out.
 - Treat an unfinished Codex turn as a timeout instead of retrying it, and
   anchor macOS signature checks to Apple's Developer ID chain.
+- Fix Claude account analysis failing with an unreadable result: Claude Code
+  rejected the analysis schema's draft declaration.
+- Include invalid identifiers and unsafe paths in the one corrective analysis
+  retry.
 - Update rustls to 0.23.45 (RUSTSEC-2026-0285) and replace the yanked chacha20
   0.10.1; update React to 19.3.0 and the Tauri CLI to 2.11.5.
 - Refresh the bundled audit snapshot from exact published Git bytes, including
