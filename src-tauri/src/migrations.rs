@@ -551,6 +551,29 @@ pub fn migrate_journal(value: Value) -> Result<TransactionJournal, AppError> {
         .and_then(Value::as_str)
         .unwrap_or("1.0.0")
         .to_string();
+    // Quarantine evidence was introduced with schema 1.1.0; a 1.0.0 journal
+    // carrying it is forged or corrupted and must not drive recovery.
+    if original_version == "1.0.0"
+        && (value
+            .get("checkpoint_sequence")
+            .is_some_and(|sequence| !sequence.is_null())
+            || value
+                .get("operations")
+                .and_then(Value::as_array)
+                .is_some_and(|operations| {
+                    operations.iter().any(|operation| {
+                        ["quarantine_leaf", "quarantine_sha256"]
+                            .iter()
+                            .any(|field| {
+                                operation.get(*field).is_some_and(|value| !value.is_null())
+                            })
+                    })
+                }))
+    {
+        return Err(AppError::Serialization(
+            "a 1.0.0 transaction journal cannot carry quarantine evidence".into(),
+        ));
+    }
     let mut value = migrate_value(value, "transaction journal", CURRENT_JOURNAL_SCHEMA)?;
     normalize_coding_environments(&mut value)?;
     if let Some(object) = value.as_object_mut() {
@@ -1052,6 +1075,22 @@ mod tests {
         let lock = migrate_lock(value).unwrap();
 
         assert!(lock.codex_analysis.unwrap().project_root.is_none());
+    }
+
+    #[test]
+    fn a_legacy_journal_with_quarantine_evidence_is_rejected() {
+        let mut value: Value = serde_json::from_str(include_str!(
+            "../../docs/examples/transaction-journal.example.json"
+        ))
+        .unwrap();
+        value["schema_version"] = Value::String("1.0.0".into());
+        let mut with_quarantine = value.clone();
+        with_quarantine["operations"][0]["quarantine_leaf"] =
+            Value::String(".hoi4ms-quarantine-x-y.tmp".into());
+        assert!(migrate_journal(with_quarantine).is_err());
+        let mut with_sequence = value;
+        with_sequence["checkpoint_sequence"] = Value::from(3);
+        assert!(migrate_journal(with_sequence).is_err());
     }
 
     #[test]

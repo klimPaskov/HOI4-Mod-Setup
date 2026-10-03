@@ -66,7 +66,12 @@ Every forward apply, managed rollback step, success-lock commit, and rollback lo
 3. The destination leaf is moved to that name with an exclusive same-directory rename through the retained parent handle, and the directory is synced. No cross-volume copy happens.
 4. The moved bytes are hashed. When they differ from the precondition, the observed hash is journaled and the file is moved back with an exclusive rename. If a new file took the destination name in the meantime, both files are kept, the quarantine stays recorded, and the operation fails for manual review.
 5. When the bytes match, the observed hash is journaled as `quarantine_sha256`, and the new bytes are placed with a synced temporary file plus an exclusive rename. A file created at the destination in the window is never replaced; the operation fails and the verified original stays in its quarantine. A managed delete places nothing.
-6. After the operation result checkpoint is synced, the quarantine is removed only while it still holds the verified bytes. On Windows the hashed handle denies write and delete sharing and performs the delete; on Unix the leaf identity is rechecked before `unlinkat`.
+6. Forward apply reads the destination back and requires the staged hash (or, for a delete, an absent destination) before it records the operation as `verified`. Any other bytes were written after placement: the operation keeps its `applying` intent without `after_sha256`, the verified original stays in its quarantine, and apply fails as a changed-local-file conflict. Rollback then refuses with both files kept instead of treating the edit as installed bytes.
+7. After the operation result checkpoint is synced, the quarantine is removed only while it still holds the verified bytes. On Windows the hashed handle denies write and delete sharing and performs the delete; on Unix the leaf identity is rechecked before `unlinkat`.
+
+An ordinary error after the rename and before placement completes, such as a hash read failure, a failed journal write, or a failed placement copy, triggers a best-effort exclusive rename of the quarantined bytes back to an absent destination before the error is returned. The journal intent stays recorded, so rollback still applies when that move back is impossible. The same applies when the rename succeeded but its directory sync or binding check failed. Quarantine fault hooks model a process stop and deliberately skip this move back. Errors after placement are left to rollback.
+
+On Windows the delete uses `FileDispositionInfoEx` with POSIX semantics. When the volume rejects that class with `ERROR_INVALID_PARAMETER`, `ERROR_NOT_SUPPORTED`, or `ERROR_INVALID_FUNCTION`, as FAT, exFAT, and many SMB servers do, the classic `FileDispositionInfo` disposition is set on the same hashed handle instead. Only read sharing was granted, so no writer or deleter can open the file before the handle closes and the entry is removed; another reader that already holds the file open can keep the name in a delete-pending state until it closes. There is no preflight capability probe: the fallback was chosen so those volumes keep working. A unit test forces the classic route on NTFS; it has not run on a real FAT, exFAT, or SMB volume.
 
 A destination that was absent at review is created with an exclusive rename, so a file that appears in the window is kept and the operation fails.
 
@@ -79,14 +84,24 @@ Recovery handles every crash point:
 | Before the rename | Destination unchanged, quarantine absent | Rollback sees the predecessor bytes as already restored. |
 | After the rename, before verification | Destination absent, quarantine unverified | Rollback moves the quarantine back without replacing anything. |
 | After verification, before placement | Destination absent, quarantine verified | Rollback moves the quarantine back. |
-| After placement, before the result checkpoint | New bytes, verified quarantine | Rollback moves the installed bytes into its own quarantine, moves the original bytes back, and releases its quarantine after both rollback records are durable. |
+| Changed bytes journaled, before the move back | Destination absent, quarantine holds the changed bytes | Rollback moves the changed bytes back and does not restore the backup over them. |
+| After placement, before the result checkpoint | New bytes, verified quarantine | Rollback moves the installed bytes into its own quarantine, moves the original bytes back, and releases its quarantine after both rollback records are synced. |
 | After the result checkpoint, before release | New bytes, verified quarantine | Same as the previous row. |
-| Changed bytes moved back | Local bytes at the destination, quarantine absent, `quarantine_sha256` differs from the predecessor | Rollback treats the local bytes as the restored state and does not replace them. |
+| Edited after placement | Local bytes at the destination, verified quarantine, no `after_sha256` | Apply fails as a conflict and rollback refuses with both files kept. |
+| Changed bytes moved back | Local bytes at the destination, quarantine absent, `quarantine_sha256` differs from `backup_sha256` | Rollback treats the local bytes as the restored state and does not replace them. |
 | Changed bytes and a new destination file | Both files present | Rollback refuses and keeps both files. |
 
 Once project apply has started, resume remains refused and rollback is the recovery route for file operations.
 Rollback restores the quarantined bytes rather than the backup copy because they are the newest bytes the user saw at that path.
+It probes the derived quarantine name of each operation even when the journal does not record it, and records the hash of the bytes it moved back in `quarantine_sha256`.
+Beside installed bytes it moves a forward quarantine back only when the quarantine holds exactly the journaled `quarantine_sha256`; anything else keeps both files for manual review.
+When the destination already holds the restored bytes, a surviving forward quarantine is released only if it holds those same bytes; otherwise rollback stops with both files kept.
 It never deletes a quarantine whose hash differs from both the reviewed precondition and the backup.
+
+After the last operation of a forward apply, during finalization resume, and after the last rollback step, a bounded sweep lists the destination directories of the transaction's operations for leftover `.hoi4ms-quarantine-<transaction id>-*` files, including the step quarantines of the rollback transaction.
+Each file is matched to its operation by derived name and settled by hash: bytes equal to the destination are released; during rollback, precondition or backup bytes beside an absent destination move back; beside a verified result, precondition bytes are released; planned result bytes are released.
+Bytes that match none of these, and names that match no operation, are kept and the step fails for manual review.
+Lock quarantines are settled separately, and the sweep is bounded to 4,096 directories and 1,000,000 listed entries.
 An unverified forward operation is recognized by its missing result evidence, so rollback refuses a destination whose bytes match neither the predecessor nor the planned result instead of removing or replacing it.
 
 Rollback steps journal their own quarantine on the child rollback operation, named with the child transaction ID.
@@ -111,7 +126,7 @@ A populated operation record looks like this:
 }
 ```
 
-Both fields are optional. Journals written before quarantine support remain readable, and schema version `1.0.0` journals must not contain them.
+Both fields are optional and are omitted, never written as `null`, when absent. Journals written before quarantine support remain readable, and schema version `1.0.0` journals must not contain them.
 
 ## Twelve stages
 
@@ -212,7 +227,7 @@ validation observes the same `/private/var` root.
 
 ### 9. Apply
 
-Apply in deterministic order and checkpoint every operation. An existing destination is replaced or deleted only through the destination quarantine; a new destination is created with an exclusive rename.
+Apply in deterministic order and checkpoint every operation. An existing destination is replaced or deleted only through the destination quarantine; a new destination is created with an exclusive rename. An operation is recorded as `verified` only when the destination reads back as the staged bytes, or as absent for a delete.
 
 ### 10. Post-install checks
 
@@ -262,6 +277,8 @@ external wrapper action, persist the manifest-declared executable, interpreter,
 and runtime identity evidence in the plan and journal; missing identity keeps
 the action `planned_unavailable` and is never permission to run a same-named
 PATH command.
+
+Operation checkpoints are appended to `operation-checkpoints.jsonl` beside the journal. Each record carries a monotonic `sequence`, and each journal snapshot records the `checkpoint_sequence` it already includes. Replay applies only records with a higher sequence, so a wall-clock step backwards cannot hide a durable intent. Checkpoint records use format `1.1.0`; replay still reads `1.0.0` records, and a journal and log written entirely before sequences existed fall back to the earlier timestamp comparison.
 
 Managed rollback restores project files and predecessor lock state. It does not
 claim to uninstall source-declared external bootstrap state such as user-level
@@ -335,4 +352,16 @@ Detect common OneDrive and iCloud paths. Warn about synchronization ordering. Pe
 
 ## Fault tests
 
-Crash and fail at every stage and operation, including disk full, permission loss, antivirus lock, network loss, checksum mismatch, user edits during dry run or staging, external health failure, and rollback after Git initialization. The checked-in fault suite covers stage and apply-operation injection, subprocess termination during finalization and rollback backup creation, inverse rollback refusal after a user file or lock edit, deterministic concurrent-edit barriers and every destination-quarantine boundary for forward apply, managed delete, rollback steps, success-lock commit, and rollback lock restore, plus targeted skipped-file, ownership, remote-approval, reanalysis binding, exact success-lock, predecessor-lock, and separate rollback-transaction backup regressions. Native disk-full, antivirus, network-loss, timeout, cancellation, and journal-write-failure adapters remain release-gate work and must not be represented as passing until exercised on Windows and macOS.
+Crash and fail at every stage and operation, including disk full, permission loss, antivirus lock, network loss, checksum mismatch, user edits during dry run or staging, external health failure, and rollback after Git initialization. The checked-in fault suite covers stage and apply-operation injection, subprocess termination during finalization and rollback backup creation, inverse rollback refusal after a user file or lock edit, and targeted skipped-file, ownership, remote-approval, reanalysis binding, exact success-lock, predecessor-lock, and separate rollback-transaction backup regressions.
+
+Destination-quarantine coverage, all modelled as returned errors rather than process aborts:
+
+- Forward replace: before the rename, after the rename, after a changed-bytes record before the move back, after verification, after placement before the result checkpoint, and after the result checkpoint before release; deterministic barriers for an edit after the precondition, a file created after verification, and an edit after placement; injected hash-read and journal-write errors after the rename.
+- Forward create: a stop after placement and a file created in the apply window.
+- Managed delete: a concurrent edit after the precondition and a stop after verification only.
+- Rollback backup restore, rollback restore of a forward quarantine, and rollback removal of a created file: before the rename, after the rename, after verification, after placement, and before release, each followed by a retry.
+- Success-lock commit: before the rename, after the rename, after verification, and before release.
+- Rollback lock restore with a predecessor and lock removal after a first install: before the rename, after the rename, after verification, and before release.
+- Recovery: a quarantine the journal does not name, an operation whose intents were never replayed, unknown bytes under an owned or unowned quarantine name, a forward quarantine beside already-restored bytes, checkpoint replay ordered by sequence, and the classic delete disposition forced on NTFS.
+
+Not covered: process-abort variants of the quarantine boundaries, external-destination quarantines, the remaining managed-delete boundaries, a concurrent edit during a rollback step, real FAT, exFAT, or SMB volumes, and every Unix route. Native disk-full, antivirus, network-loss, timeout, cancellation, and journal-write-failure adapters remain release-gate work and must not be represented as passing until exercised on Windows and macOS.

@@ -29,15 +29,15 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, FileDispositionInfoEx, FileIdInfo, FileRenameInfo, FindClose, FindFirstFileW,
-    FindNextFileW, GetFileInformationByHandle, GetFileInformationByHandleEx, ReplaceFileW,
-    SetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, CREATE_NEW, DELETE, FILE_APPEND_DATA,
-    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TEMPORARY,
-    FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
-    FILE_GENERIC_WRITE, FILE_ID_INFO, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, SYNCHRONIZE,
-    WIN32_FIND_DATAW,
+    CreateFileW, FileDispositionInfo, FileDispositionInfoEx, FileIdInfo, FileRenameInfo, FindClose,
+    FindFirstFileW, FindNextFileW, GetFileInformationByHandle, GetFileInformationByHandleEx,
+    ReplaceFileW, SetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, CREATE_NEW, DELETE,
+    FILE_APPEND_DATA, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+    FILE_ATTRIBUTE_TEMPORARY, FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+    FILE_DISPOSITION_INFO, FILE_DISPOSITION_INFO_EX, FILE_FLAG_BACKUP_SEMANTICS,
+    FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO,
+    FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO, FILE_SHARE_DELETE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, SYNCHRONIZE, WIN32_FIND_DATAW,
 };
 
 /// A directory capability rooted at one absolute, link-free directory. The
@@ -1294,22 +1294,7 @@ fn remove_directory_impl(parent: &RootedDir, name: &OsStr) -> io::Result<()> {
             "refusing to remove a reparse point or non-directory",
         ));
     }
-    let disposition = FILE_DISPOSITION_INFO_EX {
-        Flags: FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
-    };
-    let result = unsafe {
-        SetFileInformationByHandle(
-            handle.as_raw_handle() as HANDLE,
-            FileDispositionInfoEx,
-            &disposition as *const _ as *const _,
-            std::mem::size_of_val(&disposition) as u32,
-        )
-    };
-    if result == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
+    set_delete_disposition(&handle)
 }
 
 #[cfg(windows)]
@@ -1347,22 +1332,7 @@ fn remove_file_impl(parent: &RootedDir, name: &OsStr) -> Result<(), AppError> {
             "refusing to remove a reparse point or directory as a file".into(),
         ));
     }
-    let disposition = FILE_DISPOSITION_INFO_EX {
-        Flags: FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
-    };
-    let result = unsafe {
-        SetFileInformationByHandle(
-            file.as_raw_handle() as HANDLE,
-            FileDispositionInfoEx,
-            &disposition as *const _ as *const _,
-            std::mem::size_of_val(&disposition) as u32,
-        )
-    };
-    if result == 0 {
-        Err(io::Error::last_os_error().into())
-    } else {
-        Ok(())
-    }
+    set_delete_disposition(&file).map_err(AppError::from)
 }
 
 fn rename_file_at(
@@ -1553,22 +1523,91 @@ fn remove_file_if_hash_impl(
     if sha256_reader(&mut file)? != expected_sha256 {
         return Ok(false);
     }
-    let disposition = FILE_DISPOSITION_INFO_EX {
-        Flags: FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
-    };
+    // The disposition is set on the hashed handle. With the classic fallback
+    // the entry disappears when this handle closes; no writer or deleter can
+    // open it before then because only read sharing was granted.
+    set_delete_disposition(&file)?;
+    Ok(true)
+}
+
+/// Mark an opened file or directory for deletion through that same handle.
+///
+/// POSIX semantics remove the name as soon as the disposition is set. FAT,
+/// exFAT, and many SMB servers reject `FileDispositionInfoEx`; for those
+/// errors only, the classic `FileDispositionInfo` disposition is applied to
+/// the same handle and the entry is removed when the last handle closes.
+/// Either way the delete stays bound to the handle the caller validated.
+#[cfg(windows)]
+fn set_delete_disposition(file: &File) -> io::Result<()> {
+    if !classic_delete_forced_for_test() {
+        let disposition = FILE_DISPOSITION_INFO_EX {
+            Flags: FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+        };
+        let result = unsafe {
+            SetFileInformationByHandle(
+                file.as_raw_handle() as HANDLE,
+                FileDispositionInfoEx,
+                &disposition as *const _ as *const _,
+                std::mem::size_of_val(&disposition) as u32,
+            )
+        };
+        if result != 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if !posix_delete_is_unsupported(&error) {
+            return Err(error);
+        }
+    }
+    let disposition = FILE_DISPOSITION_INFO { DeleteFile: 1 };
     let result = unsafe {
         SetFileInformationByHandle(
             file.as_raw_handle() as HANDLE,
-            FileDispositionInfoEx,
+            FileDispositionInfo,
             &disposition as *const _ as *const _,
             std::mem::size_of_val(&disposition) as u32,
         )
     };
     if result == 0 {
-        Err(io::Error::last_os_error().into())
+        Err(io::Error::last_os_error())
     } else {
-        Ok(true)
+        Ok(())
     }
+}
+
+/// Errors that mean the volume does not implement POSIX delete semantics,
+/// as opposed to a permission, sharing, or state failure that must surface.
+#[cfg(windows)]
+fn posix_delete_is_unsupported(error: &io::Error) -> bool {
+    const ERROR_INVALID_FUNCTION: i32 = 1;
+    const ERROR_NOT_SUPPORTED: i32 = 50;
+    const ERROR_INVALID_PARAMETER: i32 = 87;
+    matches!(
+        error.raw_os_error(),
+        Some(ERROR_INVALID_FUNCTION | ERROR_NOT_SUPPORTED | ERROR_INVALID_PARAMETER)
+    )
+}
+
+#[cfg(all(windows, test))]
+thread_local! {
+    static FORCE_CLASSIC_DELETE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Make this thread's deletes use the classic disposition, as on a volume
+/// without POSIX delete semantics. Test-only.
+#[cfg(all(windows, test))]
+pub(crate) fn force_classic_delete_for_test(force: bool) {
+    FORCE_CLASSIC_DELETE.with(|value| value.set(force));
+}
+
+#[cfg(all(windows, test))]
+fn classic_delete_forced_for_test() -> bool {
+    FORCE_CLASSIC_DELETE.with(std::cell::Cell::get)
+}
+
+#[cfg(all(windows, not(test)))]
+fn classic_delete_forced_for_test() -> bool {
+    false
 }
 
 #[cfg(unix)]
@@ -2033,5 +2072,115 @@ mod tests {
             .expect("SystemRoot is set")
             .join("System32/WindowsPowerShell/v1.0");
         RootedDir::open_read(&path).unwrap();
+    }
+
+    #[test]
+    fn exclusive_rename_and_write_never_replace_an_existing_leaf() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = RootedDir::open(temp.path()).unwrap();
+        fs::write(temp.path().join("source.txt"), b"source").unwrap();
+        fs::write(temp.path().join("taken.txt"), b"user").unwrap();
+
+        assert!(!root
+            .rename_file_noreplace("source.txt", "taken.txt")
+            .unwrap());
+        assert_eq!(fs::read(temp.path().join("source.txt")).unwrap(), b"source");
+        assert_eq!(fs::read(temp.path().join("taken.txt")).unwrap(), b"user");
+        assert!(!root.write_atomic_noreplace("taken.txt", b"new").unwrap());
+        assert_eq!(fs::read(temp.path().join("taken.txt")).unwrap(), b"user");
+        assert!(!root
+            .copy_file_atomic_noreplace_to("source.txt", &root, "taken.txt")
+            .unwrap());
+        assert_eq!(fs::read(temp.path().join("taken.txt")).unwrap(), b"user");
+        let leftovers = fs::read_dir(temp.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".hoi4ms-"))
+            .count();
+        assert_eq!(
+            leftovers, 0,
+            "a refused exclusive write left a temporary file"
+        );
+
+        assert!(root
+            .rename_file_noreplace("source.txt", "moved.txt")
+            .unwrap());
+        assert!(!temp.path().join("source.txt").exists());
+        assert_eq!(fs::read(temp.path().join("moved.txt")).unwrap(), b"source");
+    }
+
+    #[test]
+    fn hash_checked_removal_keeps_a_mismatched_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = RootedDir::open(temp.path()).unwrap();
+        fs::write(temp.path().join("held.txt"), b"changed").unwrap();
+        let expected = crate::security::sha256_bytes(b"verified");
+
+        assert!(!root.remove_file_if_hash("held.txt", &expected).unwrap());
+        assert_eq!(fs::read(temp.path().join("held.txt")).unwrap(), b"changed");
+        let actual = crate::security::sha256_bytes(b"changed");
+        assert!(root.remove_file_if_hash("held.txt", &actual).unwrap());
+        assert!(!temp.path().join("held.txt").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn posix_delete_support_errors_select_the_classic_fallback() {
+        for code in [1, 50, 87] {
+            assert!(posix_delete_is_unsupported(&io::Error::from_raw_os_error(
+                code
+            )));
+        }
+        // Access, sharing, and missing-file errors must surface unchanged.
+        for code in [2, 5, 32] {
+            assert!(!posix_delete_is_unsupported(&io::Error::from_raw_os_error(
+                code
+            )));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn classic_delete_fallback_keeps_the_hash_then_delete_guarantee() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = RootedDir::open(temp.path()).unwrap();
+        let held = temp.path().join("held.txt");
+        fs::write(&held, b"verified").unwrap();
+        let expected = crate::security::sha256_bytes(b"verified");
+        force_classic_delete_for_test(true);
+        // A mismatched hash still keeps the file under the fallback.
+        let mismatch = root.remove_file_if_hash("held.txt", &crate::security::sha256_bytes(b"x"));
+        let removed = root.remove_file_if_hash("held.txt", &expected);
+        fs::write(temp.path().join("plain.txt"), b"plain").unwrap();
+        let plain = root.remove_file("plain.txt");
+        root.ensure_dir("empty").unwrap();
+        let directory = root.remove_dir_if_empty("empty");
+        force_classic_delete_for_test(false);
+        assert!(!mismatch.unwrap());
+        assert!(removed.unwrap());
+        assert!(!held.exists());
+        plain.unwrap();
+        assert!(!temp.path().join("plain.txt").exists());
+        assert!(directory.unwrap());
+        assert!(!temp.path().join("empty").exists());
+
+        // While the hashed handle holds the classic disposition, no writer
+        // can open the file, so the verified bytes are the deleted bytes.
+        fs::write(&held, b"verified").unwrap();
+        let file = create_windows_file(
+            &held,
+            FILE_GENERIC_READ | DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+            FILE_SHARE_READ,
+        )
+        .unwrap();
+        force_classic_delete_for_test(true);
+        let disposition = set_delete_disposition(&file);
+        force_classic_delete_for_test(false);
+        disposition.unwrap();
+        assert!(fs::OpenOptions::new().write(true).open(&held).is_err());
+        drop(file);
+        assert!(!held.exists());
     }
 }

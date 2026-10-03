@@ -139,13 +139,20 @@ Route every such change through `mutate_live_leaf` in `transaction.rs`:
 - Move the destination to the quarantine with `RootedDir::rename_file_noreplace` through the retained parent handle, then hash the moved bytes and journal them as `quarantine_sha256`.
 - On a mismatch, move the bytes back with an exclusive rename and fail as a changed-local-file conflict. If a new file took the name, keep both and leave the quarantine recorded.
 - Place new bytes only with `copy_file_atomic_noreplace_to`, `write_atomic_noreplace`, or an exclusive same-directory move. A destination absent at review is created the same way, so a file that appears in the window is never clobbered.
+- Read the destination back and require the staged hash, or an absent destination for a delete, before recording `verified` or `after_sha256`. Any other bytes were written after placement: keep the `applying` intent, keep the quarantine, and fail as a changed-local-file conflict, so rollback never treats them as installed bytes.
+- After an ordinary error that follows the quarantine rename and precedes completed placement, try an exclusive move back into an absent destination before returning the error. Quarantine fault hooks model a process stop and must not move back.
 - Release the quarantine with `remove_file_if_hash` only after the operation result checkpoint is synced.
+- On Windows, deletes fall back from POSIX-semantics `FileDispositionInfoEx` to the classic `FileDispositionInfo` on the same validated handle only for `ERROR_INVALID_PARAMETER`, `ERROR_NOT_SUPPORTED`, or `ERROR_INVALID_FUNCTION`; never fall back to a path-based delete.
 - Rollback restores a surviving forward quarantine instead of the backup copy, journals its own step quarantine on the child operation, settles an interrupted step quarantine before retrying, and never deletes a quarantine whose hash differs from both the reviewed precondition and the backup.
+- Recovery probes the derived forward quarantine name even when the journal lacks it (`forward_quarantine_leaf`), moves a quarantine into place beside installed bytes only when it holds the journaled `quarantine_sha256`, and settles a quarantine beside an already-restored destination by hash before marking the operation `rolled_back`.
+- Finish forward apply, finalization resume, and rollback with `sweep_transaction_quarantines`, which settles leftover derived quarantines of the transaction (and its rollback) by hash and keeps, then fails on, bytes or names it cannot match.
+- Order checkpoint replay by the monotonic `sequence` on each record against the snapshot's `checkpoint_sequence`, never by wall-clock time; keep the timestamp fallback only for journals and logs written entirely before sequences.
 - Lock quarantines use derived `install-lock-commit` and `install-lock-restore` names with expected hashes from `previous_lock_sha256` and `result_lock_sha256`. Finalization resume and rollback settle them before checking the lock.
 - Once project apply has started, recovery remains rollback-only; do not add resume of a partly applied file set to finish a quarantine.
 - The batch rollback intent marks operations `rollback_applying` before inspection, so recognize an unverified forward operation by its missing result evidence, never by its pre-rollback status.
 
-New fault coverage must exercise `fail_at_quarantine`, `fail_at_lock_quarantine`, the `live_mutation_barrier` test hook, and the thread-local rollback faults named `rollback_quarantine_<boundary>`, `rollback_after_placement`, and `rollback_lock_quarantine_<boundary>`.
+New fault coverage must exercise `fail_at_quarantine` (including `BeforeMoveBack`), `fail_at_lock_quarantine`, the `live_mutation_barrier` test hook (including `AfterPlacement`), the thread-local rollback faults named `rollback_quarantine_<boundary>`, `rollback_after_placement`, and `rollback_lock_quarantine_<boundary>`, and the thread-local ordinary-error faults `<prefix>_quarantine_hash_error` and `<prefix>_quarantine_journal_error` (prefix `apply`, `rollback`, or `lock-commit`). `safe_fs::force_classic_delete_for_test` forces the Windows classic delete disposition on the current thread.
+Quarantine faults are returned errors, not process aborts; say so instead of claiming crash coverage.
 Unix exclusive rename uses `renameat2(RENAME_NOREPLACE)` on Linux and `renameatx_np(RENAME_EXCL)` on macOS with an exclusive `linkat` fallback; those routes have only been compiled for Windows here, so run the native Linux and macOS suites before relying on them.
 
 - Backup all replace or delete targets before mutation.
@@ -409,8 +416,10 @@ Inject failure at every stage and operation boundary:
 - immediately after a live file or metadata mutation but before the operation
   result is observed and journaled
 - each destination-quarantine boundary: before the rename, after the rename,
-  after verification, and after the result checkpoint before release, plus a
-  concurrent edit or new file inside the precondition and placement windows
+  after a changed-bytes record before the move back, after verification,
+  after placement before the result checkpoint, and after the result
+  checkpoint before release, plus a concurrent edit or new file inside the
+  precondition, placement, and post-placement windows
 
 Verify that recovery never creates a false success lock and rollback restores expected hashes.
 
