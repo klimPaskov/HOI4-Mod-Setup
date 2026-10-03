@@ -38,6 +38,13 @@ HOI4 Mod Setup follows semantic versioning.
 - Show readable names and short summaries for scan findings instead of raw keys
   and JSON.
 - Collapse integration technical details by default.
+- Accept only a Claude plan sign-in for the Claude account route, parse Claude
+  replies before any redaction, keep Claude Code from updating itself during
+  setup, and discard an analysis that finishes after sign-out.
+- Treat an unfinished Codex turn as a timeout instead of retrying it, and
+  anchor macOS signature checks to Apple's Developer ID chain.
+- Update rustls to 0.23.45 (RUSTSEC-2026-0285) and replace the yanked chacha20
+  0.10.1; update React to 19.3.0 and the Tauri CLI to 2.11.5.
 - Refresh the bundled audit snapshot from exact published Git bytes, including
   the Python 3.13 3D compatibility files, and require the MCP server to advertise
   the reviewed package version during health checks.

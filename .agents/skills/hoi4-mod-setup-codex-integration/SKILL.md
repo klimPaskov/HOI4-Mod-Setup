@@ -85,7 +85,16 @@ Recovery, rollback, backup inspection, and managed removal remain locally usable
 - Sign-in is `claude auth login --claudeai` with closed stdin, cancellable,
   ten-minute timeout. The renderer never receives a URL, code, or token.
 - Status reads only `loggedIn`, a bounded `authMethod`, and `apiProvider`.
-  A non-first-party Claude Code session is not a Claude account sign-in.
+  Only `authMethod = "claude.ai"` with the first-party provider is the Claude
+  account route (`ClaudeSignInSummary::is_claude_plan`); Console/API-key and
+  third-party sessions get distinct messages.
+- Parse Claude output raw (`run_reviewed_tool(..., raw_stdout = true)`) and
+  validate before any redaction; never redact a structured reply before
+  parsing. `analyze_with_runner` is the injectable loop for tests.
+- Retry only a completed run whose structured output was rejected or missing;
+  never retry timeouts, truncation, unreadable envelopes, or sign-in/usage
+  errors. For Codex, an incomplete turn is a timeout and a corrective turn
+  requires the completed turn's ID.
 - Analysis is `--print --output-format json --json-schema <schema> --model
   <model> --tools "" --strict-mcp-config --safe-mode --no-session-persistence
   --system-prompt <bounded>`, prompt on stdin, cwd a fresh empty temp

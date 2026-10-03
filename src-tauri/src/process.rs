@@ -50,6 +50,9 @@ struct ProcessRunProfile<'a> {
     bound_directory: Option<&'a std::fs::File>,
     should_stop: Option<&'a mut dyn FnMut() -> bool>,
     extra_environment: &'a [(String, std::ffi::OsString)],
+    /// Return stdout unredacted so a structured reply can be parsed and then
+    /// rejected by its own validator; used only when no secret is in scope.
+    raw_stdout: bool,
 }
 
 #[cfg(target_os = "windows")]
@@ -384,6 +387,7 @@ impl ProcessSpec {
         extra_environment: &[(String, std::ffi::OsString)],
         stdin_bytes: Option<&[u8]>,
         mut should_stop: Option<&mut dyn FnMut() -> bool>,
+        raw_stdout: bool,
     ) -> Result<ProcessResult, AppError> {
         for (name, _) in extra_environment {
             let upper = name.to_ascii_uppercase();
@@ -409,6 +413,7 @@ impl ProcessSpec {
                 stdin_bytes,
                 should_stop: Some(&mut stop),
                 extra_environment,
+                raw_stdout,
                 ..ProcessRunProfile::default()
             },
         )
@@ -572,7 +577,11 @@ impl ProcessSpec {
             .unwrap_or_default();
         Ok(ProcessResult {
             status_code: status.code(),
-            stdout: redact_secrets(&stdout, &known),
+            stdout: if profile.raw_stdout {
+                stdout
+            } else {
+                redact_secrets(&stdout, &known)
+            },
             stderr: redact_secrets(&stderr, &known),
             timed_out,
             stdout_truncated,
@@ -789,8 +798,19 @@ pub fn validate_executable_publisher(
     executable: &Path,
     expected_publisher: &str,
 ) -> Result<(), AppError> {
+    verified_executable_sha256(executable, expected_publisher).map(|_| ())
+}
+
+/// Verify the publisher and return the exact content SHA-256 that was
+/// verified, so callers can bind later spawns to those bytes rather than to a
+/// separately computed hash.
+pub fn verified_executable_sha256(
+    executable: &Path,
+    expected_publisher: &str,
+) -> Result<String, AppError> {
     if !executable.is_absolute() || crate::security::path_has_link_component(executable) {
-        return validate_executable_publisher_uncached(executable, expected_publisher);
+        validate_executable_publisher_uncached(executable, expected_publisher)?;
+        return crate::security::sha256_file(executable);
     }
     let content_sha256 = crate::security::sha256_file(executable)?;
     let key = (
@@ -804,19 +824,23 @@ pub fn validate_executable_publisher(
         .map(|entries| entries.contains(&key))
         .unwrap_or(false)
     {
-        return Ok(());
+        return Ok(key.1);
     }
     validate_executable_publisher_uncached(executable, expected_publisher)?;
-    // Record only when the bytes still match the hash taken before the check.
-    if crate::security::sha256_file(executable)? == key.1 {
-        if let Ok(mut entries) = verified.lock() {
-            if entries.len() >= 64 {
-                entries.clear();
-            }
-            entries.insert(key);
-        }
+    // The verified bytes must still be the bytes hashed before the check.
+    if crate::security::sha256_file(executable)? != key.1 {
+        return Err(AppError::Process(
+            "executable changed during publisher verification".into(),
+        ));
     }
-    Ok(())
+    let content_sha256 = key.1.clone();
+    if let Ok(mut entries) = verified.lock() {
+        if entries.len() >= 64 {
+            entries.clear();
+        }
+        entries.insert(key);
+    }
+    Ok(content_sha256)
 }
 
 fn validate_executable_publisher_uncached(
@@ -906,9 +930,15 @@ fn validate_executable_publisher_uncached(
     {
         let verifier = reviewed_system_executable(PathBuf::from("/usr/bin/codesign"))
             .ok_or_else(|| AppError::Process("macOS signature verifier is unavailable".into()))?;
+        // The requirement anchors the signature to Apple's Developer ID chain
+        // and the reviewed Team ID, so a self-signed lookalike cannot pass.
+        let requirement = macos_publisher_requirement(expected_publisher).ok_or_else(|| {
+            AppError::Process("no reviewed macOS signing requirement for this publisher".into())
+        })?;
         let mut verification_command = Command::new(&verifier);
         verification_command
-            .args(["--verify", "--strict", "--verbose=2"])
+            .args(["--verify", "--strict", "--all-architectures", "--verbose=2"])
+            .arg(format!("-R={requirement}"))
             .arg(executable)
             .env_clear();
         configure_child_no_console_window(&mut verification_command);
@@ -952,6 +982,20 @@ fn validate_executable_publisher_uncached(
             "executable publisher verification is supported only on Windows and macOS".into(),
         ))
     }
+}
+
+/// Code-signing requirement for a reviewed macOS publisher: an Apple-anchored
+/// Developer ID leaf whose organizational unit is the reviewed Team ID.
+#[cfg(any(target_os = "macos", test))]
+fn macos_publisher_requirement(expected_publisher: &str) -> Option<String> {
+    let team = match expected_publisher {
+        "OpenAI" => "2DC432GLL2",
+        "Anthropic" => "Q6L2SF6YDW",
+        _ => return None,
+    };
+    Some(format!(
+        "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"{team}\""
+    ))
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -1133,6 +1177,18 @@ mod tests {
             "OpenJS Foundation",
             valid
         ));
+    }
+
+    #[test]
+    fn macos_requirements_are_anchored_to_developer_id_and_the_reviewed_team() {
+        let anthropic = macos_publisher_requirement("Anthropic").unwrap();
+        assert!(anthropic.starts_with("anchor apple generic"));
+        assert!(anthropic.contains("1.2.840.113635.100.6.1.13"));
+        assert!(anthropic.ends_with("certificate leaf[subject.OU] = \"Q6L2SF6YDW\""));
+        assert!(macos_publisher_requirement("OpenAI")
+            .unwrap()
+            .contains("\"2DC432GLL2\""));
+        assert!(macos_publisher_requirement("OpenJS Foundation").is_none());
     }
 
     #[test]

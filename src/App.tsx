@@ -596,7 +596,7 @@ export default function App() {
     }
     if (state.aiAccount !== null) return;
     void readAiAccount(state.aiProvider, state.aiModel, state.aiReasoningEffort, state.aiEndpoint).then((account) => {
-      if (account) setState((current) => ({ ...current, aiAccount: account }));
+      if (account) setState((current) => current.aiProvider === account.provider ? { ...current, aiAccount: account } : current);
     });
   }, [state.screen, state.codexAccount, state.aiProvider, state.aiModel, state.aiReasoningEffort, state.aiEndpoint, state.aiAccount, state.aiProfiles]);
 
@@ -1880,6 +1880,7 @@ function providerReady(state: WizardState): boolean {
   return Boolean(
     state.aiAccount?.available
     && state.aiAccount.authenticated
+    && (!state.aiAccount.provider || state.aiAccount.provider === state.aiProvider)
     && !state.aiAccount.usage_limited
     && !state.aiAccount.error,
   );
@@ -1999,6 +2000,9 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
   const activeClaudeLoginId = useRef<string | undefined>(undefined);
   const [claudeLoginPending, setClaudeLoginPending] = useState(false);
   const selectedProvider = state.aiProvider ?? "claude_account";
+  // Late Claude results must not land on another provider's screen.
+  const currentProvider = useRef(selectedProvider);
+  currentProvider.current = selectedProvider;
   const desktopRuntime = isTauriRuntime() || Boolean(import.meta.env.DEV && window.__HOI4_DOCUMENTATION_STATE__);
   const profiles = (state.aiProfiles?.length ? state.aiProfiles : FALLBACK_AI_PROFILES).map((candidate) => candidate.id === "deepseek" ? { ...candidate, default_model: "deepseek-flash" } : candidate);
   const profile = profiles.find((candidate) => candidate.id === selectedProvider) ?? profiles[0];
@@ -2070,6 +2074,12 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
   };
   const selectProvider = (provider: AiProviderId) => {
     const selectedProfile = profiles.find((candidate) => candidate.id === provider);
+    const pendingClaudeLogin = activeClaudeLoginId.current;
+    if (pendingClaudeLogin && provider !== "claude_account") {
+      activeClaudeLoginId.current = undefined;
+      setClaudeLoginPending(false);
+      void cancelClaudeLogin(pendingClaudeLogin);
+    }
     update({
       aiProvider: provider,
       aiModel: selectedProfile?.default_model ?? "",
@@ -2196,6 +2206,7 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
   const claudeNotInstalled = Boolean(claudeAccount && !claudeAccount.available && claudeAccount.error?.includes("not installed"));
   const refreshClaude = async () => {
     const next = await readAiAccount("claude_account", state.aiModel, state.aiReasoningEffort, "");
+    if (currentProvider.current !== "claude_account") return;
     if (next) update({ aiAccount: next, transactionError: undefined });
     else if (isTauriRuntime()) update({ aiAccount: { available: false, authenticated: false, provider: "claude_account", model: state.aiModel, auth_mode: "claude_account", usage_limited: false, error: "Claude Code could not be reached. Choose Check again." } });
   };
@@ -2217,7 +2228,7 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
     const loginId = started.value;
     activeClaudeLoginId.current = loginId;
     const { value, error } = await waitForClaudeLoginResult(loginId, state.aiModel);
-    if (activeClaudeLoginId.current !== loginId) return;
+    if (activeClaudeLoginId.current !== loginId || currentProvider.current !== "claude_account") return;
     activeClaudeLoginId.current = undefined;
     setClaudeLoginPending(false);
     update({ aiAccount: value ?? state.aiAccount, transactionError: error ?? (value && !value.authenticated ? value.error ?? undefined : undefined) });
@@ -2232,6 +2243,7 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
   const signOutClaude = async () => {
     const result = await logoutClaudeResult();
     const next = await readAiAccount("claude_account", state.aiModel, state.aiReasoningEffort, "");
+    if (currentProvider.current !== "claude_account") return;
     update({
       aiAccount: next,
       codexAnalysis: undefined,

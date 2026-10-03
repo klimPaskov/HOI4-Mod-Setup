@@ -17,7 +17,6 @@ use crate::codex::{
 };
 use crate::models::{AiModelOption, Platform};
 use crate::process::{ProcessResult, ProcessSpec};
-use crate::security::{redact_secrets, sha256_file};
 use crate::AppError;
 use serde_json::Value;
 use std::ffi::OsString;
@@ -220,6 +219,7 @@ fn probe_required_flags(executable: &Path, sha256: &str) -> Result<bool, AppErro
         MAX_HELP_BYTES,
         STATUS_TIMEOUT_SECONDS,
         None,
+        false,
     )?;
     if result.timed_out || result.stdout_truncated {
         return Err(AppError::Process(
@@ -253,10 +253,8 @@ fn find_executable() -> Result<CachedExecutable, AppError> {
         let Some(resolved) = resolve_candidate(&candidate) else {
             continue;
         };
-        if crate::process::validate_executable_publisher(&resolved, PUBLISHER).is_err() {
-            continue;
-        }
-        let Ok(sha256) = sha256_file(&resolved) else {
+        // Bind the cache to the exact bytes the publisher check verified.
+        let Ok(sha256) = crate::process::verified_executable_sha256(&resolved, PUBLISHER) else {
             continue;
         };
         found = Some((resolved, sha256));
@@ -304,6 +302,14 @@ fn ready_executable() -> Result<CachedExecutable, AppError> {
     Ok(executable)
 }
 
+/// Fixed settings for every app-started Claude Code process: the binary must
+/// not update itself mid-session (its reviewed hash would change) and must not
+/// send non-essential traffic.
+const FIXED_ENVIRONMENT: [(&str, &str); 2] = [
+    ("DISABLE_AUTOUPDATER", "1"),
+    ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1"),
+];
+
 fn passthrough_environment() -> Vec<(String, OsString)> {
     PASSTHROUGH_ENVIRONMENT
         .iter()
@@ -314,6 +320,11 @@ fn passthrough_environment() -> Vec<(String, OsString)> {
             }
             Some(((*name).to_owned(), value))
         })
+        .chain(
+            FIXED_ENVIRONMENT
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), OsString::from(value))),
+        )
         .collect()
 }
 
@@ -327,6 +338,7 @@ fn run_claude(
     max_output_bytes: usize,
     timeout_seconds: u64,
     should_stop: Option<&mut dyn FnMut() -> bool>,
+    raw_stdout: bool,
 ) -> Result<ProcessResult, AppError> {
     let spec = ProcessSpec {
         executable: executable.to_path_buf(),
@@ -344,6 +356,7 @@ fn run_claude(
         &environment,
         stdin,
         should_stop,
+        raw_stdout,
     )
 }
 
@@ -389,6 +402,7 @@ pub fn read_sign_in() -> Result<ClaudeSignInSummary, AppError> {
         MAX_STATUS_BYTES,
         STATUS_TIMEOUT_SECONDS,
         None,
+        false,
     )?;
     if result.timed_out || result.stdout_truncated {
         return Err(AppError::Process(
@@ -419,10 +433,23 @@ fn status_from_error(model: &str, error: &AppError) -> AiAccountStatus {
     }
 }
 
+/// Claude Code reports `authMethod = "claude.ai"` for a Claude plan sign-in;
+/// Console sign-ins report an API-key method. Only a Claude plan sign-in is
+/// the Claude account route that the UI describes as using the user's plan.
+pub const CLAUDE_PLAN_AUTH_METHOD: &str = "claude.ai";
+
+impl ClaudeSignInSummary {
+    pub fn is_claude_plan(&self) -> bool {
+        self.logged_in && self.first_party && self.auth_method == CLAUDE_PLAN_AUTH_METHOD
+    }
+}
+
 pub fn status_from_summary(model: &str, summary: &ClaudeSignInSummary) -> AiAccountStatus {
-    let authenticated = summary.logged_in && summary.first_party;
+    let authenticated = summary.is_claude_plan();
     let error = if authenticated {
         None
+    } else if summary.logged_in && summary.first_party {
+        Some("Claude Code is signed in with an Anthropic Console account or API key. Sign in with your Claude account, or choose Claude API key.".into())
     } else if summary.logged_in {
         Some("Claude Code is set up for another provider. Sign in with a Claude account in Claude Code to use it here.".into())
     } else {
@@ -466,6 +493,7 @@ pub fn run_login(should_stop: &mut dyn FnMut() -> bool) -> Result<(), AppError> 
         MAX_STATUS_BYTES,
         LOGIN_TIMEOUT_SECONDS,
         Some(should_stop),
+        false,
     )?;
     if result.timed_out {
         return Err(AppError::Credential(
@@ -489,6 +517,7 @@ pub fn logout() -> Result<(), AppError> {
         MAX_STATUS_BYTES,
         STATUS_TIMEOUT_SECONDS,
         None,
+        false,
     )?;
     if result.timed_out || result.status_code != Some(0) {
         return Err(AppError::Process(
@@ -577,61 +606,112 @@ pub fn extract_analysis_output(stdout: &str) -> Result<Value, AppError> {
         })
 }
 
+/// Incremented by sign-out; an analysis that started under an earlier session
+/// is discarded instead of re-creating proposals after sign-out.
+static SESSION_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn session_generation() -> u64 {
+    SESSION_GENERATION.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+pub fn invalidate_session() {
+    SESSION_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// A stable, app-owned, empty working directory for analysis turns. It keeps
+/// project paths and directory-scoped configuration out of the session and
+/// avoids adding a new per-run project entry to the user's Claude Code state.
+fn analysis_workspace() -> Result<PathBuf, AppError> {
+    let workspace = crate::paths::application_data_root()?.join("claude-analysis");
+    std::fs::create_dir_all(&workspace)
+        .map_err(|error| AppError::Process(format!("Claude workspace unavailable: {error}")))?;
+    let metadata = std::fs::symlink_metadata(&workspace)
+        .map_err(|error| AppError::Process(format!("Claude workspace unavailable: {error}")))?;
+    if !metadata.is_dir() || crate::security::path_has_link_component(&workspace) {
+        return Err(AppError::PathSecurity(
+            "Claude analysis workspace is not a plain directory".into(),
+        ));
+    }
+    if std::fs::read_dir(&workspace)
+        .map_err(|error| AppError::Process(format!("Claude workspace unavailable: {error}")))?
+        .next()
+        .is_some()
+    {
+        return Err(AppError::PathSecurity(
+            "Claude analysis workspace must stay empty".into(),
+        ));
+    }
+    Ok(workspace)
+}
+
 pub fn analyze(
     request: &AiAnalysisRequest,
     optimization_profile: &str,
 ) -> Result<CodexAnalysisResult, AppError> {
+    let generation = session_generation();
     let executable = ready_executable()?;
     let summary = read_sign_in()?;
-    if !(summary.logged_in && summary.first_party) {
+    if !summary.is_claude_plan() {
         return Err(AppError::Credential(
             "sign in to Claude before continuing".into(),
         ));
     }
+    let workspace = analysis_workspace()?;
+    let result = analyze_with_runner(request, optimization_profile, |prompt, args| {
+        run_claude(
+            &executable.path,
+            &executable.sha256,
+            args,
+            Some(workspace.clone()),
+            Some(prompt),
+            MAX_ANALYSIS_BYTES,
+            ANALYSIS_TIMEOUT_SECONDS,
+            None,
+            true,
+        )
+    })?;
+    if session_generation() != generation {
+        return Err(AppError::Credential(
+            "sign in to Claude before continuing".into(),
+        ));
+    }
+    Ok(result)
+}
+
+/// Analysis loop with an injectable process runner. Output is parsed raw and
+/// validated before anything is redacted, so credential-shaped content is
+/// rejected rather than masked. Only a rejected or schema-less response from a
+/// completed run earns the single corrective turn; timeouts, truncation,
+/// unreadable envelopes, and sign-in or usage failures are never retried.
+pub(crate) fn analyze_with_runner(
+    request: &AiAnalysisRequest,
+    optimization_profile: &str,
+    mut run: impl FnMut(&[u8], Vec<String>) -> Result<ProcessResult, AppError>,
+) -> Result<CodexAnalysisResult, AppError> {
     let input_sha256 = analysis_input_sha256(&request.analysis)?;
     let prompt =
         analysis_prompt_for_provider(&request.analysis, &input_sha256, optimization_profile)?;
     let args = analysis_arguments(&request.model, &request.reasoning_effort)?;
-    // An empty private working directory keeps project paths and any
-    // directory-scoped configuration out of the Claude Code session.
-    let workspace = tempfile::Builder::new()
-        .prefix("hoi4-mod-setup-claude-")
-        .tempdir()
-        .map_err(|error| AppError::Process(format!("Claude workspace unavailable: {error}")))?;
-    // A rejected proposal set gets one corrective turn; the deterministic
-    // validator is never relaxed.
     let mut turn_prompt = prompt.clone();
     let mut attempt = 0;
     let analysis = loop {
         attempt += 1;
-        let result = run_claude(
-            &executable.path,
-            &executable.sha256,
-            args.clone(),
-            Some(workspace.path().to_path_buf()),
-            Some(turn_prompt.as_bytes()),
-            MAX_ANALYSIS_BYTES,
-            ANALYSIS_TIMEOUT_SECONDS,
-            None,
-        )?;
+        let result = run(turn_prompt.as_bytes(), args.clone())?;
         if result.timed_out {
             return Err(AppError::Process("Claude Code analysis timed out".into()));
         }
         if result.stdout_truncated {
-            return Err(AppError::Serialization(
+            return Err(AppError::Process(
                 "Claude Code response exceeded the bounded response limit".into(),
             ));
         }
-        let validated =
-            extract_analysis_output(&redact_secrets(&result.stdout, &[])).and_then(|response| {
-                validate_analysis_output(
-                    response,
-                    &request.analysis,
-                    &input_sha256,
-                    &request.analysis.evidence,
-                )
-            });
-        match validated {
+        let response = extract_analysis_output(&result.stdout)?;
+        match validate_analysis_output(
+            response,
+            &request.analysis,
+            &input_sha256,
+            &request.analysis.evidence,
+        ) {
             Ok(analysis) => break analysis,
             Err(AppError::Serialization(reason)) if attempt < crate::codex::ANALYSIS_ATTEMPTS => {
                 turn_prompt = format!(
@@ -925,6 +1005,241 @@ mod tests {
             "claude_code analysis returned {} proposals",
             result.analysis.proposals.len()
         );
+    }
+
+    fn analysis_request() -> AiAnalysisRequest {
+        AiAnalysisRequest {
+            provider: PROVIDER_ID.into(),
+            model: DEFAULT_MODEL.into(),
+            reasoning_effort: "high".into(),
+            endpoint: String::new(),
+            analysis: crate::codex::CodexAnalysisRequest {
+                mode: "new_project_identity".into(),
+                brief: "A test mod.".into(),
+                evidence: Vec::new(),
+                constraints: serde_json::json!({}),
+                analysis_purpose: None,
+                project_root: None,
+                scan_id: None,
+            },
+        }
+    }
+
+    fn analysis_value(input_sha256: &str, reason: &str) -> Value {
+        let proposal = |key: &str, value: Value| serde_json::json!({"key": key, "value": value, "confidence": 0.9, "reason": reason, "evidence_refs": []});
+        serde_json::json!({
+            "schema_version": crate::codex::CODEX_SCHEMA_VERSION,
+            "analysis_id": uuid::Uuid::new_v4(),
+            "mode": "new_project_identity",
+            "input_sha256": input_sha256,
+            "project_summary": "A focused HOI4 mod project.",
+            "proposals": [
+                proposal("display_name", Value::from("Demo Project")),
+                proposal("project_id", Value::from("demo_project")),
+                proposal("script_prefix", Value::from("demo")),
+                proposal("primary_namespace", Value::from("demo")),
+                proposal("project_description", Value::from("A demo HOI4 project.")),
+                proposal("descriptor_tags", serde_json::json!(["Gameplay"])),
+                proposal("folder_profile", serde_json::json!(["common"])),
+                proposal("agents_profile", Value::from("default")),
+                proposal("localisation_convention", Value::from("english")),
+                proposal("documentation_convention", Value::from("markdown")),
+            ],
+            "component_recommendations": [],
+            "warnings": []
+        })
+    }
+
+    fn print_result(structured: Value) -> ProcessResult {
+        ProcessResult {
+            status_code: Some(0),
+            stdout: serde_json::to_string(&serde_json::json!({
+                "type": "result", "is_error": false, "result": "", "structured_output": structured
+            }))
+            .unwrap(),
+            stderr: String::new(),
+            timed_out: false,
+            stdout_truncated: false,
+            stderr_truncated: false,
+        }
+    }
+
+    fn input_hash() -> String {
+        analysis_input_sha256(&analysis_request().analysis).unwrap()
+    }
+
+    #[test]
+    fn a_rejected_response_gets_one_corrective_turn_and_the_record_binds_the_accepted_one() {
+        let hash = input_hash();
+        let mut calls = Vec::new();
+        let mut invalid = analysis_value(&hash, "Fits the brief.");
+        invalid["proposals"].as_array_mut().unwrap().pop();
+        let valid = analysis_value(&hash, "Fits the brief.");
+        let mut responses = vec![print_result(invalid), print_result(valid.clone())].into_iter();
+        let result = analyze_with_runner(
+            &analysis_request(),
+            "Claude account setup analysis",
+            |prompt, _| {
+                calls.push(String::from_utf8(prompt.to_vec()).unwrap());
+                Ok(responses.next().unwrap())
+            },
+        )
+        .unwrap();
+        assert_eq!(calls.len(), 2);
+        assert!(calls[1].contains("rejected by deterministic validation"));
+        assert_eq!(result.record.engine, ENGINE);
+        assert_eq!(result.record.auth_mode, AUTH_MODE);
+        assert!(!result.record.account_identity_persisted);
+        assert_eq!(
+            result.analysis.analysis_id.to_string(),
+            valid["analysis_id"].as_str().unwrap()
+        );
+        assert_eq!(
+            result.record.output_sha256,
+            crate::security::sha256_bytes(&serde_json::to_vec(&result.analysis).unwrap())
+        );
+    }
+
+    #[test]
+    fn unreadable_timed_out_and_truncated_runs_are_never_retried() {
+        let cases: Vec<(ProcessResult, &str)> = vec![
+            (
+                ProcessResult {
+                    status_code: Some(0),
+                    stdout: "not json".into(),
+                    stderr: String::new(),
+                    timed_out: false,
+                    stdout_truncated: false,
+                    stderr_truncated: false,
+                },
+                "unreadable",
+            ),
+            (
+                ProcessResult {
+                    status_code: None,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    timed_out: true,
+                    stdout_truncated: false,
+                    stderr_truncated: false,
+                },
+                "timed out",
+            ),
+            (
+                ProcessResult {
+                    status_code: Some(0),
+                    stdout: "{".into(),
+                    stderr: String::new(),
+                    timed_out: false,
+                    stdout_truncated: true,
+                    stderr_truncated: false,
+                },
+                "bounded response limit",
+            ),
+        ];
+        for (result, expected) in cases {
+            let mut calls = 0;
+            let error = analyze_with_runner(
+                &analysis_request(),
+                "Claude account setup analysis",
+                |_, _| {
+                    calls += 1;
+                    Ok(result.clone())
+                },
+            )
+            .unwrap_err()
+            .to_string();
+            assert_eq!(calls, 1, "{expected}");
+            assert!(error.contains(expected), "{error}");
+        }
+        let mut calls = 0;
+        let error = analyze_with_runner(
+            &analysis_request(),
+            "Claude account setup analysis",
+            |_, _| {
+                calls += 1;
+                Ok(ProcessResult {
+                    status_code: Some(1),
+                    stdout:
+                        r#"{"type":"result","is_error":true,"result":"Claude usage limit reached"}"#
+                            .into(),
+                    stderr: String::new(),
+                    timed_out: false,
+                    stdout_truncated: false,
+                    stderr_truncated: false,
+                })
+            },
+        )
+        .unwrap_err();
+        assert_eq!(calls, 1);
+        assert!(
+            matches!(error, AppError::Credential(message) if message.contains("usage is currently limited"))
+        );
+    }
+
+    #[test]
+    fn credential_shaped_output_is_rejected_not_masked_and_harmless_key_words_parse() {
+        let hash = input_hash();
+        let secret_reason = format!("Use {}{} for access.", "sk-ant-api03-", "a".repeat(40));
+        let error = analyze_with_runner(
+            &analysis_request(),
+            "Claude account setup analysis",
+            |_, _| Ok(print_result(analysis_value(&hash, &secret_reason))),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(!error.contains("sk-ant"), "{error}");
+        // Key-shaped text no longer corrupts the envelope: it reaches the
+        // shared validator, which rejects it like every other provider does.
+        let key_shaped = analyze_with_runner(
+            &analysis_request(),
+            "Claude account setup analysis",
+            |_, _| {
+                Ok(print_result(analysis_value(
+                    &hash,
+                    "No api_key=none setting is needed.",
+                )))
+            },
+        );
+        assert!(
+            matches!(key_shaped, Err(AppError::Serialization(_))),
+            "{key_shaped:?}"
+        );
+        let harmless = analyze_with_runner(
+            &analysis_request(),
+            "Claude account setup analysis",
+            |_, _| {
+                Ok(print_result(analysis_value(
+                    &hash,
+                    "No API key or authorization is needed for this mod.",
+                )))
+            },
+        );
+        assert!(harmless.is_ok(), "{harmless:?}");
+    }
+
+    #[test]
+    fn only_a_claude_plan_sign_in_is_the_claude_account_route() {
+        let plan = parse_sign_in_summary(
+            r#"{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}"#,
+        )
+        .unwrap();
+        assert!(plan.is_claude_plan());
+        let console = parse_sign_in_summary(
+            r#"{"loggedIn":true,"authMethod":"api_key","apiProvider":"firstParty"}"#,
+        )
+        .unwrap();
+        assert!(!console.is_claude_plan());
+        let status = status_from_summary(DEFAULT_MODEL, &console);
+        assert!(!status.authenticated);
+        assert!(status.error.unwrap().contains("Console account or API key"));
+    }
+
+    #[test]
+    fn sign_out_advances_the_session_generation() {
+        let before = session_generation();
+        invalidate_session();
+        assert!(session_generation() > before);
     }
 
     #[test]
