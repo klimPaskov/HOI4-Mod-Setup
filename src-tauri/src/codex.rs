@@ -3000,7 +3000,7 @@ mod tests {
         let executable = fs::canonicalize("/bin/sh").expect("system shell");
         let response = serde_json::to_string(&response(1, fake_initialize_result())).unwrap();
         let script = if interrupt_after_request {
-            "IFS= read -r line; exit 0"
+            "IFS= read -r line; exit 0".to_owned()
         } else {
             "IFS= read -r line || exit 2; \
              printf '%s\n' '__INIT_RESPONSE__'; \
@@ -3008,7 +3008,7 @@ mod tests {
              while :; do sleep 1; done"
                 .replace("__INIT_RESPONSE__", &response)
         };
-        (executable, vec!["-c".into(), script.into()])
+        (executable, vec!["-c".into(), script])
     }
 
     fn valid_analysis_value(input_sha256: &str) -> Value {

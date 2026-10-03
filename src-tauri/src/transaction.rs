@@ -52,9 +52,6 @@ struct OperationCheckpoint {
     sequence: Option<u64>,
 }
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
 #[derive(Debug, Clone, Default)]
 pub struct TransactionOptions {
     pub app_data_root: Option<PathBuf>,

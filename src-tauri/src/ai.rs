@@ -579,10 +579,8 @@ pub fn analyze<S: CredentialStore>(
             Err(error) => match crate::codex::correctable_output_error(&error) {
                 Some(reason) if attempt < crate::codex::ANALYSIS_ATTEMPTS => {
                     turn_prompt = format!(
-                    "{prompt}
-
-{}",
-                    crate::codex::corrective_analysis_prompt(reason, &input_sha256)
+                        "{prompt}\n\n{}",
+                        crate::codex::corrective_analysis_prompt(reason, &input_sha256)
                     );
                 }
                 _ => return Err(error),
