@@ -4,8 +4,6 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
-- Bind each installation's application-data storage (its journal, plan, backups, and staged files) to the exact folders it created, and refuse to resume, roll back, discard staging, or start a new installation for the project when one of those folders was replaced or turned into a link, instead of following it. Moving the original folder back restores the normal recovery choices.
-
 ## 0.4.0 - 2026-10-04
 
 - Make Claude the default setup assistant. **Sign in to Claude** runs your own
@@ -76,6 +74,7 @@ HOI4 Mod Setup follows semantic versioning.
   legacy identity-less journals remain inspection-only.
 - Bind the launcher descriptor's folder to its directory identity from the backup stage onward, and refuse to apply, verify, resume, or roll back into a different folder at the same path.
 - Verify installed files and capture rollback backups through retained directory handles, hashing each backup from the same read that copies it.
+- Bind each installation's application-data storage (its journal, plan, backups, and staged files) to the exact folders it created, and refuse to resume, roll back, discard staging, or start a new installation for the project when one of those folders was replaced or turned into a link, instead of following it. Moving the original folder back restores the normal recovery choices.
 - Record the launcher descriptor folder's identity when the installation plan is prepared, and refuse to start or resume an installation if a different folder has taken its place since review.
 - Stop rollback with a clear message, and keep it retryable, when the launcher folder of a changed launcher descriptor has been moved away, instead of reporting the descriptor as removed or restored.
 
