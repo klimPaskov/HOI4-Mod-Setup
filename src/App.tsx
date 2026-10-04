@@ -333,7 +333,7 @@ const screenCopy: Record<ScreenId, { title: string; supporting?: string; status?
   mcp: { title: "MCP and credentials", supporting: "Review detected servers and required variables.", status: { label: "Review", tone: "info" } },
   git: { title: "Choose Git setup", supporting: "Keep your project local or connect it online." },
   "dry-run": { title: "Review changes", supporting: "Nothing has been applied yet.", status: { label: "Dry run", tone: "info" } },
-  install: { title: "Installing components", supporting: "Staging managed files." },
+  install: { title: "Installing components", supporting: "Installing the reviewed changes." },
   ready: { title: "Project ready", supporting: "Setup checks passed.", status: { label: "Ready for agentic development", tone: "pass" } },
   update: { title: "Update and repair", supporting: "Manage the installed workflow." },
   conflict: { title: "Resolve AGENTS.md", supporting: "Choose the result before continuing." },
@@ -1826,7 +1826,7 @@ function footerNote(screen: ScreenId, state: WizardState): string {
   if (screen === "ready") return state.transactionError ?? "Readiness checks saved.";
   if (screen === "update") return state.transactionError ?? "User-modified files are never overwritten silently.";
   if (screen === "conflict") return "A preview and validation run follow the selected resolution.";
-  if (screen === "recovery") return "Recovery actions are reversible until apply begins.";
+  if (screen === "recovery") return "Your original files stay in the verified backup until recovery finishes.";
   if (screen === "chat-sources") return "Detected instructions, README, skills, and subagents are included by default; root Markdown files are optional.";
   return state.draftSaved ? "Draft saved locally." : "";
 }

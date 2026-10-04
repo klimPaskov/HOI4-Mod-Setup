@@ -670,25 +670,49 @@ pub fn analyze(
         ));
     }
     let workspace = analysis_workspace()?;
-    let result = analyze_with_runner(request, optimization_profile, |prompt, args| {
-        run_claude(
-            &executable.path,
-            &executable.sha256,
-            args,
-            Some(workspace.clone()),
-            Some(prompt),
-            MAX_ANALYSIS_BYTES,
-            ANALYSIS_TIMEOUT_SECONDS,
-            None,
-            true,
-        )
-    })?;
+    let result = with_sign_in_recheck(
+        || {
+            analyze_with_runner(request, optimization_profile, |prompt, args| {
+                run_claude(
+                    &executable.path,
+                    &executable.sha256,
+                    args,
+                    Some(workspace.clone()),
+                    Some(prompt),
+                    MAX_ANALYSIS_BYTES,
+                    ANALYSIS_TIMEOUT_SECONDS,
+                    None,
+                    true,
+                )
+            })
+        },
+        || {
+            session_generation() == generation
+                && read_sign_in().is_ok_and(|summary| summary.is_claude_plan())
+        },
+    )?;
     if session_generation() != generation {
         return Err(AppError::Credential(
             "sign in to Claude before continuing".into(),
         ));
     }
     Ok(result)
+}
+
+/// Run the analysis again once when a run reports a sign-in failure while
+/// Claude Code still reports a Claude plan sign-in, as when its access token
+/// was being refreshed. A signed-out account, usage limits, and every other
+/// error are returned unchanged.
+fn with_sign_in_recheck<T>(
+    mut attempt: impl FnMut() -> Result<T, AppError>,
+    still_signed_in: impl FnOnce() -> bool,
+) -> Result<T, AppError> {
+    match attempt() {
+        Err(AppError::Credential(message)) if message.contains("sign in") && still_signed_in() => {
+            attempt()
+        }
+        other => other,
+    }
 }
 
 /// Analysis loop with an injectable process runner. Output is parsed raw and
@@ -1130,6 +1154,67 @@ mod tests {
             result.record.output_sha256,
             crate::security::sha256_bytes(&serde_json::to_vec(&result.analysis).unwrap())
         );
+    }
+
+    #[test]
+    fn a_sign_in_failure_is_retried_once_only_while_still_signed_in() {
+        let sign_in = || AppError::Credential("sign in to Claude before continuing".into());
+
+        let mut calls = 0;
+        let result = with_sign_in_recheck(
+            || {
+                calls += 1;
+                if calls == 1 {
+                    Err(sign_in())
+                } else {
+                    Ok("analysis")
+                }
+            },
+            || true,
+        );
+        assert_eq!(result.unwrap(), "analysis");
+        assert_eq!(calls, 2);
+
+        let mut calls = 0;
+        let result: Result<&str, _> = with_sign_in_recheck(
+            || {
+                calls += 1;
+                Err(sign_in())
+            },
+            || true,
+        );
+        assert!(
+            matches!(result, Err(AppError::Credential(message)) if message.contains("sign in"))
+        );
+        assert_eq!(calls, 2, "the recheck earns exactly one more run");
+
+        let mut calls = 0;
+        let result: Result<&str, _> = with_sign_in_recheck(
+            || {
+                calls += 1;
+                Err(sign_in())
+            },
+            || false,
+        );
+        assert!(result.is_err());
+        assert_eq!(calls, 1, "a signed-out account is not retried");
+
+        for error in [
+            AppError::Credential("Claude usage is currently limited".into()),
+            AppError::Process("Claude Code could not complete the analysis".into()),
+        ] {
+            let mut calls = 0;
+            let mut pending = Some(error);
+            let result: Result<&str, _> = with_sign_in_recheck(
+                || {
+                    calls += 1;
+                    Err(pending.take().unwrap())
+                },
+                || panic!("only sign-in failures recheck the account"),
+            );
+            assert!(result.is_err());
+            assert_eq!(calls, 1);
+        }
     }
 
     #[test]

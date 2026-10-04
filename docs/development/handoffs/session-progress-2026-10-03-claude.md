@@ -58,3 +58,16 @@ A background agent implemented displaced-leaf quarantine (`mutate_live_leaf`), n
 ## Native Linux run (2026-10-04)
 
 The Rust suite had never compiled on a Unix target in this candidate. A clean clone on WSL Ubuntu 24.04's native ext4 filesystem (Rust 1.88.0, default features, because the desktop feature needs WebKitGTK development packages that are not installed there) exposed two Unix-only defects that Windows builds cannot see: a type mismatch in the Unix fake Codex process helper, which broke compilation of the test target, and an unused Unix `PermissionsExt` import in `transaction.rs`, which `clippy -D warnings` rejects. After the fixes, `cargo clippy -p hoi4-mod-setup --all-targets -- -D warnings` is clean and `cargo test -p hoi4-mod-setup` passes 418 tests with 3 ignored, including the `openat`, `renameat2`, `linkat`, and quarantine routes on a real Linux filesystem. macOS (`renameatx_np`, case-insensitive APFS) is still unrun and needs CI or a Mac.
+
+## Live native Claude create, apply, and rollback (2026-10-04)
+
+The release build ran with its window opened without activation and parked off-screen, driven only through WebView2 remote debugging; HOI4 and other desktop sessions were not touched.
+
+- First attempt: the Claude analysis failed after about 9 seconds with "Sign in to Claude before continuing" although the account panel showed a Claude plan sign-in, and an immediate retry succeeded. The raw result was not captured, so the cause is unconfirmed (an access-token refresh is the likely case). The analysis now rechecks `claude auth status` after a sign-in-category failure and runs once more only while a Claude plan sign-in remains (`with_sign_in_recheck`, with its test).
+- Recovery: a stale pre-apply transaction from 2026-10-03 (the Git LFS pointer failure) blocked the new install, as designed. "Discard prepared files" removed it and returned to the intact dry run.
+- Create: Claude Haiku 4.5 analysis, identity confirmation, all wizard screens, and a dry run of 1,247 creates with no conflicts, prepared in about 36 seconds; the install applied all 1,241 project files.
+- Readiness then blocked on `mcp.hoi4`: "The installed MCP package tree does not match the reviewed release." This is the open MCP 3.6.0 reproducibility gate. 3.7.0's enforced shrinkwrap installs a 280.1 MiB tree, so the app's total-tree bound is raised from 256 MiB to 512 MiB; the per-file bound, file-count bound, and exact tree identity are unchanged.
+- "Undo changes" rolled back all 1,242 operations: the rollback transaction completed, the installation journal reads `rolled_back`, and neither the project folder nor its launcher descriptor remained.
+- Copy fixes from the run: the recovery footer no longer claims actions are reversible until apply begins while an undo of applied files runs, and the install subtitle no longer says "Staging managed files" during apply.
+
+PR klimPaskov/HOI4-Mod-Setup#79 CI passed on Windows, Ubuntu, and macOS, including the macOS Rust suite and desktop end-to-end runs on macos-15 and macos-15-intel. That is the first native macOS run of the rooted-transaction routes.
