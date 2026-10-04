@@ -136,7 +136,8 @@
       "local_sha256": null,
       "local_state": "absent",
       "resolution": null,
-      "rollback": "remove_created"
+      "rollback": "remove_created",
+      "external_parent_identity": "windows-v2:0000000000000001:00000000000000000000000000000002"
     },
     {
       "id": "op-launcher-003",

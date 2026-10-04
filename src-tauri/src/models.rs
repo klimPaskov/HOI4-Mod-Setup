@@ -649,6 +649,14 @@ pub struct PlanOperation {
     #[serde(default)]
     pub external: bool,
     pub rollback: RollbackAction,
+    /// Identity of an external destination's parent directory, captured
+    /// through a retained handle while the plan is built, together with the
+    /// reviewed `local_sha256`. The transaction journal starts from this
+    /// identity, so backup and apply refuse a different directory at the
+    /// same path. Omitted for project destinations, for a parent that did
+    /// not exist at review, and for plans from before plan-time binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_parent_identity: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1069,11 +1077,13 @@ pub struct JournalOperation {
     /// moved back here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quarantine_sha256: Option<String>,
-    /// Identity of an external destination's parent directory, bound when
-    /// the transaction first opens that parent through a retained handle.
+    /// Identity of an external destination's parent directory, copied from
+    /// the reviewed plan operation or, for a plan without one, bound when the
+    /// transaction first opens that parent through a retained handle.
     /// Apply, post-install checks, finalization, and rollback reopen the
-    /// parent only when it still has this identity. Rollback journals copy it
-    /// from their parent operation.
+    /// parent only when it still has this identity, and rollback stops when a
+    /// bound parent of an operation that may have changed its destination is
+    /// missing. Rollback journals copy it from their parent operation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_parent_identity: Option<String>,
 }

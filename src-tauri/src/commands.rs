@@ -5419,6 +5419,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             } else {
                 RollbackAction::RestoreBackup
             },
+            external_parent_identity: None,
         });
         verified.operation_id = operation_id.clone();
         verified.destination = destination.clone();
@@ -5669,6 +5670,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             } else {
                 RollbackAction::RestoreBackup
             },
+            external_parent_identity: None,
         });
         prepared.push(PreparedFile {
             operation_id,
@@ -5721,7 +5723,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             "not_selected".into()
         },
     );
-    let plan = InstallationPlan {
+    let mut plan = InstallationPlan {
         schema_version: crate::migrations::CURRENT_PLAN_SCHEMA.into(),
         plan_id: Uuid::new_v4(),
         project_id: state
@@ -5789,6 +5791,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             push_approved: false,
         },
     };
+    crate::transaction::bind_plan_external_parents(&mut plan)?;
     if plan.flatten_chat_sources {
         let mut prepared_plan = PreparedPlan {
             plan,
@@ -6031,6 +6034,7 @@ fn refresh_flattened_outputs(prepared_plan: &mut PreparedPlan) -> Result<(), App
             } else {
                 RollbackAction::RestoreBackup
             },
+            external_parent_identity: None,
         });
         prepared_plan.prepared_files.push(PreparedFile {
             operation_id,
@@ -6394,6 +6398,7 @@ fn append_additional_component_operations(
             } else {
                 RollbackAction::RestoreBackup
             },
+            external_parent_identity: None,
         });
     }
     Ok(())
@@ -7524,6 +7529,7 @@ fn build_maintenance_plan_blocking(
                 } else {
                     RollbackAction::RestoreBackup
                 },
+                external_parent_identity: None,
             });
             prepared.push(PreparedFile {
                 operation_id,
@@ -7702,7 +7708,7 @@ fn build_maintenance_plan_blocking(
         validate_approved_project_root_identity(&root, &approved, expected_scan)
             .map_err(command_error)?
     };
-    let plan = InstallationPlan {
+    let mut plan = InstallationPlan {
         schema_version: crate::migrations::CURRENT_PLAN_SCHEMA.into(),
         plan_id: Uuid::new_v4(),
         project_id: lock.project_id.clone(),
@@ -7761,6 +7767,7 @@ fn build_maintenance_plan_blocking(
             push_approved: false,
         },
     };
+    crate::transaction::bind_plan_external_parents(&mut plan).map_err(command_error)?;
     store_prepared_plan(plan, prepared, merge_contexts, root).map_err(command_error)
 }
 
@@ -8349,6 +8356,22 @@ mod tests {
         let helper = &helper[..end];
         assert!(helper.contains("tauri::async_runtime::spawn_blocking(work)"));
         assert!(!helper.contains(".join()"));
+    }
+
+    #[test]
+    fn every_plan_builder_binds_external_destination_parents() {
+        // Plan construction needs a resolved source, so this guards the
+        // wiring; the binding itself is tested in the transaction module.
+        let source = include_str!("commands.rs");
+        for builder in ["fn build_plan(", "fn build_maintenance_plan_blocking("] {
+            let start = source.find(builder).expect("plan builder is present");
+            let body = &source[start..];
+            let body = &body[..body.find("\n}\n").expect("plan builder body is closed")];
+            assert!(
+                body.contains("crate::transaction::bind_plan_external_parents(&mut plan)"),
+                "{builder} must bind external destination parents before the plan is reviewed"
+            );
+        }
     }
 
     #[test]
@@ -10447,6 +10470,7 @@ developer_instructions = "Work on the named files."
             resolution: Some("keep".into()),
             external: false,
             rollback: RollbackAction::RestoreBackup,
+            external_parent_identity: None,
         };
         let prepared_file = |operation_id: &str, destination: &str, content: &str| PreparedFile {
             operation_id: operation_id.into(),
@@ -10727,6 +10751,7 @@ developer_instructions = "Work on the named files."
             resolution: Some("review_required".into()),
             external: false,
             rollback: RollbackAction::RestoreBackup,
+            external_parent_identity: None,
         };
         let prepared = PreparedFile {
             operation_id: "review-required".into(),

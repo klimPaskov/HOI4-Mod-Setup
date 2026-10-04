@@ -120,7 +120,7 @@ replacing existing bytes, and a redacted assignment at the end of a message.
   identity-less journals remain inspect-only. Identity checks still do not
   retain the verified handle through every transaction call.
   Application-data parents are not identity-bound end to end.
-  External destination parents are bound in the journal from the backup stage onward (not yet in the reviewed plan) and are read and changed only through retained handles with that identity.
+  External destination parents are bound in the reviewed plan (identity and reviewed hash read through one handle), carried into the journal, and read and changed only through retained handles with that identity; a missing bound parent stops recovery of an operation that may have changed its destination.
   Live
   replace and delete go through `mutate_live_leaf`: a journaled same-folder
   quarantine, hash verification against the precondition, a no-replace
