@@ -25,7 +25,7 @@ the exact route list from the resolved manifest; no package, command, version,
 tool, or macOS route is invented.
 
 Package verification allows at most 32 MiB per file while retaining the
-256 MiB total-tree and 10,000-file bounds. npm versions that emit a hidden
+512 MiB total-tree and 10,000-file bounds. npm versions that emit a hidden
 global `.package-lock.json` must retain the declared integrity there; when npm
 does not emit that optional file, exact manifest integrity plus the complete
 package-tree identity remain mandatory. Package version, tree evidence, and

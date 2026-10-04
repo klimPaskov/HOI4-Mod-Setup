@@ -105,7 +105,7 @@ const MAX_SERVER_FIELD_BYTES: usize = 256;
 const MAX_TOOL_COUNT: usize = 4096;
 const MAX_TOOL_NAME_BYTES: usize = 256;
 const MAX_PACKAGE_FILE_BYTES: u64 = 32 * 1024 * 1024;
-const MAX_PACKAGE_TREE_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_PACKAGE_TREE_BYTES: u64 = 512 * 1024 * 1024;
 
 pub(crate) struct VerifiedPackageTree {
     _temporary: tempfile::TempDir,

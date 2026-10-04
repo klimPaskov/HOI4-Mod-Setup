@@ -246,7 +246,7 @@ replacing existing bytes, and a redacted assignment at the end of a message.
   package file through no-follow containment, require the canonical full-tree
   identity, materialize the verified bytes into a private tree, and execute
   only that private runtime entry;
-  allow at most 32 MiB per package file, 256 MiB for the complete tree, and
+  allow at most 32 MiB per package file, 512 MiB for the complete tree (an enforced npm shrinkwrap installs every platform's optional Sharp binaries, about 280 MiB), and
   10,000 files. Verify a hidden npm lock when the installed npm version emits
   one, but do not require that optional file when exact registry integrity and
   the complete manifest-bound package-tree identity both pass;
