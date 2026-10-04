@@ -284,6 +284,27 @@ impl RootedDir {
         self.remove_dir(relative)
     }
 
+    /// Like `remove_tree`, but only when the opened directory still has
+    /// `expected_identity`. The contents are removed through the handle whose
+    /// identity was compared; returns `Ok(false)` and removes nothing when the
+    /// identity differs. The final empty-directory removal resolves the name
+    /// again through this retained parent and removes only an empty directory.
+    pub(crate) fn remove_tree_if_identity(
+        &self,
+        relative: &str,
+        expected_identity: &str,
+    ) -> Result<bool, AppError> {
+        let tree = self.open_dir(relative)?;
+        if tree.identity_token()? != expected_identity {
+            return Ok(false);
+        }
+        let mut count = 0;
+        tree.remove_tree_contents(0, &mut count)?;
+        drop(tree);
+        self.remove_dir(relative)?;
+        Ok(true)
+    }
+
     fn remove_tree_contents(&self, depth: usize, count: &mut usize) -> Result<(), AppError> {
         const MAX_TREE_DEPTH: usize = 256;
         const MAX_TREE_ENTRIES: usize = 100_000;

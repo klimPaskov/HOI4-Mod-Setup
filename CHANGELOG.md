@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Bind each installation's application-data storage (its journal, plan, backups, and staged files) to the exact folders it created, and refuse to resume, roll back, discard staging, or start a new installation for the project when one of those folders was replaced or turned into a link, instead of following it. Moving the original folder back restores the normal recovery choices.
+
 ## 0.4.0 - 2026-10-04
 
 - Make Claude the default setup assistant. **Sign in to Claude** runs your own

@@ -513,6 +513,34 @@
       "type": "integer",
       "minimum": 0
     },
+    "app_data_identity": {
+      "description": "Identities of the application-data directories that hold this transaction's storage, each captured through the retained handle that first creates or opens it. Every later call (stages, resume, rollback, staging discard, finalization, and discovery of an incomplete journal) opens these directories through the retained application-data root and refuses one whose identity differs, so a directory swapped away and replaced, or replaced by a link, is not followed. A bound directory is never recreated. Rollback journals bind their own transaction and backup directories and have no staging directory. Journals written before the binding omit the field and keep path-based access to their storage.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "transaction"],
+      "properties": {
+        "root": {
+          "description": "The application-data root that holds transactions/, backups/, and staging/.",
+          "type": "string",
+          "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
+        },
+        "transaction": {
+          "description": "transactions/<transaction_id>: the journal, plan, checkpoint log, readiness report, and rollback record.",
+          "type": "string",
+          "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
+        },
+        "backup": {
+          "description": "backups/<transaction_id>, bound when the backup stage or rollback preparation creates it.",
+          "type": "string",
+          "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
+        },
+        "staging": {
+          "description": "staging/<transaction_id>, bound when the staging stage creates it.",
+          "type": "string",
+          "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
+        }
+      }
+    },
     "result_lock_sha256": {
       "type": [
         "string",
@@ -565,7 +593,8 @@
               }
             }
           },
-          "checkpoint_sequence": false
+          "checkpoint_sequence": false,
+          "app_data_identity": false
         }
       }
     },

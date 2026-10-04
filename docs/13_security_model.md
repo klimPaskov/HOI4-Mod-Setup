@@ -91,7 +91,9 @@ commit retain one reviewed project handle. Managed rollback file/lock changes
 and finalization's project-file and success-lock checks retain it as well.
 External destination parents are bound by directory identity when the installation plan is built, read through the same handle as the reviewed destination hash, or by the backup stage for a parent that did not exist at review; transaction start, backup, apply, post-install checks, final verification, finalization, rollback, and the rollback child backup read and change them only through a retained handle with that identity, and refuse a different directory or a link at the same path.
 A missing bound parent stops recovery of an operation that may have changed its destination rather than reading as an absent file.
-Created-root cleanup, application-data, Git, external actions, and readiness still have path-based boundaries.
+Application-data transaction storage (the application-data root and each transaction's `transactions/`, `backups/`, and `staging/` folders) is bound by directory identity in the journal's optional `app_data_identity`: within a call the journal, plan, checkpoint log, readiness report, rollback record, backups, and staged bytes are read and written only through retained handles, and resume, staging discard, finalization, rollback, and incomplete-journal discovery refuse a folder whose identity differs from the journal before they write anything.
+Journals from before the binding keep path-based access, and the evidence detects a replaced, copied, or linked folder, not a journal forged by someone who can already write application data.
+Created-root cleanup, Git, external actions, and readiness still have path-based boundaries.
 A regular
 destination that is replaced or deleted is first moved, through the retained
 parent handle, to a journaled quarantine name in the same folder, hashed, and
@@ -99,7 +101,7 @@ compared with the reviewed precondition. Changed bytes are moved back and the
 operation fails as a conflict; matching bytes are replaced with a no-replace
 rename and the quarantine is removed only after the success checkpoint.
 Rollback restores surviving quarantined bytes instead of overwriting them.
-The application-data parents are not bound throughout the transaction, the external launcher parent handle is reopened at each step rather than retained across stages, and on Unix a writer that already held the file open can still write to the quarantined copy after verification.
+Application-data folders are reopened by path between calls and compared with the journal there, the external launcher parent handle is reopened at each step rather than retained across stages, and on Unix a writer that already held the file open can still write to the quarantined copy after verification.
 These cross-stage
 races remain release gates. Windows directory entries are flushed through a
 second write handle whose 128-bit file identity must match the retained

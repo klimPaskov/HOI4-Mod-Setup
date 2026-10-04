@@ -61,7 +61,25 @@ A bound parent is never recreated, so a deleted launcher folder blocks rollback 
 The rollback child backup is copied and hashed in one pass from one opened handle, so its `before_sha256` and `backup_sha256` describe the same bytes.
 Journal operations from before the binding keep the earlier path-only behavior in rollback.
 
-Created-root cleanup, application-data, Git, external actions, and readiness are not yet bound to retained capabilities through their complete lifetimes, and the external parent handle is reopened and rechecked at each step rather than retained across stages.
+Application-data transaction storage is bound by directory identity at journal level.
+`run_transaction` opens the application-data root once, creates `transactions/<id>` through that handle, and records both identities in the journal's optional `app_data_identity` before it writes the plan or the journal.
+The backup and staging stages create `backups/<id>` and `staging/<id>` through the same retained root and journal their identities before they use them.
+Within the call, the journal, plan, checkpoint log, readiness report, rollback record, backups, and staged bytes are read and written only through these retained handles.
+Resume, staging discard, finalization resume, and rollback reopen the root by path, open each directory through it, read the journal through the opened transaction directory, and refuse a directory whose identity differs from the journal before they write anything.
+A refused call leaves the journal untouched, so the same action succeeds once the original directory is moved back.
+Discovery of an incomplete journal for the selected project applies the same comparison and blocks a new transaction instead of ignoring or following the journal.
+A replay carries the interrupted journal's backup and staging identities into its fresh journal, and staging discard removes the staging tree only through the handle whose identity matched.
+A bound directory is never recreated, and a bound backup directory that is missing stops only a rollback step that needs a backup.
+Rollback child journals bind their own transaction and backup directories, created through the parent call's retained root.
+`read_journal` compares only the transaction directory, because a caller-supplied journal path does not identify the root; every command that acts on the journal reopens it through the root.
+Journals written before the binding carry no `app_data_identity` and keep path-based access to their storage, and schema `1.0.0` journals that carry it are rejected.
+The intermediate `transactions/`, `backups/`, and `staging/` folders are covered only through the identities of the per-transaction folders beneath them.
+Between calls the directories are necessarily reopened by path: a directory swapped away and the same directory swapped back is indistinguishable from no swap, which is the intended equivalence.
+The evidence lives in the journal inside the bound transaction directory, so the binding detects a replaced, copied, or linked directory, not a journal forged by someone who can already write application data.
+A backup or staging directory that a stopped run created before it journaled the identity is bound by the next run that opens it.
+Within one call on Unix, a rename of a retained directory cannot redirect an operation, because reads and writes stay relative to the retained descriptors and each write first rechecks that the path still names the opened directory, so the call fails instead; on Windows the retained delete-denying handles refuse the rename.
+
+Created-root cleanup, Git, external actions, and readiness are not yet bound to retained capabilities through their complete lifetimes, and the external parent handle is reopened and rechecked at each step rather than retained across stages.
 Those cross-stage races remain release blockers. A regular destination that changes
 after its precondition hash is no longer replaced or deleted blindly; the
 destination quarantine below keeps those bytes and records them in the journal.
