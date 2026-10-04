@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+## 0.4.0 - 2026-10-04
+
 - Make Claude the default setup assistant. **Sign in to Claude** runs your own
   installed Claude Code's sign-in, so the app never handles Claude credentials,
   and setup analysis uses Claude Haiku 4.5 in an isolated, tool-free Claude
