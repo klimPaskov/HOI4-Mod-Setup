@@ -1,13 +1,12 @@
 use crate::models::*;
 use crate::paths::{
-    application_data_root, transaction_root, validate_project_root,
-    validate_project_root_or_destination,
+    application_data_root, validate_project_root, validate_project_root_or_destination,
 };
 use crate::safe_fs::RootedDir;
 use crate::security::{
-    atomic_write, atomic_write_json, canonical_relative_key, is_link_metadata,
-    normalize_relative_path, path_has_link_component, redact_secrets, safe_join, sha256_bytes,
-    sha256_file, validate_external_destination,
+    canonical_relative_key, is_link_metadata, normalize_relative_path, path_has_link_component,
+    persistable_json_bytes, redact_secrets, safe_join, sha256_bytes, sha256_file,
+    validate_external_destination,
 };
 use crate::AppError;
 use chrono::Utc;
@@ -684,6 +683,8 @@ pub fn new_journal(
         previous_lock_backup_path: None,
         previous_lock_sha256: None,
         checkpoint_sequence: None,
+        // Bound by the caller once the transaction's storage is open.
+        app_data_identity: None,
         error: None,
     }
 }
@@ -1159,7 +1160,11 @@ pub fn find_incomplete_transaction(
         Ok(_) => {}
         Err(error) => return Err(error.into()),
     }
-    let transactions = RootedDir::open_read(&transactions_root)?;
+    // Every journal is read through handles retained from the application
+    // data root, so a journal that recorded its storage identities can be
+    // compared with the directories that actually hold it.
+    let app = RootedDir::open_read(app_root)?;
+    let transactions = app.open_dir(TRANSACTIONS_AREA)?;
     let entries = transactions.read_dir_names()?;
     let mut candidates = Vec::new();
     for entry in entries {
@@ -1171,20 +1176,24 @@ pub fn find_incomplete_transaction(
         }
         let path = transactions_root.join(entry_name);
         let directory = transactions.open_dir(entry_name)?;
-        if !directory.exists("journal.json")? {
+        if !directory.exists(JOURNAL_FILE)? {
             continue;
         }
-        if !directory.is_regular_file("journal.json")? {
+        if !directory.is_regular_file(JOURNAL_FILE)? {
             return Err(AppError::PathSecurity(
                 "transaction journal is not a regular file".into(),
             ));
         }
-        let journal_path = path.join("journal.json");
-        match read_journal(&journal_path) {
+        let journal_path = path.join(JOURNAL_FILE);
+        match load_journal_in(&directory, JOURNAL_FILE) {
             Ok(mut journal) => {
                 if !transaction_state_is_terminal(&journal.state)
                     && roots_match_for_transaction(&journal.project_root, project_root)
                 {
+                    // Storage swapped away from an incomplete journal of this
+                    // project blocks a new transaction instead of being
+                    // ignored or followed.
+                    verify_app_data_binding(&journal, Some(&app), &directory)?;
                     normalize_incomplete_recovery(&mut journal);
                     candidates.push(journal);
                 }
@@ -1193,7 +1202,7 @@ pub fn find_incomplete_transaction(
                 // A corrupt journal cannot be safely recovered, but if its
                 // bounded root field identifies this project it must still
                 // block a second transaction instead of being ignored.
-                let bytes = read_file_path(&journal_path)?;
+                let bytes = directory.read_file(JOURNAL_FILE)?;
                 if bytes.len() <= 1024 * 1024 {
                     let root_matches = serde_json::from_slice::<serde_json::Value>(&bytes)
                         .ok()
@@ -1239,17 +1248,6 @@ pub fn find_incomplete_transaction(
     Ok(candidates.into_iter().next())
 }
 
-fn expected_operation_backup(
-    journal: &TransactionJournal,
-    journal_path: &Path,
-    operation_id: &str,
-) -> Result<PathBuf, AppError> {
-    Ok(journal_app_root(journal_path)?
-        .join("backups")
-        .join(journal.transaction_id.to_string())
-        .join(format!("{operation_id}.bak")))
-}
-
 fn read_existing_lock_from_root(project: &RootedDir) -> Result<Option<InstallationLock>, AppError> {
     let lock_relative = ".hoi4-mod-setup/install.lock.json";
     if !project.exists(lock_relative)? {
@@ -1272,7 +1270,7 @@ fn capture_previous_lock(
     backup_root: &Path,
     backup_directory: &RootedDir,
     journal: &mut TransactionJournal,
-    journal_path: &Path,
+    store: &TransactionStore,
 ) -> Result<(), AppError> {
     let Some(project_directory) = project_directory else {
         return Ok(());
@@ -1308,7 +1306,7 @@ fn capture_previous_lock(
     }
     journal.previous_lock_backup_path = Some(backup.display().to_string());
     journal.previous_lock_sha256 = Some(digest);
-    persist_journal(journal_path, journal)
+    persist_journal(store, journal)
 }
 
 pub fn run_transaction(
@@ -1353,18 +1351,32 @@ pub fn run_transaction(
     } else {
         None
     };
-    let roots = transaction_root(&app_root, plan.plan_id);
-    RootedDir::open_or_create(&roots.transaction)?;
-    if path_has_link_component(&roots.transaction) {
-        return Err(AppError::PathSecurity(format!(
-            "transaction storage contains a symlink or junction: {}",
-            roots.transaction.display()
-        )));
+    // The application-data root and this transaction's directories are held
+    // for the whole call and bound into the journal, so later stages and
+    // recovery calls refuse a directory swapped in at the same path.
+    let app = AppDataRoot::open_or_create(&app_root)?;
+    let store = app.transaction_store(plan.plan_id, true)?;
+    let mut app_data_identity = app.bind_new_storage(&store)?;
+    if let Some(interrupted) = interrupted_journal.as_ref() {
+        // A replay writes a fresh journal into the interrupted run's storage,
+        // which must still be the storage that run recorded. Its backup and
+        // staging bindings carry over so those stages verify instead of
+        // binding whatever now occupies the path.
+        if let Some(bound) = interrupted.app_data_identity.as_ref() {
+            if bound.root != app_data_identity.root {
+                return Err(app_data_drift(&app.path));
+            }
+            if bound.transaction != app_data_identity.transaction {
+                return Err(app_data_drift(store.journal_path()));
+            }
+            app_data_identity.backup = bound.backup.clone();
+            app_data_identity.staging = bound.staging.clone();
+        }
     }
-    let journal_path = roots.transaction.join("journal.json");
-    let plan_path = roots.transaction.join("plan.json");
-    atomic_write_json(&plan_path, plan)?;
+    let backup_root = app.area_path(BACKUPS_AREA, plan.plan_id);
+    store.write_json(PLAN_FILE, plan)?;
     let mut journal = new_journal(plan, &plan.project_id, &project_root);
+    journal.app_data_identity = Some(app_data_identity);
     // A replay writes a fresh journal, but an external parent bound by the
     // interrupted run stays bound: the backup stage must find the same
     // directory instead of binding whatever now occupies the path. The
@@ -1397,28 +1409,28 @@ pub fn run_transaction(
             }
         }
     }
-    persist_journal(&journal_path, &mut journal)?;
+    persist_journal(&store, &mut journal)?;
 
     let result: Result<InstallationLock, AppError> = (|| {
         stage_start(
             &mut journal,
             0,
             "preflight",
-            &journal_path,
+            &store,
             options.fail_before_stage,
         )?;
         stage_complete(
             &mut journal,
             0,
             "preflight",
-            &journal_path,
+            &store,
             options.fail_after_stage,
         )?;
         stage_start(
             &mut journal,
             1,
             "repository source resolution",
-            &journal_path,
+            &store,
             options.fail_before_stage,
         )?;
         add_stage_evidence(
@@ -1430,153 +1442,119 @@ pub fn run_transaction(
                 format!("manifest_sha256={}", plan.source.manifest_sha256),
                 format!("manifest_origin={}", plan.source.manifest_origin),
             ],
-            &journal_path,
+            &store,
         )?;
         stage_complete(
             &mut journal,
             1,
             "repository source resolution",
-            &journal_path,
+            &store,
             options.fail_after_stage,
         )?;
         stage_start(
             &mut journal,
             2,
             "selective download",
-            &journal_path,
+            &store,
             options.fail_before_stage,
         )?;
         let selected_evidence = validate_prepared_files(plan, prepared_files)?;
-        add_stage_evidence(&mut journal, 2, selected_evidence, &journal_path)?;
+        add_stage_evidence(&mut journal, 2, selected_evidence, &store)?;
         stage_complete(
             &mut journal,
             2,
             "selective download",
-            &journal_path,
+            &store,
             options.fail_after_stage,
         )?;
         stage_start(
             &mut journal,
             3,
             "checksum verification",
-            &journal_path,
+            &store,
             options.fail_before_stage,
         )?;
         let verified_evidence = validate_prepared_files(plan, prepared_files)?;
-        add_stage_evidence(&mut journal, 3, verified_evidence, &journal_path)?;
+        add_stage_evidence(&mut journal, 3, verified_evidence, &store)?;
         stage_complete(
             &mut journal,
             3,
             "checksum verification",
-            &journal_path,
+            &store,
             options.fail_after_stage,
         )?;
         stage_start(
             &mut journal,
             4,
             "dry-run review",
-            &journal_path,
+            &store,
             options.fail_before_stage,
         )?;
         stage_complete(
             &mut journal,
             4,
             "dry-run review",
-            &journal_path,
+            &store,
             options.fail_after_stage,
         )?;
 
-        stage_start(
-            &mut journal,
-            5,
-            "backup",
-            &journal_path,
-            options.fail_before_stage,
-        )?;
-        RootedDir::open_or_create(&roots.backup)?;
-        if path_has_link_component(&roots.backup) {
-            return Err(AppError::PathSecurity(format!(
-                "backup root contains a symlink or junction: {}",
-                roots.backup.display()
-            )));
-        }
-        let backup_directory = RootedDir::open(&roots.backup)?;
+        stage_start(&mut journal, 5, "backup", &store, options.fail_before_stage)?;
+        let backup_directory = open_journal_area(&app, &mut journal, BACKUPS_AREA, plan.plan_id)?;
+        persist_journal(&store, &mut journal)?;
         capture_previous_lock(
             project_directory.as_ref(),
-            &roots.backup,
+            &backup_root,
             &backup_directory,
             &mut journal,
-            &journal_path,
+            &store,
         )?;
         backup_existing(
             &project_root,
             plan,
-            &roots.backup,
+            &backup_root,
+            &backup_directory,
             project_directory.as_ref(),
             &mut journal,
-            &journal_path,
+            &store,
         )?;
-        compact_operation_checkpoints(&journal_path, &mut journal)?;
-        stage_complete(
-            &mut journal,
-            5,
-            "backup",
-            &journal_path,
-            options.fail_after_stage,
-        )?;
+        compact_operation_checkpoints(&store, &mut journal)?;
+        stage_complete(&mut journal, 5, "backup", &store, options.fail_after_stage)?;
         stage_start(
             &mut journal,
             6,
             "staging",
-            &journal_path,
+            &store,
             options.fail_before_stage,
         )?;
-        RootedDir::open_or_create(&roots.staging)?;
-        if path_has_link_component(&roots.staging) {
-            return Err(AppError::PathSecurity(format!(
-                "staging root contains a symlink or junction: {}",
-                roots.staging.display()
-            )));
-        }
+        let staging_directory = open_journal_area(&app, &mut journal, STAGING_AREA, plan.plan_id)?;
+        persist_journal(&store, &mut journal)?;
         stage_files(
             plan,
             prepared_files,
-            &roots.staging,
+            &staging_directory,
             &mut journal,
-            &journal_path,
+            &store,
         )?;
-        stage_profile_directories(plan, &roots.staging)?;
-        compact_operation_checkpoints(&journal_path, &mut journal)?;
-        stage_complete(
-            &mut journal,
-            6,
-            "staging",
-            &journal_path,
-            options.fail_after_stage,
-        )?;
+        stage_profile_directories(plan, &staging_directory)?;
+        compact_operation_checkpoints(&store, &mut journal)?;
+        stage_complete(&mut journal, 6, "staging", &store, options.fail_after_stage)?;
         stage_start(
             &mut journal,
             7,
             "validation",
-            &journal_path,
+            &store,
             options.fail_before_stage,
         )?;
-        validate_staging(&project_root, plan, prepared_files, &roots.staging)?;
+        validate_staging(&project_root, plan, prepared_files, &staging_directory)?;
         stage_complete(
             &mut journal,
             7,
             "validation",
-            &journal_path,
+            &store,
             options.fail_after_stage,
         )?;
-        stage_start(
-            &mut journal,
-            8,
-            "apply",
-            &journal_path,
-            options.fail_before_stage,
-        )?;
-        ensure_project_root_for_apply(&project_root, plan, &mut journal, &journal_path)?;
+        stage_start(&mut journal, 8, "apply", &store, options.fail_before_stage)?;
+        ensure_project_root_for_apply(&project_root, plan, &mut journal, &store)?;
         if project_directory.is_none() {
             project_directory = Some(open_bound_project_root(
                 &project_root,
@@ -1586,17 +1564,17 @@ pub fn run_transaction(
         let project_directory = project_directory.as_ref().ok_or_else(|| {
             AppError::PathSecurity("transaction has no retained project-root handle".into())
         })?;
-        apply_profile_directories_rooted(project_directory, plan, &mut journal, &journal_path)?;
+        apply_profile_directories_rooted(project_directory, plan, &mut journal, &store)?;
         apply_operations(
             &project_root,
             plan,
-            &roots.staging,
+            &staging_directory,
             project_directory,
             &mut journal,
-            &journal_path,
+            &store,
             options,
         )?;
-        compact_operation_checkpoints(&journal_path, &mut journal)?;
+        compact_operation_checkpoints(&store, &mut journal)?;
         project_directory.verify_bound_to_path()?;
         // Every operation verified, so a quarantine of this transaction that
         // still exists is a leftover; settle it by hash or stop here.
@@ -1618,7 +1596,7 @@ pub fn run_transaction(
                 journal.git_remote_added_url = setup.remote_url.clone();
             }
             journal.last_checkpoint = "git-intent".into();
-            persist_journal(&journal_path, &mut journal)?;
+            persist_journal(&store, &mut journal)?;
             if options.fail_before_git {
                 return Err(AppError::Transaction(
                     "fault injected before Git setup".into(),
@@ -1678,30 +1656,18 @@ pub fn run_transaction(
                 journal.git_remote_added_url = setup.remote_url.clone();
             }
             journal.last_checkpoint = "git-verified".into();
-            persist_journal(&journal_path, &mut journal)?;
+            persist_journal(&store, &mut journal)?;
         }
-        stage_complete(
-            &mut journal,
-            8,
-            "apply",
-            &journal_path,
-            options.fail_after_stage,
-        )?;
+        stage_complete(&mut journal, 8, "apply", &store, options.fail_after_stage)?;
         stage_start(
             &mut journal,
             9,
             "post-install checks",
-            &journal_path,
+            &store,
             options.fail_before_stage,
         )?;
         project_directory.verify_bound_to_path()?;
-        post_install_checks(
-            &project_root,
-            project_directory,
-            plan,
-            &mut journal,
-            &journal_path,
-        )?;
+        post_install_checks(&project_root, project_directory, plan, &mut journal, &store)?;
         project_directory.verify_bound_to_path()?;
         if let Some(runner) = options.post_install_action_runner {
             let components = [crate::mcp::COMPONENT_ID, "workflow.3d"]
@@ -1726,7 +1692,7 @@ pub fn run_transaction(
                     stage.evidence.extend(reviewed_actions);
                 }
                 journal.last_checkpoint = format!("post-install-action-intent:{component_id}");
-                persist_journal(&journal_path, &mut journal)?;
+                persist_journal(&store, &mut journal)?;
                 if (options.fail_before_post_install_action && action_index == 0)
                     || options.fail_before_post_install_action_index == Some(action_index)
                 {
@@ -1782,28 +1748,28 @@ pub fn run_transaction(
                     )));
                 }
                 journal.last_checkpoint = format!("post-install-action-complete:{component_id}");
-                persist_journal(&journal_path, &mut journal)?;
+                persist_journal(&store, &mut journal)?;
             }
         }
         stage_complete(
             &mut journal,
             9,
             "post-install checks",
-            &journal_path,
+            &store,
             options.fail_after_stage,
         )?;
         stage_start(
             &mut journal,
             10,
             "readiness report",
-            &journal_path,
+            &store,
             options.fail_before_stage,
         )?;
         project_directory.verify_bound_to_path()?;
         let readiness = build_transaction_readiness(&project_root, &effective_plan, &journal)?;
         project_directory.verify_bound_to_path()?;
-        let readiness_path = roots.transaction.join("readiness-report.json");
-        atomic_write_json(&readiness_path, &readiness)?;
+        let readiness_path = store.file_path(READINESS_FILE);
+        store.write_json(READINESS_FILE, &readiness)?;
         if let Some(stage) = journal.stages.get_mut(10) {
             stage.evidence.push(readiness_path.display().to_string());
         }
@@ -1811,7 +1777,7 @@ pub fn run_transaction(
             &mut journal,
             10,
             "readiness report",
-            &journal_path,
+            &store,
             options.fail_after_stage,
         )?;
         let blocking_checks = readiness
@@ -1846,7 +1812,7 @@ pub fn run_transaction(
             &mut journal,
             11,
             "rollback record",
-            &journal_path,
+            &store,
             options.fail_before_stage,
         )?;
         // Keep a durable finalization state across the lock write. If the
@@ -1861,12 +1827,10 @@ pub fn run_transaction(
             project_apply_started: true,
             recommended_action: "resume".into(),
         };
-        persist_journal(&journal_path, &mut journal)?;
-        atomic_write_json(&roots.transaction.join("rollback-record.json"), &journal)?;
-        journal.rollback_record_sha256 = Some(sha256_file(
-            &roots.transaction.join("rollback-record.json"),
-        )?);
-        persist_journal(&journal_path, &mut journal)?;
+        persist_journal(&store, &mut journal)?;
+        store.write_json(ROLLBACK_RECORD_FILE, &journal)?;
+        journal.rollback_record_sha256 = Some(store.directory.hash_file(ROLLBACK_RECORD_FILE)?);
+        persist_journal(&store, &mut journal)?;
         maybe_abort_for_test("after_rollback_record");
         if options.fail_after_stage == Some(11) {
             return Err(AppError::Transaction(
@@ -1879,7 +1843,7 @@ pub fn run_transaction(
         // reconciled by resume only after the lock and rollback record verify.
         commit_success_lock(project_directory, &journal, &lock_bytes, options)?;
         maybe_abort_for_test("after_lock_write");
-        stage_complete(&mut journal, 11, "rollback record", &journal_path, None)?;
+        stage_complete(&mut journal, 11, "rollback record", &store, None)?;
         journal.state = "completed".into();
         journal.recovery = RecoveryState {
             resume_allowed: false,
@@ -1888,7 +1852,7 @@ pub fn run_transaction(
             project_apply_started: true,
             recommended_action: "none".into(),
         };
-        let _ = persist_journal(&journal_path, &mut journal);
+        let _ = persist_journal(&store, &mut journal);
         Ok(lock)
     })();
 
@@ -1933,7 +1897,7 @@ pub fn run_transaction(
                 message: error.to_string(),
                 stage: journal.last_checkpoint.clone(),
             });
-            let _ = persist_journal(&journal_path, &mut journal);
+            let _ = persist_journal(&store, &mut journal);
             Err(error)
         }
     }
@@ -2023,14 +1987,359 @@ fn settle_journal_lock_quarantines(
     Ok(())
 }
 
-fn persist_journal(path: &Path, journal: &mut TransactionJournal) -> Result<(), AppError> {
+const JOURNAL_FILE: &str = "journal.json";
+const PLAN_FILE: &str = "plan.json";
+const READINESS_FILE: &str = "readiness-report.json";
+const ROLLBACK_RECORD_FILE: &str = "rollback-record.json";
+const CHECKPOINT_LOG_FILE: &str = "operation-checkpoints.jsonl";
+const TRANSACTIONS_AREA: &str = "transactions";
+const BACKUPS_AREA: &str = "backups";
+const STAGING_AREA: &str = "staging";
+
+/// The application-data root retained for one transaction call. The
+/// per-transaction directories under it (`transactions/<id>`,
+/// `backups/<id>`, and `staging/<id>`) are opened through this handle, and a
+/// journal that carries `app_data_identity` requires every one of them to be
+/// the directory it recorded, so a directory swapped away between calls is
+/// refused instead of followed. Within a call the handles are retained; on
+/// Windows they also deny the rename of the directory or any ancestor.
+struct AppDataRoot {
+    directory: RootedDir,
+    /// The path as configured. Journaled backup paths are compared with
+    /// paths derived from it, so it is never canonicalized here.
+    path: PathBuf,
+}
+
+impl AppDataRoot {
+    fn open_or_create(path: &Path) -> Result<Self, AppError> {
+        Ok(Self {
+            directory: RootedDir::open_or_create(path)?,
+            path: path.to_path_buf(),
+        })
+    }
+
+    fn open(path: &Path) -> Result<Self, AppError> {
+        if path_has_link_component(path) {
+            return Err(AppError::PathSecurity(
+                "application data root contains a symlink or junction".into(),
+            ));
+        }
+        Ok(Self {
+            directory: RootedDir::open(path)?,
+            path: path.to_path_buf(),
+        })
+    }
+
+    /// Open the root of an existing journal. The journal must sit at
+    /// `<root>/transactions/<transaction id>/journal.json`, so the store opened
+    /// through the root is the journal the caller read.
+    fn for_journal(journal_path: &Path, journal: &TransactionJournal) -> Result<Self, AppError> {
+        let transaction_directory = journal_path.parent();
+        let area = transaction_directory.and_then(Path::parent);
+        let expected_id = journal.transaction_id.to_string();
+        if journal_path.file_name().and_then(|name| name.to_str()) != Some(JOURNAL_FILE)
+            || transaction_directory
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                != Some(expected_id.as_str())
+            || area
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                != Some(TRANSACTIONS_AREA)
+        {
+            return Err(AppError::PathSecurity(
+                "transaction journal path is not bound to its transaction ID".into(),
+            ));
+        }
+        Self::open(&journal_app_root(journal_path)?)
+    }
+
+    fn identity(&self) -> Result<String, AppError> {
+        self.directory.identity_token()
+    }
+
+    fn area_path(&self, area: &str, transaction_id: Uuid) -> PathBuf {
+        self.path.join(area).join(transaction_id.to_string())
+    }
+
+    /// Open `<area>/<id>`, creating it only when `create` is set and the
+    /// journal has not bound it yet. A bound directory is never recreated: a
+    /// new directory at the same path would be a different directory.
+    fn open_area(
+        &self,
+        area: &str,
+        transaction_id: Uuid,
+        create: bool,
+        expected: Option<&str>,
+    ) -> Result<Option<RootedDir>, AppError> {
+        let relative = format!("{area}/{transaction_id}");
+        let present = self.directory.is_directory(area)? && self.directory.exists(&relative)?;
+        let directory = if present {
+            if !self.directory.is_directory(&relative)? {
+                return Err(AppError::PathSecurity(format!(
+                    "transaction {area} storage is not a directory: {}",
+                    self.area_path(area, transaction_id).display()
+                )));
+            }
+            self.directory.open_dir(&relative)?
+        } else if expected.is_some() {
+            return Err(AppError::PathSecurity(format!(
+                "the application data directory bound to this transaction is missing; move it back to {} or review the transaction manually",
+                self.area_path(area, transaction_id).display()
+            )));
+        } else if create {
+            self.directory.ensure_dir(&relative)?
+        } else {
+            return Ok(None);
+        };
+        verify_app_data_directory(&directory, expected, &self.area_path(area, transaction_id))?;
+        Ok(Some(directory))
+    }
+
+    fn open_or_create_area(
+        &self,
+        area: &str,
+        transaction_id: Uuid,
+        expected: Option<&str>,
+    ) -> Result<RootedDir, AppError> {
+        self.open_area(area, transaction_id, true, expected)?
+            .ok_or_else(|| AppError::PathSecurity("transaction storage was not created".into()))
+    }
+
+    /// Open or create the transaction directory. The caller compares it with
+    /// the journal it reads through the returned store.
+    fn transaction_store(
+        &self,
+        transaction_id: Uuid,
+        create: bool,
+    ) -> Result<TransactionStore, AppError> {
+        let directory = self
+            .open_area(TRANSACTIONS_AREA, transaction_id, create, None)?
+            .ok_or_else(|| {
+                AppError::Transaction(format!(
+                    "transaction storage is missing: {}",
+                    self.area_path(TRANSACTIONS_AREA, transaction_id).display()
+                ))
+            })?;
+        Ok(TransactionStore {
+            journal_path: self
+                .area_path(TRANSACTIONS_AREA, transaction_id)
+                .join(JOURNAL_FILE),
+            directory,
+        })
+    }
+
+    /// Read a journal through `store` and require the storage it recorded.
+    fn read_bound_journal(&self, store: &TransactionStore) -> Result<TransactionJournal, AppError> {
+        let journal = load_journal_in(&store.directory, JOURNAL_FILE)?;
+        verify_app_data_binding(&journal, Some(&self.directory), &store.directory)?;
+        Ok(journal)
+    }
+
+    /// Identity evidence for a transaction whose storage this call creates.
+    fn bind_new_storage(&self, store: &TransactionStore) -> Result<AppDataIdentity, AppError> {
+        Ok(AppDataIdentity {
+            root: self.identity()?,
+            transaction: store.directory.identity_token()?,
+            backup: None,
+            staging: None,
+        })
+    }
+}
+
+/// The retained transaction directory (`transactions/<id>`): the journal,
+/// the reviewed plan, the checkpoint log, the readiness report, and the
+/// rollback record are read and written only through this handle.
+struct TransactionStore {
+    directory: RootedDir,
+    journal_path: PathBuf,
+}
+
+impl TransactionStore {
+    fn journal_path(&self) -> &Path {
+        &self.journal_path
+    }
+
+    fn file_path(&self, name: &str) -> PathBuf {
+        self.journal_path.with_file_name(name)
+    }
+
+    fn write_json<T: Serialize>(&self, name: &str, value: &T) -> Result<(), AppError> {
+        self.directory
+            .write_atomic(name, &persistable_json_bytes(value)?)
+    }
+
+    /// A store over the directory of an arbitrary journal path, for unit
+    /// tests of the journal helpers outside the application-data layout.
+    #[cfg(test)]
+    fn open_journal_directory(journal_path: &Path) -> Result<Self, AppError> {
+        assert_eq!(
+            journal_path.file_name().and_then(|name| name.to_str()),
+            Some(JOURNAL_FILE)
+        );
+        Ok(Self {
+            directory: RootedDir::open(journal_path.parent().unwrap())?,
+            journal_path: journal_path.to_path_buf(),
+        })
+    }
+}
+
+fn app_data_drift(path: &Path) -> AppError {
+    AppError::PathSecurity(format!(
+        "application data directory is no longer the directory bound to this transaction: {}; move the original folder back or review the transaction manually",
+        path.display()
+    ))
+}
+
+fn verify_app_data_directory(
+    directory: &RootedDir,
+    expected: Option<&str>,
+    path: &Path,
+) -> Result<(), AppError> {
+    match expected {
+        Some(expected) if directory.identity_token()? != expected => Err(app_data_drift(path)),
+        _ => Ok(()),
+    }
+}
+
+/// Compare retained application-data handles with the identities the
+/// journal recorded when its transaction created them. A journal from before
+/// the binding carries none and keeps path-based access.
+fn verify_app_data_binding(
+    journal: &TransactionJournal,
+    root: Option<&RootedDir>,
+    transaction: &RootedDir,
+) -> Result<(), AppError> {
+    let Some(identity) = journal.app_data_identity.as_ref() else {
+        return Ok(());
+    };
+    if let Some(root) = root {
+        if root.identity_token()? != identity.root {
+            return Err(app_data_drift(Path::new("application data root")));
+        }
+    }
+    if transaction.identity_token()? != identity.transaction {
+        return Err(app_data_drift(Path::new(&format!(
+            "transactions/{}",
+            journal.transaction_id
+        ))));
+    }
+    Ok(())
+}
+
+/// The retained backup directory of one journal and the path under which
+/// the journal recorded its backups. Recorded paths are still compared with
+/// the derived path, and the bytes are read only through the handle.
+struct JournalBackups {
+    root: PathBuf,
+    directory: Option<RootedDir>,
+    /// The journal bound a backup directory that is no longer present. Only
+    /// a step that needs a backup is refused, so a rollback that restores
+    /// nothing from it is not blocked.
+    bound_missing: bool,
+}
+
+impl JournalBackups {
+    fn open(app: &AppDataRoot, journal: &TransactionJournal) -> Result<Self, AppError> {
+        let expected = journal
+            .app_data_identity
+            .as_ref()
+            .and_then(|identity| identity.backup.as_deref());
+        let relative = format!("{BACKUPS_AREA}/{}", journal.transaction_id);
+        let present =
+            app.directory.is_directory(BACKUPS_AREA)? && app.directory.exists(&relative)?;
+        Ok(Self {
+            root: app.area_path(BACKUPS_AREA, journal.transaction_id),
+            directory: if present {
+                app.open_area(BACKUPS_AREA, journal.transaction_id, false, expected)?
+            } else {
+                None
+            },
+            bound_missing: !present && expected.is_some(),
+        })
+    }
+
+    /// Validate a journaled backup path and return the retained directory
+    /// with the leaf to read from it.
+    fn resolve<'a>(
+        &self,
+        recorded: &str,
+        leaf: &'a str,
+    ) -> Result<(&RootedDir, &'a str), AppError> {
+        let expected = self.root.join(leaf);
+        let supplied = PathBuf::from(recorded);
+        let matches = if cfg!(target_os = "windows") {
+            supplied
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&expected.to_string_lossy())
+        } else {
+            supplied == expected
+        };
+        if !matches {
+            return Err(AppError::PathSecurity(
+                "journal backup path is outside the transaction backup root".into(),
+            ));
+        }
+        let directory = self.directory.as_ref().ok_or_else(|| {
+            if self.bound_missing {
+                AppError::PathSecurity(format!(
+                    "the application data directory bound to this transaction is missing; move it back to {} or review the transaction manually",
+                    self.root.display()
+                ))
+            } else {
+                AppError::Transaction(format!(
+                    "transaction backup directory is missing: {}",
+                    self.root.display()
+                ))
+            }
+        })?;
+        Ok((directory, leaf))
+    }
+}
+
+/// Open a journal's `backups/<id>` or `staging/<id>` directory through the
+/// retained application-data root, creating it the first time. A journal
+/// that already bound the directory requires that same directory; otherwise
+/// the directory opened here is bound now and the caller persists the
+/// journal before using it. Journals from before the binding stay unbound.
+fn open_journal_area(
+    app: &AppDataRoot,
+    journal: &mut TransactionJournal,
+    area: &str,
+    transaction_id: Uuid,
+) -> Result<RootedDir, AppError> {
+    let expected = journal.app_data_identity.as_ref().and_then(|identity| {
+        if area == BACKUPS_AREA {
+            identity.backup.clone()
+        } else {
+            identity.staging.clone()
+        }
+    });
+    let directory = app.open_or_create_area(area, transaction_id, expected.as_deref())?;
+    if let Some(identity) = journal.app_data_identity.as_mut() {
+        let bound = if area == BACKUPS_AREA {
+            &mut identity.backup
+        } else {
+            &mut identity.staging
+        };
+        if bound.is_none() {
+            *bound = Some(directory.identity_token()?);
+        }
+    }
+    Ok(directory)
+}
+
+fn persist_journal(
+    store: &TransactionStore,
+    journal: &mut TransactionJournal,
+) -> Result<(), AppError> {
     journal.updated_at = Utc::now().to_rfc3339();
     // A snapshot covers every checkpoint appended before it. Recording the
     // current sequence (zero before the first checkpoint) lets replay skip
     // exactly those records without comparing wall-clock times.
     journal.checkpoint_sequence.get_or_insert(0);
     sanitize_journal_error(journal);
-    atomic_write_json(path, journal)
+    store.write_json(JOURNAL_FILE, journal)
 }
 
 fn sanitize_journal_error(journal: &mut TransactionJournal) {
@@ -2049,40 +2358,41 @@ fn sanitize_journal_error(journal: &mut TransactionJournal) {
     error.message = format!("{}...", &redacted[..end]);
 }
 
+#[cfg(test)]
 fn operation_checkpoint_root(journal_path: &Path) -> Result<PathBuf, AppError> {
     let parent = journal_path
         .parent()
         .ok_or_else(|| AppError::PathSecurity("transaction journal has no parent".into()))?;
-    Ok(parent.join("operation-checkpoints.jsonl"))
+    Ok(parent.join(CHECKPOINT_LOG_FILE))
 }
 
 #[cfg(test)]
 fn persist_operation_checkpoint(
-    journal_path: &Path,
+    store: &TransactionStore,
     journal: &mut TransactionJournal,
     operation_index: usize,
 ) -> Result<(), AppError> {
-    append_operation_checkpoints(journal_path, journal, &[operation_index], true)
+    append_operation_checkpoints(store, journal, &[operation_index], true)
 }
 
 fn append_operation_checkpoint(
-    journal_path: &Path,
+    store: &TransactionStore,
     journal: &mut TransactionJournal,
     operation_index: usize,
 ) -> Result<(), AppError> {
-    append_operation_checkpoints(journal_path, journal, &[operation_index], false)
+    append_operation_checkpoints(store, journal, &[operation_index], false)
 }
 
 fn persist_operation_checkpoint_batch(
-    journal_path: &Path,
+    store: &TransactionStore,
     journal: &mut TransactionJournal,
     operation_indices: &[usize],
 ) -> Result<(), AppError> {
-    append_operation_checkpoints(journal_path, journal, operation_indices, true)
+    append_operation_checkpoints(store, journal, operation_indices, true)
 }
 
 fn append_operation_checkpoints(
-    journal_path: &Path,
+    store: &TransactionStore,
     journal: &mut TransactionJournal,
     operation_indices: &[usize],
     sync: bool,
@@ -2090,19 +2400,11 @@ fn append_operation_checkpoints(
     if operation_indices.is_empty() {
         return Ok(());
     }
-    let checkpoint_path = operation_checkpoint_root(journal_path)?;
-    let checkpoint_parent = checkpoint_path
-        .parent()
-        .ok_or_else(|| AppError::PathSecurity("checkpoint log has no parent".into()))?;
-    let checkpoint_name = checkpoint_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::PathSecurity("checkpoint log name is invalid".into()))?;
-    let checkpoint_directory = RootedDir::open(checkpoint_parent)?;
-    if !checkpoint_directory.exists(checkpoint_name)? {
+    let checkpoint_directory = &store.directory;
+    if !checkpoint_directory.exists(CHECKPOINT_LOG_FILE)? {
         // Atomically create the append log once so its directory entry is
         // durable before an apply-intent checkpoint can guard a live change.
-        checkpoint_directory.write_atomic(checkpoint_name, b"")?;
+        checkpoint_directory.write_atomic(CHECKPOINT_LOG_FILE, b"")?;
     }
     journal.updated_at = Utc::now().to_rfc3339();
     let mut bytes = Vec::new();
@@ -2137,51 +2439,35 @@ fn append_operation_checkpoints(
         bytes.extend(record);
     }
 
-    checkpoint_directory.append_file(checkpoint_name, &bytes, sync)
+    checkpoint_directory.append_file(CHECKPOINT_LOG_FILE, &bytes, sync)
 }
 
-fn clear_operation_checkpoints(journal_path: &Path) -> Result<(), AppError> {
-    let root = operation_checkpoint_root(journal_path)?;
-    let parent = root
-        .parent()
-        .ok_or_else(|| AppError::PathSecurity("checkpoint log has no parent".into()))?;
-    let name = root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::PathSecurity("checkpoint log name is invalid".into()))?;
-    let directory = RootedDir::open(parent)?;
-    if !directory.exists(name)? {
+fn clear_operation_checkpoints(store: &TransactionStore) -> Result<(), AppError> {
+    let directory = &store.directory;
+    if !directory.exists(CHECKPOINT_LOG_FILE)? {
         return Ok(());
     }
-    if !directory.is_regular_file(name)? {
+    if !directory.is_regular_file(CHECKPOINT_LOG_FILE)? {
         return Err(AppError::PathSecurity(
             "operation checkpoint storage is not a regular file".into(),
         ));
     }
-    directory.remove_file(name)
+    directory.remove_file(CHECKPOINT_LOG_FILE)
 }
 
 fn compact_operation_checkpoints(
-    journal_path: &Path,
+    store: &TransactionStore,
     journal: &mut TransactionJournal,
 ) -> Result<(), AppError> {
-    persist_journal(journal_path, journal)?;
-    clear_operation_checkpoints(journal_path)
+    persist_journal(store, journal)?;
+    clear_operation_checkpoints(store)
 }
 
 fn replay_operation_checkpoints(
-    journal_path: &Path,
+    directory: &RootedDir,
     journal: &mut TransactionJournal,
 ) -> Result<(), AppError> {
-    let root = operation_checkpoint_root(journal_path)?;
-    let parent = root
-        .parent()
-        .ok_or_else(|| AppError::PathSecurity("checkpoint log has no parent".into()))?;
-    let name = root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::PathSecurity("checkpoint log name is invalid".into()))?;
-    let directory = RootedDir::open_read(parent)?;
+    let name = CHECKPOINT_LOG_FILE;
     if !directory.exists(name)? {
         return Ok(());
     }
@@ -2314,18 +2600,12 @@ fn location_scope_for_file(file: &LockedFile) -> String {
     })
 }
 
-fn staging_destination(
-    staging_root: &Path,
-    operation: &PlanOperation,
-) -> Result<PathBuf, AppError> {
+/// Path of an operation's staged bytes relative to `staging/<id>`.
+fn staging_relative(operation: &PlanOperation) -> Result<String, AppError> {
     if operation.external {
-        let relative = normalize_relative_path(&format!("external/{}", operation.id))?;
-        Ok(staging_root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR)))
+        normalize_relative_path(&format!("external/{}", operation.id))
     } else {
-        Ok(staging_root.join(
-            normalize_relative_path(&operation.destination)?
-                .replace('/', std::path::MAIN_SEPARATOR_STR),
-        ))
+        normalize_relative_path(&operation.destination)
     }
 }
 
@@ -2333,7 +2613,7 @@ fn stage_start(
     journal: &mut TransactionJournal,
     index: usize,
     id: &str,
-    journal_path: &Path,
+    store: &TransactionStore,
     fail_before: Option<usize>,
 ) -> Result<(), AppError> {
     if fail_before == Some(index) {
@@ -2362,14 +2642,14 @@ fn stage_start(
         stage.started_at = Some(Utc::now().to_rfc3339());
     }
     journal.last_checkpoint = id.into();
-    persist_journal(journal_path, journal)
+    persist_journal(store, journal)
 }
 
 fn stage_complete(
     journal: &mut TransactionJournal,
     index: usize,
     id: &str,
-    journal_path: &Path,
+    store: &TransactionStore,
     fail_after: Option<usize>,
 ) -> Result<(), AppError> {
     if fail_after == Some(index) {
@@ -2381,14 +2661,14 @@ fn stage_complete(
         stage.status = "complete".into();
         stage.completed_at = Some(Utc::now().to_rfc3339());
     }
-    persist_journal(journal_path, journal)
+    persist_journal(store, journal)
 }
 
 fn add_stage_evidence(
     journal: &mut TransactionJournal,
     index: usize,
     evidence: Vec<String>,
-    journal_path: &Path,
+    store: &TransactionStore,
 ) -> Result<(), AppError> {
     if evidence.len() > 4096 || evidence.iter().any(|item| item.len() > 1024) {
         return Err(AppError::Transaction(
@@ -2400,7 +2680,7 @@ fn add_stage_evidence(
         .get_mut(index)
         .ok_or_else(|| AppError::Transaction("transaction stage index is invalid".into()))?;
     stage.evidence = evidence;
-    persist_journal(journal_path, journal)
+    persist_journal(store, journal)
 }
 
 /// Revalidate the exact bytes handed from the read-only plan builder to the
@@ -2805,16 +3085,17 @@ fn backup_existing(
     project_root: &Path,
     plan: &InstallationPlan,
     backup_root: &Path,
+    backup_directory: &RootedDir,
     project_directory: Option<&RootedDir>,
     journal: &mut TransactionJournal,
-    journal_path: &Path,
+    store: &TransactionStore,
 ) -> Result<(), AppError> {
     if path_has_link_component(backup_root) {
         return Err(AppError::PathSecurity(
             "backup root contains a symlink or junction".into(),
         ));
     }
-    let backup_directory = RootedDir::open(backup_root)?;
+    backup_directory.verify_bound_to_path()?;
     let mut checkpointed = 0usize;
     for (operation_index, operation) in plan.operations.iter().enumerate() {
         if matches!(
@@ -2859,7 +3140,7 @@ fn backup_existing(
                 journal.operations[record_index].external_parent_identity =
                     Some(source_root.identity_token()?);
                 journal.last_checkpoint = format!("bind-external-parent-{}", operation.id);
-                append_operation_checkpoint(journal_path, journal, record_index)?;
+                append_operation_checkpoint(store, journal, record_index)?;
             }
             let exists = source_root.exists(source_leaf)?;
             let is_file = source_root.is_regular_file(source_leaf)?;
@@ -2882,7 +3163,7 @@ fn backup_existing(
             let executable = copy_backup_from_root(
                 &source_root,
                 source_leaf,
-                &backup_directory,
+                backup_directory,
                 &backup_leaf,
                 &hash,
             )?;
@@ -2912,7 +3193,7 @@ fn backup_existing(
             let executable = copy_backup_from_root(
                 source_root,
                 &operation.destination,
-                &backup_directory,
+                backup_directory,
                 &backup_leaf,
                 &hash,
             )?;
@@ -2933,10 +3214,10 @@ fn backup_existing(
             record.backup_path = Some(backup.display().to_string());
             record.backup_sha256 = Some(source_hash);
             journal.last_checkpoint = format!("backup-file-{}", operation.id);
-            append_operation_checkpoint(journal_path, journal, operation_index)?;
+            append_operation_checkpoint(store, journal, operation_index)?;
             checkpointed += 1;
             if checkpointed % OPERATION_CHECKPOINT_BATCH == 0 {
-                compact_operation_checkpoints(journal_path, journal)?;
+                compact_operation_checkpoints(store, journal)?;
             }
         }
     }
@@ -2946,9 +3227,9 @@ fn backup_existing(
 fn stage_files(
     plan: &InstallationPlan,
     prepared_files: &[PreparedFile],
-    staging_root: &Path,
+    staging: &RootedDir,
     journal: &mut TransactionJournal,
-    journal_path: &Path,
+    store: &TransactionStore,
 ) -> Result<(), AppError> {
     let prepared: HashMap<&str, &PreparedFile> = prepared_files
         .iter()
@@ -2976,37 +3257,24 @@ fn stage_files(
                 operation.destination
             )));
         }
-        let staged = staging_destination(staging_root, operation)?;
-        if path_has_link_component(&staged) {
+        // The staged bytes are written through the retained, identity-bound
+        // staging handle; no component of the staging path is resolved again.
+        let staged = staging_relative(operation)?;
+        if staging.exists(&staged)? && !staging.is_regular_file(&staged)? {
             return Err(AppError::PathSecurity(format!(
-                "staging path contains a symlink or junction: {}",
-                staged.display()
+                "staging destination is not a regular file: {staged}"
             )));
         }
-        if let Some(parent) = staged.parent() {
-            RootedDir::open_or_create(parent)?;
-            if path_has_link_component(parent) {
-                return Err(AppError::PathSecurity(format!(
-                    "staging parent contains a symlink or junction: {}",
-                    parent.display()
+        staging.write_atomic(&staged, &file.bytes)?;
+        #[cfg(unix)]
+        {
+            staging.set_executable(&staged, operation.executable)?;
+            if staging.observed_executable(&staged)? != Some(operation.executable) {
+                return Err(AppError::Transaction(format!(
+                    "staging executable metadata mismatch for {}",
+                    operation.destination
                 )));
             }
-        }
-        if let Ok(metadata) = fs::symlink_metadata(&staged) {
-            if is_link_metadata(&metadata) || !metadata.is_file() {
-                return Err(AppError::PathSecurity(format!(
-                    "staging destination is not a regular file: {}",
-                    staged.display()
-                )));
-            }
-        }
-        atomic_write(&staged, &file.bytes)?;
-        apply_executable_state(&staged, operation.executable)?;
-        if observed_executable(&staged)?.is_some_and(|value| value != operation.executable) {
-            return Err(AppError::Transaction(format!(
-                "staging executable metadata mismatch for {}",
-                operation.destination
-            )));
         }
         if let Some(record) = journal
             .operations
@@ -3017,38 +3285,33 @@ fn stage_files(
             record.staged_sha256 = Some(hash);
         }
         journal.last_checkpoint = format!("stage-file-{}", operation.id);
-        append_operation_checkpoint(journal_path, journal, operation_index)?;
+        append_operation_checkpoint(store, journal, operation_index)?;
         checkpointed += 1;
         if checkpointed % OPERATION_CHECKPOINT_BATCH == 0 {
-            compact_operation_checkpoints(journal_path, journal)?;
+            compact_operation_checkpoints(store, journal)?;
         }
     }
     Ok(())
 }
 
-fn stage_profile_directories(plan: &InstallationPlan, staging_root: &Path) -> Result<(), AppError> {
+fn stage_profile_directories(plan: &InstallationPlan, staging: &RootedDir) -> Result<(), AppError> {
     for directory in &plan.transaction.directories {
-        let staged = safe_join(staging_root, directory)?;
-        if path_has_link_component(&staged) {
-            return Err(AppError::PathSecurity(format!(
-                "staged profile directory contains a symlink or junction: {directory}"
-            )));
-        }
-        RootedDir::open_or_create(&staged)?;
+        staging.ensure_dir(&normalize_relative_path(directory)?)?;
     }
     Ok(())
 }
 
+/// Validate staged output read through the retained staging handle. Each
+/// file is read once, and the bytes that are hashed are the bytes that are
+/// validated.
 fn validate_staging(
     project_root: &Path,
     plan: &InstallationPlan,
     prepared_files: &[PreparedFile],
-    staging_root: &Path,
+    staging: &RootedDir,
 ) -> Result<(), AppError> {
     for directory in &plan.transaction.directories {
-        let staged = safe_join(staging_root, directory)?;
-        let metadata = fs::symlink_metadata(&staged)?;
-        if is_link_metadata(&metadata) || !metadata.is_dir() {
+        if !staging.is_directory(&normalize_relative_path(directory)?)? {
             return Err(AppError::PathSecurity(format!(
                 "staged profile path is not a regular directory: {directory}"
             )));
@@ -3065,38 +3328,30 @@ fn validate_staging(
         ) {
             continue;
         }
-        let staged = staging_destination(staging_root, operation)?;
-        if path_has_link_component(&staged) {
+        let staged = staging_relative(operation)?;
+        if !staging.is_regular_file(&staged)? {
             return Err(AppError::PathSecurity(format!(
-                "staging path contains a symlink or junction: {}",
-                staged.display()
+                "staging destination is not a regular file: {staged}"
             )));
         }
-        let staged_metadata = fs::symlink_metadata(&staged)?;
-        if is_link_metadata(&staged_metadata) || !staged_metadata.is_file() {
-            return Err(AppError::PathSecurity(format!(
-                "staging destination is not a regular file: {}",
-                staged.display()
-            )));
-        }
-        let actual = sha256_file(&staged)?;
+        let bytes = staging.read_file(&staged)?;
         let expected = prepared
             .get(operation.id.as_str())
             .map(|file| file.expected_sha256.as_str())
             .unwrap_or("");
-        if actual != expected {
+        if sha256_bytes(&bytes) != expected {
             return Err(AppError::Transaction(format!(
                 "staging hash mismatch for {}",
                 operation.destination
             )));
         }
-        if observed_executable(&staged)?.is_some_and(|value| value != operation.executable) {
+        #[cfg(unix)]
+        if staging.observed_executable(&staged)? != Some(operation.executable) {
             return Err(AppError::Transaction(format!(
                 "staging executable metadata changed for {}",
                 operation.destination
             )));
         }
-        let bytes = read_file_path(&staged)?;
         validate_managed_bytes(project_root, operation, &bytes)?;
     }
     Ok(())
@@ -3239,7 +3494,7 @@ fn ensure_project_root_for_apply(
     project_root: &Path,
     plan: &InstallationPlan,
     journal: &mut TransactionJournal,
-    journal_path: &Path,
+    store: &TransactionStore,
 ) -> Result<(), AppError> {
     match plan.transaction.project_root_mode {
         ProjectRootMode::Existing => {
@@ -3275,7 +3530,7 @@ fn ensure_project_root_for_apply(
             journal.project_root_lifecycle.checkpoint = "applying".into();
             journal.project_root_lifecycle.observed_exists = false;
             journal.last_checkpoint = "apply-project-root-intent".into();
-            persist_journal(journal_path, journal)?;
+            persist_journal(store, journal)?;
             maybe_abort_for_test("before_project_root_create");
             let parent_path = journal
                 .project_root_lifecycle
@@ -3302,7 +3557,7 @@ fn ensure_project_root_for_apply(
             journal.project_root_lifecycle.created_by_transaction = true;
             journal.project_root_lifecycle.observed_exists = true;
             journal.last_checkpoint = "apply-project-root-created".into();
-            persist_journal(journal_path, journal)
+            persist_journal(store, journal)
         }
     }
 }
@@ -3312,17 +3567,17 @@ fn apply_profile_directories(
     project_root: &Path,
     plan: &InstallationPlan,
     journal: &mut TransactionJournal,
-    journal_path: &Path,
+    store: &TransactionStore,
 ) -> Result<(), AppError> {
     let root = open_bound_project_root(project_root, &journal.project_root_lifecycle)?;
-    apply_profile_directories_rooted(&root, plan, journal, journal_path)
+    apply_profile_directories_rooted(&root, plan, journal, store)
 }
 
 fn apply_profile_directories_rooted(
     root: &RootedDir,
     plan: &InstallationPlan,
     journal: &mut TransactionJournal,
-    journal_path: &Path,
+    store: &TransactionStore,
 ) -> Result<(), AppError> {
     let mut missing = std::collections::BTreeSet::new();
     for directory in &plan.transaction.directories {
@@ -3355,27 +3610,27 @@ fn apply_profile_directories_rooted(
     }
     journal.created_directories = missing.into_iter().collect();
     journal.last_checkpoint = "apply-profile-directories-intent".into();
-    persist_journal(journal_path, journal)?;
+    persist_journal(store, journal)?;
     for directory in &plan.transaction.directories {
         root.ensure_dir(directory)?;
         root.open_dir(directory)?;
     }
     journal.last_checkpoint = "apply-profile-directories-created".into();
-    persist_journal(journal_path, journal)
+    persist_journal(store, journal)
 }
 
 fn apply_operations(
     project_root: &Path,
     plan: &InstallationPlan,
-    staging_root: &Path,
+    staging_directory: &RootedDir,
     project_directory: &RootedDir,
     journal: &mut TransactionJournal,
-    journal_path: &Path,
+    store: &TransactionStore,
     options: &TransactionOptions,
 ) -> Result<(), AppError> {
     mark_project_apply_started(journal);
-    persist_journal(journal_path, journal)?;
-    let staging_directory = RootedDir::open(staging_root)?;
+    persist_journal(store, journal)?;
+    staging_directory.verify_bound_to_path()?;
     for (index, operation) in plan.operations.iter().enumerate() {
         if index % OPERATION_INTENT_BATCH == 0 {
             let batch_end = (index + OPERATION_INTENT_BATCH).min(plan.operations.len());
@@ -3395,7 +3650,7 @@ fn apply_operations(
                 }
             }
             journal.last_checkpoint = format!("apply-batch-intent-{index:05}-{batch_end:05}");
-            persist_operation_checkpoint_batch(journal_path, journal, &intent_indices)?;
+            persist_operation_checkpoint_batch(store, journal, &intent_indices)?;
         }
         if options.fail_before_operation == Some(index) {
             return Err(AppError::Transaction(format!(
@@ -3415,7 +3670,7 @@ fn apply_operations(
                 record.status = "verified".into();
             }
             journal.last_checkpoint = format!("apply-noop-{}", operation.id);
-            append_operation_checkpoint(journal_path, journal, index)?;
+            append_operation_checkpoint(store, journal, index)?;
             if options.fail_after_operation == Some(index) {
                 return Err(AppError::Transaction(format!(
                     "fault injected after no-op operation {}",
@@ -3423,7 +3678,7 @@ fn apply_operations(
                 )));
             }
             if (index + 1) % OPERATION_CHECKPOINT_BATCH == 0 || index + 1 == plan.operations.len() {
-                compact_operation_checkpoints(journal_path, journal)?;
+                compact_operation_checkpoints(store, journal)?;
             }
             continue;
         }
@@ -3496,17 +3751,11 @@ fn apply_operations(
                 operation.destination
             )));
         }
-        let staged = staging_destination(staging_root, operation)?;
-        let staged_relative = if operation.external {
-            format!("external/{}", operation.id)
-        } else {
-            operation.destination.clone()
-        };
+        let staged_relative = staging_relative(operation)?;
         let staged_hash = if operation.action != OperationAction::DeleteManaged {
             if !staging_directory.is_regular_file(&staged_relative)? {
                 return Err(AppError::PathSecurity(format!(
-                    "staging destination is not a regular file: {}",
-                    staged.display()
+                    "staging destination is not a regular file: {staged_relative}"
                 )));
             }
             let staged_hash = staging_directory.hash_file(&staged_relative)?;
@@ -3564,7 +3813,7 @@ fn apply_operations(
             LiveChange::Delete
         } else {
             LiveChange::Copy {
-                source: &staging_directory,
+                source: staging_directory,
                 source_relative: &staged_relative,
             }
         };
@@ -3578,7 +3827,7 @@ fn apply_operations(
                 &quarantine_leaf,
                 Some(QuarantineJournal {
                     journal: &mut *journal,
-                    journal_path,
+                    store,
                     index,
                 }),
                 "apply",
@@ -3665,7 +3914,7 @@ fn apply_operations(
             // The displaced bytes are released only after this result is
             // durable, so every interruption leaves either the quarantine or
             // a synced result checkpoint that explains its absence.
-            persist_operation_checkpoint_batch(journal_path, journal, &[index])?;
+            persist_operation_checkpoint_batch(store, journal, &[index])?;
             quarantine_fault(QuarantineBoundary::BeforeRelease)?;
             let verified = current_hash.as_deref().ok_or_else(|| {
                 AppError::Transaction("held quarantine has no verified precondition".into())
@@ -3675,7 +3924,7 @@ fn apply_operations(
             })?;
             release_quarantine(target.dir(), quarantine, verified)?;
         } else {
-            append_operation_checkpoint(journal_path, journal, index)?;
+            append_operation_checkpoint(store, journal, index)?;
         }
         if options.fail_after_operation == Some(index) {
             return Err(AppError::Transaction(format!(
@@ -3684,7 +3933,7 @@ fn apply_operations(
             )));
         }
         if (index + 1) % OPERATION_CHECKPOINT_BATCH == 0 || index + 1 == plan.operations.len() {
-            compact_operation_checkpoints(journal_path, journal)?;
+            compact_operation_checkpoints(store, journal)?;
         }
     }
     Ok(())
@@ -4005,7 +4254,7 @@ fn target_hash_and_executable(
 /// Durable journal binding for a quarantine record.
 struct QuarantineJournal<'a> {
     journal: &'a mut TransactionJournal,
-    journal_path: &'a Path,
+    store: &'a TransactionStore,
     index: usize,
 }
 
@@ -4022,7 +4271,7 @@ impl QuarantineJournal<'_> {
         operation.quarantine_leaf = Some(leaf.to_string());
         operation.quarantine_sha256 = observed.map(str::to_string);
         self.journal.last_checkpoint = format!("{checkpoint}-{}", operation.id);
-        persist_operation_checkpoint_batch(self.journal_path, self.journal, &[self.index])
+        persist_operation_checkpoint_batch(self.store, self.journal, &[self.index])
     }
 }
 
@@ -4660,40 +4909,6 @@ fn remove_directory_path_if_empty(path: &Path) -> Result<bool, AppError> {
     RootedDir::open(parent)?.remove_dir_if_empty(name)
 }
 
-#[cfg(unix)]
-fn observed_executable(path: &Path) -> Result<Option<bool>, AppError> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| AppError::PathSecurity("executable file has no parent".into()))?;
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::PathSecurity("executable file name is invalid".into()))?;
-    RootedDir::open_read(parent)?.observed_executable(name)
-}
-
-#[cfg(not(unix))]
-fn observed_executable(_path: &Path) -> Result<Option<bool>, AppError> {
-    Ok(None)
-}
-
-#[cfg(unix)]
-fn apply_executable_state(path: &Path, executable: bool) -> Result<(), AppError> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| AppError::PathSecurity("executable file has no parent".into()))?;
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::PathSecurity("executable file name is invalid".into()))?;
-    RootedDir::open(parent)?.set_executable(name, executable)
-}
-
-#[cfg(not(unix))]
-fn apply_executable_state(_path: &Path, _executable: bool) -> Result<(), AppError> {
-    Ok(())
-}
-
 /// Verify every applied destination by reading it through the retained
 /// project capability or the bound external parent. The bytes that are
 /// validated are the bytes that are hashed, and neither read re-resolves the
@@ -4703,7 +4918,7 @@ fn post_install_checks(
     project_directory: &RootedDir,
     plan: &InstallationPlan,
     journal: &mut TransactionJournal,
-    journal_path: &Path,
+    store: &TransactionStore,
 ) -> Result<(), AppError> {
     for operation in &plan.operations {
         if matches!(
@@ -4762,7 +4977,7 @@ fn post_install_checks(
         }
     }
     journal.last_checkpoint = "post-install-verified".into();
-    persist_journal(journal_path, journal)
+    persist_journal(store, journal)
 }
 
 /// Re-check every destination immediately before the success lock is built.
@@ -5770,7 +5985,7 @@ fn rollback_destination_is_restored(
     operation: &JournalOperation,
     project_directory: Option<&RootedDir>,
     journal: &TransactionJournal,
-    journal_path: &Path,
+    backups: &JournalBackups,
 ) -> Result<bool, AppError> {
     let current = rollback_live_hash(operation, project_directory)?;
     match operation.rollback {
@@ -5807,28 +6022,8 @@ fn rollback_destination_is_restored(
                     operation.destination
                 )));
             };
-            let expected_backup = expected_operation_backup(journal, journal_path, &operation.id)?;
-            let supplied_backup = PathBuf::from(backup_path);
-            let matches = if cfg!(target_os = "windows") {
-                supplied_backup
-                    .to_string_lossy()
-                    .eq_ignore_ascii_case(&expected_backup.to_string_lossy())
-            } else {
-                supplied_backup == expected_backup
-            };
-            if !matches {
-                return Err(AppError::PathSecurity(
-                    "journal backup path is outside the transaction backup root".into(),
-                ));
-            }
-            let backup_parent = expected_backup.parent().ok_or_else(|| {
-                AppError::PathSecurity("rollback backup has no parent directory".into())
-            })?;
-            let backup_leaf = expected_backup
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| AppError::PathSecurity("rollback backup name is invalid".into()))?;
-            let backup_directory = RootedDir::open_read(backup_parent)?;
+            let backup_leaf = format!("{}.bak", operation.id);
+            let (backup_directory, backup_leaf) = backups.resolve(backup_path, &backup_leaf)?;
             if !backup_directory.is_regular_file(backup_leaf)? {
                 return Err(AppError::PathSecurity(
                     "rollback backup is not a regular file".into(),
@@ -6030,6 +6225,8 @@ fn new_rollback_journal(
         previous_lock_backup_path: None,
         previous_lock_sha256: None,
         checkpoint_sequence: None,
+        // Bound by the caller once the transaction's storage is open.
+        app_data_identity: None,
         error: None,
     }
 }
@@ -6178,31 +6375,20 @@ fn capture_rollback_lock_backup(
     Ok(())
 }
 
+/// Create or reopen the child rollback journal and capture its inverse
+/// backups. The child's transaction and backup directories are created
+/// through the parent's retained application-data root and bound into the
+/// child journal; a retry requires the same directories.
 fn prepare_rollback_transaction(
     project_root: &Path,
     parent: &TransactionJournal,
-    parent_journal_path: &Path,
+    app: &AppDataRoot,
     project_directory: Option<&RootedDir>,
-) -> Result<(TransactionJournal, PathBuf), AppError> {
-    let app_root = journal_app_root(parent_journal_path)?;
-    if path_has_link_component(&app_root) {
-        return Err(AppError::PathSecurity(
-            "application data root contains a symlink or junction".into(),
-        ));
-    }
+) -> Result<(TransactionJournal, TransactionStore), AppError> {
     let transaction_id = parent.rollback_transaction_id.unwrap_or_else(Uuid::new_v4);
-    let roots = transaction_root(&app_root, transaction_id);
-    if path_has_link_component(&roots.transaction) || path_has_link_component(&roots.backup) {
-        return Err(AppError::PathSecurity(
-            "rollback transaction storage contains a symlink or junction".into(),
-        ));
-    }
-    RootedDir::open_or_create(&roots.transaction)?;
-    RootedDir::open_or_create(&roots.backup)?;
-    let backup_directory = RootedDir::open(&roots.backup)?;
-    let journal_path = roots.transaction.join("journal.json");
-    let mut rollback = if journal_path.is_file() {
-        let journal = read_journal(&journal_path)?;
+    let store = app.transaction_store(transaction_id, true)?;
+    let mut rollback = if store.directory.exists(JOURNAL_FILE)? {
+        let journal = app.read_bound_journal(&store)?;
         if journal.transaction_id != transaction_id
             || journal.transaction_kind != "rollback"
             || journal.parent_transaction_id != Some(parent.transaction_id)
@@ -6213,20 +6399,24 @@ fn prepare_rollback_transaction(
         }
         journal
     } else {
-        let journal = new_rollback_journal(parent, transaction_id, project_root);
-        atomic_write_json(&journal_path, &journal)?;
+        let mut journal = new_rollback_journal(parent, transaction_id, project_root);
+        journal.app_data_identity = Some(app.bind_new_storage(&store)?);
+        store.write_json(JOURNAL_FILE, &journal)?;
         journal
     };
+    let backup_root = app.area_path(BACKUPS_AREA, transaction_id);
+    let backup_directory = open_journal_area(app, &mut rollback, BACKUPS_AREA, transaction_id)?;
+    persist_journal(&store, &mut rollback)?;
 
     validate_rollback_lock_precondition(project_root, parent, project_directory)?;
     capture_rollback_lock_backup(
         project_directory,
-        &roots.backup,
+        &backup_root,
         &backup_directory,
         &mut rollback,
         parent,
     )?;
-    compact_operation_checkpoints(&journal_path, &mut rollback)?;
+    compact_operation_checkpoints(&store, &mut rollback)?;
 
     let mut checkpointed = 0usize;
     for index in 0..rollback.operations.len() {
@@ -6242,8 +6432,8 @@ fn prepare_rollback_transaction(
         }
         if operation.status == "rollback_applying" {
             if let Some(backup_path) = operation.backup_path.as_ref() {
-                let expected_backup =
-                    expected_operation_backup(&rollback, &journal_path, &operation.id)?;
+                let backup_leaf = format!("{}.bak", operation.id);
+                let expected_backup = backup_root.join(&backup_leaf);
                 let supplied_backup = PathBuf::from(backup_path);
                 let matches = if cfg!(target_os = "windows") {
                     supplied_backup
@@ -6257,13 +6447,15 @@ fn prepare_rollback_transaction(
                         "rollback backup path is outside the rollback transaction root".into(),
                     ));
                 }
-                let metadata = fs::symlink_metadata(&expected_backup).map_err(|error| {
-                    AppError::Transaction(format!(
-                        "rollback retry backup is unavailable for {}: {error}",
+                // The retry backup is checked through the retained, bound
+                // rollback backup directory, never by reopening its path.
+                if !backup_directory.exists(&backup_leaf)? {
+                    return Err(AppError::Transaction(format!(
+                        "rollback retry backup is unavailable for {}",
                         operation.destination
-                    ))
-                })?;
-                if is_link_metadata(&metadata) || !metadata.is_file() {
+                    )));
+                }
+                if !backup_directory.is_regular_file(&backup_leaf)? {
                     return Err(AppError::PathSecurity(
                         "rollback retry backup is not a regular file".into(),
                     ));
@@ -6274,7 +6466,7 @@ fn prepare_rollback_transaction(
                         operation.destination
                     ))
                 })?;
-                if sha256_file(&expected_backup)? != expected_hash {
+                if backup_directory.hash_file(&backup_leaf)? != expected_hash {
                     return Err(AppError::Transaction(format!(
                         "rollback retry backup checksum mismatch: {}",
                         operation.destination
@@ -6290,7 +6482,7 @@ fn prepare_rollback_transaction(
         }
         rollback_operation_destination(project_root, &operation)?;
         let backup_leaf = format!("{}.bak", operation.id);
-        let backup = roots.backup.join(&backup_leaf);
+        let backup = backup_root.join(&backup_leaf);
         if path_has_link_component(&backup) {
             return Err(AppError::PathSecurity(
                 "rollback backup path contains a symlink or junction".into(),
@@ -6384,10 +6576,10 @@ fn prepare_rollback_transaction(
             rollback.operations[index].backup_sha256 = None;
         }
         rollback.last_checkpoint = format!("rollback-backup-{}", operation.id);
-        append_operation_checkpoint(&journal_path, &mut rollback, index)?;
+        append_operation_checkpoint(&store, &mut rollback, index)?;
         checkpointed += 1;
         if checkpointed % OPERATION_CHECKPOINT_BATCH == 0 {
-            compact_operation_checkpoints(&journal_path, &mut rollback)?;
+            compact_operation_checkpoints(&store, &mut rollback)?;
         }
     }
     rollback.state = "applying".into();
@@ -6396,20 +6588,20 @@ fn prepare_rollback_transaction(
         stage.status = "complete".into();
         stage.completed_at = Some(Utc::now().to_rfc3339());
     }
-    compact_operation_checkpoints(&journal_path, &mut rollback)?;
-    Ok((rollback, journal_path))
+    compact_operation_checkpoints(&store, &mut rollback)?;
+    Ok((rollback, store))
 }
 
 fn persist_rollback_checkpoint(
     rollback: &mut TransactionJournal,
-    rollback_path: &Path,
+    rollback_store: &TransactionStore,
     parent_operation_id: &str,
     status: &str,
     checkpoint: &str,
 ) -> Result<(), AppError> {
     write_rollback_checkpoint(
         rollback,
-        rollback_path,
+        rollback_store,
         parent_operation_id,
         status,
         checkpoint,
@@ -6420,7 +6612,7 @@ fn persist_rollback_checkpoint(
 /// Record the child rollback status, synced when `durable` is set.
 fn write_rollback_checkpoint(
     rollback: &mut TransactionJournal,
-    rollback_path: &Path,
+    rollback_store: &TransactionStore,
     parent_operation_id: &str,
     status: &str,
     checkpoint: &str,
@@ -6440,9 +6632,9 @@ fn write_rollback_checkpoint(
     }
     rollback.last_checkpoint = checkpoint.into();
     if durable {
-        persist_operation_checkpoint_batch(rollback_path, rollback, &[operation_index])
+        persist_operation_checkpoint_batch(rollback_store, rollback, &[operation_index])
     } else {
-        append_operation_checkpoint(rollback_path, rollback, operation_index)
+        append_operation_checkpoint(rollback_store, rollback, operation_index)
     }
 }
 
@@ -6486,7 +6678,7 @@ fn settle_rollback_step_quarantine(
 /// predecessor, such as local bytes moved back from a forward quarantine.
 fn persist_rollback_result(
     rollback: &mut TransactionJournal,
-    rollback_path: &Path,
+    rollback_store: &TransactionStore,
     index: usize,
     observed: Option<String>,
     checkpoint: &str,
@@ -6504,15 +6696,15 @@ fn persist_rollback_result(
     operation.after_exists = Some(observed.is_some());
     operation.after_sha256 = observed;
     rollback.last_checkpoint = checkpoint.into();
-    persist_operation_checkpoint_batch(rollback_path, rollback, &[index])
+    persist_operation_checkpoint_batch(rollback_store, rollback, &[index])
 }
 
 fn ensure_project_root_for_inverse_rollback(
     project_root: &Path,
     journal: &mut TransactionJournal,
-    journal_path: &Path,
+    store: &TransactionStore,
     rollback_journal: &mut TransactionJournal,
-    rollback_path: &Path,
+    rollback_store: &TransactionStore,
 ) -> Result<(), AppError> {
     if journal.transaction_kind != "rollback"
         || journal.project_root_lifecycle.mode != ProjectRootMode::CreateLeaf
@@ -6554,8 +6746,8 @@ fn ensure_project_root_for_inverse_rollback(
                 journal.last_checkpoint = "inverse-rollback-project-root-intent".into();
                 rollback_journal.project_root_lifecycle = journal.project_root_lifecycle.clone();
                 rollback_journal.last_checkpoint = "inverse-rollback-project-root-intent".into();
-                persist_journal(journal_path, journal)?;
-                persist_journal(rollback_path, rollback_journal)?;
+                persist_journal(store, journal)?;
+                persist_journal(rollback_store, rollback_journal)?;
                 maybe_abort_for_test("before_inverse_project_root_create");
                 let parent_path = journal
                     .project_root_lifecycle
@@ -6591,8 +6783,8 @@ fn ensure_project_root_for_inverse_rollback(
             journal.last_checkpoint = "inverse-rollback-project-root-created".into();
             rollback_journal.project_root_lifecycle = journal.project_root_lifecycle.clone();
             rollback_journal.last_checkpoint = "inverse-rollback-project-root-created".into();
-            persist_journal(journal_path, journal)?;
-            persist_journal(rollback_path, rollback_journal)
+            persist_journal(store, journal)?;
+            persist_journal(rollback_store, rollback_journal)
         }
         "created" | "retained_user_content" => {
             validate_project_root(project_root)?;
@@ -6624,6 +6816,15 @@ pub fn rollback_transaction(
     journal_path: &Path,
 ) -> Result<(), AppError> {
     let project_root = validate_journal_project_root(project_root, journal, journal_path)?;
+    // The journal's storage is reopened through the retained application
+    // data root and must still be the storage it recorded; the caller read
+    // the journal by path, so a copy in a swapped-in directory is refused
+    // here, before the first write.
+    let app = AppDataRoot::for_journal(journal_path, journal)?;
+    let transaction_store = app.transaction_store(journal.transaction_id, false)?;
+    verify_app_data_binding(journal, Some(&app.directory), &transaction_store.directory)?;
+    let backups = JournalBackups::open(&app, journal)?;
+    let store = &transaction_store;
     let mut project_directory = match journal.project_root_lifecycle.mode {
         ProjectRootMode::Existing => Some(open_bound_project_root(
             &project_root,
@@ -6656,16 +6857,12 @@ pub fn rollback_transaction(
         project_apply_started,
         recommended_action: "rollback".into(),
     };
-    compact_operation_checkpoints(journal_path, journal)?;
+    compact_operation_checkpoints(store, journal)?;
     if let Some(project) = project_directory.as_ref() {
         settle_journal_lock_quarantines(project, journal)?;
     }
-    let (mut rollback_journal, rollback_path) = prepare_rollback_transaction(
-        &project_root,
-        journal,
-        journal_path,
-        project_directory.as_ref(),
-    )?;
+    let (mut rollback_journal, rollback_store) =
+        prepare_rollback_transaction(&project_root, journal, &app, project_directory.as_ref())?;
     maybe_abort_for_test(if journal.transaction_kind == "rollback" {
         "inverse_rollback_after_backup"
     } else {
@@ -6674,9 +6871,9 @@ pub fn rollback_transaction(
     ensure_project_root_for_inverse_rollback(
         &project_root,
         journal,
-        journal_path,
+        store,
         &mut rollback_journal,
-        &rollback_path,
+        &rollback_store,
     )?;
     if project_directory.is_none()
         && journal.project_root_lifecycle.root_identity.is_some()
@@ -6700,9 +6897,9 @@ pub fn rollback_transaction(
                 project.verify_bound_to_path()?;
             }
             journal.git_initialized = false;
-            persist_journal(journal_path, journal)?;
+            persist_journal(store, journal)?;
             rollback_journal.last_checkpoint = "rollback-git-cleanup".into();
-            persist_journal(&rollback_path, &mut rollback_journal)?;
+            persist_journal(&rollback_store, &mut rollback_journal)?;
         } else if let (Some(name), Some(url)) = (
             journal.git_remote_added_name.as_deref(),
             journal.git_remote_added_url.as_deref(),
@@ -6716,9 +6913,9 @@ pub fn rollback_transaction(
             }
             journal.git_remote_added_name = None;
             journal.git_remote_added_url = None;
-            persist_journal(journal_path, journal)?;
+            persist_journal(store, journal)?;
             rollback_journal.last_checkpoint = "rollback-git-cleanup".into();
-            persist_journal(&rollback_path, &mut rollback_journal)?;
+            persist_journal(&rollback_store, &mut rollback_journal)?;
         }
         let operation_count = journal.operations.len();
         for index in (0..operation_count).rev() {
@@ -6740,7 +6937,7 @@ pub fn rollback_transaction(
                 }
                 journal.last_checkpoint =
                     format!("rollback-batch-intent-{batch_start:05}-{:05}", index + 1);
-                persist_operation_checkpoint_batch(journal_path, journal, &intent_indices)?;
+                persist_operation_checkpoint_batch(store, journal, &intent_indices)?;
             }
             let operation = journal.operations[index].clone();
             if journal.transaction_kind != "rollback" && operation.status == "rolled_back" {
@@ -6763,7 +6960,7 @@ pub fn rollback_transaction(
                             &operation,
                             project_directory.as_ref(),
                             journal,
-                            journal_path,
+                            &backups,
                         )?
                     {
                         return Err(AppError::Transaction(format!(
@@ -6774,14 +6971,14 @@ pub fn rollback_transaction(
                 }
                 persist_rollback_checkpoint(
                     &mut rollback_journal,
-                    &rollback_path,
+                    &rollback_store,
                     &operation.id,
                     "rolled_back",
                     &format!("rollback-{}", operation.id),
                 )?;
                 if batch_complete {
-                    compact_operation_checkpoints(journal_path, journal)?;
-                    compact_operation_checkpoints(&rollback_path, &mut rollback_journal)?;
+                    compact_operation_checkpoints(store, journal)?;
+                    compact_operation_checkpoints(&rollback_store, &mut rollback_journal)?;
                 }
                 continue;
             }
@@ -6791,8 +6988,8 @@ pub fn rollback_transaction(
             ) || (journal.transaction_kind == "rollback" && operation.status == "rolled_back"))
             {
                 if batch_complete {
-                    compact_operation_checkpoints(journal_path, journal)?;
-                    compact_operation_checkpoints(&rollback_path, &mut rollback_journal)?;
+                    compact_operation_checkpoints(store, journal)?;
+                    compact_operation_checkpoints(&rollback_store, &mut rollback_journal)?;
                 }
                 continue;
             }
@@ -6809,17 +7006,17 @@ pub fn rollback_transaction(
             {
                 journal.operations[index].status = "rolled_back".into();
                 journal.last_checkpoint = format!("rollback-noop-{}", operation.id);
-                append_operation_checkpoint(journal_path, journal, index)?;
+                append_operation_checkpoint(store, journal, index)?;
                 persist_rollback_checkpoint(
                     &mut rollback_journal,
-                    &rollback_path,
+                    &rollback_store,
                     &operation.id,
                     "rolled_back",
                     &format!("rollback-noop-{}", operation.id),
                 )?;
                 if batch_complete {
-                    compact_operation_checkpoints(journal_path, journal)?;
-                    compact_operation_checkpoints(&rollback_path, &mut rollback_journal)?;
+                    compact_operation_checkpoints(store, journal)?;
+                    compact_operation_checkpoints(&rollback_store, &mut rollback_journal)?;
                 }
                 continue;
             }
@@ -6846,7 +7043,7 @@ pub fn rollback_transaction(
                     &operation,
                     project_directory.as_ref(),
                     journal,
-                    journal_path,
+                    &backups,
                 )?
             {
                 // A forward quarantine may survive beside bytes that already
@@ -6859,17 +7056,17 @@ pub fn rollback_transaction(
                 )?;
                 journal.operations[index].status = "rolled_back".into();
                 journal.last_checkpoint = format!("rollback-{}", operation.id);
-                append_operation_checkpoint(journal_path, journal, index)?;
+                append_operation_checkpoint(store, journal, index)?;
                 persist_rollback_checkpoint(
                     &mut rollback_journal,
-                    &rollback_path,
+                    &rollback_store,
                     &operation.id,
                     "rolled_back",
                     &format!("rollback-{}", operation.id),
                 )?;
                 if batch_complete {
-                    compact_operation_checkpoints(journal_path, journal)?;
-                    compact_operation_checkpoints(&rollback_path, &mut rollback_journal)?;
+                    compact_operation_checkpoints(store, journal)?;
+                    compact_operation_checkpoints(&rollback_store, &mut rollback_journal)?;
                 }
                 continue;
             }
@@ -6919,7 +7116,7 @@ pub fn rollback_transaction(
                         journal.operations[index].quarantine_sha256 = Some(held.clone());
                         journal.last_checkpoint =
                             format!("rollback-quarantine-restore-{}", operation.id);
-                        persist_operation_checkpoint_batch(journal_path, journal, &[index])?;
+                        persist_operation_checkpoint_batch(store, journal, &[index])?;
                         let held_child = mutate_live_leaf(
                             target.dir(),
                             &target.relative,
@@ -6928,7 +7125,7 @@ pub fn rollback_transaction(
                             &quarantine_leaf_name(rollback_journal.transaction_id, &child_id),
                             Some(QuarantineJournal {
                                 journal: &mut rollback_journal,
-                                journal_path: &rollback_path,
+                                store: &rollback_store,
                                 index: child_index,
                             }),
                             "rollback",
@@ -6944,10 +7141,10 @@ pub fn rollback_transaction(
                         }
                         journal.operations[index].status = "rolled_back".into();
                         journal.last_checkpoint = format!("rollback-{}", operation.id);
-                        persist_operation_checkpoint_batch(journal_path, journal, &[index])?;
+                        persist_operation_checkpoint_batch(store, journal, &[index])?;
                         persist_rollback_result(
                             &mut rollback_journal,
-                            &rollback_path,
+                            &rollback_store,
                             child_index,
                             Some(held),
                             &format!("rollback-{}", operation.id),
@@ -6959,8 +7156,8 @@ pub fn rollback_transaction(
                             release_quarantine(target.dir(), &quarantine, displaced)?;
                         }
                         if batch_complete {
-                            compact_operation_checkpoints(journal_path, journal)?;
-                            compact_operation_checkpoints(&rollback_path, &mut rollback_journal)?;
+                            compact_operation_checkpoints(store, journal)?;
+                            compact_operation_checkpoints(&rollback_store, &mut rollback_journal)?;
                         }
                         continue;
                     }
@@ -7052,31 +7249,10 @@ pub fn rollback_transaction(
                 .or_else(|| operation.before_sha256.clone());
             let mut held_rollback_quarantine: Option<(String, String)> = None;
             if let Some(backup) = &operation.backup_path {
-                let expected_backup =
-                    expected_operation_backup(journal, journal_path, &operation.id)?;
-                let supplied_backup = PathBuf::from(backup);
-                let matches = if cfg!(target_os = "windows") {
-                    supplied_backup
-                        .to_string_lossy()
-                        .eq_ignore_ascii_case(&expected_backup.to_string_lossy())
-                } else {
-                    supplied_backup == expected_backup
-                };
-                if !matches {
-                    return Err(AppError::PathSecurity(
-                        "journal backup path is outside the transaction backup root".into(),
-                    ));
-                }
-                let backup_parent = expected_backup.parent().ok_or_else(|| {
-                    AppError::PathSecurity("rollback backup has no parent directory".into())
-                })?;
-                let backup_leaf = expected_backup
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .ok_or_else(|| {
-                        AppError::PathSecurity("rollback backup name is invalid".into())
-                    })?;
-                let backup_directory = RootedDir::open_read(backup_parent)?;
+                // The backup bytes come from the journal's retained, bound
+                // backup directory, not from a reopened path.
+                let backup_leaf = format!("{}.bak", operation.id);
+                let (backup_directory, backup_leaf) = backups.resolve(backup, &backup_leaf)?;
                 if backup_directory.is_regular_file(backup_leaf)? {
                     let actual_backup = backup_directory.hash_file(backup_leaf)?;
                     if operation
@@ -7104,13 +7280,13 @@ pub fn rollback_transaction(
                         &target.relative,
                         current.as_deref(),
                         LiveChange::Copy {
-                            source: &backup_directory,
+                            source: backup_directory,
                             source_relative: backup_leaf,
                         },
                         &quarantine_leaf_name(rollback_journal.transaction_id, &child_id),
                         Some(QuarantineJournal {
                             journal: &mut rollback_journal,
-                            journal_path: &rollback_path,
+                            store: &rollback_store,
                             index: child_index,
                         }),
                         "rollback",
@@ -7139,7 +7315,7 @@ pub fn rollback_transaction(
                     &quarantine_leaf_name(rollback_journal.transaction_id, &child_id),
                     Some(QuarantineJournal {
                         journal: &mut rollback_journal,
-                        journal_path: &rollback_path,
+                        store: &rollback_store,
                         index: child_index,
                     }),
                     "rollback",
@@ -7177,13 +7353,13 @@ pub fn rollback_transaction(
             journal.last_checkpoint = format!("rollback-{}", operation.id);
             let durable = held_rollback_quarantine.is_some();
             if durable {
-                persist_operation_checkpoint_batch(journal_path, journal, &[index])?;
+                persist_operation_checkpoint_batch(store, journal, &[index])?;
             } else {
-                append_operation_checkpoint(journal_path, journal, index)?;
+                append_operation_checkpoint(store, journal, index)?;
             }
             write_rollback_checkpoint(
                 &mut rollback_journal,
-                &rollback_path,
+                &rollback_store,
                 &operation.id,
                 "rolled_back",
                 &format!("rollback-{}", operation.id),
@@ -7199,8 +7375,8 @@ pub fn rollback_transaction(
                 release_quarantine(target.dir(), &quarantine, &displaced)?;
             }
             if batch_complete {
-                compact_operation_checkpoints(journal_path, journal)?;
-                compact_operation_checkpoints(&rollback_path, &mut rollback_journal)?;
+                compact_operation_checkpoints(store, journal)?;
+                compact_operation_checkpoints(&rollback_store, &mut rollback_journal)?;
             }
         }
         // Every actionable operation is rolled back. A quarantine of this
@@ -7212,14 +7388,9 @@ pub fn rollback_transaction(
             Some(rollback_journal.transaction_id),
             QuarantineSweep::Rollback,
         )?;
-        restore_previous_lock(
-            project_directory.as_ref(),
-            &project_root,
-            journal,
-            journal_path,
-        )?;
+        restore_previous_lock(project_directory.as_ref(), &project_root, journal, &backups)?;
         if let Some(project) = project_directory.as_ref() {
-            cleanup_created_profile_directories_rooted(project, journal, journal_path)?;
+            cleanup_created_profile_directories_rooted(project, journal, store)?;
         }
         if journal.transaction_kind != "rollback" {
             if journal.project_root_lifecycle.mode == ProjectRootMode::CreateLeaf {
@@ -7228,13 +7399,13 @@ pub fn rollback_transaction(
             cleanup_created_project_root(
                 &project_root,
                 journal,
-                journal_path,
+                store,
                 &mut rollback_journal,
-                &rollback_path,
+                &rollback_store,
             )?;
         }
         rollback_journal.last_checkpoint = "rollback-lock-restored".into();
-        persist_journal(&rollback_path, &mut rollback_journal)?;
+        persist_journal(&rollback_store, &mut rollback_journal)?;
         if let Some(project) = project_directory.as_ref() {
             let lock_relative = ".hoi4-mod-setup/install.lock.json";
             if project.exists(lock_relative)? {
@@ -7253,10 +7424,6 @@ pub fn rollback_transaction(
             rollback_journal.result_lock_exists = Some(false);
             rollback_journal.result_lock_sha256 = None;
         }
-        let child_record_path = rollback_path
-            .parent()
-            .ok_or_else(|| AppError::Transaction("rollback journal has no directory".into()))?
-            .join("rollback-record.json");
         let completed_at = Utc::now().to_rfc3339();
         for (index, stage) in rollback_journal.stages.iter_mut().enumerate() {
             stage.status = if matches!(index, 5 | 8 | 9 | 11) {
@@ -7280,20 +7447,16 @@ pub fn rollback_transaction(
             recommended_action: "rollback".into(),
         };
         child_record.last_checkpoint = "rollback-complete".into();
-        atomic_write_json(&child_record_path, &child_record)?;
-        let child_record_sha256 = sha256_file(&child_record_path)?;
+        rollback_store.write_json(ROLLBACK_RECORD_FILE, &child_record)?;
+        let child_record_sha256 = rollback_store.directory.hash_file(ROLLBACK_RECORD_FILE)?;
         rollback_journal.rollback_record_sha256 = Some(child_record_sha256.clone());
         rollback_journal.last_checkpoint = "rollback-record-written".into();
-        persist_journal(&rollback_path, &mut rollback_journal)?;
+        persist_journal(&rollback_store, &mut rollback_journal)?;
         maybe_abort_for_test("after_rollback_child_record");
         rollback_journal = child_record;
         rollback_journal.rollback_record_sha256 = Some(child_record_sha256);
-        persist_journal(&rollback_path, &mut rollback_journal)?;
+        persist_journal(&rollback_store, &mut rollback_journal)?;
         maybe_abort_for_test("after_rollback_child_complete");
-        let parent_record_path = journal_path
-            .parent()
-            .ok_or_else(|| AppError::Transaction("journal has no transaction directory".into()))?
-            .join("rollback-record.json");
         let mut parent_record = journal.clone();
         parent_record.state = "rolled_back".into();
         parent_record.recovery = RecoveryState {
@@ -7304,15 +7467,15 @@ pub fn rollback_transaction(
             recommended_action: "none".into(),
         };
         parent_record.last_checkpoint = "rollback-complete".into();
-        atomic_write_json(&parent_record_path, &parent_record)?;
-        let parent_record_sha256 = sha256_file(&parent_record_path)?;
+        store.write_json(ROLLBACK_RECORD_FILE, &parent_record)?;
+        let parent_record_sha256 = store.directory.hash_file(ROLLBACK_RECORD_FILE)?;
         journal.rollback_record_sha256 = Some(parent_record_sha256.clone());
         journal.last_checkpoint = "rollback-record-written".into();
-        persist_journal(journal_path, journal)?;
+        persist_journal(store, journal)?;
         maybe_abort_for_test("after_rollback_parent_record");
         *journal = parent_record;
         journal.rollback_record_sha256 = Some(parent_record_sha256);
-        persist_journal(journal_path, journal)?;
+        persist_journal(store, journal)?;
         Ok(())
     })();
     if let Err(error) = &result {
@@ -7323,7 +7486,7 @@ pub fn rollback_transaction(
             stage: rollback_journal.last_checkpoint.clone(),
         });
         rollback_journal.recovery.recommended_action = "inspect".into();
-        let _ = persist_journal(&rollback_path, &mut rollback_journal);
+        let _ = persist_journal(&rollback_store, &mut rollback_journal);
     }
     result
 }
@@ -7332,16 +7495,16 @@ pub fn rollback_transaction(
 fn cleanup_created_profile_directories(
     project_root: &Path,
     journal: &mut TransactionJournal,
-    journal_path: &Path,
+    store: &TransactionStore,
 ) -> Result<(), AppError> {
     let root = open_bound_project_root(project_root, &journal.project_root_lifecycle)?;
-    cleanup_created_profile_directories_rooted(&root, journal, journal_path)
+    cleanup_created_profile_directories_rooted(&root, journal, store)
 }
 
 fn cleanup_created_profile_directories_rooted(
     root: &RootedDir,
     journal: &mut TransactionJournal,
-    journal_path: &Path,
+    store: &TransactionStore,
 ) -> Result<(), AppError> {
     let mut directories = journal.created_directories.clone();
     directories.sort_by_key(|path| std::cmp::Reverse(Path::new(path).components().count()));
@@ -7353,15 +7516,15 @@ fn cleanup_created_profile_directories_rooted(
         }
     }
     journal.last_checkpoint = "rollback-profile-directories-checked".into();
-    persist_journal(journal_path, journal)
+    persist_journal(store, journal)
 }
 
 fn cleanup_created_project_root(
     project_root: &Path,
     journal: &mut TransactionJournal,
-    journal_path: &Path,
+    store: &TransactionStore,
     rollback_journal: &mut TransactionJournal,
-    rollback_path: &Path,
+    rollback_store: &TransactionStore,
 ) -> Result<(), AppError> {
     let lifecycle = &journal.project_root_lifecycle;
     if lifecycle.mode != ProjectRootMode::CreateLeaf
@@ -7377,8 +7540,8 @@ fn cleanup_created_project_root(
         journal.project_root_lifecycle.observed_exists = false;
         journal.project_root_lifecycle.cleanup_result = Some("removed".into());
         rollback_journal.project_root_lifecycle = journal.project_root_lifecycle.clone();
-        persist_journal(journal_path, journal)?;
-        persist_journal(rollback_path, rollback_journal)?;
+        persist_journal(store, journal)?;
+        persist_journal(rollback_store, rollback_journal)?;
         return Ok(());
     }
     if !lifecycle.created_by_transaction {
@@ -7388,8 +7551,8 @@ fn cleanup_created_project_root(
         journal.project_root_lifecycle.observed_exists = true;
         journal.project_root_lifecycle.cleanup_result = Some("retained_user_content".into());
         rollback_journal.project_root_lifecycle = journal.project_root_lifecycle.clone();
-        persist_journal(journal_path, journal)?;
-        persist_journal(rollback_path, rollback_journal)?;
+        persist_journal(store, journal)?;
+        persist_journal(rollback_store, rollback_journal)?;
         return Ok(());
     }
     if lifecycle.checkpoint == "removed" {
@@ -7397,8 +7560,8 @@ fn cleanup_created_project_root(
         journal.project_root_lifecycle.observed_exists = true;
         journal.project_root_lifecycle.cleanup_result = Some("retained_user_content".into());
         rollback_journal.project_root_lifecycle = journal.project_root_lifecycle.clone();
-        persist_journal(journal_path, journal)?;
-        persist_journal(rollback_path, rollback_journal)?;
+        persist_journal(store, journal)?;
+        persist_journal(rollback_store, rollback_journal)?;
         return Ok(());
     }
     let root = validate_project_root(project_root)?;
@@ -7433,7 +7596,7 @@ fn cleanup_created_project_root(
     }
     journal.project_root_lifecycle.checkpoint = "removing".into();
     journal.last_checkpoint = "rollback-project-root-intent".into();
-    persist_journal(journal_path, journal)?;
+    persist_journal(store, journal)?;
     maybe_abort_for_test("before_project_root_remove");
     if remove_directory_path_if_empty(&root)? {
         maybe_abort_for_test("after_project_root_remove");
@@ -7446,15 +7609,15 @@ fn cleanup_created_project_root(
         journal.project_root_lifecycle.cleanup_result = Some("retained_user_content".into());
     }
     rollback_journal.project_root_lifecycle = journal.project_root_lifecycle.clone();
-    persist_journal(journal_path, journal)?;
-    persist_journal(rollback_path, rollback_journal)
+    persist_journal(store, journal)?;
+    persist_journal(rollback_store, rollback_journal)
 }
 
 fn restore_previous_lock(
     project_directory: Option<&RootedDir>,
     project_root: &Path,
     journal: &TransactionJournal,
-    journal_path: &Path,
+    backups: &JournalBackups,
 ) -> Result<(), AppError> {
     const LOCK_RELATIVE: &str = ".hoi4-mod-setup/install.lock.json";
     let lock_path = safe_join(project_root, LOCK_RELATIVE)?;
@@ -7497,37 +7660,10 @@ fn restore_previous_lock(
             "installation lock changed outside the transaction; refusing rollback".into(),
         ));
     }
-    let backup_path = if let Some(path) = &journal.previous_lock_backup_path {
-        let expected = journal_app_root(journal_path)?
-            .join("backups")
-            .join(journal.transaction_id.to_string())
-            .join("install.lock.json.bak");
-        let supplied = PathBuf::from(path);
-        let matches = if cfg!(target_os = "windows") {
-            supplied
-                .to_string_lossy()
-                .eq_ignore_ascii_case(&expected.to_string_lossy())
-        } else {
-            supplied == expected
-        };
-        if !matches {
-            return Err(AppError::PathSecurity(
-                "journal lock backup path is outside the transaction backup root".into(),
-            ));
-        }
-        Some(expected)
-    } else {
-        None
-    };
-    if let Some(backup_path) = backup_path {
-        let backup_parent = backup_path.parent().ok_or_else(|| {
-            AppError::PathSecurity("previous lock backup has no parent directory".into())
-        })?;
-        let backup_leaf = backup_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| AppError::PathSecurity("previous lock backup name is invalid".into()))?;
-        let backup_directory = RootedDir::open_read(backup_parent)?;
+    if let Some(path) = &journal.previous_lock_backup_path {
+        // The predecessor lock is read through the journal's retained, bound
+        // backup directory.
+        let (backup_directory, backup_leaf) = backups.resolve(path, "install.lock.json.bak")?;
         if !backup_directory.is_regular_file(backup_leaf)? {
             return Err(AppError::PathSecurity(
                 "previous installation lock backup is not a regular file".into(),
@@ -7550,7 +7686,7 @@ fn restore_previous_lock(
             LOCK_RELATIVE,
             current.as_deref(),
             LiveChange::Copy {
-                source: &backup_directory,
+                source: backup_directory,
                 source_relative: backup_leaf,
             },
             &lock_quarantine_leaf(journal.transaction_id, "restore"),
@@ -7604,6 +7740,10 @@ fn restore_previous_lock(
     Ok(())
 }
 
+/// Read a journal by path. The journal and its checkpoint log are read
+/// through one retained handle on their directory, and a journal that
+/// recorded its transaction directory's identity is refused when that handle
+/// holds a different directory.
 pub fn read_journal(path: &Path) -> Result<TransactionJournal, AppError> {
     let parent = path
         .parent()
@@ -7613,28 +7753,39 @@ pub fn read_journal(path: &Path) -> Result<TransactionJournal, AppError> {
         .and_then(|name| name.to_str())
         .ok_or_else(|| AppError::PathSecurity("transaction journal name is invalid".into()))?;
     let directory = RootedDir::open_read(parent)?;
+    let journal = load_journal_in(&directory, name)?;
+    verify_app_data_binding(&journal, None, &directory)?;
+    Ok(journal)
+}
+
+/// Read, migrate, and replay a journal-shaped file through a retained
+/// directory handle without comparing the directory's identity.
+fn load_journal_in(directory: &RootedDir, name: &str) -> Result<TransactionJournal, AppError> {
     if !directory.is_regular_file(name)? {
         return Err(AppError::PathSecurity(
             "transaction journal is not a regular file".into(),
         ));
     }
-    let bytes = directory.read_file(name)?;
-    let value: serde_json::Value = serde_json::from_slice(&bytes)
+    parse_journal_in(directory, &directory.read_file(name)?)
+}
+
+fn parse_journal_in(directory: &RootedDir, bytes: &[u8]) -> Result<TransactionJournal, AppError> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)
         .map_err(|error| AppError::Transaction(format!("invalid transaction journal: {error}")))?;
     let mut journal = crate::migrations::migrate_journal(value)?;
-    replay_operation_checkpoints(path, &mut journal)?;
+    replay_operation_checkpoints(directory, &mut journal)?;
     sanitize_journal_error(&mut journal);
     Ok(journal)
 }
 
 fn finish_finalization(
     project_root: &Path,
-    app_root: &Path,
+    app: &AppDataRoot,
+    store: &TransactionStore,
     transaction_id: Uuid,
     journal: &mut TransactionJournal,
-    journal_path: &Path,
 ) -> Result<(TransactionJournal, InstallationLock), AppError> {
-    let project_root = validate_journal_project_root(project_root, journal, journal_path)?;
+    let project_root = validate_journal_project_root(project_root, journal, store.journal_path())?;
     let project_directory =
         open_bound_project_root(&project_root, &journal.project_root_lifecycle)?;
     if journal.transaction_id != transaction_id || journal.state != "finalizing" {
@@ -7642,7 +7793,7 @@ fn finish_finalization(
             "transaction is not in the finalization state".into(),
         ));
     }
-    if crate::security::path_has_link_component(app_root) {
+    if crate::security::path_has_link_component(&app.path) {
         return Err(AppError::PathSecurity(
             "application data root contains a symlink or junction".into(),
         ));
@@ -7687,18 +7838,20 @@ fn finish_finalization(
             "finalization lock has no verified rollback record; manual review is required".into(),
         ));
     }
-    let record_path = app_root.join(&record_reference);
+    // The rollback record is read once through the retained transaction
+    // directory: the bytes that are hashed are the bytes that are parsed.
+    let record_path = app.path.join(&record_reference);
     if path_has_link_component(&record_path) {
         return Err(AppError::PathSecurity(
             "finalization rollback record contains a symlink or junction".into(),
         ));
     }
-    let record_metadata = fs::symlink_metadata(&record_path).map_err(|error| {
-        AppError::Transaction(format!(
-            "finalization rollback record is unavailable; manual review is required: {error}"
-        ))
-    })?;
-    if is_link_metadata(&record_metadata) || !record_metadata.is_file() {
+    if !store.directory.exists(ROLLBACK_RECORD_FILE)? {
+        return Err(AppError::Transaction(
+            "finalization rollback record is unavailable; manual review is required".into(),
+        ));
+    }
+    if !store.directory.is_regular_file(ROLLBACK_RECORD_FILE)? {
         return Err(AppError::PathSecurity(
             "finalization rollback record is not a regular file".into(),
         ));
@@ -7709,12 +7862,14 @@ fn finish_finalization(
                 .into(),
         )
     })?;
-    if sha256_file(&record_path)? != expected_record_hash {
+    let record_bytes = store.directory.read_file(ROLLBACK_RECORD_FILE)?;
+    if sha256_bytes(&record_bytes) != expected_record_hash {
         return Err(AppError::Transaction(
             "finalization rollback record checksum mismatch; manual review is required".into(),
         ));
     }
-    let record = read_journal(&record_path)?;
+    let record = parse_journal_in(&store.directory, &record_bytes)?;
+    verify_app_data_binding(&record, Some(&app.directory), &store.directory)?;
     if record.transaction_id != transaction_id
         || record.transaction_kind != "installation"
         || record.project_id != journal.project_id
@@ -7835,7 +7990,7 @@ fn finish_finalization(
         project_apply_started: true,
         recommended_action: "none".into(),
     };
-    persist_journal(journal_path, journal)?;
+    persist_journal(store, journal)?;
     Ok((journal.clone(), lock))
 }
 
@@ -7864,22 +8019,20 @@ pub fn resume_transaction_with_options(
             "application data root contains a symlink or junction".into(),
         ));
     }
-    let roots = transaction_root(app_root, transaction_id);
-    let journal_path = roots.transaction.join("journal.json");
-    let mut journal = read_journal(&journal_path)?;
+    // The storage of the interrupted transaction is opened once through the
+    // retained application-data root and held through the replay, and each
+    // directory must be the one the journal recorded. A refusal here leaves
+    // the interrupted journal untouched.
+    let app = AppDataRoot::open(app_root)?;
+    let store = app.transaction_store(transaction_id, false)?;
+    let mut journal = app.read_bound_journal(&store)?;
     if journal.transaction_id != transaction_id {
         return Err(AppError::Transaction(
             "transaction journal ID does not match the requested transaction".into(),
         ));
     }
     if journal.state == "finalizing" {
-        return finish_finalization(
-            &project_root,
-            app_root,
-            transaction_id,
-            &mut journal,
-            &journal_path,
-        );
+        return finish_finalization(&project_root, &app, &store, transaction_id, &mut journal);
     }
     normalize_incomplete_recovery(&mut journal);
     if transaction_state_is_terminal(&journal.state) {
@@ -7909,10 +8062,9 @@ pub fn resume_transaction_with_options(
             "interrupted journal has no project-root binding; manual review is required".into(),
         ));
     }
-    validate_journal_project_root(&project_root, &journal, &journal_path)?;
+    validate_journal_project_root(&project_root, &journal, store.journal_path())?;
 
-    let plan_path = roots.transaction.join("plan.json");
-    let plan_bytes = read_file_path(&plan_path).map_err(|error| {
+    let plan_bytes = store.directory.read_file(PLAN_FILE).map_err(|error| {
         AppError::Transaction(format!("cannot read interrupted transaction plan: {error}"))
     })?;
     let plan: InstallationPlan = serde_json::from_slice(&plan_bytes).map_err(|error| {
@@ -7940,6 +8092,26 @@ pub fn resume_transaction_with_options(
         ));
     }
 
+    // Staged bytes are read through the retained staging directory, which
+    // must be the directory the interrupted run bound.
+    let staging = if plan.operations.iter().any(|operation| {
+        !matches!(
+            operation.action,
+            OperationAction::Skip | OperationAction::External | OperationAction::DeleteManaged
+        )
+    }) {
+        app.open_area(
+            STAGING_AREA,
+            transaction_id,
+            false,
+            journal
+                .app_data_identity
+                .as_ref()
+                .and_then(|identity| identity.staging.as_deref()),
+        )?
+    } else {
+        None
+    };
     let mut prepared = Vec::new();
     for operation in &plan.operations {
         let record = journal
@@ -8003,26 +8175,26 @@ pub fn resume_transaction_with_options(
         if operation.action == OperationAction::DeleteManaged {
             continue;
         }
-        let staged = staging_destination(&roots.staging, operation)?;
-        if crate::security::path_has_link_component(&staged) {
-            return Err(AppError::PathSecurity(format!(
-                "staged path contains a symlink or junction: {}",
-                operation.destination
-            )));
-        }
-        let staged_metadata = fs::symlink_metadata(&staged).map_err(|error| {
+        let staged = staging_relative(operation)?;
+        let staging = staging.as_ref().ok_or_else(|| {
             AppError::Transaction(format!(
-                "staged bytes are missing for {}: {error}",
+                "staged bytes are missing for {}",
                 operation.destination
             ))
         })?;
-        if is_link_metadata(&staged_metadata) || !staged_metadata.is_file() {
+        if !staging.exists(&staged)? {
+            return Err(AppError::Transaction(format!(
+                "staged bytes are missing for {}",
+                operation.destination
+            )));
+        }
+        if !staging.is_regular_file(&staged)? {
             return Err(AppError::PathSecurity(format!(
                 "staged destination is not a regular file: {}",
                 operation.destination
             )));
         }
-        let bytes = read_file_path(&staged)?;
+        let bytes = staging.read_file(&staged)?;
         let actual = sha256_bytes(&bytes);
         if expected != Some(&actual) {
             return Err(AppError::Source(format!(
@@ -8040,11 +8212,11 @@ pub fn resume_transaction_with_options(
 
     // Preserve the failed checkpoint as an audit artifact before the replay
     // writes a fresh journal at the canonical path.
-    let snapshot_path = roots
-        .transaction
-        .join(format!("journal.interrupted.{}.json", Uuid::new_v4()));
     let snapshot = journal.clone();
-    atomic_write_json(&snapshot_path, &snapshot)?;
+    store.write_json(
+        &format!("journal.interrupted.{}.json", Uuid::new_v4()),
+        &snapshot,
+    )?;
     run_transaction(
         &project_root,
         &plan,
@@ -8070,15 +8242,16 @@ pub fn discard_staging(
             "application data root contains a symlink or junction".into(),
         ));
     }
-    let roots = transaction_root(app_root, transaction_id);
-    let journal_path = roots.transaction.join("journal.json");
-    let mut journal = read_journal(&journal_path)?;
+    let app = AppDataRoot::open(app_root)?;
+    let store = app.transaction_store(transaction_id, false)?;
+    let mut journal = app.read_bound_journal(&store)?;
     if journal.transaction_id != transaction_id {
         return Err(AppError::Transaction(
             "transaction journal ID does not match the requested transaction".into(),
         ));
     }
-    let _project_root = validate_journal_project_root(project_root, &journal, &journal_path)?;
+    let _project_root =
+        validate_journal_project_root(project_root, &journal, store.journal_path())?;
     normalize_incomplete_recovery(&mut journal);
     if transaction_state_is_terminal(&journal.state) || !journal.recovery.discard_staging_allowed {
         return Err(AppError::Transaction(
@@ -8091,28 +8264,36 @@ pub fn discard_staging(
                 .into(),
         ));
     }
-    if crate::security::path_has_link_component(&roots.staging) {
+    let staging_path = app.area_path(STAGING_AREA, transaction_id);
+    if crate::security::path_has_link_component(&staging_path) {
         return Err(AppError::PathSecurity(
             "staging directory contains a symlink or junction".into(),
         ));
     }
-    let staging_parent = roots
-        .staging
-        .parent()
-        .ok_or_else(|| AppError::PathSecurity("staging directory has no parent".into()))?;
-    let staging_name = roots
-        .staging
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| AppError::PathSecurity("staging directory name is invalid".into()))?;
-    let staging_parent = RootedDir::open(staging_parent)?;
-    if staging_parent.exists(staging_name)? {
-        if !staging_parent.is_directory(staging_name)? {
-            return Err(AppError::PathSecurity(
-                "staging path is not a directory".into(),
-            ));
+    let staging_name = transaction_id.to_string();
+    if app.directory.is_directory(STAGING_AREA)? {
+        // Only the staging directory this transaction bound is removed, and
+        // its contents are removed through the handle whose identity matched.
+        let staging_parent = app.directory.open_dir(STAGING_AREA)?;
+        if staging_parent.exists(&staging_name)? {
+            if !staging_parent.is_directory(&staging_name)? {
+                return Err(AppError::PathSecurity(
+                    "staging path is not a directory".into(),
+                ));
+            }
+            match journal
+                .app_data_identity
+                .as_ref()
+                .and_then(|identity| identity.staging.as_deref())
+            {
+                Some(expected) => {
+                    if !staging_parent.remove_tree_if_identity(&staging_name, expected)? {
+                        return Err(app_data_drift(&staging_path));
+                    }
+                }
+                None => staging_parent.remove_tree(&staging_name)?,
+            }
         }
-        staging_parent.remove_tree(staging_name)?;
     }
     journal.state = "staging_discarded".into();
     journal.recovery = RecoveryState {
@@ -8123,7 +8304,7 @@ pub fn discard_staging(
         recommended_action: "none".into(),
     };
     journal.last_checkpoint = "staging-discarded".into();
-    persist_journal(&journal_path, &mut journal)?;
+    persist_journal(&store, &mut journal)?;
     Ok(journal)
 }
 
@@ -8494,7 +8675,9 @@ mod tests {
     }
 
     use super::*;
+    use crate::paths::transaction_root;
     use crate::readiness::manifest_wiki_pages;
+    use crate::security::atomic_write_json;
     use std::process::Command;
     use tempfile::tempdir;
 
@@ -8819,19 +9002,20 @@ mod tests {
         let transaction_dir = root.path().join(plan.plan_id.to_string());
         fs::create_dir_all(&transaction_dir).unwrap();
         let journal_path = transaction_dir.join("journal.json");
+        let store = TransactionStore::open_journal_directory(&journal_path).unwrap();
         let mut journal = new_journal(&plan, &plan.project_id, root.path());
-        persist_journal(&journal_path, &mut journal).unwrap();
+        persist_journal(&store, &mut journal).unwrap();
 
         journal.operations[0].status = "staged".into();
         journal.operations[0].staged_sha256 = Some("a".repeat(64));
         journal.last_checkpoint = "stage-file-op-1".into();
-        persist_operation_checkpoint(&journal_path, &mut journal, 0).unwrap();
+        persist_operation_checkpoint(&store, &mut journal, 0).unwrap();
 
         let replayed = read_journal(&journal_path).unwrap();
         assert_eq!(replayed.operations[0].status, "staged");
         assert_eq!(replayed.last_checkpoint, "stage-file-op-1");
 
-        compact_operation_checkpoints(&journal_path, &mut journal).unwrap();
+        compact_operation_checkpoints(&store, &mut journal).unwrap();
         assert!(!operation_checkpoint_root(&journal_path).unwrap().exists());
         assert_eq!(
             read_journal(&journal_path).unwrap().operations[0].status,
@@ -8846,6 +9030,7 @@ mod tests {
         let transaction_dir = root.path().join(plan.plan_id.to_string());
         fs::create_dir_all(&transaction_dir).unwrap();
         let journal_path = transaction_dir.join("journal.json");
+        let store = TransactionStore::open_journal_directory(&journal_path).unwrap();
         let mut journal = new_journal(&plan, &plan.project_id, root.path());
         let secret = ["msy", "secretRecoveryValue123456789"].join("_");
         let secondary_secret = ["synthetic", "client", "credential"].join("-");
@@ -8862,7 +9047,7 @@ mod tests {
             stage: "validation".into(),
         });
 
-        persist_journal(&journal_path, &mut journal).unwrap();
+        persist_journal(&store, &mut journal).unwrap();
         let persisted = fs::read_to_string(&journal_path).unwrap();
         assert!(!persisted.contains(&secret));
         assert!(!persisted.contains(&secondary_secret));
@@ -8890,16 +9075,17 @@ mod tests {
         let mut plan = plan();
         plan.transaction.directories = vec!["events".into(), "localisation/english".into()];
         let journal_path = transaction.path().join("journal.json");
+        let store = TransactionStore::open_journal_directory(&journal_path).unwrap();
         let mut journal = new_journal(&plan, &plan.project_id, project.path());
-        persist_journal(&journal_path, &mut journal).unwrap();
+        persist_journal(&store, &mut journal).unwrap();
 
-        apply_profile_directories(project.path(), &plan, &mut journal, &journal_path).unwrap();
+        apply_profile_directories(project.path(), &plan, &mut journal, &store).unwrap();
         assert!(project.path().join("events").is_dir());
         assert!(project.path().join("localisation/english").is_dir());
         assert!(!project.path().join("events/.gitkeep").exists());
         fs::write(project.path().join("events/user_event.txt"), "user content").unwrap();
 
-        cleanup_created_profile_directories(project.path(), &mut journal, &journal_path).unwrap();
+        cleanup_created_profile_directories(project.path(), &mut journal, &store).unwrap();
         assert!(project.path().join("events").is_dir());
         assert!(project.path().join("events/user_event.txt").is_file());
         assert!(!project.path().join("localisation/english").exists());
@@ -8921,12 +9107,13 @@ mod tests {
         let transaction_dir = root.path().join(plan.plan_id.to_string());
         fs::create_dir_all(&transaction_dir).unwrap();
         let journal_path = transaction_dir.join("journal.json");
+        let store = TransactionStore::open_journal_directory(&journal_path).unwrap();
         let mut journal = new_journal(&plan, &plan.project_id, root.path());
-        persist_journal(&journal_path, &mut journal).unwrap();
+        persist_journal(&store, &mut journal).unwrap();
 
         journal.operations[0].status = "applying".into();
         journal.last_checkpoint = "apply-intent-op-0000".into();
-        persist_operation_checkpoint(&journal_path, &mut journal, 0).unwrap();
+        persist_operation_checkpoint(&store, &mut journal, 0).unwrap();
 
         let checkpoint_path = operation_checkpoint_root(&journal_path).unwrap();
         let checkpoint_size = fs::metadata(checkpoint_path).unwrap().len();
@@ -8950,20 +9137,21 @@ mod tests {
         let transaction_dir = root.path().join(plan.plan_id.to_string());
         fs::create_dir_all(&transaction_dir).unwrap();
         let journal_path = transaction_dir.join("journal.json");
+        let store = TransactionStore::open_journal_directory(&journal_path).unwrap();
         let mut journal = new_journal(&plan, &plan.project_id, root.path());
-        persist_journal(&journal_path, &mut journal).unwrap();
+        persist_journal(&store, &mut journal).unwrap();
         let indices = (0..OPERATION_INTENT_BATCH).collect::<Vec<_>>();
         for index in &indices {
             journal.operations[*index].status = "applying".into();
         }
-        persist_operation_checkpoint_batch(&journal_path, &mut journal, &indices).unwrap();
+        persist_operation_checkpoint_batch(&store, &mut journal, &indices).unwrap();
 
         let replayed = read_journal(&journal_path).unwrap();
         assert!(replayed
             .operations
             .iter()
             .all(|operation| operation.status == "applying"));
-        compact_operation_checkpoints(&journal_path, &mut journal).unwrap();
+        compact_operation_checkpoints(&store, &mut journal).unwrap();
         assert!(!operation_checkpoint_root(&journal_path).unwrap().exists());
     }
 
@@ -8974,12 +9162,13 @@ mod tests {
         let transaction_dir = root.path().join(plan.plan_id.to_string());
         fs::create_dir_all(&transaction_dir).unwrap();
         let journal_path = transaction_dir.join("journal.json");
+        let store = TransactionStore::open_journal_directory(&journal_path).unwrap();
         let mut journal = new_journal(&plan, &plan.project_id, root.path());
-        persist_journal(&journal_path, &mut journal).unwrap();
+        persist_journal(&store, &mut journal).unwrap();
 
         journal.operations[0].status = "verified".into();
         journal.last_checkpoint = "apply-op-1".into();
-        persist_operation_checkpoint(&journal_path, &mut journal, 0).unwrap();
+        persist_operation_checkpoint(&store, &mut journal, 0).unwrap();
         let checkpoint_path = operation_checkpoint_root(&journal_path).unwrap();
         let mut file = OpenOptions::new()
             .append(true)
@@ -9357,7 +9546,8 @@ mod tests {
         fs::create_dir_all(&roots.transaction).unwrap();
         let mut journal = new_journal(&plan, &plan.project_id, project.path());
         let journal_path = roots.transaction.join("journal.json");
-        persist_journal(&journal_path, &mut journal).unwrap();
+        let store = TransactionStore::open_journal_directory(&journal_path).unwrap();
+        persist_journal(&store, &mut journal).unwrap();
         let loaded = read_journal(&journal_path).unwrap();
         assert!(roots_match_for_transaction(
             &loaded.project_root,
@@ -9375,7 +9565,7 @@ mod tests {
         assert_eq!(found.transaction_id, plan.plan_id);
 
         journal.state = "completed".into();
-        persist_journal(&journal_path, &mut journal).unwrap();
+        persist_journal(&store, &mut journal).unwrap();
         assert!(find_incomplete_transaction(app.path(), project.path())
             .unwrap()
             .is_none());
@@ -12946,8 +13136,9 @@ mod tests {
         let transaction_dir = root.path().join(plan.plan_id.to_string());
         fs::create_dir_all(&transaction_dir).unwrap();
         let journal_path = transaction_dir.join("journal.json");
+        let store = TransactionStore::open_journal_directory(&journal_path).unwrap();
         let mut journal = new_journal(&plan, &plan.project_id, root.path());
-        persist_journal(&journal_path, &mut journal).unwrap();
+        persist_journal(&store, &mut journal).unwrap();
 
         // The clock stepped backwards after this snapshot was written.
         journal.updated_at = "2999-01-01T00:00:00+00:00".into();
@@ -12955,7 +13146,7 @@ mod tests {
         journal.operations[0].status = "applying".into();
         journal.operations[0].quarantine_leaf = Some(quarantine_leaf_name(plan.plan_id, "op-1"));
         journal.last_checkpoint = "apply-quarantine-intent-op-1".into();
-        persist_operation_checkpoint(&journal_path, &mut journal, 0).unwrap();
+        persist_operation_checkpoint(&store, &mut journal, 0).unwrap();
         let replayed = read_journal(&journal_path).unwrap();
         assert_eq!(replayed.operations[0].status, "applying");
         assert!(replayed.operations[0].quarantine_leaf.is_some());
@@ -12971,7 +13162,7 @@ mod tests {
         assert_eq!(replayed.last_checkpoint, "snapshot");
 
         // Journals and records written before sequences still replay by time.
-        clear_operation_checkpoints(&journal_path).unwrap();
+        clear_operation_checkpoints(&store).unwrap();
         let mut legacy = journal.clone();
         legacy.checkpoint_sequence = None;
         legacy.operations[0].status = "pending".into();
@@ -13440,7 +13631,7 @@ mod tests {
             &project_directory,
             &case.plan,
             &mut checked,
-            &case.journal_path(),
+            &TransactionStore::open_journal_directory(&case.journal_path()).unwrap(),
         )
         .unwrap_err();
         let final_verification =
@@ -13626,7 +13817,11 @@ mod tests {
             &project_directory,
             &plan,
             &mut checked,
-            &transaction_journal_path(app.path(), plan.plan_id),
+            &TransactionStore::open_journal_directory(&transaction_journal_path(
+                app.path(),
+                plan.plan_id,
+            ))
+            .unwrap(),
         );
         drop(project_directory);
         if swapped {
@@ -14054,5 +14249,538 @@ mod tests {
         assert!(existing_operation_target(None, &operation)
             .unwrap()
             .is_none());
+    }
+
+    /// Copy a tree of regular files, standing in for a directory swapped in
+    /// at the same path with the same bytes.
+    fn copy_tree(from: &Path, to: &Path) {
+        fs::create_dir_all(to).unwrap();
+        for entry in fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let target = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                fs::copy(entry.path(), &target).unwrap();
+            }
+        }
+    }
+
+    /// Every regular file below `root` with its bytes, for proving that a
+    /// refused call wrote nothing into a directory.
+    fn tree_snapshot(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+        let mut files = std::collections::BTreeMap::new();
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(directory) = pending.pop() {
+            for entry in fs::read_dir(&directory).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_type().unwrap().is_dir() {
+                    pending.push(entry.path());
+                } else {
+                    files.insert(
+                        entry.path().strip_prefix(root).unwrap().to_path_buf(),
+                        fs::read(entry.path()).unwrap(),
+                    );
+                }
+            }
+        }
+        files
+    }
+
+    /// How an application-data directory is replaced at its path.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum AppDataSwap {
+        /// A plain directory holding a copy of the same files.
+        Directory,
+        /// A directory link (a junction on Windows) to such a copy.
+        Link,
+    }
+
+    /// An application-data directory moved away from its path, with the
+    /// impostor that now occupies the path.
+    struct SwappedAppData {
+        path: PathBuf,
+        away: PathBuf,
+        link_target: Option<PathBuf>,
+    }
+
+    impl SwappedAppData {
+        /// Move `<app>/<area>/<id>` out of the transaction areas and put an
+        /// impostor holding the same files at its path. Returns `None` when
+        /// the platform refuses to rename a directory with an open handle.
+        fn try_swap(
+            app: &Path,
+            area: &str,
+            transaction_id: Uuid,
+            swap: AppDataSwap,
+        ) -> Option<Self> {
+            let path = app.join(area).join(transaction_id.to_string());
+            let away = app.join("moved-away").join(area);
+            fs::create_dir_all(away.parent().unwrap()).unwrap();
+            if fs::rename(&path, &away).is_err() {
+                return None;
+            }
+            let link_target = match swap {
+                AppDataSwap::Directory => {
+                    copy_tree(&away, &path);
+                    None
+                }
+                AppDataSwap::Link => {
+                    let target = app.join("impostors").join(area);
+                    copy_tree(&away, &target);
+                    link_directory(&path, &target);
+                    Some(target)
+                }
+            };
+            Some(Self {
+                path,
+                away,
+                link_target,
+            })
+        }
+
+        fn swap(app: &Path, area: &str, transaction_id: Uuid, swap: AppDataSwap) -> Self {
+            Self::try_swap(app, area, transaction_id, swap).expect("the directory can be renamed")
+        }
+
+        /// The directory whose files the impostor exposes at the path.
+        fn impostor(&self) -> &Path {
+            self.link_target.as_deref().unwrap_or(&self.path)
+        }
+
+        /// Remove the impostor and move the bound directory back.
+        fn restore(self) {
+            match &self.link_target {
+                Some(target) => {
+                    remove_directory_link(&self.path);
+                    fs::remove_dir_all(target).unwrap();
+                }
+                None => fs::remove_dir_all(&self.path).unwrap(),
+            }
+            fs::rename(&self.away, &self.path).unwrap();
+        }
+    }
+
+    fn assert_app_data_refusal(error: &AppError, swap: AppDataSwap) {
+        assert!(matches!(error, AppError::PathSecurity(_)), "{error}");
+        if swap == AppDataSwap::Directory {
+            // A plain directory with the same bytes passes every content and
+            // link check, so only the identity comparison can refuse it.
+            assert!(
+                error
+                    .to_string()
+                    .contains("application data directory is no longer the directory bound to this transaction"),
+                "{error}"
+            );
+        }
+    }
+
+    /// Run a transaction that stops after staged-output validation, so it is
+    /// resumable and has created all of its application-data directories.
+    fn interrupted_before_apply(project: &Path, app: &Path) -> InstallationPlan {
+        let (plan, prepared) = existing_file_fixture(project);
+        let validation_stage = TRANSACTION_STAGES
+            .iter()
+            .position(|stage| *stage == "validation")
+            .unwrap();
+        let interrupted = run_test_transaction(
+            project,
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.to_path_buf()),
+                fail_after_stage: Some(validation_stage),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(
+            interrupted
+                .to_string()
+                .contains("fault injected after stage validation"),
+            "{interrupted}"
+        );
+        plan
+    }
+
+    #[test]
+    fn journal_binds_the_application_data_directories_it_creates() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let plan = interrupted_before_apply(project.path(), app.path());
+        let journal = read_journal(&transaction_journal_path(app.path(), plan.plan_id)).unwrap();
+        let identity = journal
+            .app_data_identity
+            .expect("application data identity");
+        let observed = |relative: &Path| {
+            RootedDir::open_read(&app.path().join(relative))
+                .unwrap()
+                .identity_token()
+                .unwrap()
+        };
+        let id = plan.plan_id.to_string();
+        assert_eq!(
+            identity.root,
+            RootedDir::open_read(app.path())
+                .unwrap()
+                .identity_token()
+                .unwrap()
+        );
+        assert_eq!(
+            identity.transaction,
+            observed(&Path::new("transactions").join(&id))
+        );
+        assert_eq!(
+            identity.backup,
+            Some(observed(&Path::new("backups").join(&id)))
+        );
+        assert_eq!(
+            identity.staging,
+            Some(observed(&Path::new("staging").join(&id)))
+        );
+    }
+
+    /// Swap one application-data directory of a resumable transaction for an
+    /// impostor with the same files. Resume must refuse it without writing
+    /// anything, and resume normally once the bound directory returns.
+    fn app_data_swap_before_resume_is_refused(area: &str, swap: AppDataSwap) {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let plan = interrupted_before_apply(project.path(), app.path());
+
+        let swapped = SwappedAppData::swap(app.path(), area, plan.plan_id, swap);
+        let impostor_before = tree_snapshot(swapped.impostor());
+        let bound_before = tree_snapshot(&swapped.away);
+        let refused = resume_transaction(project.path(), app.path(), plan.plan_id).unwrap_err();
+        assert_app_data_refusal(&refused, swap);
+        if area == TRANSACTIONS_AREA {
+            // The impostor journal also blocks a new transaction for the
+            // project instead of being ignored.
+            let blocked = find_incomplete_transaction(app.path(), project.path()).unwrap_err();
+            assert_app_data_refusal(&blocked, swap);
+        }
+        assert_eq!(tree_snapshot(swapped.impostor()), impostor_before);
+        assert_eq!(tree_snapshot(&swapped.away), bound_before);
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"old");
+        assert!(!project
+            .path()
+            .join(".hoi4-mod-setup/install.lock.json")
+            .exists());
+
+        swapped.restore();
+        let (journal, _) = resume_transaction(project.path(), app.path(), plan.plan_id).unwrap();
+        assert_eq!(journal.state, "completed");
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"safe");
+    }
+
+    #[test]
+    fn transaction_directory_replaced_before_resume_is_refused() {
+        app_data_swap_before_resume_is_refused(TRANSACTIONS_AREA, AppDataSwap::Directory);
+    }
+
+    #[test]
+    fn transaction_directory_replaced_by_a_link_before_resume_is_refused() {
+        app_data_swap_before_resume_is_refused(TRANSACTIONS_AREA, AppDataSwap::Link);
+    }
+
+    #[test]
+    fn staging_directory_replaced_before_resume_is_refused() {
+        app_data_swap_before_resume_is_refused(STAGING_AREA, AppDataSwap::Directory);
+    }
+
+    #[test]
+    fn staging_directory_replaced_by_a_link_before_resume_is_refused() {
+        app_data_swap_before_resume_is_refused(STAGING_AREA, AppDataSwap::Link);
+    }
+
+    #[test]
+    fn application_data_root_replaced_before_recovery_is_refused() {
+        let project = tempdir().unwrap();
+        let parent = tempdir().unwrap();
+        let app = parent.path().join("app-data");
+        fs::create_dir(&app).unwrap();
+        let plan = interrupted_before_apply(project.path(), &app);
+
+        // The whole application-data root moves away and a copy takes its
+        // place, so every per-transaction folder is a copy as well.
+        let away = parent.path().join("app-data-away");
+        fs::rename(&app, &away).unwrap();
+        copy_tree(&away, &app);
+        let impostor_before = tree_snapshot(&app);
+        let refused = resume_transaction(project.path(), &app, plan.plan_id).unwrap_err();
+        assert_app_data_refusal(&refused, AppDataSwap::Directory);
+        let refused = discard_staging(project.path(), &app, plan.plan_id).unwrap_err();
+        assert_app_data_refusal(&refused, AppDataSwap::Directory);
+        let blocked = find_incomplete_transaction(&app, project.path()).unwrap_err();
+        assert_app_data_refusal(&blocked, AppDataSwap::Directory);
+        assert_eq!(tree_snapshot(&app), impostor_before);
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"old");
+
+        fs::remove_dir_all(&app).unwrap();
+        fs::rename(&away, &app).unwrap();
+        let (journal, _) = resume_transaction(project.path(), &app, plan.plan_id).unwrap();
+        assert_eq!(journal.state, "completed");
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"safe");
+    }
+
+    #[test]
+    fn staging_discard_never_removes_a_swapped_in_staging_directory() {
+        for swap in [AppDataSwap::Directory, AppDataSwap::Link] {
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let plan = interrupted_before_apply(project.path(), app.path());
+            let swapped = SwappedAppData::swap(app.path(), STAGING_AREA, plan.plan_id, swap);
+            let impostor_before = tree_snapshot(swapped.impostor());
+
+            let refused = discard_staging(project.path(), app.path(), plan.plan_id).unwrap_err();
+            assert_app_data_refusal(&refused, swap);
+            assert_eq!(
+                tree_snapshot(swapped.impostor()),
+                impostor_before,
+                "{swap:?}"
+            );
+            assert_ne!(
+                read_journal(&transaction_journal_path(app.path(), plan.plan_id))
+                    .unwrap()
+                    .state,
+                "staging_discarded"
+            );
+
+            swapped.restore();
+            let journal = discard_staging(project.path(), app.path(), plan.plan_id).unwrap();
+            assert_eq!(journal.state, "staging_discarded");
+            assert!(!app
+                .path()
+                .join(STAGING_AREA)
+                .join(plan.plan_id.to_string())
+                .exists());
+        }
+    }
+
+    /// Install, then swap one application-data directory for an impostor
+    /// with the same files. Rollback must refuse before it changes the
+    /// journal or the project, and roll back normally once the bound
+    /// directory returns.
+    fn app_data_swap_before_rollback_is_refused(area: &str, swap: AppDataSwap) {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().to_path_buf()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"safe");
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        // The caller reads the journal before the swap, so only the
+        // rollback's own storage binding can notice it.
+        let mut journal = read_journal(&journal_path).unwrap();
+
+        let swapped = SwappedAppData::swap(app.path(), area, plan.plan_id, swap);
+        let impostor_before = tree_snapshot(swapped.impostor());
+        let bound_before = tree_snapshot(&swapped.away);
+        if area == TRANSACTIONS_AREA {
+            assert_app_data_refusal(&read_journal(&journal_path).unwrap_err(), swap);
+        }
+        let refused =
+            rollback_transaction(project.path(), &mut journal, &journal_path).unwrap_err();
+        assert_app_data_refusal(&refused, swap);
+        assert_eq!(tree_snapshot(swapped.impostor()), impostor_before);
+        assert_eq!(tree_snapshot(&swapped.away), bound_before);
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"safe");
+        assert!(!app
+            .path()
+            .join(TRANSACTIONS_AREA)
+            .read_dir()
+            .unwrap()
+            .any(|entry| {
+                entry.unwrap().file_name().to_string_lossy() != plan.plan_id.to_string()
+            }));
+
+        swapped.restore();
+        let mut journal = read_journal(&journal_path).unwrap();
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert_eq!(journal.state, "rolled_back");
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"old");
+    }
+
+    #[test]
+    fn transaction_directory_replaced_before_rollback_is_refused() {
+        app_data_swap_before_rollback_is_refused(TRANSACTIONS_AREA, AppDataSwap::Directory);
+    }
+
+    #[test]
+    fn transaction_directory_replaced_by_a_link_before_rollback_is_refused() {
+        app_data_swap_before_rollback_is_refused(TRANSACTIONS_AREA, AppDataSwap::Link);
+    }
+
+    #[test]
+    fn backup_directory_replaced_before_rollback_is_refused() {
+        app_data_swap_before_rollback_is_refused(BACKUPS_AREA, AppDataSwap::Directory);
+    }
+
+    #[test]
+    fn backup_directory_replaced_by_a_link_before_rollback_is_refused() {
+        app_data_swap_before_rollback_is_refused(BACKUPS_AREA, AppDataSwap::Link);
+    }
+
+    #[test]
+    fn child_rollback_storage_replaced_before_a_retry_is_refused() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared) = existing_file_fixture(project.path());
+        run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().to_path_buf()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        // Stop the first rollback after its child journal and inverse backup
+        // exist, so the retry reopens that child storage.
+        let mut journal = read_journal(&journal_path).unwrap();
+        let stopped = with_test_fault("rollback_after_placement", || {
+            rollback_transaction(project.path(), &mut journal, &journal_path)
+        });
+        assert!(stopped.is_err());
+        let child_id = read_journal(&journal_path)
+            .unwrap()
+            .rollback_transaction_id
+            .expect("the first rollback recorded its child");
+        let child = read_journal(&transaction_journal_path(app.path(), child_id)).unwrap();
+        let child_identity = child.app_data_identity.expect("child storage identity");
+        assert!(child_identity.backup.is_some());
+        assert!(child_identity.staging.is_none());
+
+        for area in [TRANSACTIONS_AREA, BACKUPS_AREA] {
+            let swapped = SwappedAppData::swap(app.path(), area, child_id, AppDataSwap::Directory);
+            let impostor_before = tree_snapshot(swapped.impostor());
+            let mut journal = read_journal(&journal_path).unwrap();
+            let refused =
+                rollback_transaction(project.path(), &mut journal, &journal_path).unwrap_err();
+            assert_app_data_refusal(&refused, AppDataSwap::Directory);
+            assert_eq!(tree_snapshot(swapped.impostor()), impostor_before, "{area}");
+            swapped.restore();
+        }
+        let mut journal = read_journal(&journal_path).unwrap();
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"old");
+    }
+
+    struct ApplyAppDataSwap {
+        app: PathBuf,
+        transaction_id: Uuid,
+        swap: AppDataSwap,
+        attempted: bool,
+        swapped: Option<SwappedAppData>,
+        impostor_before: Option<std::collections::BTreeMap<PathBuf, Vec<u8>>>,
+    }
+
+    static APPLY_APP_DATA_SWAP: std::sync::Mutex<Option<ApplyAppDataSwap>> =
+        std::sync::Mutex::new(None);
+
+    /// Swap the transaction directory once the first live precondition has
+    /// passed. The swap succeeds only where the platform lets a directory
+    /// with an open handle be renamed.
+    fn swap_transaction_directory_during_apply(
+        _path: &Path,
+        _index: usize,
+        point: LiveMutationBarrier,
+    ) {
+        if point != LiveMutationBarrier::AfterPrecondition {
+            return;
+        }
+        let mut guard = APPLY_APP_DATA_SWAP.lock().unwrap();
+        let Some(state) = guard.as_mut() else {
+            return;
+        };
+        if state.attempted {
+            return;
+        }
+        state.attempted = true;
+        state.swapped = SwappedAppData::try_swap(
+            &state.app,
+            TRANSACTIONS_AREA,
+            state.transaction_id,
+            state.swap,
+        );
+        state.impostor_before = state
+            .swapped
+            .as_ref()
+            .map(|swapped| tree_snapshot(swapped.impostor()));
+    }
+
+    #[test]
+    fn transaction_directory_swap_during_apply_cannot_redirect_the_journal() {
+        for swap in [AppDataSwap::Directory, AppDataSwap::Link] {
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let (plan, prepared) = existing_file_fixture(project.path());
+            *APPLY_APP_DATA_SWAP.lock().unwrap() = Some(ApplyAppDataSwap {
+                app: app.path().to_path_buf(),
+                transaction_id: plan.plan_id,
+                swap,
+                attempted: false,
+                swapped: None,
+                impostor_before: None,
+            });
+            let result = run_test_transaction(
+                project.path(),
+                &plan,
+                &prepared,
+                &TransactionOptions {
+                    app_data_root: Some(app.path().to_path_buf()),
+                    live_mutation_barrier: Some(swap_transaction_directory_during_apply),
+                    ..Default::default()
+                },
+            );
+            let state = APPLY_APP_DATA_SWAP.lock().unwrap().take().unwrap();
+            assert!(state.attempted, "{swap:?}");
+            #[cfg(windows)]
+            {
+                assert!(
+                    state.swapped.is_none(),
+                    "the retained transaction directory handle must refuse the rename"
+                );
+                assert!(result.is_ok(), "{:?}", result.as_ref().err());
+            }
+            // Unix lets a directory with an open descriptor be renamed, so the
+            // refusal path below is the one exercised there.
+            #[cfg(unix)]
+            assert!(state.swapped.is_some(), "{swap:?}");
+            match state.swapped {
+                Some(swapped) => {
+                    let error = result.unwrap_err();
+                    assert!(
+                        matches!(error, AppError::PathSecurity(_)),
+                        "{swap:?}: {error}"
+                    );
+                    assert_eq!(
+                        Some(tree_snapshot(swapped.impostor())),
+                        state.impostor_before,
+                        "the swapped-in directory received journal writes"
+                    );
+                    assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"old");
+                    swapped.restore();
+                    let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+                    let mut journal = read_journal(&journal_path).unwrap();
+                    rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+                    assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"old");
+                }
+                None => {
+                    result.unwrap();
+                    assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"safe");
+                }
+            }
+        }
     }
 }

@@ -336,6 +336,13 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
 }
 
 pub fn atomic_write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), AppError> {
+    atomic_write(path, &persistable_json_bytes(value)?)
+}
+
+/// Serialize a value for persistence after the same secret checks that
+/// `atomic_write_json` applies. Callers that write through a retained
+/// `RootedDir` use these bytes instead of reopening the file by path.
+pub fn persistable_json_bytes<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, AppError> {
     let json = serde_json::to_value(value)?;
     reject_secret_like_keys(&json)?;
     // Inspect decoded values, not JSON punctuation. Otherwise an already
@@ -346,8 +353,7 @@ pub fn atomic_write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<
             "credential-shaped content is not serializable".into(),
         ));
     }
-    let bytes = serde_json::to_vec_pretty(&json)?;
-    atomic_write(path, &bytes)
+    Ok(serde_json::to_vec_pretty(&json)?)
 }
 
 fn json_contains_credential_shaped_content(value: &serde_json::Value) -> bool {

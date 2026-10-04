@@ -120,7 +120,15 @@ stops for inspection if a recreated root does not match the journal.
 Forward backup, apply, final verification, lock construction, and lock commit
 retain the reviewed project capability. Managed rollback file and lock changes
 and finalization checks also use a retained project capability.
-Application-data parents still reopen by path, created-root cleanup drops the root handle, and Git/external actions still use path-based cwd and checks.
+Created-root cleanup drops the root handle, and Git/external actions still use path-based cwd and checks.
+
+Application-data transaction storage is identity-bound at journal level (`TransactionJournal.app_data_identity`: `root`, `transaction`, and the optional `backup` and `staging`):
+
+- Open storage only through `AppDataRoot` (the retained application-data root) and `TransactionStore` (the retained `transactions/<id>` directory) in `transaction.rs`. Journal, plan, checkpoint-log, readiness, and rollback-record reads and writes go through the store; backups and staged bytes go through the `RootedDir` returned by `open_journal_area` or `AppDataRoot::open_area`. Never reopen an application-data path in transaction code with `atomic_write_json`, `read_file_path`, `sha256_file`, `fs::symlink_metadata`, or `RootedDir::open(path)`.
+- A new per-transaction directory is created through `open_journal_area` (or `transaction_store` with `bind_new_storage`), and its identity is journaled before the directory is used. A bound directory is never recreated; a missing bound directory is a `PathSecurity` error, except that `JournalBackups` defers it until a rollback step actually needs a backup.
+- A command that receives a journal read by path verifies it against the reopened storage with `verify_app_data_binding` (or reads it through `AppDataRoot::read_bound_journal`) before its first write, so a refusal leaves the journal untouched and the same action succeeds once the original folder returns. A replay carries the interrupted journal's `backup` and `staging` identities into its fresh journal; rollback child journals bind their own storage through the parent call's root; staging discard removes the tree only through `RootedDir::remove_tree_if_identity`.
+- Journals without `app_data_identity` keep path-based access; schema `1.0.0` journals carrying it are rejected by `migrate_journal`. `read_journal(path)` checks only the transaction directory, because a path does not identify the root.
+- Swap tests replace a per-transaction folder with a plain copy (only the identity comparison can refuse it) and with a junction or symlink to a copy, then prove that nothing was written into the impostor and that the action succeeds after the folder is moved back.
 
 External destination parents follow the project-root pattern at journal level:
 

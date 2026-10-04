@@ -1142,6 +1142,28 @@ fn default_root_checkpoint() -> String {
     "not_required".into()
 }
 
+/// Identities of the application-data directories that hold one
+/// transaction's storage. Each is captured through the retained handle that
+/// first creates or opens the directory, and every later call compares the
+/// directory it opens by path with this evidence, so a directory swapped away
+/// between calls is refused instead of followed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppDataIdentity {
+    /// The application-data root that holds `transactions/`, `backups/`, and
+    /// `staging/`.
+    pub root: String,
+    /// `transactions/<id>`: the journal, plan, checkpoint log, readiness
+    /// report, and rollback record.
+    pub transaction: String,
+    /// `backups/<id>`, bound when the backup stage creates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<String>,
+    /// `staging/<id>`, bound when the staging stage creates it. Rollback
+    /// journals have no staging directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staging: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalError {
     pub code: String,
@@ -1208,6 +1230,11 @@ pub struct TransactionJournal {
     /// field existed omit it and replay falls back to timestamps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint_sequence: Option<u64>,
+    /// Application-data directory identities bound when this transaction
+    /// created its storage. Journals written before the binding omit it and
+    /// keep path-based access to their storage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_data_identity: Option<AppDataIdentity>,
 }
 
 fn default_transaction_kind() -> String {

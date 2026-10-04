@@ -551,13 +551,13 @@ pub fn migrate_journal(value: Value) -> Result<TransactionJournal, AppError> {
         .and_then(Value::as_str)
         .unwrap_or("1.0.0")
         .to_string();
-    // Quarantine evidence and external-parent identities were introduced with
-    // schema 1.1.0; a 1.0.0 journal carrying them is forged or corrupted and
-    // must not drive recovery.
+    // Quarantine evidence, external-parent identities, and application-data
+    // identities were introduced with schema 1.1.0; a 1.0.0 journal carrying
+    // them is forged or corrupted and must not drive recovery.
     if original_version == "1.0.0"
-        && (value
-            .get("checkpoint_sequence")
-            .is_some_and(|sequence| !sequence.is_null())
+        && (["checkpoint_sequence", "app_data_identity"]
+            .iter()
+            .any(|field| value.get(*field).is_some_and(|value| !value.is_null()))
             || value
                 .get("operations")
                 .and_then(Value::as_array)
@@ -574,7 +574,7 @@ pub fn migrate_journal(value: Value) -> Result<TransactionJournal, AppError> {
                 }))
     {
         return Err(AppError::Serialization(
-            "a 1.0.0 transaction journal cannot carry quarantine or external-parent identity evidence".into(),
+            "a 1.0.0 transaction journal cannot carry quarantine, external-parent identity, or application-data identity evidence".into(),
         ));
     }
     let mut value = migrate_value(value, "transaction journal", CURRENT_JOURNAL_SCHEMA)?;
@@ -1095,9 +1095,49 @@ mod tests {
         with_external_identity["operations"][0]["external_parent_identity"] =
             Value::String("unix:1:2".into());
         assert!(migrate_journal(with_external_identity).is_err());
+        let mut with_app_data_identity = value.clone();
+        with_app_data_identity["app_data_identity"] =
+            json!({"root": "unix:1:2", "transaction": "unix:1:3"});
+        assert!(migrate_journal(with_app_data_identity).is_err());
         let mut with_sequence = value;
         with_sequence["checkpoint_sequence"] = Value::from(3);
         assert!(migrate_journal(with_sequence).is_err());
+    }
+
+    #[test]
+    fn current_journal_keeps_app_data_identity_and_legacy_journals_omit_it() {
+        let value: Value = serde_json::from_str(include_str!(
+            "../../docs/examples/transaction-journal.example.json"
+        ))
+        .unwrap();
+        let legacy = migrate_journal(value.clone()).unwrap();
+        assert!(legacy.app_data_identity.is_none());
+        assert!(serde_json::to_value(&legacy)
+            .unwrap()
+            .get("app_data_identity")
+            .is_none());
+
+        let token = |last: char| {
+            format!(
+                "windows-v2:{}:{}",
+                "0".repeat(15) + "1",
+                last.to_string().repeat(32)
+            )
+        };
+        let mut bound = value;
+        bound["app_data_identity"] = json!({
+            "root": token('a'),
+            "transaction": token('b'),
+            "backup": token('c')
+        });
+        let journal = migrate_journal(bound).unwrap();
+        let identity = journal.app_data_identity.clone().unwrap();
+        assert_eq!(identity.root, token('a'));
+        assert_eq!(identity.transaction, token('b'));
+        assert_eq!(identity.backup, Some(token('c')));
+        assert_eq!(identity.staging, None);
+        let serialized = serde_json::to_value(&journal).unwrap();
+        assert!(serialized["app_data_identity"].get("staging").is_none());
     }
 
     #[test]
