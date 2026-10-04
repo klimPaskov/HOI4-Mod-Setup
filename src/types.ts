@@ -466,6 +466,7 @@ export interface InstallationPlanOperation {
   resolution?: string | null;
   external?: boolean;
   rollback: InstallationRollbackAction;
+  external_parent_identity?: string | null;
 }
 
 export interface InstallationPlanConflict {

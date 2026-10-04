@@ -72,6 +72,8 @@ HOI4 Mod Setup follows semantic versioning.
   legacy identity-less journals remain inspection-only.
 - Bind the launcher descriptor's folder to its directory identity from the backup stage onward, and refuse to apply, verify, resume, or roll back into a different folder at the same path.
 - Verify installed files and capture rollback backups through retained directory handles, hashing each backup from the same read that copies it.
+- Record the launcher descriptor folder's identity when the installation plan is prepared, and refuse to start or resume an installation if a different folder has taken its place since review.
+- Stop rollback with a clear message, and keep it retryable, when the launcher folder of a changed launcher descriptor has been moved away, instead of reporting the descriptor as removed or restored.
 
 ## 0.3.5 - 2026-09-05
 

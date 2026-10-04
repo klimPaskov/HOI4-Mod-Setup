@@ -47,15 +47,21 @@ Forward backup, apply, final verification, lock construction, and lock commit
 retain the reviewed project capability. Managed rollback file and lock changes
 and finalization checks retain it as well. Post-install checks read project files through the same retained capability, and the bytes they validate are the bytes they hash.
 
-An external destination's parent directory, such as the launcher `mod` folder, is bound when the backup stage first opens it: the journal operation records its identity as `external_parent_identity`.
-A resumed replay carries that identity forward, and the pre-replay check refuses a different directory before a new journal is written, so the interrupted journal stays resumable once the bound directory returns.
+An external destination's parent directory, such as the launcher `mod` folder, is bound when the plan is built: `bind_plan_external_parents` opens the parent through one handle, records its identity as the plan operation's `external_parent_identity`, and requires a fresh hash of the destination through that same handle to equal the reviewed `local_sha256`, so the bound folder is the reviewed one.
+The journal operation starts from the plan's identity, and `run_transaction` refuses a different folder, or a missing folder for a mutating operation, before it writes any transaction storage; the backup stage verifies the same identity again.
+A plan whose parent did not exist at review, and a plan from before plan-time binding, carry no identity; for those the backup stage binds the parent the first time it opens it, as before.
+A resumed replay carries the identity forward and refuses an interrupted journal that bound a different folder than the plan, and the pre-replay check refuses a different directory before a new journal is written, so the interrupted journal stays resumable once the bound directory returns.
 Apply takes the precondition hash, performs the quarantine and placement, and reads the result back through one retained parent handle whose identity must match; an external operation without a bound identity is refused at apply.
 Post-install checks, final verification, finalization resume, rollback, the rollback child backup, quarantine settlement, and the quarantine sweep reopen the parent only when it still has the bound identity, and a bound parent is never recreated.
-A link or other non-directory at the path of a bound parent is identity drift, while a missing parent still reads as an absent destination.
+A link or other non-directory at the path of a bound parent is identity drift.
+A missing bound parent is handled by whether the operation may have changed its destination: an operation with a leaf-changing action whose status has moved past `pending` and `staged` (including one only marked `applying` by a batch intent) could have its destination or a quarantine of the user's bytes inside the moved folder, so rollback, finalization, and the quarantine sweep stop with a `PathSecurity` error that names the folder and asks for it to be moved back.
+Rollback stops in the child-backup capture before it writes any rollback intent or changes a project file, the parent journal stays `rolling_back` with rollback allowed, and the same rollback finishes once the folder is back.
+A skip, an external action, a legacy record without an action, and an operation still `pending` or `staged` changed nothing in that folder, so their rollback genuinely requires nothing and a missing parent still reads as absent; an unbound legacy record keeps the absent reading too.
+A bound parent is never recreated, so a deleted launcher folder blocks rollback of a changed launcher descriptor until it is restored or the journal is reviewed manually.
 The rollback child backup is copied and hashed in one pass from one opened handle, so its `before_sha256` and `backup_sha256` describe the same bytes.
 Journal operations from before the binding keep the earlier path-only behavior in rollback.
 
-Created-root cleanup, application-data, Git, external actions, and readiness are not yet bound to retained capabilities through their complete lifetimes, and the reviewed plan does not carry an external parent identity, so the binding starts at the backup stage rather than at review.
+Created-root cleanup, application-data, Git, external actions, and readiness are not yet bound to retained capabilities through their complete lifetimes, and the external parent handle is reopened and rechecked at each step rather than retained across stages.
 Those cross-stage races remain release blockers. A regular destination that changes
 after its precondition hash is no longer replaced or deleted blindly; the
 destination quarantine below keeps those bytes and records them in the journal.

@@ -372,6 +372,12 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
                 )));
             }
         }
+        if !operation.external && operation.external_parent_identity.is_some() {
+            return Err(AppError::Transaction(format!(
+                "only an external destination can carry a parent identity: {}",
+                operation.destination
+            )));
+        }
         if let Some(result_sha256) = &operation.result_sha256 {
             crate::source::validate_sha256(result_sha256)?;
         }
@@ -655,7 +661,13 @@ pub fn new_journal(
                 after_executable: None,
                 quarantine_leaf: None,
                 quarantine_sha256: None,
-                external_parent_identity: None,
+                // The journal starts from the parent reviewed in the plan, so
+                // the backup stage verifies that directory instead of binding
+                // whatever occupies the path when the transaction starts.
+                external_parent_identity: operation
+                    .external
+                    .then(|| operation.external_parent_identity.clone())
+                    .flatten(),
             })
             .collect(),
         created_directories: Vec::new(),
@@ -855,6 +867,99 @@ fn validate_plan_project_root_identity(
         return Err(AppError::PathSecurity(
             "project root or its reviewed parent changed after planning".into(),
         ));
+    }
+    Ok(())
+}
+
+/// Observe an external destination through one retained handle on its
+/// parent: the parent's identity and the hash of a regular-file leaf come
+/// from the same opened directory. A parent that does not exist yields
+/// neither; a link or other non-directory at the parent path is refused by
+/// `RootedDir`.
+fn observe_external_destination(
+    destination: &str,
+) -> Result<(Option<String>, Option<String>), AppError> {
+    let absolute = validate_external_destination(destination)?;
+    let parent = absolute.parent().ok_or_else(|| {
+        AppError::PathSecurity("external destination has no parent directory".into())
+    })?;
+    let leaf = absolute
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("external destination name is invalid".into()))?;
+    match fs::symlink_metadata(parent) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((None, None)),
+        Err(error) => return Err(error.into()),
+    }
+    let directory = RootedDir::open_read(parent)?;
+    let hash = if directory.is_regular_file(leaf)? {
+        Some(directory.hash_file(leaf)?)
+    } else {
+        None
+    };
+    Ok((Some(directory.identity_token()?), hash))
+}
+
+/// Bind every external destination of a plan under review to the parent
+/// directory whose contents the plan reviewed. The identity and a fresh hash
+/// of the destination are read through one handle, and the hash must still
+/// equal the reviewed `local_sha256`, so the bound directory is the one that
+/// was reviewed rather than one swapped in after the review hash was taken.
+/// A parent that does not exist at review stays unbound; the backup stage
+/// then binds the directory it first opens, as for plans from before
+/// plan-time binding.
+pub fn bind_plan_external_parents(plan: &mut InstallationPlan) -> Result<(), AppError> {
+    for operation in plan
+        .operations
+        .iter_mut()
+        .filter(|operation| operation.external)
+    {
+        let (identity, observed) = observe_external_destination(&operation.destination)?;
+        if identity.is_some() && observed != operation.local_sha256 {
+            return Err(AppError::Transaction(format!(
+                "external destination changed while the plan was built; review it again: {}",
+                operation.destination
+            )));
+        }
+        operation.external_parent_identity = identity;
+    }
+    Ok(())
+}
+
+/// Refuse, before any transaction storage is written, an external
+/// destination parent that is no longer the directory bound in the reviewed
+/// plan. A mutating operation also needs its reviewed parent to exist; a
+/// skipped operation never changes its destination, so a missing parent is
+/// left to the later checks that read it.
+fn validate_plan_external_parent_identities(plan: &InstallationPlan) -> Result<(), AppError> {
+    for operation in plan
+        .operations
+        .iter()
+        .filter(|operation| operation.external)
+    {
+        let Some(expected) = operation.external_parent_identity.as_deref() else {
+            continue;
+        };
+        let absolute = validate_external_destination(&operation.destination)?;
+        let parent = absolute.parent().ok_or_else(|| {
+            AppError::PathSecurity("external destination has no parent directory".into())
+        })?;
+        if !external_parent_present(parent, Some(expected), &operation.destination)? {
+            if matches!(
+                operation.action,
+                OperationAction::Skip | OperationAction::External
+            ) {
+                continue;
+            }
+            return Err(AppError::PathSecurity(format!(
+                "the folder reviewed for {} is missing; move it back to {} or review the plan again",
+                operation.destination,
+                parent.display()
+            )));
+        }
+        let directory = RootedDir::open_read(parent)?;
+        verify_external_parent_identity(&directory, Some(expected), &operation.destination)?;
     }
     Ok(())
 }
@@ -1216,6 +1321,7 @@ pub fn run_transaction(
     validate_plan(plan)?;
     validate_plan_project_root(plan, &project_root, root_exists)?;
     validate_plan_project_root_identity(plan, &project_root)?;
+    validate_plan_external_parent_identities(plan)?;
     validate_flatten_transaction_inputs(plan, prepared_files, &project_root)?;
     let mut effective_plan = plan.clone();
     let mut project_directory = if plan.transaction.project_root_mode == ProjectRootMode::Existing {
@@ -1261,14 +1367,16 @@ pub fn run_transaction(
     let mut journal = new_journal(plan, &plan.project_id, &project_root);
     // A replay writes a fresh journal, but an external parent bound by the
     // interrupted run stays bound: the backup stage must find the same
-    // directory instead of binding whatever now occupies the path.
+    // directory instead of binding whatever now occupies the path. The
+    // fresh journal already carries the plan's identity; an interrupted run
+    // can only have bound that same directory.
     if let Some(interrupted) = interrupted_journal.as_ref() {
         for operation in journal
             .operations
             .iter_mut()
             .filter(|operation| operation.external)
         {
-            operation.external_parent_identity = interrupted
+            let carried = interrupted
                 .operations
                 .iter()
                 .find(|previous| {
@@ -1277,6 +1385,16 @@ pub fn run_transaction(
                         && previous.destination == operation.destination
                 })
                 .and_then(|previous| previous.external_parent_identity.clone());
+            match (operation.external_parent_identity.as_deref(), carried) {
+                (Some(planned), Some(carried)) if planned != carried => {
+                    return Err(AppError::PathSecurity(format!(
+                        "the interrupted transaction bound a different folder than the reviewed plan for {}; manual review is required",
+                        operation.destination
+                    )));
+                }
+                (_, Some(carried)) => operation.external_parent_identity = Some(carried),
+                (_, None) => {}
+            }
         }
     }
     persist_journal(&journal_path, &mut journal)?;
@@ -2719,9 +2837,11 @@ fn backup_existing(
                     AppError::PathSecurity("external backup destination name is invalid".into())
                 })?;
             let source_root = RootedDir::open(parent)?;
-            // Bind the parent the first time the transaction opens it. A
-            // resumed replay carries the identity of the interrupted run and
-            // must still find the same directory.
+            // A reviewed plan carries the parent's identity into the journal,
+            // and a resumed replay carries the identity of the interrupted
+            // run; either way this must still be the same directory. Only a
+            // plan without one binds the parent here, the first time the
+            // transaction opens it.
             let record_index = journal
                 .operations
                 .iter()
@@ -3315,8 +3435,9 @@ fn apply_operations(
         let deleting = operation.action == OperationAction::DeleteManaged;
         // The precondition, the live mutation, and the post-apply readback
         // all use this one retained target. An external parent must still be
-        // the directory bound at backup, which always runs earlier in the
-        // same run, so an unbound external parent is never opened here.
+        // the directory bound in the plan or at backup, which always runs
+        // earlier in the same run, so an unbound external parent is never
+        // opened here.
         let bound_identity = journal
             .operations
             .get(index)
@@ -3749,10 +3870,12 @@ fn live_target<'a>(
 }
 
 /// Whether an external destination's parent exists at its path. A missing
-/// parent reads as absent: no destination or quarantine can exist in it. A
-/// link or other non-directory at the path of a bound parent is identity
-/// drift, never an absent destination; an unbound legacy parent keeps the
-/// earlier absent reading.
+/// parent reports `false`: no destination or quarantine can exist at that
+/// path. Callers decide what a missing bound parent means; recovery of an
+/// operation that may have changed its destination treats it as an error
+/// (`existing_operation_target`). A link or other non-directory at the path
+/// of a bound parent is identity drift, never an absent destination; an
+/// unbound legacy parent keeps the earlier absent reading.
 fn external_parent_present(
     parent: &Path,
     external_identity: Option<&str>,
@@ -3771,7 +3894,9 @@ fn external_parent_present(
 }
 
 /// Like `live_target`, but reports `None` when an external parent no longer
-/// exists. No quarantine can exist in a missing directory.
+/// exists at its path. Journal operations go through
+/// `existing_operation_target`, which refuses a missing bound parent when the
+/// operation may have changed its destination.
 fn existing_live_target<'a>(
     project_directory: Option<&'a RootedDir>,
     external: bool,
@@ -3799,19 +3924,58 @@ fn existing_live_target<'a>(
     .map(Some)
 }
 
+/// Whether a journal operation may have changed its live destination or
+/// left a quarantine beside it. Only a leaf-changing action that reached the
+/// apply intent can; a skip, an external action, a legacy record without an
+/// action, and an operation still `pending` or `staged` have changed nothing,
+/// so their rollback genuinely requires no inspection of the destination.
+fn operation_may_have_changed_destination(operation: &JournalOperation) -> bool {
+    !matches!(
+        operation.action,
+        Some(OperationAction::Skip | OperationAction::External) | None
+    ) && !matches!(operation.status.as_str(), "pending" | "staged")
+}
+
+/// The error for a bound external parent that no longer exists while its
+/// operation may have changed the destination. The destination, or a
+/// quarantine holding the user's bytes, may have moved with the folder, so
+/// reading the destination as absent could report a removal or restore that
+/// never happened. The journal is left as it was, so the same recovery can be
+/// retried once the folder is back.
+fn missing_bound_external_parent(destination: &str) -> AppError {
+    let folder = validate_external_destination(destination)
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.display().to_string()))
+        .unwrap_or_else(|| "its original location".into());
+    AppError::PathSecurity(format!(
+        "the folder bound to this transaction for {destination} is missing; move it back to {folder} and retry, because recovery cannot confirm the destination while the folder is elsewhere"
+    ))
+}
+
 /// The retained target of one journal operation, bound to its journaled
-/// external parent identity. `None` when an external parent or the project
-/// root capability no longer exists.
+/// external parent identity. `None` when the project root capability no
+/// longer exists, or when an external parent no longer exists and the
+/// operation has not changed its destination. A missing bound parent of an
+/// operation that may have changed its destination is an error instead of an
+/// absent destination; see `missing_bound_external_parent`.
 fn existing_operation_target<'a>(
     project_directory: Option<&'a RootedDir>,
     operation: &JournalOperation,
 ) -> Result<Option<LiveTarget<'a>>, AppError> {
-    existing_live_target(
+    let target = existing_live_target(
         project_directory,
         operation.external,
         &operation.destination,
         operation.external_parent_identity.as_deref(),
-    )
+    )?;
+    if target.is_none()
+        && operation.external
+        && operation.external_parent_identity.is_some()
+        && operation_may_have_changed_destination(operation)
+    {
+        return Err(missing_bound_external_parent(&operation.destination));
+    }
+    Ok(target)
 }
 
 /// Hash and executable state of a live destination read through its retained
@@ -4279,6 +4443,17 @@ fn sweep_transaction_quarantines(
                 )?;
             }
             if !present {
+                // A quarantine of an operation that may have changed its
+                // destination could have moved with a bound folder.
+                if let Some(index) = indices.iter().find(|index| {
+                    let operation = &journal.operations[**index];
+                    operation.external_parent_identity.is_some()
+                        && operation_may_have_changed_destination(operation)
+                }) {
+                    return Err(missing_bound_external_parent(
+                        &journal.operations[*index].destination,
+                    ));
+                }
                 continue;
             }
             let directory = RootedDir::open(&path)?;
@@ -5676,8 +5851,9 @@ fn rollback_destination_is_restored(
 }
 
 /// Live hash of a rollback destination, read through the retained project
-/// capability or through the external parent bound to the journal. An
-/// external parent that no longer exists reads as absent.
+/// capability or through the external parent bound to the journal. A
+/// missing unbound external parent reads as absent; a missing bound parent of
+/// an operation that may have changed its destination is an error.
 fn rollback_live_hash(
     operation: &JournalOperation,
     project_directory: Option<&RootedDir>,
@@ -6138,6 +6314,12 @@ fn prepare_rollback_transaction(
             }
         }
         let target = existing_operation_target(project_directory, &operation)?;
+        if target.is_none() && operation.external && operation.external_parent_identity.is_some() {
+            // Only a step whose parent operation may have changed its
+            // destination reaches this capture. The child record is still
+            // `pending`, so the check is made here rather than from its status.
+            return Err(missing_bound_external_parent(&operation.destination));
+        }
         let live_state = match target.as_ref() {
             Some(target) if target.dir().exists(&target.relative)? => {
                 if !target.dir().is_regular_file(&target.relative)? {
@@ -8043,6 +8225,7 @@ pub fn repair_operations(
             } else {
                 RollbackAction::RestoreBackup
             },
+            external_parent_identity: None,
         });
     }
     Ok(operations)
@@ -8098,6 +8281,7 @@ pub fn managed_removal_operations(
             },
             external: file.external,
             rollback: RollbackAction::RestoreBackup,
+            external_parent_identity: None,
         });
     }
     Ok(operations)
@@ -8160,6 +8344,7 @@ pub fn reinstall_operations(
                 ),
                 external: file.external,
                 rollback: RollbackAction::RestoreBackup,
+                external_parent_identity: None,
             })
         })
         .collect()
@@ -8233,6 +8418,7 @@ pub fn update_operations(
                 } else {
                     RollbackAction::RestoreBackup
                 },
+                external_parent_identity: None,
             })
         })
         .collect::<Result<_, AppError>>()?;
@@ -8283,6 +8469,7 @@ pub fn update_operations(
             }),
             external: file.external,
             rollback: RollbackAction::RestoreBackup,
+            external_parent_identity: None,
         });
     }
     Ok(operations)
@@ -8421,6 +8608,7 @@ mod tests {
                 resolution: None,
                 external: false,
                 rollback: RollbackAction::RemoveCreated,
+                external_parent_identity: None,
             }],
             conflicts: vec![],
             external_actions: vec![],
@@ -8604,6 +8792,7 @@ mod tests {
             resolution: Some("managed_remove".into()),
             external: false,
             rollback: RollbackAction::RestoreBackup,
+            external_parent_identity: None,
         }];
         let journal = new_journal(&plan, &plan.project_id, project.path());
         let project_directory = RootedDir::open_read(project.path()).unwrap();
@@ -9445,6 +9634,7 @@ mod tests {
             resolution: None,
             external: true,
             rollback: RollbackAction::RemoveCreated,
+            external_parent_identity: None,
         });
         plan.operations.push(PlanOperation {
             id: "thumbnail".into(),
@@ -9465,6 +9655,7 @@ mod tests {
             resolution: Some("keep".into()),
             external: false,
             rollback: RollbackAction::None,
+            external_parent_identity: None,
         });
 
         let validation_stage = TRANSACTION_STAGES
@@ -9574,6 +9765,7 @@ mod tests {
             resolution: None,
             external: true,
             rollback: RollbackAction::RemoveCreated,
+            external_parent_identity: None,
         });
 
         let error = run_test_transaction(
@@ -10740,6 +10932,7 @@ mod tests {
             resolution: Some("keep".into()),
             external: false,
             rollback: RollbackAction::None,
+            external_parent_identity: None,
         });
         let prepared = vec![PreparedFile {
             operation_id: "op-1".into(),
@@ -13012,6 +13205,7 @@ mod tests {
                 resolution: Some("keep".into()),
                 external: false,
                 rollback: RollbackAction::None,
+                external_parent_identity: None,
             });
             let canonical_project = validate_project_root(project.path()).unwrap();
             let identity = ProjectIdentity {
@@ -13050,6 +13244,7 @@ mod tests {
                 resolution: None,
                 external: true,
                 rollback: RollbackAction::RestoreBackup,
+                external_parent_identity: None,
             });
             let prepared = vec![
                 PreparedFile {
@@ -13445,5 +13640,419 @@ mod tests {
             result.unwrap();
         }
         assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"safe");
+    }
+
+    impl ExternalLauncherCase {
+        /// The same case for a launcher that does not exist yet, which the
+        /// transaction creates and rollback removes.
+        fn new_created() -> Self {
+            let mut case = Self::new();
+            fs::remove_file(&case.launcher_path).unwrap();
+            let launcher = case
+                .plan
+                .operations
+                .iter_mut()
+                .find(|operation| operation.id == "launcher")
+                .unwrap();
+            launcher.action = OperationAction::Generate;
+            launcher.local_sha256 = None;
+            launcher.local_state = LocalState::Absent;
+            launcher.rollback = RollbackAction::RemoveCreated;
+            case
+        }
+
+        /// Review the plan the way plan construction does.
+        fn bind_plan(&mut self) -> String {
+            bind_plan_external_parents(&mut self.plan).unwrap();
+            self.plan
+                .operations
+                .iter()
+                .find(|operation| operation.id == "launcher")
+                .and_then(|operation| operation.external_parent_identity.clone())
+                .expect("the reviewed launcher parent is bound in the plan")
+        }
+
+        /// Replace the launcher parent with a different directory holding
+        /// `bytes` (or nothing) at the launcher path.
+        fn swap_parent(&self, bytes: Option<&[u8]>) {
+            fs::rename(&self.launcher_parent, self.away()).unwrap();
+            fs::create_dir(&self.launcher_parent).unwrap();
+            if let Some(bytes) = bytes {
+                fs::write(&self.launcher_path, bytes).unwrap();
+            }
+        }
+
+        fn restore_parent(&self) {
+            fs::remove_dir_all(&self.launcher_parent).unwrap();
+            fs::rename(self.away(), &self.launcher_parent).unwrap();
+        }
+    }
+
+    #[test]
+    fn plan_binding_records_the_reviewed_launcher_parent_through_one_handle() {
+        let mut case = ExternalLauncherCase::new();
+        let bound = case.bind_plan();
+        assert_eq!(
+            bound,
+            RootedDir::open_read(&case.launcher_parent)
+                .unwrap()
+                .identity_token()
+                .unwrap()
+        );
+        assert!(case
+            .plan
+            .operations
+            .iter()
+            .filter(|operation| !operation.external)
+            .all(|operation| operation.external_parent_identity.is_none()));
+        // The journal starts from the reviewed identity, before any stage.
+        let journal = new_journal(&case.plan, &case.plan.project_id, case.project.path());
+        assert_eq!(
+            ExternalLauncherCase::bound_identity(&journal),
+            Some(bound.clone())
+        );
+        // A plan round-trips the binding, and one without it stays readable.
+        let serialized = serde_json::to_value(&case.plan).unwrap();
+        let launcher = serialized["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|operation| operation["id"] == "launcher")
+            .unwrap();
+        assert_eq!(launcher["external_parent_identity"], bound.as_str());
+        let mut legacy = serialized.clone();
+        for operation in legacy["operations"].as_array_mut().unwrap() {
+            operation
+                .as_object_mut()
+                .unwrap()
+                .remove("external_parent_identity");
+        }
+        let legacy: InstallationPlan = serde_json::from_value(legacy).unwrap();
+        assert!(legacy
+            .operations
+            .iter()
+            .all(|operation| operation.external_parent_identity.is_none()));
+        assert!(
+            ExternalLauncherCase::bound_identity(&new_journal(
+                &legacy,
+                &legacy.project_id,
+                case.project.path()
+            ))
+            .is_none(),
+            "a plan without the binding keeps the backup-stage binding"
+        );
+
+        // Bytes that differ from the reviewed hash mean the plan no longer
+        // describes this directory.
+        fs::write(&case.launcher_path, b"changed after review").unwrap();
+        let changed = bind_plan_external_parents(&mut case.plan).unwrap_err();
+        assert!(
+            changed
+                .to_string()
+                .contains("changed while the plan was built"),
+            "{changed}"
+        );
+
+        // A parent that does not exist at review stays unbound.
+        let mut absent = ExternalLauncherCase::new_created();
+        let missing_parent = absent.launcher_parent.join("missing").join("example.mod");
+        for operation in absent.plan.operations.iter_mut() {
+            if operation.id == "launcher" {
+                operation.destination = missing_parent.display().to_string();
+            }
+        }
+        bind_plan_external_parents(&mut absent.plan).unwrap();
+        assert!(absent
+            .plan
+            .operations
+            .iter()
+            .all(|operation| operation.external_parent_identity.is_none()));
+
+        // Only an external destination may carry a parent identity.
+        let mut project_bound = ready_plan(case.project.path());
+        project_bound.operations[0].external_parent_identity = Some(bound);
+        assert!(validate_plan(&project_bound)
+            .unwrap_err()
+            .to_string()
+            .contains("only an external destination"));
+    }
+
+    #[test]
+    fn external_parent_swapped_after_plan_review_is_refused_before_transaction_storage() {
+        let mut case = ExternalLauncherCase::new();
+        let bound = case.bind_plan();
+        // A different directory with the reviewed bytes at the same path:
+        // every content precondition still passes.
+        case.swap_parent(Some(&case.old_launcher));
+
+        let refused = run_test_transaction(
+            case.project.path(),
+            &case.plan,
+            &case.prepared,
+            &case.options(),
+        )
+        .unwrap_err();
+        assert!(
+            refused
+                .to_string()
+                .contains("no longer the directory bound to this transaction"),
+            "{refused}"
+        );
+        assert!(
+            !case.journal_path().exists(),
+            "a plan refused at preflight writes no transaction storage"
+        );
+        assert_eq!(fs::read(&case.launcher_path).unwrap(), case.old_launcher);
+        assert_eq!(
+            fs::read(case.away().join("example.mod")).unwrap(),
+            case.old_launcher
+        );
+        assert!(!case.project.path().join("AGENTS.md").exists());
+
+        // The reviewed directory returns; the same plan now applies there.
+        case.restore_parent();
+        let (journal, _) = run_test_transaction(
+            case.project.path(),
+            &case.plan,
+            &case.prepared,
+            &case.options(),
+        )
+        .unwrap();
+        assert_eq!(fs::read(&case.launcher_path).unwrap(), case.new_launcher);
+        assert_eq!(ExternalLauncherCase::bound_identity(&journal), Some(bound));
+    }
+
+    #[test]
+    fn the_journal_starts_from_the_plan_bound_parent_before_backup() {
+        let mut case = ExternalLauncherCase::new();
+        let bound = case.bind_plan();
+        // Stop at dry-run review, before the backup stage opens the parent.
+        let review_stage = TRANSACTION_STAGES
+            .iter()
+            .position(|stage| *stage == "dry-run review")
+            .unwrap();
+        run_test_transaction(
+            case.project.path(),
+            &case.plan,
+            &case.prepared,
+            &TransactionOptions {
+                fail_after_stage: Some(review_stage),
+                ..case.options()
+            },
+        )
+        .unwrap_err();
+        let interrupted = read_journal(&case.journal_path()).unwrap();
+        assert_eq!(
+            interrupted.stages[5].status, "pending",
+            "backup has not run"
+        );
+        assert_eq!(
+            ExternalLauncherCase::bound_identity(&interrupted),
+            Some(bound),
+            "the journal carries the reviewed identity before the backup stage"
+        );
+    }
+
+    #[test]
+    fn plan_bound_parent_missing_at_apply_time_is_refused() {
+        let mut case = ExternalLauncherCase::new_created();
+        case.bind_plan();
+        fs::rename(&case.launcher_parent, case.away()).unwrap();
+        let refused = run_test_transaction(
+            case.project.path(),
+            &case.plan,
+            &case.prepared,
+            &case.options(),
+        )
+        .unwrap_err();
+        assert!(refused.to_string().contains("is missing"), "{refused}");
+        assert!(
+            !case.launcher_parent.exists(),
+            "a bound parent is never recreated"
+        );
+        assert!(!case.journal_path().exists());
+    }
+
+    /// Install the launcher, move its bound parent away, and roll back.
+    /// Rollback must stop instead of reading the destination as absent and
+    /// reporting it restored, keep the journal recoverable, and finish once
+    /// the folder is back.
+    fn rollback_with_a_missing_bound_parent_stops(created: bool) {
+        let mut case = if created {
+            ExternalLauncherCase::new_created()
+        } else {
+            ExternalLauncherCase::new()
+        };
+        case.bind_plan();
+        run_test_transaction(
+            case.project.path(),
+            &case.plan,
+            &case.prepared,
+            &case.options(),
+        )
+        .unwrap();
+        assert_eq!(fs::read(&case.launcher_path).unwrap(), case.new_launcher);
+        fs::rename(&case.launcher_parent, case.away()).unwrap();
+
+        let mut journal = read_journal(&case.journal_path()).unwrap();
+        let refused = rollback_transaction(case.project.path(), &mut journal, &case.journal_path())
+            .unwrap_err();
+        assert!(matches!(refused, AppError::PathSecurity(_)), "{refused:?}");
+        assert!(
+            refused.to_string().contains("is missing; move it back"),
+            "{refused}"
+        );
+        let stopped = read_journal(&case.journal_path()).unwrap();
+        assert_ne!(stopped.state, "rolled_back");
+        assert!(stopped.recovery.rollback_allowed);
+        // The inverse-backup capture stops first, before any rollback intent
+        // or project change.
+        assert!(
+            stopped
+                .operations
+                .iter()
+                .all(|operation| operation.status == "verified"),
+            "{:?}",
+            stopped
+                .operations
+                .iter()
+                .map(|operation| (&operation.id, &operation.status))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            fs::read(case.project.path().join("AGENTS.md")).unwrap(),
+            b"safe"
+        );
+        assert!(
+            !case.launcher_parent.exists(),
+            "a bound parent is never recreated"
+        );
+        assert_eq!(
+            fs::read(case.away().join("example.mod")).unwrap(),
+            case.new_launcher
+        );
+
+        fs::rename(case.away(), &case.launcher_parent).unwrap();
+        let mut journal = read_journal(&case.journal_path()).unwrap();
+        rollback_transaction(case.project.path(), &mut journal, &case.journal_path()).unwrap();
+        if created {
+            assert!(!case.launcher_path.exists());
+        } else {
+            assert_eq!(fs::read(&case.launcher_path).unwrap(), case.old_launcher);
+        }
+        assert!(!case.project.path().join("AGENTS.md").exists());
+    }
+
+    #[test]
+    fn rollback_of_a_created_launcher_stops_while_its_bound_parent_is_missing() {
+        rollback_with_a_missing_bound_parent_stops(true);
+    }
+
+    #[test]
+    fn rollback_of_a_replaced_launcher_stops_while_its_bound_parent_is_missing() {
+        rollback_with_a_missing_bound_parent_stops(false);
+    }
+
+    #[test]
+    fn rollback_of_a_kept_launcher_needs_nothing_from_a_missing_bound_parent() {
+        let mut case = ExternalLauncherCase::new();
+        let launcher = case
+            .plan
+            .operations
+            .iter_mut()
+            .find(|operation| operation.id == "launcher")
+            .unwrap();
+        // The kept launcher already registers this project.
+        launcher.action = OperationAction::Skip;
+        launcher.result_sha256 = None;
+        launcher.local_sha256 = Some(sha256_bytes(&case.new_launcher));
+        launcher.local_state = LocalState::Unmodified;
+        launcher.rollback = RollbackAction::None;
+        fs::write(&case.launcher_path, &case.new_launcher).unwrap();
+        case.old_launcher = case.new_launcher.clone();
+        case.bind_plan();
+        run_test_transaction(
+            case.project.path(),
+            &case.plan,
+            &case.prepared,
+            &case.options(),
+        )
+        .unwrap();
+        assert_eq!(fs::read(&case.launcher_path).unwrap(), case.old_launcher);
+        fs::rename(&case.launcher_parent, case.away()).unwrap();
+        // A kept destination is never changed, so nothing in the moved
+        // folder needs restoring and rollback completes without it.
+        let mut journal = read_journal(&case.journal_path()).unwrap();
+        rollback_transaction(case.project.path(), &mut journal, &case.journal_path()).unwrap();
+        assert!(
+            !case.launcher_parent.exists(),
+            "a bound parent is never recreated"
+        );
+        assert_eq!(
+            fs::read(case.away().join("example.mod")).unwrap(),
+            case.old_launcher
+        );
+        assert!(!case.project.path().join("AGENTS.md").exists());
+    }
+
+    #[test]
+    fn a_missing_bound_parent_is_absent_only_for_operations_that_changed_nothing() {
+        let case = ExternalLauncherCase::new();
+        let identity = RootedDir::open_read(&case.launcher_parent)
+            .unwrap()
+            .identity_token()
+            .unwrap();
+        fs::rename(&case.launcher_parent, case.away()).unwrap();
+        let mut operation = new_journal(&case.plan, &case.plan.project_id, case.project.path())
+            .operations
+            .into_iter()
+            .find(|operation| operation.id == "launcher")
+            .unwrap();
+        operation.external_parent_identity = Some(identity);
+        for (status, action, missing_is_error) in [
+            ("pending", Some(OperationAction::Replace), false),
+            ("staged", Some(OperationAction::Replace), false),
+            ("verified", Some(OperationAction::Skip), false),
+            ("verified", None, false),
+            ("applying", Some(OperationAction::Replace), true),
+            ("verified", Some(OperationAction::Generate), true),
+            ("rollback_applying", Some(OperationAction::Replace), true),
+            ("rolled_back", Some(OperationAction::Replace), true),
+        ] {
+            operation.status = status.into();
+            operation.action = action;
+            match existing_operation_target(None, &operation) {
+                Ok(target) => {
+                    assert!(!missing_is_error, "{status} {action:?} read as absent");
+                    assert!(target.is_none());
+                }
+                Err(error) => {
+                    assert!(missing_is_error, "{status} {action:?}: {error}");
+                    assert!(error.to_string().contains("is missing; move it back"));
+                }
+            }
+        }
+        // The quarantine sweep applies the same rule to the folder it lists.
+        let mut journal = new_journal(&case.plan, &case.plan.project_id, case.project.path());
+        journal.operations.retain(|record| record.id == "launcher");
+        journal.operations[0] = operation.clone();
+        journal.operations[0].status = "staged".into();
+        journal.operations[0].action = Some(OperationAction::Replace);
+        sweep_transaction_quarantines(None, &journal, None, QuarantineSweep::Rollback).unwrap();
+        journal.operations[0].status = "rolled_back".into();
+        let swept = sweep_transaction_quarantines(None, &journal, None, QuarantineSweep::Rollback)
+            .unwrap_err();
+        assert!(
+            swept.to_string().contains("is missing; move it back"),
+            "{swept}"
+        );
+
+        // An unbound legacy record keeps the absent reading.
+        operation.external_parent_identity = None;
+        operation.status = "verified".into();
+        operation.action = Some(OperationAction::Replace);
+        assert!(existing_operation_target(None, &operation)
+            .unwrap()
+            .is_none());
     }
 }

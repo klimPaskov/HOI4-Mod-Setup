@@ -431,7 +431,7 @@
             "pattern": "^[0-9a-f]{64}$"
           },
           "external_parent_identity": {
-            "description": "Identity of an external destination's parent directory, bound when the transaction first opens that parent through a retained handle (normally the backup stage). Apply, post-install checks, finalization, and rollback reopen the parent only when it still has this identity, and a bound parent is never recreated. Rollback journals copy it from their parent operation. Omitted for project destinations and for operations from before the binding.",
+            "description": "Identity of an external destination's parent directory, copied from the reviewed plan operation or, for a plan without one, bound when the transaction first opens that parent through a retained handle (the backup stage). Apply, post-install checks, finalization, and rollback reopen the parent only when it still has this identity, and a bound parent is never recreated. When the operation may have changed its destination (a leaf-changing action past the pending and staged states), a missing bound parent stops recovery instead of reading as an absent destination. Rollback journals copy it from their parent operation. Omitted for project destinations and for operations from before the binding.",
             "type": [
               "string",
               "null"

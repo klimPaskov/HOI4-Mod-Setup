@@ -44,6 +44,16 @@
       }
     },
     {
+      "if": { "properties": { "schema_version": { "const": "1.0.0" } } },
+      "then": {
+        "properties": {
+          "operations": {
+            "items": { "properties": { "external_parent_identity": false } }
+          }
+        }
+      }
+    },
+    {
       "if": { "properties": { "ai_provider": { "enum": ["codex", "claude_account"] } } },
       "then": { "properties": { "ai_endpoint": { "type": ["null", "string"], "maxLength": 0 } } }
     },
@@ -717,7 +727,18 @@
             "external_launcher",
             "application_data"
           ]
+        },
+        "external_parent_identity": {
+          "description": "Identity of an external destination's parent directory, captured through a retained handle while the plan is built, together with the reviewed local hash. The transaction journal starts from this identity, so backup and apply refuse a different directory at the same path. Omitted for project destinations, for a parent that did not exist at review, and for plans from before plan-time binding.",
+          "type": "string",
+          "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
         }
+      },
+      "if": {
+        "properties": { "external": { "const": false } }
+      },
+      "then": {
+        "properties": { "external_parent_identity": false }
       }
     },
     "conflictDecision": {
