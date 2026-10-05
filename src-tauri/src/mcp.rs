@@ -828,9 +828,10 @@ const MAX_NATIVE_SCAN_ENTRIES: usize = 20_000;
 
 /// Native libraries of the installed MCP package that a running MCP client
 /// has loaded, when the reviewed setup must replace that package. The
-/// bootstrap reinstalls whenever the installed version differs from the
-/// reviewed release, and npm cannot replace a loaded library, so setup would
-/// otherwise fail only after the project files were applied.
+/// bootstrap keeps an installation whose complete tree already matches the
+/// reviewed release and otherwise removes and reinstalls it, and npm cannot
+/// replace a loaded library, so setup would otherwise fail only after the
+/// project files were applied.
 pub fn loaded_native_files_blocking_replacement(
     target: &VerifiedMcpTarget,
 ) -> Result<Vec<String>, AppError> {
@@ -843,7 +844,7 @@ pub fn loaded_native_files_blocking_replacement(
             .join("npm")
             .join("node_modules")
             .join(&target.package_name);
-        loaded_native_files_in(&root, &target.package_version)
+        loaded_native_files_in(&root, target)
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -864,9 +865,24 @@ fn installed_package_version(package_root: &Path) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Whether the installed package is exactly the reviewed release: its version
+/// and its complete tree identity and file count.
+fn installed_package_matches(package_root: &Path, target: &VerifiedMcpTarget) -> bool {
+    if installed_package_version(package_root).as_deref() != Some(target.package_version.as_str()) {
+        return false;
+    }
+    read_installed_package_tree(package_root).is_ok_and(|files| {
+        package_tree_identity(&files)
+            == (
+                target.package_tree_sha256.clone(),
+                target.package_file_count,
+            )
+    })
+}
+
 fn loaded_native_files_in(
     package_root: &Path,
-    reviewed_version: &str,
+    target: &VerifiedMcpTarget,
 ) -> Result<Vec<String>, AppError> {
     let metadata = match std::fs::symlink_metadata(package_root) {
         Ok(metadata) => metadata,
@@ -876,7 +892,7 @@ fn loaded_native_files_in(
     if is_link_metadata(&metadata) || !metadata.is_dir() {
         return Ok(Vec::new());
     }
-    if installed_package_version(package_root).as_deref() == Some(reviewed_version) {
+    if installed_package_matches(package_root, target) {
         return Ok(Vec::new());
     }
     let mut loaded = Vec::new();
@@ -943,11 +959,27 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
+    fn native_scan_target(version: &str, tree: &str, files: u64) -> VerifiedMcpTarget {
+        VerifiedMcpTarget {
+            target: "hoi4-agent-tools.cmd".into(),
+            package_name: "hoi4-agent-tools".into(),
+            package_version: version.into(),
+            package_integrity: "sha512-reviewed".into(),
+            package_tree_sha256: tree.into(),
+            package_file_count: files,
+            runtime_entry: "dist/bin/stdio.js".into(),
+            runtime_entry_sha256: "0".repeat(64),
+            runtime_entry_size: 1,
+            required_tools: Vec::new(),
+        }
+    }
+
     #[test]
-    fn loaded_native_files_block_only_a_replacement_of_a_different_version() {
+    fn loaded_native_files_block_only_a_replacement_of_a_package_that_does_not_match() {
         let temporary = tempfile::tempdir().unwrap();
         let root = temporary.path().join("hoi4-agent-tools");
-        assert!(loaded_native_files_in(&root, "3.8.1").unwrap().is_empty());
+        let newer = native_scan_target("3.8.1", &"a".repeat(64), 1);
+        assert!(loaded_native_files_in(&root, &newer).unwrap().is_empty());
 
         let library = root.join("node_modules/@img/sharp-win32-x64/lib");
         std::fs::create_dir_all(&library).unwrap();
@@ -955,27 +987,37 @@ mod tests {
         std::fs::write(library.join("libvips-42.dll"), b"image").unwrap();
         std::fs::write(library.join("sharp.node"), b"addon").unwrap();
         std::fs::write(library.join("notes.txt"), b"text").unwrap();
-        assert!(loaded_native_files_in(&root, "3.8.1").unwrap().is_empty());
+        assert!(loaded_native_files_in(&root, &newer).unwrap().is_empty());
+
+        let (tree, count) = package_tree_identity(&read_installed_package_tree(&root).unwrap());
+        let installed = native_scan_target("3.6.0", &tree, count);
+        let same_version_other_tree = native_scan_target("3.6.0", &"b".repeat(64), count);
 
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::fs::OpenOptionsExt;
             // An exclusive handle stands in for a loader mapping: both
             // refuse a second write handle with a sharing violation.
-            let _held = std::fs::OpenOptions::new()
+            let held = std::fs::OpenOptions::new()
                 .read(true)
                 .share_mode(0)
                 .open(library.join("libvips-42.dll"))
                 .unwrap();
+            let expected = vec!["node_modules/@img/sharp-win32-x64/lib/libvips-42.dll".to_string()];
+            assert_eq!(loaded_native_files_in(&root, &newer).unwrap(), expected);
             assert_eq!(
-                loaded_native_files_in(&root, "3.8.1").unwrap(),
-                vec!["node_modules/@img/sharp-win32-x64/lib/libvips-42.dll".to_string()]
+                loaded_native_files_in(&root, &same_version_other_tree).unwrap(),
+                expected,
+                "a same-version tree with stale files is still replaced"
             );
-            assert!(
-                loaded_native_files_in(&root, "3.6.0").unwrap().is_empty(),
-                "the reviewed version is already installed, so nothing is replaced"
-            );
+            drop(held);
         }
+        assert!(
+            loaded_native_files_in(&root, &installed)
+                .unwrap()
+                .is_empty(),
+            "the exact reviewed tree is kept, so nothing is replaced"
+        );
     }
 
     struct FakeTransport {

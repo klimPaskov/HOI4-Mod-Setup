@@ -1146,9 +1146,11 @@ mod tests {
         assert_eq!(result.record.engine, ENGINE);
         assert_eq!(result.record.auth_mode, AUTH_MODE);
         assert!(!result.record.account_identity_persisted);
-        assert_eq!(
+        assert_eq!(result.record.analysis_id, result.analysis.analysis_id);
+        assert_ne!(
             result.analysis.analysis_id.to_string(),
-            valid["analysis_id"].as_str().unwrap()
+            valid["analysis_id"].as_str().unwrap(),
+            "the core assigns the analysis ID"
         );
         assert_eq!(
             result.record.output_sha256,
