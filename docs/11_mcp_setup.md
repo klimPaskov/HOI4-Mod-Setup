@@ -10,7 +10,7 @@ The inspected `.codex/config.toml` contains `hoi4_agent_tools` with command `hoi
 
 These findings drive the example manifest. They do not authorize macOS equivalents.
 
-The current source pins `hoi4-agent-tools@3.6.0` by npm SHA-512 integrity,
+The current source pins `hoi4-agent-tools@3.8.1` by npm SHA-512 integrity,
 canonical package-tree SHA-256 and file count, runtime-entry SHA-256 and size,
 and required tool names. The bootstrap and app independently verify the full
 installed package tree, so changing an imported sibling module fails before
@@ -19,8 +19,8 @@ and Node executes that copy, preventing a change between verification and
 spawn. The `.cmd` wrapper is used only to locate the current-user npm
 prefix and is never executed. Node must be a regular link-free executable with
 a valid OpenJS Foundation signature; its actual SHA-256 is captured and
-rechecked immediately at spawn. The 3.6.0 source snapshot declares 5,099
-package files and the current 34 required MCP routes. The application reads
+rechecked immediately at spawn. The 3.8.1 source snapshot declares 5,353
+package files and the current 35 required MCP routes. The application reads
 the exact route list from the resolved manifest; no package, command, version,
 tool, or macOS route is invented.
 

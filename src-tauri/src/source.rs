@@ -1982,13 +1982,13 @@ mod tests {
             .expect("current MCP health declaration must be present");
         assert_eq!(
             mcp_health.parameters["package_version"].as_str(),
-            Some("3.6.0")
+            Some("3.8.1")
         );
         assert_eq!(
             mcp_health.parameters["required_tools"]
                 .as_array()
                 .map(Vec::len),
-            Some(34)
+            Some(35)
         );
         let workflow_3d = manifest
             .components
