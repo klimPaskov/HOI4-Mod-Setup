@@ -12,17 +12,17 @@ const component = manifest.components.find((candidate) => candidate.id === "mcp.
 const health = component?.validation?.find((rule) => rule.id === "mcp.hoi4.health")?.parameters;
 const maxOutputBytes = 2 * 1024 * 1024;
 const maxPackageFileBytes = 32 * 1024 * 1024;
-const maxPackageTreeBytes = 256 * 1024 * 1024;
+const maxPackageTreeBytes = 512 * 1024 * 1024;
 const maxPackageFiles = 10_000;
 
 function requireEvidence() {
   if (process.platform !== "win32") {
     throw new Error("The current HOI4 Agent Tools MCP route is supported only on Windows.");
   }
-  if (!health || health.package_name !== "hoi4-agent-tools" || health.package_version !== "3.6.0") {
-    throw new Error("The bundled manifest does not declare the reviewed MCP 3.6.0 package.");
+  if (!health || health.package_name !== "hoi4-agent-tools" || health.package_version !== "3.8.1") {
+    throw new Error("The bundled manifest does not declare the reviewed MCP 3.8.1 package.");
   }
-  if (!Array.isArray(health.required_tools) || health.required_tools.length !== 34) {
+  if (!Array.isArray(health.required_tools) || health.required_tools.length !== 35) {
     throw new Error("The bundled MCP tool list does not match the current source contract.");
   }
   if (!/^[a-f0-9]{64}$/.test(health.package_tree_sha256 ?? "")
@@ -177,9 +177,19 @@ function probeTools(entry, childEnvironment, projectRoot) {
       settled = true;
       clearTimeout(timer);
       lines.close();
+      // Settle only after the server exits, so its working directory is
+      // released before the temporary tree is removed.
+      const settle = () => (error ? reject(error) : resolvePromise(tools));
+      if (child.exitCode !== null || child.signalCode !== null) {
+        settle();
+        return;
+      }
+      const exitTimer = setTimeout(settle, 10_000);
+      child.once("exit", () => {
+        clearTimeout(exitTimer);
+        settle();
+      });
       child.kill();
-      if (error) reject(error);
-      else resolvePromise(tools);
     };
     lines.on("line", (line) => {
       let message;
@@ -326,5 +336,5 @@ try {
   process.stdout.write("MCP live check passed: " + health.package_name + "@" + health.package_version
     + "; " + tools.length + " tools advertised; all " + health.required_tools.length + " manifest routes present.\n");
 } finally {
-  await rm(resolvedRoot, { recursive: true, force: true });
+  await rm(resolvedRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
 }
