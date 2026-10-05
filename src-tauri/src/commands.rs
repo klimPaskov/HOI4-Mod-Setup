@@ -623,6 +623,24 @@ fn provider_analysis_user_error(error: AppError) -> String {
 /// change a choice stay readable; source, filesystem, transaction, and tool
 /// failures are replaced with a next step so internal paths, URLs, and OS
 /// error text never reach the screen.
+/// Refuse a plan whose MCP setup would have to replace an installed HOI4
+/// Agent Tools package that a running MCP client has loaded. npm cannot
+/// replace loaded native libraries, so the failure would otherwise surface
+/// only at readiness, after every project file was applied.
+fn ensure_mcp_package_replaceable(plan: &InstallationPlan) -> Result<(), AppError> {
+    let Ok(target) = crate::mcp::reviewed_plan_target(&plan.external_actions) else {
+        return Ok(());
+    };
+    if crate::mcp::loaded_native_files_blocking_replacement(&target)?.is_empty() {
+        return Ok(());
+    }
+    Err(AppError::InvalidInput(format!(
+        "{MCP_IN_USE_MESSAGE} Nothing was changed."
+    )))
+}
+
+const MCP_IN_USE_MESSAGE: &str = "HOI4 Agent Tools needs an update, but an app connected to the HOI4 MCP is using it. Close Codex, Claude Code, Cursor, or any other app using the HOI4 MCP, then prepare the changes again.";
+
 fn planning_command_error(error: AppError) -> String {
     match error {
         provider_error @ (AppError::Credential(_)
@@ -5792,6 +5810,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         },
     };
     crate::transaction::bind_plan_external_parents(&mut plan)?;
+    ensure_mcp_package_replaceable(&plan)?;
     if plan.flatten_chat_sources {
         let mut prepared_plan = PreparedPlan {
             plan,
@@ -7768,6 +7787,7 @@ fn build_maintenance_plan_blocking(
         },
     };
     crate::transaction::bind_plan_external_parents(&mut plan).map_err(command_error)?;
+    ensure_mcp_package_replaceable(&plan).map_err(planning_command_error)?;
     store_prepared_plan(plan, prepared, merge_contexts, root).map_err(command_error)
 }
 
@@ -7987,6 +8007,9 @@ fn apply_installation(plan_id: String, project_root: String) -> Result<Transacti
         }
         (prepared.plan.clone(), prepared.prepared_files.clone())
     };
+    // An MCP client may have started after the review; refuse before any
+    // project file changes rather than failing at readiness.
+    ensure_mcp_package_replaceable(&approved_plan).map_err(planning_command_error)?;
     let (journal, _) = run_transaction(
         &root,
         &approved_plan,

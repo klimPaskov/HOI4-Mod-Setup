@@ -824,11 +824,159 @@ fn resolved_node() -> Result<PathBuf, AppError> {
     ))
 }
 
+const MAX_NATIVE_SCAN_ENTRIES: usize = 20_000;
+
+/// Native libraries of the installed MCP package that a running MCP client
+/// has loaded, when the reviewed setup must replace that package. The
+/// bootstrap reinstalls whenever the installed version differs from the
+/// reviewed release, and npm cannot replace a loaded library, so setup would
+/// otherwise fail only after the project files were applied.
+pub fn loaded_native_files_blocking_replacement(
+    target: &VerifiedMcpTarget,
+) -> Result<Vec<String>, AppError> {
+    #[cfg(target_os = "windows")]
+    {
+        let Some(appdata) = std::env::var_os("APPDATA") else {
+            return Ok(Vec::new());
+        };
+        let root = PathBuf::from(appdata)
+            .join("npm")
+            .join("node_modules")
+            .join(&target.package_name);
+        loaded_native_files_in(&root, &target.package_version)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = target;
+        Ok(Vec::new())
+    }
+}
+
+fn installed_package_version(package_root: &Path) -> Option<String> {
+    let bytes = std::fs::read(package_root.join("package.json")).ok()?;
+    if bytes.len() > 1024 * 1024 {
+        return None;
+    }
+    let package: Value = serde_json::from_slice(&bytes).ok()?;
+    package
+        .get("version")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+fn loaded_native_files_in(
+    package_root: &Path,
+    reviewed_version: &str,
+) -> Result<Vec<String>, AppError> {
+    let metadata = match std::fs::symlink_metadata(package_root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    if is_link_metadata(&metadata) || !metadata.is_dir() {
+        return Ok(Vec::new());
+    }
+    if installed_package_version(package_root).as_deref() == Some(reviewed_version) {
+        return Ok(Vec::new());
+    }
+    let mut loaded = Vec::new();
+    let mut pending = vec![package_root.to_path_buf()];
+    let mut visited = 0usize;
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory)? {
+            let entry = entry?;
+            visited += 1;
+            if visited > MAX_NATIVE_SCAN_ENTRIES {
+                loaded.sort();
+                return Ok(loaded);
+            }
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            if file_type.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let native = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    extension.eq_ignore_ascii_case("node") || extension.eq_ignore_ascii_case("dll")
+                });
+            if native && is_loaded_by_another_process(&path) {
+                let relative = path.strip_prefix(package_root).unwrap_or(&path);
+                loaded.push(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    loaded.sort();
+    Ok(loaded)
+}
+
+/// A mapped image refuses write access even when every sharing mode is
+/// granted, so a sharing violation here means another process has loaded it.
+#[cfg(target_os = "windows")]
+fn is_loaded_by_another_process(path: &Path) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_ALL: u32 = 0x1 | 0x2 | 0x4;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .share_mode(FILE_SHARE_ALL)
+        .open(path)
+    {
+        Ok(_) => false,
+        Err(error) => error.raw_os_error() == Some(ERROR_SHARING_VIOLATION),
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_loaded_by_another_process(_path: &Path) -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn loaded_native_files_block_only_a_replacement_of_a_different_version() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("hoi4-agent-tools");
+        assert!(loaded_native_files_in(&root, "3.8.1").unwrap().is_empty());
+
+        let library = root.join("node_modules/@img/sharp-win32-x64/lib");
+        std::fs::create_dir_all(&library).unwrap();
+        std::fs::write(root.join("package.json"), r#"{"version":"3.6.0"}"#).unwrap();
+        std::fs::write(library.join("libvips-42.dll"), b"image").unwrap();
+        std::fs::write(library.join("sharp.node"), b"addon").unwrap();
+        std::fs::write(library.join("notes.txt"), b"text").unwrap();
+        assert!(loaded_native_files_in(&root, "3.8.1").unwrap().is_empty());
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // An exclusive handle stands in for a loader mapping: both
+            // refuse a second write handle with a sharing violation.
+            let _held = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(library.join("libvips-42.dll"))
+                .unwrap();
+            assert_eq!(
+                loaded_native_files_in(&root, "3.8.1").unwrap(),
+                vec!["node_modules/@img/sharp-win32-x64/lib/libvips-42.dll".to_string()]
+            );
+            assert!(
+                loaded_native_files_in(&root, "3.6.0").unwrap().is_empty(),
+                "the reviewed version is already installed, so nothing is replaced"
+            );
+        }
+    }
 
     struct FakeTransport {
         sent: Arc<Mutex<Vec<Value>>>,
