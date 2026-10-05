@@ -1318,7 +1318,7 @@ pub(crate) fn analysis_prompt_for_provider(
 ) -> Result<String, AppError> {
     let input = serde_json::to_string(&model_visible_analysis_input(request))?;
     Ok(format!(
-        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Set analysis_id to a fresh RFC 4122 UUID. Return every required proposal key exactly once. When input.constraints.requested_mod_name is present, the display_name proposal must be exactly that name, and project_id, script_prefix, and primary_namespace must be derived from it. descriptor_tags and folder_profile proposal values must be JSON arrays of strings; every other proposal value must be a string. Descriptor tags may use only these official categories: Alternative History, Balance, Events, Fixes, Gameplay, Graphics, Historical, Ideologies, Map, Military, National Focuses, Sound, Technologies, Translation, Utilities. Propose concise, user-facing reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs (input.evidence[].reference); never invent paths or references. When input.evidence is not empty, every proposal must cite at least one of those IDs; when it is empty, every evidence_refs array must be empty. Keep project_summary, proposal values, reasons, and warnings focused on the mod; never attribute them to the setup assistant, provider, model, or analysis process, and never mention schemas, constraints, evidence fields, operating systems, platforms, or Workshop ID rules. Return warnings only when the user must make a decision or correct something. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
+        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Set analysis_id to any RFC 4122 UUID; the app assigns its own identifier. Return every required proposal key exactly once. When input.constraints.requested_mod_name is present, the display_name proposal must be exactly that name, and project_id, script_prefix, and primary_namespace must be derived from it. descriptor_tags and folder_profile proposal values must be JSON arrays of strings; every other proposal value must be a string. Descriptor tags may use only these official categories: Alternative History, Balance, Events, Fixes, Gameplay, Graphics, Historical, Ideologies, Map, Military, National Focuses, Sound, Technologies, Translation, Utilities. Propose concise, user-facing reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs (input.evidence[].reference); never invent paths or references. When input.evidence is not empty, every proposal must cite at least one of those IDs; when it is empty, every evidence_refs array must be empty. Keep project_summary, proposal values, reasons, and warnings focused on the mod; never attribute them to the setup assistant, provider, model, or analysis process, and never mention schemas, constraints, evidence fields, operating systems, platforms, or Workshop ID rules. Return warnings only when the user must make a decision or correct something. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
     ))
 }
 
@@ -1488,7 +1488,12 @@ pub(crate) fn validate_analysis_output(
         validate_output_text(&recommendation.reason, "Codex recommendation reason")?;
         validate_user_facing_analysis_text(&recommendation.reason, "Codex recommendation reason")?;
     }
-    Ok(keep_requested_mod_name(analysis, request))
+    let mut analysis = keep_requested_mod_name(analysis, request);
+    // The analysis ID keys the core's session-bound confirmation store, so the
+    // core assigns it. Models often repeat the same example UUID across runs,
+    // and a reused ID would let one analysis replace another's confirmation.
+    analysis.analysis_id = Uuid::new_v4();
+    Ok(analysis)
 }
 
 /// A mod name the user typed for a new project is theirs: the display-name
@@ -3579,6 +3584,22 @@ mod tests {
     }
 
     #[test]
+    fn the_core_assigns_every_analysis_id_instead_of_the_model() {
+        let input = "a".repeat(64);
+        let request = analysis_request_with_component_registry(&["core.skills"]);
+        let output = valid_analysis_value(&input);
+        let model_id = Uuid::parse_str(output["analysis_id"].as_str().unwrap()).unwrap();
+        let first = validate_analysis_output(output.clone(), &request, &input, &[]).unwrap();
+        let second = validate_analysis_output(output, &request, &input, &[]).unwrap();
+        assert_ne!(first.analysis_id, model_id);
+        assert_ne!(second.analysis_id, model_id);
+        assert_ne!(
+            first.analysis_id, second.analysis_id,
+            "a repeated model UUID must not let two analyses share one confirmation entry"
+        );
+    }
+
+    #[test]
     fn analysis_output_accepts_forward_compatible_component_ids_and_rejects_invalid_ids() {
         let input = "a".repeat(64);
         let request = analysis_request_with_component_registry(&[
@@ -4280,7 +4301,7 @@ mod tests {
         let prompt = analysis_prompt(&request, &input_sha256).unwrap();
 
         assert!(prompt.contains("finding-1"));
-        assert!(prompt.contains("fresh RFC 4122 UUID"));
+        assert!(prompt.contains("the app assigns its own identifier"));
         assert!(prompt.contains("descriptor_tags and folder_profile"));
         assert!(prompt.contains("Alternative History, Balance, Events"));
         assert!(prompt.contains("Return warnings only when the user must make a decision"));
