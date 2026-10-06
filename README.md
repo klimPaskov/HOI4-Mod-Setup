@@ -12,6 +12,10 @@ own Claude Code. This choice is only for
 analyzing and preparing the mod; it does not choose the AI client you use later
 for Agentic HOI4 Modding.
 
+## Quick start
+
+Follow the [Windows first-run guide](docs/QUICKSTART.md) to install the app and prepare your mod.
+
 ## Download
 
 - Windows: [Download the `.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-windows-x64-setup.exe)
@@ -203,6 +207,10 @@ HOI4 Mod Setup checks for app updates when it opens. If a newer signed version
 is found, the app shows the update immediately, downloads and verifies it,
 replaces the current installation, and restarts into the new version. If the
 update fails, the running version remains usable and a retry action appears.
+
+## Troubleshooting
+
+See [Troubleshooting](docs/TROUBLESHOOTING.md) for sign-in, setup source, MCP, and interrupted installation fixes.
 
 ## Privacy
 
