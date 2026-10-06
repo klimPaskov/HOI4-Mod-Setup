@@ -303,6 +303,32 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(estimatePlanPreparationProgress(startedAt, startedAt + 60_000).percent).toBe(96);
   });
 
+  it("lets the returned update reanalysis be confirmed from the Update screen", async () => {
+    const record = { analysis_id: "maintenance", confirmed_fields: [] } as unknown as WizardState["codexAnalysisRecord"];
+    const onConfirmAnalysis = vi.fn().mockResolvedValue(undefined);
+    render(<Update
+      state={{
+        ...initialState,
+        aiProvider: "claude_account",
+        maintenanceEvidenceReady: true,
+        codexAnalysis: semanticAnalysisFixture() as unknown as WizardState["codexAnalysis"],
+        codexAnalysisRecord: record,
+        maintenanceCodexAnalysisRecord: record,
+      } as WizardState}
+      update={vi.fn()}
+      findings={[]}
+      setFindings={vi.fn()}
+      onMaintenance={vi.fn()}
+      onStartMaintenance={vi.fn()}
+      onReanalyze={vi.fn().mockResolvedValue(true)}
+      onConfirmAnalysis={onConfirmAnalysis}
+    />);
+
+    const review = screen.getByRole("region", { name: /proposal review/i });
+    fireEvent.click(within(review).getByRole("button", { name: /^Confirm/ }));
+    await waitFor(() => expect(onConfirmAnalysis).toHaveBeenCalledTimes(1));
+  });
+
   it("opens every prepared maintenance plan in a visible review step", () => {
     expect(maintenanceReviewScreen({ conflicts: [] })).toBe("dry-run");
     expect(maintenanceReviewScreen({ conflicts: [{ selected: undefined }] as never })).toBe("conflict");
