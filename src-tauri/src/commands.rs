@@ -7267,6 +7267,17 @@ fn build_maintenance_plan_blocking(
             .source_path
             .as_deref()
             .is_some_and(|path| path.starts_with("generated:"));
+        let recorded_generated = lock.files.iter().any(|file| {
+            file.path == operation.destination
+                && file.external == operation.external
+                && (file.generated_content.is_some() || file.generated_bytes.is_some())
+        });
+        if source_is_generated && !recorded_generated && operation.action == OperationAction::Skip {
+            // A healthy generated file needs no rewrite, so a lock written
+            // before generated content was kept for updated files does not
+            // block the rest of the repair.
+            continue;
+        }
         let source_bytes = if source_is_generated {
             lock.files
                 .iter()
