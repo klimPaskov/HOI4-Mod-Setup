@@ -4,8 +4,17 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
-## 0.4.0 - 2026-10-04
+## 0.4.0 - 2026-10-06
 
+- Fix Check for updates, which never reached the core with its confirmed review, and show the confirmable review on the Update screen.
+- Fix Repair, which could not plan for files with optional sections or adapted subagents and asked the user to resolve every healthy file.
+- Recognize the subagents this app installs as valid when a project is scanned again.
+- Make Claude account updates plan correctly and keep reanalysis reliable by stating the identifier, folder, and component rules to the model.
+- Stop before changing any files when a running HOI4 MCP client would block the shared HOI4 Agent Tools reinstall, and explain the shared install.
+- Commit the initial Git snapshot in batches instead of two Git processes per file, cutting several minutes from a fresh setup.
+- Give the HOI4 MCP health check time for a cold start after installation, and name the running setup check on the progress screen.
+- Bundle HOI4 Agent Tools 3.9.0, whose Codex registration lets idle subagent servers exit.
+- Add a quick start and a troubleshooting guide.
 - Make Claude the default setup assistant. **Sign in to Claude** runs your own
   installed Claude Code's sign-in, so the app never handles Claude credentials,
   and setup analysis uses Claude Haiku 4.5 in an isolated, tool-free Claude

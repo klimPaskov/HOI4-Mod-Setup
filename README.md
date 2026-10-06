@@ -181,8 +181,8 @@ even when another AI performed setup analysis.
 If flattened ChatGPT files were selected, the Ready screen links directly to
 [ChatGPT Chat](https://chatgpt.com). When the optional portrait workflow is
 enabled, it also shows its persisted Cloud, Local, or RunPod readiness and
-canonical source guidance, or the explicit Disabled state. Chaos Redux uses
-RunPod API-first; computer control is used only when explicitly requested.
+canonical source guidance, or the explicit Disabled state. RunPod runs
+API-first; computer control is used only when explicitly requested.
 Non-sourced fictional or impossible portraits use native ImageGen. Disabled
 generic projects keep source-based portrait handling without ComfyUI-specific
 project files. See
