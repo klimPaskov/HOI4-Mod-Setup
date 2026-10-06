@@ -326,7 +326,7 @@ const screenCopy: Record<ScreenId, { title: string; supporting?: string; status?
   identity: { title: "Project identity", supporting: "Confirm the names and paths used by HOI4 and the generated project." },
   scan: { title: "Scanning project", supporting: "Read-only scan in progress.", status: { label: "Read only", tone: "info" } },
   findings: { title: "Confirm scan findings", supporting: "Edit only the values that are wrong." },
-  environments: { title: "Coding Environments", supporting: "Choose the client that should be primary, then add any other clients you use." },
+  environments: { title: "Coding environments", supporting: "Choose the client that should be primary, then add any other clients you use." },
   components: { title: "Choose what to install", supporting: "Recommended components are selected.", status: { label: "Recommended", tone: "info" } },
   workflows: { title: "Optional workflows", supporting: "These choices never block the core setup." },
   mesh: { title: "3D model workflow", supporting: "Connect Meshy.ai; provider charges may apply.", status: { label: "Key required", tone: "review" } },
