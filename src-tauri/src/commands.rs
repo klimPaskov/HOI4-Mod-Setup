@@ -3978,6 +3978,21 @@ fn adapt_subagent_for_spawn(bytes: &[u8]) -> Result<Vec<u8>, AppError> {
     Ok(rendered.into_bytes())
 }
 
+/// Whether `adapted_sha256` is the verified source with only its optional
+/// Super Events and portrait sections adapted to the selection. Repair and
+/// update reproduce a selected file from its verified source, and those
+/// sections legitimately change bytes in ordinary skill and guide files.
+fn only_optional_sections_adapted(
+    source: &[u8],
+    adapted_sha256: &str,
+    super_events_selected: bool,
+    portrait: &PortraitPipelineConfig,
+) -> Result<bool, AppError> {
+    let conditional = adapt_optional_super_events_skill(source, super_events_selected)?;
+    let conditional = adapt_optional_portrait_section(&conditional, portrait.enabled)?;
+    Ok(conditional.as_slice() != source && sha256_bytes(&conditional) == adapted_sha256)
+}
+
 fn adapt_optional_super_events_skill(
     bytes: &[u8],
     super_events_selected: bool,
@@ -7342,7 +7357,7 @@ fn build_maintenance_plan_blocking(
             .as_deref()
             .is_some_and(|path| path.starts_with("generated:"));
         let bytes = if generated_source && operation.component_id != "core.agents" {
-            source_bytes
+            source_bytes.clone()
         } else {
             adapt_selected_source(
                 &operation.component_id,
@@ -7380,6 +7395,15 @@ fn build_maintenance_plan_blocking(
                 "core.agents" | "codex.config"
             )
             && operation.result_sha256.is_none()
+            && !only_optional_sections_adapted(
+                &source_bytes,
+                &actual,
+                maintenance_components
+                    .iter()
+                    .any(|id| id == "workflow.super_events"),
+                &portrait_pipeline,
+            )
+            .map_err(command_error)?
         {
             // Provider-adapted AGENTS and MCP-filtered Codex config have source
             // evidence for the downloaded blob and a separate result hash for
@@ -8718,6 +8742,34 @@ mod tests {
             runpod_workspace: "/workspace/comfyui-hoi4-portraits".into(),
             mcp_registered: enabled && provider == "cloud",
         }
+    }
+
+    #[test]
+    fn repair_accepts_a_skill_whose_only_change_is_its_optional_sections() {
+        let source = b"# Events\n\nAlways present.\n\n<!-- HOI4_MOD_SETUP_SUPER_EVENTS_START -->\nSuper Events only.\n<!-- HOI4_MOD_SETUP_SUPER_EVENTS_END -->\n";
+        let disabled = test_portrait_config("disabled", false);
+        let adapted = adapt_optional_super_events_skill(source, false).unwrap();
+        assert!(
+            only_optional_sections_adapted(source, &sha256_bytes(&adapted), false, &disabled)
+                .unwrap()
+        );
+        assert!(
+            !only_optional_sections_adapted(source, &sha256_bytes(&adapted), true, &disabled)
+                .unwrap(),
+            "bytes adapted for a different selection are not accepted"
+        );
+        assert!(!only_optional_sections_adapted(
+            source,
+            &sha256_bytes(b"tampered"),
+            false,
+            &disabled
+        )
+        .unwrap());
+        let plain = b"# No optional sections\n";
+        assert!(
+            !only_optional_sections_adapted(plain, &sha256_bytes(plain), false, &disabled).unwrap(),
+            "an unadapted file must still match its source evidence directly"
+        );
     }
 
     #[test]
