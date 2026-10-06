@@ -2158,10 +2158,16 @@ fn detect_agentic_files(
             let Ok(value) = text.parse::<toml::Value>() else {
                 return true;
             };
-            value
-                .get("fork_context")
-                .and_then(toml::Value::as_bool)
-                .unwrap_or(true)
+            // Mirror the installer: a subagent either declares a top-level
+            // `fork_context = false` or requires it in its parsed developer
+            // instructions. A comment alone never counts.
+            match value.get("fork_context").and_then(toml::Value::as_bool) {
+                Some(fork_context) => fork_context,
+                None => !value
+                    .get("developer_instructions")
+                    .and_then(toml::Value::as_str)
+                    .is_some_and(|instructions| instructions.contains("fork_context=false")),
+            }
         })
         .map(|file| file.relative.clone())
         .take(MAX_MALFORMED_AGENTIC_SAMPLES + 1)
@@ -3254,6 +3260,32 @@ mod tests {
                 .all(|evidence| evidence.excerpt_sha256.as_deref() == Some(expected.as_str())));
         }
         assert!(!result.partial);
+    }
+
+    #[test]
+    fn installed_subagents_that_require_fork_context_false_in_instructions_are_valid() {
+        let directory = tempdir().unwrap();
+        fs::create_dir_all(directory.path().join(".codex/agents")).unwrap();
+        fs::write(
+            directory.path().join(".codex/agents/explorer.toml"),
+            "name = 'explorer'\ndeveloper_instructions = '''\nExplore.\n\nThe parent must spawn this subagent with fork_context=false.'''\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join(".codex/agents/inherits.toml"),
+            "name = 'inherits'\nfork_context = true\ndeveloper_instructions = 'fork_context=false'\n",
+        )
+        .unwrap();
+
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+        let blocked = |path: &str| {
+            result.conflicts.iter().any(|conflict| {
+                conflict.id.starts_with("conflict.subagent.") && conflict.path == path
+            })
+        };
+
+        assert!(!blocked(".codex/agents/explorer.toml"));
+        assert!(blocked(".codex/agents/inherits.toml"));
     }
 
     #[test]
