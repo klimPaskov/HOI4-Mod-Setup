@@ -8930,6 +8930,26 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
     }
 
     #[test]
+    fn codex_mcp_registration_keeps_the_source_idle_exit_environment() {
+        let config = b"[mcp_servers.hoi4_agent_tools]\ncommand = \"hoi4-agent-tools.cmd\"\nenv = { HOI4_AGENT_STDIO_IDLE_EXIT_MINUTES = \"30\" }\n";
+        let adapted = adapt_codex_config_for_selection(
+            config,
+            true,
+            false,
+            false,
+            &test_portrait_config("disabled", false),
+        )
+        .unwrap();
+        let value: toml::Value = String::from_utf8(adapted).unwrap().parse().unwrap();
+        assert_eq!(
+            value["mcp_servers"]["hoi4_agent_tools"]["env"]["HOI4_AGENT_STDIO_IDLE_EXIT_MINUTES"]
+                .as_str(),
+            Some("30"),
+            "Codex keeps a stdio server per finished subagent unless it exits when idle"
+        );
+    }
+
+    #[test]
     fn selected_3d_workflow_materializes_the_reviewed_mcp_routes() {
         let config = b"[mcp_servers.hoi4_agent_tools]\ncommand = \"hoi4-agent-tools.cmd\"\n";
         let adapted = String::from_utf8(
@@ -9011,7 +9031,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
         assert_eq!(bootstrap.privilege, "current_user");
 
         let target = crate::mcp::reviewed_plan_target(&actions).unwrap();
-        assert_eq!(target.package_version, "3.8.1");
+        assert_eq!(target.package_version, "3.9.0");
         assert_eq!(target.required_tools.len(), 35);
         for route in [
             "hoi4.tech_inspect",

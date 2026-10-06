@@ -1042,8 +1042,8 @@ mod tests {
                     "project_id_pattern": "^[a-z][a-z0-9_]{1,63}$",
                     "requested_mod_name": "Iron Dawn",
                     "component_registry": {
-                        "source_revision": "8c13135973cb9351e6837757acc5315c48dcd50e",
-                        "manifest_sha256": "9cca68ea47dfa77bcb41a9d525177213a75a98fb4be549690a15ec1ce74cab07",
+                        "source_revision": "bea20cfb6ddde6679abe7e7f0a31b7534c3b1725",
+                        "manifest_sha256": "d1697f2632d65ff56fa66f10f8798345062636e8e831fa9405b5f5d385dc28bd",
                         "component_ids": ["core.agents", "core.skills", "core.subagents", "codex.config", "mcp.hoi4_agent_tools", "wiki.snapshot", "workflow.super_events"]
                     }
                 }),
