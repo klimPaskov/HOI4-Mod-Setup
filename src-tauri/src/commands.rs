@@ -643,6 +643,18 @@ const MCP_IN_USE_MESSAGE: &str = "This setup needs to reinstall HOI4 Agent Tools
 
 fn planning_command_error(error: AppError) -> String {
     match error {
+        // Confirmation and session-binding checks share the credential
+        // category with real sign-in failures, but the user fixes them by
+        // reviewing again, not by reconnecting.
+        AppError::Credential(message)
+            if !message.starts_with("connect the selected")
+                && ["reanalysis", "confirm", "semantic review", "core session"]
+                    .iter()
+                    .any(|needle| message.contains(needle)) =>
+        {
+            "The confirmed review no longer matches this session. Run the review again, confirm it, and try again. Nothing was changed."
+                .into()
+        }
         provider_error @ (AppError::Credential(_)
         | AppError::Protocol(_)
         | AppError::Serialization(_)) => provider_analysis_user_error(provider_error),
@@ -6234,20 +6246,14 @@ fn require_maintenance_reanalysis(
             "update planning requires a maintenance-purpose provider reanalysis".into(),
         ));
     }
+    // A profile without a custom endpoint (the Claude account route, and API
+    // providers on their default endpoint) records none in the lock; the
+    // analysis bound the same empty endpoint when it ran.
     let expected_endpoint_fingerprint = record
         .provider
         .as_deref()
         .filter(|provider| *provider != "codex")
-        .map(|_| {
-            expected_endpoint
-                .ok_or_else(|| {
-                    AppError::Credential(
-                        "provider reanalysis endpoint is not bound to the installed profile".into(),
-                    )
-                })
-                .map(|endpoint| sha256_bytes(endpoint.trim().as_bytes()))
-        })
-        .transpose()?;
+        .map(|_| sha256_bytes(expected_endpoint.unwrap_or_default().trim().as_bytes()));
     let (record_root, record_scan_id) = {
         let analyses = codex_analyses()
             .lock()
@@ -10281,6 +10287,45 @@ developer_instructions = "Work on the named files."
             Some(&confirmation_hash)
         )
         .is_ok());
+
+        // The Claude account route records no endpoint in the lock and bound
+        // the empty endpoint when its analysis ran.
+        let mut claude = record.clone();
+        claude.provider = Some("claude_account".into());
+        claude.engine = "claude_code_cli".into();
+        claude.auth_mode = "claude_account".into();
+        claude.model = Some(crate::claude_code::DEFAULT_MODEL.into());
+        {
+            let mut analyses = codex_analyses().lock().unwrap();
+            let pending = analyses.get_mut(&analysis_id).unwrap();
+            pending.record = claude.clone();
+            pending.confirmed = Some(claude.clone());
+            pending.endpoint_fingerprint = Some(sha256_bytes(b""));
+        }
+        assert!(require_maintenance_reanalysis(
+            "update",
+            Some(&claude),
+            &root,
+            None,
+            Some(&confirmation_hash)
+        )
+        .is_ok());
+        assert!(require_maintenance_reanalysis(
+            "update",
+            Some(&claude),
+            &root,
+            Some("https://other.example/v1"),
+            Some(&confirmation_hash)
+        )
+        .is_err());
+        {
+            let mut analyses = codex_analyses().lock().unwrap();
+            let pending = analyses.get_mut(&analysis_id).unwrap();
+            pending.record = record.clone();
+            pending.confirmed = Some(record.clone());
+            pending.endpoint_fingerprint = None;
+        }
+
         let mut stale = record;
         stale.evidence_sha256 = Some("d".repeat(64));
         assert!(require_maintenance_reanalysis(
