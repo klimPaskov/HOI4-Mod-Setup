@@ -90,7 +90,7 @@ unrelated data dumps, so even very large mods stay within the setup scan.
 Select the instructions, skills, helpers, tools, and offline wiki you want.
 Required items stay selected so the project remains usable.
 
-Before the component list, choose **Coding Environments**. Select exactly one
+Before the component list, choose **Coding environments**. Select exactly one
 primary client (Codex is the default), then add any combination of Claude Code,
 Cursor, Qoder, and OpenCode. The primary is removed from the additional choices
 automatically. Each selected client receives its complete native package while

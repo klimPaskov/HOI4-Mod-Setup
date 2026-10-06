@@ -12,7 +12,7 @@ Follow these steps to prepare a new or existing mod for AI-assisted development.
 
 5. **Confirm the identity.** For a new mod, review **Project identity**, including the project ID, script prefix, namespace, tags, initial folders, and project and launcher paths. Edit any incorrect suggestions and use the assistant's suggestion-confirmation button before continuing; imported projects also require confirmation of the assistant's suggestions. [Screenshot](screenshots/03-identity.png)
 
-6. **Choose your coding clients.** On **Coding Environments**, pick one **Primary environment** (Codex is the default), then select any **Additional environments** from Claude Code, Codex, Cursor, Qoder, and OpenCode. To use both Claude Code and Codex, make one primary and add the other; this choice is separate from the setup assistant. [Screenshot](screenshots/15-coding-environments.png)
+6. **Choose your coding clients.** On **Coding environments**, pick one **Primary environment** (Codex is the default), then select any **Additional environments** from Claude Code, Codex, Cursor, Qoder, and OpenCode. To use both Claude Code and Codex, make one primary and add the other; this choice is separate from the setup assistant. [Screenshot](screenshots/15-coding-environments.png)
 
 7. **Choose components.** On **Choose what to install**, review the selected project instructions, skills, subagents, client configuration, HOI4 Agent Tools MCP, and offline Paradox wiki. Required items stay selected, and the selected clients receive their project guidance and configuration, including `AGENTS.md` and, for Claude Code, `CLAUDE.md`. [Screenshot](screenshots/04-components.png)
 

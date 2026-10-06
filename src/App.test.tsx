@@ -865,7 +865,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await screen.findByRole("heading", { name: "Project identity" });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await screen.findByRole("heading", { name: "Coding Environments" });
+    await screen.findByRole("heading", { name: "Coding environments" });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await screen.findByRole("heading", { name: "Choose what to install" });
     fireEvent.click(screen.getByText("Choose source version"));
