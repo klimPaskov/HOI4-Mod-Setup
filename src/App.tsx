@@ -336,7 +336,7 @@ const screenCopy: Record<ScreenId, { title: string; supporting?: string; status?
   install: { title: "Installing components", supporting: "Installing the reviewed changes." },
   ready: { title: "Project ready", supporting: "Setup checks passed.", status: { label: "Ready for agentic development", tone: "pass" } },
   update: { title: "Update and repair", supporting: "Manage the installed workflow." },
-  conflict: { title: "Resolve AGENTS.md", supporting: "Choose the result before continuing." },
+  conflict: { title: "Resolve file conflicts", supporting: "Choose the result for each changed file before continuing." },
   recovery: { title: "Installation was interrupted", supporting: "Resume from the last safe checkpoint." },
   "chat-sources": { title: "Package ChatGPT project sources", supporting: "Choose detected project files and a download folder.", status: { label: "Export", tone: "info" } },
 };
