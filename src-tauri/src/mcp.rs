@@ -838,6 +838,7 @@ fn resolved_node() -> Result<PathBuf, AppError> {
     ))
 }
 
+#[cfg(any(target_os = "windows", test))]
 const MAX_NATIVE_SCAN_ENTRIES: usize = 20_000;
 
 /// Native libraries of the installed MCP package that a running MCP client
@@ -867,6 +868,7 @@ pub fn loaded_native_files_blocking_replacement(
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn installed_package_version(package_root: &Path) -> Option<String> {
     let bytes = std::fs::read(package_root.join("package.json")).ok()?;
     if bytes.len() > 1024 * 1024 {
@@ -881,6 +883,7 @@ fn installed_package_version(package_root: &Path) -> Option<String> {
 
 /// Whether the installed package is exactly the reviewed release: its version
 /// and its complete tree identity and file count.
+#[cfg(any(target_os = "windows", test))]
 fn installed_package_matches(package_root: &Path, target: &VerifiedMcpTarget) -> bool {
     if installed_package_version(package_root).as_deref() != Some(target.package_version.as_str()) {
         return false;
@@ -894,6 +897,7 @@ fn installed_package_matches(package_root: &Path, target: &VerifiedMcpTarget) ->
     })
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn loaded_native_files_in(
     package_root: &Path,
     target: &VerifiedMcpTarget,
@@ -962,7 +966,7 @@ fn is_loaded_by_another_process(path: &Path) -> bool {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(all(not(target_os = "windows"), test))]
 fn is_loaded_by_another_process(_path: &Path) -> bool {
     false
 }
@@ -1005,6 +1009,7 @@ mod tests {
 
         let (tree, count) = package_tree_identity(&read_installed_package_tree(&root).unwrap());
         let installed = native_scan_target("3.6.0", &tree, count);
+        #[cfg(target_os = "windows")]
         let same_version_other_tree = native_scan_target("3.6.0", &"b".repeat(64), count);
 
         #[cfg(target_os = "windows")]
