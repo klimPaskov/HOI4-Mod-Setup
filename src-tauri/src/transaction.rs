@@ -5684,6 +5684,11 @@ fn build_lock(
                     .source_sha256
                     .clone()
                     .unwrap_or_else(|| prepared.expected_sha256.clone());
+                let generated = operation.action == OperationAction::Generate
+                    || operation
+                        .source_path
+                        .as_deref()
+                        .is_some_and(|path| path.starts_with("generated:"));
                 let locked_file = LockedFile {
                     path: operation.destination.clone(),
                     location_scope: Some(if operation.external {
@@ -5707,13 +5712,15 @@ fn build_lock(
                     ownership,
                     preserved_local: false,
                     external: operation.external,
-                    generated_content: if operation.action == OperationAction::Generate {
+                    // Repair reproduces generated files from this recorded
+                    // content, and an update replans them as replacements of
+                    // a `generated:` source, so keep it for either action.
+                    generated_content: if generated {
                         String::from_utf8(prepared.bytes.clone()).ok()
                     } else {
                         None
                     },
-                    generated_bytes: (operation.action == OperationAction::Generate)
-                        .then_some(prepared.bytes.clone()),
+                    generated_bytes: generated.then_some(prepared.bytes.clone()),
                     executable: operation.executable,
                     platform: operation.platform.or(Some(ManifestPlatform::All)),
                 };
@@ -8940,6 +8947,63 @@ mod tests {
                 && operation.action == OperationAction::DeleteManaged
                 && operation.resolution.as_deref() == Some("obsolete_managed_remove")
         }));
+    }
+
+    #[test]
+    fn an_update_keeps_the_content_of_replaced_generated_files_for_repair() {
+        let project = tempdir().unwrap();
+        let predecessor: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let readme = b"# Project\n";
+        let mut plan = plan();
+        plan.maintenance_mode = Some("update".into());
+        plan.operations = vec![PlanOperation {
+            id: "update-readme".into(),
+            component_id: "project.readme".into(),
+            ownership: Some(Ownership::Generated),
+            location_scope: Some("project".into()),
+            action: OperationAction::Replace,
+            source_path: Some("generated:README.md".into()),
+            destination: "README.md".into(),
+            source_sha256: Some(sha256_bytes(readme)),
+            source_size: Some(readme.len() as u64),
+            platform: Some(ManifestPlatform::All),
+            executable: false,
+            result_sha256: Some(sha256_bytes(readme)),
+            base_sha256: None,
+            local_sha256: None,
+            local_state: LocalState::Unmodified,
+            resolution: None,
+            external: false,
+            rollback: RollbackAction::RestoreBackup,
+            external_parent_identity: None,
+        }];
+        let prepared = vec![PreparedFile {
+            operation_id: "update-readme".into(),
+            destination: "README.md".into(),
+            bytes: readme.to_vec(),
+            expected_sha256: sha256_bytes(readme),
+        }];
+        let journal = new_journal(&plan, &plan.project_id, project.path());
+        let project_directory = RootedDir::open_read(project.path()).unwrap();
+        let lock = build_lock(
+            &plan,
+            &prepared,
+            &journal,
+            Some(&predecessor),
+            project.path(),
+            &project_directory,
+        )
+        .unwrap();
+        let locked = lock
+            .files
+            .iter()
+            .find(|file| file.path == "README.md")
+            .unwrap();
+        assert_eq!(locked.generated_content.as_deref(), Some("# Project\n"));
+        assert_eq!(locked.generated_bytes.as_deref(), Some(&readme[..]));
     }
 
     #[test]
