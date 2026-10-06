@@ -7390,10 +7390,10 @@ fn build_maintenance_plan_blocking(
         // was fetched. Adaptation then legitimately changes many files (the
         // project instructions, Codex configuration, subagent TOML, and any
         // file with optional Super Events or portrait sections), and the
-        // adapted bytes become this operation's result hash.
-        if operation.action != OperationAction::Skip {
-            operation.result_sha256 = Some(actual.clone());
-        }
+        // adapted bytes become this operation's result hash, including for
+        // a skipped file: its prepared bytes are what Use new would install,
+        // while a skip itself is verified against the unchanged local hash.
+        operation.result_sha256 = Some(actual.clone());
         prepared.push(PreparedFile {
             operation_id: operation.id.clone(),
             destination: operation.destination.clone(),
