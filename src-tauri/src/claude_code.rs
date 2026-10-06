@@ -983,6 +983,125 @@ mod tests {
     /// Opt-in probe of the user's real Claude Code. It verifies discovery,
     /// the signature, the isolation-flag probe, and signed-out or signed-in
     /// status; with `HOI4_CLAUDE_LIVE_LOGIN=1` it also starts and cancels a
+    /// Repeated real existing-project reanalysis turns against an installed
+    /// project (`HOI4_CLAUDE_LIVE_PROJECT`), printing each attempt's
+    /// validation outcome so recurring proposal-format rejections can be
+    /// diagnosed. Raw results stay in the local temporary directory.
+    #[test]
+    #[ignore = "requires the user's signed-in Claude Code and an installed project"]
+    fn live_claude_code_existing_project_reanalysis() {
+        let Ok(root) = std::env::var("HOI4_CLAUDE_LIVE_PROJECT") else {
+            eprintln!("HOI4_CLAUDE_LIVE_PROJECT is not set; skipped");
+            return;
+        };
+        let root = std::path::PathBuf::from(root);
+        let evidence_file = |reference: &str, path: &str| {
+            let bytes = std::fs::read(root.join(path)).unwrap_or_default();
+            let excerpt = String::from_utf8_lossy(&bytes)
+                .chars()
+                .take(600)
+                .collect::<String>();
+            crate::codex::ApprovedEvidence {
+                reference: reference.into(),
+                path: path.into(),
+                excerpt_sha256: crate::security::sha256_bytes(excerpt.as_bytes()),
+                excerpt,
+                confidence: Some(0.9),
+            }
+        };
+        let evidence = vec![
+            evidence_file("descriptor.name", "descriptor.mod"),
+            evidence_file("codex.agents", "AGENTS.md"),
+            evidence_file("codex.config", ".codex/config.toml"),
+            evidence_file("documentation.readme", "README.md"),
+            evidence_file("claude.instructions", "CLAUDE.md"),
+        ];
+        let executable = ready_executable().expect("official Claude Code was not found");
+        let workspace = analysis_workspace().unwrap();
+        let attempts_dir = std::env::temp_dir().join("hoi4ms-live-reanalysis");
+        let _ = std::fs::create_dir_all(&attempts_dir);
+        for run in 1..=3 {
+            let request = AiAnalysisRequest {
+                provider: PROVIDER_ID.into(),
+                model: DEFAULT_MODEL.into(),
+                reasoning_effort: "high".into(),
+                endpoint: String::new(),
+                analysis: crate::codex::CodexAnalysisRequest {
+                    mode: "existing_project_semantics".into(),
+                    brief: "Review the installed HOI4 project for semantic changes before a workflow update. Preserve deterministic facts, identify convention or instruction changes, and propose only reviewable values.".into(),
+                    evidence: evidence.clone(),
+                    constraints: {
+                        let manifest: serde_json::Value = serde_json::from_slice(include_bytes!(
+                            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+                        ))
+                        .unwrap();
+                        let mut ids = manifest["components"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|component| component["id"].as_str().unwrap().to_string())
+                            .collect::<Vec<_>>();
+                        ids.sort();
+                        serde_json::json!({
+                            "analysis_purpose": "maintenance_reanalysis",
+                            "project_id_pattern": "^[a-z][a-z0-9_]{1,63}$",
+                            "component_registry": {
+                                "source_revision": "e29fd0102ffc782c130706adf047e7e121cc6aa2",
+                                "manifest_sha256": "d1697f2632d65ff56fa66f10f8798345062636e8e831fa9405b5f5d385dc28bd",
+                                "component_ids": ids,
+                            }
+                        })
+                    },
+                    analysis_purpose: Some("maintenance_reanalysis".into()),
+                    project_root: Some(root.display().to_string()),
+                    scan_id: Some(uuid::Uuid::new_v4()),
+                },
+            };
+            let mut attempt = 0;
+            let result =
+                analyze_with_runner(&request, "Claude account setup analysis", |prompt, args| {
+                    attempt += 1;
+                    let output = run_claude(
+                        &executable.path,
+                        &executable.sha256,
+                        args,
+                        Some(workspace.clone()),
+                        Some(prompt),
+                        MAX_ANALYSIS_BYTES,
+                        ANALYSIS_TIMEOUT_SECONDS,
+                        None,
+                        true,
+                    );
+                    if let Ok(result) = &output {
+                        let _ = std::fs::write(
+                            attempts_dir.join(format!("run{run}-attempt{attempt}.json")),
+                            &result.stdout,
+                        );
+                        if let Ok(value) = extract_analysis_output(&result.stdout) {
+                            let input =
+                                crate::codex::analysis_input_sha256(&request.analysis).unwrap();
+                            let verdict = crate::codex::validate_analysis_output(
+                                value,
+                                &request.analysis,
+                                &input,
+                                &request.analysis.evidence,
+                            )
+                            .map(|_| "valid".to_string())
+                            .unwrap_or_else(|error| error.to_string());
+                            eprintln!("run {run} attempt {attempt}: {verdict}");
+                        }
+                    }
+                    output
+                });
+            eprintln!(
+                "run {run}: {}",
+                result
+                    .map(|_| "accepted".to_string())
+                    .unwrap_or_else(|error| error.to_string())
+            );
+        }
+    }
+
     /// real sign-in, and when signed in it runs one real Haiku analysis turn.
     #[test]
     #[ignore = "requires the user's installed Claude Code; run with pnpm test:claude-live"]

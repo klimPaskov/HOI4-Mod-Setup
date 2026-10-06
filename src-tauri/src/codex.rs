@@ -1318,7 +1318,7 @@ pub(crate) fn analysis_prompt_for_provider(
 ) -> Result<String, AppError> {
     let input = serde_json::to_string(&model_visible_analysis_input(request))?;
     Ok(format!(
-        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Set analysis_id to any RFC 4122 UUID; the app assigns its own identifier. Return every required proposal key exactly once. When input.constraints.requested_mod_name is present, the display_name proposal must be exactly that name, and project_id, script_prefix, and primary_namespace must be derived from it. descriptor_tags and folder_profile proposal values must be JSON arrays of strings; every other proposal value must be a string. project_id, script_prefix, and primary_namespace values must use only lowercase ASCII letters, digits, and underscores, starting with a lowercase letter or underscore; never use dots, hyphens, spaces, or uppercase letters. Descriptor tags may use only these official categories: Alternative History, Balance, Events, Fixes, Gameplay, Graphics, Historical, Ideologies, Map, Military, National Focuses, Sound, Technologies, Translation, Utilities. Propose concise, user-facing reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs (input.evidence[].reference); never invent paths or references. When input.evidence is not empty, every proposal must cite at least one of those IDs; when it is empty, every evidence_refs array must be empty. Keep project_summary, proposal values, reasons, and warnings focused on the mod; never attribute them to the setup assistant, provider, model, or analysis process, and never mention schemas, constraints, evidence fields, operating systems, platforms, or Workshop ID rules. Return warnings only when the user must make a decision or correct something. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
+        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Set analysis_id to any RFC 4122 UUID; the app assigns its own identifier. Return every required proposal key exactly once. When input.constraints.requested_mod_name is present, the display_name proposal must be exactly that name, and project_id, script_prefix, and primary_namespace must be derived from it. descriptor_tags and folder_profile proposal values must be JSON arrays of strings; every other proposal value must be a string. project_id, script_prefix, and primary_namespace values must use only lowercase ASCII letters, digits, and underscores, starting with a lowercase letter or underscore; never use dots, hyphens, spaces, or uppercase letters. folder_profile values are at most 32 distinct relative mod folders such as events or common/national_focus, never absolute, never containing .., and never under .agents, .codex, .git, .hoi4-mod-setup, chatgpt_project_sources, or paradox_wiki. Descriptor tags may use only these official categories: Alternative History, Balance, Events, Fixes, Gameplay, Graphics, Historical, Ideologies, Map, Military, National Focuses, Sound, Technologies, Translation, Utilities. Propose concise, user-facing reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs (input.evidence[].reference); never invent paths or references. component_recommendations may name only component_id values listed in input.constraints.component_registry.component_ids; return an empty list when none apply. When input.evidence is not empty, every proposal must cite at least one of those IDs; when it is empty, every evidence_refs array must be empty. Keep project_summary, proposal values, reasons, and warnings focused on the mod; never attribute them to the setup assistant, provider, model, or analysis process, and never mention schemas, constraints, evidence fields, operating systems, platforms, or Workshop ID rules. Return warnings only when the user must make a decision or correct something. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
     ))
 }
 
@@ -1394,7 +1394,7 @@ pub(crate) fn validate_analysis_output(
             "Codex analysis contains an unsupported field".into(),
         ));
     }
-    let analysis: CodexAnalysis = serde_json::from_value(value)?;
+    let mut analysis: CodexAnalysis = serde_json::from_value(value)?;
     if analysis.schema_version != CODEX_SCHEMA_VERSION
         || analysis.input_sha256 != input_sha256
         || analysis.proposals.is_empty()
@@ -1459,22 +1459,23 @@ pub(crate) fn validate_analysis_output(
             "Codex analysis omitted one or more required semantic proposals".into(),
         ));
     }
+    // Recommendations are advisory and never change the selected components,
+    // so one that names a component outside the bound registry, or explains
+    // itself at excessive length, is dropped instead of failing the analysis.
+    // Models sometimes invent plausible component names.
     let allowed_component_ids = analysis_component_registry_ids(request)?;
+    analysis.component_recommendations.retain(|recommendation| {
+        valid_component_recommendation_id(&recommendation.component_id)
+            && allowed_component_ids.contains(&recommendation.component_id)
+            && recommendation.reason.chars().count() <= 500
+    });
     if analysis
-        .component_recommendations
+        .warnings
         .iter()
-        .any(|recommendation| {
-            !valid_component_recommendation_id(&recommendation.component_id)
-                || !allowed_component_ids.contains(&recommendation.component_id)
-                || recommendation.reason.chars().count() > 500
-        })
-        || analysis
-            .warnings
-            .iter()
-            .any(|warning| warning.chars().count() > 500)
+        .any(|warning| warning.chars().count() > 500)
     {
         return Err(AppError::Serialization(
-            "Codex recommendation failed schema validation".into(),
+            "each warning must be at most 500 characters".into(),
         ));
     }
     validate_output_text(&analysis.project_summary, "Codex project summary")?;
@@ -1781,7 +1782,7 @@ pub(crate) fn validate_proposal_value(key: &ProposalKey, value: &Value) -> Resul
                 || validate_folder_profile_paths(&folders).is_err()
             {
                 return Err(AppError::Serialization(
-                    "Codex folder profile proposal is invalid".into(),
+                    "folder_profile must list at most 32 distinct relative mod folders such as events or common/national_focus, never absolute, never containing .., and never under .agents, .codex, .git, .hoi4-mod-setup, chatgpt_project_sources, or paradox_wiki".into(),
                 ));
             }
         }
@@ -3621,15 +3622,19 @@ mod tests {
             json!("2d.future_component");
         assert!(validate_analysis_output(digit_component, &request, &input, &[]).is_ok());
 
+        // Advisory recommendations outside the registry are dropped, not
+        // fatal: models sometimes invent plausible component names.
         let mut absent_component = valid_analysis_value(&input);
         absent_component["component_recommendations"][0]["component_id"] =
             json!("workflow.not_in_manifest");
-        assert!(validate_analysis_output(absent_component, &request, &input, &[]).is_err());
+        let accepted = validate_analysis_output(absent_component, &request, &input, &[]).unwrap();
+        assert!(accepted.component_recommendations.is_empty());
 
         let mut invalid_component = valid_analysis_value(&input);
         invalid_component["component_recommendations"][0]["component_id"] =
             json!("Workflow/Future");
-        assert!(validate_analysis_output(invalid_component, &request, &input, &[]).is_err());
+        let accepted = validate_analysis_output(invalid_component, &request, &input, &[]).unwrap();
+        assert!(accepted.component_recommendations.is_empty());
 
         let mut sensitive_component = valid_analysis_value(&input);
         sensitive_component["component_recommendations"][0]["component_id"] =
