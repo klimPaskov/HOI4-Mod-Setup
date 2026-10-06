@@ -970,6 +970,7 @@ fn stage_managed_paths_without_filters_with_hook(
     let git_root = read_root.open_child_directory(".git")?;
     validate_local_git_config_in_git_root(&git_root)?;
     before_hash();
+    let mut verified = Vec::with_capacity(managed_paths.len());
     for path in managed_paths {
         crate::source::validate_sha256(&path.expected_sha256)?;
         let normalized = normalize_relative_path(&path.relative)?;
@@ -989,17 +990,6 @@ fn stage_managed_paths_without_filters_with_hook(
                 "managed Git path changed after transaction validation: {normalized}"
             )));
         }
-        let hash = run_bound_git_mutation_with_stdin(
-            &git_root,
-            &["hash-object", "-w", "--stdin"],
-            &bytes,
-        )?;
-        let object = hash.stdout.trim();
-        if !process_succeeded(&hash) || !valid_commit_id(object) {
-            return Err(AppError::Process(
-                "Git could not hash a managed file without content filters".into(),
-            ));
-        }
         #[cfg(unix)]
         let mode = {
             use std::os::unix::fs::PermissionsExt;
@@ -1011,40 +1001,102 @@ fn stage_managed_paths_without_filters_with_hook(
         };
         #[cfg(not(unix))]
         let mode = "100644";
-        let cacheinfo = format!("{mode},{object},{normalized}");
-        let update = run_bound_git_mutation(
-            &git_root,
-            &["update-index", "--add", "--cacheinfo", &cacheinfo],
-        )?;
-        if !process_succeeded(&update) {
-            return Err(AppError::Process(
-                "Git could not stage the filter-free managed object".into(),
-            ));
+        verified.push((normalized, mode, bytes));
+    }
+    // Spawning Git twice per file took most of a fresh setup on Windows, so
+    // the verified bytes are written in bounded fast-import batches and staged
+    // with one index update. Git still receives only the verified bytes.
+    let mut index_info = Vec::new();
+    let mut start = 0;
+    while start < verified.len() {
+        let mut end = start;
+        let mut batch_bytes = 0usize;
+        while end < verified.len()
+            && (end == start || batch_bytes + verified[end].2.len() <= GIT_STAGE_BATCH_BYTES)
+        {
+            batch_bytes += verified[end].2.len();
+            end += 1;
         }
+        let batch = &verified[start..end];
+        let objects = if batch_bytes > GIT_STAGE_BATCH_BYTES {
+            // One file larger than a batch would push the fast-import stream
+            // past the stdin bound, so it is written on its own.
+            vec![write_filter_free_blob(&git_root, &batch[0].2)?]
+        } else {
+            write_filter_free_blobs(&git_root, batch.iter().map(|entry| &entry.2[..]))?
+        };
+        for ((normalized, mode, _), object) in batch.iter().zip(objects) {
+            index_info.extend_from_slice(format!("{mode} {object}\t{normalized}").as_bytes());
+            index_info.push(0);
+        }
+        start = end;
+    }
+    if index_info.is_empty() {
+        return Ok(());
+    }
+    let update = run_bound_git_mutation_with_stdin(
+        &git_root,
+        &["update-index", "--add", "-z", "--index-info"],
+        &index_info,
+    )?;
+    if !process_succeeded(&update) {
+        return Err(AppError::Process(
+            "Git could not stage the filter-free managed objects".into(),
+        ));
     }
     Ok(())
 }
 
-fn run_bound_git_mutation(
+const GIT_STAGE_BATCH_BYTES: usize = 24 * 1024 * 1024;
+
+fn write_filter_free_blob(
     git_root: &crate::flatten::BoundedReadRoot,
-    args: &[&str],
-) -> Result<ProcessResult, AppError> {
-    git_root.with_stable_path(|git_dir| {
-        validate_local_git_config_in_git_root(git_root)?;
-        let (mut spec, executable) = prepare_hardened_git_process(
-            git_dir,
-            HardenedGitProfile::Mutation,
-            args,
-            &[],
-            true,
-            find_git_executable,
-        )?;
-        spec.args.insert(2, "--work-tree=..".into());
-        spec.args.insert(2, "--git-dir=.".into());
-        let output = spec.run_git_read_only_bound(&[executable], git_root.directory_handle());
-        validate_local_git_config_in_git_root(git_root)?;
-        output
-    })?
+    bytes: &[u8],
+) -> Result<String, AppError> {
+    let hash =
+        run_bound_git_mutation_with_stdin(git_root, &["hash-object", "-w", "--stdin"], bytes)?;
+    let object = hash.stdout.trim();
+    if !process_succeeded(&hash) || !valid_commit_id(object) {
+        return Err(AppError::Process(
+            "Git could not hash a managed file without content filters".into(),
+        ));
+    }
+    Ok(object.to_owned())
+}
+
+/// Write blobs exactly as given, with no content filters, through one
+/// `git fast-import` process, and return each object ID in order.
+fn write_filter_free_blobs<'a>(
+    git_root: &crate::flatten::BoundedReadRoot,
+    blobs: impl Iterator<Item = &'a [u8]>,
+) -> Result<Vec<String>, AppError> {
+    let mut stream = b"feature done\n".to_vec();
+    let mut count = 0usize;
+    for (index, bytes) in blobs.enumerate() {
+        let mark = index + 1;
+        stream.extend_from_slice(format!("blob\nmark :{mark}\ndata {}\n", bytes.len()).as_bytes());
+        stream.extend_from_slice(bytes);
+        stream.extend_from_slice(format!("\nget-mark :{mark}\n").as_bytes());
+        count += 1;
+    }
+    stream.extend_from_slice(b"done\n");
+    let output = run_bound_git_mutation_with_stdin(git_root, &["fast-import", "--quiet"], &stream)?;
+    let objects = output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if !process_succeeded(&output)
+        || objects.len() != count
+        || !objects.iter().all(|object| valid_commit_id(object))
+    {
+        return Err(AppError::Process(
+            "Git could not write the managed files without content filters".into(),
+        ));
+    }
+    Ok(objects)
 }
 
 fn run_bound_git_mutation_with_stdin(
@@ -3015,6 +3067,51 @@ mod tests {
         );
         assert!(!marker.exists(), "the filter process must never start");
         assert!(!project.path().join(".git/git-filter-marker.txt").exists());
+    }
+
+    #[test]
+    fn batched_staging_records_the_exact_bytes_of_every_managed_file() {
+        let project = tempdir().unwrap();
+        run_git_initialize(project.path(), "--initial-branch=main").unwrap();
+        fs::create_dir_all(project.path().join("docs/nested dir")).unwrap();
+        let files: Vec<(&str, Vec<u8>)> = vec![
+            ("README.md", b"readme\n".to_vec()),
+            (
+                "docs/nested dir/notes.txt",
+                b"notes with spaces\r\n".to_vec(),
+            ),
+            ("docs/empty.txt", Vec::new()),
+            ("binary.bin", (0u8..=255).collect()),
+        ];
+        let mut paths = Vec::new();
+        for (relative, bytes) in &files {
+            fs::write(project.path().join(relative), bytes).unwrap();
+            paths.push(ManagedGitPath {
+                relative: (*relative).into(),
+                expected_sha256: crate::security::sha256_bytes(bytes),
+                expected_size: bytes.len() as u64,
+            });
+        }
+
+        stage_managed_paths_without_filters(project.path(), &paths).unwrap();
+
+        let staged = run_git_read_only(project.path(), &["ls-files", "-s", "-z"]).unwrap();
+        let entries: std::collections::BTreeMap<String, String> = staged
+            .stdout
+            .split('\0')
+            .filter(|entry| !entry.is_empty())
+            .map(|entry| {
+                let (meta, path) = entry.split_once('\t').unwrap();
+                (path.to_owned(), meta.split(' ').nth(1).unwrap().to_owned())
+            })
+            .collect();
+        assert_eq!(entries.len(), files.len());
+        let read_root = crate::flatten::BoundedReadRoot::open(project.path()).unwrap();
+        let git_root = read_root.open_child_directory(".git").unwrap();
+        for (relative, bytes) in &files {
+            let expected = write_filter_free_blob(&git_root, bytes).unwrap();
+            assert_eq!(entries.get(*relative), Some(&expected), "{relative}");
+        }
     }
 
     #[test]

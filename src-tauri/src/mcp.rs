@@ -52,7 +52,18 @@ impl<T: JsonlTransport> McpProtocol<T> {
             }
             let message = self
                 .transport
-                .receive(remaining)?
+                .receive(remaining)
+                .map_err(|error| match error {
+                    // The shared JSONL transport names the Codex App Server in
+                    // its errors; report the MCP server instead.
+                    AppError::Process(message) if message.contains("timed out") => {
+                        AppError::Process(format!(
+                            "the HOI4 Agent Tools MCP server did not answer {method} within {} seconds",
+                            self.timeout.as_secs()
+                        ))
+                    }
+                    other => other,
+                })?
                 .ok_or_else(|| AppError::Process(format!("MCP closed during {method}")))?;
             if message.get("id") != Some(&json!(id)) {
                 continue;
@@ -100,6 +111,9 @@ impl<T: JsonlTransport> Drop for McpProtocol<T> {
 }
 
 pub const COMPONENT_ID: &str = "mcp.hoi4_agent_tools";
+/// A first start right after installation loads native libraries that
+/// antivirus scanning may hold for many seconds.
+const MCP_HEALTH_TIMEOUT: Duration = Duration::from_secs(60);
 pub const HEALTH_RULE_ID: &str = "mcp.hoi4.health";
 const MAX_SERVER_FIELD_BYTES: usize = 256;
 const MAX_TOOL_COUNT: usize = 4096;
@@ -620,7 +634,7 @@ pub fn initialize_health(
         Some(node_directory),
         &sha256_file(&node)?,
     )?;
-    let mut protocol = McpProtocol::new(transport, Duration::from_secs(10));
+    let mut protocol = McpProtocol::new(transport, MCP_HEALTH_TIMEOUT);
     let initialized = protocol.initialize()?;
     let evidence = validate_verified_initialize_result(&initialized, &target.package_version)?;
     let listing = protocol.request("tools/list", json!({}))?;

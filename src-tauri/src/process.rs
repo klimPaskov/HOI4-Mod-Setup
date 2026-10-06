@@ -234,41 +234,6 @@ impl ProcessSpec {
         )
     }
 
-    /// Run an isolated Git probe from the exact directory represented by a
-    /// retained handle. Unix changes directory with `fchdir` in the child
-    /// immediately before exec; Windows relies on the handle denying delete
-    /// sharing while the canonical working directory is used.
-    pub(crate) fn run_git_read_only_bound(
-        &self,
-        allowlisted_executables: &[PathBuf],
-        directory: &std::fs::File,
-    ) -> Result<ProcessResult, AppError> {
-        let executable_name = self
-            .executable
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default();
-        if !matches!(
-            executable_name.to_ascii_lowercase().as_str(),
-            "git" | "git.exe"
-        ) || !self.environment_names.is_empty()
-        {
-            return Err(AppError::Process(
-                "the isolated Git profile accepts only a reviewed Git executable without credentials"
-                    .into(),
-            ));
-        }
-        self.run_with_profile(
-            allowlisted_executables,
-            None,
-            ProcessRunProfile {
-                isolated_git_read_only: true,
-                bound_directory: Some(directory),
-                ..ProcessRunProfile::default()
-            },
-        )
-    }
-
     pub(crate) fn run_git_read_only_bound_with_check(
         &self,
         allowlisted_executables: &[PathBuf],
