@@ -105,7 +105,7 @@ interface TauriCommandMap {
   preview_descriptors: { args: { state: WizardState }; result: GeneratedArtifactPreview[] };
   preview_installation_conflict: { args: { planId: string; path: string }; result: ConflictPreview };
   build_installation_plan: { args: { state: WizardState }; result: InstallationPlan };
-  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; codexAnalysis?: CodexAnalysisRecord | null; addOptionalComponents?: string[]; portraitPipeline?: WizardState["portraitPipeline"]; primaryCodingEnvironment?: CodingEnvironmentId; additionalCodingEnvironments?: CodingEnvironmentId[]; analysisConfirmationValues?: CodexAnalysisConfirmationValues }; result: InstallationPlan };
+  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; analysisOverride?: CodexAnalysisRecord | null; addOptionalComponents?: string[]; portraitPipeline?: WizardState["portraitPipeline"]; primaryCodingEnvironment?: CodingEnvironmentId; additionalCodingEnvironments?: CodingEnvironmentId[]; analysisConfirmationValues?: CodexAnalysisConfirmationValues }; result: InstallationPlan };
   approve_installation: { args: { planId: string }; result: void };
   resolve_installation_conflict: { args: { planId: string; path: string; choice: string }; result: InstallationPlan };
   apply_installation: { args: { planId: string; projectRoot: string }; result: TransactionJournal };
@@ -512,7 +512,7 @@ export async function resolveInstallationConflict(planId: string, path: string, 
 }
 
 export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord, addOptionalComponents: string[] = [], portraitPipeline?: WizardState["portraitPipeline"], primaryCodingEnvironment?: CodingEnvironmentId, additionalCodingEnvironments?: CodingEnvironmentId[], analysisConfirmationValues?: CodexAnalysisConfirmationValues): Promise<InstallationPlan | null> {
-  const args: TauriCommandMap["build_maintenance_plan"]["args"] = { mode, projectRoot, codexAnalysis: codexAnalysis ?? null, addOptionalComponents };
+  const args: TauriCommandMap["build_maintenance_plan"]["args"] = { mode, projectRoot, analysisOverride: codexAnalysis ?? null, addOptionalComponents };
   if (portraitPipeline) args.portraitPipeline = portraitPipeline;
   if (primaryCodingEnvironment) args.primaryCodingEnvironment = primaryCodingEnvironment;
   if (analysisConfirmationValues) args.analysisConfirmationValues = analysisConfirmationValues;
@@ -525,7 +525,7 @@ export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstal
 
 export async function buildMaintenancePlanResult(...parameters: Parameters<typeof buildMaintenancePlan>): Promise<CommandResult<InstallationPlan>> {
   const [mode, projectRoot, codexAnalysis, addOptionalComponents = [], portraitPipeline, primaryCodingEnvironment, additionalCodingEnvironments, analysisConfirmationValues] = parameters;
-  const args: TauriCommandMap["build_maintenance_plan"]["args"] = { mode, projectRoot, codexAnalysis: codexAnalysis ?? null, addOptionalComponents };
+  const args: TauriCommandMap["build_maintenance_plan"]["args"] = { mode, projectRoot, analysisOverride: codexAnalysis ?? null, addOptionalComponents };
   if (portraitPipeline) args.portraitPipeline = portraitPipeline;
   if (primaryCodingEnvironment) args.primaryCodingEnvironment = primaryCodingEnvironment;
   if (analysisConfirmationValues) args.analysisConfirmationValues = analysisConfirmationValues;

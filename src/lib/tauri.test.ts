@@ -186,7 +186,7 @@ describe("typed scanner bridge", () => {
     expect(invoke).toHaveBeenCalledWith("build_maintenance_plan", {
       mode: "repair",
       projectRoot: "C:/mods/example",
-      codexAnalysis: null,
+      analysisOverride: null,
       addOptionalComponents: ["workflow.3d", "workflow.super_events"],
     });
   });
@@ -224,7 +224,7 @@ describe("typed scanner bridge", () => {
     expect(invoke).toHaveBeenNthCalledWith(2, "build_maintenance_plan", {
       mode: "repair",
       projectRoot: "C:/mods/example",
-      codexAnalysis: null,
+      analysisOverride: null,
       addOptionalComponents: [],
       portraitPipeline: portrait,
     });
