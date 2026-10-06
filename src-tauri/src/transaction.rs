@@ -8392,11 +8392,15 @@ pub fn repair_operations(
             } else if file.ownership == Ownership::External {
                 Some("user_owned_review".into())
             } else if action == OperationAction::Skip {
-                if file.ownership == Ownership::Merged {
-                    (local_state != LocalState::Unmodified).then(|| "reverse_merge_required".into())
-                } else {
-                    Some("review_required".into())
-                }
+                // A healthy file is skipped without any decision; only local
+                // edits need the user's review.
+                (local_state != LocalState::Unmodified).then(|| {
+                    if file.ownership == Ownership::Merged {
+                        "reverse_merge_required".into()
+                    } else {
+                        "review_required".into()
+                    }
+                })
             } else {
                 None
             },
@@ -10888,6 +10892,23 @@ mod tests {
             .unwrap();
         assert_eq!(agents.action, OperationAction::Skip);
         assert_eq!(agents.local_state, LocalState::Unmodified);
+        assert_eq!(
+            agents.resolution, None,
+            "a healthy file must not ask the user to resolve a conflict"
+        );
+
+        fs::write(project.path().join("AGENTS.md"), b"edited locally").unwrap();
+        let operations = repair_operations(&lock, project.path()).unwrap();
+        let agents = operations
+            .iter()
+            .find(|operation| operation.destination == "AGENTS.md")
+            .unwrap();
+        assert_eq!(agents.action, OperationAction::Skip);
+        assert_eq!(agents.local_state, LocalState::Modified);
+        assert!(
+            agents.resolution.is_some(),
+            "a local edit still needs review"
+        );
     }
 
     #[test]
