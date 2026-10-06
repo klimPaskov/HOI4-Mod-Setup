@@ -523,6 +523,16 @@ export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstal
   return invokeCommand("build_maintenance_plan", args);
 }
 
+export async function buildMaintenancePlanResult(...parameters: Parameters<typeof buildMaintenancePlan>): Promise<CommandResult<InstallationPlan>> {
+  const [mode, projectRoot, codexAnalysis, addOptionalComponents = [], portraitPipeline, primaryCodingEnvironment, additionalCodingEnvironments, analysisConfirmationValues] = parameters;
+  const args: TauriCommandMap["build_maintenance_plan"]["args"] = { mode, projectRoot, codexAnalysis: codexAnalysis ?? null, addOptionalComponents };
+  if (portraitPipeline) args.portraitPipeline = portraitPipeline;
+  if (primaryCodingEnvironment) args.primaryCodingEnvironment = primaryCodingEnvironment;
+  if (analysisConfirmationValues) args.analysisConfirmationValues = analysisConfirmationValues;
+  if (additionalCodingEnvironments !== undefined) args.additionalCodingEnvironments = additionalCodingEnvironments;
+  return invokeCommandResult("build_maintenance_plan", args);
+}
+
 export async function rollbackInstallation(projectRoot: string, transactionId: string): Promise<TransactionJournal | null> {
   return invokeCommand("rollback_installation", { projectRoot, transactionId });
 }
