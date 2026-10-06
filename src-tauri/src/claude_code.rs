@@ -1046,8 +1046,8 @@ mod tests {
                             "analysis_purpose": "maintenance_reanalysis",
                             "project_id_pattern": "^[a-z][a-z0-9_]{1,63}$",
                             "component_registry": {
-                                "source_revision": "e29fd0102ffc782c130706adf047e7e121cc6aa2",
-                                "manifest_sha256": "d1697f2632d65ff56fa66f10f8798345062636e8e831fa9405b5f5d385dc28bd",
+                                "source_revision": "0c521fd1c8b7d00cf641d098576ebb5aac7bdbe9",
+                                "manifest_sha256": "5df7b08759189c3ab15cc42c3cef08025b4ff6f185de52370d3e6575ea77abce",
                                 "component_ids": ids,
                             }
                         })
@@ -1161,8 +1161,8 @@ mod tests {
                     "project_id_pattern": "^[a-z][a-z0-9_]{1,63}$",
                     "requested_mod_name": "Iron Dawn",
                     "component_registry": {
-                        "source_revision": "bea20cfb6ddde6679abe7e7f0a31b7534c3b1725",
-                        "manifest_sha256": "d1697f2632d65ff56fa66f10f8798345062636e8e831fa9405b5f5d385dc28bd",
+                        "source_revision": "08db5a77ff9ae0a5ceab197dd00b77400b2ccd8d",
+                        "manifest_sha256": "5df7b08759189c3ab15cc42c3cef08025b4ff6f185de52370d3e6575ea77abce",
                         "component_ids": ["core.agents", "core.skills", "core.subagents", "codex.config", "mcp.hoi4_agent_tools", "wiki.snapshot", "workflow.super_events"]
                     }
                 }),
