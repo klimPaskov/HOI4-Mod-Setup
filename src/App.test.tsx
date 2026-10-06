@@ -1320,6 +1320,14 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(update.mock.calls[0][0]).not.toHaveProperty("meshCredentialReference");
   });
 
+  it("ends a managed removal with a removal summary instead of readiness checks", () => {
+    render(<Ready state={{ ...readyState(), readiness: null, removalSummary: { removed: 1239, kept: 5 } }} update={vi.fn()} onMaintenance={vi.fn()} />);
+    expect(screen.getByRole("heading", { name: "Setup removed" })).toBeInTheDocument();
+    expect(screen.getByText("Removed 1,239 unchanged setup files and the folders they emptied.")).toBeInTheDocument();
+    expect(screen.getByText("Kept 5 files you changed. Review them before deleting.")).toBeInTheDocument();
+    expect(screen.queryByText("Project and descriptors")).not.toBeInTheDocument();
+  });
+
   it("keeps 3D readiness in the report without a redundant Ready-screen action", () => {
     render(<Ready state={{ ...readyState(), meshSelected: true } as unknown as WizardState} update={vi.fn()} onMaintenance={vi.fn()} />);
     expect(screen.getByText("3D model workflow")).toBeInTheDocument();

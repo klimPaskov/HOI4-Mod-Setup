@@ -1856,6 +1856,9 @@ pub fn run_transaction(
             recommended_action: "none".into(),
         };
         let _ = persist_journal(&store, &mut journal);
+        if removal {
+            prune_emptied_directories(project_directory, plan);
+        }
         Ok(lock)
     })();
 
@@ -8448,6 +8451,29 @@ pub fn repair_operations(
 
 /// Build a managed-removal view. A file changed by the user is retained and
 /// represented as a skipped operation for an explicit removal decision.
+/// After a committed removal, remove the folders that held only deleted
+/// managed files, deepest first. This is best effort: a folder that still has
+/// any content stays, and a rollback recreates folders as it restores files.
+fn prune_emptied_directories(root: &RootedDir, plan: &InstallationPlan) {
+    let mut directories = std::collections::BTreeSet::new();
+    for operation in plan
+        .operations
+        .iter()
+        .filter(|operation| operation.action == OperationAction::DeleteManaged)
+    {
+        let mut parent = Path::new(&operation.destination).parent();
+        while let Some(directory) = parent.filter(|path| !path.as_os_str().is_empty()) {
+            directories.insert(directory.to_string_lossy().replace('\\', "/"));
+            parent = directory.parent();
+        }
+    }
+    let mut ordered = directories.into_iter().collect::<Vec<_>>();
+    ordered.sort_by_key(|path| std::cmp::Reverse(path.split('/').count()));
+    for directory in ordered {
+        let _ = root.remove_dir_if_empty(&directory);
+    }
+}
+
 pub fn managed_removal_operations(
     lock: &InstallationLock,
     project_root: &Path,
@@ -10690,6 +10716,72 @@ mod tests {
             .optional_workflows
             .contains_key("workflow.lora_comfyui_interest"));
         assert!(!project.path().join("AGENTS.md").exists());
+    }
+
+    #[test]
+    fn managed_removal_prunes_emptied_folders_and_rollback_restores_them() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        fs::create_dir_all(project.path().join("docs")).unwrap();
+        fs::write(project.path().join("docs/user.md"), b"mine").unwrap();
+        let mut initial_plan = ready_plan(project.path());
+        let mut nested = initial_plan.operations[0].clone();
+        nested.id = "op-nested".into();
+        nested.destination = "docs/setup/notes/guide.md".into();
+        initial_plan.operations.push(nested);
+        let initial_prepared = ["AGENTS.md", "docs/setup/notes/guide.md"]
+            .into_iter()
+            .zip(["op-1", "op-nested"])
+            .map(|(destination, operation_id)| PreparedFile {
+                operation_id: operation_id.into(),
+                destination: destination.into(),
+                bytes: b"safe".to_vec(),
+                expected_sha256: sha256_bytes(b"safe"),
+            })
+            .collect::<Vec<_>>();
+        let (_, installed_lock) = run_test_transaction(
+            project.path(),
+            &initial_plan,
+            &initial_prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let mut removal_plan = ready_plan(project.path());
+        removal_plan.maintenance_mode = Some("remove".into());
+        removal_plan.plan_id = Uuid::new_v4();
+        removal_plan.codex_analysis = None;
+        removal_plan.generated_artifacts.clear();
+        removal_plan.external_actions.clear();
+        removal_plan.git_setup = None;
+        removal_plan.optional_workflows.clear();
+        removal_plan.operations =
+            managed_removal_operations(&installed_lock, project.path()).unwrap();
+        run_test_transaction(
+            project.path(),
+            &removal_plan,
+            &[],
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!project.path().join("docs/setup").exists());
+        assert!(project.path().join("docs/user.md").is_file());
+
+        let journal_path = transaction_root(app.path(), removal_plan.plan_id)
+            .transaction
+            .join("journal.json");
+        let mut journal = read_journal(&journal_path).unwrap();
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert_eq!(
+            fs::read(project.path().join("docs/setup/notes/guide.md")).unwrap(),
+            b"safe"
+        );
     }
 
     #[test]
