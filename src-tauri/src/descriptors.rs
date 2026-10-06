@@ -73,18 +73,69 @@ pub fn validate_descriptor_tags(tags: &[String]) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Keys that HOI4 descriptors may legitimately repeat. Repeated values are
+/// retained in order, separated by a newline (which no single value contains).
+const REPEATABLE_DESCRIPTOR_KEYS: [&str; 1] = ["replace_path"];
+
+/// Upper bound on the lines one `{ ... }` block may span, so a missing closing
+/// brace fails fast instead of consuming the rest of an untrusted file.
+const MAX_BLOCK_LINES: usize = 512;
+
 pub fn parse_descriptor(bytes: &[u8]) -> Result<Descriptor, AppError> {
     let text = String::from_utf8(bytes.to_vec())
         .map_err(|_| AppError::InvalidInput("descriptor is not UTF-8".into()))?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let mut fields = BTreeMap::new();
-    for (line_number, line) in text.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+    let mut lines = text.lines().enumerate();
+    while let Some((line_number, line)) = lines.next() {
+        let trimmed = strip_trailing_comment(line.trim());
+        if trimmed.is_empty() {
             continue;
         }
-        let (key, value) = parse_assignment(trimmed).ok_or_else(|| {
+        // HOI4 descriptors commonly spread list blocks such as `tags={` over
+        // several lines. Join the block until its closing brace, then parse
+        // it as one assignment.
+        let mut statement = trimmed.to_string();
+        let mut depth = trimmed
+            .split_once('=')
+            .map(|(_, value)| block_depth(value))
+            .unwrap_or(0);
+        let mut consumed = 0;
+        while depth > 0 {
+            let (_, next) = lines.next().ok_or_else(|| {
+                AppError::InvalidInput(format!(
+                    "descriptor block starting on line {} is not closed",
+                    line_number + 1
+                ))
+            })?;
+            consumed += 1;
+            if consumed > MAX_BLOCK_LINES {
+                return Err(AppError::InvalidInput(format!(
+                    "descriptor block starting on line {} is too long",
+                    line_number + 1
+                )));
+            }
+            let next = strip_trailing_comment(next.trim());
+            if next.is_empty() {
+                continue;
+            }
+            depth += block_depth(next);
+            statement.push(' ');
+            statement.push_str(next);
+        }
+        let (key, value) = parse_assignment(&statement).ok_or_else(|| {
             AppError::InvalidInput(format!("descriptor line {} is malformed", line_number + 1))
         })?;
+        if REPEATABLE_DESCRIPTOR_KEYS.contains(&key.as_str()) {
+            fields
+                .entry(key)
+                .and_modify(|existing: &mut String| {
+                    existing.push('\n');
+                    existing.push_str(&value);
+                })
+                .or_insert(value);
+            continue;
+        }
         if fields.insert(key.clone(), value).is_some() {
             return Err(AppError::InvalidInput(format!(
                 "descriptor field is duplicated: {key}"
@@ -97,6 +148,57 @@ pub fn parse_descriptor(bytes: &[u8]) -> Result<Descriptor, AppError> {
         ));
     }
     Ok(Descriptor { fields })
+}
+
+/// Net brace depth change of one descriptor fragment, ignoring braces inside
+/// quoted strings.
+fn block_depth(fragment: &str) -> i32 {
+    let mut depth = 0;
+    let mut quoted = false;
+    let mut escaped = false;
+    for character in fragment.chars() {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                quoted = false;
+            }
+            continue;
+        }
+        match character {
+            '"' => quoted = true,
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            _ => {}
+        }
+    }
+    depth
+}
+
+/// Remove a `#` comment that is outside a quoted string.
+fn strip_trailing_comment(fragment: &str) -> &str {
+    let mut quoted = false;
+    let mut escaped = false;
+    for (index, character) in fragment.char_indices() {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                quoted = false;
+            }
+            continue;
+        }
+        if character == '"' {
+            quoted = true;
+        } else if character == '#' {
+            return fragment[..index].trim_end();
+        }
+    }
+    fragment
 }
 
 fn parse_assignment(line: &str) -> Option<(String, String)> {
@@ -395,6 +497,48 @@ mod tests {
         assert!(!parsed.fields.contains_key("namespace"));
         assert!(!rendered.contains("script_prefix="));
         assert!(!rendered.contains("namespace="));
+    }
+
+    #[test]
+    fn real_world_descriptors_with_multiline_blocks_and_repeated_paths_parse() {
+        let descriptor = concat!(
+            "\u{feff}name=\"Chaos Redux\"\n",
+            "replace_path=\"gfx/loadingscreens\"\n",
+            "replace_path=\"history/units\"\n",
+            "tags={\n",
+            "\t\"Alternative History\"\n",
+            "\t\"Events\" # main\n",
+            "\n",
+            "\t\"Gameplay\"\n",
+            "}\n",
+            "# a full-line comment\n",
+            "picture=\"thumbnail.png\"\n",
+            "version=\"0.1\" # current\n",
+            "supported_version=\"1.19.*\"\n",
+            "dependencies={\n",
+            "\t\"Base {mod}\"\n",
+            "}\n",
+        );
+        let parsed = parse_descriptor(descriptor.as_bytes()).unwrap();
+        assert_eq!(parsed.fields["name"], "Chaos Redux");
+        assert_eq!(
+            parsed.fields["tags"],
+            "{ \"Alternative History\" \"Events\" \"Gameplay\" }"
+        );
+        assert_eq!(
+            parsed.fields["replace_path"],
+            "gfx/loadingscreens\nhistory/units"
+        );
+        assert_eq!(parsed.fields["version"], "0.1");
+        assert_eq!(parsed.fields["dependencies"], "{ \"Base {mod}\" }");
+    }
+
+    #[test]
+    fn unterminated_or_duplicated_descriptor_fields_are_rejected() {
+        assert!(parse_descriptor(b"name=\"A\"\ntags={\n\t\"Events\"\n").is_err());
+        assert!(parse_descriptor(b"name=\"A\"\nname=\"B\"\n").is_err());
+        let endless = format!("name=\"A\"\ntags={{\n{}", "\"Events\"\n".repeat(600));
+        assert!(parse_descriptor(endless.as_bytes()).is_err());
     }
 
     #[test]

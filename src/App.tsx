@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlan, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, packageChatSources, pickChatSourcesFolder, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewChatSources, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, packageChatSources, pickChatSourcesFolder, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewChatSources, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
-import type { AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPreview, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisRequest, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
+import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPreview, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
 
 const PHASES: Array<{ id: PhaseId; label: string }> = [
@@ -54,7 +54,7 @@ const DEFAULT_IDENTITY: ProjectIdentity = {
   projectId: DEFAULT_GENERATED_IDENTITY.projectId,
   author: "",
   version: "0.1.0",
-  supportedGameVersion: "1.17.*",
+  supportedGameVersion: "1.19.*",
   projectRoot: "",
   defaultBranch: "main",
   scriptPrefix: DEFAULT_GENERATED_IDENTITY.scriptPrefix,
@@ -110,18 +110,56 @@ function portraitComponentIdsFor(provider: PortraitProviderId): string[] {
   ];
 }
 
+const DEFAULT_SEMANTIC_CONVENTIONS: SemanticConventions = {
+  agents_profile: "default",
+  localisation_convention: "english",
+  documentation_convention: "markdown",
+};
+
+export const REQUIRED_SEMANTIC_PROPOSAL_KEYS: SemanticProposalKey[] = [
+  "display_name",
+  "project_id",
+  "script_prefix",
+  "primary_namespace",
+  "project_description",
+  "descriptor_tags",
+  "folder_profile",
+  "agents_profile",
+  "localisation_convention",
+  "documentation_convention",
+];
+
+const CLAUDE_HAIKU_MODEL = "claude-haiku-4-5-20251001";
+
+const EXISTING_PROJECT_REVIEW_BRIEF = "Review this existing HOI4 mod using only the approved scan evidence. Keep detected facts unchanged, infer conventions only from that evidence, and do not invent the mod's theme or content.";
+
+/** An imported project has no user-written brief; the Create screen's example
+ * description must never be presented as the project's own. */
+export function analysisBrief(mode: "new_project_identity" | "existing_project_semantics", description: string): string {
+  return mode === "existing_project_semantics" ? EXISTING_PROJECT_REVIEW_BRIEF : description;
+}
+
+// Scan findings that carry machine-local routes. They restore settings in the
+// UI but never become setup-assistant input; the core rejects them as well.
+const LOCAL_ONLY_FINDING_IDS = new Set(["installation.portrait_routes"]);
+
+function modelVisibleFindings(findings: ScanFinding[]): ScanFinding[] {
+  return findings.filter((finding) => finding.status !== "rejected" && !LOCAL_ONLY_FINDING_IDS.has(finding.id));
+}
+
 const FALLBACK_AI_PROFILES: AiProviderProfile[] = [
+  { id: "claude_account", display_name: "Claude", protocol: "claude_code_cli", requires_credential: false, optimization_profile: "Claude account setup analysis", default_model: CLAUDE_HAIKU_MODEL, default_reasoning_effort: "high", account_url: "https://code.claude.com/docs/en/setup" },
   { id: "codex", display_name: "Codex", protocol: "codex_app_server", requires_credential: false, optimization_profile: "Codex setup analysis", default_model: "gpt-5.6-luna", default_reasoning_effort: "xhigh" },
-  { id: "claude", display_name: "Claude", protocol: "anthropic_messages", requires_credential: true, optimization_profile: "Claude setup analysis", default_model: "claude-sonnet-5", default_endpoint: "https://api.anthropic.com/v1/messages", account_url: "https://platform.claude.com/settings/keys" },
+  { id: "claude", display_name: "Claude API key", protocol: "anthropic_messages", requires_credential: true, optimization_profile: "Claude setup analysis", default_model: CLAUDE_HAIKU_MODEL, default_endpoint: "https://api.anthropic.com/v1/messages", account_url: "https://platform.claude.com/settings/keys" },
   { id: "kimi", display_name: "Kimi", protocol: "openai_compatible", requires_credential: true, optimization_profile: "Kimi setup analysis", default_model: "kimi-k2.6", default_endpoint: "https://api.moonshot.ai/v1/chat/completions", account_url: "https://platform.kimi.ai/console/api-keys" },
   { id: "glm", display_name: "GLM", protocol: "openai_compatible", requires_credential: true, optimization_profile: "GLM setup analysis", default_model: "glm-5.2", default_endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions", account_url: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys" },
-  { id: "deepseek", display_name: "DeepSeek", protocol: "openai_compatible", requires_credential: true, optimization_profile: "DeepSeek setup analysis", default_model: "deepseek-v4-flash", default_reasoning_effort: "high", default_endpoint: "https://api.deepseek.com/chat/completions", account_url: "https://platform.deepseek.com/api_keys" },
+  { id: "deepseek", display_name: "DeepSeek", protocol: "openai_compatible", requires_credential: true, optimization_profile: "DeepSeek setup analysis", default_model: "deepseek-flash", default_reasoning_effort: "high", default_endpoint: "https://api.deepseek.com/chat/completions", account_url: "https://platform.deepseek.com/api_keys" },
   { id: "local", display_name: "Local model", protocol: "openai_compatible", requires_credential: false, optimization_profile: "Local setup analysis" },
   { id: "custom", display_name: "Other provider", protocol: "openai_compatible", requires_credential: true, optimization_profile: "Custom setup analysis" },
 ];
 
 function aiProviderLabel(provider: AiProviderId | undefined, profiles: AiProviderProfile[] = FALLBACK_AI_PROFILES): string {
-  const selectedProvider = provider ?? "codex";
+  const selectedProvider = provider ?? "claude_account";
   return profiles.find((profile) => profile.id === selectedProvider)?.display_name ?? selectedProvider;
 }
 
@@ -131,7 +169,7 @@ function verifiedModelOptions(profile: AiProviderProfile | undefined): AiModelOp
   const configuredEffort = profile.default_reasoning_effort ?? "high";
   return [{
     id: model,
-    display_name: model,
+    display_name: model === CLAUDE_HAIKU_MODEL ? "Claude Haiku 4.5" : model,
     default_reasoning_effort: configuredEffort,
     supported_reasoning_efforts: [configuredEffort],
   }];
@@ -141,6 +179,53 @@ function mergeModelOptions(verified: AiModelOption[], live: AiModelOption[]): Ai
   const options = new Map<string, AiModelOption>();
   for (const model of [...verified, ...live]) options.set(model.id, model);
   return [...options.values()];
+}
+
+function proposalString(analysis: NonNullable<WizardState["codexAnalysis"]> | undefined, key: SemanticProposalKey, fallback: string): string {
+  const value = analysis?.proposals.find((proposal) => proposal.key === key)?.value;
+  return typeof value === "string" ? value : fallback;
+}
+
+function proposalStrings(analysis: NonNullable<WizardState["codexAnalysis"]> | undefined, key: SemanticProposalKey, fallback: string[]): string[] {
+  const value = analysis?.proposals.find((proposal) => proposal.key === key)?.value;
+  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value as string[] : fallback;
+}
+
+function conventionsFromAnalysis(analysis: NonNullable<WizardState["codexAnalysis"]> | undefined, current?: SemanticConventions, preserveKeys?: Set<SemanticProposalKey>): SemanticConventions {
+  return {
+    agents_profile: (!preserveKeys || preserveKeys.has("agents_profile")) ? current?.agents_profile ?? proposalString(analysis, "agents_profile", DEFAULT_SEMANTIC_CONVENTIONS.agents_profile) : proposalString(analysis, "agents_profile", DEFAULT_SEMANTIC_CONVENTIONS.agents_profile),
+    localisation_convention: (!preserveKeys || preserveKeys.has("localisation_convention")) ? current?.localisation_convention ?? proposalString(analysis, "localisation_convention", DEFAULT_SEMANTIC_CONVENTIONS.localisation_convention) : proposalString(analysis, "localisation_convention", DEFAULT_SEMANTIC_CONVENTIONS.localisation_convention),
+    documentation_convention: (!preserveKeys || preserveKeys.has("documentation_convention")) ? current?.documentation_convention ?? proposalString(analysis, "documentation_convention", DEFAULT_SEMANTIC_CONVENTIONS.documentation_convention) : proposalString(analysis, "documentation_convention", DEFAULT_SEMANTIC_CONVENTIONS.documentation_convention),
+  };
+}
+
+function componentRecommendationsFromAnalysis(analysis: NonNullable<WizardState["codexAnalysis"]> | undefined, current?: ComponentRecommendation[]): ComponentRecommendation[] {
+  return analysis?.component_recommendations ?? current ?? [];
+}
+
+// Editing a suggestion after it was returned keeps the core-held analysis
+// record (the core re-binds confirmation to the edited values) but clears
+// any earlier confirmation so the user confirms the values actually used.
+function unconfirmedRecord(record: WizardState["codexAnalysisRecord"]): WizardState["codexAnalysisRecord"] {
+  return record ? { ...record, confirmed_fields: [], confirmed_at: "" } : record;
+}
+
+function semanticProposalIsOverridden(state: WizardState, key: SemanticProposalKey): boolean {
+  return state.semanticProposalOverrides?.includes(key) === true;
+}
+
+function semanticProposalOverrideSet(state: WizardState, key: SemanticProposalKey): SemanticProposalKey[] {
+  return Array.from(new Set([...(state.semanticProposalOverrides ?? []), key]));
+}
+
+export function buildAnalysisConfirmationValues(state: WizardState): CodexAnalysisConfirmationValues {
+  return {
+    description: state.description,
+    folderProfile: state.folderProfile ?? [],
+    identity: state.identity,
+    conventions: conventionsFromAnalysis(state.codexAnalysis, state.conventions),
+    componentRecommendations: componentRecommendationsFromAnalysis(state.codexAnalysis, state.semanticComponentRecommendations),
+  };
 }
 
 function ChoiceIcon({ kind }: { kind: "plus" | "search" | "sparkle" | "circle" }) {
@@ -164,9 +249,10 @@ export const initialState: WizardState = {
   description: DEFAULT_DESCRIPTION,
   sourceMode: "latest",
   pinnedRef: "",
-  aiProvider: "codex",
-  aiModel: "gpt-5.6-luna",
-  aiReasoningEffort: "xhigh",
+  aiProvider: "claude_account",
+  aiModel: CLAUDE_HAIKU_MODEL,
+  aiReasoningEffort: "high",
+  aiModelCatalogStatus: "idle",
   aiEndpoint: "",
   aiAccount: null,
   aiProfiles: undefined,
@@ -207,6 +293,9 @@ export const initialState: WizardState = {
   codexLoginPending: false,
   codexAnalysis: undefined,
   codexAnalysisRecord: undefined,
+  conventions: DEFAULT_SEMANTIC_CONVENTIONS,
+  semanticProposalOverrides: [],
+  semanticComponentRecommendations: undefined,
   draftSaved: true,
 };
 
@@ -237,17 +326,17 @@ const screenCopy: Record<ScreenId, { title: string; supporting?: string; status?
   identity: { title: "Project identity", supporting: "Confirm the names and paths used by HOI4 and the generated project." },
   scan: { title: "Scanning project", supporting: "Read-only scan in progress.", status: { label: "Read only", tone: "info" } },
   findings: { title: "Confirm scan findings", supporting: "Edit only the values that are wrong." },
-  environments: { title: "Coding Environments", supporting: "Choose the client that should be primary, then add any other clients you use." },
+  environments: { title: "Coding environments", supporting: "Choose the client that should be primary, then add any other clients you use." },
   components: { title: "Choose what to install", supporting: "Recommended components are selected.", status: { label: "Recommended", tone: "info" } },
   workflows: { title: "Optional workflows", supporting: "These choices never block the core setup." },
   mesh: { title: "3D model workflow", supporting: "Connect Meshy.ai; provider charges may apply.", status: { label: "Key required", tone: "review" } },
   mcp: { title: "MCP and credentials", supporting: "Review detected servers and required variables.", status: { label: "Review", tone: "info" } },
   git: { title: "Choose Git setup", supporting: "Keep your project local or connect it online." },
   "dry-run": { title: "Review changes", supporting: "Nothing has been applied yet.", status: { label: "Dry run", tone: "info" } },
-  install: { title: "Installing components", supporting: "Staging managed files." },
+  install: { title: "Installing components", supporting: "Installing the reviewed changes." },
   ready: { title: "Project ready", supporting: "Setup checks passed.", status: { label: "Ready for agentic development", tone: "pass" } },
   update: { title: "Update and repair", supporting: "Manage the installed workflow." },
-  conflict: { title: "Resolve AGENTS.md", supporting: "Choose the result before continuing." },
+  conflict: { title: "Resolve file conflicts", supporting: "Choose the result for each changed file before continuing." },
   recovery: { title: "Installation was interrupted", supporting: "Resume from the last safe checkpoint." },
   "chat-sources": { title: "Package ChatGPT project sources", supporting: "Choose detected project files and a download folder.", status: { label: "Export", tone: "info" } },
 };
@@ -284,9 +373,16 @@ function managedInstallationDetails(findings: ScanFinding[]): { present: boolean
     detectedCodingEnvironments = [];
   }
   const finding = findings.find((candidate) => candidate.id === "installation.managed");
+  let portraitRoutes: { local_root?: string; local_server_url?: string; runpod_url?: string; runpod_workspace?: string } = {};
+  try {
+    const routes = findings.find((candidate) => candidate.id === "installation.portrait_routes");
+    portraitRoutes = routes ? JSON.parse(routes.value) as typeof portraitRoutes : {};
+  } catch {
+    portraitRoutes = {};
+  }
   if (!finding) return { present: false, valid: false, componentIds: [], workflow3d: "not_selected", superEvents: "not_selected", meshKeyConfigured: false, chatSourcesAvailable: detectedSources, primaryCodingEnvironment: "codex", additionalCodingEnvironments: detectedCodingEnvironments.filter((id) => id !== "codex"), detectedCodingEnvironments };
   try {
-    const value = JSON.parse(finding.value) as { present?: boolean; valid?: boolean; component_ids?: string[]; workflow_3d_state?: WorkflowState; workflow_super_events_state?: WorkflowState; workflow_3d_key_configured?: boolean; primary_coding_environment?: string; additional_coding_environments?: string[]; portrait_provider?: PortraitProviderId; portrait_provider_status?: PortraitProviderStatus; portrait_enabled?: boolean; portrait_workflow_commit?: string; portrait_preferred_workflow?: PortraitPipelineState["preferredWorkflow"]; portrait_mcp_registered?: boolean; portrait_local_root?: string; portrait_local_server_url?: string; portrait_runpod_url?: string; portrait_runpod_workspace?: string };
+    const value = JSON.parse(finding.value) as { present?: boolean; valid?: boolean; component_ids?: string[]; workflow_3d_state?: WorkflowState; workflow_super_events_state?: WorkflowState; workflow_3d_key_configured?: boolean; primary_coding_environment?: string; additional_coding_environments?: string[]; portrait_provider?: PortraitProviderId; portrait_provider_status?: PortraitProviderStatus; portrait_enabled?: boolean; portrait_workflow_commit?: string; portrait_preferred_workflow?: PortraitPipelineState["preferredWorkflow"]; portrait_mcp_registered?: boolean };
     const installedComponents = new Set(value.component_ids ?? []);
     const selection = normalizeCodingEnvironmentSelection(value.primary_coding_environment, value.additional_coding_environments);
     return {
@@ -307,10 +403,10 @@ function managedInstallationDetails(findings: ScanFinding[]): { present: boolean
         workflowCommit: value.portrait_workflow_commit ?? PORTRAIT_COMMIT,
         preferredWorkflow: value.portrait_preferred_workflow ?? "source",
         mcpRegistered: value.portrait_mcp_registered === true,
-        localComfyuiRoot: value.portrait_local_root ?? "",
-        localServerUrl: value.portrait_local_server_url ?? "http://127.0.0.1:8188",
-        runpodUrl: value.portrait_runpod_url ?? "",
-        runpodWorkspace: value.portrait_runpod_workspace ?? "/workspace/comfyui-hoi4-portraits",
+        localComfyuiRoot: portraitRoutes.local_root ?? "",
+        localServerUrl: portraitRoutes.local_server_url ?? "http://127.0.0.1:8188",
+        runpodUrl: portraitRoutes.runpod_url ?? "",
+        runpodWorkspace: portraitRoutes.runpod_workspace ?? "/workspace/comfyui-hoi4-portraits",
       } : undefined,
     };
   } catch {
@@ -500,7 +596,7 @@ export default function App() {
     }
     if (state.aiAccount !== null) return;
     void readAiAccount(state.aiProvider, state.aiModel, state.aiReasoningEffort, state.aiEndpoint).then((account) => {
-      if (account) setState((current) => ({ ...current, aiAccount: account }));
+      if (account) setState((current) => current.aiProvider === account.provider ? { ...current, aiAccount: account } : current);
     });
   }, [state.screen, state.codexAccount, state.aiProvider, state.aiModel, state.aiReasoningEffort, state.aiEndpoint, state.aiAccount, state.aiProfiles]);
 
@@ -556,7 +652,7 @@ export default function App() {
       setScanPartial(false);
       setScanLimitsHit([]);
       setFindings([]);
-      setState((current) => ({ ...current, scanContext: undefined, codexAnalysis: undefined, codexAnalysisRecord: undefined }));
+      setState((current) => ({ ...current, scanContext: undefined, codexAnalysis: undefined, codexAnalysisRecord: undefined, semanticComponentRecommendations: undefined }));
       if (!state.identity.projectRoot.trim()) {
         setScanError("Choose an accessible project folder before scanning.");
         return;
@@ -699,12 +795,12 @@ export default function App() {
   }, [installationPending, activeTransactionId, state.identity.projectRoot, state.plan?.plan_id]);
 
   useEffect(() => {
-    if (state.screen === "ready" && !state.readiness) {
+    if (state.screen === "ready" && !state.readiness && !state.removalSummary) {
       void evaluateReadiness(state.identity.projectRoot || "<selected project>", state.identity.projectId, state.meshSelected ? state.meshKeyStatus === "verified" ? "ready" : "incomplete" : "not_selected", state.portraitPipeline).then((result) => {
         if (result) setState((current) => ({ ...current, readiness: result }));
       });
     }
-  }, [state.screen, state.readiness, state.identity.projectId, state.identity.projectRoot, state.meshSelected, state.meshKeyStatus, state.portraitPipeline]);
+  }, [state.screen, state.readiness, state.removalSummary, state.identity.projectId, state.identity.projectRoot, state.meshSelected, state.meshKeyStatus, state.portraitPipeline]);
 
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
@@ -712,24 +808,61 @@ export default function App() {
 
   const update = (patch: Partial<WizardState>) => setState((current) => {
     const overrides = new Set(current.identityOverrides ?? []);
+    const semanticOverrides = new Set(current.semanticProposalOverrides ?? []);
     if (Object.prototype.hasOwnProperty.call(patch, "identity")) overrides.clear();
-    if (Object.prototype.hasOwnProperty.call(patch, "folderProfile")) overrides.add("folderProfile");
-    return { ...current, ...patch, identityOverrides: Array.from(overrides), draftSaved: true };
+    if (Object.prototype.hasOwnProperty.call(patch, "folderProfile")) {
+      overrides.add("folderProfile");
+      if (current.codexAnalysis) semanticOverrides.add("folder_profile");
+    }
+    const semanticEdit = Boolean(current.codexAnalysis)
+      && (Object.prototype.hasOwnProperty.call(patch, "folderProfile") || Object.prototype.hasOwnProperty.call(patch, "conventions"));
+    const analysisInputChanged = ["aiProvider", "aiModel", "aiReasoningEffort", "aiEndpoint", "sourceMode", "pinnedRef"]
+      .some((field) => Object.prototype.hasOwnProperty.call(patch, field));
+    const nextAnalysisRecord = semanticEdit
+      ? undefined
+      : Object.prototype.hasOwnProperty.call(patch, "codexAnalysisRecord")
+        ? patch.codexAnalysisRecord
+        : current.codexAnalysisRecord;
+    return {
+      ...current,
+      ...patch,
+      codexAnalysisRecord: nextAnalysisRecord,
+      semanticComponentRecommendations: analysisInputChanged
+        ? undefined
+        : Object.prototype.hasOwnProperty.call(patch, "semanticComponentRecommendations")
+          ? patch.semanticComponentRecommendations
+          : current.semanticComponentRecommendations,
+      identityOverrides: Array.from(overrides),
+      semanticProposalOverrides: Array.from(semanticOverrides),
+      draftSaved: true,
+    };
   });
   const updateIdentity = (patch: Partial<ProjectIdentity>) => setState((current) => {
     const oldProjectId = current.identity.projectId;
     const identity = { ...current.identity, ...patch };
     let gitHubRepository = current.gitHubRepository;
     const overrides = new Set(current.identityOverrides ?? []);
+    const semanticOverrides = new Set(current.semanticProposalOverrides ?? []);
+    const semanticKeyByIdentityField: Partial<Record<keyof ProjectIdentity, SemanticProposalKey>> = {
+      displayName: "display_name",
+      projectId: "project_id",
+      scriptPrefix: "script_prefix",
+      primaryNamespace: "primary_namespace",
+      descriptorTags: "descriptor_tags",
+    };
     for (const field of GENERATED_IDENTITY_FIELDS) {
       if (field !== "folderProfile" && Object.prototype.hasOwnProperty.call(patch, field)) overrides.add(field);
+    }
+    for (const [field, key] of Object.entries(semanticKeyByIdentityField) as Array<[keyof ProjectIdentity, SemanticProposalKey]>) {
+      if (current.codexAnalysis && Object.prototype.hasOwnProperty.call(patch, field)) semanticOverrides.add(key);
     }
     if (Object.prototype.hasOwnProperty.call(patch, "displayName")) {
       const generated = deriveGeneratedIdentity(identity.displayName, current.description);
       if (!overrides.has("projectId")) identity.projectId = generated.projectId;
       if (!overrides.has("scriptPrefix")) identity.scriptPrefix = generated.scriptPrefix;
       if (!overrides.has("primaryNamespace")) identity.primaryNamespace = generated.primaryNamespace;
-      if (!overrides.has("descriptorTags")) identity.descriptorTags = generated.descriptorTags;
+      // Suggested tags describe the mod's content, not its name; keep them.
+      if (!overrides.has("descriptorTags") && !current.codexAnalysis) identity.descriptorTags = generated.descriptorTags;
     }
     if (identity.projectId !== oldProjectId && current.identity.launcherDescriptorPath) {
       const oldFile = current.identity.launcherDescriptorPath.split(/[\\/]/).pop()?.toLowerCase();
@@ -739,32 +872,47 @@ export default function App() {
       }
     }
     if (identity.projectId !== oldProjectId && (!gitHubRepository || gitHubRepository === oldProjectId)) gitHubRepository = identity.projectId;
-    return { ...current, identity, gitHubRepository, identityOverrides: Array.from(overrides), transactionError: undefined, draftSaved: true };
+    const semanticEdit = Boolean(current.codexAnalysis) && Object.keys(semanticKeyByIdentityField).some((field) => Object.prototype.hasOwnProperty.call(patch, field));
+    return {
+      ...current,
+      identity,
+      gitHubRepository,
+      codexAnalysisRecord: semanticEdit ? unconfirmedRecord(current.codexAnalysisRecord) : current.codexAnalysisRecord,
+      identityOverrides: Array.from(overrides),
+      semanticProposalOverrides: Array.from(semanticOverrides),
+      transactionError: undefined,
+      draftSaved: true,
+    };
   });
-  const updateDescription = (description: string) => setState((current) => {
+  const updateDescription = (description: string, preserveAnalysis = false) => setState((current) => {
     const overrides = new Set(current.identityOverrides ?? []);
     const oldProjectId = current.identity.projectId;
     const generated = deriveGeneratedIdentity(current.identity.displayName, description);
     const identity = { ...current.identity };
-    if (!overrides.has("projectId")) identity.projectId = generated.projectId;
-    if (!overrides.has("scriptPrefix")) identity.scriptPrefix = generated.scriptPrefix;
-    if (!overrides.has("primaryNamespace")) identity.primaryNamespace = generated.primaryNamespace;
-    if (!overrides.has("descriptorTags")) identity.descriptorTags = generated.descriptorTags;
-    const gitHubRepository = (!current.gitHubRepository || current.gitHubRepository === oldProjectId) ? generated.projectId : current.gitHubRepository;
+    const semanticOverrides = new Set(current.semanticProposalOverrides ?? []);
+    if (current.codexAnalysis && preserveAnalysis) semanticOverrides.add("project_description");
+    if (!preserveAnalysis) {
+      if (!overrides.has("projectId")) identity.projectId = generated.projectId;
+      if (!overrides.has("scriptPrefix")) identity.scriptPrefix = generated.scriptPrefix;
+      if (!overrides.has("primaryNamespace")) identity.primaryNamespace = generated.primaryNamespace;
+      if (!overrides.has("descriptorTags")) identity.descriptorTags = generated.descriptorTags;
+    }
+    const gitHubRepository = !preserveAnalysis && (!current.gitHubRepository || current.gitHubRepository === oldProjectId) ? generated.projectId : current.gitHubRepository;
     return {
       ...current,
       description,
       identity,
       gitHubRepository,
-      folderProfile: overrides.has("folderProfile") ? current.folderProfile : generated.folderProfile,
-      codexAnalysis: undefined,
-      codexAnalysisRecord: undefined,
+      folderProfile: preserveAnalysis || overrides.has("folderProfile") ? current.folderProfile : generated.folderProfile,
+      codexAnalysis: preserveAnalysis ? current.codexAnalysis : undefined,
+      codexAnalysisRecord: preserveAnalysis ? unconfirmedRecord(current.codexAnalysisRecord) : undefined,
+      semanticProposalOverrides: Array.from(semanticOverrides),
       draftSaved: true,
     };
   });
   const chooseProjectFolder = () => pickProjectFolder();
   const chooseLauncherFolder = () => pickLauncherFolder();
-  const buildCodexEvidence = async (sourceFindings: ScanFinding[]) => Promise.all(sourceFindings.filter((finding) => finding.status !== "rejected").map(async (finding) => ({
+  const buildCodexEvidence = async (sourceFindings: ScanFinding[]) => Promise.all(modelVisibleFindings(sourceFindings).map(async (finding) => ({
     reference: finding.id,
     path: finding.evidencePath ?? "",
     excerpt: finding.evidenceExcerpt ?? finding.value,
@@ -837,11 +985,12 @@ export default function App() {
     setSemanticProgressStage("analyzing");
     const request: CodexAnalysisRequest = {
       mode,
-      brief: state.description,
+      brief: analysisBrief(mode, state.description),
       evidence: mode === "existing_project_semantics" ? evidence : [],
       constraints: {
         project_id_pattern: "^[a-z][a-z0-9_]{1,63}$",
         source: { mode: state.sourceMode, selected_ref: state.sourceMode === "latest" ? undefined : state.pinnedRef },
+        ...(mode === "new_project_identity" && state.identity.displayName.trim() ? { requested_mod_name: state.identity.displayName.trim() } : {}),
       },
       analysis_purpose: mode === "existing_project_semantics" ? "existing_project_import" : undefined,
       project_root: mode === "existing_project_semantics" ? state.scanContext?.projectRoot : undefined,
@@ -859,10 +1008,12 @@ export default function App() {
     setSemanticProgressStage("validating");
     const result = response.value;
     if (!result) {
+      const preserved = mode === "existing_project_semantics" ? "Your draft and scan remain unchanged." : "Your draft is unchanged.";
+      const detail = response.error && !/unchanged/i.test(response.error) ? `${response.error} ${preserved}` : response.error ?? preserved;
       update({
         transactionError: response.error
-          ? `${aiProviderLabel(provider, state.aiProfiles)} planning could not finish: ${response.error} Your draft and scan remain unchanged.`
-          : `${aiProviderLabel(provider, state.aiProfiles)} analysis could not be completed. Your draft and scan remain unchanged.`,
+          ? `${aiProviderLabel(provider, state.aiProfiles)} planning could not finish: ${detail}`
+          : `${aiProviderLabel(provider, state.aiProfiles)} analysis could not be completed. ${preserved}`,
       });
       return false;
     }
@@ -874,6 +1025,9 @@ export default function App() {
     const scriptPrefix = proposal("script_prefix");
     const primaryNamespace = proposal("primary_namespace");
     const descriptorTags = proposal("descriptor_tags");
+    const agentsProfile = proposal("agents_profile");
+    const localisationConvention = proposal("localisation_convention");
+    const documentationConvention = proposal("documentation_convention");
     const generated = deriveGeneratedIdentity(
       typeof displayName === "string" ? displayName : state.identity.displayName,
       typeof description === "string" ? description : state.description,
@@ -885,14 +1039,20 @@ export default function App() {
       codexAnalysisRecord: result.record,
       identity: {
         ...current.identity,
-        displayName: typeof displayName === "string" ? displayName : current.identity.displayName,
-        projectId: current.identityOverrides?.includes("projectId") ? current.identity.projectId : typeof projectId === "string" ? projectId : current.identity.projectId || generated.projectId,
-        scriptPrefix: current.identityOverrides?.includes("scriptPrefix") ? current.identity.scriptPrefix : typeof scriptPrefix === "string" && scriptPrefix.trim() ? scriptPrefix : current.identity.scriptPrefix || generated.scriptPrefix,
-        primaryNamespace: current.identityOverrides?.includes("primaryNamespace") ? current.identity.primaryNamespace : typeof primaryNamespace === "string" && primaryNamespace.trim() ? primaryNamespace : current.identity.primaryNamespace || generated.primaryNamespace,
-        descriptorTags: current.identityOverrides?.includes("descriptorTags") ? current.identity.descriptorTags : Array.isArray(descriptorTags) && descriptorTags.every((item) => typeof item === "string") && descriptorTags.length > 0 ? descriptorTags as string[] : current.identity.descriptorTags?.length ? current.identity.descriptorTags : generated.descriptorTags,
+        displayName: semanticProposalIsOverridden(current, "display_name") ? current.identity.displayName : typeof displayName === "string" ? displayName : current.identity.displayName,
+        projectId: current.identityOverrides?.includes("projectId") || semanticProposalIsOverridden(current, "project_id") ? current.identity.projectId : typeof projectId === "string" ? projectId : current.identity.projectId || generated.projectId,
+        scriptPrefix: current.identityOverrides?.includes("scriptPrefix") || semanticProposalIsOverridden(current, "script_prefix") ? current.identity.scriptPrefix : typeof scriptPrefix === "string" && scriptPrefix.trim() ? scriptPrefix : current.identity.scriptPrefix || generated.scriptPrefix,
+        primaryNamespace: current.identityOverrides?.includes("primaryNamespace") || semanticProposalIsOverridden(current, "primary_namespace") ? current.identity.primaryNamespace : typeof primaryNamespace === "string" && primaryNamespace.trim() ? primaryNamespace : current.identity.primaryNamespace || generated.primaryNamespace,
+        descriptorTags: current.identityOverrides?.includes("descriptorTags") || semanticProposalIsOverridden(current, "descriptor_tags") ? current.identity.descriptorTags : Array.isArray(descriptorTags) && descriptorTags.every((item) => typeof item === "string") && descriptorTags.length > 0 ? descriptorTags as string[] : current.identity.descriptorTags?.length ? current.identity.descriptorTags : generated.descriptorTags,
       },
-      description: typeof description === "string" ? description : current.description,
-      folderProfile: current.identityOverrides?.includes("folderProfile") ? current.folderProfile : Array.isArray(folderProfile) && folderProfile.every((item) => typeof item === "string") && folderProfile.length > 0 ? folderProfile as string[] : current.folderProfile?.length ? current.folderProfile : generated.folderProfile,
+      description: semanticProposalIsOverridden(current, "project_description") ? current.description : typeof description === "string" ? description : current.description,
+      folderProfile: current.identityOverrides?.includes("folderProfile") || semanticProposalIsOverridden(current, "folder_profile") ? current.folderProfile : Array.isArray(folderProfile) && folderProfile.every((item) => typeof item === "string") && folderProfile.length > 0 ? folderProfile as string[] : current.folderProfile?.length ? current.folderProfile : generated.folderProfile,
+      conventions: {
+        agents_profile: semanticProposalIsOverridden(current, "agents_profile") ? current.conventions?.agents_profile ?? DEFAULT_SEMANTIC_CONVENTIONS.agents_profile : typeof agentsProfile === "string" ? agentsProfile : current.conventions?.agents_profile ?? DEFAULT_SEMANTIC_CONVENTIONS.agents_profile,
+        localisation_convention: semanticProposalIsOverridden(current, "localisation_convention") ? current.conventions?.localisation_convention ?? DEFAULT_SEMANTIC_CONVENTIONS.localisation_convention : typeof localisationConvention === "string" ? localisationConvention : current.conventions?.localisation_convention ?? DEFAULT_SEMANTIC_CONVENTIONS.localisation_convention,
+        documentation_convention: semanticProposalIsOverridden(current, "documentation_convention") ? current.conventions?.documentation_convention ?? DEFAULT_SEMANTIC_CONVENTIONS.documentation_convention : typeof documentationConvention === "string" ? documentationConvention : current.conventions?.documentation_convention ?? DEFAULT_SEMANTIC_CONVENTIONS.documentation_convention,
+      },
+      semanticComponentRecommendations: result.analysis.component_recommendations,
       transactionError: undefined,
       draftSaved: true,
     }));
@@ -949,6 +1109,7 @@ export default function App() {
       maintenanceCodexAnalysisRecord: undefined,
       codexAnalysis: undefined,
       codexAnalysisRecord: undefined,
+      semanticComponentRecommendations: undefined,
       screen: "update",
       transactionError: scanWasPartial
         ? scanned.cancelled
@@ -964,7 +1125,7 @@ export default function App() {
       update({ transactionError: "Prepare the latest read-only evidence before reanalysis." });
       return false;
     }
-    const provider = state.aiProvider ?? "codex";
+    const provider = state.aiProvider ?? "claude_account";
     const providerLabel = aiProviderLabel(provider, state.aiProfiles);
     let codexAccount = state.codexAccount;
     let aiAccount = state.aiAccount;
@@ -1011,6 +1172,7 @@ export default function App() {
       update({ transactionError: "The edited scan results could not be confirmed. Prepare the read-only scan again." });
       return false;
     }
+    update({ transactionError: `Running ${providerLabel} reanalysis. This can take a few minutes; the installed project stays unchanged.` });
     const request: CodexAnalysisRequest = {
       mode: "existing_project_semantics",
       brief: "Review the installed HOI4 project for semantic changes before a workflow update. Preserve deterministic facts, identify convention or instruction changes, and propose only reviewable values. Do not write files or approve operations.",
@@ -1046,6 +1208,8 @@ export default function App() {
       aiAccount,
       codexAnalysis: result.analysis,
       codexAnalysisRecord: result.record,
+      conventions: conventionsFromAnalysis(result.analysis, state.conventions, new Set(state.semanticProposalOverrides ?? [])),
+      semanticComponentRecommendations: result.analysis.component_recommendations,
       maintenanceCodexAnalysisRecord: result.record,
       transactionError: `Review and confirm the ${providerLabel} reanalysis before creating the update plan.`,
       screen: "update",
@@ -1053,13 +1217,12 @@ export default function App() {
     return true;
   };
   const confirmAnalysis = async () => {
-    if (!state.codexAnalysis || !state.codexAnalysisRecord) return;
+    if (!state.codexAnalysis || !state.codexAnalysisRecord) {
+      update({ transactionError: `The ${aiProviderLabel(state.aiProvider, state.aiProfiles)} suggestions are no longer available. Go back and run the analysis again; your entries are kept.` });
+      return;
+    }
     const confirmedFields = state.codexAnalysis.proposals.map((proposal) => proposal.key);
-    const record = await confirmCodexAnalysis(state.codexAnalysisRecord, confirmedFields, {
-      description: state.description,
-      folderProfile: state.folderProfile ?? [],
-      identity: state.identity,
-    });
+    const record = await confirmCodexAnalysis(state.codexAnalysisRecord, confirmedFields, buildAnalysisConfirmationValues(state));
     if (!record) {
       update({ transactionError: `${aiProviderLabel(state.aiProvider, state.aiProfiles)} suggestions could not be confirmed.` });
       return;
@@ -1113,7 +1276,14 @@ export default function App() {
         return;
       }
       const maintenance = state.maintenanceMode !== undefined;
+      const removalSummary = state.maintenanceMode === "remove"
+        ? {
+          removed: plan.operations.filter((operation) => operation.action === "delete_managed").length,
+          kept: plan.operations.filter((operation) => operation.action === "skip").length,
+        }
+        : undefined;
       update({
+        removalSummary,
         plan: maintenance ? undefined : plan,
         maintenanceMode: maintenance ? undefined : state.maintenanceMode,
         maintenanceCodexAnalysisRecord: maintenance ? undefined : state.maintenanceCodexAnalysisRecord,
@@ -1132,6 +1302,19 @@ export default function App() {
       setInstallationPending(false);
     }
   };
+  // Arriving at the dry run starts preparing the plan once per visit, so the
+  // review shows real changes without an extra click. A failure leaves the
+  // manual Prepare changes action for retry instead of looping.
+  const autoPreparedDryRun = useRef(false);
+  useEffect(() => {
+    if (state.screen !== "dry-run") {
+      autoPreparedDryRun.current = false;
+      return;
+    }
+    if (autoPreparedDryRun.current || state.plan || planPreparationPending || !isTauriRuntime()) return;
+    autoPreparedDryRun.current = true;
+    void prepareSetupPlan();
+  }, [state.screen, state.plan, planPreparationPending]);
   const prepareSetupPlan = async () => {
     if (planPreparationPending) return;
     const startedAt = Date.now();
@@ -1179,12 +1362,13 @@ export default function App() {
           : []),
       ]
       : [];
-    const plan = await buildMaintenancePlan(mode, state.identity.projectRoot, state.maintenanceCodexAnalysisRecord, addOptionalComponents, state.portraitPipeline, state.primaryCodingEnvironment, state.additionalCodingEnvironments);
+    const planResult = await buildMaintenancePlanResult(mode, state.identity.projectRoot, state.maintenanceCodexAnalysisRecord, addOptionalComponents, state.portraitPipeline, state.primaryCodingEnvironment, state.additionalCodingEnvironments, state.codexAnalysis ? buildAnalysisConfirmationValues(state) : undefined);
+    const plan = planResult.value;
     if (!plan) {
-      update({ transactionError: "The maintenance plan is unavailable. Nothing was changed." });
+      update({ transactionError: planResult.error ? `The maintenance plan is unavailable: ${planResult.error}` : "The maintenance plan is unavailable. Nothing was changed." });
       return;
     }
-    update({ plan, maintenanceMode: mode, transactionError: undefined, screen: maintenanceReviewScreen(plan) });
+    update({ plan, maintenanceMode: mode, removalSummary: undefined, transactionError: undefined, screen: maintenanceReviewScreen(plan) });
     } finally {
       setMaintenancePending(false);
     }
@@ -1290,7 +1474,7 @@ export default function App() {
       return;
     }
     if (state.screen === "welcome" && !state.recoveryEntry && isTauriRuntime() && !providerReady(state)) {
-      update({ transactionError: state.aiProvider === "codex" ? "Sign in with ChatGPT through Codex before starting setup. Recovery remains available." : `Connect ${aiProviderLabel(state.aiProvider, state.aiProfiles)} before starting setup. Recovery remains available.` });
+      update({ transactionError: `${providerConnectAction(state)} before starting setup. Recovery remains available.` });
       return;
     }
     if (state.screen === "description" && state.mode === "new" && !state.codexAnalysisRecord) {
@@ -1374,7 +1558,7 @@ export default function App() {
       return;
     }
     if (state.screen === "install" && state.installProgress >= 100) {
-      update({ screen: "ready" });
+      update({ screen: "ready", removalSummary: undefined });
       return;
     }
     if (state.screen === "ready") {
@@ -1397,7 +1581,11 @@ export default function App() {
     const transaction = screen === "recovery" && state.identity.projectRoot.trim()
       ? await findInterruptedTransaction(state.identity.projectRoot)
       : undefined;
+    // Maintenance starts from a scanned project, so its name comes from the
+    // descriptor the scan read rather than the new-project default.
+    const scannedName = findings.find((finding) => finding.id === "descriptor.name")?.value?.trim();
     update({
+      ...(scannedName ? { identity: { ...state.identity, displayName: scannedName } } : {}),
       screen,
       transaction: screen === "recovery" ? transaction ?? undefined : state.transaction,
       recoveryChoice: transaction ? preferredRecoveryChoice(transaction) : state.recoveryChoice,
@@ -1464,7 +1652,13 @@ export default function App() {
   const recoveryStage = state.screen === "recovery" && state.transaction
     ? recoveryStagePosition(state.transaction)
     : undefined;
-  const copy = state.screen === "ready" && state.finished
+  const copy = state.screen === "ready" && state.removalSummary
+    ? {
+      title: "Components removed",
+      supporting: `${state.identity.displayName || "The project"} no longer has the app-managed setup.`,
+      status: { label: "Removed", tone: "pass" as const },
+    }
+    : state.screen === "ready" && state.finished
     ? {
       title: "Congratulations, you are all set!",
       supporting: `${state.identity.displayName || "Your mod"} is ready for agentic development.`,
@@ -1572,7 +1766,7 @@ function ScreenFrame({ screen, copy, state, canAdvance, pending, chatSourcesPend
     <footer className="footer-bar">
       <span className="footer-note" role={state.transactionError ? "alert" : undefined}>{footerNote(screen, state)}</span>
       <div className="footer-actions">
-        {screen === "ready" && !state.finished && <button className="button secondary" onClick={() => onMaintenance("update")}>Update and repair</button>}
+        {screen === "ready" && !state.finished && !state.removalSummary && <button className="button secondary" onClick={() => onMaintenance("update")}>Update and repair</button>}
         {screen === "dry-run" && (!state.plan || unresolvedConflicts) && <button className="button secondary" onClick={() => void onPrepareConflicts()} disabled={preparingPlan} aria-busy={preparingPlan || undefined}>{preparingPlan ? "Preparing changes…" : state.plan ? "Resolve conflicts" : "Prepare changes"}</button>}
         {showBack && <button className="button secondary" onClick={onBack}>Back</button>}
         {displayedPrimaryLabel && <button className="button primary" onClick={onNext} disabled={!canAdvance} aria-busy={pending || undefined}>{displayedPrimaryLabel}</button>}
@@ -1636,7 +1830,7 @@ function PlanPreparationProgress({ startedAt, now }: { startedAt?: number; now: 
 
 function footerNote(screen: ScreenId, state: WizardState): string {
   if (state.transactionError) return state.transactionError;
-  if (screen === "welcome") return providerReady(state) ? "Nothing is changed until the dry run." : state.aiProvider === "codex" ? "Sign in with ChatGPT to continue." : `Connect ${aiProviderLabel(state.aiProvider, state.aiProfiles)} to continue.`;
+  if (screen === "welcome") return providerReady(state) ? "Nothing is changed until the dry run." : `${providerConnectAction(state)} to continue.`;
   if (screen === "scan") return state.transactionError ?? "No project files are being modified.";
   if (screen === "workflows") return "Optional workflows can be changed from Update and Repair.";
   if (screen === "mesh") return "The key is never written into the project or lock file.";
@@ -1647,14 +1841,44 @@ function footerNote(screen: ScreenId, state: WizardState): string {
     if (state.plan.conflicts.some((conflict) => !conflict.selected)) return "Resolve blocking conflicts before installation.";
     return "The reviewed changes are ready to install.";
   }
-  if (screen === "install") return state.installProgress >= 100 ? "Setup saved. Readiness is next." : "Installing selected files…";
-  if (screen === "ready") return state.transactionError ?? "Readiness checks saved.";
+  if (screen === "install") {
+    if (state.installProgress >= 100) return "Setup saved. Readiness is next.";
+    const active = state.transaction?.stages.find((stage) => stage.status === "active");
+    return active && INSTALL_CHECK_PROGRESS[active.id] ? `${installStageLabel(active.id)}…` : "Installing selected files…";
+  }
+  if (screen === "ready") return state.transactionError ?? (state.removalSummary ? "Managed setup files were removed." : "Readiness checks saved.");
   if (screen === "update") return state.transactionError ?? "User-modified files are never overwritten silently.";
   if (screen === "conflict") return "A preview and validation run follow the selected resolution.";
-  if (screen === "recovery") return "Recovery actions are reversible until apply begins.";
+  if (screen === "recovery") return "Your original files stay in the verified backup until recovery finishes.";
   if (screen === "chat-sources") return "Detected instructions, README, skills, and subagents are included by default; root Markdown files are optional.";
   return state.draftSaved ? "Draft saved locally." : "";
 }
+
+const INSTALL_STAGE_LABELS: Record<string, string> = {
+  preflight: "Check the project",
+  "repository source resolution": "Find the selected source",
+  "selective download": "Download selected files",
+  "checksum verification": "Verify downloaded files",
+  "dry-run review": "Confirm the changes",
+  backup: "Save existing files",
+  staging: "Prepare the setup",
+  validation: "Validate the project",
+  apply: "Apply the setup",
+  "post-install checks": "Check the result",
+  "readiness report": "Check readiness",
+  "rollback record": "Save recovery information",
+};
+
+function installStageLabel(id: string): string {
+  return INSTALL_STAGE_LABELS[id] ?? id;
+}
+
+// Stages that run after every file is in place and can take minutes, such
+// as committing to Git or installing and starting the HOI4 MCP server.
+const INSTALL_CHECK_PROGRESS: Record<string, string> = {
+  "post-install checks": "Checking installed files and setting up Git",
+  "readiness report": "Running setup checks, including any MCP server installation",
+};
 
 function closeDisclosureOnEscape(event: ReactKeyboardEvent<HTMLElement>) {
   if (event.key !== "Escape") return;
@@ -1682,7 +1906,17 @@ function preferredRecoveryChoice(transaction: NonNullable<WizardState["transacti
   return "discard";
 }
 
+function providerConnectAction(state: WizardState): string {
+  if (state.aiProvider === "codex") return "Sign in with ChatGPT through Codex";
+  if (state.aiProvider === "claude_account") {
+    if (state.aiAccount && !state.aiAccount.available) return state.aiAccount.error?.includes("not installed") ? "Install Claude Code" : state.aiAccount.error?.includes("needs an update") ? "Update Claude Code" : "Check Claude Code";
+    return "Sign in to Claude";
+  }
+  return `Connect ${aiProviderLabel(state.aiProvider, state.aiProfiles)}`;
+}
+
 function providerReady(state: WizardState): boolean {
+  if (state.aiModelCatalogStatus === "live-missing") return false;
   if (state.aiProvider === "codex") {
     return Boolean(
       state.codexAccount?.available
@@ -1695,9 +1929,17 @@ function providerReady(state: WizardState): boolean {
   return Boolean(
     state.aiAccount?.available
     && state.aiAccount.authenticated
+    && (!state.aiAccount.provider || state.aiAccount.provider === state.aiProvider)
     && !state.aiAccount.usage_limited
     && !state.aiAccount.error,
   );
+}
+
+function analysisConfirmed(state: WizardState): boolean {
+  if (!state.codexAnalysis || !state.codexAnalysisRecord) return false;
+  const confirmed = new Set(state.codexAnalysisRecord.confirmed_fields);
+  return REQUIRED_SEMANTIC_PROPOSAL_KEYS.every((key) => confirmed.has(key))
+    && state.codexAnalysis.proposals.every((proposal) => confirmed.has(proposal.key as SemanticProposalKey));
 }
 
 function canAdvanceFromScreen(
@@ -1727,7 +1969,7 @@ function canAdvanceFromScreen(
       }
       return planningReady
         && (state.projectPathStatus === "ready" || state.projectPathStatus === "manual")
-        && Boolean(state.codexAnalysisRecord?.confirmed_fields.length)
+        && analysisConfirmed(state)
         && [
           state.identity.displayName,
           state.identity.projectId,
@@ -1742,7 +1984,7 @@ function canAdvanceFromScreen(
       return scan.scanComplete && !scan.scanError && !scan.scanPartial;
     case "findings":
       if (!planningReady || scan.findings.length === 0) return false;
-      return !state.codexAnalysis || Boolean(state.codexAnalysisRecord?.confirmed_fields.length);
+      return !state.codexAnalysis || analysisConfirmed(state);
     case "environments": {
       const selection = normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments);
       return selection.primary === (state.primaryCodingEnvironment ?? "codex")
@@ -1776,13 +2018,13 @@ function canAdvanceFromScreen(
   }
 }
 
-function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) => void, updateIdentity: (patch: Partial<ProjectIdentity>) => void, updateDescription: (description: string) => void, findings: ScanFinding[], selectedFinding: string, setSelectedFinding: (id: string) => void, setFindings: Dispatch<SetStateAction<ScanFinding[]>>, scanComplete: boolean, scanError: string | undefined, scanProgress: ScanProgress, scanPartial: boolean, scanLimitsHit: string[], scanRequestId: string | undefined, scanCancellationRequested: boolean, onCancelScan: () => Promise<void>, onMaintenance: (screen: "update" | "conflict" | "recovery") => void, startMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void, onReanalyze: () => Promise<boolean>, chooseConflict: (choice: ConflictChoice) => void, onPickProjectFolder: () => Promise<FolderSelection | null>, onPickLauncherFolder: () => Promise<FolderSelection | null>, onPickChatSourcesFolder: () => Promise<void>, onConfirmAnalysis: () => Promise<void>, recoveryPending: boolean, maintenancePending: boolean, onPackageChatSources: () => Promise<void>) {
+function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) => void, updateIdentity: (patch: Partial<ProjectIdentity>) => void, updateDescription: (description: string) => void, findings: ScanFinding[], selectedFinding: string, setSelectedFinding: (id: string) => void, setFindings: Dispatch<SetStateAction<ScanFinding[]>>, scanComplete: boolean, scanError: string | undefined, scanProgress: ScanProgress, scanPartial: boolean, scanLimitsHit: string[], scanRequestId: string | undefined, scanCancellationRequested: boolean, onCancelScan: () => Promise<void>, onMaintenance: (screen: "update" | "conflict" | "recovery") => void, startMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void, onReanalyze: () => Promise<boolean>, chooseConflict: (choice: ConflictChoice) => void | Promise<void>, onPickProjectFolder: () => Promise<FolderSelection | null>, onPickLauncherFolder: () => Promise<FolderSelection | null>, onPickChatSourcesFolder: () => Promise<void>, onConfirmAnalysis: () => Promise<void>, recoveryPending: boolean, maintenancePending: boolean, onPackageChatSources: () => Promise<void>) {
   switch (state.screen) {
     case "welcome": return <Welcome state={state} update={update} />;
     case "description": return <Description state={state} updateDescription={updateDescription} updateIdentity={updateIdentity} />;
-    case "identity": return <Identity state={state} update={update} updateIdentity={updateIdentity} onPickProjectFolder={onPickProjectFolder} onPickLauncherFolder={onPickLauncherFolder} onConfirmAnalysis={onConfirmAnalysis} />;
+    case "identity": return <Identity state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onPickProjectFolder={onPickProjectFolder} onPickLauncherFolder={onPickLauncherFolder} onConfirmAnalysis={onConfirmAnalysis} />;
     case "scan": return <Scan state={state} complete={scanComplete} error={scanError} progress={scanProgress} partial={scanPartial} limitsHit={scanLimitsHit} canCancel={Boolean(scanRequestId)} cancellationRequested={scanCancellationRequested} onCancel={onCancelScan} />;
-    case "findings": return <Findings state={state} findings={findings} selected={selectedFinding} setSelected={setSelectedFinding} setFindings={setFindings} onConfirmAnalysis={onConfirmAnalysis} onManageExisting={() => onMaintenance("update")} onPackageChatSources={onPackageChatSources} />;
+    case "findings": return <Findings state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} findings={findings} selected={selectedFinding} setSelected={setSelectedFinding} setFindings={setFindings} onConfirmAnalysis={onConfirmAnalysis} onManageExisting={() => onMaintenance("update")} onPackageChatSources={onPackageChatSources} />;
     case "environments": return <CodingEnvironments state={state} update={update} />;
     case "components": return <Components state={state} update={update} />;
     case "workflows": return <Workflows state={state} update={update} />;
@@ -1792,7 +2034,7 @@ function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) 
     case "dry-run": return <DryRun state={state} update={update} />;
     case "install": return <Install state={state} />;
     case "ready": return <Ready state={state} update={update} onMaintenance={onMaintenance} />;
-    case "update": return <Update state={state} update={update} findings={findings} setFindings={setFindings} onMaintenance={onMaintenance} onStartMaintenance={startMaintenance} onReanalyze={onReanalyze} onPackageChatSources={onPackageChatSources} pending={maintenancePending} />;
+    case "update": return <Update state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} findings={findings} setFindings={setFindings} onMaintenance={onMaintenance} onStartMaintenance={startMaintenance} onReanalyze={onReanalyze} onConfirmAnalysis={onConfirmAnalysis} onPackageChatSources={onPackageChatSources} pending={maintenancePending} />;
     case "conflict": return <Conflict state={state} update={update} onChoice={chooseConflict} />;
     case "recovery": return <Recovery state={state} update={update} onPickProjectFolder={onPickProjectFolder} onStartMaintenance={startMaintenance} pending={recoveryPending} />;
     case "chat-sources": return <ChatSources state={state} update={update} onPickFolder={onPickChatSourcesFolder} />;
@@ -1802,47 +2044,101 @@ function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) 
 export function Welcome({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
   const [aiKeyDraft, setAiKeyDraft] = useState("");
   const [liveAiModels, setLiveAiModels] = useState<AiModelOption[]>([]);
-  const [modelListStatus, setModelListStatus] = useState<"idle" | "loading" | "live" | "fallback-empty" | "fallback-error">("idle");
+  const [modelListStatus, setModelListStatus] = useState<AiModelCatalogStatus>(state.aiModelCatalogStatus ?? "idle");
   const activeCodexLoginId = useRef<string | undefined>(undefined);
-  const selectedProvider = state.aiProvider ?? "codex";
+  const activeClaudeLoginId = useRef<string | undefined>(undefined);
+  const [claudeLoginPending, setClaudeLoginPending] = useState(false);
+  const selectedProvider = state.aiProvider ?? "claude_account";
+  // Late Claude results must not land on another provider's screen.
+  const currentProvider = useRef(selectedProvider);
+  currentProvider.current = selectedProvider;
   const desktopRuntime = isTauriRuntime() || Boolean(import.meta.env.DEV && window.__HOI4_DOCUMENTATION_STATE__);
-  const profiles = state.aiProfiles?.length ? state.aiProfiles : FALLBACK_AI_PROFILES;
+  const profiles = (state.aiProfiles?.length ? state.aiProfiles : FALLBACK_AI_PROFILES).map((candidate) => candidate.id === "deepseek" ? { ...candidate, default_model: "deepseek-flash" } : candidate);
   const profile = profiles.find((candidate) => candidate.id === selectedProvider) ?? profiles[0];
   const aiModels = mergeModelOptions(verifiedModelOptions(profile), liveAiModels);
   const selectedLabel = aiProviderLabel(selectedProvider, profiles);
+  // Key-related copy names the account that issues the key.
+  const keyOwnerLabel = selectedProvider === "claude" ? "Anthropic" : selectedLabel;
   const providerNeedsManualDetails = selectedProvider === "local" || selectedProvider === "custom";
   useEffect(() => {
-    const canLoad = selectedProvider === "codex" || state.aiAccount?.authenticated || (selectedProvider === "local" && Boolean(state.aiEndpoint.trim()));
-    if (!desktopRuntime || !canLoad) { setLiveAiModels([]); setModelListStatus("idle"); return; }
+    // Claude Code has no model-catalog command; its verified built-in choices
+    // are shown without being labelled as a live result.
+    const canLoad = selectedProvider !== "claude_account" && (selectedProvider === "codex" || state.aiAccount?.authenticated || (selectedProvider === "local" && Boolean(state.aiEndpoint.trim())));
+    if (!desktopRuntime || !canLoad) {
+      setLiveAiModels([]);
+      setModelListStatus("idle");
+      update({ aiModelCatalogStatus: "idle" });
+      return;
+    }
     let active = true;
     setModelListStatus("loading");
+    update({ aiModelCatalogStatus: "loading" });
     void readAiModels(selectedProvider, state.aiEndpoint).then((models) => {
       if (!active) return;
       setLiveAiModels(models);
-      setModelListStatus(models.length ? "live" : "fallback-empty");
       const selected = models.find((model) => model.id === state.aiModel);
+      const nextStatus: AiModelCatalogStatus = models.length === 0 ? "fallback-empty" : selected ? "live" : "live-missing";
+      setModelListStatus(nextStatus);
+      update({ aiModelCatalogStatus: nextStatus });
       if (selected && !selected.supported_reasoning_efforts.includes(state.aiReasoningEffort)) {
         update({ aiReasoningEffort: selected.default_reasoning_effort });
       }
-    }).catch(() => { if (active) { setLiveAiModels([]); setModelListStatus("fallback-error"); } });
+    }).catch(() => {
+      if (active) {
+        setLiveAiModels([]);
+        setModelListStatus("fallback-error");
+        update({ aiModelCatalogStatus: "fallback-error" });
+      }
+    });
     return () => { active = false; };
   }, [desktopRuntime, selectedProvider, state.aiEndpoint, state.aiAccount?.authenticated]);
-  const selectedModel = aiModels.find((model) => model.id === state.aiModel);
+  const selectedModel = liveAiModels.length
+    ? liveAiModels.find((model) => model.id === state.aiModel)
+    : aiModels.find((model) => model.id === state.aiModel);
   const reasoningEfforts = selectedModel?.supported_reasoning_efforts
-    ?? (selectedProvider === "codex" || selectedProvider === "deepseek" || selectedProvider === "claude"
+    ?? (modelListStatus === "live-missing"
+      ? [state.aiReasoningEffort]
+      : selectedProvider === "codex" || selectedProvider === "deepseek" || selectedProvider === "claude"
       ? (["low", "medium", "high", "xhigh", "max"] as const)
       : (["high"] as const));
+  // A model without an adjustable effort level has nothing to choose, so the
+  // control is hidden instead of offering a single fixed option.
+  const showReasoningEffort = selectedProvider === "codex" || reasoningEfforts.length > 1;
   const effortLabel = (effort: string) => ({ low: "Light", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" }[effort] ?? effort);
+  const selectModel = (modelId: string) => {
+    const model = liveAiModels.find((candidate) => candidate.id === modelId) ?? aiModels.find((candidate) => candidate.id === modelId);
+    const nextCatalogStatus: AiModelCatalogStatus = liveAiModels.length > 0
+      ? liveAiModels.some((candidate) => candidate.id === modelId) ? "live" : "live-missing"
+      : modelListStatus;
+    update({
+      aiModel: modelId,
+      aiReasoningEffort: model?.default_reasoning_effort ?? state.aiReasoningEffort,
+      aiModelCatalogStatus: nextCatalogStatus,
+      aiAccount: null,
+      codexAnalysis: undefined,
+      codexAnalysisRecord: undefined,
+      semanticComponentRecommendations: undefined,
+    });
+    setModelListStatus(nextCatalogStatus);
+  };
   const selectProvider = (provider: AiProviderId) => {
     const selectedProfile = profiles.find((candidate) => candidate.id === provider);
+    const pendingClaudeLogin = activeClaudeLoginId.current;
+    if (pendingClaudeLogin && provider !== "claude_account") {
+      activeClaudeLoginId.current = undefined;
+      setClaudeLoginPending(false);
+      void cancelClaudeLogin(pendingClaudeLogin);
+    }
     update({
       aiProvider: provider,
       aiModel: selectedProfile?.default_model ?? "",
       aiReasoningEffort: selectedProfile?.default_reasoning_effort ?? (provider === "codex" ? "xhigh" : "high"),
+      aiModelCatalogStatus: "idle",
       aiEndpoint: selectedProfile?.default_endpoint ?? "",
       aiAccount: null,
       codexAnalysis: undefined,
       codexAnalysisRecord: undefined,
+      semanticComponentRecommendations: undefined,
       meshSelected: state.meshSelected,
       transactionError: undefined,
     });
@@ -1907,6 +2203,7 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
       codexAccount: next,
       codexAnalysis: undefined,
       codexAnalysisRecord: undefined,
+      semanticComponentRecommendations: undefined,
       maintenanceCodexAnalysisRecord: undefined,
       transactionError: result.error ?? undefined,
     });
@@ -1948,7 +2245,68 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
       ? state.aiAccount.error
       : providerNeedsManualDetails
         ? `Enter the ${selectedLabel} details and connect.`
-        : `Paste your ${selectedLabel} API key to connect.`;
+        : `Paste your ${keyOwnerLabel} API key to connect.`;
+  useEffect(() => () => {
+    const loginId = activeClaudeLoginId.current;
+    activeClaudeLoginId.current = undefined;
+    if (loginId) void cancelClaudeLogin(loginId);
+  }, []);
+  const claudeAccount = selectedProvider === "claude_account" ? state.aiAccount : null;
+  const claudeNotInstalled = Boolean(claudeAccount && !claudeAccount.available && claudeAccount.error?.includes("not installed"));
+  const refreshClaude = async () => {
+    const next = await readAiAccount("claude_account", state.aiModel, state.aiReasoningEffort, "");
+    if (currentProvider.current !== "claude_account") return;
+    if (next) update({ aiAccount: next, transactionError: undefined });
+    else if (isTauriRuntime()) update({ aiAccount: { available: false, authenticated: false, provider: "claude_account", model: state.aiModel, auth_mode: "claude_account", usage_limited: false, error: "Claude Code could not be reached. Choose Check again." } });
+  };
+  const signInClaude = async () => {
+    if (!desktopRuntime) {
+      update({ transactionError: "Open the installed desktop app to sign in." });
+      return;
+    }
+    const previous = activeClaudeLoginId.current;
+    if (previous) await cancelClaudeLogin(previous);
+    setClaudeLoginPending(true);
+    update({ transactionError: undefined });
+    const started = await startClaudeLogin();
+    if (!started.value) {
+      setClaudeLoginPending(false);
+      update({ transactionError: started.error ?? "Claude sign-in could not be started." });
+      return;
+    }
+    const loginId = started.value;
+    activeClaudeLoginId.current = loginId;
+    const { value, error } = await waitForClaudeLoginResult(loginId, state.aiModel);
+    if (activeClaudeLoginId.current !== loginId || currentProvider.current !== "claude_account") return;
+    activeClaudeLoginId.current = undefined;
+    setClaudeLoginPending(false);
+    update({ aiAccount: value ?? state.aiAccount, transactionError: error ?? (value && !value.authenticated ? value.error ?? undefined : undefined) });
+  };
+  const cancelClaude = async () => {
+    const loginId = activeClaudeLoginId.current;
+    activeClaudeLoginId.current = undefined;
+    setClaudeLoginPending(false);
+    if (loginId) await cancelClaudeLogin(loginId);
+    update({ transactionError: "Claude sign-in cancelled. You can try again." });
+  };
+  const signOutClaude = async () => {
+    const result = await logoutClaudeResult();
+    const next = await readAiAccount("claude_account", state.aiModel, state.aiReasoningEffort, "");
+    if (currentProvider.current !== "claude_account") return;
+    update({
+      aiAccount: next,
+      codexAnalysis: undefined,
+      codexAnalysisRecord: undefined,
+      semanticComponentRecommendations: undefined,
+      maintenanceCodexAnalysisRecord: undefined,
+      transactionError: result.error ?? undefined,
+    });
+  };
+  const openClaudeSetup = async () => {
+    if (!profile?.account_url) return;
+    const result = await openExternalUrlResult(profile.account_url);
+    update({ transactionError: result.error });
+  };
   const chooseMode = (mode: "new" | "existing") => {
     if (state.mode === mode) return;
     update({
@@ -1968,24 +2326,45 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
     <button type="button" className={`choice-card ${state.mode === "existing" ? "selected" : ""}`} aria-pressed={state.mode === "existing"} onClick={() => chooseMode("existing")}>
       <ChoiceIcon kind="search" /><span className="choice-radio" aria-hidden="true" /><h2>Import existing mod</h2><p>Scan the project without changing it.</p>
     </button>
-  </div><section><div className="section-label">Setup assistant</div><div className="panel recent-list provider-panel"><label className="field"><span className="field-label">AI provider</span><select className="text-input" value={state.aiProvider} onChange={(event) => selectProvider(event.target.value as AiProviderId)}>{profiles.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>)}</select></label><p className="muted provider-help">Used only to analyze and prepare the mod. It does not choose the AI you use for later development.</p><div className="provider-manual-details"><label className="field"><span className="field-label">Model</span>{providerNeedsManualDetails ? <><input aria-label="Model" className="text-input mono" list="provider-model-options" value={state.aiModel} onChange={(event) => { const model = aiModels.find((candidate) => candidate.id === event.target.value); update({ aiModel: event.target.value, aiReasoningEffort: model?.default_reasoning_effort ?? state.aiReasoningEffort, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined }); }} placeholder={modelListStatus === "loading" ? "Loading models…" : "Model name"} /><datalist id="provider-model-options">{aiModels.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}</datalist></> : <select className="text-input" value={state.aiModel} onChange={(event) => { const model = aiModels.find((candidate) => candidate.id === event.target.value); update({ aiModel: event.target.value, aiReasoningEffort: model?.default_reasoning_effort ?? state.aiReasoningEffort, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined }); }}>{aiModels.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}</select>}</label><label className="field"><span className="field-label">Reasoning effort</span><select className="text-input" value={state.aiReasoningEffort} onChange={(event) => update({ aiReasoningEffort: event.target.value as WizardState["aiReasoningEffort"], aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })}>{reasoningEfforts.map((effort) => <option key={effort} value={effort}>{effortLabel(effort)}</option>)}</select></label></div>{modelListStatus === "fallback-empty" && <p className="muted provider-help" role="status">{providerNeedsManualDetails ? "No live model suggestions were returned. Enter the model name used by this provider." : "No live models were returned. The verified built-in model remains available."}</p>}{modelListStatus === "fallback-error" && <p className="muted provider-help" role="status">{providerNeedsManualDetails ? "Live model suggestions could not be refreshed. Enter the model name used by this provider." : "Using the verified built-in model while live choices refresh."}</p>}{state.aiProvider !== "codex" && <>
-    {profile?.account_url && <div className="provider-connect-intro"><span>Use an API key from your {selectedLabel} account.</span>{desktopRuntime ? <button type="button" className="text-button" onClick={() => void openProviderAccount()}>Get {selectedLabel} API key</button> : <a href={profile.account_url} target="_blank" rel="noreferrer">Get {selectedLabel} API key</a>}</div>}
-    {profile?.requires_credential && <label className="field"><span className="field-label">{selectedLabel} API key</span><input className="text-input" type="password" value={aiKeyDraft} onChange={(event) => setAiKeyDraft(event.target.value)} autoComplete="off" /></label>}
-    {providerNeedsManualDetails ? <div className="provider-manual-details"><Field label={state.aiProvider === "local" ? "Local model address" : "Provider address"} value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder={state.aiProvider === "local" ? "http://127.0.0.1:…" : "https://…"} mono /></div> : <details><summary>Advanced</summary><div className="provider-advanced"><Field label="Provider address" value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder="Filled automatically" mono /></div></details>}
-    {state.aiProvider === "local" && <p className="muted provider-help">Enter the address shown by your local model app. No online account is needed.</p>}
-    <div className="button-row"><button type="button" className="button secondary" onClick={() => void connectProvider()} disabled={!state.aiModel.trim() || !state.aiEndpoint.trim() || (profile?.requires_credential === true && !aiKeyDraft.trim() && !state.aiAccount?.authenticated)}>{state.aiAccount?.authenticated ? `Check ${selectedLabel}` : `Connect ${selectedLabel}`}</button>{state.aiAccount?.authenticated && profile?.requires_credential && <button type="button" className="text-button" onClick={() => void removeProviderCredential()}>Disconnect</button>}</div>
-    {state.aiAccount && <p className="callout" role="status">{providerStatus}</p>}
-  </>}</div></section>{state.aiProvider === "codex" && <section><div className="section-label">Codex access</div><div className="panel recent-list">
+  </div><section><div className="section-label">Setup assistant</div><div className="panel recent-list provider-panel"><label className="field"><span className="field-label">AI provider</span><select className="text-input" value={state.aiProvider} onChange={(event) => selectProvider(event.target.value as AiProviderId)}>{profiles.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>)}</select></label>{state.aiProvider === "claude_account" && <div className="provider-access" role="group" aria-label="Claude access">
+    {!desktopRuntime && <p className="muted">Open the installed desktop app to sign in to Claude.</p>}
+    {desktopRuntime && !claudeAccount && <p className="muted" role="status">Checking Claude Code…</p>}
+    {desktopRuntime && claudeAccount?.authenticated && <><p><strong>Signed in to Claude</strong></p><p className="muted">Setup analysis uses your Claude plan through Claude Code.</p>{claudeAccount.usage_limited && <p className="callout review" role="status">Claude usage is currently limited. Planning is paused until usage is available again; recovery remains available.</p>}<div className="button-row"><button type="button" className="text-button" onClick={() => void refreshClaude()}>Check again</button><button type="button" className="text-button" onClick={() => void signOutClaude()}>Sign out</button></div></>}
+    {desktopRuntime && claudeAccount && !claudeAccount.available && <><p className="callout review" role="status">{claudeAccount.error ?? "Claude Code could not be reached."}</p><div className="button-row">{claudeNotInstalled && <button type="button" className="button secondary" onClick={() => void openClaudeSetup()}>Install Claude Code ↗</button>}<button type="button" className="text-button" onClick={() => void refreshClaude()}>Check again</button></div></>}
+    {desktopRuntime && claudeAccount?.available && !claudeAccount.authenticated && <><p className="muted">Claude Code opens your browser to sign in. This app never sees your Claude credentials.</p>{claudeAccount.error && !claudeAccount.error.startsWith("Sign in to Claude") && <p className="callout review" role="status">{claudeAccount.error}</p>}<div className="button-row"><button type="button" className="button secondary" onClick={() => void signInClaude()} disabled={claudeLoginPending} aria-busy={claudeLoginPending || undefined}>{claudeLoginPending ? "Waiting for browser sign-in…" : "Sign in to Claude"}</button>{claudeLoginPending && <button type="button" className="text-button" onClick={() => void cancelClaude()}>Cancel sign-in</button>}<button type="button" className="text-button" onClick={() => void refreshClaude()} disabled={claudeLoginPending}>Check again</button></div>{claudeLoginPending && <p className="muted" role="status">Finish signing in in your browser. If it did not open, run <code>claude auth login</code> in a terminal, then choose Check again.</p>}</>}
+    {!claudeAccount?.authenticated && <button type="button" className="text-button" onClick={() => selectProvider("claude")}>Use an Anthropic API key instead</button>}
+  </div>}{state.aiProvider === "codex" && <div className="provider-access" role="group" aria-label="Codex access">
     {!desktopRuntime && <p className="muted">Open the installed desktop app to sign in with ChatGPT.</p>}
     {desktopRuntime && !account && <p className="muted" role="status">Checking Codex…</p>}
     {desktopRuntime && account && account.available && account.authenticated && account.auth_mode === "chatgpt" && <><p><strong>Signed in with ChatGPT</strong>{account.email ? ` · ${account.email}` : ""}</p>{account.usage_limited && <p className="callout review" role="status">Codex usage is currently limited. Planning is paused until usage is available again; recovery remains available.</p>}<button type="button" className="text-button" onClick={() => void refresh()}>Refresh account status</button><button type="button" className="text-button" onClick={() => void signOut()}>Sign out</button></>}
     {desktopRuntime && account && (!account.available || !account.authenticated || account.auth_mode !== "chatgpt") && <><p className="muted">Create, Import, Update, and Repair use your ChatGPT Codex access. No API key is requested.</p>{account.error && <p className="callout review" role="status">{account.error}</p>}<div className="button-row"><button type="button" className="button secondary" onClick={() => void signIn("browser")} disabled={state.codexLoginPending}>{state.codexLoginPending ? "Opening sign-in…" : "Sign in with ChatGPT"}</button><button type="button" className="text-button" onClick={() => void signIn("device")} disabled={state.codexLoginPending}>Use device code</button>{state.codexLoginPending && <button type="button" className="text-button" onClick={() => void cancel()}>Cancel sign-in</button>}</div>{state.codexLogin?.auth_url && <p><button type="button" className="text-button" onClick={() => void openLoginUrl(state.codexLogin?.auth_url ?? "")}>Open the ChatGPT sign-in page</button></p>}{state.codexLogin?.verification_url && <p className="muted"><button type="button" className="text-button" onClick={() => void openLoginUrl(state.codexLogin?.verification_url ?? "")}>Open the device-code page</button> and enter <strong>{state.codexLogin.user_code}</strong>.</p>}<button type="button" className="text-button" onClick={() => void refresh()}>Check again</button></>}
-  </div></section>}
+  </div>}<p className="muted provider-help">Used only to analyze and prepare the mod. It does not choose the AI you use for later development.</p><div className="provider-manual-details"><label className="field"><span className="field-label">Model</span>{providerNeedsManualDetails ? <><input aria-label="Model" className="text-input mono" list="provider-model-options" value={state.aiModel} onChange={(event) => selectModel(event.target.value)} placeholder={modelListStatus === "loading" ? "Loading models…" : "Model name"} /><datalist id="provider-model-options">{aiModels.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}</datalist></> : <select className="text-input" value={state.aiModel} onChange={(event) => selectModel(event.target.value)}>{aiModels.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}</select>}</label>{showReasoningEffort && <label className="field"><span className="field-label">Reasoning effort</span><select className="text-input" value={state.aiReasoningEffort} onChange={(event) => update({ aiReasoningEffort: event.target.value as WizardState["aiReasoningEffort"], aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })}>{reasoningEfforts.map((effort) => <option key={effort} value={effort}>{effortLabel(effort)}</option>)}</select></label>}</div>{modelListStatus === "fallback-empty" && <p className="muted provider-help" role="status">{providerNeedsManualDetails ? "No live model suggestions were returned. Enter the model name used by this provider." : "No live models were returned. The verified built-in model remains available."}</p>}{modelListStatus === "fallback-error" && <p className="muted provider-help" role="status">{providerNeedsManualDetails ? "Live model suggestions could not be refreshed. Enter the model name used by this provider." : "Using the verified built-in model while live choices refresh."}</p>}{modelListStatus === "live-missing" && <p className="callout review" role="alert">The selected model is not in the live catalog. Choose a listed model before continuing.</p>}{state.aiProvider !== "codex" && state.aiProvider !== "claude_account" && <>
+    {profile?.account_url && <div className="provider-connect-intro"><span>Use an API key from your {keyOwnerLabel} account.</span>{desktopRuntime ? <button type="button" className="text-button" onClick={() => void openProviderAccount()}>Get {keyOwnerLabel} API key</button> : <a href={profile.account_url} target="_blank" rel="noreferrer">Get {keyOwnerLabel} API key</a>}</div>}
+    {profile?.requires_credential && <label className="field"><span className="field-label">{keyOwnerLabel} API key</span><input className="text-input" type="password" value={aiKeyDraft} onChange={(event) => setAiKeyDraft(event.target.value)} autoComplete="off" /></label>}
+    {providerNeedsManualDetails ? <div className="provider-manual-details"><Field label={state.aiProvider === "local" ? "Local model address" : "Provider address"} value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder={state.aiProvider === "local" ? "http://127.0.0.1:…" : "https://…"} mono /></div> : <details><summary>Advanced</summary><div className="provider-advanced"><Field label="Provider address" value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder="Filled automatically" mono /></div></details>}
+    {state.aiProvider === "local" && <p className="muted provider-help">Enter the address shown by your local model app. No online account is needed.</p>}
+    <div className="button-row"><button type="button" className="button secondary" onClick={() => void connectProvider()} disabled={!state.aiModel.trim() || !state.aiEndpoint.trim() || (profile?.requires_credential === true && !aiKeyDraft.trim() && !state.aiAccount?.authenticated)}>{state.aiAccount?.authenticated ? `Check ${selectedLabel}` : `Connect ${selectedLabel}`}</button>{state.aiAccount?.authenticated && profile?.requires_credential && <button type="button" className="text-button" onClick={() => void removeProviderCredential()}>Disconnect</button>}</div>
+    {state.aiAccount && <p className="callout" role="status">{providerStatus}</p>}
+  </>}</div></section>
   <section><div className="section-label">Already have a project?</div><div className="panel recent-list"><p className="muted">Inspect its files, package ChatGPT sources, or manage setup if this app has installed it.</p><button type="button" className="text-button" onClick={() => update({ screen: "identity", mode: "existing", recoveryEntry: false, identity: { ...DEFAULT_IDENTITY }, transaction: undefined, transactionError: undefined })}>Manage an existing project</button></div></section></div>;
 }
 
+function SemanticInputManifest({ state, analysis }: { state: WizardState; analysis?: WizardState["codexAnalysis"] }) {
+  const source = state.sourceMode === "latest" ? "Latest resolved source" : `${state.sourceMode === "pinned_commit" ? "Pinned commit" : "Pinned release"}: ${state.pinnedRef || "Not selected"}`;
+  return <details className="analysis-input-manifest">
+    <summary>{analysis ? "Approved semantic input" : "Analysis input preview"}</summary>
+    <div className="manifest-details">
+      <div><strong>Mode</strong><span>{analysis?.mode === "existing_project_semantics" ? "Existing project semantics" : "New project identity"}</span></div>
+      <div><strong>Brief</strong><span>{state.description || "No description entered"}</span></div>
+      <div><strong>Source</strong><span>{source}</span></div>
+      <div><strong>Constraints</strong><span>Project ID must match <code>{"^[a-z][a-z0-9_]{1,63}$"}</code>; deterministic validation remains required.</span></div>
+      <div><strong>Evidence</strong><span>{analysis?.mode === "existing_project_semantics" ? "Approved scan findings only" : "No project files supplied for a new project"}</span></div>
+    </div>
+  </details>;
+}
+
 function Description({ state, updateDescription, updateIdentity }: { state: WizardState; updateDescription: (description: string) => void; updateIdentity: (patch: Partial<ProjectIdentity>) => void }) {
-  return <div className="stack narrow"><section className="panel form-panel"><Field label="Mod name" value={state.identity.displayName} onChange={(value) => updateIdentity({ displayName: value })} /><label className="field"><span className="field-label">Description</span><textarea className="brief-input" aria-label="Mod description" value={state.description} onChange={(event) => updateDescription(event.target.value)} /></label><p className="muted">The project ID, script prefix, namespace, tags, and initial folders are filled from these two fields. You can edit any generated value on the next screen.</p></section><details><summary>{aiProviderLabel(state.aiProvider, state.aiProfiles)} input preview</summary><p className="muted">Your brief and setup preferences are used to prepare editable project details. No files are changed.</p></details><div className="chips"><span>Natural-language brief</span><span>Generated identity</span><span>Editable structure</span></div></div>;
+  return <div className="stack narrow"><section className="panel form-panel"><Field label="Mod name" value={state.identity.displayName} onChange={(value) => updateIdentity({ displayName: value })} /><label className="field"><span className="field-label">Description</span><textarea className="brief-input" aria-label="Mod description" value={state.description} onChange={(event) => updateDescription(event.target.value)} /></label><p className="muted">The project ID, script prefix, namespace, tags, and initial folders are filled from these two fields. You can edit any generated value on the next screen.</p></section><SemanticInputManifest state={state} analysis={state.codexAnalysis} /><div className="chips"><span>Natural-language brief</span><span>Generated identity</span><span>Editable structure</span></div></div>;
 }
 
 const PROPOSAL_LABELS: Record<string, string> = {
@@ -2007,12 +2386,89 @@ function formatProposalValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function CodexReview({ state, onConfirmAnalysis }: { state: WizardState; onConfirmAnalysis: () => Promise<void> }) {
+function proposalValueForState(state: WizardState, proposal: { key: string; value: unknown }): string | string[] {
+  switch (proposal.key as SemanticProposalKey) {
+    case "display_name": return state.identity?.displayName ?? formatProposalValue(proposal.value);
+    case "project_id": return state.identity?.projectId ?? formatProposalValue(proposal.value);
+    case "script_prefix": return state.identity?.scriptPrefix ?? formatProposalValue(proposal.value);
+    case "primary_namespace": return state.identity?.primaryNamespace ?? formatProposalValue(proposal.value);
+    case "project_description": return state.description ?? formatProposalValue(proposal.value);
+    case "descriptor_tags": return state.identity?.descriptorTags ?? proposalStrings(state.codexAnalysis, "descriptor_tags", []);
+    case "folder_profile": return state.folderProfile ?? proposalStrings(state.codexAnalysis, "folder_profile", []);
+    case "agents_profile": return state.conventions?.agents_profile ?? proposalString(state.codexAnalysis, "agents_profile", DEFAULT_SEMANTIC_CONVENTIONS.agents_profile);
+    case "localisation_convention": return state.conventions?.localisation_convention ?? proposalString(state.codexAnalysis, "localisation_convention", DEFAULT_SEMANTIC_CONVENTIONS.localisation_convention);
+    case "documentation_convention": return state.conventions?.documentation_convention ?? proposalString(state.codexAnalysis, "documentation_convention", DEFAULT_SEMANTIC_CONVENTIONS.documentation_convention);
+    default: return formatProposalValue(proposal.value);
+  }
+}
+
+interface CodexReviewProps {
+  state: WizardState;
+  update?: (patch: Partial<WizardState>) => void;
+  updateIdentity?: (patch: Partial<ProjectIdentity>) => void;
+  updateDescription?: (description: string, preserveAnalysis?: boolean) => void;
+  onConfirmAnalysis: () => Promise<void>;
+}
+
+function CodexReview({ state, update, updateIdentity, updateDescription, onConfirmAnalysis }: CodexReviewProps) {
   const analysis = state.codexAnalysis;
+  const [draftValues, setDraftValues] = useState<Record<string, string | string[]>>({});
+  const [confirmPending, setConfirmPending] = useState(false);
   if (!analysis) return null;
-  const confirmed = (state.codexAnalysisRecord?.confirmed_fields.length ?? 0) > 0;
+  const confirmedFields = new Set(state.codexAnalysisRecord?.confirmed_fields ?? []);
+  const confirmed = analysisConfirmed(state);
   const providerLabel = aiProviderLabel(state.aiProvider, state.aiProfiles);
-  return <section className="panel proposal-review" aria-label={`${providerLabel} proposal review`}><div className="list-row"><div><strong>{confirmed ? `${providerLabel} suggestions confirmed` : `Suggested by ${providerLabel}`}</strong><span>{analysis.project_summary}</span></div><Status label={confirmed ? "Confirmed" : "Review required"} tone={confirmed ? "pass" : "review"} /></div><details open={!confirmed}><summary>{analysis.proposals.length} suggested values</summary><div className="manifest-details proposal-list">{analysis.proposals.map((proposal) => <div className="proposal-row" key={proposal.key}><div className="proposal-heading"><strong>{PROPOSAL_LABELS[proposal.key] ?? proposal.key.replaceAll("_", " ")}</strong><span>{Math.round(proposal.confidence * 100)}% confidence</span></div><span className="proposal-value">{formatProposalValue(proposal.value)}</span><small>{proposal.reason}</small></div>)}</div></details>{analysis.warnings.length > 0 && <details className="analysis-notes"><summary>Before you continue</summary><ul>{analysis.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details>}{!confirmed && <div className="proposal-actions"><button type="button" className="button primary" onClick={() => void onConfirmAnalysis()}>Confirm {providerLabel} suggestions</button></div>}</section>;
+  const setProposalValue = (proposal: { key: string; value: unknown }, value: string | string[]) => {
+    const key = proposal.key as SemanticProposalKey;
+    setDraftValues((current) => ({ ...current, [key]: value }));
+    const markEdited = () => update?.({ semanticProposalOverrides: semanticProposalOverrideSet(state, key), codexAnalysisRecord: unconfirmedRecord(state.codexAnalysisRecord), transactionError: undefined });
+    switch (key) {
+      case "display_name": updateIdentity?.({ displayName: String(value) }); break;
+      case "project_id": updateIdentity?.({ projectId: String(value) }); break;
+      case "script_prefix": updateIdentity?.({ scriptPrefix: String(value) }); break;
+      case "primary_namespace": updateIdentity?.({ primaryNamespace: String(value) }); break;
+      case "project_description": updateDescription?.(String(value), true); break;
+      case "descriptor_tags": updateIdentity?.({ descriptorTags: Array.isArray(value) ? value : String(value).split(",").map((item) => item.trim()).filter(Boolean) }); break;
+      case "folder_profile": update?.({ folderProfile: Array.isArray(value) ? value : String(value).split(",").map((item) => item.trim()).filter(Boolean) }); break;
+      case "agents_profile":
+      case "localisation_convention":
+      case "documentation_convention": {
+        const conventions = { ...conventionsFromAnalysis(state.codexAnalysis, state.conventions), [key]: String(value) } as SemanticConventions;
+        update?.({ conventions });
+        break;
+      }
+      default: break;
+    }
+    markEdited();
+  };
+  const confirm = async () => {
+    if (confirmPending || confirmed) return;
+    setConfirmPending(true);
+    try {
+      await onConfirmAnalysis();
+    } finally {
+      setConfirmPending(false);
+    }
+  };
+  return <section className="panel proposal-review" aria-label={`${providerLabel} proposal review`}>
+    <div className="list-row"><div><strong>{confirmed ? `${providerLabel} suggestions confirmed` : `Suggested by ${providerLabel}`}</strong><span>{analysis.project_summary}</span></div><Status label={confirmed ? "Confirmed" : "Review required"} tone={confirmed ? "pass" : "review"} /></div>
+    {analysis.mode === "new_project_identity" && <SemanticInputManifest state={state} analysis={analysis} />}
+    <details open={!confirmed}><summary>{analysis.proposals.length} suggested values</summary><div className="manifest-details proposal-list">{analysis.proposals.map((proposal) => {
+      const label = PROPOSAL_LABELS[proposal.key] ?? proposal.key.replaceAll("_", " ");
+      const value = draftValues[proposal.key] ?? proposalValueForState(state, proposal);
+      const reasonId = `proposal-${proposal.key}-reason`;
+      const inputId = `proposal-${proposal.key}`;
+      const inputValue = Array.isArray(value) ? value.join(", ") : value;
+      return <div className="proposal-row" key={proposal.key}>
+        <div className="proposal-heading"><label className="proposal-label" htmlFor={inputId}>{label}</label><span className="proposal-state">{confirmedFields.has(proposal.key) ? "Confirmed" : "Suggested"}</span><span>{Math.round(proposal.confidence * 100)}% confidence</span></div>
+        {proposal.key === "project_description" ? <textarea id={inputId} className="text-input proposal-editor" value={inputValue} aria-describedby={reasonId} onChange={(event) => setProposalValue(proposal, event.target.value)} /> : <input id={inputId} className="text-input proposal-editor" value={inputValue} aria-describedby={reasonId} onChange={(event) => setProposalValue(proposal, event.target.value)} />}
+        <output className="visually-hidden" aria-label={`Current ${label}`}>{inputValue}</output>
+        <details className="proposal-evidence"><summary>Why this was suggested</summary><div id={reasonId}><p>{proposal.reason}</p>{proposal.evidence_refs.length > 0 && <p>Evidence references: {proposal.evidence_refs.join(", ")}</p>}</div></details>
+      </div>;
+    })}</div></details>
+    {analysis.warnings.length > 0 && <details className="analysis-notes"><summary>Before you continue</summary><ul>{analysis.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details>}
+    {!confirmed && <div className="proposal-actions"><button type="button" className="button primary" onClick={() => void confirm()} disabled={confirmPending} aria-busy={confirmPending || undefined}>{confirmPending ? "Confirming suggestions…" : `Confirm ${providerLabel} suggestions`}</button></div>}
+  </section>;
 }
 
 function RecoveryProjectPicker({ state, updateIdentity, onPickProjectFolder }: { state: WizardState; updateIdentity: (patch: Partial<ProjectIdentity>) => void; onPickProjectFolder: () => Promise<FolderSelection | null> }) {
@@ -2057,7 +2513,7 @@ function ExistingProjectPicker({ state, updateIdentity, onPickProjectFolder }: {
   return <div className="stack narrow"><section className="panel form-panel"><p className="muted">Choose the mod project. Its descriptors, agentic setup, and existing managed state will be detected during the read-only scan.</p><Field label="Project folder" value={state.identity.projectRoot} placeholder="Choose an existing mod project" onChange={(value) => { setPendingSelection(undefined); updateIdentity({ projectRoot: value, launcherDescriptorPath: undefined }); }} action="Browse" onAction={() => void choose()} />{pendingSelection?.path && <button type="button" className="button secondary" onClick={() => { updateIdentity({ projectRoot: pendingSelection.path ?? "", launcherDescriptorPath: undefined }); setPendingSelection(undefined); setMessage("The scan will continue without an external launcher file."); }}>Scan without launcher file</button>}{state.identity.launcherDescriptorPath && <div className="path-preview" role="status"><p className="muted"><strong>Launcher candidate:</strong> <code>{state.identity.launcherDescriptorPath}</code></p><p className="muted">Its declared path matches the selected project. Continue to use it, or exclude it from the scan.</p><button type="button" className="button secondary" onClick={() => { updateIdentity({ launcherDescriptorPath: undefined }); setMessage("The scan will continue without an external launcher file."); }}>Scan without launcher file</button></div>}{message && <p className="muted" role="status">{message}</p>}</section></div>;
 }
 
-export function Identity({ state, update, updateIdentity, onPickProjectFolder, onPickLauncherFolder, onConfirmAnalysis }: { state: WizardState; update: (patch: Partial<WizardState>) => void; updateIdentity: (patch: Partial<ProjectIdentity>) => void; onPickProjectFolder: () => Promise<FolderSelection | null>; onPickLauncherFolder: () => Promise<FolderSelection | null>; onConfirmAnalysis: () => Promise<void> }) {
+export function Identity({ state, update, updateIdentity, updateDescription, onPickProjectFolder, onPickLauncherFolder, onConfirmAnalysis }: { state: WizardState; update: (patch: Partial<WizardState>) => void; updateIdentity: (patch: Partial<ProjectIdentity>) => void; updateDescription?: (description: string, preserveAnalysis?: boolean) => void; onPickProjectFolder: () => Promise<FolderSelection | null>; onPickLauncherFolder: () => Promise<FolderSelection | null>; onConfirmAnalysis: () => Promise<void> }) {
   const [selectedPreview, setSelectedPreview] = useState<GeneratedArtifactPreview>();
   const [previewMessage, setPreviewMessage] = useState<string>();
   const [previewPending, setPreviewPending] = useState(false);
@@ -2131,13 +2587,18 @@ export function Identity({ state, update, updateIdentity, onPickProjectFolder, o
   if (state.mode === "existing") {
     return <ExistingProjectPicker state={state} updateIdentity={updateIdentity} onPickProjectFolder={onPickProjectFolder} />;
   }
-  return <div className="stack">{state.codexAnalysis && <CodexReview state={state} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel form-panel"><p className="muted">Generated from the mod name and description. Edit any value when you want a different convention.</p><div className="form-grid">
+  // With a setup-assistant review on screen, identity values are edited in
+  // that review only; repeating the same fields here would double the task.
+  const reviewedIdentity = Boolean(state.codexAnalysis) && state.mode === "new";
+  return <div className="stack">{state.codexAnalysis && <CodexReview state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel form-panel"><p className="muted">{reviewedIdentity ? "The suggested values above are edited there. Choose where the project is created and adjust advanced details here." : "Generated from the mod name and description. Edit any value when you want a different convention."}</p><div className="form-grid">
+    {!reviewedIdentity && <>
     <Field label="Mod name" value={state.identity.displayName} onChange={(value) => updateIdentity({ displayName: value })} />
     <Field label="Project ID" value={state.identity.projectId} onChange={(value) => updateIdentity({ projectId: value })} mono />
     <Field label="Script prefix" value={state.identity.scriptPrefix ?? ""} onChange={(value) => updateIdentity({ scriptPrefix: value })} mono />
     <Field label="Primary namespace" value={state.identity.primaryNamespace ?? ""} onChange={(value) => updateIdentity({ primaryNamespace: value })} mono />
     <fieldset className="field tag-picker"><legend className="field-label">Descriptor tags</legend><div className="tag-options">{HOI4_DESCRIPTOR_TAGS.map((tag) => { const checked = state.identity.descriptorTags?.includes(tag) ?? false; return <label key={tag}><input type="checkbox" checked={checked} onChange={(event) => updateIdentity({ descriptorTags: event.target.checked ? [...(state.identity.descriptorTags ?? []), tag] : (state.identity.descriptorTags ?? []).filter((value) => value !== tag) })} /><span>{tag}</span></label>; })}</div></fieldset>
     <Field label="Initial folders" value={(state.folderProfile ?? []).join(", ")} placeholder="common, events, gfx, localisation/english, docs" onChange={(value) => update({ folderProfile: value.split(",").map((folder) => folder.trim()).filter(Boolean) })} />
+    </>}
     <details><summary>Advanced project metadata</summary>
     <Field label="Author" value={state.identity.author} onChange={(value) => updateIdentity({ author: value })} />
     <Field label="Version" value={state.identity.version} onChange={(value) => updateIdentity({ version: value })} />
@@ -2203,16 +2664,16 @@ export function Scan({ state, complete, error, progress, partial, limitsHit, can
   );
 }
 
-export function Findings({ state, findings, selected, setSelected, setFindings, onConfirmAnalysis, onManageExisting, onPackageChatSources }: { state: WizardState; findings: ScanFinding[]; selected: string; setSelected: (id: string) => void; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onConfirmAnalysis: () => Promise<void>; onManageExisting: () => void; onPackageChatSources: () => Promise<void> }) {
+export function Findings({ state, update, updateIdentity, updateDescription, findings, selected, setSelected, setFindings, onConfirmAnalysis, onManageExisting, onPackageChatSources }: { state: WizardState; update?: (patch: Partial<WizardState>) => void; updateIdentity?: (patch: Partial<ProjectIdentity>) => void; updateDescription?: (description: string, preserveAnalysis?: boolean) => void; findings: ScanFinding[]; selected: string; setSelected: (id: string) => void; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onConfirmAnalysis: () => Promise<void>; onManageExisting: () => void; onPackageChatSources: () => Promise<void> }) {
   const active = findings.find((finding) => finding.id === selected) ?? findings[0];
   const managed = managedInstallationDetails(findings);
-  return <div className="stack"><details><summary>{aiProviderLabel(state.aiProvider, state.aiProfiles)} input preview</summary><div className="manifest-details">{findings.filter((finding) => finding.status !== "rejected").map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small></div>)}</div></details>{managed.present && managed.valid && <section className="callout info existing-setup-callout"><div><strong>Existing setup found</strong><p>This project already has a managed setup. You can repair it now or add the 3D workflow later without starting over.</p></div><button type="button" className="button secondary" onClick={onManageExisting}>Repair or add workflows</button></section>}{managed.chatSourcesAvailable && <section className="callout info existing-setup-callout"><div><strong>ChatGPT project sources found</strong><p>Package the detected instructions, skills, subagents, and optional root Markdown outside the mod project.</p></div><button type="button" className="button secondary" onClick={() => void onPackageChatSources()}>Package ChatGPT project sources</button></section>}{state.codexAnalysis && <CodexReview state={state} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel"><PanelTitle title="Project facts" />{findings.length ? <div>{findings.map((finding) => <button type="button" key={finding.id} className={`finding-row ${finding.status === "needs_review" ? "review" : ""}`} aria-pressed={finding.id === active?.id} onClick={() => setSelected(finding.id)}><span className={`state-icon ${finding.status === "needs_review" ? "review" : "pass"}`}>{finding.status === "needs_review" ? "!" : "✓"}</span><span><strong>{finding.label}</strong><small>{finding.value}</small></span><span className="text-button">{finding.status === "needs_review" ? "Review" : "Edit"}</span></button>)}</div> : <p className="muted">No scan findings are available in this runtime. The desktop scanner must return evidence before values can be accepted.</p>}</section><section className="panel selected-finding"><PanelTitle title="Selected finding" />{active ? <div className="selected-body"><label className="field-label" htmlFor="finding-value">Editable project value: {active.label}</label><input id="finding-value" className="text-input focused" value={active.value} onChange={(event) => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, value: event.target.value, status: "edited" } : finding))} /><span className="confidence">{Math.round(active.confidence * 100)}% confidence</span><button type="button" className="text-button" aria-pressed={active.status !== "rejected"} onClick={() => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, status: finding.status === "rejected" ? "accepted" : "rejected" } : finding))}>{active.status === "rejected" ? `Include in ${aiProviderLabel(state.aiProvider, state.aiProfiles)} input` : `Exclude from ${aiProviderLabel(state.aiProvider, state.aiProfiles)} input`}</button><div className="evidence-block"><span>Evidence</span><p>{active.evidence}</p></div><details><summary>Show matching files</summary><p className="muted">Full evidence and hashes stay behind progressive disclosure.</p></details></div> : <p className="muted">Select a finding after the bounded scan returns.</p>}</section></div></div>;
+  return <div className="stack"><details><summary>{aiProviderLabel(state.aiProvider, state.aiProfiles)} input preview</summary><div className="manifest-details">{modelVisibleFindings(findings).map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small></div>)}</div></details>{managed.present && managed.valid && <section className="callout info existing-setup-callout"><div><strong>Existing setup found</strong><p>This project already has a managed setup. You can repair it now or add the 3D workflow later without starting over.</p></div><button type="button" className="button secondary" onClick={onManageExisting}>Repair or add workflows</button></section>}{managed.chatSourcesAvailable && <section className="callout info existing-setup-callout"><div><strong>ChatGPT project sources found</strong><p>Package the detected instructions, skills, subagents, and optional root Markdown outside the mod project.</p></div><button type="button" className="button secondary" onClick={() => void onPackageChatSources()}>Package ChatGPT project sources</button></section>}{state.codexAnalysis && <CodexReview state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel"><PanelTitle title="Project facts" />{findings.length ? <div>{findings.map((finding) => <button type="button" key={finding.id} className={`finding-row ${finding.status === "needs_review" ? "review" : ""}`} aria-pressed={finding.id === active?.id} onClick={() => setSelected(finding.id)}><span className={`state-icon ${finding.status === "needs_review" ? "review" : "pass"}`}>{finding.status === "needs_review" ? "!" : "✓"}</span><span><strong>{finding.label}</strong><small>{finding.status === "edited" ? finding.value : finding.displayValue ?? finding.value}</small></span><span className="text-button">{finding.status === "needs_review" ? "Review" : "Edit"}</span></button>)}</div> : <p className="muted">No scan findings are available in this runtime. The desktop scanner must return evidence before values can be accepted.</p>}</section><section className="panel selected-finding"><PanelTitle title="Selected finding" />{active ? <div className="selected-body"><label className="field-label" htmlFor="finding-value">Editable project value: {active.label}</label><input id="finding-value" className="text-input focused" value={active.value} onChange={(event) => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, value: event.target.value, status: "edited" } : finding))} /><span className="confidence">{Math.round(active.confidence * 100)}% confidence</span><button type="button" className="text-button" aria-pressed={active.status !== "rejected"} onClick={() => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, status: finding.status === "rejected" ? "accepted" : "rejected" } : finding))}>{active.status === "rejected" ? `Include in ${aiProviderLabel(state.aiProvider, state.aiProfiles)} input` : `Exclude from ${aiProviderLabel(state.aiProvider, state.aiProfiles) } input`}</button><div className="evidence-block"><span>Evidence</span><p>{active.evidence}</p></div><details><summary>Show matching files</summary><p className="muted">Full evidence and hashes stay behind progressive disclosure.</p></details></div> : <p className="muted">Select a finding after the bounded scan returns.</p>}</section></div></div>;
 }
 
 function formatManifestSize(component: ManifestComponentPreview): string {
   const bytes = component.expected_files.reduce((total, file) => total + (file.size ?? 0), 0);
   const size = bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : bytes ? `${bytes} B` : "—";
-  return `${component.expected_files.length} files · ${size}`;
+  return `${component.expected_files.length === 1 ? "1 file" : `${component.expected_files.length} files`} · ${size}`;
 }
 
 function currentUiPlatform(): "windows" | "macos" {
@@ -2254,6 +2715,10 @@ function providerSupportsComponent(component: ManifestComponentPreview, componen
   void components;
   void provider;
   return true;
+}
+
+function componentRecommendationLabel(value: ComponentRecommendation["recommendation"]): string {
+  return value === "required" ? "Required" : value === "recommended" ? "Recommended" : "Not recommended";
 }
 
 function meshWorkflowAvailable(state: WizardState): boolean {
@@ -2412,7 +2877,7 @@ export function Components({ state, update }: { state: WizardState; update: (pat
   const chatFiles = flattenedChatFiles(state, manifest);
   const chatSize = chatFiles.reduce((total, file) => total + (file.size ?? 0), 0);
   const allChatSizesKnown = chatFiles.length > 0 && chatFiles.every((file) => file.size !== undefined);
-  const chatSummary = `${chatFiles.length} files${allChatSizesKnown ? ` · ${formatScanBytes(chatSize)}` : ""}`;
+  const chatSummary = `${chatFiles.length === 1 ? "1 file" : `${chatFiles.length} files`}${allChatSizesKnown ? ` · ${formatScanBytes(chatSize)}` : ""}`;
   const toggle = (id: string) => {
     const component = rows.find((row) => row.id === id);
     if (!component || component.required || component.state === "blocked") return;
@@ -2431,7 +2896,8 @@ export function Components({ state, update }: { state: WizardState; update: (pat
     setManifestRetrying(true);
     setManifestRequest((request) => request + 1);
   };
-  return <div className="stack narrow"><section className="panel">{manifest ? visibleRows.map((component) => <button type="button" key={component.id} className="component-row" onClick={() => toggle(component.id)} aria-pressed={component.selected} aria-disabled={component.required || component.state === "blocked" || undefined} disabled={component.required || component.state === "blocked"}><span className={`checkbox ${component.selected ? "checked" : ""}`}>{component.selected ? "✓" : ""}</span><span><strong>{component.title}</strong><small>{component.detail}</small></span><span className="size">{component.size}</span></button>) : null}<label className="component-row flatten-package-row"><input className="visually-hidden" type="checkbox" checked={state.flattenForChat} onChange={(event) => chooseFlattenedSources(event.target.checked)} /><span className={`checkbox ${state.flattenForChat ? "checked" : ""}`} aria-hidden="true">{state.flattenForChat ? "✓" : ""}</span><span><strong>Prepare a flattened ChatGPT project-sources folder</strong><small>Optional ChatGPT client package; independent of the setup assistant</small></span><span className="size">{chatSummary}</span></label>{state.flattenForChat && <details><summary>Files in the ChatGPT folder</summary><div className="manifest-details flattened-file-list">{chatFiles.map((file) => <div key={file.name}><strong>{file.name}</strong><small>{file.size === undefined ? "Size calculated during review" : formatScanBytes(file.size)}</small></div>)}</div></details>}{manifestFailed || manifestRetrying ? <div className="callout block" role={manifestRetrying ? "status" : "alert"}><span>{manifestMessage}</span><button type="button" className="button secondary" aria-disabled={manifestRetrying || undefined} aria-busy={manifestRetrying || undefined} onClick={retryManifest}>{manifestRetrying ? "Loading components…" : "Retry loading components"}</button></div> : <p className="muted" role="status" tabIndex={-1} ref={manifestStatusRef}>{manifestMessage}</p>}<p className="muted">Source: <ExternalLink href="https://github.com/klimPaskov/Agentic-HOI4-Modding">Agentic HOI4 Modding <span aria-hidden="true">↗</span></ExternalLink></p><details><summary>Dependencies and file list</summary>{manifest ? <div className="manifest-details">{manifest.components.map((component) => <div key={component.id}><strong>{component.display_name}</strong><span>{component.dependencies.length ? `Requires ${component.dependencies.join(", ")}` : "No additional components required"}</span><small>Platforms: {component.platforms.join(", ")}</small><small>{component.expected_files.length === 1 ? "1 file" : `${component.expected_files.length} files`} · destination: {component.destination.path}</small>{component.expected_files.map((file) => <small className="manifest-file-path" key={`${component.id}-${file.path}`}>{file.path}</small>)}</div>)}</div> : <p className="muted">Dependencies appear after the components load.</p>}</details><details><summary>Choose source version</summary><label className="field"><span className="field-label">Version</span><select className="text-input" value={state.sourceMode} onChange={(event) => update({ sourceMode: event.target.value as WizardState["sourceMode"], pinnedRef: "", manifestPreview: undefined, components: [], codexAnalysis: undefined, codexAnalysisRecord: undefined, plan: undefined, transactionError: "Changing the source requires a new analysis before setup can continue." })}><option value="latest">Latest</option><option value="pinned_commit">Specific commit</option><option value="pinned_release">Release</option></select></label>{state.sourceMode !== "latest" && <Field label={state.sourceMode === "pinned_commit" ? "Commit" : "Release"} value={state.pinnedRef} onChange={(value) => update({ pinnedRef: value, manifestPreview: undefined, components: [], codexAnalysis: undefined, codexAnalysisRecord: undefined, plan: undefined, transactionError: "Changing the source requires a new analysis before setup can continue." })} mono placeholder={state.sourceMode === "pinned_commit" ? "40-character commit" : "v1.0.0"} />}</details></section><div className="disclosure-note">Download size appears before installation.</div></div>;
+  const recommendations = componentRecommendationsFromAnalysis(state.codexAnalysis, state.semanticComponentRecommendations);
+  return <div className="stack narrow"><section className="panel">{recommendations.length > 0 && manifest && <section className="component-recommendation-summary" aria-labelledby="component-recommendation-title"><h2 id="component-recommendation-title" className="panel-title">Setup assistant recommendations</h2><p className="muted">Review the suggestions below; they do not change the selected components.</p><div className="manifest-details">{recommendations.map((recommendation) => { const component = manifest.components.find((candidate) => candidate.id === recommendation.component_id); return <div className="component-recommendation-row" key={recommendation.component_id}><div className="proposal-heading"><strong>{component?.display_name ?? recommendation.component_id}</strong><Status label={componentRecommendationLabel(recommendation.recommendation)} tone={recommendation.recommendation === "not_recommended" ? "muted" : recommendation.recommendation === "required" ? "review" : "info"} /></div><span>{recommendation.reason}</span></div>; })}</div></section>}{manifest ? visibleRows.map((component) => <button type="button" key={component.id} className="component-row" onClick={() => toggle(component.id)} aria-pressed={component.selected} aria-disabled={component.required || component.state === "blocked" || undefined} disabled={component.required || component.state === "blocked"}><span className={`checkbox ${component.selected ? "checked" : ""}`}>{component.selected ? "✓" : ""}</span><span><strong>{component.title}</strong><small>{component.detail}</small></span><span className="size">{component.size}</span></button>) : null}<label className="component-row flatten-package-row"><input className="visually-hidden" type="checkbox" checked={state.flattenForChat} onChange={(event) => chooseFlattenedSources(event.target.checked)} /><span className={`checkbox ${state.flattenForChat ? "checked" : ""}`} aria-hidden="true">{state.flattenForChat ? "✓" : ""}</span><span><strong>Prepare a flattened ChatGPT project-sources folder</strong><small>Optional ChatGPT client package; independent of the setup assistant</small></span><span className="size">{chatSummary}</span></label>{state.flattenForChat && <details><summary>Files in the ChatGPT folder</summary><div className="manifest-details flattened-file-list">{chatFiles.map((file) => <div key={file.name}><strong>{file.name}</strong><small>{file.size === undefined ? "Size calculated during review" : formatScanBytes(file.size)}</small></div>)}</div></details>}{manifestFailed || manifestRetrying ? <div className="callout block" role={manifestRetrying ? "status" : "alert"}><span>{manifestMessage}</span><button type="button" className="button secondary" aria-disabled={manifestRetrying || undefined} aria-busy={manifestRetrying || undefined} onClick={retryManifest}>{manifestRetrying ? "Loading components…" : "Retry loading components"}</button></div> : <p className="muted" role="status" tabIndex={-1} ref={manifestStatusRef}>{manifestMessage}</p>}<p className="muted">Source: <ExternalLink href="https://github.com/klimPaskov/Agentic-HOI4-Modding">Agentic HOI4 Modding <span aria-hidden="true">↗</span></ExternalLink></p><details><summary>Dependencies and file list</summary>{manifest ? <div className="manifest-details">{manifest.components.map((component) => <div key={component.id}><strong>{component.display_name}</strong><span>{component.dependencies.length ? `Requires ${component.dependencies.join(", ")}` : "No additional components required"}</span><small>Platforms: {component.platforms.join(", ")}</small><small>{component.expected_files.length === 1 ? "1 file" : `${component.expected_files.length} files`} · destination: {component.destination.path}</small>{component.expected_files.map((file) => <small className="manifest-file-path" key={`${component.id}-${file.path}`}>{file.path}</small>)}</div>)}</div> : <p className="muted">Dependencies appear after the components load.</p>}</details><details><summary>Choose source version</summary><label className="field"><span className="field-label">Version</span><select className="text-input" value={state.sourceMode} onChange={(event) => update({ sourceMode: event.target.value as WizardState["sourceMode"], pinnedRef: "", manifestPreview: undefined, components: [], codexAnalysis: undefined, codexAnalysisRecord: undefined, semanticComponentRecommendations: undefined, plan: undefined, transactionError: "Changing the source requires a new analysis before setup can continue." })}><option value="latest">Latest</option><option value="pinned_commit">Specific commit</option><option value="pinned_release">Release</option></select></label>{state.sourceMode !== "latest" && <Field label={state.sourceMode === "pinned_commit" ? "Commit" : "Release"} value={state.pinnedRef} onChange={(value) => update({ pinnedRef: value, manifestPreview: undefined, components: [], codexAnalysis: undefined, codexAnalysisRecord: undefined, semanticComponentRecommendations: undefined, plan: undefined, transactionError: "Changing the source requires a new analysis before setup can continue." })} mono placeholder={state.sourceMode === "pinned_commit" ? "40-character commit" : "v1.0.0"} />}</details></section><div className="disclosure-note">Download size appears before installation.</div></div>;
 }
 
 export function Workflows({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
@@ -2677,7 +3143,7 @@ export function Mcp({ state }: { state: WizardState }) {
   const environmentText = component?.environment.map((environment) => `${environment.name}${environment.secret ? " · secret" : ""}`).join(", ") || "None declared";
   const capabilityText = component?.capabilities.join(", ") || "None declared";
   const healthText = component?.required_tools.flatMap((tool) => tool.health_checks).join(", ") || "No health checks declared";
-  return <div className="two-column"><section className="panel"><PanelTitle title="Integrations" />{component ? <div className="server-row"><img className="server-icon server-icon-image" src={appIcon} alt="" aria-hidden="true" /><span><strong>{component.display_name}</strong><small>{component.description ?? "Selected integration"}</small></span></div> : <p className="muted">No integration is selected.</p>}{component && <details open><summary>Requirements</summary><div className="manifest-details"><div><strong>Tools</strong><span>{toolText}</span></div><div><strong>Environment names</strong><span>{environmentText}</span></div><div><strong>Capabilities</strong><span>{capabilityText}</span></div><div><strong>Health checks</strong><span>{healthText}</span></div><div><strong>Validation</strong><span>{component.validation.map((rule) => `${rule.id} · ${rule.severity}`).join(", ") || "None declared"}</span></div></div></details>}</section><section className="panel"><PanelTitle title="Credentials" /><div className="list-row"><div><strong>Meshy API key</strong><span>Stored securely by this computer</span></div><Status label={state.meshSelected && state.meshKeyStatus === "present" ? "Stored" : state.meshSelected ? "Not stored" : "Not selected"} tone={state.meshSelected && state.meshKeyStatus === "present" ? "review" : "muted"} /></div><div className="list-row"><div><strong>Project secrets</strong><span>Secret values are never added to the project.</span></div><Status label="Protected" tone="info" /></div></section></div>;
+  return <div className="two-column"><section className="panel"><PanelTitle title="Integrations" />{component ? <div className="server-row"><img className="server-icon server-icon-image" src={appIcon} alt="" aria-hidden="true" /><span><strong>{component.display_name}</strong><small>{component.description ?? "Selected integration"}</small></span></div> : <p className="muted">No integration is selected.</p>}{component && <details><summary>Technical details</summary><div className="manifest-details"><div><strong>Tools</strong><span>{toolText}</span></div><div><strong>Environment names</strong><span>{environmentText}</span></div><div><strong>Capabilities</strong><span>{capabilityText}</span></div><div><strong>Health checks</strong><span>{healthText}</span></div><div><strong>Validation</strong><span>{component.validation.map((rule) => `${rule.id} · ${rule.severity}`).join(", ") || "None declared"}</span></div></div></details>}</section><section className="panel"><PanelTitle title="Credentials" /><div className="list-row"><div><strong>Meshy API key</strong><span>Stored securely by this computer</span></div><Status label={state.meshSelected && state.meshKeyStatus === "present" ? "Stored" : state.meshSelected ? "Not stored" : "Not selected"} tone={state.meshSelected && state.meshKeyStatus === "present" ? "review" : "muted"} /></div><div className="list-row"><div><strong>Project secrets</strong><span>Secret values are never added to the project.</span></div><Status label="Protected" tone="info" /></div></section></div>;
 }
 
 export function Git({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
@@ -2713,7 +3179,7 @@ export function DryRun({ state, update }: { state: WizardState; update: (patch: 
     : componentId === "workflow.3d"
       ? "Check the 3D workflow"
       : "Check an installed integration";
-  return <div className="stack"><div className="metric-grid"><Metric label="Create" value={plan ? String(counts.create) : "—"} tone={plan ? "pass" : "info"} /><Metric label="Update" value={plan ? String(counts.update) : "—"} tone={plan ? "info" : "muted"} /><Metric label="Skip" value={plan ? String(counts.skip) : "—"} tone={plan ? "review" : "muted"} /><Metric label="Conflicts" value={plan ? String(unresolved) : "—"} tone={plan ? unresolved ? "block" : "pass" : "info"} /></div><div className="two-column"><section className="panel"><PanelTitle title="Plan summary" /><ChangeRow title="Add development tools" detail="Skills, instructions, configuration, and offline wiki" value={planStatus} /><ChangeRow title="Update project instructions" detail="Keeps your existing edits" status={plan ? "Review if modified" : "Pending"} /><ChangeRow title="Configure integrations" detail="Selected tools only" value={plan ? "Ready" : "Pending"} /><ChangeRow title="Git setup" detail={`${state.gitBranch} · local changes`} value={plan ? "Ready" : "Pending"} /><ChangeRow title="Online Git" detail="Runs only after setup" value={plan ? onlineActionLabel : "Pending"} />{state.flattenForChat && <ChangeRow title="ChatGPT project files" detail="Selected in Components" value={flattenedSummary} />}{plan && <details open={showFilePlan} onToggle={(event) => setShowFilePlan(event.currentTarget.open)}><summary>Files and folders to install · {plan.operations.length + profileDirectories.length}</summary>{showFilePlan && <div className="manifest-details file-plan-list">{profileDirectories.map((directory) => <div key={`directory-${directory}`}><strong>{directory}/</strong><small>Create folder</small></div>)}{plan.operations.map((operation) => <div key={operation.id}><strong>{operation.destination}</strong><small>{operation.action === "create" || operation.action === "generate" ? "Add" : operation.action === "replace" || operation.action === "merge" ? "Update" : operation.action === "rename" ? "Keep both" : operation.action === "skip" ? "Keep current" : operation.action === "delete_managed" ? "Remove" : "Check"}</small></div>)}</div>}</details>}{setupChecks.length > 0 && <details><summary>Setup checks</summary><div className="manifest-details">{setupChecks.map((action) => <details key={action.id}><summary>{setupCheckLabel(action.component_id)}</summary><small>Runs automatically after the files are installed.</small><small>Command: {action.display_command ?? action.command_source}</small><small>Folder: {action.working_directory ?? "Project folder"}</small><small>Environment: {action.environment_names?.join(", ") || "None"}</small><small>Expected changes: {action.expected_writes?.join(", ") || "None"}</small></details>)}</div></details>}{!plan && <p className="muted">Prepare the changes before installation.</p>}</section><section className="panel"><PanelTitle title="Before setup" />{state.flattenForChat && flattenedFiles.length > 0 && <details><summary>ChatGPT folder · {flattenedSummary}</summary><div className="manifest-details flattened-file-list">{flattenedFiles.map((artifact) => { const bytes = artifact.bytes?.length ?? new TextEncoder().encode(artifact.content).length; return <div key={artifact.destination}><strong>{artifact.destination.replace("chatgpt_project_sources/", "")}</strong><small>{formatScanBytes(bytes)}</small></div>; })}</div></details>}<CheckRow label="Existing files saved" status={plan ? "Ready" : "Pending"} tone={plan ? "pass" : "info"} /><CheckRow label="Setup checks" status={plan ? setupChecks.length ? `${setupChecks.length} included` : "None needed" : "Pending"} tone={plan ? "pass" : "info"} /><CheckRow label="Unresolved conflicts" status={plan ? String(unresolved) : "Pending"} tone={plan ? unresolved ? "block" : "pass" : "info"} /></section></div></div>;
+  return <div className="stack"><div className="metric-grid"><Metric label="Create" value={plan ? String(counts.create) : "—"} tone={plan ? "pass" : "info"} /><Metric label="Update" value={plan ? String(counts.update) : "—"} tone={plan ? "info" : "muted"} /><Metric label="Skip" value={plan ? String(counts.skip) : "—"} tone={plan ? "review" : "muted"} /><Metric label="Conflicts" value={plan ? String(unresolved) : "—"} tone={plan ? unresolved ? "block" : "pass" : "info"} /></div><div className="two-column"><section className="panel"><PanelTitle title="Plan summary" /><ChangeRow title="Add development tools" detail="Skills, instructions, configuration, and offline wiki" value={planStatus} /><ChangeRow title={state.mode === "new" ? "Project instructions" : "Update project instructions"} detail={state.mode === "new" ? "Adapted to this mod" : "Keeps your existing edits"} status={plan ? state.mode === "new" ? "Ready" : "Review if modified" : "Pending"} /><ChangeRow title="Configure integrations" detail="Selected tools only" value={plan ? "Ready" : "Pending"} /><ChangeRow title="Git setup" detail={`${state.gitBranch} · local changes`} value={plan ? "Ready" : "Pending"} /><ChangeRow title="Online Git" detail="Runs only after setup" value={plan ? onlineActionLabel : "Pending"} />{state.flattenForChat && <ChangeRow title="ChatGPT project files" detail="Selected in Components" value={flattenedSummary} />}{plan && <details open={showFilePlan} onToggle={(event) => setShowFilePlan(event.currentTarget.open)}><summary>Files and folders to install · {plan.operations.length + profileDirectories.length}</summary>{showFilePlan && <div className="manifest-details file-plan-list">{profileDirectories.map((directory) => <div key={`directory-${directory}`}><strong>{directory}/</strong><small>Create folder</small></div>)}{plan.operations.map((operation) => <div key={operation.id}><strong>{operation.destination}</strong><small>{operation.action === "create" || operation.action === "generate" ? "Add" : operation.action === "replace" || operation.action === "merge" ? "Update" : operation.action === "rename" ? "Keep both" : operation.action === "skip" ? "Keep current" : operation.action === "delete_managed" ? "Remove" : "Check"}</small></div>)}</div>}</details>}{setupChecks.length > 0 && <details><summary>Setup checks</summary><div className="manifest-details">{setupChecks.map((action) => <details key={action.id}><summary>{setupCheckLabel(action.component_id)}</summary><small>Runs automatically after the files are installed.</small><small>Command: {action.display_command ?? action.command_source}</small><small>Folder: {action.working_directory ?? "Project folder"}</small><small>Environment: {action.environment_names?.join(", ") || "None"}</small><small>Expected changes: {action.expected_writes?.join(", ") || "None"}</small></details>)}</div></details>}{!plan && <p className="muted">Prepare the changes before installation.</p>}</section><section className="panel"><PanelTitle title="Before setup" />{state.flattenForChat && flattenedFiles.length > 0 && <details><summary>ChatGPT folder · {flattenedSummary}</summary><div className="manifest-details flattened-file-list">{flattenedFiles.map((artifact) => { const bytes = artifact.bytes?.length ?? new TextEncoder().encode(artifact.content).length; return <div key={artifact.destination}><strong>{artifact.destination.replace("chatgpt_project_sources/", "")}</strong><small>{formatScanBytes(bytes)}</small></div>; })}</div></details>}<CheckRow label="Existing files saved" status={plan ? "Ready" : "Pending"} tone={plan ? "pass" : "info"} /><CheckRow label="Setup checks" status={plan ? setupChecks.length ? `${setupChecks.length} included` : "None needed" : "Pending"} tone={plan ? "pass" : "info"} /><CheckRow label="Unresolved conflicts" status={plan ? String(unresolved) : "Pending"} tone={plan ? unresolved ? "block" : "pass" : "info"} /></section></div></div>;
 }
 
 function Install({ state }: { state: WizardState }) {
@@ -2724,20 +3190,7 @@ function Install({ state }: { state: WizardState }) {
     return () => window.clearInterval(timer);
   }, [state.transaction?.transaction_id, state.transaction?.state]);
   const stages = state.transaction?.stages ?? ["preflight", "repository source resolution", "selective download", "checksum verification", "dry-run review", "backup", "staging", "validation", "apply", "post-install checks", "readiness report", "rollback record"].map((id) => ({ id, status: "pending" }));
-  const stageLabel = (id: string) => ({
-    preflight: "Check the project",
-    "repository source resolution": "Find the selected source",
-    "selective download": "Download selected files",
-    "checksum verification": "Verify downloaded files",
-    "dry-run review": "Confirm the changes",
-    backup: "Save existing files",
-    staging: "Prepare the setup",
-    validation: "Validate the project",
-    apply: "Apply the setup",
-    "post-install checks": "Check the result",
-    "readiness report": "Check readiness",
-    "rollback record": "Save recovery information",
-  } as Record<string, string>)[id] ?? id;
+  const stageLabel = installStageLabel;
   const isDone = (status: string) => status === "complete" || status === "completed";
   const completed = stages.filter((stage) => isDone(stage.status)).length;
   const activeStage = stages.find((stage) => stage.status === "active");
@@ -2770,7 +3223,10 @@ function Install({ state }: { state: WizardState }) {
         ? `${progress}% complete`
         : "Starting setup…";
   const remainingTime = estimateRemainingTime(progress, state.transaction?.created_at, now);
-  const fileProgressLabel = activeMeasurement
+  const activeCheckLabel = activeStage && !activeMeasurement ? INSTALL_CHECK_PROGRESS[activeStage.id] : undefined;
+  const fileProgressLabel = activeCheckLabel
+    ? activeCheckLabel
+    : activeMeasurement
     ? `${activeMeasurement.complete.toLocaleString()} of ${activeMeasurement.total.toLocaleString()} files`
     : applyingOperations.length
       ? `${applyingOperations.filter((operation) => ["applied", "verified"].includes(operation.status)).length.toLocaleString()} of ${applyingOperations.length.toLocaleString()} files`
@@ -2849,6 +3305,13 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
   const [mcpCheck, setMcpCheck] = useState<WorkflowHealthResult>();
   const [openMessage, setOpenMessage] = useState<string>();
   const [openPending, setOpenPending] = useState(false);
+  if (state.removalSummary) {
+    const { removed, kept } = state.removalSummary;
+    return <section className="panel completion-panel" role="status">
+      <span className="ready-icon" aria-hidden="true">✓</span>
+      <div><h2>Setup removed</h2><p>{`Removed ${removed.toLocaleString()} unchanged setup ${removed === 1 ? "file" : "files"} and the folders they emptied.`}</p>{kept > 0 && <p className="muted">{`Kept ${kept.toLocaleString()} ${kept === 1 ? "file" : "files"} you changed. Review ${kept === 1 ? "it" : "them"} before deleting.`}</p>}<p className="muted">Your own mod files were not touched.</p></div>
+    </section>;
+  }
   if (state.finished) {
     return <section className="panel completion-panel" role="status">
       <span className="ready-icon" aria-hidden="true">✓</span>
@@ -3062,7 +3525,7 @@ function MaintenanceCodingEnvironmentOptions({ state, update }: { state: WizardS
   return <section className="panel maintenance-environment-panel"><PanelTitle title="Coding environments" /><p className="muted">Existing and locally modified files are preserved. Deselecting removes only unchanged files after review.</p><div className="coding-environment-options" role="radiogroup" aria-label="Primary coding environment">{CODING_ENVIRONMENTS.map((environment) => <label className="coding-environment-option" key={environment.id}><input type="radio" name="maintenance-primary-coding-environment" checked={selection.primary === environment.id} onChange={() => choosePrimary(environment.id)} /><span className="coding-environment-copy"><strong>{environment.label}</strong><small>{environment.detail}</small></span>{selection.primary === environment.id && <Status label="Primary" tone="info" />}</label>)}</div><details><summary>Additional environments</summary><div className="stack" role="group" aria-label="Additional coding environments">{CODING_ENVIRONMENTS.filter((environment) => environment.id !== selection.primary).map((environment) => <label className="radio-row" key={environment.id}><input type="checkbox" checked={selection.additional.includes(environment.id)} onChange={(event) => toggle(environment.id, event.target.checked)} /><span><strong>{environment.label}</strong><small>Keep this native package installed alongside the primary.</small></span></label>)}</div></details></section>;
 }
 
-export function Update({ state, update, findings, setFindings, onMaintenance, onStartMaintenance, onReanalyze, onPackageChatSources, pending = false }: { state: WizardState; update: (patch: Partial<WizardState>) => void; findings: ScanFinding[]; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void; onReanalyze: () => Promise<boolean>; onPackageChatSources?: () => Promise<void>; pending?: boolean }) {
+export function Update({ state, update, updateIdentity, updateDescription, findings, setFindings, onMaintenance, onStartMaintenance, onReanalyze, onConfirmAnalysis, onPackageChatSources, pending = false }: { state: WizardState; update: (patch: Partial<WizardState>) => void; updateIdentity?: (patch: Partial<ProjectIdentity>) => void; updateDescription?: (description: string, preserveAnalysis?: boolean) => void; onConfirmAnalysis?: () => Promise<void>; findings: ScanFinding[]; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void; onReanalyze: () => Promise<boolean>; onPackageChatSources?: () => Promise<void>; pending?: boolean }) {
   const plan = state.plan;
   const optional3d = state.meshSelected ? state.meshKeyStatus === "present" ? "Stored; health check pending" : "Selected; key not stored" : "Not selected";
   const superEvents = state.superEventsSelected ? state.installedSuperEventsState === "not_selected" ? "Selected for the next change" : "Installed" : "Not selected";
@@ -3070,7 +3533,7 @@ export function Update({ state, update, findings, setFindings, onMaintenance, on
   const portraits = portraitPipeline.enabled ? `${portraitPipeline.provider} · ${portraitPipeline.providerStatus}` : "Disabled";
   const providerLabel = aiProviderLabel(state.aiProvider, state.aiProfiles);
   const reanalysisLabel = state.maintenanceEvidenceReady ? state.maintenanceCodexAnalysisRecord ? "Run again" : `Run ${providerLabel} reanalysis` : "Prepare read-only evidence";
-  return <div className="stack"><div className="action-grid"><ActionTile title="Check for updates" detail="Compare this project with a newer setup." onClick={() => onStartMaintenance("update")} /><ActionTile title="Repair installation" detail="Restore missing or damaged setup files." onClick={() => onStartMaintenance("repair")} /><ActionTile title="Remove components" detail="Review the files before removing app-managed setup." onClick={() => onStartMaintenance("remove")} /><ActionTile title="Recover interrupted setup" detail="Continue or undo an interrupted change." onClick={() => onMaintenance("recovery")} />{state.chatSourcesAvailable && onPackageChatSources && <ActionTile title="Package ChatGPT project sources" detail="Choose detected files and download a source ZIP." onClick={() => void onPackageChatSources()} />}</div><MaintenanceCodingEnvironmentOptions state={state} update={update} /><MaintenanceWorkflowOptions state={state} update={update} /><section className="panel"><PanelTitle title={`${providerLabel} review`} /><p className="muted">Review the project before updating its setup.</p><button type="button" className="button secondary" onClick={() => void onReanalyze()}>{reanalysisLabel}</button>{state.maintenanceEvidenceReady && <details open><summary>{findings.filter((finding) => finding.status !== "rejected").length} approved findings</summary><div className="manifest-details">{findings.filter((finding) => finding.status !== "rejected").map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small><button type="button" className="text-button" aria-pressed="true" onClick={() => setFindings((current) => current.map((candidate) => candidate.id === finding.id ? { ...candidate, status: "rejected" } : candidate))}>Exclude</button></div>)}</div></details>}{state.maintenanceCodexAnalysisRecord && <p className="muted" role="status">Review returned. Confirm the {providerLabel} suggestions before checking for updates.</p>}</section><section className="panel"><PanelTitle title="Installed state" /><CheckRow label="Core setup" status={plan ? `${plan.operations.length} planned changes` : "No plan loaded"} tone={plan ? "info" : "muted"} /><CheckRow label="Optional 3D workflow" status={optional3d} tone={state.meshSelected ? "review" : "muted"} /><CheckRow label="Super Events workflow" status={superEvents} tone={state.superEventsSelected ? "review" : "muted"} /><CheckRow label="Portrait production" status={portraits} tone={portraitPipeline.enabled ? "review" : "muted"} /><CheckRow label="Modified files" status={plan ? String(plan.conflicts.length) : "Not evaluated"} tone={plan?.conflicts.length ? "review" : "muted"} />{plan && <details open><summary>Reviewed changes</summary><p className="muted">Modified files remain visible until resolved.</p></details>}</section></div>;
+  return <div className="stack"><div className="action-grid"><ActionTile title="Check for updates" detail="Compare this project with a newer setup." onClick={() => onStartMaintenance("update")} /><ActionTile title="Repair installation" detail="Restore missing or damaged setup files." onClick={() => onStartMaintenance("repair")} /><ActionTile title="Remove components" detail="Review the files before removing app-managed setup." onClick={() => onStartMaintenance("remove")} /><ActionTile title="Recover interrupted setup" detail="Continue or undo an interrupted change." onClick={() => onMaintenance("recovery")} />{state.chatSourcesAvailable && onPackageChatSources && <ActionTile title="Package ChatGPT project sources" detail="Choose detected files and download a source ZIP." onClick={() => void onPackageChatSources()} />}</div><MaintenanceCodingEnvironmentOptions state={state} update={update} /><MaintenanceWorkflowOptions state={state} update={update} /><section className="panel"><PanelTitle title={`${providerLabel} review`} /><p className="muted">Review the project before updating its setup.</p><button type="button" className="button secondary" onClick={() => void onReanalyze()}>{reanalysisLabel}</button>{state.maintenanceEvidenceReady && <details open><summary>{modelVisibleFindings(findings).length} approved findings</summary><div className="manifest-details">{modelVisibleFindings(findings).map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small><button type="button" className="text-button" aria-pressed="true" onClick={() => setFindings((current) => current.map((candidate) => candidate.id === finding.id ? { ...candidate, status: "rejected" } : candidate))}>Exclude</button></div>)}</div></details>}{state.maintenanceCodexAnalysisRecord && <p className="muted" role="status">Review returned. Confirm the {providerLabel} suggestions before checking for updates.</p>}{state.maintenanceCodexAnalysisRecord && state.codexAnalysis && onConfirmAnalysis && <CodexReview state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onConfirmAnalysis={onConfirmAnalysis} />}</section><section className="panel"><PanelTitle title="Installed state" /><CheckRow label="Core setup" status={plan ? `${plan.operations.length} planned changes` : "No plan loaded"} tone={plan ? "info" : "muted"} /><CheckRow label="Optional 3D workflow" status={optional3d} tone={state.meshSelected ? "review" : "muted"} /><CheckRow label="Super Events workflow" status={superEvents} tone={state.superEventsSelected ? "review" : "muted"} /><CheckRow label="Portrait production" status={portraits} tone={portraitPipeline.enabled ? "review" : "muted"} /><CheckRow label="Modified files" status={plan ? String(plan.conflicts.length) : "Not evaluated"} tone={plan?.conflicts.length ? "review" : "muted"} />{plan && <details open><summary>Reviewed changes</summary><p className="muted">Modified files remain visible until resolved.</p></details>}</section></div>;
 }
 
 export function ChatSources({ state, update, onPickFolder }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onPickFolder: () => Promise<void> }) {
@@ -3110,7 +3573,8 @@ export function ChatSources({ state, update, onPickFolder }: { state: WizardStat
   </div>;
 }
 
-function Conflict({ state, update, onChoice }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onChoice: (choice: ConflictChoice) => void }) {
+function Conflict({ state, update, onChoice }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onChoice: (choice: ConflictChoice) => void | Promise<void> }) {
+  const [choosing, setChoosing] = useState(false);
   const conflict = state.plan?.conflicts.find((candidate) => !candidate.selected) ?? state.plan?.conflicts[0];
   const choices = (conflict?.options ?? ["keep", "replace", "merge", "rename", "skip"]).filter((choice): choice is ConflictChoice => ["keep", "replace", "merge", "rename", "skip"].includes(choice));
   const operation = conflict && state.plan?.operations.find((candidate) => candidate.destination === conflict.path);
@@ -3147,7 +3611,7 @@ function Conflict({ state, update, onChoice }: { state: WizardState; update: (pa
   const baseText = content(preview?.base, preview ? "No original content is available." : "Loading preview…");
   const localText = content(preview?.local, preview ? "No current content is present." : "Loading preview…");
   const incomingText = content(preview?.incoming, preview ? "No new text preview is available." : "Loading preview…");
-  return <div className="stack"><div className="diff-grid"><DiffPane title="Original" badge={preview?.base ? "Previously installed" : "Reference"} text={`${conflict?.path ?? "No conflict selected"}\n\n${baseText}`} tone="neutral" /><DiffPane title="Current" badge={operation?.local_state === "modified" ? "Your changes" : "Not present"} text={`${conflict?.path ?? "No conflict selected"}\n\n${localText}`} tone="minus" /><DiffPane title="New" badge={preview?.kind ? "Available update" : "Incoming file"} text={`${conflict?.path ?? "No conflict selected"}\n\n${incomingText}`} tone="plus" /></div>{previewMessage && <p className="muted" role="status">{previewMessage}</p>}<section className="panel conflict-actions"><p className="muted">{conflict ? `Choose what to do with ${conflict.path}. Any merged result is checked before it is saved.` : "All conflicts are resolved."}</p><div className="button-row">{choices.map((choice) => <button type="button" key={choice} className={`button ${state.conflictChoice === choice ? "primary" : "secondary"}`} aria-pressed={state.conflictChoice === choice} onClick={() => { update({ conflictChoice: choice }); void onChoice(choice); }}>{choice === "keep" ? "Keep current" : choice === "replace" ? "Use new" : choice === "merge" ? "Merge" : choice === "rename" ? "Keep both" : "Skip"}</button>)}</div></section></div>;
+  return <div className="stack"><div className="diff-grid"><DiffPane title="Original" badge={preview?.base ? "Previously installed" : "Reference"} text={`${conflict?.path ?? "No conflict selected"}\n\n${baseText}`} tone="neutral" /><DiffPane title="Current" badge={operation?.local_state === "modified" ? "Your changes" : preview?.local != null || operation?.local_sha256 ? "Current file" : "Not present"} text={`${conflict?.path ?? "No conflict selected"}\n\n${localText}`} tone="minus" /><DiffPane title="New" badge={preview?.kind ? "Available update" : "Incoming file"} text={`${conflict?.path ?? "No conflict selected"}\n\n${incomingText}`} tone="plus" /></div>{previewMessage && <p className="muted" role="status">{previewMessage}</p>}{choosing && <p className="muted" role="status">Saving your choice and checking the result…</p>}<section className="panel conflict-actions"><p className="muted">{conflict ? `Choose what to do with ${conflict.path}. Any merged result is checked before it is saved.` : "All conflicts are resolved."}</p><div className="button-row">{choices.map((choice) => <button type="button" key={choice} className={`button ${state.conflictChoice === choice ? "primary" : "secondary"}`} aria-pressed={state.conflictChoice === choice} disabled={choosing} onClick={() => { update({ conflictChoice: choice }); setChoosing(true); void Promise.resolve(onChoice(choice)).finally(() => setChoosing(false)); }}>{choice === "keep" ? "Keep current" : choice === "replace" ? "Use new" : choice === "merge" ? "Merge" : choice === "rename" ? "Keep both" : "Skip"}</button>)}</div></section></div>;
 }
 
 export function recoveryProgress(journal: TransactionJournal | null | undefined) {

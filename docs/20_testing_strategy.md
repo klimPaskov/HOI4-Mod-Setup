@@ -4,7 +4,11 @@
 
 Use a protocol fixture that emulates App Server JSONL without real account credentials in ordinary CI. Cover process absence, incompatible versions, initialize ordering, an existing ChatGPT session, browser login, exact per-`loginId` `account/login/cancel` behavior, isolated concurrent cancellation, device-code fallback, logout, account updates, usage limits, App Server crash, turn cancellation, output schema acceptance and rejection, proposal key/value type binding, unexpected fields, deterministic rejection of bad identifiers, token and account-data absence, and recovery while signed out. Add fake Anthropic, OpenAI-compatible, and loopback adapters for configured, missing-key, malformed-response, endpoint, redirect, bounded-response, provider-switch, and no-secret-persistence cases.
 
-Run a controlled manual release test against a real ChatGPT account. Never place real credentials in CI.
+`pnpm test:codex-live` can verify a signed local App Server initialize/account
+read plus browser/device login start-and-cancel using a temporary Codex home.
+It does not complete browser authentication and never prints account or login
+details; run the clean browser/device completion gate only with a developer
+present. Never place real credentials in CI.
 
 ## Unit tests
 
@@ -93,6 +97,10 @@ path, and Codex targets.
 - Git fixtures with ambient configuration isolation, hostile local config
   rejection before spawn, and direct bounded submodule discovery
 - MCP test server
+- opt-in `pnpm test:mcp-live` on Windows: install the exact manifest-pinned
+  package into a disposable prefix, validate integrity and full-tree evidence,
+  then require the initialize handshake and all required `tools/list` names;
+  never invoke a tool or use a provider credential
 - launcher descriptor outside project
 - bounded parent-level launcher descriptor discovery, explicit pre-scan
   confirmation/decline/cancel, candidate mismatch, and no read of an
@@ -112,6 +120,19 @@ after managed files are applied, and during rollback. Assert that exactly one
 reviewed leaf is created only at apply, that a pre-apply race stops safely, and
 that rollback removes the leaf only when empty while preserving unknown content
 and its parent.
+
+Transaction filesystem regressions must run natively on Windows and macOS.
+Cover link and reparse swaps at every ancestor, root/transaction/backup/staging
+replacement, journal and checkpoint updates, apply and rollback, external
+launcher parents, executable metadata, and recursive staging discard. Use
+deterministic barriers after root/parent acquisition and immediately before
+namespace changes. Assert outside sentinels remain byte-for-byte unchanged,
+root identity drift cannot produce a success lock, and displaced user bytes
+remain recoverable. The source regression catches selected direct ambient
+filesystem calls; it does not prove helper wrappers use the same verified root
+handle. Current `safe_fs` unit tests cover static link leaves, linked-root
+acquisition, ancestor swaps, and recursive staging links on Windows and Unix;
+they do not cover concurrent final-leaf changes or macOS native execution.
 
 ## End-to-end cases
 
@@ -203,6 +224,14 @@ collisions and size limits, no-overwrite, atomic output, and unchanged project
 contents.
 
 ## UI tests
+
+`pnpm test:e2e` runs Playwright against the development server using disposable
+browser contexts and sanitized documentation fixtures. Install its browser
+with `pnpm test:e2e:install`; CI performs this before the browser gate. The
+suite checks rendered screens, runtime errors, horizontal overflow at desktop
+and narrow widths, keyboard coding-environment selection, signed-out project
+management, and recovery details. It does not claim native IPC or a complete
+installation from a screenshot fixture. Native lifecycle tests remain required.
 
 Keyboard traversal, focus order, screen reader labels, contrast, scaling, long paths, long translations, error states, reduced motion, and visual regression for all 17 screen states. Add density assertions for the seven-phase rail, one primary task per screen, maximum visible content regions, collapsed secondary details, absence of permanent keyboard hints, and no repeated explanatory copy.
 
@@ -310,3 +339,9 @@ internal `\\?\` verbatim prefix, validate it against the canonical root used for
 filesystem operations, still reject a different complete path, and resume a
 verified pre-apply validation checkpoint through final readiness and the
 success lock.
+
+The browser harness builds development-only synthetic routes into the ignored
+`artifacts/browser-fixture` directory, then serves that fixture on loopback
+port 1421. It never reuses a running user app or enables fixtures in the normal
+production output. Build readiness is awaited before browser tests start, so
+Vite cold module compilation is not charged to the first wizard assertion.

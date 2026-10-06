@@ -5,6 +5,7 @@
 
 pub mod ai;
 pub mod chat_sources;
+pub mod claude_code;
 pub mod codex;
 pub mod coding_environment;
 pub mod credentials;
@@ -20,6 +21,7 @@ pub mod paths;
 pub mod portraits;
 pub mod process;
 pub mod readiness;
+mod safe_fs;
 pub mod scanner;
 pub mod security;
 pub mod source;

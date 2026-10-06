@@ -2,7 +2,7 @@
 
 ## Product statement
 
-**HOI4 Mod Setup** is a Windows and macOS desktop application that prepares a Hearts of Iron IV mod project for provider-neutral agentic development. The user selects a setup assistant for bounded semantic analysis; Codex is the default. That choice does not select or restrict the AI client used later for development. The app creates a new launcher-ready mod from a guided brief or imports an existing project through an evidence-backed read-only scan. It installs a selected workflow package from `klimPaskov/Agentic-HOI4-Modding` without cloning the complete source repository. Structural analysis is deterministic. Required semantic analysis uses the selected setup-provider adapter and produces reviewable proposals after deterministic evidence is collected.
+**HOI4 Mod Setup** is a Windows and macOS desktop application that prepares a Hearts of Iron IV mod project for provider-neutral agentic development. The user selects a setup assistant for bounded semantic analysis; Claude, signed in through the user's own Claude Code with Claude Haiku 4.5, is the default. That choice does not select or restrict the AI client used later for development. The app creates a new launcher-ready mod from a guided brief or imports an existing project through an evidence-backed read-only scan. It installs a selected workflow package from `klimPaskov/Agentic-HOI4-Modding` without cloning the complete source repository. Structural analysis is deterministic. Required semantic analysis uses the selected setup-provider adapter and produces reviewable proposals after deterministic evidence is collected.
 
 ## Primary outcome
 
@@ -57,8 +57,12 @@ Needs pinned installs, optional 3D support, exact provenance, update and repair,
 
 ## Setup assistant requirement
 
-The first setup screen selects Codex, Claude, Kimi, GLM, DeepSeek, a local
-model, or a bounded custom profile as the setup assistant. Codex uses the official local Codex
+The first setup screen selects Claude (the default), Codex, Claude API key,
+Kimi, GLM, DeepSeek, a local model, or a bounded custom profile as the setup
+assistant. Claude runs the user's own installed, unmodified Claude Code: Claude
+Code owns browser sign-in and credential storage, and the app reads only a
+non-identifying signed-in summary and runs one isolated, tool-free print-mode
+turn. Codex uses the official local Codex
 App Server and ChatGPT-managed browser or device-code authentication. Hosted
 non-Codex profiles use a user-supplied endpoint and an API key stored in the OS
 credential vault. Local models use an explicit loopback HTTP endpoint. The
@@ -67,7 +71,8 @@ commands, model names, MCP servers, or platform support.
 
 The first screen fetches the selected provider's available model catalog after
 authentication, exposes the selected model's supported reasoning levels from
-Light through Max, and persists both choices. Codex defaults to Luna at xhigh;
+Light through Max, and persists both choices. Claude defaults to Claude Haiku
+4.5, which has no adjustable effort level; Codex defaults to Luna at xhigh;
 DeepSeek defaults to its Flash model. A failed or empty catalog refresh keeps
 the checked-in verified model selectable for Codex and known hosted providers;
 Local and Custom keep an editable model field and add live endpoint results as

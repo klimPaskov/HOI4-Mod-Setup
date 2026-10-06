@@ -96,6 +96,80 @@ operations are not accepted; mode belongs to the reviewed file operation.
 
 ## Apply rules
 
+Transaction file operations use the native `RootedDir` facade in
+`src-tauri/src/safe_fs.rs`. It opens path components without following links,
+retains ancestor handles, and provides atomic writes, copy, append, delete,
+executable-mode updates, and bounded staging-tree removal. Use
+`RootedDir::open_read` for read-only roots and `RootedDir::open` or
+`open_or_create` for mutation roots. Do not add ambient `std::fs` mutation or
+read calls to production transaction code. The current source regression only
+catches selected direct calls; it does not prove that path-helper wrappers
+retain the same project/app-data identity through the mutation.
+
+Existing-project scans capture a project-root identity, and semantic review
+and plan construction must confirm that same directory. Plans bind an
+existing project by its directory identity and a new project by its existing
+parent identity. Journals retain parent and created-root identities; recovery
+rejects drift and project-root creation uses the reviewed parent handle. The
+identity-checked handle is not yet retained through every transaction
+operation. Schema 1.0 journals without identity evidence are inspect-only. A
+crash after creating an empty root but before journaling its identity records
+the observed identity and preserves the unowned directory. Inverse rollback
+stops for inspection if a recreated root does not match the journal.
+
+Forward backup, apply, final verification, lock construction, and lock commit
+retain the reviewed project capability. Managed rollback file and lock changes
+and finalization checks also use a retained project capability.
+Created-root cleanup drops the root handle, and Git/external actions still use path-based cwd and checks.
+
+Application-data transaction storage is identity-bound at journal level (`TransactionJournal.app_data_identity`: `root`, `transaction`, and the optional `backup` and `staging`):
+
+- Open storage only through `AppDataRoot` (the retained application-data root) and `TransactionStore` (the retained `transactions/<id>` directory) in `transaction.rs`. Journal, plan, checkpoint-log, readiness, and rollback-record reads and writes go through the store; backups and staged bytes go through the `RootedDir` returned by `open_journal_area` or `AppDataRoot::open_area`. Never reopen an application-data path in transaction code with `atomic_write_json`, `read_file_path`, `sha256_file`, `fs::symlink_metadata`, or `RootedDir::open(path)`.
+- A new per-transaction directory is created through `open_journal_area` (or `transaction_store` with `bind_new_storage`), and its identity is journaled before the directory is used. A bound directory is never recreated; a missing bound directory is a `PathSecurity` error, except that `JournalBackups` defers it until a rollback step actually needs a backup.
+- A command that receives a journal read by path verifies it against the reopened storage with `verify_app_data_binding` (or reads it through `AppDataRoot::read_bound_journal`) before its first write, so a refusal leaves the journal untouched and the same action succeeds once the original folder returns. A replay carries the interrupted journal's `backup` and `staging` identities into its fresh journal; rollback child journals bind their own storage through the parent call's root; staging discard removes the tree only through `RootedDir::remove_tree_if_identity`.
+- Journals without `app_data_identity` keep path-based access; schema `1.0.0` journals carrying it are rejected by `migrate_journal`. `read_journal(path)` checks only the transaction directory, because a path does not identify the root.
+- Swap tests replace a per-transaction folder with a plain copy (only the identity comparison can refuse it) and with a junction or symlink to a copy, then prove that nothing was written into the impostor and that the action succeeds after the folder is moved back.
+
+External destination parents follow the project-root pattern at journal level:
+
+- Every plan builder calls `bind_plan_external_parents` before the plan is reviewed: it reads the parent identity and a fresh destination hash through one handle, requires the hash to equal `local_sha256`, and records the identity on the plan operation. `new_journal` copies it into the journal, and `run_transaction` refuses a different (or, for a mutating operation, missing) parent before writing transaction storage. Only a plan without an identity (parent absent at review, or a legacy plan) binds `external_parent_identity` at `backup_existing`; verify instead of overwriting when the operation already carries one. A resumed replay copies the interrupted journal's identities into its fresh journal, refuses one that differs from the plan's, and `resume_transaction_with_options` verifies them before the replay writes that journal.
+- Open every external target through `live_target`, `existing_live_target`, or `existing_operation_target` with the bound identity. Never recreate a bound parent, and treat a link or non-directory at a bound parent's path as drift.
+- A missing bound parent is an error (`missing_bound_external_parent`) whenever the operation may have changed its destination (`operation_may_have_changed_destination`: a leaf-changing action past `pending`/`staged`); `existing_operation_target` and the quarantine sweep enforce it, and `prepare_rollback_transaction` checks it explicitly because child records stay `pending`. Skips, external actions, legacy records without an action, untouched operations, and unbound legacy records keep the absent reading. Read journal operations through `existing_operation_target`, not `existing_live_target`, so recovery cannot report a moved folder's destination as restored.
+- Take a precondition, the mutation, and the readback from one retained target per operation or rollback step; do not hash by path and then reopen for the use.
+- A backup whose hash is recorded must come from the same read as its bytes (`copy_file_atomic_noreplace_hashed_to`), never from a separate hash and copy.
+- Rollback journals copy the identity from their parent operation, and schema `1.0.0` journals must not carry it. On Windows, `RootedDir::sync_directory` flushes through `ReOpenFile`
+and, when that reopen is denied, through an identity-verified reopen of the
+retained path; directory-entry durability across sudden power loss is still
+not proven by a native test. Keep the P1/P2 release findings open until the
+same verified handles perform every operation, the Windows durability
+guarantee is proven or narrowed, and native Windows/macOS swap tests cover
+backup, staging, apply, rollback, journal, lock, and recursive discard.
+
+### Destination quarantine
+
+Never replace or delete an existing live regular file with a plain atomic replace or `remove_file`.
+Route every such change through `mutate_live_leaf` in `transaction.rs`:
+
+- Persist a synced operation checkpoint with `quarantine_leaf` before the namespace change. The name is `.hoi4ms-quarantine-<transaction id>-<operation id>.tmp` in the destination's own directory, and recovery accepts only that derived name.
+- Move the destination to the quarantine with `RootedDir::rename_file_noreplace` through the retained parent handle, then hash the moved bytes and journal them as `quarantine_sha256`.
+- On a mismatch, move the bytes back with an exclusive rename and fail as a changed-local-file conflict. If a new file took the name, keep both and leave the quarantine recorded.
+- Place new bytes only with `copy_file_atomic_noreplace_to`, `write_atomic_noreplace`, or an exclusive same-directory move. A destination absent at review is created the same way, so a file that appears in the window is never clobbered.
+- Read the destination back and require the staged hash, or an absent destination for a delete, before recording `verified` or `after_sha256`. Any other bytes were written after placement: keep the `applying` intent, keep the quarantine, and fail as a changed-local-file conflict, so rollback never treats them as installed bytes.
+- After an ordinary error that follows the quarantine rename and precedes completed placement, try an exclusive move back into an absent destination before returning the error. Quarantine fault hooks model a process stop and must not move back.
+- Release the quarantine with `remove_file_if_hash` only after the operation result checkpoint is synced.
+- On Windows, deletes fall back from POSIX-semantics `FileDispositionInfoEx` to the classic `FileDispositionInfo` on the same validated handle only for `ERROR_INVALID_PARAMETER`, `ERROR_NOT_SUPPORTED`, or `ERROR_INVALID_FUNCTION`; never fall back to a path-based delete.
+- Rollback restores a surviving forward quarantine instead of the backup copy, journals its own step quarantine on the child operation, settles an interrupted step quarantine before retrying, and never deletes a quarantine whose hash differs from both the reviewed precondition and the backup.
+- Recovery probes the derived forward quarantine name even when the journal lacks it (`forward_quarantine_leaf`), moves a quarantine into place beside installed bytes only when it holds the journaled `quarantine_sha256`, and settles a quarantine beside an already-restored destination by hash before marking the operation `rolled_back`.
+- Finish forward apply, finalization resume, and rollback with `sweep_transaction_quarantines`, which settles leftover derived quarantines of the transaction (and its rollback) by hash and keeps, then fails on, bytes or names it cannot match.
+- Order checkpoint replay by the monotonic `sequence` on each record against the snapshot's `checkpoint_sequence`, never by wall-clock time; keep the timestamp fallback only for journals and logs written entirely before sequences.
+- Lock quarantines use derived `install-lock-commit` and `install-lock-restore` names with expected hashes from `previous_lock_sha256` and `result_lock_sha256`. Finalization resume and rollback settle them before checking the lock.
+- Once project apply has started, recovery remains rollback-only; do not add resume of a partly applied file set to finish a quarantine.
+- The batch rollback intent marks operations `rollback_applying` before inspection, so recognize an unverified forward operation by its missing result evidence, never by its pre-rollback status.
+
+New fault coverage must exercise `fail_at_quarantine` (including `BeforeMoveBack`), `fail_at_lock_quarantine`, the `live_mutation_barrier` test hook (including `AfterPlacement`), the thread-local rollback faults named `rollback_quarantine_<boundary>`, `rollback_after_placement`, and `rollback_lock_quarantine_<boundary>`, and the thread-local ordinary-error faults `<prefix>_quarantine_hash_error` and `<prefix>_quarantine_journal_error` (prefix `apply`, `rollback`, or `lock-commit`). `safe_fs::force_classic_delete_for_test` forces the Windows classic delete disposition on the current thread.
+Quarantine faults are returned errors, not process aborts; say so instead of claiming crash coverage.
+Unix exclusive rename uses `renameat2(RENAME_NOREPLACE)` on Linux and `renameatx_np(RENAME_EXCL)` on macOS with an exclusive `linkat` fallback; those routes have only been compiled for Windows here, so run the native Linux and macOS suites before relying on them.
+
 - Backup all replace or delete targets before mutation.
 - Stage files outside live destinations.
 - Carry selected starter folders as normalized reviewed directory entries.
@@ -125,7 +199,11 @@ operations are not accepted; mode belongs to the reviewed file operation.
   readiness consumes that result and never launches a second probe that could
   reverse an earlier failure.
 - Persist the readiness report, then refuse stage 12 and the success lock when any blocking core check is `block`; optional `incomplete`, `planned_unavailable`, and unsupported optional routes remain non-blocking.
-- Persist an `applying` operation intent before replacing or deleting a live destination. Use the platform atomic replace route where available and verify the expected incoming hash, not only an observed self-hash.
+- Preserve bounded, redacted MCP bootstrap exit/timeout and diagnostic output
+  in its action outcome. A failed MCP readiness check copies that journaled
+  cause into the readiness message and final failure so Recovery can explain
+  the failure without rerunning the external action or weakening integrity.
+- Persist an `applying` operation intent before replacing or deleting a live destination. Replace or delete an existing destination only through the destination quarantine, create a new one with an exclusive rename, and verify the expected incoming hash, not only an observed self-hash.
 - Bind UI apply to a core-owned reviewed plan session and prepared bytes. The renderer sends only the approved plan ID and project root when installation starts; never reserialize or accept a renderer-edited plan as authoritative.
 - Track source hash separately from result hash: generated files, structured merges, and optional MCP TOML adaptation may have a verified incoming source hash and a different deterministic installed hash. The generated `.hoi4-mod-setup/state.json` must validate against `project-state.schema.json`, including provider, model, reasoning effort, and optimization-profile provenance.
 - The Super Events source package uses stable `hoi4ms_*` names for manifest
@@ -352,6 +430,11 @@ Inject failure at every stage and operation boundary:
 - journal write failure
 - immediately after a live file or metadata mutation but before the operation
   result is observed and journaled
+- each destination-quarantine boundary: before the rename, after the rename,
+  after a changed-bytes record before the move back, after verification,
+  after placement before the result checkpoint, and after the result
+  checkpoint before release, plus a concurrent edit or new file inside the
+  precondition, placement, and post-placement windows
 
 Verify that recovery never creates a false success lock and rollback restores expected hashes.
 

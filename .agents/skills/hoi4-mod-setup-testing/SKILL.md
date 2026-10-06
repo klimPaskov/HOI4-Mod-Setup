@@ -178,7 +178,23 @@ session, cancellation, credential-health, or analysis assertions.
 
 For every transaction operation, support controlled failure before and after the live mutation boundary. Verify journal state, recovery options, destination hashes, and absence of false success.
 
+When transaction filesystem code changes, run the `safe_fs` link/reparse tests,
+the transaction fault matrix, and `transaction_mutations_do_not_use_ambient_filesystem_apis`.
+Add native Windows junction and macOS symlink swap barriers for every affected
+ancestor and operation boundary. These tests currently establish ancestor-link
+containment for selected paths; final-leaf races and root identity across
+recovery remain separate required cases.
+
 ## UI tests
+
+Run `pnpm test:e2e:install` once to prepare Playwright Chromium, then
+`pnpm test:e2e` for the real headless-browser suite in `tests/browser/`.
+`HOI4_TEST_BROWSER_PATH` can select an existing local browser executable.
+Keep the documentation-fixture screen loop, runtime-error and overflow checks,
+keyboard environment selection, signed-out management, and recovery interaction
+coverage. Browser fixtures do not prove native IPC, provider authentication,
+or transaction success; report those layers separately. Keep Vitest discovery
+limited to `src/**/*.test.{ts,tsx}` so it does not run Playwright tests.
 
 Public README captures use the sanitized, development-only scenarios in
 `src/documentation-fixtures.ts`. Tests prove known routes return synthetic
@@ -202,9 +218,16 @@ within 2 KiB. Direct transaction and rollback command errors use quoted-field
 fixtures too. Never show Undo as an unavailable card.
 
 Keep a desktop responsiveness regression test that verifies every Tauri command
-uses `#[tauri::command(async)]` so blocking Rust core work cannot run on the UI
-event loop; the current source-level test is
-`every_desktop_command_uses_the_async_dispatcher`.
+uses `#[tauri::command(async)]` and long-running helpers use the Tauri blocking
+pool so blocking Rust core work cannot run on the UI event loop; the source
+regressions are `every_desktop_command_uses_the_async_dispatcher` and
+`blocking_command_work_uses_the_async_runtime_blocking_pool`.
+
+Use `pnpm test:mcp-live` for an opt-in Windows check of the exact MCP package in
+the bundled source manifest. It isolates npm configuration, installs into a
+disposable prefix, verifies registry and full-tree evidence, then performs only
+`initialize` and `tools/list`. It never calls a tool and needs no provider
+credential. The ordinary fake MCP health-server tests remain the CI gate.
 
 ## Platform matrix
 
@@ -279,6 +302,13 @@ legacy per-machine installation, remove only registry values whose install
 paths exactly match the current E2E root, and assert that neither product
 registry key retains a test-owned path. Cleanup runs after success and ordinary
 failure; never delete or replace unrelated installation metadata.
+
+The browser harness builds development-only synthetic routes into the ignored
+`artifacts/browser-fixture` directory, then serves that fixture on loopback
+port 1421. It never reuses a running user app or enables fixtures in the normal
+production output. Build readiness is awaited before browser tests start, so
+Vite cold module compilation is not charged to the first wizard assertion.
+
 
 ## Update this skill when
 

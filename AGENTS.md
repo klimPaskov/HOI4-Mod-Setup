@@ -4,7 +4,7 @@ This file governs development of the **HOI4 Mod Setup** desktop application. It 
 
 ## 1. Product promise
 
-HOI4 Mod Setup prepares a new or existing Hearts of Iron IV mod for agentic development with a user-selected AI provider. Codex is the default.
+HOI4 Mod Setup prepares a new or existing Hearts of Iron IV mod for agentic development with a user-selected AI provider. Claude, signed in through the user's own Claude Code with Claude Haiku 4.5, is the default setup assistant.
 
 Every implementation must preserve these promises:
 
@@ -142,9 +142,11 @@ Use `hoi4-mod-setup-source-manifest` for changes to this surface.
 
 ## 5A. AI provider authentication and Codex App Server
 
-Codex remains the default provider. ChatGPT sign-in is a core prerequisite for Codex Create, Import, Update, and Repair planning. Use the official local `codex app-server` process over stdio JSONL. Do not implement an application-owned OAuth service or an OpenAI API-key fallback for the Codex route.
+The default setup assistant is the Claude account route (`claude_account`). It runs the user's own installed, unmodified, Anthropic-signed Claude Code: `claude auth login` owns sign-in, `claude auth status --json` supplies a non-identifying summary, and analysis is one isolated print-mode turn with tools, MCP servers, customizations, and session persistence disabled, run in an empty working directory with Claude Haiku 4.5 by default. Anthropic does not permit third-party apps to offer Claude.ai login or to collect, store, or intermediate Claude credentials, so never build an app-owned Claude OAuth flow, read Claude Code's credential store, accept a pasted authorization code, or forward `ANTHROPIC_*` credentials to the child. The full boundary is in `docs/31_ai_provider_profiles_and_chat_sources.md`.
 
-The first setup screen also supports the bounded provider registry in `docs/31_ai_provider_profiles_and_chat_sources.md`. Claude, Kimi, GLM, and DeepSeek use checked-in model/address defaults verified against official provider documentation plus an OS-vault API key; those non-secret defaults remain editable under Advanced. Custom hosted routes require an explicit HTTPS address and OS-vault API key. Local models require an explicit loopback HTTP address and do not claim a hosted account. The app must not invent provider URLs, login routes, packages, commands, model names, MCP servers, or platform support.
+Codex remains a first-class provider. ChatGPT sign-in is a core prerequisite for Codex Create, Import, Update, and Repair planning. Use the official local `codex app-server` process over stdio JSONL. Do not implement an application-owned OAuth service or an OpenAI API-key fallback for the Codex route.
+
+The first setup screen also supports the bounded provider registry in `docs/31_ai_provider_profiles_and_chat_sources.md`. Claude API key, Kimi, GLM, and DeepSeek use checked-in model/address defaults verified against official provider documentation plus an OS-vault API key; those non-secret defaults remain editable under Advanced. Custom hosted routes require an explicit HTTPS address and OS-vault API key. Local models require an explicit loopback HTTP address and do not claim a hosted account. The app must not invent provider URLs, login routes, packages, commands, model names, MCP servers, or platform support.
 
 Required behavior:
 

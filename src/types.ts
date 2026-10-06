@@ -22,7 +22,7 @@ export type PhaseId = "project" | "review" | "components" | "integrations" | "gi
 
 export type SourceMode = "latest" | "pinned_commit" | "pinned_release";
 
-export type AiProviderId = "codex" | "claude" | "kimi" | "glm" | "deepseek" | "local" | "custom";
+export type AiProviderId = "claude_account" | "codex" | "claude" | "kimi" | "glm" | "deepseek" | "local" | "custom";
 
 export type CodingEnvironmentId = "codex" | "claude_code" | "cursor" | "qoder" | "opencode";
 
@@ -167,6 +167,42 @@ export interface AiModelOption {
   supported_reasoning_efforts: ReasoningEffort[];
 }
 
+export type AiModelCatalogStatus = "idle" | "loading" | "live" | "fallback-empty" | "fallback-error" | "live-missing";
+
+export type SemanticProposalKey =
+  | "display_name"
+  | "project_id"
+  | "script_prefix"
+  | "primary_namespace"
+  | "project_description"
+  | "descriptor_tags"
+  | "folder_profile"
+  | "agents_profile"
+  | "localisation_convention"
+  | "documentation_convention";
+
+export interface SemanticConventions {
+  agents_profile: string;
+  localisation_convention: string;
+  documentation_convention: string;
+}
+
+export type ComponentRecommendationKind = "required" | "recommended" | "not_recommended";
+
+export interface ComponentRecommendation {
+  component_id: string;
+  recommendation: ComponentRecommendationKind;
+  reason: string;
+}
+
+export interface CodexAnalysisConfirmationValues {
+  description: string;
+  folderProfile: string[];
+  identity: ProjectIdentity;
+  conventions: SemanticConventions;
+  componentRecommendations: ComponentRecommendation[];
+}
+
 export interface AiAccountStatus {
   available: boolean;
   authenticated: boolean;
@@ -202,7 +238,7 @@ export interface CodexAnalysis {
   input_sha256: string;
   project_summary: string;
   proposals: CodexProposal[];
-  component_recommendations: Array<{ component_id: string; recommendation: string; reason: string }>;
+  component_recommendations: ComponentRecommendation[];
   warnings: string[];
 }
 
@@ -253,6 +289,8 @@ export interface ScanFinding {
   category?: string;
   label: string;
   value: string;
+  /** Readable summary of the scanned value for the review list. */
+  displayValue?: string;
   /** Immutable value returned by the completed core scan; edits stay review-only. */
   evidenceExcerpt?: string;
   confidence: number;
@@ -428,6 +466,7 @@ export interface InstallationPlanOperation {
   resolution?: string | null;
   external?: boolean;
   rollback: InstallationRollbackAction;
+  external_parent_identity?: string | null;
 }
 
 export interface InstallationPlanConflict {
@@ -529,6 +568,7 @@ export interface InstallationPlan {
     project_root_mode: "existing" | "create_leaf";
     project_root_parent?: string | null;
     project_root_leaf?: string | null;
+    project_root_identity: string;
   };
   approvals: {
     dry_run_reviewed: boolean;
@@ -595,6 +635,7 @@ export interface WizardState {
   aiProvider: AiProviderId;
   aiModel: string;
   aiReasoningEffort: ReasoningEffort;
+  aiModelCatalogStatus?: AiModelCatalogStatus;
   aiEndpoint: string;
   aiAccount: AiAccountStatus | null;
   aiProfiles?: AiProviderProfile[];
@@ -622,6 +663,8 @@ export interface WizardState {
   transaction?: TransactionJournal;
   plan?: InstallationPlan;
   maintenanceMode?: "update" | "repair" | "reinstall" | "remove";
+  /** Set after a managed removal commits, in place of a readiness report. */
+  removalSummary?: { removed: number; kept: number };
   maintenanceCodexAnalysisRecord?: CodexAnalysisRecord;
   maintenanceEvidenceReady?: boolean;
   existingInstallationDetected?: boolean;
@@ -646,6 +689,9 @@ export interface WizardState {
   codexLoginPending?: boolean;
   codexAnalysis?: CodexAnalysis;
   codexAnalysisRecord?: CodexAnalysisRecord;
+  conventions?: SemanticConventions;
+  semanticProposalOverrides?: SemanticProposalKey[];
+  semanticComponentRecommendations?: ComponentRecommendation[];
   manifestPreview?: SourceManifestPreview;
   draftSaved: boolean;
 }

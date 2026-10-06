@@ -6,10 +6,15 @@ HOI4 Mod Setup is a desktop wizard for preparing a Hearts of Iron IV mod for
 AI-assisted development. Start a new mod from its name and description, or
 choose an existing mod to add, update, or repair its development setup.
 
-The setup assistant can use Codex, Claude, Kimi, GLM, DeepSeek, a local model,
-or a custom provider. Codex is selected by default. This choice is only for
+The setup assistant can use Claude, Codex, Kimi, GLM, DeepSeek, a local model,
+or a custom provider. Claude is selected by default and signs in through your
+own Claude Code. This choice is only for
 analyzing and preparing the mod; it does not choose the AI client you use later
 for Agentic HOI4 Modding.
+
+## Quick start
+
+Follow the [Windows first-run guide](docs/QUICKSTART.md) to install the app and prepare your mod.
 
 ## Download
 
@@ -32,13 +37,18 @@ reviewed the changes and started installation.
 
 ![Create a new mod or import an existing one](docs/screenshots/01-welcome.jpg)
 
-Choose **Create new mod** or **Import existing mod**. For Codex, sign in with
-ChatGPT. For Claude, Kimi, GLM, or DeepSeek, paste an API key from the provider;
+Choose **Create new mod** or **Import existing mod**. For Claude, choose
+**Sign in to Claude**: your installed Claude Code opens the browser and signs
+you in with your Claude account, and the app never sees your Claude
+credentials. If Claude Code is not installed yet, the app links to Anthropic's
+setup page. For Codex, sign in with ChatGPT. For Kimi, GLM, DeepSeek, or
+**Claude API key**, paste an API key from the provider;
 the app fills the normal connection details automatically. Local and custom
 models let you enter the address supplied by that model service. Once connected,
 choose from the provider's live model list and select one of the reasoning
-levels that model supports, from **Light** through **Max**. Codex defaults to
-GPT-5.6 Luna with Extra high reasoning; DeepSeek defaults to its Flash model.
+levels that model supports, from **Light** through **Max**. Claude defaults to
+Claude Haiku 4.5; Codex defaults to GPT-5.6 Luna with Extra high reasoning;
+DeepSeek defaults to its Flash model.
 
 **Manage an existing project** scans any selected mod before changing it. If the
 scan finds app-managed setup, the view also offers repair, update, optional
@@ -80,7 +90,7 @@ unrelated data dumps, so even very large mods stay within the setup scan.
 Select the instructions, skills, helpers, tools, and offline wiki you want.
 Required items stay selected so the project remains usable.
 
-Before the component list, choose **Coding Environments**. Select exactly one
+Before the component list, choose **Coding environments**. Select exactly one
 primary client (Codex is the default), then add any combination of Claude Code,
 Cursor, Qoder, and OpenCode. The primary is removed from the additional choices
 automatically. Each selected client receives its complete native package while
@@ -171,8 +181,8 @@ even when another AI performed setup analysis.
 If flattened ChatGPT files were selected, the Ready screen links directly to
 [ChatGPT Chat](https://chatgpt.com). When the optional portrait workflow is
 enabled, it also shows its persisted Cloud, Local, or RunPod readiness and
-canonical source guidance, or the explicit Disabled state. Chaos Redux uses
-RunPod API-first; computer control is used only when explicitly requested.
+canonical source guidance, or the explicit Disabled state. RunPod runs
+API-first; computer control is used only when explicitly requested.
 Non-sourced fictional or impossible portraits use native ImageGen. Disabled
 generic projects keep source-based portrait handling without ComfyUI-specific
 project files. See
@@ -197,6 +207,10 @@ HOI4 Mod Setup checks for app updates when it opens. If a newer signed version
 is found, the app shows the update immediately, downloads and verifies it,
 replaces the current installation, and restarts into the new version. If the
 update fails, the running version remains usable and a retry action appears.
+
+## Troubleshooting
+
+See [Troubleshooting](docs/TROUBLESHOOTING.md) for sign-in, setup source, MCP, and interrupted installation fixes.
 
 ## Privacy
 

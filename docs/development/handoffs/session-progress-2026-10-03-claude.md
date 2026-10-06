@@ -1,0 +1,79 @@
+# Session progress: Claude default, live native runs, and fixes
+
+Date: 2026-10-03. Continues `session-continuation-2026-10-03.md`. This is a work-in-progress record, not a release approval.
+
+## Claude account route (user requirement: easy Claude login, default, Haiku 4.5)
+
+- Implemented as provider `claude_account` in `src-tauri/src/claude_code.rs`, the default setup assistant, with `claude-haiku-4-5-20251001` as the default model.
+- Policy basis: Anthropic's Claude Code legal and compliance page (`https://code.claude.com/docs/en/legal-and-compliance`) forbids third-party Claude.ai login and credential intermediation but permits an end user signing in to the unmodified Claude Code binary with their own subscription. The app therefore runs the user's own Anthropic-signed `claude` for `auth status`, `auth login --claudeai` (closed stdin), `auth logout`, and one isolated print-mode analysis turn.
+- The Anthropic API-key route remains as `Claude API key` and also defaults to Haiku 4.5. Codex remains first-class.
+- Live evidence on this Windows machine with Anthropic-signed Claude Code 2.1.286 on PATH: discovery, Authenticode `Anthropic, PBC`, isolation-flag probe, signed-out status, and real sign-in start plus cancellation (1.5 s) pass through `pnpm test:claude-live`. The native app shows the signed-out panel, the not-installed panel with the official setup link, and the correct footer prompts.
+- Signed-in analysis proven: after the user signed in to Claude Code themselves, the ignored live test `claude_code::tests::live_claude_account_analysis` returned 10 schema-valid proposals with Haiku 4.5. Two defects surfaced and were fixed: Claude Code rejected the schema's `$schema` declaration and exited with empty stdout (now stripped from the `--json-schema` copy; empty stdout is a Process error), and an invalid `project_id` was not retried (the corrective retry now covers schema, identifier/value, and path rejections through `correctable_output_error`).
+- Not yet proven: a full Claude create flow in the native app (waits for the shared desktop to be free).
+- macOS: Developer ID `Anthropic PBC (Q6L2SF6YDW)` comes from public issue reports of `codesign -dv` output and is unverified on a Mac.
+
+## Live native findings and fixes
+
+All found by driving the rebuilt native app (real Rust backend, real Codex) through WebView2 remote debugging.
+
+| Finding | Fix | Regression evidence |
+| --- | --- | --- |
+| Codex planning failed as "temporarily unavailable": current Codex streams more deltas than the correlated notification limit | deltas counted, not retained | `a_long_streamed_turn_completes_without_hitting_the_retained_limit`; live Codex analysis 39-58 s, 10 proposals |
+| The typed mod name was replaced by the AI and never sent | `requested_mod_name` constraint plus core enforcement | `a_requested_new_project_name_is_kept_in_the_display_name_proposal`; live run kept the name |
+| Editing any suggestion cleared the record; Confirm silently did nothing | record kept with confirmation cleared; explicit error otherwise | App test `keeps an edited suggestion confirmable...`; live confirm after edit |
+| Renaming regenerated AI tags heuristically | tags kept when an analysis exists | same App test |
+| Identity screen duplicated reviewed fields | form hides them when a review is shown | live screen |
+| Supported version default `1.17.*` (installed game 1.19.2) | `1.19.*` | live descriptor preview |
+| Windows directory flush denied via `ReOpenFile`; plan preparation failed | identity-checked path handle flush | `retained_directory_handle_flushes_after_a_rename`; live plan |
+| Raw internal error text on the dry run | `planning_command_error` maps every category | `codex_analysis_error_categories_remain_actionable_and_sanitized` |
+| Upstream wiki image is an unresolved Git LFS pointer (object 404); installs failed at validation | early `verify_download` rejection with a clear message; source fix prepared upstream | `verified_download_rejects_an_unresolved_git_lfs_pointer`; live plan stops in about 6 s |
+| Codex check took about 65 s (Authenticode of a 312 MB binary up to three times) | per-run publisher memo keyed by content hash; startup warm-up | `a_verified_publisher_is_remembered_only_for_the_same_content`; live check 6-11 s |
+| Plan preparation took about 4 minutes (1,236 sequential downloads) | bounded parallel prefetch into the verified cache | `prefetch_reuses_verified_cache_entries_and_tolerates_duplicates` |
+| Dry run needed an extra Prepare click; new-project copy said "Keeps your existing edits" | auto-prepare once per visit; mode-specific copy | live dry run |
+| Descriptor parser rejected multi-line `tags`, repeated `replace_path`, comments (Chaos Redux and most real mods) | parser accepts them; bounded blocks | `real_world_descriptors_with_multiline_blocks_and_repeated_paths_parse`; live import of a legacy fixture |
+| Scan findings showed raw keys and JSON | readable labels and summaries (`src/findings.ts`) | `src/findings.test.ts`; live findings screen |
+| Import review sent the Create example description (summary invented an Atlantis theme) | neutral review brief | App test `never sends the Create example description...`; live summary |
+| Import review intermittently rejected (a proposal cited no evidence) | clearer prompt plus one corrective retry; validator unchanged | `analysis_without_schema_constrained_output_is_rejected`; live review passes |
+| Import plan always failed: renderer record lost the core scan ID | scan ID and root restored from the core session | `import_record_from_the_renderer_regains_its_core_scan_binding`; live plan passes the binding |
+| Portrait local roots and URLs were sent as AI evidence | local-only finding, refused by the core | `local_only_portrait_routes_are_never_approved_as_semantic_evidence` |
+| Skill frontmatter checked by substring | bounded parser | `skill_frontmatter_check_accepts_valid_variants_and_rejects_malformed_blocks` |
+| MCP screen opened technical details by default; "1 files" | collapsed disclosure; pluralization | App test |
+
+## Transaction quarantine
+
+A background agent implemented displaced-leaf quarantine (`mutate_live_leaf`), no-replace placement, rollback restoration, journal fields `quarantine_leaf` and `quarantine_sha256`, and ten fault tests. See `public-readiness-transaction-quarantine.md`. Unix paths were only type-checked; macOS validation remains required.
+
+## Blocked on user approval
+
+1. Done with user approval: the wiki fix `7b7d2a4` was pushed to `klimPaskov/Agentic-HOI4-Modding` `main`; the publish workflow committed the refreshed manifest `d4cd673`, which validates and lists the image as the real 11,604-byte file. The app's bundled manifest and source-audit inventory now use that exact blob.
+2. Publish an immutable `hoi4-agent-tools` release with a reproducible production closure (see `public-readiness-mcp-reproducibility.md`). The local `hoi4-agent-tools` checkout contains another session's uncommitted work.
+3. Done with user approval: #75, #77, and #78 were closed as superseded with explanations; the candidate carries rustls 0.23.45, chacha20 0.10.2, React 19.3.0, and Tauri CLI 2.11.5, and `cargo audit` reports no vulnerabilities. #72 (GitHub Actions group) is still open and unreviewed.
+4. Candidate PR, version bump, tag, and signed release.
+
+## Test artifacts
+
+- Disposable legacy fixture: `C:\Users\klimp\Documents\Projects\hoi4-test-mods` (synthetic; safe to delete after testing).
+- No test mod has been written into the real HOI4 mod folder: the only create attempt stopped before project apply because of the LFS pointer, and its staging and journal live in app data as an interrupted, pre-apply transaction (`9043b5bf-...`) that recovery can discard.
+
+## Native Linux run (2026-10-04)
+
+The Rust suite had never compiled on a Unix target in this candidate. A clean clone on WSL Ubuntu 24.04's native ext4 filesystem (Rust 1.88.0, default features, because the desktop feature needs WebKitGTK development packages that are not installed there) exposed two Unix-only defects that Windows builds cannot see: a type mismatch in the Unix fake Codex process helper, which broke compilation of the test target, and an unused Unix `PermissionsExt` import in `transaction.rs`, which `clippy -D warnings` rejects. After the fixes, `cargo clippy -p hoi4-mod-setup --all-targets -- -D warnings` is clean and `cargo test -p hoi4-mod-setup` passes 418 tests with 3 ignored, including the `openat`, `renameat2`, `linkat`, and quarantine routes on a real Linux filesystem. macOS (`renameatx_np`, case-insensitive APFS) is still unrun and needs CI or a Mac.
+
+## Live native Claude create, apply, and rollback (2026-10-04)
+
+The release build ran with its window opened without activation and parked off-screen, driven only through WebView2 remote debugging; HOI4 and other desktop sessions were not touched.
+
+- First attempt: the Claude analysis failed after about 9 seconds with "Sign in to Claude before continuing" although the account panel showed a Claude plan sign-in, and an immediate retry succeeded. The raw result was not captured, so the cause is unconfirmed (an access-token refresh is the likely case). The analysis now rechecks `claude auth status` after a sign-in-category failure and runs once more only while a Claude plan sign-in remains (`with_sign_in_recheck`, with its test).
+- Recovery: a stale pre-apply transaction from 2026-10-03 (the Git LFS pointer failure) blocked the new install, as designed. "Discard prepared files" removed it and returned to the intact dry run.
+- Create: Claude Haiku 4.5 analysis, identity confirmation, all wizard screens, and a dry run of 1,247 creates with no conflicts, prepared in about 36 seconds; the install applied all 1,241 project files.
+- Readiness then blocked on `mcp.hoi4`: "The installed MCP package tree does not match the reviewed release." This is the open MCP 3.6.0 reproducibility gate. 3.7.0's enforced shrinkwrap installs a 280.1 MiB tree, so the app's total-tree bound is raised from 256 MiB to 512 MiB; the per-file bound, file-count bound, and exact tree identity are unchanged.
+- "Undo changes" rolled back all 1,242 operations: the rollback transaction completed, the installation journal reads `rolled_back`, and neither the project folder nor its launcher descriptor remained.
+- Copy fixes from the run: the recovery footer no longer claims actions are reversible until apply begins while an undo of applied files runs, and the install subtitle no longer says "Staging managed files" during apply.
+
+PR klimPaskov/HOI4-Mod-Setup#79 CI passed on Windows, Ubuntu, and macOS, including the macOS Rust suite and desktop end-to-end runs on macos-15 and macos-15-intel. That is the first native macOS run of the rooted-transaction routes.
+
+## Live run with MCP 3.8.1 (2026-10-05)
+
+The candidate build ran off-screen after the trailer session agreed. The Claude analysis passed on the first attempt and produced a dry run of 1,247 creates with no conflicts. The install applied all files, but readiness then failed: "npm could not replace loaded MCP native libraries". Three running Claude Code sessions on this machine had the global `hoi4-agent-tools` 3.6.0 loaded, so npm could not replace sharp's DLLs. "Undo changes" rolled everything back through the new application-data handles and left nothing in the mod directory.
+
+That failure appeared only after every project file had been applied, so the plan builders and `apply_installation` now refuse such a plan first. `ensure_mcp_package_replaceable` checks whether the plan's MCP bootstrap must replace an installed package of a different version, and `mcp::loaded_native_files_blocking_replacement` checks whether any of that package's `.node` or `.dll` files refuses a write handle with a sharing violation, which is the signature of a mapped image. If so, setup stops with "HOI4 Agent Tools needs an update, but an app connected to the HOI4 MCP is using it. Close Codex, Claude Code, Cursor, or any other app using the HOI4 MCP, then prepare the changes again. Nothing was changed." The live dry run showed exactly that, with "Prepare changes" available to retry. The MCP component cannot be deselected: the required `docs.mcp_integration` depends on it. So closing the MCP clients is the only route, and the message offers no deselect option.

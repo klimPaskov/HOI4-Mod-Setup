@@ -1,14 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { ChatSources, CodingEnvironments, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, recoveryProgress } from "./App";
-import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelCodexLogin, checkForAppUpdate, findInterruptedTransaction, installAppUpdate, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readAiModels, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, startCodexLogin, suggestProjectPaths, waitForCodexLoginResult } from "./lib/tauri";
-import type { ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
+import App, { analysisBrief, ChatSources, CodingEnvironments, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, recoveryProgress } from "./App";
+import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, startClaudeLogin, startCodexLogin, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
+import type { AiAccountStatus, AiProviderId, ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), startCodexLogin: vi.fn(), suggestProjectPaths: vi.fn(), waitForCodexLoginResult: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
 });
 
 afterEach(() => {
@@ -23,12 +23,17 @@ afterEach(() => {
 beforeEach(() => {
   vi.mocked(readCodexAccount).mockResolvedValue({ available: false, authenticated: false, auth_mode: "none", usage_limited: false });
   vi.mocked(readAiModels).mockResolvedValue([]);
+  vi.mocked(readAiAccount).mockImplementation(async (provider, model) => ({ available: true, authenticated: false, provider: provider as AiProviderId, model, auth_mode: provider === "claude_account" ? "claude_account" : "api_key", usage_limited: false, error: provider === "claude_account" ? "Sign in to Claude to continue." : "the selected provider credential is not available" }));
   vi.mocked(readTransactionJournal).mockResolvedValue(null);
   vi.mocked(rollbackInstallationResult).mockResolvedValue({ value: null, error: "Undo is unavailable." });
   vi.mocked(logoutCodexResult).mockResolvedValue({ value: null });
   vi.mocked(openCodexLoginUrlResult).mockResolvedValue({ value: undefined });
   vi.mocked(openExternalUrlResult).mockResolvedValue({ value: undefined });
   vi.mocked(cancelCodexLogin).mockResolvedValue(true);
+  vi.mocked(cancelClaudeLogin).mockResolvedValue(true);
+  vi.mocked(startClaudeLogin).mockResolvedValue({ value: "claude-login" });
+  vi.mocked(waitForClaudeLoginResult).mockResolvedValue({ value: null, error: "Claude sign-in did not finish." });
+  vi.mocked(logoutClaudeResult).mockResolvedValue({ value: undefined });
   vi.mocked(pickProjectFolder).mockResolvedValue(null);
   vi.mocked(previewDescriptorsResult).mockResolvedValue({ value: null });
   vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: null });
@@ -59,6 +64,12 @@ function welcomeState(account: WizardState["codexAccount"], codexLogin?: WizardS
   return { mode: "new", aiProvider: "codex", aiModel: "gpt-5.6-luna", aiReasoningEffort: "xhigh", aiEndpoint: "", selectedComponents: ["codex.config", "mcp.hoi4_agent_tools", "workflow.3d"], flattenForChat: false, meshSelected: true, codexAccount: account, codexLogin } as unknown as WizardState;
 }
 
+function selectCodexProvider() {
+  fireEvent.change(screen.getByLabelText("AI provider"), { target: { value: "codex" } });
+}
+
+// Most wizard-flow tests exercise the Codex App Server path so its coverage is
+// retained now that the Claude account route is the default.
 async function renderAuthenticatedApp() {
   vi.mocked(readCodexAccount).mockResolvedValue({
     available: true,
@@ -67,6 +78,7 @@ async function renderAuthenticatedApp() {
     usage_limited: false,
   });
   render(<App />);
+  selectCodexProvider();
   await waitFor(() => expect(screen.getByRole("button", { name: /continue/i })).toBeEnabled());
 }
 
@@ -74,15 +86,47 @@ function enableTauriRuntime() {
   (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
 }
 
+function semanticAnalysisFixture() {
+  return {
+    schema_version: "1.0.0",
+    analysis_id: "semantic-analysis",
+    mode: "new_project_identity" as const,
+    input_sha256: "a".repeat(64),
+    project_summary: "A focused project summary.",
+    proposals: [
+      ["display_name", "Iron Dawn"],
+      ["project_id", "iron_dawn"],
+      ["script_prefix", "id"],
+      ["primary_namespace", "id"],
+      ["project_description", "A focused alternate-history project."],
+      ["descriptor_tags", ["Alternative History", "Events"]],
+      ["folder_profile", ["common", "events"]],
+      ["agents_profile", "default"],
+      ["localisation_convention", "english"],
+      ["documentation_convention", "markdown"],
+    ].map(([key, value]) => ({ key, value, confidence: 0.9, reason: `Reason for ${String(key)}.`, evidence_refs: ["brief:1"] })),
+    component_recommendations: [{ component_id: "core.skills", recommendation: "recommended", reason: "The brief calls for repeated HOI4 workflow support." }],
+    warnings: [],
+  };
+}
+
 describe("HOI4 Mod Setup wizard", () => {
   it("starts new projects with the Atlantis Rising example", () => {
     expect(initialState.identity.displayName).toBe("Atlantis Rising");
     expect(initialState.description).toBe("An Atlantis total conversion with a new Atlantic island, naval expansion, custom units, national focuses, and original mechanics.");
-    expect(initialState.aiModel).toBe("gpt-5.6-luna");
-    expect(initialState.aiReasoningEffort).toBe("xhigh");
+    expect(initialState.aiProvider).toBe("claude_account");
+    expect(initialState.aiModel).toBe("claude-haiku-4-5-20251001");
+    expect(initialState.aiReasoningEffort).toBe("high");
     expect(initialState.identity.projectId).toBe("atlantis_rising");
     expect(initialState.primaryCodingEnvironment).toBe("codex");
     expect(initialState.additionalCodingEnvironments).toEqual([]);
+  });
+
+  it("never sends the Create example description as an imported project's brief", () => {
+    const brief = analysisBrief("existing_project_semantics", initialState.description);
+    expect(brief).not.toContain("Atlantis");
+    expect(brief).toMatch(/approved scan evidence/);
+    expect(analysisBrief("new_project_identity", "My own mod idea.")).toBe("My own mod idea.");
   });
 
   it("normalizes coding-environment choices to one primary and unique additional clients", () => {
@@ -259,6 +303,32 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(estimatePlanPreparationProgress(startedAt, startedAt + 60_000).percent).toBe(96);
   });
 
+  it("lets the returned update reanalysis be confirmed from the Update screen", async () => {
+    const record = { analysis_id: "maintenance", confirmed_fields: [] } as unknown as WizardState["codexAnalysisRecord"];
+    const onConfirmAnalysis = vi.fn().mockResolvedValue(undefined);
+    render(<Update
+      state={{
+        ...initialState,
+        aiProvider: "claude_account",
+        maintenanceEvidenceReady: true,
+        codexAnalysis: semanticAnalysisFixture() as unknown as WizardState["codexAnalysis"],
+        codexAnalysisRecord: record,
+        maintenanceCodexAnalysisRecord: record,
+      } as WizardState}
+      update={vi.fn()}
+      findings={[]}
+      setFindings={vi.fn()}
+      onMaintenance={vi.fn()}
+      onStartMaintenance={vi.fn()}
+      onReanalyze={vi.fn().mockResolvedValue(true)}
+      onConfirmAnalysis={onConfirmAnalysis}
+    />);
+
+    const review = screen.getByRole("region", { name: /proposal review/i });
+    fireEvent.click(within(review).getByRole("button", { name: /^Confirm/ }));
+    await waitFor(() => expect(onConfirmAnalysis).toHaveBeenCalledTimes(1));
+  });
+
   it("opens every prepared maintenance plan in a visible review step", () => {
     expect(maintenanceReviewScreen({ conflicts: [] })).toBe("dry-run");
     expect(maintenanceReviewScreen({ conflicts: [{ selected: undefined }] as never })).toBe("conflict");
@@ -327,6 +397,7 @@ describe("HOI4 Mod Setup wizard", () => {
     vi.mocked(readCodexAccount).mockReturnValue(new Promise((resolve) => { resolveAccount = resolve; }));
 
     render(<StrictMode><App /></StrictMode>);
+    selectCodexProvider();
 
     await waitFor(() => expect(readCodexAccount).toHaveBeenCalledTimes(1));
     await act(async () => resolveAccount?.({ available: false, authenticated: false, auth_mode: "none", usage_limited: false }));
@@ -344,6 +415,7 @@ describe("HOI4 Mod Setup wizard", () => {
     });
 
     render(<App />);
+    selectCodexProvider();
 
     expect(await screen.findByText("Codex usage could not be checked. Choose Check again to retry.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
@@ -385,6 +457,121 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(continueButton).toBeDisabled();
   });
 
+  describe("Claude account setup assistant", () => {
+    const signedInClaude: AiAccountStatus = { available: true, authenticated: true, provider: "claude_account", model: "claude-haiku-4-5-20251001", auth_mode: "claude_account", usage_limited: false };
+
+    it("defaults to Claude with Haiku 4.5 and asks the user to sign in through Claude Code", async () => {
+      enableTauriRuntime();
+      render(<App />);
+
+      expect(screen.getByLabelText("AI provider")).toHaveValue("claude_account");
+      expect(screen.getByLabelText("Model")).toHaveValue("claude-haiku-4-5-20251001");
+      expect(screen.queryByLabelText("Reasoning effort")).not.toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "Sign in to Claude" })).toBeEnabled();
+      expect(screen.getByText(/never sees your Claude credentials/i)).toBeInTheDocument();
+      expect(screen.queryByLabelText(/API key/i)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+      expect(readAiAccount).toHaveBeenCalledWith("claude_account", "claude-haiku-4-5-20251001", "high", "");
+      expect(readCodexAccount).not.toHaveBeenCalled();
+    });
+
+    it("offers the official installer page when Claude Code is missing", async () => {
+      enableTauriRuntime();
+      vi.mocked(readAiAccount).mockResolvedValue({ available: false, authenticated: false, provider: "claude_account", model: "claude-haiku-4-5-20251001", auth_mode: "claude_account", usage_limited: false, error: "Claude Code is not installed. Install it, then choose Check again." });
+      render(<App />);
+
+      expect(await screen.findByText("Claude Code is not installed. Install it, then choose Check again.")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /Install Claude Code/ }));
+      await waitFor(() => expect(openExternalUrlResult).toHaveBeenCalledWith("https://code.claude.com/docs/en/setup"));
+      expect(screen.queryByRole("button", { name: "Sign in to Claude" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    });
+
+    it("runs Claude Code sign-in and enables Continue once the account is signed in", async () => {
+      enableTauriRuntime();
+      vi.mocked(waitForClaudeLoginResult).mockResolvedValue({ value: signedInClaude });
+      render(<App />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "Sign in to Claude" }));
+
+      expect(await screen.findByText("Signed in to Claude")).toBeInTheDocument();
+      expect(startClaudeLogin).toHaveBeenCalledTimes(1);
+      expect(waitForClaudeLoginResult).toHaveBeenCalledWith("claude-login", "claude-haiku-4-5-20251001");
+      await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
+    });
+
+    it("shows one busy sign-in state and cancels the pending Claude Code login", async () => {
+      enableTauriRuntime();
+      vi.mocked(waitForClaudeLoginResult).mockReturnValue(new Promise(() => undefined));
+      render(<App />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "Sign in to Claude" }));
+      const pending = await screen.findByRole("button", { name: "Waiting for browser sign-in…" });
+      expect(pending).toBeDisabled();
+      expect(pending).toHaveAttribute("aria-busy", "true");
+      expect(screen.getByText(/claude auth login/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Cancel sign-in" }));
+
+      await waitFor(() => expect(cancelClaudeLogin).toHaveBeenCalledWith("claude-login"));
+      expect(await screen.findByRole("button", { name: "Sign in to Claude" })).toBeEnabled();
+      expect(screen.getAllByText("Claude sign-in cancelled. You can try again.").length).toBeGreaterThan(0);
+    });
+
+    it("cancels a pending Claude sign-in when another provider is selected", async () => {
+      enableTauriRuntime();
+      let finishLogin: ((result: { value: AiAccountStatus }) => void) | undefined;
+      vi.mocked(waitForClaudeLoginResult).mockReturnValue(new Promise((resolve) => { finishLogin = resolve; }));
+      render(<App />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "Sign in to Claude" }));
+      await screen.findByRole("button", { name: "Waiting for browser sign-in…" });
+      fireEvent.change(screen.getByLabelText("AI provider"), { target: { value: "kimi" } });
+
+      await waitFor(() => expect(cancelClaudeLogin).toHaveBeenCalledWith("claude-login"));
+      await act(async () => finishLogin?.({ value: signedInClaude }));
+      expect(screen.getByLabelText("AI provider")).toHaveValue("kimi");
+      expect(screen.queryByText("Signed in to Claude")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    });
+
+    it("keeps the draft usable when Claude sign-in does not finish", async () => {
+      enableTauriRuntime();
+      render(<App />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "Sign in to Claude" }));
+
+      expect((await screen.findAllByText("Claude sign-in did not finish.")).length).toBeGreaterThan(0);
+      expect(screen.getByRole("button", { name: "Sign in to Claude" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    });
+
+    it("signs out through Claude Code and clears provider-bound analysis", async () => {
+      enableTauriRuntime();
+      const update = vi.fn();
+      vi.mocked(readAiAccount).mockResolvedValue({ ...signedInClaude, authenticated: false, error: "Sign in to Claude to continue." });
+      render(<Welcome state={{ ...initialState, aiAccount: signedInClaude, codexAnalysisRecord: { analysis_id: "a" } as never }} update={update} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+
+      await waitFor(() => expect(logoutClaudeResult).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ codexAnalysisRecord: undefined, codexAnalysis: undefined, aiAccount: expect.objectContaining({ authenticated: false }) })));
+    });
+
+    it("lets the user switch to an Anthropic API key without losing the Haiku default", () => {
+      function ControlledWelcome() {
+        const [state, setState] = useState<WizardState>({ ...initialState, aiAccount: { available: true, authenticated: false, provider: "claude_account", model: "claude-haiku-4-5-20251001", auth_mode: "claude_account", usage_limited: false, error: "Sign in to Claude to continue." } });
+        return <Welcome state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
+      }
+      render(<ControlledWelcome />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Use an Anthropic API key instead" }));
+
+      expect(screen.getByLabelText("AI provider")).toHaveValue("claude");
+      expect(screen.getByLabelText("Model")).toHaveValue("claude-haiku-4-5-20251001");
+      expect(screen.getByLabelText("Anthropic API key")).toHaveAttribute("type", "password");
+    });
+  });
+
   it("selects a setup assistant without presenting it as the future development client", () => {
     function ControlledWelcome() {
       const [state, setState] = useState(welcomeState({ available: false, authenticated: false, auth_mode: "none", usage_limited: false }));
@@ -396,10 +583,11 @@ describe("HOI4 Mod Setup wizard", () => {
 
     expect(screen.getByLabelText("Model")).toBeInTheDocument();
     expect(screen.getByLabelText("Provider address")).toBeInTheDocument();
-    expect(screen.getByLabelText("Model")).toHaveValue("claude-sonnet-5");
-    expect(screen.getByLabelText("Reasoning effort")).toHaveValue("high");
+    expect(screen.getByLabelText("Model")).toHaveValue("claude-haiku-4-5-20251001");
+    // Haiku 4.5 has no adjustable effort level, so no effort control is shown.
+    expect(screen.queryByLabelText("Reasoning effort")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Provider address")).toHaveValue("https://api.anthropic.com/v1/messages");
-    expect(screen.getByLabelText("Claude API key")).toHaveAttribute("type", "password");
+    expect(screen.getByLabelText("Anthropic API key")).toHaveAttribute("type", "password");
     expect(screen.getByText("Advanced")).toBeInTheDocument();
     expect(screen.getByText(/Used only to analyze and prepare the mod/i)).toBeInTheDocument();
     expect(screen.queryByText(/project follows the provider/i)).not.toBeInTheDocument();
@@ -427,10 +615,10 @@ describe("HOI4 Mod Setup wizard", () => {
 
   it.each([
     ["codex", "gpt-5.6-luna", "xhigh", ""],
-    ["claude", "claude-sonnet-5", "high", "https://api.anthropic.com/v1/messages"],
+    ["claude", "claude-haiku-4-5-20251001", "high", "https://api.anthropic.com/v1/messages"],
     ["kimi", "kimi-k2.6", "high", "https://api.moonshot.ai/v1/chat/completions"],
     ["glm", "glm-5.2", "high", "https://open.bigmodel.cn/api/paas/v4/chat/completions"],
-    ["deepseek", "deepseek-v4-flash", "high", "https://api.deepseek.com/chat/completions"],
+    ["deepseek", "deepseek-flash", "high", "https://api.deepseek.com/chat/completions"],
     ["local", "local-model", "high", "http://127.0.0.1:11434/v1/chat/completions"],
     ["custom", "custom-model", "high", "https://models.example.test/v1/chat/completions"],
   ] as const)("keeps the %s model control usable when its live catalog fails", async (provider, model, effort, endpoint) => {
@@ -455,18 +643,19 @@ describe("HOI4 Mod Setup wizard", () => {
       expect(screen.getByLabelText("Model")).toHaveAttribute("list", "provider-model-options");
       expect(await screen.findByText(/Live model suggestions could not be refreshed/i)).toBeInTheDocument();
     } else {
-      expect(within(screen.getByLabelText("Model")).getByRole("option", { name: model })).toBeInTheDocument();
-      expect(within(screen.getByLabelText("Reasoning effort")).getAllByRole("option")).toHaveLength(1);
+      expect(within(screen.getByLabelText("Model")).getByRole("option", { name: model === "claude-haiku-4-5-20251001" ? "Claude Haiku 4.5" : model })).toBeInTheDocument();
+      if (provider === "codex") expect(within(screen.getByLabelText("Reasoning effort")).getAllByRole("option")).toHaveLength(1);
+      else expect(screen.queryByLabelText("Reasoning effort")).not.toBeInTheDocument();
       expect(await screen.findByText(/Using the verified built-in model/i)).toBeInTheDocument();
     }
   });
 
   it.each([
     ["codex", "gpt-5.6-luna", "", false],
-    ["claude", "claude-sonnet-5", "https://api.anthropic.com/v1/messages", false],
+    ["claude", "claude-haiku-4-5-20251001", "https://api.anthropic.com/v1/messages", false],
     ["kimi", "kimi-k2.6", "https://api.moonshot.ai/v1/chat/completions", false],
     ["glm", "glm-5.2", "https://open.bigmodel.cn/api/paas/v4/chat/completions", false],
-    ["deepseek", "deepseek-v4-flash", "https://api.deepseek.com/chat/completions", false],
+    ["deepseek", "deepseek-flash", "https://api.deepseek.com/chat/completions", false],
     ["local", "local-model", "http://127.0.0.1:11434/v1/chat/completions", true],
     ["custom", "custom-model", "https://models.example.test/v1/chat/completions", true],
   ] as const)("distinguishes an empty %s catalog from a live result", async (provider, model, endpoint, manual) => {
@@ -518,7 +707,7 @@ describe("HOI4 Mod Setup wizard", () => {
 
     render(<ControlledWelcome />);
     fireEvent.change(screen.getByLabelText("AI provider"), { target: { value: "claude" } });
-    fireEvent.click(screen.getByRole("button", { name: "Get Claude API key" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get Anthropic API key" }));
 
     await waitFor(() => expect(openExternalUrlResult).toHaveBeenCalledWith("https://platform.claude.com/settings/keys"));
   });
@@ -676,7 +865,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await screen.findByRole("heading", { name: "Project identity" });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await screen.findByRole("heading", { name: "Coding Environments" });
+    await screen.findByRole("heading", { name: "Coding environments" });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await screen.findByRole("heading", { name: "Choose what to install" });
     fireEvent.click(screen.getByText("Choose source version"));
@@ -702,6 +891,9 @@ describe("HOI4 Mod Setup wizard", () => {
       ...initialState,
       screen: "components",
       mode: "existing",
+      aiProvider: "codex",
+      aiModel: "gpt-5.6-luna",
+      aiReasoningEffort: "xhigh",
       codexAccount: { available: true, authenticated: true, auth_mode: "chatgpt", usage_limited: false },
       codexAnalysis: { analysis_id: "existing-analysis" } as never,
       codexAnalysisRecord: { analysis_id: "existing-analysis", confirmed_fields: ["display_name"] } as never,
@@ -1128,6 +1320,14 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(update.mock.calls[0][0]).not.toHaveProperty("meshCredentialReference");
   });
 
+  it("ends a managed removal with a removal summary instead of readiness checks", () => {
+    render(<Ready state={{ ...readyState(), readiness: null, removalSummary: { removed: 1239, kept: 5 } }} update={vi.fn()} onMaintenance={vi.fn()} />);
+    expect(screen.getByRole("heading", { name: "Setup removed" })).toBeInTheDocument();
+    expect(screen.getByText("Removed 1,239 unchanged setup files and the folders they emptied.")).toBeInTheDocument();
+    expect(screen.getByText("Kept 5 files you changed. Review them before deleting.")).toBeInTheDocument();
+    expect(screen.queryByText("Project and descriptors")).not.toBeInTheDocument();
+  });
+
   it("keeps 3D readiness in the report without a redundant Ready-screen action", () => {
     render(<Ready state={{ ...readyState(), meshSelected: true } as unknown as WizardState} update={vi.fn()} onMaintenance={vi.fn()} />);
     expect(screen.getByText("3D model workflow")).toBeInTheDocument();
@@ -1469,6 +1669,137 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(within(review).getByText("Alternative History, Events")).toBeInTheDocument();
     expect(within(review).queryByText("display_name")).not.toBeInTheDocument();
     expect(within(review).queryByText("descriptor_tags")).not.toBeInTheDocument();
+  });
+
+  it("keeps an edited suggestion confirmable and the suggested tags when the name changes", async () => {
+    enableTauriRuntime();
+    const analysis = {
+      schema_version: "1.0.0",
+      analysis_id: "analysis-edit",
+      mode: "new_project_identity" as const,
+      input_sha256: "a".repeat(64),
+      project_summary: "A focused alternate-history project.",
+      proposals: [
+        { key: "display_name", value: "Iron Dawn", confidence: 0.96, reason: "Uses the supplied mod name.", evidence_refs: [] },
+        { key: "descriptor_tags", value: ["Alternative History", "Military"], confidence: 0.88, reason: "Matches the brief.", evidence_refs: [] },
+      ],
+      component_recommendations: [],
+      warnings: [],
+    };
+    const record = { engine: "codex_app_server", auth_mode: "chatgpt", provider: "codex", model: "gpt-5.6-luna", analysis_id: "analysis-edit", schema_version: "1.0.0", input_sha256: "a".repeat(64), output_sha256: "b".repeat(64), confirmed_fields: [], confirmed_at: "" };
+    vi.mocked(runCodexAnalysisResult).mockResolvedValue({ value: { analysis, record } as unknown as CodexAnalysisResult });
+    vi.mocked(confirmCodexAnalysis).mockResolvedValue({ ...record, confirmed_fields: ["display_name", "descriptor_tags"], confirmed_at: "2026-10-03T00:00:00Z" } as never);
+
+    await renderAuthenticatedApp();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.change(screen.getByLabelText("Mod name"), { target: { value: "Iron Dawn" } });
+    fireEvent.change(screen.getByLabelText("Mod description"), { target: { value: "An alternate-history military mod." } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("2 suggested values");
+    expect(vi.mocked(runCodexAnalysisResult).mock.calls[0][0].constraints).toMatchObject({ requested_mod_name: "Iron Dawn" });
+
+    const review = screen.getByRole("region", { name: "Codex proposal review" });
+    fireEvent.change(within(review).getAllByRole("textbox")[0], { target: { value: "Iron Dawn Reforged" } });
+    expect(within(review).getByDisplayValue("Alternative History, Military")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Codex suggestions" }));
+
+    await waitFor(() => expect(confirmCodexAnalysis).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(confirmCodexAnalysis).mock.calls[0][0]).toMatchObject({ analysis_id: "analysis-edit" });
+    expect(vi.mocked(confirmCodexAnalysis).mock.calls[0][2]).toMatchObject({ identity: expect.objectContaining({ displayName: "Iron Dawn Reforged" }) });
+  });
+
+  it("renders all ten semantic proposals as editable accessible review fields", () => {
+    const analysis = semanticAnalysisFixture();
+    function ControlledIdentity() {
+      const [state, setState] = useState({
+        ...initialState,
+        screen: "identity" as const,
+        mode: "new" as const,
+        projectPathStatus: "manual" as const,
+        identity: { ...initialState.identity, projectRoot: "C:\\mods\\iron_dawn", launcherDescriptorPath: "C:\\mods\\iron_dawn.mod" },
+        codexAnalysis: analysis as unknown as WizardState["codexAnalysis"],
+        codexAnalysisRecord: { engine: "codex_app_server", auth_mode: "chatgpt", analysis_id: "semantic-analysis", schema_version: "1.0.0", input_sha256: "a".repeat(64), output_sha256: "b".repeat(64), confirmed_fields: [], confirmed_at: "pending" },
+        conventions: { agents_profile: "default", localisation_convention: "english", documentation_convention: "markdown" },
+      } as WizardState);
+      return <Identity state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} updateIdentity={(patch) => setState((current) => ({ ...current, identity: { ...current.identity, ...patch } }))} updateDescription={(description) => setState((current) => ({ ...current, description }))} onPickProjectFolder={vi.fn().mockResolvedValue(null)} onPickLauncherFolder={vi.fn().mockResolvedValue(null)} onConfirmAnalysis={vi.fn().mockResolvedValue(undefined)} />;
+    }
+
+    render(<ControlledIdentity />);
+
+    expect(screen.getAllByText("Suggested", { exact: true })).toHaveLength(10);
+    expect(screen.getAllByText("Why this was suggested", { selector: "summary" })).toHaveLength(10);
+    expect(screen.getByLabelText("Project guidance")).toHaveValue("default");
+    expect(screen.getByLabelText("Localisation style")).toHaveValue("english");
+    expect(screen.getByLabelText("Documentation style")).toHaveValue("markdown");
+
+    fireEvent.change(screen.getByLabelText("Project guidance"), { target: { value: "events-first" } });
+    expect(screen.getByLabelText("Project guidance")).toHaveValue("events-first");
+    fireEvent.click(screen.getAllByText("Why this was suggested", { selector: "summary" })[0]);
+    expect(screen.getByText("Reason for display_name.")).toBeInTheDocument();
+  });
+
+  it("builds the confirmation payload with conventions and component recommendations", () => {
+    const analysis = semanticAnalysisFixture() as unknown as WizardState["codexAnalysis"];
+    const state = {
+      ...initialState,
+      description: "Edited description",
+      folderProfile: ["common", "events"],
+      codexAnalysis: analysis,
+      conventions: { agents_profile: "events-first", localisation_convention: "english", documentation_convention: "markdown" },
+      semanticComponentRecommendations: [{ component_id: "core.skills", recommendation: "recommended", reason: "Keep the workflow skills." }],
+    } as WizardState;
+
+    expect(buildAnalysisConfirmationValues(state)).toMatchObject({
+      description: "Edited description",
+      folderProfile: ["common", "events"],
+      conventions: { agents_profile: "events-first", localisation_convention: "english", documentation_convention: "markdown" },
+      componentRecommendations: [{ component_id: "core.skills", recommendation: "recommended", reason: "The brief calls for repeated HOI4 workflow support." }],
+    });
+    expect(Object.keys(buildAnalysisConfirmationValues(state))).toEqual(["description", "folderProfile", "identity", "conventions", "componentRecommendations"]);
+  });
+
+  it("shows component recommendations by manifest display name without selecting them", async () => {
+    const manifest = {
+      schema_version: "1.0.0",
+      manifest_id: "recommendation-fixture",
+      source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
+      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
+      components: [{ id: "core.skills", display_name: "HOI4 Skills", description: "Workflow skills", category: "skill", optional: true, platforms: ["all"], source: { kind: "tree", path: ".agents/skills" }, destination: { path: ".agents/skills/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [], capabilities: [], validation: [], update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true } }],
+      profiles: [],
+    } as unknown as SourceManifestPreview;
+    vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: manifest });
+    function ControlledComponents() {
+      const [state, setState] = useState({
+        ...initialState,
+        sourceMode: "latest" as const,
+        pinnedRef: "",
+        selectedComponents: [],
+        codexAnalysis: { ...semanticAnalysisFixture(), component_recommendations: [{ component_id: "core.skills", recommendation: "recommended", reason: "Keep the workflow skills." }] } as unknown as WizardState["codexAnalysis"],
+        semanticComponentRecommendations: [{ component_id: "core.skills", recommendation: "recommended", reason: "Keep the workflow skills." }],
+      } as WizardState);
+      return <><Components state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} /><output aria-label="selected components">{state.selectedComponents.join(",")}</output></>;
+    }
+
+    render(<ControlledComponents />);
+    const summary = await screen.findByRole("region", { name: "Setup assistant recommendations" });
+    expect(within(summary).getByText("HOI4 Skills")).toBeInTheDocument();
+    expect(within(summary).getByText("Keep the workflow skills.")).toBeInTheDocument();
+    expect(screen.getByLabelText("selected components")).toHaveTextContent("");
+  });
+
+  it("announces a live catalog that omits the selected model and recovers when a listed model is chosen", async () => {
+    enableTauriRuntime();
+    vi.mocked(readAiModels).mockResolvedValue([{ id: "listed-model", display_name: "Listed model", default_reasoning_effort: "high", supported_reasoning_efforts: ["high"] }]);
+    function ControlledWelcome() {
+      const [state, setState] = useState(welcomeState({ available: true, authenticated: true, auth_mode: "chatgpt", usage_limited: false }));
+      return <Welcome state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
+    }
+
+    render(<ControlledWelcome />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/not in the live catalog/i);
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "listed-model" } });
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(screen.getByLabelText("Reasoning effort")).toHaveValue("high");
   });
 
   it("shows the bounded launcher candidate and allows scanning without it", async () => {
@@ -1850,7 +2181,7 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.queryByText("Open full file plan")).not.toBeInTheDocument();
   });
 
-  it("opens integration requirements by default", () => {
+  it("keeps integration technical details collapsed by default", () => {
     render(<Mcp state={{
       selectedComponents: ["mcp.hoi4_agent_tools"],
       manifestPreview: {
@@ -1870,7 +2201,8 @@ describe("HOI4 Mod Setup wizard", () => {
       meshKeyStatus: "missing",
     } as unknown as WizardState} />);
 
-    expect(screen.getByText("Requirements", { selector: "summary" }).closest("details")).toHaveAttribute("open");
+    // Technical requirements stay behind progressive disclosure.
+    expect(screen.getByText("Technical details", { selector: "summary" }).closest("details")).not.toHaveAttribute("open");
   });
 
   it("shows dry-run preparation as busy and enables installation only after a plan succeeds", async () => {

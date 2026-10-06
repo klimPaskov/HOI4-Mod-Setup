@@ -5,7 +5,7 @@ description: Use when implementing or changing provider authentication, model pr
 
 # HOI4 Mod Setup Codex Integration
 
-Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The user selects a setup assistant, live-catalog model, and model-supported reasoning effort at the start; Codex is the default profile. This choice is never the later Agentic HOI4 Modding development-client selection.
+Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The user selects a setup assistant, model, and model-supported reasoning effort at the start; the Claude account route (`claude_account`, Claude Haiku 4.5) is the default profile and Codex remains first-class. This choice is never the later Agentic HOI4 Modding development-client selection.
 
 ## Product rule
 
@@ -22,7 +22,8 @@ detail to the renderer.
 Fetch Codex models through App Server `model/list` and provider models through
 the authenticated official Models API. Bind model plus reasoning effort to the
 analysis record, plan, and lock. The checked-in fallback defaults are
-`gpt-5.6-luna`/`xhigh` for Codex and `deepseek-v4-flash` for DeepSeek. Persist
+`claude-haiku-4-5-20251001` for both Claude routes, `gpt-5.6-luna`/`xhigh` for
+Codex, and `deepseek-flash` for DeepSeek. Persist
 these only as setup-analysis provenance; do not write them into generated
 AGENTS/README guidance or use them to select development components.
 
@@ -69,6 +70,50 @@ not report an exact total, the visible percentage and time remaining are
 explicit elapsed-time estimates within those stages.
 
 Recovery, rollback, backup inspection, and managed removal remain locally usable while signed out.
+
+## Claude account route
+
+`claude_account` runs the user's own installed, unmodified Claude Code through
+`src-tauri/src/claude_code.rs`; the full boundary is in
+`docs/31_ai_provider_profiles_and_chat_sources.md`.
+
+- Discover `claude` from PATH, `~/.local/bin`, and (macOS) Homebrew prefixes,
+  then require the Anthropic signature before any run. Never download, bundle,
+  or patch it; link to `https://code.claude.com/docs/en/setup` when missing.
+- Probe `claude --help` for every isolation flag in `REQUIRED_PRINT_FLAGS`.
+  A missing flag is a "needs an update" state, never a weaker invocation.
+- Sign-in is `claude auth login --claudeai` with closed stdin, cancellable,
+  ten-minute timeout. The renderer never receives a URL, code, or token.
+- Status reads only `loggedIn`, a bounded `authMethod`, and `apiProvider`.
+  Only `authMethod = "claude.ai"` with the first-party provider is the Claude
+  account route (`ClaudeSignInSummary::is_claude_plan`); Console/API-key and
+  third-party sessions get distinct messages.
+- Parse Claude output raw (`run_reviewed_tool(..., raw_stdout = true)`) and
+  validate before any redaction; never redact a structured reply before
+  parsing. `analyze_with_runner` is the injectable loop for tests.
+- Pass Claude Code the analysis schema without `$schema`/`$id`
+  (`claude_output_schema`): its validator rejects the 2020-12 declaration and
+  the run exits with empty stdout. Empty stdout is a Process error.
+- Retry (via `correctable_output_error`) only a completed run whose
+  structured output was missing or rejected for schema, identifier/value, or
+  path rules;
+  never retry timeouts, truncation, unreadable envelopes, or sign-in/usage
+  errors. For Codex, an incomplete turn is a timeout and a corrective turn
+  requires the completed turn's ID.
+- Analysis is `--print --output-format json --json-schema <schema> --model
+  <model> --tools "" --strict-mcp-config --safe-mode --no-session-persistence
+  --system-prompt <bounded>`, prompt on stdin, cwd a fresh empty temp
+  directory. Read `structured_output`; map `is_error` results to sanitized
+  sign-in, usage-limited, model, or generic categories without forwarding raw
+  result text.
+- Haiku 4.5 does not accept effort: do not forward `--effort` for it, and hide
+  the effort control when a model offers a single effort level.
+- Persist provider `claude_account`, engine/integration `claude_code_cli`, auth
+  mode `claude_account`. A legacy record with no provider still means Codex.
+- `claude_logout` clears pending proposals and approved scan evidence.
+
+Claude Code exposes no remaining-usage reading; describe usage as coming from
+the user's Claude plan and surface a usage-limit result only after it occurs.
 
 ## Required contract
 
@@ -145,6 +190,13 @@ briefs, constraints, or excerpts before prompt construction. New-project
 analysis may have no scan evidence but still receives only the bounded user
 brief and typed constraints.
 
+The already approved external launcher uses the reserved summary identifier
+`@approved-launcher/descriptor.mod` at this boundary; its actual path stays in
+the displayed finding value. Do not open the identifier or accept arbitrary
+absolute paths. Bind it through the same completed scan, project, excerpt hash,
+and explicit evidence-vector approval as other summaries. Cover the actual
+scanner-to-approval path and reject an altered path, hash, or stale scan.
+
 The application renders files only after deterministic validation and user confirmation.
 
 Protocol failure coverage uses local fake transports only: browser and device
@@ -172,6 +224,13 @@ and requires reanalysis. Locks written before
 this binding existed may copy the fields only from valid source evidence
 already stored in that same lock; absent or malformed provenance remains
 blocked instead of being inferred from the current repository.
+
+Aggregate scan evidence uses reserved `@scan/git-summary`,
+`@scan/coding-environments`, and `@scan/absolute-paths` identifiers instead of
+`.` or raw `.git` paths. These identifiers and `@approved-launcher/descriptor.mod`
+are summaries, never filesystem inputs. They remain bound to the core scan ID,
+canonical project root, finding/conflict reference, excerpt hash, and explicit
+evidence approval. Do not relax the generic absolute-path or `.git` rejection.
 
 ## Current implementation boundary
 
@@ -246,6 +305,17 @@ remain unchanged on process, login, usage-limit, or schema failure. The new-proj
 renderer separately validates the user-confirmed launcher filename, descriptor
 agreement, and replaceable PNG placeholder; these are deterministic Rust checks.
 
+## Corrective retry
+
+Every adapter (Codex App Server, provider API, Claude Code) allows
+`ANALYSIS_ATTEMPTS` = 2 turns. When `validate_analysis_output` rejects a
+response with a serialization error, one corrective turn is sent with
+`corrective_analysis_prompt` (the validator's bounded reason plus the input
+hash; Codex reuses the same thread). Validation is never relaxed, other error
+categories are not retried, and the record binds only the accepted response.
+Validator messages name the failing proposal and rule so live probes can
+diagnose rejections; the renderer still sees only sanitized categories.
+
 ## Failure handling
 
 Missing selected provider capability, signed-out state, cancelled login, usage limits, App Server or HTTP adapter exit, malformed output, or rejected proposals must preserve the local draft and scan. No failure may start a project transaction.
@@ -268,6 +338,7 @@ Cover:
 
 - process startup and shutdown
 - initialize ordering
+- initialize response compatibility and platform metadata
 - existing ChatGPT session
 - browser login success, cancellation, and failure
 - exact `account/login/cancel` method and `loginId` payload, including isolated
@@ -286,6 +357,13 @@ Cover:
   `workflow.super_events` registry ID/schema path and selected-vs-unselected
   AGENTS guidance
 - setup-assistant-independent flatten visibility, mapping, collision rejection, secret rejection, and recommendation copy
+
+`pnpm test:codex-live` is an opt-in Windows smoke using the signed installed
+Codex executable named by `HOI4_CODEX_EXECUTABLE`. It reads only the current
+account type, then starts and cancels browser and device-code login attempts in
+a temporary Codex home. It does not print account or login values, open returned
+URLs, or wait for user input. It proves login-start/cancel transport only;
+manual browser and device-code completion remains a separate release gate.
 
 ## Update this skill when
 

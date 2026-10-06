@@ -41,6 +41,10 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 
 ## CI rules
 
+- Every job running `pnpm test:e2e` first runs `pnpm test:e2e:install` to
+  install the pinned Playwright browser and required OS libraries. This gate
+  now executes browser interactions rather than checking HTML source text.
+
 - Default workflow permissions are read-only.
 - Source builds use repository-owned scripts.
 - Tagged builds derive and validate one semantic version across the package manifest, Tauri configuration, metadata, and exact tag.

@@ -49,6 +49,10 @@ struct ProcessRunProfile<'a> {
     disable_local_git_config: bool,
     bound_directory: Option<&'a std::fs::File>,
     should_stop: Option<&'a mut dyn FnMut() -> bool>,
+    extra_environment: &'a [(String, std::ffi::OsString)],
+    /// Return stdout unredacted so a structured reply can be parsed and then
+    /// rejected by its own validator; used only when no secret is in scope.
+    raw_stdout: bool,
 }
 
 #[cfg(target_os = "windows")]
@@ -230,41 +234,6 @@ impl ProcessSpec {
         )
     }
 
-    /// Run an isolated Git probe from the exact directory represented by a
-    /// retained handle. Unix changes directory with `fchdir` in the child
-    /// immediately before exec; Windows relies on the handle denying delete
-    /// sharing while the canonical working directory is used.
-    pub(crate) fn run_git_read_only_bound(
-        &self,
-        allowlisted_executables: &[PathBuf],
-        directory: &std::fs::File,
-    ) -> Result<ProcessResult, AppError> {
-        let executable_name = self
-            .executable
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default();
-        if !matches!(
-            executable_name.to_ascii_lowercase().as_str(),
-            "git" | "git.exe"
-        ) || !self.environment_names.is_empty()
-        {
-            return Err(AppError::Process(
-                "the isolated Git profile accepts only a reviewed Git executable without credentials"
-                    .into(),
-            ));
-        }
-        self.run_with_profile(
-            allowlisted_executables,
-            None,
-            ProcessRunProfile {
-                isolated_git_read_only: true,
-                bound_directory: Some(directory),
-                ..ProcessRunProfile::default()
-            },
-        )
-    }
-
     pub(crate) fn run_git_read_only_bound_with_check(
         &self,
         allowlisted_executables: &[PathBuf],
@@ -372,6 +341,49 @@ impl ProcessSpec {
         )
     }
 
+    /// Run a reviewed, publisher-verified tool with an optional prompt on
+    /// standard input, cooperative cancellation, and a small set of
+    /// non-secret passthrough variables. Passthrough names are validated
+    /// against credential-shaped names so an override key can never be
+    /// forwarded through this route.
+    pub(crate) fn run_reviewed_tool(
+        &self,
+        allowlisted_executables: &[PathBuf],
+        extra_environment: &[(String, std::ffi::OsString)],
+        stdin_bytes: Option<&[u8]>,
+        mut should_stop: Option<&mut dyn FnMut() -> bool>,
+        raw_stdout: bool,
+    ) -> Result<ProcessResult, AppError> {
+        for (name, _) in extra_environment {
+            let upper = name.to_ascii_uppercase();
+            if name.is_empty()
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                || ["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"]
+                    .iter()
+                    .any(|marker| upper.contains(marker))
+                || upper.starts_with("ANTHROPIC_")
+            {
+                return Err(AppError::Process(
+                    "reviewed tool passthrough environment is not allowed".into(),
+                ));
+            }
+        }
+        let mut stop = move || should_stop.as_mut().is_some_and(|check| check());
+        self.run_with_profile(
+            allowlisted_executables,
+            None,
+            ProcessRunProfile {
+                stdin_bytes,
+                should_stop: Some(&mut stop),
+                extra_environment,
+                raw_stdout,
+                ..ProcessRunProfile::default()
+            },
+        )
+    }
+
     fn run_with_profile(
         &self,
         allowlisted_executables: &[PathBuf],
@@ -411,6 +423,9 @@ impl ProcessSpec {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         add_safe_environment(&mut command);
+        for (name, value) in profile.extra_environment {
+            command.env(name, value);
+        }
         if profile.isolated_git_read_only {
             add_isolated_git_environment(&mut command);
         }
@@ -527,7 +542,11 @@ impl ProcessSpec {
             .unwrap_or_default();
         Ok(ProcessResult {
             status_code: status.code(),
-            stdout: redact_secrets(&stdout, &known),
+            stdout: if profile.raw_stdout {
+                stdout
+            } else {
+                redact_secrets(&stdout, &known)
+            },
             stderr: redact_secrets(&stderr, &known),
             timed_out,
             stdout_truncated,
@@ -726,11 +745,70 @@ pub fn find_path_executable(names: &[&str]) -> Result<PathBuf, AppError> {
     )))
 }
 
+/// Publisher checks that already succeeded in this app run, keyed by the exact
+/// path, content SHA-256, and reviewed publisher. Platform signature checks
+/// re-hash and re-verify the whole binary and take tens of seconds for large
+/// clients such as Codex; identical bytes cannot change their signature, so a
+/// repeat check of the same content is answered from this record after one
+/// fresh content hash. Any byte change produces a new hash and a full check.
+static VERIFIED_PUBLISHERS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashSet<(PathBuf, String, String)>>,
+> = std::sync::OnceLock::new();
+
 /// Establish publisher identity independently of a PATH lookup before a
 /// discovered executable receives account-storage paths or vault secrets.
 /// The candidate path is passed as a dedicated, process-scoped environment
 /// value; it is never interpolated into the fixed verification command.
 pub fn validate_executable_publisher(
+    executable: &Path,
+    expected_publisher: &str,
+) -> Result<(), AppError> {
+    verified_executable_sha256(executable, expected_publisher).map(|_| ())
+}
+
+/// Verify the publisher and return the exact content SHA-256 that was
+/// verified, so callers can bind later spawns to those bytes rather than to a
+/// separately computed hash.
+pub fn verified_executable_sha256(
+    executable: &Path,
+    expected_publisher: &str,
+) -> Result<String, AppError> {
+    if !executable.is_absolute() || crate::security::path_has_link_component(executable) {
+        validate_executable_publisher_uncached(executable, expected_publisher)?;
+        return crate::security::sha256_file(executable);
+    }
+    let content_sha256 = crate::security::sha256_file(executable)?;
+    let key = (
+        executable.to_path_buf(),
+        content_sha256,
+        expected_publisher.to_owned(),
+    );
+    let verified = VERIFIED_PUBLISHERS.get_or_init(Default::default);
+    if verified
+        .lock()
+        .map(|entries| entries.contains(&key))
+        .unwrap_or(false)
+    {
+        return Ok(key.1);
+    }
+    validate_executable_publisher_uncached(executable, expected_publisher)?;
+    // The verified bytes must still be the bytes hashed before the check.
+    if crate::security::sha256_file(executable)? != key.1 {
+        return Err(AppError::Process(
+            "executable changed during publisher verification".into(),
+        ));
+    }
+    let content_sha256 = key.1.clone();
+    if let Ok(mut entries) = verified.lock() {
+        if entries.len() >= 64 {
+            entries.clear();
+        }
+        entries.insert(key);
+    }
+    Ok(content_sha256)
+}
+
+fn validate_executable_publisher_uncached(
     executable: &Path,
     expected_publisher: &str,
 ) -> Result<(), AppError> {
@@ -796,6 +874,9 @@ pub fn validate_executable_publisher(
             // Codex desktop installation; the logical product name is never
             // matched as a substring.
             "OpenAI" => "OpenAI OpCo, LLC",
+            // Exact Authenticode subject simple name verified from the
+            // official Anthropic-signed Claude Code binary.
+            "Anthropic" => "Anthropic, PBC",
             value => value,
         };
         if !publisher
@@ -814,9 +895,15 @@ pub fn validate_executable_publisher(
     {
         let verifier = reviewed_system_executable(PathBuf::from("/usr/bin/codesign"))
             .ok_or_else(|| AppError::Process("macOS signature verifier is unavailable".into()))?;
+        // The requirement anchors the signature to Apple's Developer ID chain
+        // and the reviewed Team ID, so a self-signed lookalike cannot pass.
+        let requirement = macos_publisher_requirement(expected_publisher).ok_or_else(|| {
+            AppError::Process("no reviewed macOS signing requirement for this publisher".into())
+        })?;
         let mut verification_command = Command::new(&verifier);
         verification_command
-            .args(["--verify", "--strict", "--verbose=2"])
+            .args(["--verify", "--strict", "--all-architectures", "--verbose=2"])
+            .arg(format!("-R={requirement}"))
             .arg(executable)
             .env_clear();
         configure_child_no_console_window(&mut verification_command);
@@ -844,7 +931,7 @@ pub fn validate_executable_publisher(
         );
         if !details.status.success()
             || detail.len() > 16 * 1024
-            || !detail.contains(expected_publisher)
+            || !macos_signature_matches_publisher(expected_publisher, &detail)
         {
             return Err(AppError::Process(
                 "executable publisher does not match the reviewed product".into(),
@@ -859,6 +946,51 @@ pub fn validate_executable_publisher(
         Err(AppError::UnsupportedPlatform(
             "executable publisher verification is supported only on Windows and macOS".into(),
         ))
+    }
+}
+
+/// Code-signing requirement for a reviewed macOS publisher: an Apple-anchored
+/// Developer ID leaf whose organizational unit is the reviewed Team ID.
+#[cfg(any(target_os = "macos", test))]
+fn macos_publisher_requirement(expected_publisher: &str) -> Option<String> {
+    let team = match expected_publisher {
+        "OpenAI" => "2DC432GLL2",
+        "Anthropic" => "Q6L2SF6YDW",
+        _ => return None,
+    };
+    Some(format!(
+        "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"{team}\""
+    ))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_signature_matches_publisher(expected_publisher: &str, details: &str) -> bool {
+    match expected_publisher {
+        "OpenAI" => {
+            let expected_authority =
+                "Authority=Developer ID Application: OpenAI OpCo, LLC (2DC432GLL2)";
+            details
+                .lines()
+                .any(|line| line.trim() == expected_authority)
+                && details
+                    .lines()
+                    .any(|line| line.trim() == "TeamIdentifier=2DC432GLL2")
+        }
+        "Anthropic" => {
+            // Developer ID identity of the official Claude Code binary.
+            let expected_authority =
+                "Authority=Developer ID Application: Anthropic PBC (Q6L2SF6YDW)";
+            details
+                .lines()
+                .any(|line| line.trim() == expected_authority)
+                && details
+                    .lines()
+                    .any(|line| line.trim() == "TeamIdentifier=Q6L2SF6YDW")
+        }
+        // Codex and Claude Code are the macOS account-bearing routes. MCP and the
+        // credential-bearing Meshy route are Windows-only, so do not infer a
+        // macOS OpenJS identity without a reviewed Apple Team ID.
+        _ => false,
     }
 }
 
@@ -996,6 +1128,33 @@ fn quote_argument(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::credentials::{save_meshy_key, MemoryCredentialStore, ScopedSecretEnvironment};
+
+    #[test]
+    fn macos_publisher_requires_exact_openai_authority_and_team_identity() {
+        let valid = "Authority=Developer ID Application: OpenAI OpCo, LLC (2DC432GLL2)\nTeamIdentifier=2DC432GLL2\n";
+        assert!(macos_signature_matches_publisher("OpenAI", valid));
+
+        let lookalike = "Authority=Developer ID Application: Other Company (AAAA111111)\nDesignatedRequirement=anchor apple and identifier com.openai.codex\nTeamIdentifier=AAAA111111\n";
+        assert!(!macos_signature_matches_publisher("OpenAI", lookalike));
+        let wrong_team = "Authority=Developer ID Application: OpenAI OpCo, LLC (BBBB222222)\nTeamIdentifier=BBBB222222\n";
+        assert!(!macos_signature_matches_publisher("OpenAI", wrong_team));
+        assert!(!macos_signature_matches_publisher(
+            "OpenJS Foundation",
+            valid
+        ));
+    }
+
+    #[test]
+    fn macos_requirements_are_anchored_to_developer_id_and_the_reviewed_team() {
+        let anthropic = macos_publisher_requirement("Anthropic").unwrap();
+        assert!(anthropic.starts_with("anchor apple generic"));
+        assert!(anthropic.contains("1.2.840.113635.100.6.1.13"));
+        assert!(anthropic.ends_with("certificate leaf[subject.OU] = \"Q6L2SF6YDW\""));
+        assert!(macos_publisher_requirement("OpenAI")
+            .unwrap()
+            .contains("\"2DC432GLL2\""));
+        assert!(macos_publisher_requirement("OpenJS Foundation").is_none());
+    }
 
     #[test]
     fn process_preview_contains_names_not_secret_values() {
@@ -1191,6 +1350,31 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("signature") || error.contains("publisher"));
+        // A failed check is never remembered: a second attempt fails again.
+        assert!(validate_executable_publisher(&current_test_binary, "OpenAI").is_err());
+        let sha256 = crate::security::sha256_file(&current_test_binary).unwrap();
+        assert!(!VERIFIED_PUBLISHERS
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .contains(&(current_test_binary, sha256, "OpenAI".into())));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn a_verified_publisher_is_remembered_only_for_the_same_content() {
+        let executable = std::fs::canonicalize(std::env::var_os("ComSpec").unwrap()).unwrap();
+        validate_executable_publisher(&executable, "Microsoft Windows").unwrap();
+        let sha256 = crate::security::sha256_file(&executable).unwrap();
+        let key = (executable.clone(), sha256, "Microsoft Windows".to_owned());
+        assert!(VERIFIED_PUBLISHERS
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .contains(&key));
+        validate_executable_publisher(&executable, "Microsoft Windows").unwrap();
+        // A different publisher name for the same bytes is checked afresh.
+        assert!(validate_executable_publisher(&executable, "OpenAI").is_err());
     }
 
     #[cfg(target_os = "windows")]

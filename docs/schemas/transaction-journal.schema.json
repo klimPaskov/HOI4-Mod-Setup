@@ -33,7 +33,7 @@
   ],
   "properties": {
     "schema_version": {
-      "type": "string"
+      "enum": ["1.0.0", "1.1.0"]
     },
     "transaction_id": {
       "type": "string",
@@ -95,6 +95,20 @@
             "string",
             "null"
           ]
+        },
+        "root_identity": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
+        },
+        "parent_identity": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
         },
         "checkpoint": {
           "enum": [
@@ -399,7 +413,41 @@
               "boolean",
               "null"
             ]
+          },
+          "quarantine_leaf": {
+            "description": "Same-directory name that holds the displaced destination while the operation replaces or deletes it. Recovery accepts only the name derived from the transaction and operation IDs.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\.hoi4ms-quarantine-[0-9a-f]{32}-[A-Za-z0-9_-]{1,64}\\.tmp$"
+          },
+          "quarantine_sha256": {
+            "description": "Observed SHA-256 of the quarantined bytes. Absent while the quarantine is planned but not verified; a value different from backup_sha256 records local bytes that changed after review and were preserved. When rollback moves a surviving forward quarantine back, it records the hash of the bytes it moved back.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "external_parent_identity": {
+            "description": "Identity of an external destination's parent directory, copied from the reviewed plan operation or, for a plan without one, bound when the transaction first opens that parent through a retained handle (the backup stage). Apply, post-install checks, finalization, and rollback reopen the parent only when it still has this identity, and a bound parent is never recreated. When the operation may have changed its destination (a leaf-changing action past the pending and staged states), a missing bound parent stops recovery instead of reading as an absent destination. Rollback journals copy it from their parent operation. Omitted for project destinations and for operations from before the binding.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
           }
+        },
+        "dependentRequired": {
+          "quarantine_sha256": ["quarantine_leaf"]
+        },
+        "if": {
+          "required": ["quarantine_sha256"],
+          "properties": { "quarantine_sha256": { "type": "string" } }
+        },
+        "then": {
+          "properties": { "quarantine_leaf": { "type": "string" } }
         }
       }
     },
@@ -460,6 +508,39 @@
       ],
       "pattern": "^[0-9a-f]{64}$"
     },
+    "checkpoint_sequence": {
+      "description": "Sequence of the last operation checkpoint this snapshot includes. Replay applies only checkpoint records with a higher sequence; journals written before the field existed omit it and replay by timestamp.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "app_data_identity": {
+      "description": "Identities of the application-data directories that hold this transaction's storage, each captured through the retained handle that first creates or opens it. Every later call (stages, resume, rollback, staging discard, finalization, and discovery of an incomplete journal) opens these directories through the retained application-data root and refuses one whose identity differs, so a directory swapped away and replaced, or replaced by a link, is not followed. A bound directory is never recreated. Rollback journals bind their own transaction and backup directories and have no staging directory. Journals written before the binding omit the field and keep path-based access to their storage.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "transaction"],
+      "properties": {
+        "root": {
+          "description": "The application-data root that holds transactions/, backups/, and staging/.",
+          "type": "string",
+          "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
+        },
+        "transaction": {
+          "description": "transactions/<transaction_id>: the journal, plan, checkpoint log, readiness report, and rollback record.",
+          "type": "string",
+          "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
+        },
+        "backup": {
+          "description": "backups/<transaction_id>, bound when the backup stage or rollback preparation creates it.",
+          "type": "string",
+          "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
+        },
+        "staging": {
+          "description": "staging/<transaction_id>, bound when the staging stage creates it.",
+          "type": "string",
+          "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
+        }
+      }
+    },
     "result_lock_sha256": {
       "type": [
         "string",
@@ -498,6 +579,69 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "schema_version": { "const": "1.0.0" } } },
+      "then": {
+        "properties": {
+          "operations": {
+            "items": {
+              "properties": {
+                "quarantine_leaf": false,
+                "quarantine_sha256": false,
+                "external_parent_identity": false
+              }
+            }
+          },
+          "checkpoint_sequence": false,
+          "app_data_identity": false
+        }
+      }
+    },
+    {
+      "if": { "properties": { "schema_version": { "const": "1.1.0" } } },
+      "then": {
+        "properties": {
+          "project_root_lifecycle": {
+            "required": ["root_identity", "parent_identity"],
+            "allOf": [
+              {
+                "if": { "properties": { "mode": { "const": "existing" } } },
+                "then": {
+                  "properties": {
+                    "root_identity": { "type": "string" },
+                    "parent_identity": { "type": "null" }
+                  }
+                }
+              },
+              {
+                "if": { "properties": { "mode": { "const": "create_leaf" } } },
+                "then": {
+                  "properties": { "parent_identity": { "type": "string" } },
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "checkpoint": {
+                            "enum": ["created", "removing", "removed", "retained_user_content"]
+                          }
+                        }
+                      },
+                      "then": { "properties": { "root_identity": { "type": "string" } } }
+                    },
+                    {
+                      "if": { "properties": { "checkpoint": { "const": "pending" } } },
+                      "then": { "properties": { "root_identity": { "type": "null" } } }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "stage": {
       "type": "object",

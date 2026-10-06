@@ -52,7 +52,18 @@ impl<T: JsonlTransport> McpProtocol<T> {
             }
             let message = self
                 .transport
-                .receive(remaining)?
+                .receive(remaining)
+                .map_err(|error| match error {
+                    // The shared JSONL transport names the Codex App Server in
+                    // its errors; report the MCP server instead.
+                    AppError::Process(message) if message.contains("timed out") => {
+                        AppError::Process(format!(
+                            "the HOI4 Agent Tools MCP server did not answer {method} within {} seconds",
+                            self.timeout.as_secs()
+                        ))
+                    }
+                    other => other,
+                })?
                 .ok_or_else(|| AppError::Process(format!("MCP closed during {method}")))?;
             if message.get("id") != Some(&json!(id)) {
                 continue;
@@ -100,12 +111,15 @@ impl<T: JsonlTransport> Drop for McpProtocol<T> {
 }
 
 pub const COMPONENT_ID: &str = "mcp.hoi4_agent_tools";
+/// A first start right after installation loads native libraries that
+/// antivirus scanning may hold for many seconds.
+const MCP_HEALTH_TIMEOUT: Duration = Duration::from_secs(60);
 pub const HEALTH_RULE_ID: &str = "mcp.hoi4.health";
 const MAX_SERVER_FIELD_BYTES: usize = 256;
 const MAX_TOOL_COUNT: usize = 4096;
 const MAX_TOOL_NAME_BYTES: usize = 256;
 const MAX_PACKAGE_FILE_BYTES: u64 = 32 * 1024 * 1024;
-const MAX_PACKAGE_TREE_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_PACKAGE_TREE_BYTES: u64 = 512 * 1024 * 1024;
 
 pub(crate) struct VerifiedPackageTree {
     _temporary: tempfile::TempDir,
@@ -620,10 +634,9 @@ pub fn initialize_health(
         Some(node_directory),
         &sha256_file(&node)?,
     )?;
-    let mut protocol = McpProtocol::new(transport, Duration::from_secs(10));
+    let mut protocol = McpProtocol::new(transport, MCP_HEALTH_TIMEOUT);
     let initialized = protocol.initialize()?;
-    let evidence = validate_initialize_result(&initialized)?;
-    require_tools_capability(&initialized)?;
+    let evidence = validate_verified_initialize_result(&initialized, &target.package_version)?;
     let listing = protocol.request("tools/list", json!({}))?;
     let tool_count = validate_tools_result(&listing, &target.required_tools)?;
     Ok(HealthEvidence {
@@ -631,6 +644,20 @@ pub fn initialize_health(
         required_tools: target.required_tools.clone(),
         ..evidence
     })
+}
+
+fn validate_verified_initialize_result(
+    initialized: &Value,
+    expected_version: &str,
+) -> Result<HealthEvidence, AppError> {
+    let evidence = validate_initialize_result(initialized)?;
+    if evidence.server_version != expected_version {
+        return Err(AppError::Process(
+            "MCP server version does not match the reviewed package identity".into(),
+        ));
+    }
+    require_tools_capability(initialized)?;
+    Ok(evidence)
 }
 
 fn require_tools_capability(initialized: &Value) -> Result<(), AppError> {
@@ -811,11 +838,206 @@ fn resolved_node() -> Result<PathBuf, AppError> {
     ))
 }
 
+#[cfg(any(target_os = "windows", test))]
+const MAX_NATIVE_SCAN_ENTRIES: usize = 20_000;
+
+/// Native libraries of the installed MCP package that a running MCP client
+/// has loaded, when the reviewed setup must replace that package. The
+/// bootstrap keeps an installation whose complete tree already matches the
+/// reviewed release and otherwise removes and reinstalls it, and npm cannot
+/// replace a loaded library, so setup would otherwise fail only after the
+/// project files were applied.
+pub fn loaded_native_files_blocking_replacement(
+    target: &VerifiedMcpTarget,
+) -> Result<Vec<String>, AppError> {
+    #[cfg(target_os = "windows")]
+    {
+        let Some(appdata) = std::env::var_os("APPDATA") else {
+            return Ok(Vec::new());
+        };
+        let root = PathBuf::from(appdata)
+            .join("npm")
+            .join("node_modules")
+            .join(&target.package_name);
+        loaded_native_files_in(&root, target)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = target;
+        Ok(Vec::new())
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn installed_package_version(package_root: &Path) -> Option<String> {
+    let bytes = std::fs::read(package_root.join("package.json")).ok()?;
+    if bytes.len() > 1024 * 1024 {
+        return None;
+    }
+    let package: Value = serde_json::from_slice(&bytes).ok()?;
+    package
+        .get("version")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+/// Whether the installed package is exactly the reviewed release: its version
+/// and its complete tree identity and file count.
+#[cfg(any(target_os = "windows", test))]
+fn installed_package_matches(package_root: &Path, target: &VerifiedMcpTarget) -> bool {
+    if installed_package_version(package_root).as_deref() != Some(target.package_version.as_str()) {
+        return false;
+    }
+    read_installed_package_tree(package_root).is_ok_and(|files| {
+        package_tree_identity(&files)
+            == (
+                target.package_tree_sha256.clone(),
+                target.package_file_count,
+            )
+    })
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn loaded_native_files_in(
+    package_root: &Path,
+    target: &VerifiedMcpTarget,
+) -> Result<Vec<String>, AppError> {
+    let metadata = match std::fs::symlink_metadata(package_root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    if is_link_metadata(&metadata) || !metadata.is_dir() {
+        return Ok(Vec::new());
+    }
+    if installed_package_matches(package_root, target) {
+        return Ok(Vec::new());
+    }
+    let mut loaded = Vec::new();
+    let mut pending = vec![package_root.to_path_buf()];
+    let mut visited = 0usize;
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory)? {
+            let entry = entry?;
+            visited += 1;
+            if visited > MAX_NATIVE_SCAN_ENTRIES {
+                loaded.sort();
+                return Ok(loaded);
+            }
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            if file_type.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let native = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    extension.eq_ignore_ascii_case("node") || extension.eq_ignore_ascii_case("dll")
+                });
+            if native && is_loaded_by_another_process(&path) {
+                let relative = path.strip_prefix(package_root).unwrap_or(&path);
+                loaded.push(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    loaded.sort();
+    Ok(loaded)
+}
+
+/// A mapped image refuses write access even when every sharing mode is
+/// granted, so a sharing violation here means another process has loaded it.
+#[cfg(target_os = "windows")]
+fn is_loaded_by_another_process(path: &Path) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_ALL: u32 = 0x1 | 0x2 | 0x4;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .share_mode(FILE_SHARE_ALL)
+        .open(path)
+    {
+        Ok(_) => false,
+        Err(error) => error.raw_os_error() == Some(ERROR_SHARING_VIOLATION),
+    }
+}
+
+#[cfg(all(not(target_os = "windows"), test))]
+fn is_loaded_by_another_process(_path: &Path) -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
+
+    fn native_scan_target(version: &str, tree: &str, files: u64) -> VerifiedMcpTarget {
+        VerifiedMcpTarget {
+            target: "hoi4-agent-tools.cmd".into(),
+            package_name: "hoi4-agent-tools".into(),
+            package_version: version.into(),
+            package_integrity: "sha512-reviewed".into(),
+            package_tree_sha256: tree.into(),
+            package_file_count: files,
+            runtime_entry: "dist/bin/stdio.js".into(),
+            runtime_entry_sha256: "0".repeat(64),
+            runtime_entry_size: 1,
+            required_tools: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn loaded_native_files_block_only_a_replacement_of_a_package_that_does_not_match() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("hoi4-agent-tools");
+        let newer = native_scan_target("3.8.1", &"a".repeat(64), 1);
+        assert!(loaded_native_files_in(&root, &newer).unwrap().is_empty());
+
+        let library = root.join("node_modules/@img/sharp-win32-x64/lib");
+        std::fs::create_dir_all(&library).unwrap();
+        std::fs::write(root.join("package.json"), r#"{"version":"3.6.0"}"#).unwrap();
+        std::fs::write(library.join("libvips-42.dll"), b"image").unwrap();
+        std::fs::write(library.join("sharp.node"), b"addon").unwrap();
+        std::fs::write(library.join("notes.txt"), b"text").unwrap();
+        assert!(loaded_native_files_in(&root, &newer).unwrap().is_empty());
+
+        let (tree, count) = package_tree_identity(&read_installed_package_tree(&root).unwrap());
+        let installed = native_scan_target("3.6.0", &tree, count);
+        #[cfg(target_os = "windows")]
+        let same_version_other_tree = native_scan_target("3.6.0", &"b".repeat(64), count);
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // An exclusive handle stands in for a loader mapping: both
+            // refuse a second write handle with a sharing violation.
+            let held = std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(library.join("libvips-42.dll"))
+                .unwrap();
+            let expected = vec!["node_modules/@img/sharp-win32-x64/lib/libvips-42.dll".to_string()];
+            assert_eq!(loaded_native_files_in(&root, &newer).unwrap(), expected);
+            assert_eq!(
+                loaded_native_files_in(&root, &same_version_other_tree).unwrap(),
+                expected,
+                "a same-version tree with stale files is still replaced"
+            );
+            drop(held);
+        }
+        assert!(
+            loaded_native_files_in(&root, &installed)
+                .unwrap()
+                .is_empty(),
+            "the exact reviewed tree is kept, so nothing is replaced"
+        );
+    }
 
     struct FakeTransport {
         sent: Arc<Mutex<Vec<Value>>>,
@@ -846,7 +1068,7 @@ mod tests {
                     "id": 1,
                     "result": {
                         "protocolVersion": MCP_PROTOCOL_VERSION,
-                        "serverInfo": {"name": "hoi4-agent-tools", "version": "3.0.7"},
+                        "serverInfo": {"name": "hoi4-agent-tools", "version": "3.9.0"},
                         "capabilities": {"tools": {}}
                     }
                 }),
@@ -875,7 +1097,7 @@ mod tests {
         assert!(error.to_string().contains("capabilities"));
         let error = validate_initialize_result(&json!({
             "protocolVersion": "2024-11-05",
-            "serverInfo": {"name": "hoi4-agent-tools", "version": "3.0.7"},
+            "serverInfo": {"name": "hoi4-agent-tools", "version": "3.9.0"},
             "capabilities": {"tools": {}}
         }))
         .unwrap_err();
@@ -1001,13 +1223,40 @@ mod tests {
     fn required_tools_capability_is_not_optional() {
         let initialized = json!({
             "protocolVersion": MCP_PROTOCOL_VERSION,
-            "serverInfo": {"name": "hoi4-agent-tools", "version": "3.0.7"},
+            "serverInfo": {"name": "hoi4-agent-tools", "version": "3.9.0"},
             "capabilities": {}
         });
         assert!(require_tools_capability(&initialized)
             .unwrap_err()
             .to_string()
             .contains("required tools capability"));
+    }
+
+    #[test]
+    fn running_server_must_advertise_the_reviewed_package_version() {
+        let manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+        ))
+        .unwrap();
+        let target = manifest_target(&manifest).unwrap();
+        let mut initialized = json!({
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "serverInfo": {
+                "name": "hoi4-agent-tools",
+                "version": target.package_version.clone()
+            },
+            "capabilities": {"tools": {}}
+        });
+        let evidence =
+            validate_verified_initialize_result(&initialized, &target.package_version).unwrap();
+        assert_eq!(evidence.server_version, target.package_version);
+        initialized["serverInfo"]["version"] = json!("unreviewed-version");
+        assert!(
+            validate_verified_initialize_result(&initialized, &target.package_version)
+                .unwrap_err()
+                .to_string()
+                .contains("reviewed package identity")
+        );
     }
 
     #[test]
@@ -1018,8 +1267,16 @@ mod tests {
         .unwrap();
         let target = manifest_target(&manifest).unwrap();
         assert_eq!(target.package_name, "hoi4-agent-tools");
-        assert_eq!(target.package_version, "3.0.7");
-        for tool in ["hoi4.tech_inspect", "hoi4.tech_render", "hoi4.tech_compare"] {
+        assert_eq!(target.package_version, "3.9.0");
+        assert_eq!(target.required_tools.len(), 35);
+        for tool in [
+            "hoi4.tech_inspect",
+            "hoi4.tech_render",
+            "hoi4.tech_compare",
+            "hoi4.probability_sequence",
+            "hoi4.job_inspect",
+            "hoi4.job_cancel",
+        ] {
             assert!(target
                 .required_tools
                 .iter()

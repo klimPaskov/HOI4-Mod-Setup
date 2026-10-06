@@ -649,6 +649,14 @@ pub struct PlanOperation {
     #[serde(default)]
     pub external: bool,
     pub rollback: RollbackAction,
+    /// Identity of an external destination's parent directory, captured
+    /// through a retained handle while the plan is built, together with the
+    /// reviewed `local_sha256`. The transaction journal starts from this
+    /// identity, so backup and apply refuse a different directory at the
+    /// same path. Omitted for project destinations, for a parent that did
+    /// not exist at review, and for plans from before plan-time binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_parent_identity: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -741,6 +749,11 @@ pub struct TransactionPlanInfo {
     pub project_root_parent: Option<String>,
     #[serde(default)]
     pub project_root_leaf: Option<String>,
+    /// Stable identity captured when the project plan is reviewed. For an
+    /// existing project this identifies the project directory; for a new
+    /// project it identifies the existing parent directory.
+    #[serde(default)]
+    pub project_root_identity: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1050,6 +1063,29 @@ pub struct JournalOperation {
     pub after_exists: Option<bool>,
     #[serde(default)]
     pub after_executable: Option<bool>,
+    /// Same-directory name that holds the displaced destination while the
+    /// operation replaces or deletes it. It is durable before the namespace
+    /// change, and recovery derives and checks the expected name from the
+    /// transaction and operation IDs before using it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quarantine_leaf: Option<String>,
+    /// Observed SHA-256 of the quarantined bytes after the namespace change.
+    /// Absent while the quarantine is planned but not yet verified. A value
+    /// different from `backup_sha256` records local bytes that changed after
+    /// review and were preserved instead of replaced. When rollback moves a
+    /// surviving forward quarantine back, it records the hash of the bytes it
+    /// moved back here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quarantine_sha256: Option<String>,
+    /// Identity of an external destination's parent directory, copied from
+    /// the reviewed plan operation or, for a plan without one, bound when the
+    /// transaction first opens that parent through a retained handle.
+    /// Apply, post-install checks, finalization, and rollback reopen the
+    /// parent only when it still has this identity, and rollback stops when a
+    /// bound parent of an operation that may have changed its destination is
+    /// missing. Rollback journals copy it from their parent operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_parent_identity: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1069,6 +1105,13 @@ pub struct ProjectRootLifecycle {
     pub canonical_parent: Option<String>,
     #[serde(default)]
     pub leaf: Option<String>,
+    /// Identity of the project directory once it exists. Existing roots bind
+    /// this at review; create-leaf roots bind it immediately after creation.
+    #[serde(default)]
+    pub root_identity: Option<String>,
+    /// Identity of the reviewed parent for a create-leaf project root.
+    #[serde(default)]
+    pub parent_identity: Option<String>,
     #[serde(default = "default_root_checkpoint")]
     pub checkpoint: String,
     #[serde(default)]
@@ -1085,6 +1128,8 @@ impl Default for ProjectRootLifecycle {
             mode: ProjectRootMode::Existing,
             canonical_parent: None,
             leaf: None,
+            root_identity: None,
+            parent_identity: None,
             checkpoint: default_root_checkpoint(),
             created_by_transaction: false,
             observed_exists: true,
@@ -1095,6 +1140,28 @@ impl Default for ProjectRootLifecycle {
 
 fn default_root_checkpoint() -> String {
     "not_required".into()
+}
+
+/// Identities of the application-data directories that hold one
+/// transaction's storage. Each is captured through the retained handle that
+/// first creates or opens the directory, and every later call compares the
+/// directory it opens by path with this evidence, so a directory swapped away
+/// between calls is refused instead of followed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppDataIdentity {
+    /// The application-data root that holds `transactions/`, `backups/`, and
+    /// `staging/`.
+    pub root: String,
+    /// `transactions/<id>`: the journal, plan, checkpoint log, readiness
+    /// report, and rollback record.
+    pub transaction: String,
+    /// `backups/<id>`, bound when the backup stage creates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<String>,
+    /// `staging/<id>`, bound when the staging stage creates it. Rollback
+    /// journals have no staging directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staging: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1157,6 +1224,17 @@ pub struct TransactionJournal {
     pub previous_lock_sha256: Option<String>,
     #[serde(default)]
     pub error: Option<JournalError>,
+    /// Position of the last operation checkpoint this snapshot includes.
+    /// Checkpoint replay applies only records with a higher sequence, so the
+    /// order never depends on wall-clock time. Journals written before the
+    /// field existed omit it and replay falls back to timestamps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_sequence: Option<u64>,
+    /// Application-data directory identities bound when this transaction
+    /// created its storage. Journals written before the binding omit it and
+    /// keep path-based access to their storage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_data_identity: Option<AppDataIdentity>,
 }
 
 fn default_transaction_kind() -> String {

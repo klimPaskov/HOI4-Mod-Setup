@@ -4,7 +4,88 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
-No unreleased changes.
+## 0.4.0 - 2026-10-06
+
+- Fix Check for updates, which never reached the core with its confirmed review, and show the confirmable review on the Update screen.
+- Fix Repair, which could not plan for files with optional sections or adapted subagents and asked the user to resolve every healthy file.
+- Recognize the subagents this app installs as valid when a project is scanned again.
+- Make Claude account updates plan correctly and keep reanalysis reliable by stating the identifier, folder, and component rules to the model.
+- Stop before changing any files when a running HOI4 MCP client would block the shared HOI4 Agent Tools reinstall, and explain the shared install.
+- Commit the initial Git snapshot in batches instead of two Git processes per file, cutting several minutes from a fresh setup.
+- Give the HOI4 MCP health check time for a cold start after installation, and name the running setup check on the progress screen.
+- Bundle HOI4 Agent Tools 3.9.0, whose Codex registration lets idle subagent servers exit.
+- Add a quick start and a troubleshooting guide.
+- Make Claude the default setup assistant. **Sign in to Claude** runs your own
+  installed Claude Code's sign-in, so the app never handles Claude credentials,
+  and setup analysis uses Claude Haiku 4.5 in an isolated, tool-free Claude
+  Code turn. The Anthropic API-key route remains available as Claude API key
+  and also defaults to Haiku 4.5. Codex remains fully supported.
+- Hide the reasoning-effort control for models that have no adjustable effort.
+- Fix Codex planning failing as "temporarily unavailable" when current Codex
+  releases stream many reasoning and message deltas during one turn.
+- Import existing mods whose descriptors spread `tags` or `dependencies` over
+  several lines, repeat `replace_path`, or carry `#` comments, instead of
+  reporting the descriptor as unreadable.
+- Check skill frontmatter with a bounded parser that rejects unterminated
+  blocks, duplicate keys, and empty names or descriptions.
+- Keep local ComfyUI folders and RunPod addresses on the computer: they restore
+  portrait settings during import but are never sent to the setup assistant.
+- Flush Windows directory entries after file replacements instead of treating
+  a denied directory flush as success.
+- Stop preparing an installation as soon as the source provides a Git LFS
+  placeholder instead of a real file, with a clear explanation, instead of
+  failing late during validation.
+- Show plain next steps instead of internal error text when the installation
+  plan cannot be prepared.
+- Prepare the reviewed changes automatically when the dry run opens.
+- Keep the mod name you typed for a new mod, keep suggested tags when you
+  rename it, and let you confirm suggestions after editing them.
+- Default new mods to supported game version 1.19.*.
+- Check Codex and Claude Code signatures once per app run for unchanged
+  binaries, cutting the first account check from about a minute to seconds.
+- Download setup source files in parallel before preparing the plan.
+- Retry setup analysis once with the exact validation problem when the setup
+  assistant returns an incomplete proposal set, instead of failing the review.
+- Show readable names and short summaries for scan findings instead of raw keys
+  and JSON.
+- Collapse integration technical details by default.
+- Accept only a Claude plan sign-in for the Claude account route, parse Claude
+  replies before any redaction, keep Claude Code from updating itself during
+  setup, and discard an analysis that finishes after sign-out.
+- Treat an unfinished Codex turn as a timeout instead of retrying it, and
+  anchor macOS signature checks to Apple's Developer ID chain.
+- Fix Claude account analysis failing with an unreadable result: Claude Code
+  rejected the analysis schema's draft declaration.
+- Include invalid identifiers and unsafe paths in the one corrective analysis
+  retry.
+- Update rustls to 0.23.45 (RUSTSEC-2026-0285) and replace the yanked chacha20
+  0.10.1; update React to 19.3.0 and the Tauri CLI to 2.11.5.
+- Refresh the bundled audit snapshot from exact published Git bytes, including
+  the Python 3.13 3D compatibility files, and require the MCP server to advertise
+  the reviewed package version during health checks.
+- Fix existing-project review rejecting approved launcher descriptors, Git
+  summaries, and aggregate scan findings as invalid evidence paths.
+- Preserve bounded, redacted MCP bootstrap failure details through readiness
+  and recovery, and allow already redacted error messages to persist safely.
+- Replace the HTML-only browser smoke check with real headless wizard rendering
+  and interaction tests in CI.
+- Upgrade Vitest to 4.1.11 to remove the moderate path traversal advisory from
+  the test dependency tree.
+- Route transaction file reads and mutations through retained, no-follow
+  directory handles to prevent ancestor link swaps from redirecting them.
+- Bind reviewed plans and transaction journals to project-root identities,
+  create new roots through the reviewed parent handle, and retain ambiguous
+  roots safely after a crash before the identity checkpoint.
+- Capture project identity during existing-project scan and require it again
+  during semantic review and plan construction; version plan and journal
+  identity evidence as schema 1.1.
+- Use no-follow Windows lexical root acquisition and versioned 128-bit file IDs;
+  legacy identity-less journals remain inspection-only.
+- Bind the launcher descriptor's folder to its directory identity from the backup stage onward, and refuse to apply, verify, resume, or roll back into a different folder at the same path.
+- Verify installed files and capture rollback backups through retained directory handles, hashing each backup from the same read that copies it.
+- Bind each installation's application-data storage (its journal, plan, backups, and staged files) to the exact folders it created, and refuse to resume, roll back, discard staging, or start a new installation for the project when one of those folders was replaced or turned into a link, instead of following it. Moving the original folder back restores the normal recovery choices.
+- Record the launcher descriptor folder's identity when the installation plan is prepared, and refuse to start or resume an installation if a different folder has taken its place since review.
+- Stop rollback with a clear message, and keep it retryable, when the launcher folder of a changed launcher descriptor has been moved away, instead of reporting the descriptor as removed or restored.
 
 ## 0.3.5 - 2026-09-05
 

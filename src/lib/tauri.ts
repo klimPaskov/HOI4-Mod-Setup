@@ -1,4 +1,5 @@
-import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderProfile, AppUpdateStatus, ChatSourcesPackageResult, ChatSourcesPreview, CodexAccountStatus, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, CodingEnvironmentId, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
+import { findingDisplayValue, findingLabel } from "../findings";
+import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderProfile, AppUpdateStatus, ChatSourcesPackageResult, ChatSourcesPreview, CodexAccountStatus, CodexAnalysisConfirmationValues, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, CodingEnvironmentId, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
   id: string;
@@ -75,6 +76,10 @@ interface TauriCommandMap {
   codex_login_start: { args: { mode: "browser" | "device" }; result: CodexLoginStart };
   codex_login_wait: { args: { loginId: string }; result: CodexAccountStatus };
   codex_login_cancel: { args: { loginId: string }; result: void };
+  claude_login_start: { args: Record<string, never>; result: string };
+  claude_login_wait: { args: { loginId: string; model: string }; result: AiAccountStatus };
+  claude_login_cancel: { args: { loginId: string }; result: void };
+  claude_logout: { args: Record<string, never>; result: void };
   open_codex_login_url: { args: { url: string }; result: void };
   open_external_url: { args: { url: string }; result: void };
   codex_logout: { args: Record<string, never>; result: void };
@@ -100,7 +105,7 @@ interface TauriCommandMap {
   preview_descriptors: { args: { state: WizardState }; result: GeneratedArtifactPreview[] };
   preview_installation_conflict: { args: { planId: string; path: string }; result: ConflictPreview };
   build_installation_plan: { args: { state: WizardState }; result: InstallationPlan };
-  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; codexAnalysis?: CodexAnalysisRecord | null; addOptionalComponents?: string[]; portraitPipeline?: WizardState["portraitPipeline"]; primaryCodingEnvironment?: CodingEnvironmentId; additionalCodingEnvironments?: CodingEnvironmentId[] }; result: InstallationPlan };
+  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; analysisOverride?: CodexAnalysisRecord | null; addOptionalComponents?: string[]; portraitPipeline?: WizardState["portraitPipeline"]; primaryCodingEnvironment?: CodingEnvironmentId; additionalCodingEnvironments?: CodingEnvironmentId[]; analysisConfirmationValues?: CodexAnalysisConfirmationValues }; result: InstallationPlan };
   approve_installation: { args: { planId: string }; result: void };
   resolve_installation_conflict: { args: { planId: string; path: string; choice: string }; result: InstallationPlan };
   apply_installation: { args: { planId: string; projectRoot: string }; result: TransactionJournal };
@@ -211,6 +216,23 @@ export async function storeAiProviderCredential(provider: string, value: string)
 
 export async function removeAiProviderCredential(provider: string): Promise<boolean> {
   return (await invokeCommand("remove_ai_provider_credential", { provider })) === true;
+}
+
+export async function startClaudeLogin(): Promise<CommandResult<string>> {
+  return invokeCommandResult("claude_login_start", {});
+}
+
+export async function waitForClaudeLoginResult(loginId: string, model: string): Promise<CommandResult<AiAccountStatus>> {
+  return invokeCommandResult("claude_login_wait", { loginId, model });
+}
+
+export async function cancelClaudeLogin(loginId: string): Promise<boolean> {
+  if (!loginId.trim()) return false;
+  return (await invokeCommandResult("claude_login_cancel", { loginId })).error === undefined;
+}
+
+export async function logoutClaudeResult(): Promise<CommandResult<void>> {
+  return invokeCommandResult("claude_logout", {});
 }
 
 export async function startCodexLogin(mode: "browser" | "device"): Promise<CodexLoginStart | null> {
@@ -346,8 +368,9 @@ export async function scanProject(
       findings: [...(result.findings ?? []).map((finding) => ({
         id: finding.id,
         category: finding.category,
-        label: `${finding.origin === "provider_suggested" ? "Suggested" : finding.origin === "user_confirmed" ? "Confirmed" : "Detected"} · ${finding.key}`,
+        label: `${finding.origin === "provider_suggested" ? "Suggested" : finding.origin === "user_confirmed" ? "Confirmed" : "Detected"} · ${findingLabel(finding.key)}`,
         value: typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? "",
+        displayValue: findingDisplayValue(finding.key, typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? ""),
         evidenceExcerpt: typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? "",
         confidence: finding.confidence ?? Math.max(0, ...(finding.evidence ?? []).map((evidence) => evidence.confidence)),
         evidencePath: finding.evidence?.[0]?.path,
@@ -488,15 +511,26 @@ export async function resolveInstallationConflict(planId: string, path: string, 
   return invokeCommand("resolve_installation_conflict", { planId, path, choice });
 }
 
-export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord, addOptionalComponents: string[] = [], portraitPipeline?: WizardState["portraitPipeline"], primaryCodingEnvironment?: CodingEnvironmentId, additionalCodingEnvironments?: CodingEnvironmentId[]): Promise<InstallationPlan | null> {
-  const args: TauriCommandMap["build_maintenance_plan"]["args"] = { mode, projectRoot, codexAnalysis: codexAnalysis ?? null, addOptionalComponents };
+export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord, addOptionalComponents: string[] = [], portraitPipeline?: WizardState["portraitPipeline"], primaryCodingEnvironment?: CodingEnvironmentId, additionalCodingEnvironments?: CodingEnvironmentId[], analysisConfirmationValues?: CodexAnalysisConfirmationValues): Promise<InstallationPlan | null> {
+  const args: TauriCommandMap["build_maintenance_plan"]["args"] = { mode, projectRoot, analysisOverride: codexAnalysis ?? null, addOptionalComponents };
   if (portraitPipeline) args.portraitPipeline = portraitPipeline;
   if (primaryCodingEnvironment) args.primaryCodingEnvironment = primaryCodingEnvironment;
+  if (analysisConfirmationValues) args.analysisConfirmationValues = analysisConfirmationValues;
   // An empty array is meaningful: it explicitly deselects every additional
   // environment. Preserve the distinction between omitted (legacy caller)
   // and [] (current UI choice).
   if (additionalCodingEnvironments !== undefined) args.additionalCodingEnvironments = additionalCodingEnvironments;
   return invokeCommand("build_maintenance_plan", args);
+}
+
+export async function buildMaintenancePlanResult(...parameters: Parameters<typeof buildMaintenancePlan>): Promise<CommandResult<InstallationPlan>> {
+  const [mode, projectRoot, codexAnalysis, addOptionalComponents = [], portraitPipeline, primaryCodingEnvironment, additionalCodingEnvironments, analysisConfirmationValues] = parameters;
+  const args: TauriCommandMap["build_maintenance_plan"]["args"] = { mode, projectRoot, analysisOverride: codexAnalysis ?? null, addOptionalComponents };
+  if (portraitPipeline) args.portraitPipeline = portraitPipeline;
+  if (primaryCodingEnvironment) args.primaryCodingEnvironment = primaryCodingEnvironment;
+  if (analysisConfirmationValues) args.analysisConfirmationValues = analysisConfirmationValues;
+  if (additionalCodingEnvironments !== undefined) args.additionalCodingEnvironments = additionalCodingEnvironments;
+  return invokeCommandResult("build_maintenance_plan", args);
 }
 
 export async function rollbackInstallation(projectRoot: string, transactionId: string): Promise<TransactionJournal | null> {

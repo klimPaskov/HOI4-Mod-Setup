@@ -10,7 +10,7 @@ The inspected `.codex/config.toml` contains `hoi4_agent_tools` with command `hoi
 
 These findings drive the example manifest. They do not authorize macOS equivalents.
 
-The current source pins `hoi4-agent-tools@3.0.7` by npm SHA-512 integrity,
+The current source pins `hoi4-agent-tools@3.9.0` by npm SHA-512 integrity,
 canonical package-tree SHA-256 and file count, runtime-entry SHA-256 and size,
 and required tool names. The bootstrap and app independently verify the full
 installed package tree, so changing an imported sibling module fails before
@@ -19,20 +19,18 @@ and Node executes that copy, preventing a change between verification and
 spawn. The `.cmd` wrapper is used only to locate the current-user npm
 prefix and is never executed. Node must be a regular link-free executable with
 a valid OpenJS Foundation signature; its actual SHA-256 is captured and
-rechecked immediately at spawn. No package, command, version, or macOS route is
-invented.
+rechecked immediately at spawn. The 3.9.0 source snapshot declares 5,356
+package files and the current 35 required MCP routes. The application reads
+the exact route list from the resolved manifest; no package, command, version,
+tool, or macOS route is invented.
 
-The verified 3.0.7 package contains 4,848 files and an 18,406,400-byte native
-library. Package verification therefore allows at most 32 MiB per file while
-retaining the 256 MiB total-tree and 10,000-file bounds. npm versions that emit
-a hidden global `.package-lock.json` must retain the declared integrity there;
-when npm does not emit that optional file, exact manifest integrity plus the
-complete package-tree identity remain mandatory.
-
-Version 3.0.7 also releases detached parser, graph, and renderer memory after
-the idle cache window, preventing parallel coding-agent sessions from
-exhausting the server process while leaving the command, runtime entry, and
-23-tool readiness baseline unchanged.
+Package verification allows at most 32 MiB per file while retaining the
+512 MiB total-tree and 10,000-file bounds. npm versions that emit a hidden
+global `.package-lock.json` must retain the declared integrity there; when npm
+does not emit that optional file, exact manifest integrity plus the complete
+package-tree identity remain mandatory. Package version, tree evidence, and
+required routes change with the canonical source manifest and are not copied
+forward from an earlier release.
 
 ## MCP component fields
 
@@ -67,8 +65,8 @@ Security-sensitive root values such as `approval_policy` and `sandbox_mode` rece
    its SHA-256, and recheck that identity immediately at spawn.
 5. Send the MCP JSON-RPC initialize request with protocol version, empty client
    capabilities, and client info, followed by `notifications/initialized`.
-6. Require the exact negotiated protocol version and an advertised `tools`
-   capability.
+6. Require the exact negotiated protocol version, the reviewed package version
+   advertised by the server, and a `tools` capability.
 7. Call `tools/list` and require every source-advertised route, including all
    three Technology Tree routes.
 8. Stop cleanly.
@@ -108,6 +106,16 @@ Display only name, required state, secret state, source, and available or missin
 ## Update
 
 Compare version policy, package evidence, command, configuration, environment requirements, and live tool list. Any package-source, command, or credential change requires review.
+
+The published runtime must also be reproducible from immutable artifacts.
+Pinning the top-level npm version does not pin transitive version ranges.
+A canonical full-tree hash captured from one successful installation is not
+proof that a later clean install will produce the same bytes. Before public
+release, install the exact declared artifact into a disposable prefix and
+verify the complete tree against the manifest. Publish a bundled runtime or
+an integrity-complete pinned dependency closure when transitive resolution
+can drift; do not replace the expected hash with whichever tree a user's
+machine happens to contain, or bypass a failed check.
 
 ## Removal
 

@@ -5,7 +5,7 @@ use chrono::Utc;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -36,6 +36,9 @@ const MAX_LAUNCHER_CANDIDATES: usize = 512;
 const MAX_LAUNCHER_PARENT_ENTRIES: usize = 10_000;
 const MAX_LAUNCHER_DESCRIPTOR_BYTES: u64 = 256 * 1024;
 const MAX_GIT_HEAD_BYTES: u64 = 1024 * 1024;
+// A semantic evidence identifier, never a path to open. The real approved
+// external path remains in the launcher finding's value for user review.
+const APPROVED_LAUNCHER_EVIDENCE_PATH: &str = "@approved-launcher/descriptor.mod";
 
 const IGNORED_SCAN_DIRECTORIES: &[&str] = &[
     ".git",
@@ -603,7 +606,7 @@ where
                         "needs_review",
                         evidence(
                             "approved_external_descriptor",
-                            &external.display().to_string(),
+                            APPROVED_LAUNCHER_EVIDENCE_PATH,
                             0.5,
                             Some("Approved launcher descriptor was not found."),
                         ),
@@ -1822,7 +1825,7 @@ fn detect_descriptors(
             "accepted",
             evidence(
                 "approved_external_descriptor",
-                &external.display().to_string(),
+                APPROVED_LAUNCHER_EVIDENCE_PATH,
                 1.0,
                 None,
             ),
@@ -1837,7 +1840,7 @@ fn detect_descriptors(
                     }) => {}
             _ => conflicts.push(ScanConflict {
                 id: "conflict.launcher.malformed".into(),
-                path: external_value,
+                path: APPROVED_LAUNCHER_EVIDENCE_PATH.into(),
                 kind: "descriptor_mismatch".into(),
                 severity: "block".into(),
                 details: Some(
@@ -2021,7 +2024,7 @@ fn detect_git(
         finding_status,
         evidence(
             "git_metadata",
-            ".git/HEAD",
+            "@scan/git-summary",
             if !is_git {
                 0.8
             } else if inspection.status_probe == "targeted_complete" {
@@ -2047,7 +2050,7 @@ fn detect_git(
                 "scan.git.inspection"
             }
             .into(),
-            path: ".git".into(),
+            path: "@scan/git-summary".into(),
             kind: "other".into(),
             severity: "warn".into(),
             details: Some(
@@ -2059,7 +2062,7 @@ fn detect_git(
     if git_is_link {
         conflicts.push(ScanConflict {
             id: "scan.git.link".into(),
-            path: ".git".into(),
+            path: "@scan/git-summary".into(),
             kind: "other".into(),
             severity: "block".into(),
             details: Some("The .git entry is a link; Git metadata was not followed.".into()),
@@ -2067,7 +2070,7 @@ fn detect_git(
     } else if head_is_link {
         conflicts.push(ScanConflict {
             id: "scan.git.head_link".into(),
-            path: ".git/HEAD".into(),
+            path: "@scan/git-summary".into(),
             kind: "other".into(),
             severity: "block".into(),
             details: Some("Git HEAD is a link; metadata was not followed.".into()),
@@ -2075,7 +2078,7 @@ fn detect_git(
     } else if head_read_error {
         conflicts.push(ScanConflict {
             id: "scan.git.head_read".into(),
-            path: ".git/HEAD".into(),
+            path: "@scan/git-summary".into(),
             kind: "other".into(),
             severity: "warn".into(),
             details: Some("Git HEAD could not be read as bounded UTF-8 text.".into()),
@@ -2086,7 +2089,7 @@ fn detect_git(
     {
         conflicts.push(ScanConflict {
             id: "conflict.git.worktree".into(),
-            path: ".git".into(),
+            path: "@scan/git-summary".into(),
             kind: "other".into(),
             severity: "warn".into(),
             details: Some(
@@ -2137,13 +2140,7 @@ fn detect_agentic_files(
         .collect();
     let malformed_skills = skill_files
         .iter()
-        .filter(|file| {
-            let text = String::from_utf8_lossy(&file.bytes);
-            let normalized = text.replace("\r\n", "\n");
-            !(normalized.starts_with("---\n")
-                && normalized.contains("\nname:")
-                && normalized.contains("\ndescription:"))
-        })
+        .filter(|file| !skill_frontmatter_is_valid(&String::from_utf8_lossy(&file.bytes)))
         .map(|file| file.relative.clone())
         .take(MAX_MALFORMED_AGENTIC_SAMPLES + 1)
         .collect::<Vec<_>>();
@@ -2161,10 +2158,16 @@ fn detect_agentic_files(
             let Ok(value) = text.parse::<toml::Value>() else {
                 return true;
             };
-            value
-                .get("fork_context")
-                .and_then(toml::Value::as_bool)
-                .unwrap_or(true)
+            // Mirror the installer: a subagent either declares a top-level
+            // `fork_context = false` or requires it in its parsed developer
+            // instructions. A comment alone never counts.
+            match value.get("fork_context").and_then(toml::Value::as_bool) {
+                Some(fork_context) => fork_context,
+                None => !value
+                    .get("developer_instructions")
+                    .and_then(toml::Value::as_str)
+                    .is_some_and(|instructions| instructions.contains("fork_context=false")),
+            }
         })
         .map(|file| file.relative.clone())
         .take(MAX_MALFORMED_AGENTIC_SAMPLES + 1)
@@ -2429,9 +2432,9 @@ fn detect_coding_environments(
             "cursor" => ".cursor/agent-map.md",
             "qoder" => ".qoder/agent-map.md",
             "opencode" => "opencode.json",
-            _ => ".",
+            _ => "@scan/coding-environments",
         })
-        .unwrap_or(".");
+        .unwrap_or("@scan/coding-environments");
     findings.push(finding(
         "coding.environments",
         "coding_environment",
@@ -2513,7 +2516,7 @@ fn detect_absolute_paths(evidence_state: &ScanEvidenceState, findings: &mut Vec<
         },
         evidence(
             "absolute_path_detector",
-            ".",
+            "@scan/absolute-paths",
             if matches.is_empty() { 1.0 } else { 0.9 },
             Some("Only paths are reported; matching content is not copied into evidence."),
         ),
@@ -2801,10 +2804,6 @@ fn detect_managed_installation(
             "portrait_workflow_commit": portrait_pipeline.map(|portrait| portrait.workflow_commit.clone()),
             "portrait_preferred_workflow": portrait_pipeline.map(|portrait| portrait.preferred_workflow.clone()),
             "portrait_mcp_registered": portrait_pipeline.is_some_and(|portrait| portrait.mcp_registered),
-            "portrait_local_root": portrait_pipeline.map(|portrait| portrait.local_comfyui_root.clone()),
-            "portrait_local_server_url": portrait_pipeline.map(|portrait| portrait.local_server_url.clone()),
-            "portrait_runpod_url": portrait_pipeline.map(|portrait| portrait.runpod_url.clone()),
-            "portrait_runpod_workspace": portrait_pipeline.map(|portrait| portrait.runpod_workspace.clone()),
         }),
         "accepted",
         evidence(
@@ -2815,6 +2814,104 @@ fn detect_managed_installation(
         ),
         Some("Use the installed setup actions to repair files or add an optional workflow."),
     ));
+    // Machine-local portrait routes restore the settings UI only. They live in
+    // a separate local-only finding that the approval boundary refuses to
+    // pass to a setup assistant.
+    if let Some(portrait) = portrait_pipeline {
+        findings.push(finding(
+            LOCAL_ONLY_PORTRAIT_ROUTES_FINDING,
+            "installation",
+            "portrait_routes",
+            json!({
+                "local_root": portrait.local_comfyui_root,
+                "local_server_url": portrait.local_server_url,
+                "runpod_url": portrait.runpod_url,
+                "runpod_workspace": portrait.runpod_workspace,
+            }),
+            "accepted",
+            evidence(
+                "managed_installation_detector",
+                LOCK_RELATIVE,
+                1.0,
+                Some("Local portrait routes are kept on this computer and are not sent for analysis."),
+            ),
+            None,
+        ));
+    }
+}
+
+/// Finding ID for machine-local portrait routes. It is never approved as
+/// setup-assistant evidence.
+pub const LOCAL_ONLY_PORTRAIT_ROUTES_FINDING: &str = "installation.portrait_routes";
+
+/// Bounded skill frontmatter check. The file must open with a `---` line and
+/// close the block with another `---` line. Inside it, top-level `key: value`
+/// lines (plain or quoted keys) must define exactly one non-empty `name` and
+/// one non-empty `description`; a block scalar (`>` or `|`) counts as
+/// non-empty when an indented line follows. Duplicate top-level keys and an
+/// unterminated block are invalid. This is not a full YAML parser.
+fn skill_frontmatter_is_valid(text: &str) -> bool {
+    const MAX_FRONTMATTER_LINES: usize = 200;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut lines = text.lines().map(|line| line.trim_end_matches('\r'));
+    if lines.next() != Some("---") {
+        return false;
+    }
+    let mut keys = BTreeSet::new();
+    let mut name_present = false;
+    let mut description_present = false;
+    let mut pending_block: Option<&str> = None;
+    for (index, line) in lines.enumerate() {
+        if index >= MAX_FRONTMATTER_LINES {
+            return false;
+        }
+        if line == "---" {
+            return pending_block.is_none() && name_present && description_present;
+        }
+        let indented = line.starts_with(' ') || line.starts_with('\t');
+        if let Some(key) = pending_block.take() {
+            if indented && !line.trim().is_empty() {
+                match key {
+                    "name" => name_present = true,
+                    "description" => description_present = true,
+                    _ => {}
+                }
+                continue;
+            }
+        }
+        if indented || line.trim().is_empty() || line.trim_start().starts_with('#') {
+            continue;
+        }
+        let Some((raw_key, raw_value)) = line.split_once(':') else {
+            continue;
+        };
+        let key = raw_key
+            .trim()
+            .trim_matches(|character| character == '"' || character == '\'');
+        if key.is_empty() || !keys.insert(key.to_owned()) {
+            return false;
+        }
+        let value = raw_value.trim();
+        let scalar = value.trim_matches(|character| character == '"' || character == '\'');
+        let present = if matches!(value.chars().next(), Some('>') | Some('|')) {
+            pending_block = Some(if key == "name" {
+                "name"
+            } else if key == "description" {
+                "description"
+            } else {
+                "other"
+            });
+            false
+        } else {
+            !scalar.trim().is_empty()
+        };
+        match key {
+            "name" => name_present = present,
+            "description" => description_present = present,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn relative_path(root: &Path, path: &Path) -> String {
@@ -3163,6 +3260,32 @@ mod tests {
                 .all(|evidence| evidence.excerpt_sha256.as_deref() == Some(expected.as_str())));
         }
         assert!(!result.partial);
+    }
+
+    #[test]
+    fn installed_subagents_that_require_fork_context_false_in_instructions_are_valid() {
+        let directory = tempdir().unwrap();
+        fs::create_dir_all(directory.path().join(".codex/agents")).unwrap();
+        fs::write(
+            directory.path().join(".codex/agents/explorer.toml"),
+            "name = 'explorer'\ndeveloper_instructions = '''\nExplore.\n\nThe parent must spawn this subagent with fork_context=false.'''\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join(".codex/agents/inherits.toml"),
+            "name = 'inherits'\nfork_context = true\ndeveloper_instructions = 'fork_context=false'\n",
+        )
+        .unwrap();
+
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+        let blocked = |path: &str| {
+            result.conflicts.iter().any(|conflict| {
+                conflict.id.starts_with("conflict.subagent.") && conflict.path == path
+            })
+        };
+
+        assert!(!blocked(".codex/agents/explorer.toml"));
+        assert!(blocked(".codex/agents/inherits.toml"));
     }
 
     #[test]
@@ -3734,6 +3857,29 @@ mod tests {
     }
 
     #[test]
+    fn skill_frontmatter_check_accepts_valid_variants_and_rejects_malformed_blocks() {
+        for valid in [
+            "---\nname: example\ndescription: Example skill.\n---\nBody",
+            "\u{feff}---\r\nname: example\r\ndescription: Example skill.\r\n---\r\n",
+            "---\n\"description\": 'Quoted keys work.'\n\"name\": \"example\"\n---\n",
+            "---\nname: example\ndescription: >\n  Folded text\n  continues.\nmetadata:\n  type: user\n---\n",
+        ] {
+            assert!(skill_frontmatter_is_valid(valid), "rejected {valid:?}");
+        }
+        for invalid in [
+            "name: example\ndescription: Missing opening delimiter.\n---\n",
+            "---\nname: example\ndescription: Unterminated block.\n",
+            "---\nname: example\nname: again\ndescription: Duplicate keys.\n---\n",
+            "---\nname: \"\"\ndescription: Empty name.\n---\n",
+            "---\nname: example\ndescription: >\n---\n",
+            "---\nname: example\n---\ndescription: Outside the block.\n",
+            "---\n  name: nested\n  description: Not top-level.\n---\n",
+        ] {
+            assert!(!skill_frontmatter_is_valid(invalid), "accepted {invalid:?}");
+        }
+    }
+
+    #[test]
     fn crlf_skill_frontmatter_is_valid() {
         let observations = vec![FileObservation {
             relative: ".agents/skills/example/SKILL.md".into(),
@@ -4236,6 +4382,20 @@ mod tests {
         assert_eq!(managed.value["present"], true);
         assert_eq!(managed.value["valid"], true);
         assert_eq!(managed.value["workflow_super_events_state"], "not_selected");
+        // Machine-local portrait routes never appear in the model-visible
+        // managed summary; they are only in the local-only finding.
+        let managed_text = managed.value.to_string();
+        assert!(!managed_text.contains("runpod_workspace"));
+        assert!(!managed_text.contains("local_root"));
+        let routes = result
+            .findings
+            .iter()
+            .find(|finding| finding.id == LOCAL_ONLY_PORTRAIT_ROUTES_FINDING)
+            .expect("local-only portrait route finding");
+        assert_eq!(
+            routes.value["runpod_workspace"],
+            "/workspace/comfyui-hoi4-portraits"
+        );
         let coding = result
             .findings
             .iter()

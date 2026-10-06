@@ -385,6 +385,33 @@ impl HttpSourceClient {
         Ok(bytes)
     }
 
+    /// Warm the immutable, hash-addressed cache for many declared files with a
+    /// small fixed number of parallel HTTPS fetches. Every file is still
+    /// verified by size and SHA-256 before it is cached. Errors are ignored
+    /// here: the caller's ordered fetch repeats any miss and reports it with
+    /// full context. Files are de-duplicated by hash so two workers never
+    /// write the same cache entry.
+    pub fn prefetch_verified_files(&self, revision: &str, files: &[(String, String, Option<u64>)]) {
+        const WORKERS: usize = 8;
+        let mut seen = std::collections::BTreeSet::new();
+        let unique = files
+            .iter()
+            .filter(|(_, sha256, _)| seen.insert(sha256.clone()))
+            .collect::<Vec<_>>();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..WORKERS.min(unique.len()) {
+                scope.spawn(|| loop {
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((path, sha256, size)) = unique.get(index) else {
+                        break;
+                    };
+                    let _ = self.fetch_verified_file(revision, path, sha256, *size);
+                });
+            }
+        });
+    }
+
     /// Fetch a manifest-declared blob using an immutable, hash-addressed cache.
     /// Cache entries are accepted only after both the declared size and SHA-256
     /// match; a corrupted entry is ignored and replaced by a fresh HTTPS fetch.
@@ -968,6 +995,23 @@ pub fn validate_manifest(
                 "duplicate component id: {}",
                 component.id
             )));
+        }
+        if let Some(engine) = component.source.template_engine.as_deref() {
+            let supported_engine = match (component.id.as_str(), engine) {
+                ("core.agents" | "core.claude.instructions", "agents_adaptation_v1") => {
+                    component.source.kind == SourceKind::File
+                }
+                ("mcp.hoi4_agent_tools", "mcp_config_v1") => {
+                    component.source.kind == SourceKind::Generated
+                }
+                _ => false,
+            };
+            if !supported_engine {
+                return Err(AppError::Source(format!(
+                    "component {} declares an unsupported template engine: {engine}",
+                    component.id
+                )));
+            }
         }
         if let Some(environment) = component.coding_environment.as_deref() {
             if !crate::coding_environment::is_supported(environment) {
@@ -1681,6 +1725,8 @@ fn add_source_file(
     Ok(())
 }
 
+const GIT_LFS_POINTER_PREFIX: &[u8] = b"version https://git-lfs.github.com/spec/v1";
+
 pub fn verify_download(
     selection: &SelectedSourceFile,
     bytes: &[u8],
@@ -1708,6 +1754,14 @@ pub fn verify_download(
                 selection.source_path
             )));
         }
+    }
+    // A committed Git LFS pointer hashes correctly against Git-blob evidence
+    // but is a placeholder, not the declared file; reject it before staging.
+    if bytes.starts_with(GIT_LFS_POINTER_PREFIX) {
+        return Err(AppError::Source(format!(
+            "source file is an unresolved Git LFS pointer: {}",
+            selection.source_path
+        )));
     }
     Ok(DownloadedFile {
         operation_id: String::new(),
@@ -1849,6 +1903,15 @@ mod tests {
             .components
             .iter()
             .any(|component| component == "docs.mcp_integration"));
+        assert!(core_profile
+            .components
+            .iter()
+            .any(|component| component == "docs.runtimes"));
+        assert!(manifest.components.iter().any(|component| {
+            component.id == "core.claude.instructions"
+                && component.source.template_engine.as_deref() == Some("agents_adaptation_v1")
+                && component.destination.path == "CLAUDE.md"
+        }));
         assert!(manifest
             .components
             .iter()
@@ -1912,6 +1975,21 @@ mod tests {
             .dependencies
             .iter()
             .any(|dependency| dependency == "mcp.hoi4_agent_tools.bootstrap"));
+        let mcp_health = mcp
+            .validation
+            .iter()
+            .find(|rule| rule.id == "mcp.hoi4.health")
+            .expect("current MCP health declaration must be present");
+        assert_eq!(
+            mcp_health.parameters["package_version"].as_str(),
+            Some("3.9.0")
+        );
+        assert_eq!(
+            mcp_health.parameters["required_tools"]
+                .as_array()
+                .map(Vec::len),
+            Some(35)
+        );
         let workflow_3d = manifest
             .components
             .iter()
@@ -1953,6 +2031,22 @@ mod tests {
             .components
             .iter()
             .all(|component| component.id != "workflow.lora_comfyui_interest"));
+    }
+
+    #[test]
+    fn unknown_component_template_engine_fails_closed() {
+        let mut manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+        ))
+        .unwrap();
+        let component = manifest
+            .components
+            .iter_mut()
+            .find(|component| component.id == "core.claude.instructions")
+            .unwrap();
+        component.source.template_engine = Some("future_unreviewed_engine".into());
+        let error = validate_manifest(&manifest, None).unwrap_err();
+        assert!(error.to_string().contains("unsupported template engine"));
     }
 
     #[test]
@@ -2411,6 +2505,32 @@ mod tests {
     }
 
     #[test]
+    fn verified_download_rejects_an_unresolved_git_lfs_pointer() {
+        let bytes: &[u8] = b"version https://git-lfs.github.com/spec/v1\noid sha256:0c87ae522997ef55ebb907eee55a25391e8e5dcdc52a75dec09ad52e73abbe66\nsize 11604\n";
+        let selection = SelectedSourceFile {
+            component_id: "wiki.snapshot".into(),
+            source_path: "paradox_wiki/media/image.jpg".into(),
+            destination: "paradox_wiki/media/image.jpg".into(),
+            ownership: Ownership::Managed,
+            expected_sha256: Some(sha256_bytes(bytes)),
+            expected_size: Some(bytes.len() as u64),
+            executable: false,
+            platform: ManifestPlatform::All,
+        };
+
+        let error = verify_download(
+            &selection,
+            bytes,
+            "599497ea2f93612d9094461c6fde114fc87a5c0f",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("unresolved Git LFS pointer"));
+        assert!(error.contains("paradox_wiki/media/image.jpg"));
+    }
+
+    #[test]
     fn verified_download_rejects_wrong_size() {
         let bytes = b"incoming";
         let selection = SelectedSourceFile {
@@ -2455,6 +2575,42 @@ mod tests {
 
         assert_eq!(returned, trusted);
         assert_eq!(fs::read(&cache_path).unwrap(), replacement);
+    }
+
+    #[test]
+    fn prefetch_reuses_verified_cache_entries_and_tolerates_duplicates() {
+        let root = tempfile::tempdir().unwrap();
+        let client = HttpSourceClient::with_cache_root(root.path().to_path_buf()).unwrap();
+        let revision = "599497ea2f93612d9094461c6fde114fc87a5c0f";
+        let mut files = Vec::new();
+        for index in 0..20 {
+            let bytes = format!("cached file {index}").into_bytes();
+            let sha256 = sha256_bytes(&bytes);
+            let cache_path = client.cache_root.join("blobs").join(revision).join(&sha256);
+            fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
+            fs::write(&cache_path, &bytes).unwrap();
+            files.push((
+                format!("core/{index}.txt"),
+                sha256.clone(),
+                Some(bytes.len() as u64),
+            ));
+            files.push((
+                format!("copy/{index}.txt"),
+                sha256,
+                Some(bytes.len() as u64),
+            ));
+        }
+
+        client.prefetch_verified_files(revision, &files);
+
+        for (path, sha256, size) in &files {
+            let bytes = client
+                .fetch_verified_file_with_download(revision, path, sha256, *size, |_, _, _| {
+                    panic!("prefetched files must be served from the verified cache")
+                })
+                .unwrap();
+            assert_eq!(sha256_bytes(&bytes), *sha256);
+        }
     }
 
     #[test]
