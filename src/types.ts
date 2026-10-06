@@ -663,6 +663,8 @@ export interface WizardState {
   transaction?: TransactionJournal;
   plan?: InstallationPlan;
   maintenanceMode?: "update" | "repair" | "reinstall" | "remove";
+  /** Set after a managed removal commits, in place of a readiness report. */
+  removalSummary?: { removed: number; kept: number };
   maintenanceCodexAnalysisRecord?: CodexAnalysisRecord;
   maintenanceEvidenceReady?: boolean;
   existingInstallationDetected?: boolean;

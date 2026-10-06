@@ -795,12 +795,12 @@ export default function App() {
   }, [installationPending, activeTransactionId, state.identity.projectRoot, state.plan?.plan_id]);
 
   useEffect(() => {
-    if (state.screen === "ready" && !state.readiness) {
+    if (state.screen === "ready" && !state.readiness && !state.removalSummary) {
       void evaluateReadiness(state.identity.projectRoot || "<selected project>", state.identity.projectId, state.meshSelected ? state.meshKeyStatus === "verified" ? "ready" : "incomplete" : "not_selected", state.portraitPipeline).then((result) => {
         if (result) setState((current) => ({ ...current, readiness: result }));
       });
     }
-  }, [state.screen, state.readiness, state.identity.projectId, state.identity.projectRoot, state.meshSelected, state.meshKeyStatus, state.portraitPipeline]);
+  }, [state.screen, state.readiness, state.removalSummary, state.identity.projectId, state.identity.projectRoot, state.meshSelected, state.meshKeyStatus, state.portraitPipeline]);
 
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
@@ -1276,7 +1276,14 @@ export default function App() {
         return;
       }
       const maintenance = state.maintenanceMode !== undefined;
+      const removalSummary = state.maintenanceMode === "remove"
+        ? {
+          removed: plan.operations.filter((operation) => operation.action === "delete_managed").length,
+          kept: plan.operations.filter((operation) => operation.action === "skip").length,
+        }
+        : undefined;
       update({
+        removalSummary,
         plan: maintenance ? undefined : plan,
         maintenanceMode: maintenance ? undefined : state.maintenanceMode,
         maintenanceCodexAnalysisRecord: maintenance ? undefined : state.maintenanceCodexAnalysisRecord,
@@ -1361,7 +1368,7 @@ export default function App() {
       update({ transactionError: planResult.error ? `The maintenance plan is unavailable: ${planResult.error}` : "The maintenance plan is unavailable. Nothing was changed." });
       return;
     }
-    update({ plan, maintenanceMode: mode, transactionError: undefined, screen: maintenanceReviewScreen(plan) });
+    update({ plan, maintenanceMode: mode, removalSummary: undefined, transactionError: undefined, screen: maintenanceReviewScreen(plan) });
     } finally {
       setMaintenancePending(false);
     }
@@ -1551,7 +1558,7 @@ export default function App() {
       return;
     }
     if (state.screen === "install" && state.installProgress >= 100) {
-      update({ screen: "ready" });
+      update({ screen: "ready", removalSummary: undefined });
       return;
     }
     if (state.screen === "ready") {
@@ -1645,7 +1652,13 @@ export default function App() {
   const recoveryStage = state.screen === "recovery" && state.transaction
     ? recoveryStagePosition(state.transaction)
     : undefined;
-  const copy = state.screen === "ready" && state.finished
+  const copy = state.screen === "ready" && state.removalSummary
+    ? {
+      title: "Components removed",
+      supporting: `${state.identity.displayName || "The project"} no longer has the app-managed setup.`,
+      status: { label: "Removed", tone: "pass" as const },
+    }
+    : state.screen === "ready" && state.finished
     ? {
       title: "Congratulations, you are all set!",
       supporting: `${state.identity.displayName || "Your mod"} is ready for agentic development.`,
@@ -1753,7 +1766,7 @@ function ScreenFrame({ screen, copy, state, canAdvance, pending, chatSourcesPend
     <footer className="footer-bar">
       <span className="footer-note" role={state.transactionError ? "alert" : undefined}>{footerNote(screen, state)}</span>
       <div className="footer-actions">
-        {screen === "ready" && !state.finished && <button className="button secondary" onClick={() => onMaintenance("update")}>Update and repair</button>}
+        {screen === "ready" && !state.finished && !state.removalSummary && <button className="button secondary" onClick={() => onMaintenance("update")}>Update and repair</button>}
         {screen === "dry-run" && (!state.plan || unresolvedConflicts) && <button className="button secondary" onClick={() => void onPrepareConflicts()} disabled={preparingPlan} aria-busy={preparingPlan || undefined}>{preparingPlan ? "Preparing changes…" : state.plan ? "Resolve conflicts" : "Prepare changes"}</button>}
         {showBack && <button className="button secondary" onClick={onBack}>Back</button>}
         {displayedPrimaryLabel && <button className="button primary" onClick={onNext} disabled={!canAdvance} aria-busy={pending || undefined}>{displayedPrimaryLabel}</button>}
@@ -1833,7 +1846,7 @@ function footerNote(screen: ScreenId, state: WizardState): string {
     const active = state.transaction?.stages.find((stage) => stage.status === "active");
     return active && INSTALL_CHECK_PROGRESS[active.id] ? `${installStageLabel(active.id)}…` : "Installing selected files…";
   }
-  if (screen === "ready") return state.transactionError ?? "Readiness checks saved.";
+  if (screen === "ready") return state.transactionError ?? (state.removalSummary ? "Managed setup files were removed." : "Readiness checks saved.");
   if (screen === "update") return state.transactionError ?? "User-modified files are never overwritten silently.";
   if (screen === "conflict") return "A preview and validation run follow the selected resolution.";
   if (screen === "recovery") return "Your original files stay in the verified backup until recovery finishes.";
@@ -3292,6 +3305,13 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
   const [mcpCheck, setMcpCheck] = useState<WorkflowHealthResult>();
   const [openMessage, setOpenMessage] = useState<string>();
   const [openPending, setOpenPending] = useState(false);
+  if (state.removalSummary) {
+    const { removed, kept } = state.removalSummary;
+    return <section className="panel completion-panel" role="status">
+      <span className="ready-icon" aria-hidden="true">✓</span>
+      <div><h2>Setup removed</h2><p>{`Removed ${removed.toLocaleString()} unchanged setup ${removed === 1 ? "file" : "files"} and the folders they emptied.`}</p>{kept > 0 && <p className="muted">{`Kept ${kept.toLocaleString()} ${kept === 1 ? "file" : "files"} you changed. Review ${kept === 1 ? "it" : "them"} before deleting.`}</p>}<p className="muted">Your own mod files were not touched.</p></div>
+    </section>;
+  }
   if (state.finished) {
     return <section className="panel completion-panel" role="status">
       <span className="ready-icon" aria-hidden="true">✓</span>
