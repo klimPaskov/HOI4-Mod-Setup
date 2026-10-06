@@ -5593,6 +5593,26 @@ fn build_lock(
                             );
                         }
                     }
+                    // A kept or skipped file in a maintenance plan joins the
+                    // plan's revision: readiness requires one revision across
+                    // the lock, and the installed hash still records the
+                    // bytes the user kept. A file the new release no longer
+                    // ships is preserved so maintenance never removes it.
+                    if plan.maintenance_mode.is_some() && !removing {
+                        if let Some(existing) = files.get_mut(&key) {
+                            if existing.source_revision != plan.source.resolved_revision {
+                                existing.source_revision = plan.source.resolved_revision.clone();
+                                match (&operation.source_path, &operation.source_sha256) {
+                                    (Some(source_path), Some(source_sha256)) => {
+                                        existing.source_path = source_path.clone();
+                                        existing.source_sha256 = source_sha256.clone();
+                                        existing.source_size = operation.source_size;
+                                    }
+                                    _ => existing.preserved_local = true,
+                                }
+                            }
+                        }
+                    }
                 } else if operation.local_state != LocalState::Absent {
                     // A first install can intentionally keep a user-owned
                     // file (most importantly an existing thumbnail). It must
@@ -8920,6 +8940,85 @@ mod tests {
                 && operation.action == OperationAction::DeleteManaged
                 && operation.resolution.as_deref() == Some("obsolete_managed_remove")
         }));
+    }
+
+    #[test]
+    fn an_update_that_keeps_a_file_records_it_at_the_new_revision() {
+        let project = tempdir().unwrap();
+        fs::write(project.path().join(".gitignore"), b"kept by the user\n").unwrap();
+        let kept_sha256 = sha256_bytes(b"kept by the user\n");
+        let mut predecessor: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let old_revision = "b".repeat(40);
+        predecessor.files = vec![LockedFile {
+            path: ".gitignore".into(),
+            location_scope: Some("project".into()),
+            component_id: "core.agents".into(),
+            source_path: ".gitignore".into(),
+            source_revision: old_revision.clone(),
+            source_sha256: "c".repeat(64),
+            source_size: Some(1),
+            base_sha256: None,
+            installed_sha256: kept_sha256.clone(),
+            installed_size: Some(17),
+            ownership: Ownership::Merged,
+            preserved_local: false,
+            external: false,
+            generated_content: None,
+            generated_bytes: None,
+            executable: false,
+            platform: Some(ManifestPlatform::All),
+        }];
+
+        let mut plan = plan();
+        plan.maintenance_mode = Some("update".into());
+        assert_ne!(plan.source.resolved_revision, old_revision);
+        plan.operations = vec![PlanOperation {
+            id: "update-keep".into(),
+            component_id: "core.agents".into(),
+            ownership: Some(Ownership::Merged),
+            location_scope: Some("project".into()),
+            action: OperationAction::Skip,
+            source_path: Some(".gitignore".into()),
+            destination: ".gitignore".into(),
+            source_sha256: Some("d".repeat(64)),
+            source_size: Some(2),
+            platform: Some(ManifestPlatform::All),
+            executable: false,
+            result_sha256: None,
+            base_sha256: Some(kept_sha256.clone()),
+            local_sha256: Some(kept_sha256.clone()),
+            local_state: LocalState::Unmodified,
+            resolution: Some("merged_base_required".into()),
+            external: false,
+            rollback: RollbackAction::RestoreBackup,
+            external_parent_identity: None,
+        }];
+        let journal = new_journal(&plan, &plan.project_id, project.path());
+        let project_directory = RootedDir::open_read(project.path()).unwrap();
+        let lock = build_lock(
+            &plan,
+            &[],
+            &journal,
+            Some(&predecessor),
+            project.path(),
+            &project_directory,
+        )
+        .unwrap();
+
+        let kept = lock
+            .files
+            .iter()
+            .find(|file| file.path == ".gitignore")
+            .unwrap();
+        assert_eq!(kept.source_revision, plan.source.resolved_revision);
+        assert_eq!(kept.source_sha256, "d".repeat(64));
+        assert_eq!(
+            kept.installed_sha256, kept_sha256,
+            "the kept bytes stay recorded"
+        );
     }
 
     #[test]
