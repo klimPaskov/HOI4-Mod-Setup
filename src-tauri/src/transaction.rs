@@ -1669,7 +1669,10 @@ pub fn run_transaction(
         project_directory.verify_bound_to_path()?;
         post_install_checks(&project_root, project_directory, plan, &mut journal, &store)?;
         project_directory.verify_bound_to_path()?;
-        if let Some(runner) = options.post_install_action_runner {
+        // A removal sets nothing up: it only deletes managed files, and any
+        // remaining component keeps the state it already had.
+        let removal = plan.maintenance_mode.as_deref() == Some("remove");
+        if let Some(runner) = options.post_install_action_runner.filter(|_| !removal) {
             let components = [crate::mcp::COMPONENT_ID, "workflow.3d"]
                 .into_iter()
                 .filter(|component_id| {
@@ -10686,6 +10689,56 @@ mod tests {
         assert!(!removal_lock
             .optional_workflows
             .contains_key("workflow.lora_comfyui_interest"));
+        assert!(!project.path().join("AGENTS.md").exists());
+    }
+
+    #[test]
+    fn managed_removal_does_not_rerun_post_install_actions_for_kept_components() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let initial_plan = ready_plan(project.path());
+        let initial_prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        let (_, installed_lock) = run_test_transaction(
+            project.path(),
+            &initial_plan,
+            &initial_prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let mut removal_plan = ready_plan(project.path());
+        removal_plan.maintenance_mode = Some("remove".into());
+        removal_plan.plan_id = Uuid::new_v4();
+        removal_plan.codex_analysis = None;
+        removal_plan.generated_artifacts.clear();
+        removal_plan.external_actions.clear();
+        removal_plan.git_setup = None;
+        removal_plan
+            .optional_workflows
+            .insert(crate::mcp::COMPONENT_ID.into(), "ready".into());
+        removal_plan.operations =
+            managed_removal_operations(&installed_lock, project.path()).unwrap();
+
+        let (_, removal_lock) = run_test_transaction(
+            project.path(),
+            &removal_plan,
+            &[],
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                post_install_action_runner: Some(failing_three_d_action),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(removal_lock.files.is_empty());
         assert!(!project.path().join("AGENTS.md").exists());
     }
 
