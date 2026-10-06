@@ -639,7 +639,7 @@ fn ensure_mcp_package_replaceable(plan: &InstallationPlan) -> Result<(), AppErro
     )))
 }
 
-const MCP_IN_USE_MESSAGE: &str = "HOI4 Agent Tools needs an update, but an app connected to the HOI4 MCP is using it. Close Codex, Claude Code, Cursor, or any other app using the HOI4 MCP, then prepare the changes again.";
+const MCP_IN_USE_MESSAGE: &str = "This setup needs to reinstall HOI4 Agent Tools at the version it uses, but an app connected to the HOI4 MCP is using the installed copy. Close Codex, Claude Code, Cursor, or any other app using the HOI4 MCP, then prepare the changes again. For an older project, Check for updates moves it to the current version instead.";
 
 fn planning_command_error(error: AppError) -> String {
     match error {

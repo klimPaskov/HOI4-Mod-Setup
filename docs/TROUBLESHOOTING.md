@@ -63,11 +63,11 @@ Your draft is kept, and recovery remains available while planning is paused.
 
 ## Another client is using HOI4 Agent Tools
 
-> HOI4 Agent Tools needs an update, but an app connected to the HOI4 MCP is using it. Close Codex, Claude Code, Cursor, or any other app using the HOI4 MCP, then prepare the changes again. Nothing was changed.
+> This setup needs to reinstall HOI4 Agent Tools at the version it uses, but an app connected to the HOI4 MCP is using the installed copy. Close Codex, Claude Code, Cursor, or any other app using the HOI4 MCP, then prepare the changes again. For an older project, Check for updates moves it to the current version instead. Nothing was changed.
 
-**Cause:** A connected MCP client is holding files that the HOI4 Agent Tools update needs to replace.
+**Cause:** HOI4 Agent Tools is installed once for your Windows account and shared by every mod. The setup you are preparing uses a different version from the installed copy, and a connected MCP client is holding files that must be replaced.
 
-**Fix:** Close Codex, Claude Code, Cursor, and any other client connected to the HOI4 MCP, then choose **Prepare changes** again.
+**Fix:** Close Codex, Claude Code, Cursor, and any other client connected to the HOI4 MCP, then choose **Prepare changes** again. If you were repairing an older project while a newer HOI4 Agent Tools is installed, choose **Check for updates** instead: it moves the project to the current version rather than reinstalling the older one.
 
 ## The setup source contains a placeholder
 
