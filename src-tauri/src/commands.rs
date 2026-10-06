@@ -641,6 +641,32 @@ fn ensure_mcp_package_replaceable(plan: &InstallationPlan) -> Result<(), AppErro
 
 const MCP_IN_USE_MESSAGE: &str = "This setup needs to reinstall HOI4 Agent Tools at the version it uses, but an app connected to the HOI4 MCP is using the installed copy. Close Codex, Claude Code, Cursor, or any other app using the HOI4 MCP, then prepare the changes again. For an older project, Check for updates moves it to the current version instead.";
 
+/// The current bytes of a generated file that still matches its installed
+/// hash. They are exactly the generated content, so a lock written before
+/// generated content was kept for updated files can still be repaired.
+fn healthy_generated_bytes(
+    lock: &InstallationLock,
+    root: &Path,
+    operation: &PlanOperation,
+) -> Option<Vec<u8>> {
+    let locked = lock
+        .files
+        .iter()
+        .find(|file| file.path == operation.destination && file.external == operation.external)?;
+    let path = if operation.external {
+        crate::security::validate_external_destination(&operation.destination).ok()?
+    } else {
+        safe_join(root, &operation.destination).ok()?
+    };
+    let bytes = crate::flatten::read_bounded_regular_file_no_follow_under_root(
+        path.parent()?,
+        path.file_name()?.to_str()?,
+        64 * 1024 * 1024,
+    )
+    .ok()?;
+    (sha256_bytes(&bytes) == locked.installed_sha256).then_some(bytes)
+}
+
 fn planning_command_error(error: AppError) -> String {
     match error {
         // Confirmation and session-binding checks share the credential
@@ -7267,17 +7293,6 @@ fn build_maintenance_plan_blocking(
             .source_path
             .as_deref()
             .is_some_and(|path| path.starts_with("generated:"));
-        let recorded_generated = lock.files.iter().any(|file| {
-            file.path == operation.destination
-                && file.external == operation.external
-                && (file.generated_content.is_some() || file.generated_bytes.is_some())
-        });
-        if source_is_generated && !recorded_generated && operation.action == OperationAction::Skip {
-            // A healthy generated file needs no rewrite, so a lock written
-            // before generated content was kept for updated files does not
-            // block the rest of the repair.
-            continue;
-        }
         let source_bytes = if source_is_generated {
             lock.files
                 .iter()
@@ -7295,6 +7310,7 @@ fn build_maintenance_plan_blocking(
                         })
                         .and_then(|file| file.generated_bytes.clone())
                 })
+                .or_else(|| healthy_generated_bytes(&lock, &root, operation))
                 .ok_or_else(|| {
                     format!(
                         "generated maintenance artifact has no recorded content: {}",
