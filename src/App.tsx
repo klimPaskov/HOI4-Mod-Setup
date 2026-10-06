@@ -1574,7 +1574,11 @@ export default function App() {
     const transaction = screen === "recovery" && state.identity.projectRoot.trim()
       ? await findInterruptedTransaction(state.identity.projectRoot)
       : undefined;
+    // Maintenance starts from a scanned project, so its name comes from the
+    // descriptor the scan read rather than the new-project default.
+    const scannedName = findings.find((finding) => finding.id === "descriptor.name")?.value?.trim();
     update({
+      ...(scannedName ? { identity: { ...state.identity, displayName: scannedName } } : {}),
       screen,
       transaction: screen === "recovery" ? transaction ?? undefined : state.transaction,
       recoveryChoice: transaction ? preferredRecoveryChoice(transaction) : state.recoveryChoice,
