@@ -1822,7 +1822,11 @@ function footerNote(screen: ScreenId, state: WizardState): string {
     if (state.plan.conflicts.some((conflict) => !conflict.selected)) return "Resolve blocking conflicts before installation.";
     return "The reviewed changes are ready to install.";
   }
-  if (screen === "install") return state.installProgress >= 100 ? "Setup saved. Readiness is next." : "Installing selected files…";
+  if (screen === "install") {
+    if (state.installProgress >= 100) return "Setup saved. Readiness is next.";
+    const active = state.transaction?.stages.find((stage) => stage.status === "active");
+    return active && INSTALL_CHECK_PROGRESS[active.id] ? `${installStageLabel(active.id)}…` : "Installing selected files…";
+  }
   if (screen === "ready") return state.transactionError ?? "Readiness checks saved.";
   if (screen === "update") return state.transactionError ?? "User-modified files are never overwritten silently.";
   if (screen === "conflict") return "A preview and validation run follow the selected resolution.";
@@ -1830,6 +1834,32 @@ function footerNote(screen: ScreenId, state: WizardState): string {
   if (screen === "chat-sources") return "Detected instructions, README, skills, and subagents are included by default; root Markdown files are optional.";
   return state.draftSaved ? "Draft saved locally." : "";
 }
+
+const INSTALL_STAGE_LABELS: Record<string, string> = {
+  preflight: "Check the project",
+  "repository source resolution": "Find the selected source",
+  "selective download": "Download selected files",
+  "checksum verification": "Verify downloaded files",
+  "dry-run review": "Confirm the changes",
+  backup: "Save existing files",
+  staging: "Prepare the setup",
+  validation: "Validate the project",
+  apply: "Apply the setup",
+  "post-install checks": "Check the result",
+  "readiness report": "Check readiness",
+  "rollback record": "Save recovery information",
+};
+
+function installStageLabel(id: string): string {
+  return INSTALL_STAGE_LABELS[id] ?? id;
+}
+
+// Stages that run after every file is in place and can take minutes, such
+// as committing to Git or installing and starting the HOI4 MCP server.
+const INSTALL_CHECK_PROGRESS: Record<string, string> = {
+  "post-install checks": "Checking installed files and setting up Git",
+  "readiness report": "Running setup checks, including any MCP server installation",
+};
 
 function closeDisclosureOnEscape(event: ReactKeyboardEvent<HTMLElement>) {
   if (event.key !== "Escape") return;
@@ -3141,20 +3171,7 @@ function Install({ state }: { state: WizardState }) {
     return () => window.clearInterval(timer);
   }, [state.transaction?.transaction_id, state.transaction?.state]);
   const stages = state.transaction?.stages ?? ["preflight", "repository source resolution", "selective download", "checksum verification", "dry-run review", "backup", "staging", "validation", "apply", "post-install checks", "readiness report", "rollback record"].map((id) => ({ id, status: "pending" }));
-  const stageLabel = (id: string) => ({
-    preflight: "Check the project",
-    "repository source resolution": "Find the selected source",
-    "selective download": "Download selected files",
-    "checksum verification": "Verify downloaded files",
-    "dry-run review": "Confirm the changes",
-    backup: "Save existing files",
-    staging: "Prepare the setup",
-    validation: "Validate the project",
-    apply: "Apply the setup",
-    "post-install checks": "Check the result",
-    "readiness report": "Check readiness",
-    "rollback record": "Save recovery information",
-  } as Record<string, string>)[id] ?? id;
+  const stageLabel = installStageLabel;
   const isDone = (status: string) => status === "complete" || status === "completed";
   const completed = stages.filter((stage) => isDone(stage.status)).length;
   const activeStage = stages.find((stage) => stage.status === "active");
@@ -3187,7 +3204,10 @@ function Install({ state }: { state: WizardState }) {
         ? `${progress}% complete`
         : "Starting setup…";
   const remainingTime = estimateRemainingTime(progress, state.transaction?.created_at, now);
-  const fileProgressLabel = activeMeasurement
+  const activeCheckLabel = activeStage && !activeMeasurement ? INSTALL_CHECK_PROGRESS[activeStage.id] : undefined;
+  const fileProgressLabel = activeCheckLabel
+    ? activeCheckLabel
+    : activeMeasurement
     ? `${activeMeasurement.complete.toLocaleString()} of ${activeMeasurement.total.toLocaleString()} files`
     : applyingOperations.length
       ? `${applyingOperations.filter((operation) => ["applied", "verified"].includes(operation.status)).length.toLocaleString()} of ${applyingOperations.length.toLocaleString()} files`
