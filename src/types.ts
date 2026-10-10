@@ -24,7 +24,16 @@ export type SourceMode = "latest" | "pinned_commit" | "pinned_release";
 
 export type AiProviderId = "claude_account" | "codex" | "claude" | "kimi" | "glm" | "deepseek" | "local" | "custom";
 
-export type CodingEnvironmentId = "codex" | "claude_code" | "cursor" | "qoder" | "opencode";
+/** Built-in environment ids; a source manifest may declare more. */
+export type CodingEnvironmentId = "claude_code" | "codex" | "cursor" | "qoder" | "opencode" | (string & {});
+
+export interface CodingEnvironmentDefinition {
+  id: CodingEnvironmentId;
+  display_name: string;
+  description?: string | null;
+  default_primary?: boolean;
+  open_command?: string | null;
+}
 
 export interface CodingEnvironmentSelection {
   primary: CodingEnvironmentId;
@@ -433,6 +442,8 @@ export interface SourceManifestPreview {
   repository: { provider: string; owner: string; name: string; default_branch: string; web_url?: string | null; license_evidence?: string | null };
   components: ManifestComponentPreview[];
   profiles: Array<{ id: string; display_name: string; components: string[]; default: boolean }>;
+  coding_environments?: CodingEnvironmentDefinition[];
+  local_source?: string | null;
 }
 
 export interface FolderSelection {

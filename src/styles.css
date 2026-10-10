@@ -200,6 +200,7 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .manifest-details > div { min-width: 0; display: grid; gap: 5px; padding: 13px 0; border-bottom: 1px solid var(--line); }
 .manifest-details > div:last-child { border-bottom: 0; }
 .manifest-details > div > :where(strong, span, small) { min-width: 0; overflow-wrap: anywhere; }
+.component-recommendation-summary > p.muted { margin: 0; padding: 0 18px 6px; font-size: 13px; }
 .manifest-details > div > strong { color: #dce5f4; font-size: 13px; }
 .manifest-details > div > span { color: #b9c5d7; font-size: 13px; line-height: 1.5; }
 .manifest-details > div > small { color: var(--muted); font-size: 12px; line-height: 1.5; }
@@ -360,6 +361,7 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .portrait-workflow-note a { color: #a9bdff; font-weight: 700; text-underline-offset: 3px; }
 .portrait-workflow-note a:hover { color: white; }
 .portrait-workflow-note a:focus-visible { border-radius: 4px; outline: 3px solid var(--focus); outline-offset: 4px; }
+.portrait-workflow-note small { display: block; margin-top: 4px; }
 .report-preview { max-height: 240px; overflow: auto; margin: 0 16px 16px; padding: 12px; color: #a9bad1; background: #0a111c; font-size: 11px; }
 .artifact-preview { min-width: 0; border-top: 1px solid var(--line); }
 .artifact-preview-heading { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; }

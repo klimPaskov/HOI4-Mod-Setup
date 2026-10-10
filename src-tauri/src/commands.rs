@@ -111,6 +111,9 @@ struct SourceManifestPreview {
     repository: RepositoryDescriptor,
     components: Vec<ComponentDefinition>,
     profiles: Vec<Profile>,
+    coding_environments: Vec<CodingEnvironmentDefinition>,
+    /// Set when a developer serves the package from a local checkout.
+    local_source: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -923,6 +926,7 @@ pub fn run() {
             resume_installation,
             discard_installation_staging,
             open_in_codex,
+            open_in_coding_environment,
         ])
         .run(tauri::generate_context!())
         .expect("error while running HOI4 Mod Setup");
@@ -3387,6 +3391,7 @@ fn preview_source_manifest_blocking(
     let request = source_request_from_state(&state).map_err(command_error)?;
     let client = HttpSourceClient::new().map_err(command_error)?;
     let resolution = resolve_source(&client, &request).map_err(command_error)?;
+    let coding_environments = crate::coding_environment::definitions(&resolution.manifest);
     Ok(SourceManifestPreview {
         schema_version: resolution.manifest.schema_version.clone(),
         manifest_id: resolution.manifest.manifest_id.clone(),
@@ -3394,6 +3399,9 @@ fn preview_source_manifest_blocking(
         repository: resolution.manifest.repository.clone(),
         components: resolution.manifest.components,
         profiles: resolution.manifest.profiles,
+        coding_environments,
+        local_source: crate::local_source::configured_repository()
+            .map(|root| root.display().to_string()),
     })
 }
 
@@ -3519,6 +3527,20 @@ fn requested_components_for_selection(
             && !requested.iter().any(|id| id == shared)
         {
             requested.push(shared.into());
+        }
+    }
+    // Any other required, runtime-neutral component the source declares (for
+    // example the canonical CLAUDE.md) is installed as well.
+    for component in &manifest.components {
+        if !component.optional
+            && component.coding_environment.is_none()
+            && component
+                .platforms
+                .iter()
+                .any(|platform| platform.supports(Platform::current()))
+            && !requested.iter().any(|id| id == &component.id)
+        {
+            requested.push(component.id.clone());
         }
     }
     let active_component_ids = expand_components(manifest, &requested)?
@@ -4201,9 +4223,12 @@ fn adapt_agents_for_selection(
         .as_deref()
         .or(identity.script_prefix.as_deref())
         .unwrap_or(&identity.project_id);
+    let install = crate::paths::game_install();
     let mut adapted = text
         .replace("[MOD_NAME]", &identity.display_name)
-        .replace("[MOD_PREFIX]", prefix);
+        .replace("[MOD_PREFIX]", prefix)
+        .replace("[HOI4_GAME_DIR]", &install.game_dir)
+        .replace("[STEAM_WORKSHOP_DIR]", &install.workshop_dir);
     adapted = strip_agents_placeholder_guide(&adapted);
     adapted = String::from_utf8(adapt_optional_portrait_section(
         adapted.as_bytes(),
@@ -4234,9 +4259,12 @@ fn adapt_agents_for_selection(
                 adapted.replace_range(start..block_end, "");
             }
         }
-        (None, None) if super_events_selected => {
+        (None, None)
+            if super_events_selected
+                && !adapted.contains("HOI4_MOD_SETUP:COMPONENT:workflow.super_events") =>
+        {
             adapted.push_str(
-                "\n## Optional Super Events workflow\n\n- Use `hoi4-super-events` for the complete installed runtime and presentation contract. Use the Super Events sections added to `hoi4-feature-planning`, `hoi4-events`, `hoi4-feature-assets`, `hoi4-text-audio-research`, and `hoi4-subagents` for their normal ownership boundaries. Keep registration, caller, text, quote, response, image, optional or explicitly required audio, provenance, documentation, cleanup, and the acceptance scenario aligned.\n- Spawn `hoi4_super_event_quote_researcher`, `hoi4_super_event_audio_researcher`, or `hoi4_super_event_art_researcher` with `fork_context=false` only when its narrow handoff is needed.\n",
+                "\n## Optional Super Events workflow\n\n- Use `hoi4-super-events` for the complete installed runtime and presentation contract. Use the Super Events sections added to `hoi4-feature-planning`, `hoi4-events`, `hoi4-feature-assets`, `hoi4-text-audio-research`, and `hoi4-subagents` for their normal ownership boundaries. Keep registration, caller, text, quote, response, image, optional or explicitly required audio, provenance, documentation, cleanup, and the acceptance scenario aligned.\n- Spawn `hoi4_super_event_quote_researcher`, `hoi4_super_event_audio_researcher`, or `hoi4_super_event_art_researcher` without inherited conversation context, and only when its narrow handoff is needed.\n",
             );
         }
         (None, None) => {}
@@ -4269,59 +4297,8 @@ fn adapt_agents_for_selection(
     Ok(adapted.into_bytes())
 }
 
-fn adapt_claude_instructions(
-    bytes: &[u8],
-    identity: &ProjectIdentity,
-) -> Result<Vec<u8>, AppError> {
-    let template = std::str::from_utf8(bytes)
-        .map_err(|error| AppError::Source(format!("Claude Code template is not UTF-8: {error}")))?;
-    if !template.contains("[MOD_NAME]")
-        || !template.contains("[MOD_PREFIX]")
-        || !template.contains("exactly one authority")
-        || !template.contains("@AGENTS.md")
-    {
-        return Err(AppError::Source(
-            "Claude Code template does not match the reviewed single-authority contract".into(),
-        ));
-    }
-    let project_name = identity
-        .display_name
-        .replace(['\r', '\n'], " ")
-        .replace('`', "\\`");
-    if project_name.trim().is_empty() {
-        return Err(AppError::InvalidInput(
-            "a confirmed project name is required for Claude Code instructions".into(),
-        ));
-    }
-    let rendered_template = template.replace("[MOD_NAME]", &project_name).replace(
-        "[MOD_PREFIX]",
-        identity
-            .primary_namespace
-            .as_deref()
-            .or(identity.script_prefix.as_deref())
-            .unwrap_or(&identity.project_id),
-    );
-    if rendered_template.contains("[MOD_")
-        || rendered_template.contains("{{PROJECT_")
-        || rendered_template.contains("<PROJECT_")
-    {
-        return Err(AppError::Source(
-            "Claude Code template contains unresolved project placeholders".into(),
-        ));
-    }
-
-    // The source template explicitly allows this projection. AGENTS.md is
-    // always installed as the shared, provider-neutral authority; CLAUDE.md
-    // therefore contains only Claude Code's loading note and an import, never
-    // a second full copy of project rules.
-    Ok(format!(
-        "# Claude Code entry for {project_name}\n\nThe root `AGENTS.md` contains the complete project instructions and is the single authority for project rules. Read and follow it before making changes. This file only directs Claude Code to that shared guidance; it does not add or override project instructions.\n\n@AGENTS.md\n"
-    )
-    .into_bytes())
-}
-
 fn strip_agents_placeholder_guide(text: &str) -> String {
-    let heading = Regex::new(r"(?m)^## Placeholder Guide[\t ]*\r?$")
+    let heading = Regex::new(r"(?m)^## (?:Placeholder Guide|How to use this template)[\t ]*\r?$")
         .expect("static placeholder-guide heading regex");
     let next_heading = Regex::new(r"(?m)^## [^\r\n]+").expect("static Markdown heading regex");
     let mut stripped = text.to_string();
@@ -4665,11 +4642,102 @@ fn adapt_selected_source(
     mcp_selected: bool,
     three_d_selected: bool,
     portrait: &PortraitPipelineConfig,
+    selected_components: &[String],
 ) -> Result<Vec<u8>, AppError> {
     let conditional = adapt_optional_super_events_skill(bytes, super_events_selected)?;
     let conditional = adapt_optional_portrait_section(&conditional, portrait.enabled)?;
-    let bytes = conditional.as_slice();
-    if component_id == "core.agents" {
+    let adapted = adapt_component_specific_source(
+        component_id,
+        destination,
+        &conditional,
+        identity,
+        conventions,
+        ai_provider,
+        ai_model,
+        ai_reasoning_effort,
+        super_events_selected,
+        mcp_selected,
+        three_d_selected,
+        portrait,
+    )?;
+    adapt_component_blocks(adapted, selected_components)
+}
+
+const COMPONENT_BLOCK_PREFIX: &str = "<!-- HOI4_MOD_SETUP:COMPONENT:";
+
+/// Keep or remove `<!-- HOI4_MOD_SETUP:COMPONENT:<id>:START -->` ...
+/// `<!-- HOI4_MOD_SETUP:COMPONENT:<id>:END -->` blocks depending on whether
+/// the named component is installed. The source package can therefore gate
+/// guidance for any optional workflow without an app release.
+fn adapt_component_blocks(
+    bytes: Vec<u8>,
+    selected_components: &[String],
+) -> Result<Vec<u8>, AppError> {
+    if !bytes
+        .windows(COMPONENT_BLOCK_PREFIX.len())
+        .any(|window| window == COMPONENT_BLOCK_PREFIX.as_bytes())
+    {
+        return Ok(bytes);
+    }
+    let Ok(text) = String::from_utf8(bytes.clone()) else {
+        return Ok(bytes);
+    };
+    let marker = Regex::new(
+        r"(?m)^[ \t]*<!-- HOI4_MOD_SETUP:COMPONENT:([a-z0-9][a-z0-9._-]{0,127}):(START|END) -->[ \t]*\r?\n?",
+    )
+    .expect("static component block regex");
+    let mut output = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+    let mut open: Option<(String, bool)> = None;
+    for captures in marker.captures_iter(&text) {
+        let whole = captures.get(0).expect("regex match");
+        let component = captures[1].to_string();
+        let start = &captures[2] == "START";
+        match (&open, start) {
+            (None, true) => {
+                output.push_str(&text[cursor..whole.start()]);
+                let keep = selected_components.iter().any(|id| id == &component);
+                open = Some((component, keep));
+            }
+            (Some((open_component, keep)), false) if *open_component == component => {
+                if *keep {
+                    output.push_str(&text[cursor..whole.start()]);
+                }
+                open = None;
+            }
+            _ => {
+                return Err(AppError::Source(format!(
+                    "a source file has an unbalanced optional block for {component}"
+                )))
+            }
+        }
+        cursor = whole.end();
+    }
+    if let Some((component, _)) = open {
+        return Err(AppError::Source(format!(
+            "a source file has an unterminated optional block for {component}"
+        )));
+    }
+    output.push_str(&text[cursor..]);
+    Ok(output.into_bytes())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn adapt_component_specific_source(
+    component_id: &str,
+    destination: &str,
+    bytes: &[u8],
+    identity: &ProjectIdentity,
+    conventions: &ProjectConventions,
+    ai_provider: &str,
+    ai_model: &str,
+    ai_reasoning_effort: &str,
+    super_events_selected: bool,
+    mcp_selected: bool,
+    three_d_selected: bool,
+    portrait: &PortraitPipelineConfig,
+) -> Result<Vec<u8>, AppError> {
+    if component_id == "core.agents" || component_id == "core.claude.instructions" {
         adapt_agents_for_selection(
             bytes,
             identity,
@@ -4680,8 +4748,6 @@ fn adapt_selected_source(
             super_events_selected,
             portrait.enabled,
         )
-    } else if component_id == "core.claude.instructions" {
-        adapt_claude_instructions(bytes, identity)
     } else if component_id == "codex.config" {
         adapt_codex_config_for_selection(
             bytes,
@@ -4695,9 +4761,6 @@ fn adapt_selected_source(
         .to_ascii_lowercase()
         .starts_with(".codex/agents/")
         && destination.to_ascii_lowercase().ends_with(".toml")
-        || component_id == "core.subagents"
-        || component_id.ends_with(".subagents")
-        || component_id == "workflow.portraits.subagent"
     {
         adapt_subagent_for_spawn(bytes)
     } else if component_id == "workflow.portraits.config" {
@@ -5391,6 +5454,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             mcp_selected,
             three_d_selected,
             &portrait_pipeline,
+            &download_selected,
         )?;
         let incoming_sha256 = sha256_bytes(&bytes);
         let source_destination = safe_join(&root, &adapted_destination)?;
@@ -5917,14 +5981,10 @@ fn accepted_flatten_prepared_files(
             operation.resolution.as_deref(),
             Some("keep" | "keep_user_modification")
         );
-        let eligible = file
-            .destination
-            .replace('\\', "/")
-            .starts_with(".agents/skills/")
-            || file
-                .destination
-                .replace('\\', "/")
-                .starts_with(".codex/agents/");
+        let normalized_destination = file.destination.replace('\\', "/");
+        let eligible = crate::flatten::FLATTEN_SOURCE_PREFIXES
+            .iter()
+            .any(|prefix| normalized_destination.starts_with(prefix));
         if kept_local && eligible {
             let bytes = crate::flatten::read_regular_file_no_follow_under_root(
                 project_root,
@@ -6868,6 +6928,7 @@ fn build_maintenance_plan_blocking(
                     mcp_selected,
                     maintenance_components.iter().any(|id| id == "workflow.3d"),
                     &portrait_pipeline,
+                    &maintenance_components,
                 )?;
                 Ok(LockedFile {
                     path: destination,
@@ -7392,6 +7453,7 @@ fn build_maintenance_plan_blocking(
                 mcp_selected,
                 maintenance_components.iter().any(|id| id == "workflow.3d"),
                 &portrait_pipeline,
+                &maintenance_components,
             )
             .map_err(command_error)?
         };
@@ -8168,6 +8230,116 @@ fn open_in_codex(project_root: String) -> Result<OpenInCodexResult, String> {
     })
 }
 
+/// Open the prepared project in the selected coding environment. Codex keeps
+/// its verified app opener; Claude Code starts in a new terminal window in the
+/// project folder; other environments get a clear manual instruction.
+#[tauri::command(async)]
+fn open_in_coding_environment(
+    project_root: String,
+    environment: String,
+) -> Result<OpenInCodexResult, String> {
+    if environment == crate::coding_environment::CODEX {
+        return open_in_codex(project_root);
+    }
+    if !crate::coding_environment::is_supported(&environment) {
+        return Err(format!("unsupported coding environment: {environment}"));
+    }
+    let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
+    let lock = read_project_lock(&root).map_err(command_error)?;
+    let workflow_3d_state = lock
+        .optional_workflows
+        .get("workflow.3d")
+        .map(|workflow| workflow.state.clone())
+        .unwrap_or_else(|| "not_selected".into());
+    let readiness =
+        evaluate_installed_readiness(&root, &lock.project_id, workflow_3d_state, Vec::new())
+            .map_err(command_error)?;
+    if !readiness.core_ready {
+        return Err("Resolve the blocking readiness checks before opening the project.".into());
+    }
+    if environment == crate::coding_environment::CLAUDE_CODE {
+        if let Ok(executable) = crate::claude_code::verified_executable_path() {
+            if launch_in_terminal(&root, &executable).is_ok() {
+                return Ok(OpenInCodexResult {
+                    opened: true,
+                    message: "Claude Code started in a new terminal window in the project folder."
+                        .into(),
+                });
+            }
+        }
+        return Ok(OpenInCodexResult {
+            opened: false,
+            message: format!(
+                "Open a terminal in {} and run claude to start Claude Code in this project.",
+                root.display()
+            ),
+        });
+    }
+    Ok(OpenInCodexResult {
+        opened: false,
+        message: format!(
+            "Open this folder in your coding environment: {}",
+            root.display()
+        ),
+    })
+}
+
+/// Start an interactive command-line tool in a new terminal window whose
+/// working directory is the project folder.
+fn launch_in_terminal(root: &Path, executable: &Path) -> Result<(), AppError> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let system_root = std::env::var_os("SystemRoot")
+            .ok_or_else(|| AppError::Process("SystemRoot is unavailable".into()))?;
+        let cmd = PathBuf::from(system_root).join("System32").join("cmd.exe");
+        let line = format!(
+            "/d /c start \"Claude Code\" /d \"{}\" \"{}\"",
+            root.display(),
+            executable.display()
+        );
+        if line.contains('%') || line.contains('^') {
+            return Err(AppError::Process(
+                "the project path cannot be passed to a terminal safely".into(),
+            ));
+        }
+        let mut command = std::process::Command::new(cmd);
+        command.raw_arg(line).current_dir(root);
+        crate::process::configure_child_no_console_window(&mut command);
+        command
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| AppError::Process(format!("the terminal could not start: {error}")))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let quote =
+            |value: &Path| format!("'{}'", value.display().to_string().replace('\'', r"'\''"));
+        let shell = format!("cd {} && {}", quote(root), quote(executable));
+        let script = format!(
+            "tell application \"Terminal\" to do script \"{}\"",
+            shell.replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        std::process::Command::new("/usr/bin/osascript")
+            .args([
+                "-e",
+                &script,
+                "-e",
+                "tell application \"Terminal\" to activate",
+            ])
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| AppError::Process(format!("Terminal could not start: {error}")))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (root, executable);
+        Err(AppError::UnsupportedPlatform(
+            "opening a terminal is supported on Windows and macOS".into(),
+        ))
+    }
+}
+
 fn codex_app_args(root: &Path) -> Vec<String> {
     vec!["app".into(), root.display().to_string()]
 }
@@ -8605,7 +8777,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_instructions_are_adapted_to_one_shared_authority() {
+    fn canonical_claude_instructions_are_adapted_like_agents_instructions() {
         let identity = ProjectIdentity {
             display_name: "Example Mod".into(),
             project_id: "example_mod".into(),
@@ -8619,30 +8791,67 @@ mod tests {
             descriptor_tags: Vec::new(),
             launcher_descriptor_path: None,
         };
-        let template = b"# Project Instructions\n\nThis describes `[MOD_NAME]`.\n\nReplace `[MOD_PREFIX]` before use.\n\nKeep exactly one authority and use `@AGENTS.md` when AGENTS owns the rules.\n";
-        let adapted = adapt_selected_source(
-            "core.claude.instructions",
-            "CLAUDE.md",
-            template,
-            &identity,
-            &ProjectConventions::default(),
-            "deepseek",
-            "deepseek-flash",
-            "high",
-            false,
-            false,
-            false,
-            &test_portrait_config("disabled", false),
+        let template = b"# Project Instructions\n\nThis describes `[MOD_NAME]`.\n\n## Placeholder Guide\n\nReplace `[MOD_PREFIX]` before use.\n\n## 0. Required Reading\n\nGame files live in `[HOI4_GAME_DIR]` and Workshop mods in `[STEAM_WORKSHOP_DIR]`.\n\n<!-- HOI4_MOD_SETUP:COMPONENT:workflow.live_tools:START -->\nLive testing guidance.\n<!-- HOI4_MOD_SETUP:COMPONENT:workflow.live_tools:END -->\n<!-- HOI4_MOD_SETUP:COMPONENT:workflow.super_events:START -->\nSuper Events guidance.\n<!-- HOI4_MOD_SETUP:COMPONENT:workflow.super_events:END -->\nUse `[MOD_PREFIX]` identifiers.\n";
+        let adapt = |selected: &[String]| {
+            String::from_utf8(
+                adapt_selected_source(
+                    "core.claude.instructions",
+                    "CLAUDE.md",
+                    template,
+                    &identity,
+                    &ProjectConventions::default(),
+                    "deepseek",
+                    "deepseek-flash",
+                    "high",
+                    selected.iter().any(|id| id == "workflow.super_events"),
+                    false,
+                    false,
+                    &test_portrait_config("disabled", false),
+                    selected,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let plain = adapt(&[]);
+        assert!(plain.starts_with("# Project Instructions\n\nThis describes `Example Mod`."));
+        assert!(plain.contains("Use `example` identifiers."));
+        assert!(!plain.contains("Placeholder Guide"));
+        assert!(!plain.contains("[MOD_"));
+        assert!(!plain.contains("[HOI4_GAME_DIR]") && !plain.contains("[STEAM_WORKSHOP_DIR]"));
+        assert!(plain.contains("steamapps/common/Hearts of Iron IV"));
+        assert!(!plain.contains("Live testing guidance"));
+        assert!(!plain.contains("Super Events guidance"));
+        assert!(!plain.contains("HOI4_MOD_SETUP"));
+        assert!(!plain.contains("Optional Super Events workflow"));
+        assert!(!plain.contains("DeepSeek") && !plain.contains("deepseek-flash"));
+
+        let selected = adapt(&["workflow.live_tools".into(), "workflow.super_events".into()]);
+        assert!(selected.contains("Live testing guidance.\nSuper Events guidance.\nUse `example`"));
+        assert!(!selected.contains("HOI4_MOD_SETUP"));
+        assert!(!selected.contains("Optional Super Events workflow"));
+    }
+
+    #[test]
+    fn unbalanced_component_blocks_are_rejected() {
+        let error = adapt_component_blocks(
+            b"<!-- HOI4_MOD_SETUP:COMPONENT:workflow.live_tools:START -->\ntext\n".to_vec(),
+            &[],
         )
-        .unwrap();
-        let adapted = String::from_utf8(adapted).unwrap();
-        assert!(adapted.contains("Claude Code entry for Example Mod"));
-        assert!(adapted.contains("single authority"));
-        assert!(adapted.contains("@AGENTS.md"));
-        assert!(!adapted.contains("[MOD_NAME]"));
-        assert!(!adapted.contains("[MOD_PREFIX]"));
-        assert!(!adapted.contains("DeepSeek"));
-        assert!(!adapted.contains("deepseek-flash"));
+        .unwrap_err();
+        assert!(error.to_string().contains("unterminated"));
+        let error = adapt_component_blocks(
+            b"<!-- HOI4_MOD_SETUP:COMPONENT:a:START -->\n<!-- HOI4_MOD_SETUP:COMPONENT:b:END -->\n"
+                .to_vec(),
+            &[],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unbalanced"));
+        let untouched = b"no markers here".to_vec();
+        assert_eq!(
+            adapt_component_blocks(untouched.clone(), &[]).unwrap(),
+            untouched
+        );
     }
 
     #[test]
@@ -8827,6 +9036,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
             false,
             false,
             &portrait,
+            &[],
         )
         .unwrap();
 
@@ -8954,6 +9164,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
             false,
             false,
             &test_portrait_config("disabled", false),
+            &[],
         )
         .unwrap();
 

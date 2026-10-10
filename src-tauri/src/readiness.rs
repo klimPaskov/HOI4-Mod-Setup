@@ -73,34 +73,106 @@ fn bounded_agent_files(root: &Path, suffix: &str) -> Option<Vec<PathBuf>> {
     Some(files)
 }
 
-pub(crate) fn valid_agents_file(project_root: &Path) -> bool {
-    let path = project_root.join("AGENTS.md");
-    fs::symlink_metadata(&path)
+fn valid_instruction_file(path: &Path) -> bool {
+    fs::symlink_metadata(path)
         .ok()
-        .is_some_and(|metadata| metadata.is_file() && !path_has_link_component(&path))
+        .is_some_and(|metadata| metadata.is_file() && !path_has_link_component(path))
         && fs::read_to_string(path).ok().is_some_and(|text| {
-            !text.trim().is_empty() && !text.contains("{{PROJECT_") && !text.contains("<PROJECT_")
+            !text.trim().is_empty()
+                && !text.contains("{{PROJECT_")
+                && !text.contains("<PROJECT_")
+                && !text.contains("[MOD_NAME]")
+                && !text.contains("[MOD_PREFIX]")
         })
 }
 
+/// AGENTS.md must be valid; the canonical CLAUDE.md must be valid too when
+/// the project has one.
+pub(crate) fn valid_agents_file(project_root: &Path) -> bool {
+    let claude = project_root.join("CLAUDE.md");
+    valid_instruction_file(&project_root.join("AGENTS.md"))
+        && (!claude.exists() || valid_instruction_file(&claude))
+}
+
+/// Canonical skill library first (`.claude/skills`, manifest major 3), then
+/// the runtime copy or the older canonical location (`.agents/skills`).
+pub(crate) const SKILL_ROOTS: [&str; 2] = [".claude/skills", ".agents/skills"];
+/// Canonical Claude Code agents first, then Codex agent files.
+pub(crate) const AGENT_ROOTS: [&str; 2] = [".claude/agents", ".codex/agents"];
+
+/// The folder that holds the project's canonical skills.
+pub(crate) fn canonical_skill_root(project_root: &Path) -> &'static str {
+    SKILL_ROOTS
+        .into_iter()
+        .find(|root| project_root.join(root).is_dir())
+        .unwrap_or(SKILL_ROOTS[0])
+}
+
+/// The folder that holds the project's canonical subagents.
+pub(crate) fn canonical_agent_root(project_root: &Path) -> &'static str {
+    if bounded_agent_files(&project_root.join(AGENT_ROOTS[0]), ".md")
+        .is_some_and(|files| !files.is_empty())
+        || !project_root.join(AGENT_ROOTS[1]).is_dir()
+    {
+        AGENT_ROOTS[0]
+    } else {
+        AGENT_ROOTS[1]
+    }
+}
+
+fn valid_frontmatter_files(files: &[PathBuf]) -> bool {
+    files.iter().all(|path| {
+        fs::read_to_string(path).ok().is_some_and(|text| {
+            let text = text.replace("\r\n", "\n");
+            text.starts_with("---\n") && text.contains("\nname:") && text.contains("\ndescription:")
+        })
+    })
+}
+
+/// Every skill tree that exists must be complete and parse; at least one must.
 pub(crate) fn valid_skill_tree(project_root: &Path) -> bool {
-    let root = project_root.join(".agents/skills");
-    let Some(files) = bounded_agent_files(&root, "SKILL.md") else {
-        return false;
-    };
-    !files.is_empty()
-        && files.iter().all(|path| {
-            fs::read_to_string(path).ok().is_some_and(|text| {
-                text.starts_with("---\n")
-                    && text.contains("\nname:")
-                    && text.contains("\ndescription:")
-            })
-        })
+    let mut found = false;
+    for root in SKILL_ROOTS {
+        let root = project_root.join(root);
+        if !root.exists() {
+            continue;
+        }
+        let Some(files) = bounded_agent_files(&root, "SKILL.md") else {
+            return false;
+        };
+        if files.is_empty() || !valid_frontmatter_files(&files) {
+            return false;
+        }
+        found = true;
+    }
+    found
 }
 
+/// Canonical Claude Code agents need valid frontmatter; Codex agent files,
+/// when present, must parse and start without inherited context. At least one
+/// of the two trees must exist.
 pub(crate) fn valid_subagent_tree(project_root: &Path) -> bool {
-    let root = project_root.join(".codex/agents");
-    let Some(files) = bounded_agent_files(&root, ".toml") else {
+    let claude = project_root.join(AGENT_ROOTS[0]);
+    let codex = project_root.join(AGENT_ROOTS[1]);
+    let claude_files = if claude.exists() {
+        match bounded_agent_files(&claude, ".md") {
+            Some(files) => files,
+            None => return false,
+        }
+    } else {
+        Vec::new()
+    };
+    if !valid_frontmatter_files(&claude_files) {
+        return false;
+    }
+    if !codex.exists() {
+        return !claude_files.is_empty();
+    }
+    valid_codex_subagent_tree(&codex)
+}
+
+fn valid_codex_subagent_tree(root: &Path) -> bool {
+    let Some(files) = bounded_agent_files(root, ".toml") else {
         return false;
     };
     !files.is_empty()
@@ -137,9 +209,9 @@ fn valid_text_file(path: &Path) -> bool {
 }
 
 /// Validate the complete native package for one coding client. Native
-/// projections are generated from the canonical Codex TOMLs by the source
-/// synchronizer; readiness checks their presence and parseability without
-/// executing a client.
+/// projections are generated from the canonical Claude Code files by the
+/// source synchronizers; readiness checks their presence and parseability
+/// without executing a client.
 #[cfg(test)]
 fn valid_coding_environment(project_root: &Path, environment: &str) -> bool {
     valid_coding_environment_with_mcp(project_root, environment, true)
@@ -195,7 +267,9 @@ pub(crate) fn valid_coding_environment_with_mcp(
                     |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
                 )
         }
-        _ => false,
+        // An environment declared only by the manifest has no built-in layout
+        // check; its installed files are verified by the managed-file checks.
+        _ => crate::coding_environment::is_supported(environment),
     }
 }
 
@@ -439,6 +513,9 @@ impl Default for ReadinessInput {
 
 pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
     let mut checks = Vec::new();
+    let project_path = Path::new(&input.project_root);
+    let skill_root = format!("{}/", canonical_skill_root(project_path));
+    let agent_root = format!("{}/", canonical_agent_root(project_path));
     let ai_provider = if input.ai_provider.trim().is_empty() {
         "codex"
     } else {
@@ -565,8 +642,8 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         "codex",
         input.agents_valid,
         true,
-        "AGENTS.md is present and contains no unresolved template tokens.",
-        "AGENTS.md",
+        "Project instructions are present and contain no unresolved template tokens.",
+        "CLAUDE.md and AGENTS.md",
     );
     add_bool_check(
         &mut checks,
@@ -576,7 +653,7 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         input.skills_valid,
         true,
         "Selected skills are present and valid.",
-        ".agents/skills/",
+        &skill_root,
     );
     add_bool_check(
         &mut checks,
@@ -585,8 +662,8 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         "subagent",
         input.subagents_valid,
         true,
-        "Selected subagent definitions parse and require fork_context=false.",
-        ".codex/agents/",
+        "Subagent definitions parse and start without inherited conversation context.",
+        &agent_root,
     );
     add_bool_check(
         &mut checks,
@@ -1845,7 +1922,10 @@ mod tests {
         write("CLAUDE.md", "# Claude\n");
         write(".claude/settings.json", "{}\n");
         write(".claude/agent-map.md", "# Agents\n");
-        write(".claude/agents/example.md", "# Example\n");
+        write(
+            ".claude/agents/example.md",
+            "---\nname: example\ndescription: Example agent.\nmodel: haiku\n---\n\nBody.\n",
+        );
         write(".mcp.json", "{\"mcpServers\":{}}\n");
         write(".cursor/settings.json", "{}\n");
         write(".cursor/mcp.json", "{}\n");

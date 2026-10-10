@@ -278,6 +278,12 @@ fn find_executable() -> Result<CachedExecutable, AppError> {
     Ok(entry)
 }
 
+/// The verified path of the user's official Claude Code, for opening a
+/// prepared project.
+pub fn verified_executable_path() -> Result<std::path::PathBuf, AppError> {
+    find_executable().map(|executable| executable.path)
+}
+
 /// Locate and signature-check Claude Code ahead of the first account check.
 /// Failures are ignored; the account check reports them normally.
 pub fn warm_executable() {

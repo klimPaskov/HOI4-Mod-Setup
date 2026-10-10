@@ -355,13 +355,9 @@ fn validate_package_identity(
             ));
         }
     }
-    for technology_tool in ["hoi4.tech_inspect", "hoi4.tech_render", "hoi4.tech_compare"] {
-        if !unique.contains(technology_tool) {
-            return Err(AppError::Source(format!(
-                "the MCP package does not declare required Technology Tree route {technology_tool}"
-            )));
-        }
-    }
+    // The manifest's required tool list belongs to the exact pinned package
+    // version, so the app never adds its own route names: a later server
+    // release may rename or consolidate routes.
     Ok(())
 }
 
@@ -1260,48 +1256,32 @@ mod tests {
     }
 
     #[test]
-    fn manifest_target_binds_the_exact_public_package_and_technology_routes() {
-        let mut manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
+    fn manifest_target_binds_the_exact_public_package_and_its_declared_routes() {
+        let manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
             "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
         ))
         .unwrap();
         let target = manifest_target(&manifest).unwrap();
         assert_eq!(target.package_name, "hoi4-agent-tools");
-        assert_eq!(target.package_version, "3.9.0");
-        assert_eq!(target.required_tools.len(), 35);
-        for tool in [
-            "hoi4.tech_inspect",
-            "hoi4.tech_render",
-            "hoi4.tech_compare",
-            "hoi4.probability_sequence",
-            "hoi4.job_inspect",
-            "hoi4.job_cancel",
-        ] {
-            assert!(target
-                .required_tools
-                .iter()
-                .any(|candidate| candidate == tool));
-        }
-        let component = manifest
+        let declared = manifest
             .components
-            .iter_mut()
+            .iter()
             .find(|component| component.id == COMPONENT_ID)
-            .unwrap();
-        let tools = component
-            .validation
-            .iter_mut()
-            .find(|rule| rule.id == HEALTH_RULE_ID)
+            .and_then(|component| {
+                component
+                    .validation
+                    .iter()
+                    .find(|rule| rule.id == HEALTH_RULE_ID)
+            })
+            .and_then(|rule| rule.parameters.get("required_tools"))
+            .and_then(Value::as_array)
             .unwrap()
-            .parameters
-            .get_mut("required_tools")
-            .unwrap()
-            .as_array_mut()
-            .unwrap();
-        tools.retain(|tool| tool.as_str() != Some("hoi4.tech_render"));
-        assert!(manifest_target(&manifest)
-            .unwrap_err()
-            .to_string()
-            .contains("hoi4.tech_render"));
+            .iter()
+            .filter_map(Value::as_str)
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        assert!(!declared.is_empty());
+        assert_eq!(target.required_tools, declared);
     }
 
     #[test]

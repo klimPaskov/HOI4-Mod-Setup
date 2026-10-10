@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, packageChatSources, pickChatSourcesFolder, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewChatSources, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, packageChatSources, pickChatSourcesFolder, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewChatSources, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
 import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPreview, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
@@ -15,20 +15,46 @@ const PHASES: Array<{ id: PhaseId; label: string }> = [
   { id: "ready", label: "Ready" },
 ];
 
-export const CODING_ENVIRONMENTS: Array<{ id: CodingEnvironmentId; label: string; detail: string }> = [
-  { id: "codex", label: "Codex", detail: "Native .codex configuration and canonical TOML agents" },
-  { id: "claude_code", label: "Claude Code", detail: "CLAUDE.md, .claude settings, agents, map, and MCP" },
-  { id: "cursor", label: "Cursor", detail: ".cursor agents, project settings, map, and MCP" },
-  { id: "qoder", label: "Qoder", detail: ".qoder agents, project settings, map, and MCP" },
-  { id: "opencode", label: "OpenCode", detail: "OpenCode agents, project config, map, and MCP" },
+export interface CodingEnvironmentOption { id: CodingEnvironmentId; label: string; detail: string; defaultPrimary?: boolean }
+
+/** Used until the source manifest is loaded, and for manifests that predate
+ * environment declarations. Claude Code is the canonical environment. */
+export const CODING_ENVIRONMENTS: CodingEnvironmentOption[] = [
+  { id: "claude_code", label: "Claude Code", detail: "Canonical CLAUDE.md, skills, and agents in .claude, plus MCP", defaultPrimary: true },
+  { id: "codex", label: "Codex", detail: "AGENTS.md, the .agents/skills copy, generated .codex agents, and MCP" },
+  { id: "cursor", label: "Cursor", detail: "Generated .cursor agents, project settings, map, and MCP" },
+  { id: "qoder", label: "Qoder", detail: "Generated .qoder agents, project settings, map, and MCP" },
+  { id: "opencode", label: "OpenCode", detail: "Generated OpenCode agents, project config, map, and MCP" },
 ];
+
+export const DEFAULT_PRIMARY_CODING_ENVIRONMENT: CodingEnvironmentId = "claude_code";
+
+/** The environments offered by the loaded source manifest, in its order. */
+export function codingEnvironmentOptions(manifest?: SourceManifestPreview | null): CodingEnvironmentOption[] {
+  const declared = manifest?.coding_environments ?? [];
+  if (declared.length === 0) return CODING_ENVIRONMENTS;
+  return declared.map((environment) => ({
+    id: environment.id,
+    label: environment.display_name,
+    detail: environment.description ?? CODING_ENVIRONMENTS.find((candidate) => candidate.id === environment.id)?.detail ?? "",
+    defaultPrimary: environment.default_primary === true,
+  }));
+}
+
+export function codingEnvironmentLabel(id: CodingEnvironmentId, manifest?: SourceManifestPreview | null): string {
+  return codingEnvironmentOptions(manifest).find((environment) => environment.id === id)?.label
+    ?? CODING_ENVIRONMENTS.find((environment) => environment.id === id)?.label
+    ?? id;
+}
 
 export function normalizeCodingEnvironmentSelection(
   primary?: CodingEnvironmentId | string | null,
   additional?: Array<CodingEnvironmentId | string> | null,
+  options: CodingEnvironmentOption[] = CODING_ENVIRONMENTS,
 ): CodingEnvironmentSelection {
-  const supported = new Set<CodingEnvironmentId>(CODING_ENVIRONMENTS.map((environment) => environment.id));
-  const resolvedPrimary = primary && supported.has(primary as CodingEnvironmentId) ? primary as CodingEnvironmentId : "codex";
+  const supported = new Set<CodingEnvironmentId>(options.map((environment) => environment.id));
+  const fallback = options.find((environment) => environment.defaultPrimary)?.id ?? options[0]?.id ?? DEFAULT_PRIMARY_CODING_ENVIRONMENT;
+  const resolvedPrimary = primary && supported.has(primary as CodingEnvironmentId) ? primary as CodingEnvironmentId : fallback;
   const seen = new Set<CodingEnvironmentId>();
   const resolvedAdditional = (additional ?? []).filter((environment): environment is CodingEnvironmentId => {
     const id = environment as CodingEnvironmentId;
@@ -72,15 +98,16 @@ const INITIAL_SCAN_PROGRESS: ScanProgress = {
 };
 
 const DEFAULT_COMPONENTS: ComponentRow[] = [
-  { id: "core.agents", title: "Project instructions", detail: "AGENTS.md adapted to your mod", size: "—", selected: true, required: true },
+  { id: "core.claude.instructions", title: "Project instructions", detail: "Canonical CLAUDE.md adapted to your mod", size: "—", selected: true, required: true },
+  { id: "core.agents", title: "AGENTS.md", detail: "The same instructions for Codex and other clients", size: "—", selected: true, required: true },
   { id: "core.skills", title: "Skills", detail: "Current HOI4 workflow skills", size: "—", selected: true, required: true },
-  { id: "core.subagents", title: "Subagents", detail: "Focused agent profiles", size: "—", selected: true, required: true },
-  { id: "codex.config", title: "Codex and MCP", detail: "Project configuration", size: "—", selected: true, required: true },
+  { id: "core.subagents", title: "Subagents", detail: "Specialist agents with per-role model tiers", size: "—", selected: true, required: true },
   { id: "mcp.hoi4_agent_tools", title: "HOI4 Agent Tools MCP", detail: "Optional HOI4-aware coding tools", size: "—", selected: true, required: false, platform: "windows" },
   { id: "wiki.snapshot", title: "Offline wiki", detail: "Installed under paradox_wiki/", size: "—", selected: true, required: true },
 ];
 
 const PORTRAIT_REPOSITORY = "https://github.com/klimPaskov/comfyui-hoi4-portraits";
+const LIVE_TOOLS_GUIDE = "https://github.com/klimPaskov/Agentic-HOI4-Modding/blob/main/.claude/skills/hoi4-live-testing/references/setup.md";
 const PORTRAIT_BRANCH = "codex/portrait-pipeline";
 const PORTRAIT_COMMIT = "b47222a77f2f6454704530865aa1441fad48bdd3";
 const PORTRAIT_RESOURCE_REQUIREMENT = "Minimum recommended to run this workflow: 16 GB VRAM and 25 GB storage.";
@@ -256,7 +283,7 @@ export const initialState: WizardState = {
   aiEndpoint: "",
   aiAccount: null,
   aiProfiles: undefined,
-  primaryCodingEnvironment: "codex",
+  primaryCodingEnvironment: DEFAULT_PRIMARY_CODING_ENVIRONMENT,
   additionalCodingEnvironments: [],
   installedCodingEnvironments: [],
   selectedComponents: DEFAULT_COMPONENTS.filter((component) => component.selected).map((component) => component.id),
@@ -368,7 +395,7 @@ function managedInstallationDetails(findings: ScanFinding[]): { present: boolean
   let detectedCodingEnvironments: CodingEnvironmentId[] = [];
   try {
     const value = environmentFinding ? JSON.parse(environmentFinding.value) as { detected?: string[] } : {};
-    detectedCodingEnvironments = (value.detected ?? []).filter((id): id is CodingEnvironmentId => CODING_ENVIRONMENTS.some((environment) => environment.id === id));
+    detectedCodingEnvironments = (value.detected ?? []).filter((id): id is CodingEnvironmentId => /^[a-z][a-z0-9_]{0,63}$/.test(id));
   } catch {
     detectedCodingEnvironments = [];
   }
@@ -380,11 +407,14 @@ function managedInstallationDetails(findings: ScanFinding[]): { present: boolean
   } catch {
     portraitRoutes = {};
   }
-  if (!finding) return { present: false, valid: false, componentIds: [], workflow3d: "not_selected", superEvents: "not_selected", meshKeyConfigured: false, chatSourcesAvailable: detectedSources, primaryCodingEnvironment: "codex", additionalCodingEnvironments: detectedCodingEnvironments.filter((id) => id !== "codex"), detectedCodingEnvironments };
+  const detectedPrimary: CodingEnvironmentId = detectedCodingEnvironments.length === 0 || detectedCodingEnvironments.includes(DEFAULT_PRIMARY_CODING_ENVIRONMENT) ? DEFAULT_PRIMARY_CODING_ENVIRONMENT : detectedCodingEnvironments[0];
+  if (!finding) return { present: false, valid: false, componentIds: [], workflow3d: "not_selected", superEvents: "not_selected", meshKeyConfigured: false, chatSourcesAvailable: detectedSources, primaryCodingEnvironment: detectedPrimary, additionalCodingEnvironments: detectedCodingEnvironments.filter((id) => id !== detectedPrimary), detectedCodingEnvironments };
   try {
     const value = JSON.parse(finding.value) as { present?: boolean; valid?: boolean; component_ids?: string[]; workflow_3d_state?: WorkflowState; workflow_super_events_state?: WorkflowState; workflow_3d_key_configured?: boolean; primary_coding_environment?: string; additional_coding_environments?: string[]; portrait_provider?: PortraitProviderId; portrait_provider_status?: PortraitProviderStatus; portrait_enabled?: boolean; portrait_workflow_commit?: string; portrait_preferred_workflow?: PortraitPipelineState["preferredWorkflow"]; portrait_mcp_registered?: boolean };
     const installedComponents = new Set(value.component_ids ?? []);
-    const selection = normalizeCodingEnvironmentSelection(value.primary_coding_environment, value.additional_coding_environments);
+    const recorded = [value.primary_coding_environment, ...(value.additional_coding_environments ?? [])].filter((id): id is string => typeof id === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(id));
+    const recordedOptions = Array.from(new Set([...CODING_ENVIRONMENTS.map((environment) => environment.id), ...recorded])).map((id) => CODING_ENVIRONMENTS.find((environment) => environment.id === id) ?? { id, label: id, detail: "" });
+    const selection = normalizeCodingEnvironmentSelection(value.primary_coding_environment ?? "codex", value.additional_coding_environments, recordedOptions);
     return {
       present: value.present === true,
       valid: value.valid === true,
@@ -410,7 +440,7 @@ function managedInstallationDetails(findings: ScanFinding[]): { present: boolean
       } : undefined,
     };
   } catch {
-    return { present: false, valid: false, componentIds: [], workflow3d: "not_selected", superEvents: "not_selected", meshKeyConfigured: false, chatSourcesAvailable: detectedSources, primaryCodingEnvironment: "codex", additionalCodingEnvironments: detectedCodingEnvironments.filter((id) => id !== "codex"), detectedCodingEnvironments };
+    return { present: false, valid: false, componentIds: [], workflow3d: "not_selected", superEvents: "not_selected", meshKeyConfigured: false, chatSourcesAvailable: detectedSources, primaryCodingEnvironment: detectedPrimary, additionalCodingEnvironments: detectedCodingEnvironments.filter((id) => id !== detectedPrimary), detectedCodingEnvironments };
   }
 }
 
@@ -2753,8 +2783,8 @@ function flattenedChatFiles(state: WizardState, manifest: SourceManifestPreview 
     if (!state.selectedComponents.includes(component.id)) continue;
     for (const file of component.expected_files) {
       const path = file.path.replaceAll("\\", "/");
-      const skill = path.match(/(?:^|\/)\.agents\/skills\/([^/]+)\/SKILL\.md$/i);
-      const subagent = path.match(/(?:^|\/)\.codex\/agents\/([^/]+\.toml)$/i);
+      const skill = path.match(/(?:^|\/)\.(?:claude|agents)\/skills\/([^/]+)\/SKILL\.md$/i);
+      const subagent = path.match(/(?:^|\/)\.codex\/agents\/([^/]+\.toml)$/i) ?? path.match(/(?:^|\/)\.claude\/agents\/([^/]+\.md)$/i);
       const name = skill ? `${skill[1]}.md` : subagent?.[1];
       if (name && !files.has(name.toLocaleLowerCase())) files.set(name.toLocaleLowerCase(), { name, size: file.size ?? undefined });
     }
@@ -2763,24 +2793,26 @@ function flattenedChatFiles(state: WizardState, manifest: SourceManifestPreview 
 }
 
 export function CodingEnvironments({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
-  const selection = normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments);
+  const options = codingEnvironmentOptions(state.manifestPreview);
+  const selection = normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments, options);
+  const defaultLabel = options.find((environment) => environment.defaultPrimary)?.label ?? options[0]?.label ?? "Claude Code";
   const choosePrimary = (primary: CodingEnvironmentId) => {
-    const next = normalizeCodingEnvironmentSelection(primary, selection.additional);
+    const next = normalizeCodingEnvironmentSelection(primary, selection.additional, options);
     update({ primaryCodingEnvironment: next.primary, additionalCodingEnvironments: next.additional, plan: undefined, transactionError: undefined });
   };
   const toggleAdditional = (environment: CodingEnvironmentId, checked: boolean) => {
     const additional = checked
       ? [...selection.additional, environment]
       : selection.additional.filter((candidate) => candidate !== environment);
-    const next = normalizeCodingEnvironmentSelection(selection.primary, additional);
+    const next = normalizeCodingEnvironmentSelection(selection.primary, additional, options);
     update({ primaryCodingEnvironment: next.primary, additionalCodingEnvironments: next.additional, plan: undefined, transactionError: undefined });
   };
   return <div className="stack narrow">
     <section className="panel">
       <PanelTitle title="Primary environment" />
-      <p className="muted">This client is the first-class entry point for the generated project. Codex is selected by default.</p>
+      <p className="muted">The coding client you will mainly use. {defaultLabel} is selected by default; its skills, agents, and instructions are the canonical files that the other clients' files are generated from.</p>
       <div className="coding-environment-options" role="radiogroup" aria-label="Primary coding environment">
-        {CODING_ENVIRONMENTS.map((environment) => <label className="coding-environment-option" key={environment.id}>
+        {options.map((environment) => <label className="coding-environment-option" key={environment.id}>
           <input type="radio" name="primary-coding-environment" value={environment.id} checked={selection.primary === environment.id} onChange={() => choosePrimary(environment.id)} />
           <span className="coding-environment-copy"><strong>{environment.label}</strong><small>{environment.detail}</small></span>
           {selection.primary === environment.id && <Status label="Primary" tone="info" />}
@@ -2791,7 +2823,7 @@ export function CodingEnvironments({ state, update }: { state: WizardState; upda
       <PanelTitle title="Additional environments" />
       <p className="muted">Install any other native client packages alongside the primary. The primary environment is excluded automatically.</p>
       <div className="stack" role="group" aria-label="Additional coding environments">
-        {CODING_ENVIRONMENTS.filter((environment) => environment.id !== selection.primary).map((environment) => <label className="radio-row" key={environment.id}>
+        {options.filter((environment) => environment.id !== selection.primary).map((environment) => <label className="radio-row" key={environment.id}>
           <input type="checkbox" checked={selection.additional.includes(environment.id)} onChange={(event) => toggleAdditional(environment.id, event.target.checked)} />
           <span><strong>{environment.label}</strong><small>{environment.detail}</small></span>
           {selection.additional.includes(environment.id) && <Status label="Selected" tone="pass" />}
@@ -3054,17 +3086,6 @@ function PortraitProviderSetup({
       <ToggleRow label="3D models workflow" detail={meshUnavailable ? meshUnavailableReason : "Installs and prepares the verified Meshy and Blender workflow automatically"} checked={state.meshSelected && !meshUnavailable} disabled={Boolean(meshUnavailable)} onChange={(checked) => setWorkflow("workflow.3d", checked, { meshSelected: checked })} />
       <ToggleRow label="Super Events workflow" detail={superEventsUnavailable ? (superEventsComponentUnavailableOnComputer(state) ? "Not available on this computer" : "Unavailable in the selected source version") : "Adds a ready-to-use popup, templates, example, and reusable registration workflow"} checked={state.superEventsSelected && !superEventsUnavailable} disabled={superEventsUnavailable} onChange={(checked) => setWorkflow("workflow.super_events", checked, { superEventsSelected: checked })} />
       <ToggleRow label="ComfyUI portrait production" detail={!portraitAvailable ? (portraitPlatformUnavailable ? "Not available on this computer" : "Unavailable in the selected source version") : "Optional provider-backed portraits with a source-based fallback"} checked={portrait.enabled && portraitAvailable} disabled={!portraitAvailable} onChange={(checked) => choosePortraitProvider(checked ? "cloud" : "disabled")} />
-      {genericWorkflowComponents.map((component) => {
-        const platformUnavailable = !manifestComponentSupportsPlatform(component);
-        const providerUnavailable = !providerSupportsComponent(component, state.manifestPreview?.components ?? [], state.aiProvider);
-        const unavailable = platformUnavailable || providerUnavailable;
-        const detail = platformUnavailable
-          ? "Not available on this computer"
-          : providerUnavailable
-            ? "Not available for the selected provider because the verified manifest requires Codex."
-            : component.description ?? "Optional workflow declared by the selected source version";
-        return <ToggleRow key={component.id} label={component.display_name} detail={detail} checked={state.selectedComponents.includes(component.id) && !unavailable} disabled={unavailable} onChange={(checked) => setWorkflow(component.id, checked, {})} />;
-      })}
       {portraitAvailable && portrait.enabled && <div className="workflow-provider-panel">
         <p className="workflow-resource-note">{PORTRAIT_RESOURCE_REQUIREMENT}</p>
         <span className="field-label" id="portrait-provider-label">Portrait provider</span>
@@ -3096,6 +3117,17 @@ function PortraitProviderSetup({
         {portrait.provider === "cloud" && <div className="workflow-provider-summary"><Status label="Cloud MCP registered" tone="pass" /><span>Authorization and Builder subscription remain provider-owned setup.</span><code>https://cloud.comfy.org/mcp</code></div>}
         {portrait.provider !== "runpod" && <div className="workflow-provider-summary"><Status label={portrait.providerStatus === "ready" ? "Provider ready" : "Setup deferred"} tone={portrait.providerStatus === "ready" ? "pass" : "review"} /><span>Current portrait workflow commit: <code>{portrait.workflowCommit.slice(0, 12)}</code></span></div>}
       </div>}
+      {genericWorkflowComponents.map((component) => {
+        const platformUnavailable = !manifestComponentSupportsPlatform(component);
+        const providerUnavailable = !providerSupportsComponent(component, state.manifestPreview?.components ?? [], state.aiProvider);
+        const unavailable = platformUnavailable || providerUnavailable;
+        const detail = platformUnavailable
+          ? "Not available on this computer"
+          : providerUnavailable
+            ? "Not available for the selected provider because the verified manifest requires Codex."
+            : component.description ?? "Optional workflow declared by the selected source version";
+        return <ToggleRow key={component.id} label={component.display_name} detail={detail} checked={state.selectedComponents.includes(component.id) && !unavailable} disabled={unavailable} onChange={(checked) => setWorkflow(component.id, checked, {})} />;
+      })}
     </section>
   </div>;
 }
@@ -3143,7 +3175,10 @@ export function Mcp({ state }: { state: WizardState }) {
   const environmentText = component?.environment.map((environment) => `${environment.name}${environment.secret ? " · secret" : ""}`).join(", ") || "None declared";
   const capabilityText = component?.capabilities.join(", ") || "None declared";
   const healthText = component?.required_tools.flatMap((tool) => tool.health_checks).join(", ") || "No health checks declared";
-  return <div className="two-column"><section className="panel"><PanelTitle title="Integrations" />{component ? <div className="server-row"><img className="server-icon server-icon-image" src={appIcon} alt="" aria-hidden="true" /><span><strong>{component.display_name}</strong><small>{component.description ?? "Selected integration"}</small></span></div> : <p className="muted">No integration is selected.</p>}{component && <details><summary>Technical details</summary><div className="manifest-details"><div><strong>Tools</strong><span>{toolText}</span></div><div><strong>Environment names</strong><span>{environmentText}</span></div><div><strong>Capabilities</strong><span>{capabilityText}</span></div><div><strong>Health checks</strong><span>{healthText}</span></div><div><strong>Validation</strong><span>{component.validation.map((rule) => `${rule.id} · ${rule.severity}`).join(", ") || "None declared"}</span></div></div></details>}</section><section className="panel"><PanelTitle title="Credentials" /><div className="list-row"><div><strong>Meshy API key</strong><span>Stored securely by this computer</span></div><Status label={state.meshSelected && state.meshKeyStatus === "present" ? "Stored" : state.meshSelected ? "Not stored" : "Not selected"} tone={state.meshSelected && state.meshKeyStatus === "present" ? "review" : "muted"} /></div><div className="list-row"><div><strong>Project secrets</strong><span>Secret values are never added to the project.</span></div><Status label="Protected" tone="info" /></div></section></div>;
+  const liveTools = state.selectedComponents.includes("workflow.live_tools")
+    ? state.manifestPreview?.components.find((candidate) => candidate.id === "workflow.live_tools" && manifestComponentSupportsPlatform(candidate))
+    : undefined;
+  return <div className="two-column"><section className="panel"><PanelTitle title="Integrations" />{liveTools && <div className="server-row"><img className="server-icon server-icon-image" src={appIcon} alt="" aria-hidden="true" /><span><strong>{liveTools.display_name}</strong><small>Optional live-game MCP server. Register it once for your user with the command in the installed setup guide.</small></span><Status label="Per-user setup" tone="info" /></div>}{component ? <div className="server-row"><img className="server-icon server-icon-image" src={appIcon} alt="" aria-hidden="true" /><span><strong>{component.display_name}</strong><small>{component.description ?? "Selected integration"}</small></span></div> : <p className="muted">No integration is selected.</p>}{component && <details><summary>Technical details</summary><div className="manifest-details"><div><strong>Tools</strong><span>{toolText}</span></div><div><strong>Environment names</strong><span>{environmentText}</span></div><div><strong>Capabilities</strong><span>{capabilityText}</span></div><div><strong>Health checks</strong><span>{healthText}</span></div><div><strong>Validation</strong><span>{component.validation.map((rule) => `${rule.id} · ${rule.severity}`).join(", ") || "None declared"}</span></div></div></details>}</section><section className="panel"><PanelTitle title="Credentials" /><div className="list-row"><div><strong>Meshy API key</strong><span>Stored securely by this computer</span></div><Status label={state.meshSelected && state.meshKeyStatus === "present" ? "Stored" : state.meshSelected ? "Not stored" : "Not selected"} tone={state.meshSelected && state.meshKeyStatus === "present" ? "pass" : "muted"} /></div><div className="list-row"><div><strong>Project secrets</strong><span>Secret values are never added to the project.</span></div><Status label="Protected" tone="info" /></div></section></div>;
 }
 
 export function Git({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
@@ -3320,7 +3355,10 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
   }
   const report = state.readiness;
   const coreReady = report?.coreReady === true;
-  const open = report?.openInCodex === true;
+  const primaryEnvironment = normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments, codingEnvironmentOptions(state.manifestPreview)).primary;
+  const primaryLabel = codingEnvironmentLabel(primaryEnvironment, state.manifestPreview);
+  const opensCodex = primaryEnvironment === "codex";
+  const open = opensCodex ? report?.openInCodex === true : report?.coreReady === true;
   const readinessPending = report === null;
   const portraitPipeline = state.portraitPipeline ?? DEFAULT_PORTRAIT_PIPELINE;
   const project = readinessRow(report, ["descriptor.project", "structure.core"]);
@@ -3347,13 +3385,13 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
     setOpenMessage(undefined);
     setOpenPending(true);
     try {
-      const result = await openInCodex(state.identity.projectRoot);
+      const result = await openInCodingEnvironment(state.identity.projectRoot, primaryEnvironment);
       if (!result) {
-        update({ transactionError: "Codex could not be opened. Check the Codex installation or open the project folder manually." });
+        update({ transactionError: `${primaryLabel} could not be opened. Check its installation or open the project folder manually.` });
         return;
       }
       update({ transactionError: undefined });
-      setOpenMessage(result.opened ? "Codex opened successfully." : result.message);
+      setOpenMessage(result.opened ? `${primaryLabel} opened successfully.` : result.message);
     } finally {
       setOpenPending(false);
     }
@@ -3367,12 +3405,12 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
           <p>{readinessPending ? "Core checks are still being evaluated." : coreReady ? "Optional workflow status does not block agentic development." : "Resolve blocking checks before continuing."}</p>
         </div>
         <div className="ready-action">
-          <button type="button" className="button primary" disabled={!open || openPending} aria-busy={openPending || undefined} aria-describedby="open-in-codex-help" onClick={() => void handleOpen()}>{openPending ? "Opening Codex…" : openMessage === "Codex opened successfully." ? "Codex opened ✓" : "Open in Codex ↗"}</button>
+          <button type="button" className="button primary" disabled={!open || openPending} aria-busy={openPending || undefined} aria-describedby="open-in-codex-help" onClick={() => void handleOpen()}>{openPending ? `Opening ${primaryLabel}…` : openMessage === `${primaryLabel} opened successfully.` ? `${primaryLabel} opened ✓` : `Open in ${primaryLabel} ↗`}</button>
           {openMessage && <p className="ready-action-message" role="status">{openMessage}</p>}
-          {!readinessPending && coreReady && !open && <p className="ready-action-message">Install the Codex configuration component to enable this action.</p>}
+          {!readinessPending && coreReady && !open && opensCodex && <p className="ready-action-message">Install the Codex configuration component to enable this action.</p>}
         </div>
         <span id="open-in-codex-help" className="visually-hidden">
-          {readinessPending ? "Readiness checks are still running." : open ? "Opens the project in Codex, or shows a manual folder-opening instruction if no verified opener is installed." : coreReady ? "Install the Codex configuration component before opening in Codex." : "Resolve blocking checks before opening in Codex."}
+          {readinessPending ? "Readiness checks are still running." : open ? `Opens the project in ${primaryLabel}, or shows how to open it manually if no verified opener is installed.` : coreReady && opensCodex ? "Install the Codex configuration component before opening in Codex." : `Resolve blocking checks before opening in ${primaryLabel}.`}
         </span>
       </section>
       <div className="two-column">
@@ -3394,6 +3432,7 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
           </div>
           {state.flattenForChat && <div className="callout info chatgpt-ready-callout"><ExternalLink href="https://chatgpt.com"><strong>ChatGPT Chat sources prepared</strong><span>Start planning in ChatGPT Chat <span aria-hidden="true">↗</span></span></ExternalLink></div>}
           {coreReady && portraitPipeline.enabled && <div className="portrait-workflow-note"><ExternalLink href={PORTRAIT_REPOSITORY}>Portrait production source and setup guidance <span aria-hidden="true">↗</span></ExternalLink></div>}
+          {coreReady && state.selectedComponents.includes("workflow.live_tools") && <div className="portrait-workflow-note"><ExternalLink href={LIVE_TOOLS_GUIDE}>HOI4 Live Tools setup guide <span aria-hidden="true">↗</span></ExternalLink><small className="muted">Register the live-game server once for your user; the guide is also installed in .claude/skills/hoi4-live-testing.</small></div>}
           <details>
             <summary>Readiness details</summary>
             {report ? <div className="manifest-details">{report.checks.map((check) => <div key={check.id}><strong>{check.label}</strong><span>{check.status === "configured" || check.status === "pass" ? "Ready" : check.status === "unsupported_platform" ? "Not available on this computer" : check.status === "planned_unavailable" ? "Optional tool not installed" : check.status === "not_selected" ? "Not selected" : check.blocking ? "Action needed" : "Optional setup incomplete"}</span></div>)}</div> : <p className="muted">Details appear after the checks finish.</p>}
@@ -3513,16 +3552,17 @@ function PortraitMaintenanceSetup({
 }
 
 function MaintenanceCodingEnvironmentOptions({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
-  const selection = normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments);
+  const options = codingEnvironmentOptions(state.manifestPreview);
+  const selection = normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments, options);
   const choosePrimary = (primary: CodingEnvironmentId) => {
-    const next = normalizeCodingEnvironmentSelection(primary, selection.additional);
+    const next = normalizeCodingEnvironmentSelection(primary, selection.additional, options);
     update({ primaryCodingEnvironment: next.primary, additionalCodingEnvironments: next.additional, plan: undefined, transactionError: undefined });
   };
   const toggle = (id: CodingEnvironmentId, checked: boolean) => {
-    const next = normalizeCodingEnvironmentSelection(selection.primary, checked ? [...selection.additional, id] : selection.additional.filter((candidate) => candidate !== id));
+    const next = normalizeCodingEnvironmentSelection(selection.primary, checked ? [...selection.additional, id] : selection.additional.filter((candidate) => candidate !== id), options);
     update({ primaryCodingEnvironment: next.primary, additionalCodingEnvironments: next.additional, plan: undefined, transactionError: undefined });
   };
-  return <section className="panel maintenance-environment-panel"><PanelTitle title="Coding environments" /><p className="muted">Existing and locally modified files are preserved. Deselecting removes only unchanged files after review.</p><div className="coding-environment-options" role="radiogroup" aria-label="Primary coding environment">{CODING_ENVIRONMENTS.map((environment) => <label className="coding-environment-option" key={environment.id}><input type="radio" name="maintenance-primary-coding-environment" checked={selection.primary === environment.id} onChange={() => choosePrimary(environment.id)} /><span className="coding-environment-copy"><strong>{environment.label}</strong><small>{environment.detail}</small></span>{selection.primary === environment.id && <Status label="Primary" tone="info" />}</label>)}</div><details><summary>Additional environments</summary><div className="stack" role="group" aria-label="Additional coding environments">{CODING_ENVIRONMENTS.filter((environment) => environment.id !== selection.primary).map((environment) => <label className="radio-row" key={environment.id}><input type="checkbox" checked={selection.additional.includes(environment.id)} onChange={(event) => toggle(environment.id, event.target.checked)} /><span><strong>{environment.label}</strong><small>Keep this native package installed alongside the primary.</small></span></label>)}</div></details></section>;
+  return <section className="panel maintenance-environment-panel"><PanelTitle title="Coding environments" /><p className="muted">Existing and locally modified files are preserved. Deselecting removes only unchanged files after review.</p><div className="coding-environment-options" role="radiogroup" aria-label="Primary coding environment">{options.map((environment) => <label className="coding-environment-option" key={environment.id}><input type="radio" name="maintenance-primary-coding-environment" checked={selection.primary === environment.id} onChange={() => choosePrimary(environment.id)} /><span className="coding-environment-copy"><strong>{environment.label}</strong><small>{environment.detail}</small></span>{selection.primary === environment.id && <Status label="Primary" tone="info" />}</label>)}</div><details><summary>Additional environments</summary><div className="stack" role="group" aria-label="Additional coding environments">{options.filter((environment) => environment.id !== selection.primary).map((environment) => <label className="radio-row" key={environment.id}><input type="checkbox" checked={selection.additional.includes(environment.id)} onChange={(event) => toggle(environment.id, event.target.checked)} /><span><strong>{environment.label}</strong><small>Keep this native package installed alongside the primary.</small></span></label>)}</div></details></section>;
 }
 
 export function Update({ state, update, updateIdentity, updateDescription, findings, setFindings, onMaintenance, onStartMaintenance, onReanalyze, onConfirmAnalysis, onPackageChatSources, pending = false }: { state: WizardState; update: (patch: Partial<WizardState>) => void; updateIdentity?: (patch: Partial<ProjectIdentity>) => void; updateDescription?: (description: string, preserveAnalysis?: boolean) => void; onConfirmAnalysis?: () => Promise<void>; findings: ScanFinding[]; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void; onReanalyze: () => Promise<boolean>; onPackageChatSources?: () => Promise<void>; pending?: boolean }) {

@@ -1649,7 +1649,7 @@ fn unsafe_git_config_section(section: &str) -> bool {
     )
 }
 
-fn find_git_executable() -> Result<PathBuf, AppError> {
+pub(crate) fn find_git_executable() -> Result<PathBuf, AppError> {
     let names = if cfg!(target_os = "windows") {
         ["git.exe", "git"]
     } else {

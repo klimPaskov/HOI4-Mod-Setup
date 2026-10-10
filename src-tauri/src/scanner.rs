@@ -1372,7 +1372,10 @@ fn scan_content_policy(relative: &str) -> Option<ScanContentPolicy> {
     let segments = normalized.split('/').collect::<Vec<_>>();
     let name = segments.last().copied().unwrap_or_default();
     let extension = name.rsplit_once('.').map(|(_, extension)| extension)?;
-    let skill = matches!(segments.as_slice(), [".agents", "skills", _, "skill.md"]);
+    let skill = matches!(
+        segments.as_slice(),
+        [".claude" | ".agents" | ".qoder", "skills", _, "skill.md"]
+    );
     let subagent = matches!(segments.as_slice(), [".codex", "agents", _]) && extension == "toml";
     let codex_config = normalized == ".codex/config.toml";
     // Native coding-client files are a bounded, explicit scan surface. The
@@ -2131,27 +2134,58 @@ fn detect_agentic_files(
     findings: &mut Vec<ScanFinding>,
     conflicts: &mut Vec<ScanConflict>,
 ) {
-    let skill_files: Vec<&FileObservation> = observations
-        .iter()
-        .filter(|file| {
-            let lower = file.relative.to_ascii_lowercase();
-            !file.is_symlink && lower.starts_with(".agents/skills/") && lower.ends_with("skill.md")
-        })
-        .collect();
+    // The canonical library is `.claude/skills`; `.agents/skills` is either
+    // its runtime copy or, in older setups, the canonical library itself.
+    let skill_files_under = |root: &str| -> Vec<&FileObservation> {
+        observations
+            .iter()
+            .filter(|file| {
+                let lower = file.relative.to_ascii_lowercase();
+                !file.is_symlink && lower.starts_with(root) && lower.ends_with("skill.md")
+            })
+            .collect()
+    };
+    let claude_skill_files = skill_files_under(".claude/skills/");
+    let (skill_root, skill_files) = if claude_skill_files.is_empty() {
+        (".agents/skills/", skill_files_under(".agents/skills/"))
+    } else {
+        (".claude/skills/", claude_skill_files)
+    };
     let malformed_skills = skill_files
         .iter()
         .filter(|file| !skill_frontmatter_is_valid(&String::from_utf8_lossy(&file.bytes)))
         .map(|file| file.relative.clone())
         .take(MAX_MALFORMED_AGENTIC_SAMPLES + 1)
         .collect::<Vec<_>>();
-    let subagent_files: Vec<&FileObservation> = observations
+    let claude_agent_files: Vec<&FileObservation> = observations
+        .iter()
+        .filter(|file| {
+            let lower = file.relative.to_ascii_lowercase();
+            !file.is_symlink && lower.starts_with(".claude/agents/") && lower.ends_with(".md")
+        })
+        .collect();
+    let codex_agent_files: Vec<&FileObservation> = observations
         .iter()
         .filter(|file| {
             let lower = file.relative.to_ascii_lowercase();
             !file.is_symlink && lower.starts_with(".codex/agents/") && lower.ends_with(".toml")
         })
         .collect();
-    let malformed_subagents = subagent_files
+    let subagent_root = if claude_agent_files.is_empty() {
+        ".codex/agents/"
+    } else {
+        ".claude/agents/"
+    };
+    let subagent_count = if claude_agent_files.is_empty() {
+        codex_agent_files.len()
+    } else {
+        claude_agent_files.len()
+    };
+    let malformed_claude_agents = claude_agent_files
+        .iter()
+        .filter(|file| !skill_frontmatter_is_valid(&String::from_utf8_lossy(&file.bytes)))
+        .map(|file| file.relative.clone());
+    let malformed_subagents = codex_agent_files
         .iter()
         .filter(|file| {
             let text = String::from_utf8_lossy(&file.bytes);
@@ -2170,6 +2204,7 @@ fn detect_agentic_files(
             }
         })
         .map(|file| file.relative.clone())
+        .chain(malformed_claude_agents)
         .take(MAX_MALFORMED_AGENTIC_SAMPLES + 1)
         .collect::<Vec<_>>();
     let agentic_samples_truncated = malformed_skills.len() > MAX_MALFORMED_AGENTIC_SAMPLES
@@ -2185,7 +2220,7 @@ fn detect_agentic_files(
     if agentic_samples_truncated {
         conflicts.push(ScanConflict {
             id: "scan.agentic_cardinality_limit".into(),
-            path: ".agents/ and .codex/agents/".into(),
+            path: format!("{skill_root} and {subagent_root}"),
             kind: "other".into(),
             severity: "warn".into(),
             details: Some(
@@ -2239,7 +2274,7 @@ fn detect_agentic_files(
         } else {
             "needs_review"
         },
-        evidence("agentic_file_detector", ".agents/skills/", 1.0, None),
+        evidence("agentic_file_detector", skill_root, 1.0, None),
         None,
     ));
     for path in malformed_skills {
@@ -2258,13 +2293,13 @@ fn detect_agentic_files(
         "subagent.inventory",
         "subagent",
         "subagent_count",
-        json!({"count": subagent_files.len(), "malformed": malformed_subagents.clone()}),
+        json!({"count": subagent_count, "malformed": malformed_subagents.clone()}),
         if malformed_subagents.is_empty() {
             "accepted"
         } else {
             "needs_review"
         },
-        evidence("agentic_file_detector", ".codex/agents/", 1.0, None),
+        evidence("agentic_file_detector", subagent_root, 1.0, None),
         None,
     ));
     for path in malformed_subagents {
@@ -2274,7 +2309,7 @@ fn detect_agentic_files(
             kind: "other".into(),
             severity: "block".into(),
             details: Some(
-                "Subagent TOML is invalid or does not explicitly require fork_context=false."
+                "Subagent definition is unreadable, lacks a name or description, or (for Codex) does not require fork_context=false."
                     .into(),
             ),
         });
@@ -2529,7 +2564,13 @@ fn detect_existing_components(
     observations: &[FileObservation],
     conflicts: &mut Vec<ScanConflict>,
 ) {
-    for path in ["paradox_wiki", ".agents/skills", ".codex/agents"] {
+    for path in [
+        "paradox_wiki",
+        ".claude/skills",
+        ".claude/agents",
+        ".agents/skills",
+        ".codex/agents",
+    ] {
         let present = if path == "paradox_wiki" {
             fs::symlink_metadata(root.join(path))
                 .ok()

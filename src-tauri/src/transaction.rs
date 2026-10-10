@@ -2966,8 +2966,9 @@ pub(crate) fn validate_flatten_transaction_inputs(
             Some("keep" | "keep_user_modification")
         );
         let normalized = file.destination.replace('\\', "/");
-        let eligible =
-            normalized.starts_with(".agents/skills/") || normalized.starts_with(".codex/agents/");
+        let eligible = crate::flatten::FLATTEN_SOURCE_PREFIXES
+            .iter()
+            .any(|prefix| normalized.starts_with(prefix));
         if kept_local && eligible {
             let bytes = crate::flatten::read_regular_file_no_follow_under_root(
                 project_root,

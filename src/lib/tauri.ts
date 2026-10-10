@@ -115,6 +115,7 @@ interface TauriCommandMap {
   resume_installation: { args: { projectRoot: string; transactionId: string }; result: TransactionJournal };
   discard_installation_staging: { args: { projectRoot: string; transactionId: string }; result: TransactionJournal };
   open_in_codex: { args: { projectRoot: string }; result: OpenInCodexResult };
+  open_in_coding_environment: { args: { projectRoot: string; environment: CodingEnvironmentId }; result: OpenInCodexResult };
   git_online_prepare: { args: { projectRoot: string; action: Exclude<GitOnlineAction, "none">; remoteName: string; repository: string; branch: string }; result: GitOnlinePlan };
   git_online_action: { args: { projectRoot: string; planId: string; confirmed: boolean; transactionId?: string | null }; result: GitOnlineResult };
 }
@@ -567,6 +568,10 @@ export async function applyInstallationResult(planId: string, projectRoot: strin
 
 export async function openInCodex(projectRoot: string): Promise<OpenInCodexResult | null> {
   return invokeCommand("open_in_codex", { projectRoot });
+}
+
+export async function openInCodingEnvironment(projectRoot: string, environment: CodingEnvironmentId): Promise<OpenInCodexResult | null> {
+  return invokeCommand("open_in_coding_environment", { projectRoot, environment });
 }
 
 export async function prepareGitOnlineAction(args: TauriCommandMap["git_online_prepare"]["args"]): Promise<CommandResult<GitOnlinePlan>> {

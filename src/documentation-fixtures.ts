@@ -62,16 +62,18 @@ function component(
 }
 
 const manifestComponents = [
-  component("core.agents", "Project instructions", "AGENTS.md adapted to the mod", "instructions", 1),
-  component("core.skills", "HOI4 skills", "Current workflows for scripting, art, research, and review", "skills", 494),
-  component("core.subagents", "Focused subagents", "Narrow helpers for common HOI4 tasks", "subagents", 19),
-  component("codex.config", "Codex and MCP configuration", "Project configuration for Codex", "configuration", 1),
+  component("core.claude.instructions", "Project instructions (canonical CLAUDE.md)", "CLAUDE.md adapted to the mod; AGENTS.md is generated from it", "core", 1),
+  component("core.agents", "Project instructions (AGENTS.md)", "The same rules for Codex, Cursor, Qoder, OpenCode, and DSH", "core", 1),
+  component("core.skills", "HOI4 workflow skills", "The canonical skill library in .claude/skills", "skill", 512),
+  component("core.subagents", "Subagents", "Canonical Claude Code specialists with per-role model tiers", "subagent", 19),
+  component("runtime.agent_sync", "Runtime synchronizers", "Regenerate AGENTS.md, other runtimes' agents, and skill copies", "script", 8),
   component("mcp.hoi4_agent_tools", "HOI4 Agent Tools MCP", "HOI4-aware validation tools", "mcp", 0, true, ["windows"]),
   component("docs.mcp_integration", "HOI4 Agent Tools integration guide", "Capability, evidence, recovery, and troubleshooting contract", "documentation", 1),
   component("wiki.snapshot", "Offline Paradox wiki", "A local reference installed under paradox_wiki/", "documentation", 586),
   component("workflow.3d", "3D models workflow", "Optional Meshy and bounded Blender adapter workflow", "workflow", 10, true, ["windows"]),
   component("workflow.super_events", "Super Events workflow", "Reusable event popup, templates, examples, and assets", "workflow", 9, true),
-  component("workflow.portraits.core", "Complete portrait production contract", "Grounded source, native ImageGen, processing, wiring, manifest, and handoff contract.", "skill", 1, true),
+  component("workflow.live_tools", "HOI4 Live Tools", "Live-testing skill and setup guide for the optional HOI4 Live Tools MCP server, which drives a running game on Windows", "workflow", 2, true, ["windows"]),
+  component("workflow.portraits.core", "Complete portrait production contract", "Grounded source, generated portraits, processing, wiring, manifest, and handoff contract.", "skill", 1, true),
   component("workflow.portraits.router", "ComfyUI portrait-provider router", "Explicit Cloud, Local, or user-run RunPod selection contract", "workflow", 1, true),
   component("workflow.portraits.cloud", "Comfy Cloud portrait production", "Selected provider route", "workflow", 1, true),
   component("workflow.portraits.local", "Loopback ComfyUI portrait production", "Selected provider route", "workflow", 1, true),
@@ -103,7 +105,7 @@ const source = {
 };
 
 const manifest = {
-  schema_version: "1.0.0",
+  schema_version: "3.0.0",
   manifest_id: "agentic-hoi4-modding",
   source,
   repository: {
@@ -116,10 +118,17 @@ const manifest = {
   components: manifestComponents,
   profiles: [{
     id: "core",
-    display_name: "Core Codex setup",
-    components: ["core.agents", "core.skills", "core.subagents", "codex.config", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot"],
+    display_name: "Core agentic setup",
+    components: ["core.claude.instructions", "core.agents", "core.skills", "core.subagents", "runtime.agent_sync", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot"],
     default: true,
   }],
+  coding_environments: [
+    { id: "claude_code", display_name: "Claude Code", description: "Canonical CLAUDE.md, skills, and agents in .claude, shared settings, and project MCP registration", default_primary: true },
+    { id: "codex", display_name: "Codex", description: "AGENTS.md, the .agents/skills copy, generated .codex agents, and Codex MCP configuration" },
+    { id: "cursor", display_name: "Cursor", description: "Generated .cursor agents, project settings, map, and MCP" },
+    { id: "qoder", display_name: "Qoder", description: "Generated .qoder agents, project settings, map, and MCP" },
+    { id: "opencode", display_name: "OpenCode", description: "Generated .opencode agents, opencode.json, map, and MCP" },
+  ],
 };
 
 const semanticAnalysis: CodexAnalysis = {
@@ -171,10 +180,12 @@ const semanticConventions: SemanticConventions = {
 };
 
 const operations: InstallationPlan["operations"] = [
+  ["claude", "core.claude.instructions", "CLAUDE.md"],
   ["agents", "core.agents", "AGENTS.md"],
-  ["skills", "core.skills", ".agents/skills/"],
-  ["subagents", "core.subagents", ".codex/agents/"],
-  ["config", "codex.config", ".codex/config.toml"],
+  ["skills", "core.skills", ".claude/skills/"],
+  ["subagents", "core.subagents", ".claude/agents/"],
+  ["settings", "runtime.claude", ".claude/settings.json"],
+  ["mcp", "runtime.claude.mcp", ".mcp.json"],
   ["wiki", "wiki.snapshot", "paradox_wiki/"],
   ["descriptor", "core.agents", "descriptor.mod"],
   ["launcher", "core.agents", "atlantis_rising.mod"],
@@ -193,10 +204,10 @@ const plan: InstallationPlan = {
   plan_id: "documentation-preview",
   project_id: "atlantis_rising",
   source,
-  ai_provider: "codex",
-  ai_model: "default",
+  ai_provider: "claude_account",
+  ai_model: "claude-haiku-4-5-20251001",
   flatten_chat_sources: true,
-  selected_components: ["core.agents", "core.skills", "core.subagents", "codex.config", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot", "workflow.super_events", "workflow.portraits.router", ...portraitComponentIds],
+  selected_components: ["core.claude.instructions", "core.agents", "core.skills", "core.subagents", "runtime.agent_sync", "runtime.claude", "runtime.claude.mcp", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot", "workflow.super_events", "workflow.live_tools", "workflow.portraits.router", ...portraitComponentIds],
   wiki_required_pages: ["Hearts of Iron 4 Wiki", "Modding"],
   generated_artifacts: [
     { component_id: "chat.flattened", destination: "chatgpt_project_sources/AGENTS.md", content: "Project instructions", expected_sha256: "documentation-preview" },
@@ -242,7 +253,7 @@ const readiness: ReadinessReport = {
     ["codex.agents", "Project instructions", "pass"],
     ["skills.core", "Skills", "pass"],
     ["subagents.core", "Subagents", "pass"],
-    ["codex.config", "Codex configuration", "pass"],
+    ["coding.environments", "Coding environments", "pass"],
     ["mcp.hoi4", "HOI4 Agent Tools", "pass"],
     ["wiki.coverage", "Offline wiki", "pass"],
     ["git.project", "Git", "pass"],
@@ -284,10 +295,12 @@ export function documentationFixture(base: WizardState): WizardState {
       title: item.display_name,
       detail: item.description ?? "Setup component",
       size: item.expected_files.length === 1 ? "1 file" : `${item.expected_files.length} files`,
-      selected: !["workflow.3d", "workflow.super_events", ...allPortraitComponentIds].includes(item.id),
+      selected: !["workflow.3d", "workflow.super_events", "workflow.live_tools", ...allPortraitComponentIds].includes(item.id),
       required: !item.optional,
     })),
-    selectedComponents: ["core.agents", "core.skills", "core.subagents", "codex.config", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot"],
+    selectedComponents: ["core.claude.instructions", "core.agents", "core.skills", "core.subagents", "runtime.agent_sync", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot"],
+    primaryCodingEnvironment: "claude_code",
+    additionalCodingEnvironments: [],
     folderProfile: ["common", "events", "gfx", "interface", "localisation/english"],
     codexAnalysis: semanticAnalysis,
     codexAnalysisRecord: semanticAnalysisRecord,
@@ -316,8 +329,8 @@ export function documentationFixture(base: WizardState): WizardState {
   if (scenario === "identity") return { ...common, screen: "identity", mode: "new", codexAnalysis: semanticAnalysis, codexAnalysisRecord: semanticAnalysisRecord, conventions: semanticConventions, semanticComponentRecommendations: semanticAnalysis.component_recommendations };
   if (scenario === "existing") return { ...common, screen: "identity", mode: "existing", recoveryEntry: true };
   if (scenario === "components") return { ...common, screen: "components", flattenForChat: true };
-  if (scenario === "environments") return { ...common, screen: "environments", primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["cursor"] };
-  if (scenario === "workflows") return { ...common, screen: "workflows", meshSelected: true, superEventsSelected: true, portraitPipeline: runpodPortrait, selectedComponents: [...common.selectedComponents, "workflow.3d", "workflow.super_events", ...portraitComponentIds] };
+  if (scenario === "environments") return { ...common, screen: "environments", primaryCodingEnvironment: "claude_code", additionalCodingEnvironments: ["codex"] };
+  if (scenario === "workflows") return { ...common, screen: "workflows", meshSelected: true, superEventsSelected: true, portraitPipeline: runpodPortrait, selectedComponents: [...common.selectedComponents, "workflow.3d", "workflow.super_events", "workflow.live_tools", ...portraitComponentIds] };
   if (scenario === "mcp") return { ...common, screen: "mcp", meshSelected: true, meshKeyStatus: "present", selectedComponents: [...common.selectedComponents, "workflow.3d"] };
   if (scenario === "git") return { ...common, screen: "git", gitOnlineAction: "create_public_github", gitHubRepository: "atlantis-rising" };
   if (scenario === "dry-run") return { ...common, screen: "dry-run", plan, flattenForChat: true, superEventsSelected: true };
@@ -356,8 +369,8 @@ export function documentationFixture(base: WizardState): WizardState {
       files: [
         { id: "AGENTS.md", sourcePath: "AGENTS.md", archivePath: "AGENTS.md", category: "instructions", size: 18432, required: true, selectedByDefault: true },
         { id: "README.md", sourcePath: "README.md", archivePath: "README.md", category: "readme", size: 9216, required: true, selectedByDefault: true },
-        { id: ".agents/skills/hoi4-art/SKILL.md", sourcePath: ".agents/skills/hoi4-art/SKILL.md", archivePath: "hoi4-art.md", category: "skill", size: 14336, required: true, selectedByDefault: true },
-        { id: ".codex/agents/hoi4_researcher.toml", sourcePath: ".codex/agents/hoi4_researcher.toml", archivePath: "hoi4_researcher.toml", category: "subagent", size: 5632, required: true, selectedByDefault: true },
+        { id: ".claude/skills/hoi4-events/SKILL.md", sourcePath: ".claude/skills/hoi4-events/SKILL.md", archivePath: "hoi4-events.md", category: "skill", size: 14336, required: true, selectedByDefault: true },
+        { id: ".claude/agents/hoi4-repo-explorer.md", sourcePath: ".claude/agents/hoi4-repo-explorer.md", archivePath: "hoi4-repo-explorer.md", category: "subagent", size: 5632, required: true, selectedByDefault: true },
         { id: "DESIGN_NOTES.md", sourcePath: "DESIGN_NOTES.md", archivePath: "DESIGN_NOTES.md", category: "root_markdown", size: 4096, required: false, selectedByDefault: false },
         { id: "TODO.md", sourcePath: "TODO.md", archivePath: "TODO.md", category: "root_markdown", size: 3072, required: false, selectedByDefault: false },
       ],

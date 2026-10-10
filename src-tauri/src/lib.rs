@@ -12,6 +12,7 @@ pub mod credentials;
 pub mod descriptors;
 pub mod flatten;
 pub mod git;
+pub mod local_source;
 pub mod mcp;
 pub mod merge;
 pub mod meshy;

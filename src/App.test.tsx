@@ -1,14 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { analysisBrief, ChatSources, CodingEnvironments, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, recoveryProgress } from "./App";
-import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, startClaudeLogin, startCodexLogin, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
+import App, { analysisBrief, ChatSources, CodingEnvironments, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
+import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, startClaudeLogin, startCodexLogin, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import type { AiAccountStatus, AiProviderId, ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
 });
 
 afterEach(() => {
@@ -57,6 +57,8 @@ function readyState(): WizardState {
     readiness: { openInCodex: true, coreReady: true, blockingCheckIds: [], checks: [] },
     selectedComponents: [],
     meshSelected: false,
+    primaryCodingEnvironment: "codex",
+    additionalCodingEnvironments: [],
   } as unknown as WizardState;
 }
 
@@ -118,7 +120,7 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(initialState.aiModel).toBe("claude-haiku-4-5-20251001");
     expect(initialState.aiReasoningEffort).toBe("high");
     expect(initialState.identity.projectId).toBe("atlantis_rising");
-    expect(initialState.primaryCodingEnvironment).toBe("codex");
+    expect(initialState.primaryCodingEnvironment).toBe("claude_code");
     expect(initialState.additionalCodingEnvironments).toEqual([]);
   });
 
@@ -134,7 +136,10 @@ describe("HOI4 Mod Setup wizard", () => {
       primary: "cursor",
       additional: ["codex"],
     });
-    expect(normalizeCodingEnvironmentSelection(undefined, undefined)).toEqual({ primary: "codex", additional: [] });
+    expect(normalizeCodingEnvironmentSelection(undefined, undefined)).toEqual({ primary: "claude_code", additional: [] });
+    const declared = codingEnvironmentOptions({ coding_environments: [{ id: "windsurf", display_name: "Windsurf" }, { id: "codex", display_name: "Codex", default_primary: true }] } as never);
+    expect(declared.map((environment) => environment.id)).toEqual(["windsurf", "codex"]);
+    expect(normalizeCodingEnvironmentSelection(undefined, ["windsurf"], declared)).toEqual({ primary: "codex", additional: ["windsurf"] });
   });
 
   it("lets every supported environment be primary and keeps the primary out of additional choices", () => {
@@ -169,7 +174,8 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(group).toHaveClass("coding-environment-options");
     expect(container.querySelectorAll(".coding-environment-option")).toHaveLength(5);
     expect(container.querySelectorAll(".coding-environment-copy")).toHaveLength(5);
-    expect(within(group).getByText("Codex").closest(".coding-environment-copy")).toHaveTextContent(/Native \.codex configuration and canonical TOML agents/);
+    expect(within(group).getByText("Codex").closest(".coding-environment-copy")).toHaveTextContent(/AGENTS\.md, the \.agents\/skills copy/);
+    expect(container.querySelector(".coding-environment-option")).toHaveTextContent(/Claude Code/);
     expect(screen.getByRole("group", { name: /additional coding environments/i })).toContainElement(screen.getByRole("checkbox", { name: /Cursor/ }));
   });
 
@@ -192,8 +198,8 @@ describe("HOI4 Mod Setup wizard", () => {
     const fixture = documentationFixture(readyState());
 
     expect(fixture.screen).toBe("environments");
-    expect(fixture.primaryCodingEnvironment).toBe("codex");
-    expect(fixture.additionalCodingEnvironments).toEqual(["cursor"]);
+    expect(fixture.primaryCodingEnvironment).toBe("claude_code");
+    expect(fixture.additionalCodingEnvironments).toEqual(["codex"]);
     expect(fixture.identity.projectRoot).toContain("C:\\Users\\Player\\");
   });
 
@@ -2347,7 +2353,7 @@ describe("HOI4 Mod Setup wizard", () => {
   });
 
   it("announces a manual project-opening path when Codex has no verified opener", async () => {
-    vi.mocked(openInCodex).mockResolvedValue({
+    vi.mocked(openInCodingEnvironment).mockResolvedValue({
       opened: false,
       message: "No verified Codex opener was found. Open this folder manually: C:\\mods\\cold-war-curtain",
     });
@@ -2361,7 +2367,7 @@ describe("HOI4 Mod Setup wizard", () => {
 
   it("shows immediate and completed feedback while opening Codex", async () => {
     let finishOpen: ((result: { opened: boolean; message: string }) => void) | undefined;
-    vi.mocked(openInCodex).mockReturnValue(new Promise((resolve) => { finishOpen = resolve; }));
+    vi.mocked(openInCodingEnvironment).mockReturnValue(new Promise((resolve) => { finishOpen = resolve; }));
     render(<Ready state={readyState()} update={vi.fn()} onMaintenance={vi.fn()} />);
 
     fireEvent.click(screen.getByRole("button", { name: /open in codex/i }));
@@ -2370,6 +2376,16 @@ describe("HOI4 Mod Setup wizard", () => {
     await act(async () => finishOpen?.({ opened: true, message: "Codex was launched." }));
     expect(screen.getByRole("button", { name: /codex opened/i })).toBeEnabled();
     expect(screen.getByRole("status")).toHaveTextContent("Codex opened successfully.");
+  });
+
+  it("opens the project in Claude Code when it is the primary environment", async () => {
+    vi.mocked(openInCodingEnvironment).mockResolvedValue({ opened: true, message: "Claude Code started." });
+    render(<Ready state={{ ...readyState(), primaryCodingEnvironment: "claude_code", readiness: { openInCodex: false, coreReady: true, blockingCheckIds: [], checks: [] } } as unknown as WizardState} update={vi.fn()} onMaintenance={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /open in claude code/i }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Claude Code opened successfully."));
+    expect(vi.mocked(openInCodingEnvironment)).toHaveBeenCalledWith("C:\\mods\\cold-war-curtain", "claude_code");
+    expect(screen.queryByText("Install the Codex configuration component to enable this action.")).not.toBeInTheDocument();
   });
 
   it("opens a completion page in the existing Ready phase when Finish is pressed", () => {

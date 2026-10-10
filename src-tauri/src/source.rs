@@ -82,6 +82,8 @@ pub struct HttpSourceClient {
     owner: String,
     name: String,
     cache_root: PathBuf,
+    /// Developer-only local checkout that replaces GitHub for package testing.
+    local_repository: Option<PathBuf>,
 }
 
 impl HttpSourceClient {
@@ -110,6 +112,7 @@ impl HttpSourceClient {
             api_base: "https://api.github.com".to_string(),
             owner: SOURCE_OWNER.to_string(),
             name: SOURCE_NAME.to_string(),
+            local_repository: crate::local_source::configured_repository(),
             cache_root,
         })
     }
@@ -125,6 +128,15 @@ impl HttpSourceClient {
             return Err(AppError::Source(format!(
                 "source URL is not an approved HTTPS endpoint: {url}"
             )));
+        }
+        if let Some(root) = &self.local_repository {
+            let bytes = crate::local_source::fetch(root, &parsed)?;
+            if bytes.len() > limit {
+                return Err(AppError::Source(
+                    "source response exceeds its bounded size limit".into(),
+                ));
+            }
+            return Ok(bytes);
         }
         let response = self
             .client
@@ -552,6 +564,15 @@ impl HttpSourceClient {
                 "verified source blob URL is not an approved endpoint".into(),
             ));
         }
+        if let Some(root) = &self.local_repository {
+            let bytes = crate::local_source::fetch(root, &parsed)?;
+            if bytes.len() > limit {
+                return Err(AppError::Source(
+                    "source blob response exceeds its bounded size limit".into(),
+                ));
+            }
+            return Ok(bytes);
+        }
         let offset = partial.len();
         let mut request = self
             .client
@@ -926,10 +947,43 @@ pub fn validate_manifest(
         .next()
         .and_then(|value| value.parse::<u64>().ok())
         .ok_or_else(|| AppError::Source("manifest schema_version is invalid".into()))?;
-    if major != SUPPORTED_MANIFEST_MAJOR {
-        return Err(AppError::Source(format!(
-            "unsupported manifest major {major}; supported major is {SUPPORTED_MANIFEST_MAJOR}"
-        )));
+    if !SUPPORTED_MANIFEST_MAJORS.contains(&major) {
+        return Err(AppError::Source(if major > CURRENT_MANIFEST_MAJOR {
+            format!(
+                "the setup package uses manifest format {major}, which needs a newer HOI4 Mod Setup. Update the app, then try again"
+            )
+        } else {
+            format!(
+                "the setup package uses manifest format {major}, which this app no longer reads"
+            )
+        }));
+    }
+    let declared_environments = manifest
+        .coding_environments
+        .iter()
+        .map(|environment| environment.id.as_str())
+        .collect::<HashSet<_>>();
+    if declared_environments.len() != manifest.coding_environments.len()
+        || manifest.coding_environments.iter().any(|environment| {
+            !crate::coding_environment::is_supported(&environment.id)
+                || environment.display_name.trim().is_empty()
+                || environment.display_name.chars().count() > 64
+        })
+        || manifest
+            .coding_environments
+            .iter()
+            .filter(|environment| environment.default_primary)
+            .count()
+            > 1
+    {
+        return Err(AppError::Source(
+            "the manifest coding-environment declarations are invalid".into(),
+        ));
+    }
+    if major >= 3 && manifest.coding_environments.is_empty() {
+        return Err(AppError::Source(
+            "the manifest does not declare its coding environments".into(),
+        ));
     }
     if manifest.manifest_id.trim().is_empty()
         || !Regex::new(r"^[a-z0-9][a-z0-9._-]*$")
@@ -1014,7 +1068,10 @@ pub fn validate_manifest(
             }
         }
         if let Some(environment) = component.coding_environment.as_deref() {
-            if !crate::coding_environment::is_supported(environment) {
+            if !crate::coding_environment::is_supported(environment)
+                || (!declared_environments.is_empty()
+                    && !declared_environments.contains(environment))
+            {
                 return Err(AppError::Source(format!(
                     "component {} declares an unsupported coding environment: {environment}",
                     component.id
@@ -1887,7 +1944,7 @@ mod tests {
         );
         assert!(manifest.profiles.iter().any(|profile| profile.default));
         assert_eq!(manifest.wiki.destination, "paradox_wiki/");
-        assert_eq!(manifest.components.len(), 45);
+        assert_eq!(manifest.components.len(), 55);
         for environment in crate::coding_environment::SUPPORTED {
             assert!(manifest
                 .components
@@ -2144,9 +2201,9 @@ mod tests {
             .map(|file| file.path.as_str())
             .collect::<HashSet<_>>();
         for expected in [
-            ".agents/skills/hoi4-super-events/SKILL.md",
-            ".agents/skills/hoi4-super-events/assets/examples/contact_sheet.png",
-            ".agents/skills/hoi4-super-events/assets/examples/super_event_world_in_fury.png",
+            ".claude/skills/hoi4-super-events/SKILL.md",
+            ".claude/skills/hoi4-super-events/assets/examples/contact_sheet.png",
+            ".claude/skills/hoi4-super-events/assets/examples/super_event_world_in_fury.png",
             "interface/hoi4ms_super_events.gui",
             "interface/hoi4ms_super_events.gfx",
             "common/scripted_guis/hoi4ms_super_events.txt",
@@ -2157,17 +2214,21 @@ mod tests {
             "gfx/super_events/super_event_template.psd",
             "gfx/super_events/super_event_image_template_457x328.psd",
             "docs/super_events/README.md",
-            ".codex/agents/hoi4_super_event_quote_researcher.toml",
-            ".codex/agents/hoi4_super_event_audio_researcher.toml",
-            ".codex/agents/hoi4_super_event_art_researcher.toml",
+            ".claude/agents/hoi4-super-event-quote-researcher.md",
+            ".claude/agents/hoi4-super-event-audio-researcher.md",
+            ".claude/agents/hoi4-super-event-art-researcher.md",
         ] {
             assert!(paths.contains(expected), "{expected}");
         }
 
+        // A Git tree lists each path once even when two components (such as
+        // a canonical skill and its runtime copy) read the same source file.
+        let mut seen_paths = HashSet::new();
         let tree = manifest
             .components
             .iter()
             .flat_map(|component| component.expected_files.iter())
+            .filter(|file| seen_paths.insert(file.path.clone()))
             .map(|file| TreeEntry {
                 path: file.path.clone(),
                 kind: "blob".into(),
@@ -2184,17 +2245,17 @@ mod tests {
             .iter()
             .filter(|file| {
                 file.destination
-                    .starts_with(".agents/skills/hoi4-super-events")
+                    .starts_with(".claude/skills/hoi4-super-events")
                     && file.destination.ends_with("/SKILL.md")
             })
             .collect::<Vec<_>>();
         assert_eq!(super_event_skills.len(), 1);
         assert_eq!(
             super_event_skills[0].destination,
-            ".agents/skills/hoi4-super-events/SKILL.md"
+            ".claude/skills/hoi4-super-events/SKILL.md"
         );
         assert!(selected_files.iter().any(|file| {
-            file.destination == ".codex/agents/hoi4_super_event_audio_researcher.toml"
+            file.destination == ".claude/agents/hoi4-super-event-audio-researcher.md"
         }));
     }
 
@@ -2758,6 +2819,7 @@ mod tests {
                 manifest_cache_ttl_seconds: None,
             },
             signing: None,
+            coding_environments: Vec::new(),
         }
     }
 }

@@ -1,7 +1,7 @@
 //! Build the optional flat source folder intended for a ChatGPT Chat project.
 //!
 //! This is a generated view of the verified setup inputs. It never removes the
-//! normal `.agents/skills` or `.codex/agents` trees and every output remains a
+//! normal `.claude/skills`, `.agents/skills`, `.claude/agents`, or `.codex/agents` trees and every output remains a
 //! normal transaction operation with conflict and rollback evidence.
 
 use crate::models::{GeneratedArtifact, PreparedFile};
@@ -65,6 +65,14 @@ fn directory_errno() -> i32 {
     unsafe { *libc::__error() }
 }
 
+/// Folders whose skill and subagent files can feed flattened chat sources.
+pub(crate) const FLATTEN_SOURCE_PREFIXES: [&str; 4] = [
+    ".claude/skills/",
+    ".claude/agents/",
+    ".agents/skills/",
+    ".codex/agents/",
+];
+
 pub fn build_artifacts(
     prepared: &[PreparedFile],
     generated: &[GeneratedArtifact],
@@ -111,6 +119,14 @@ pub fn build_artifacts(
     let mut outputs = BTreeMap::<String, (String, Vec<u8>)>::new();
     let mut skill_count = 0usize;
     let mut subagent_count = 0usize;
+    // Canonical Claude files win over their runtime copies so each skill and
+    // subagent appears once in the flattened sources.
+    let has_claude_skills = sources
+        .keys()
+        .any(|source| source.starts_with(".claude/skills/"));
+    let has_claude_agents = sources
+        .keys()
+        .any(|source| source.starts_with(".claude/agents/"));
     for (source, bytes) in &sources {
         if source == "AGENTS.md" || source == "README.md" {
             std::str::from_utf8(bytes).map_err(|_| {
@@ -123,7 +139,7 @@ pub fn build_artifacts(
         }
         let parts = source.split('/').collect::<Vec<_>>();
         if parts.len() == 4
-            && parts[0] == ".agents"
+            && (parts[0] == ".claude" || (parts[0] == ".agents" && !has_claude_skills))
             && parts[1] == "skills"
             && parts[3] == "SKILL.md"
         {
@@ -135,9 +151,11 @@ pub fn build_artifacts(
             insert_output(&mut outputs, &destination, bytes.clone())?;
             skill_count += 1;
         } else if parts.len() == 3
-            && parts[0] == ".codex"
-            && parts[1] == "agents"
-            && parts[2].ends_with(".toml")
+            && ((parts[0] == ".claude" && parts[1] == "agents" && parts[2].ends_with(".md"))
+                || (!has_claude_agents
+                    && parts[0] == ".codex"
+                    && parts[1] == "agents"
+                    && parts[2].ends_with(".toml")))
         {
             std::str::from_utf8(bytes).map_err(|_| {
                 AppError::Serialization(format!("flattened subagent is not valid UTF-8: {source}"))
@@ -196,11 +214,18 @@ fn is_flatten_source_candidate(destination: &str) -> bool {
         return true;
     }
     let parts = normalized.split('/').collect::<Vec<_>>();
-    (parts.len() == 4 && parts[0] == ".agents" && parts[1] == "skills" && parts[3] == "SKILL.md")
+    (parts.len() == 4
+        && matches!(parts[0], ".claude" | ".agents")
+        && parts[1] == "skills"
+        && parts[3] == "SKILL.md")
         || (parts.len() == 3
             && parts[0] == ".codex"
             && parts[1] == "agents"
             && parts[2].ends_with(".toml"))
+        || (parts.len() == 3
+            && parts[0] == ".claude"
+            && parts[1] == "agents"
+            && parts[2].ends_with(".md"))
 }
 
 pub(crate) fn read_regular_file_no_follow_under_root(

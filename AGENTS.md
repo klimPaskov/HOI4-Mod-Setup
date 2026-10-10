@@ -105,7 +105,7 @@ Keep core domain logic independent from UI components and platform APIs. Platfor
 
 ## 5. Repository source rules
 
-Use "C:\Users\klimp\OneDrive\Documents\Paradox Interactive\Hearts of Iron IV\mod\agentic_hoi4_modding" as the live workflow source.
+The live workflow source is the public [Agentic HOI4 Modding](https://github.com/klimPaskov/Agentic-HOI4-Modding) repository. To test unpublished package changes end to end, set `HOI4_MOD_SETUP_SOURCE_REPOSITORY` to the absolute path of a local checkout before starting the app; it then serves the checkout's committed files in place of GitHub.
 
 The application must:
 

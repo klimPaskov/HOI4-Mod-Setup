@@ -4,7 +4,11 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-pub const SUPPORTED_MANIFEST_MAJOR: u64 = 2;
+/// Manifest majors this build reads. Major 2 is the Codex-canonical layout
+/// (`.agents/skills`, `.codex/agents`); major 3 is the Claude-first layout
+/// (`.claude/skills`, `.claude/agents`) with declared coding environments.
+pub const SUPPORTED_MANIFEST_MAJORS: [u64; 2] = [2, 3];
+pub const CURRENT_MANIFEST_MAJOR: u64 = 3;
 
 pub const TRANSACTION_STAGES: [&str; 12] = [
     "preflight",
@@ -348,6 +352,23 @@ pub struct RemoteManifest {
     pub update_policy: ManifestUpdatePolicy,
     #[serde(default)]
     pub signing: Option<SigningPolicy>,
+    /// Coding clients the package supports, in display order. Older manifests
+    /// omit it and use the built-in list.
+    #[serde(default)]
+    pub coding_environments: Vec<CodingEnvironmentDefinition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CodingEnvironmentDefinition {
+    pub id: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub default_primary: bool,
+    #[serde(default)]
+    pub open_command: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
