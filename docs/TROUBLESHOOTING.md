@@ -145,11 +145,45 @@ Afterward, use **Refresh checks** on **Project ready**, or **Check integration**
 **Fix:** Leave the unavailable MCP component unselected on macOS and continue with the supported components.
 Core setup remains usable; this MCP route cannot be enabled on macOS through a setting in the app.
 
-## Codex does not open from the Ready screen
+## The project does not open from the Ready screen
 
-> Codex could not be opened. Check the Codex installation or open the project folder manually.
+> Claude Code could not be opened. Check its installation or open the project folder manually.
 
-**Cause:** The app could not open the prepared folder in Codex.
+**Cause:** The app could not start your primary coding client for the prepared folder. For Claude Code, the app starts `claude` in a new terminal window in the project folder; other clients are opened manually.
 
-**Fix:** Check the Codex installation or open your mod's **Project folder** manually in Codex.
-If **Open in Codex** is disabled, review the readiness checks and whether the Codex configuration component is installed.
+**Fix:** Open a terminal in the mod's **Project folder** and run `claude`, or open the folder in your client.
+For Codex, **Open in Codex** stays disabled until the Codex configuration component is installed and the readiness checks pass.
+
+## The setup package needs a newer HOI4 Mod Setup
+
+> The setup package uses manifest format 3, which needs a newer HOI4 Mod Setup. Update the app, then try again.
+
+**Cause:** The published workflow package changed its file format, and this copy of the app is older than that format.
+
+**Fix:** Restart the app so its automatic update can install the current version, or download the newest installer from [GitHub Releases](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest). Nothing in your mod was changed.
+
+## Claude Code does not show the project skills, agents, or MCP server
+
+**Cause:** Claude Code reads `.claude/skills/`, `.claude/agents/`, and the project `.mcp.json` from the folder it was started in, and it asks once before it starts a project MCP server.
+
+**Fix:** Start Claude Code in the mod's project folder, approve the `hoi4_agent_tools` server when asked, and check it with `/mcp`. If the server was declined earlier, run `claude mcp reset-project-choices` in the project folder and start Claude Code again.
+
+## Codex or another client follows outdated rules
+
+**Cause:** `CLAUDE.md`, `.claude/skills/`, and `.claude/agents/` are the canonical files; `AGENTS.md`, `.agents/skills/`, and the Codex, Cursor, Qoder, and OpenCode agents are generated from them. A canonical file was edited without regenerating the copies.
+
+**Fix:** In the project folder, run:
+
+```powershell
+python .tools/sync/sync_instructions.py
+python .tools/sync/sync_agents.py
+python .tools/sync/sync_skills.py
+```
+
+Add `--check` to any of them to see what is out of date without writing.
+
+## HOI4 Live Tools is not listed in Claude Code or Codex
+
+**Cause:** HOI4 Live Tools is a separate program whose folder differs on every computer, so it is registered for your user rather than inside the mod.
+
+**Fix:** Follow `.claude/skills/hoi4-live-testing/references/setup.md` in the project: install the tools, set `HOI4_LIVE_PYTHON`, run the `selftest` command, then register the server with `claude mcp add --scope user hoi4-live -- "<install folder>\hoi4-live-tools.cmd"` (or the Codex entry in the guide) and restart the client.

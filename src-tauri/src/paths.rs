@@ -334,6 +334,47 @@ pub fn validate_project_root_or_destination(path: &Path) -> Result<(PathBuf, boo
     Ok((candidate, false))
 }
 
+/// Append one technical line to the bounded diagnostics log in application
+/// data. User-facing messages stay short; this file keeps the underlying
+/// cause for troubleshooting. Failures to log are ignored, and unit tests
+/// never write to the real application data folder.
+pub fn record_diagnostic(context: &str, detail: &str) {
+    if cfg!(test) {
+        return;
+    }
+    if let Ok(root) = application_data_root() {
+        append_diagnostic(&root.join("logs"), context, detail);
+    }
+}
+
+fn append_diagnostic(directory: &Path, context: &str, detail: &str) {
+    const MAX_BYTES: u64 = 512 * 1024;
+    if fs::create_dir_all(directory).is_err() {
+        return;
+    }
+    let path = directory.join("diagnostics.log");
+    if fs::metadata(&path).is_ok_and(|metadata| metadata.len() > MAX_BYTES) {
+        let _ = fs::rename(&path, directory.join("diagnostics.previous.log"));
+    }
+    let line = format!(
+        "{} {} {}\n",
+        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        context,
+        crate::security::redact_secrets(&detail.replace(['\r', '\n'], " "), &[])
+    );
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        use std::io::Write;
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+/// The diagnostics log location shown to users.
+pub fn diagnostics_log_path() -> Option<PathBuf> {
+    application_data_root()
+        .ok()
+        .map(|root| root.join("logs").join("diagnostics.log"))
+}
+
 /// Where Hearts of Iron IV and its Workshop content live on this computer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GameInstall {
@@ -449,6 +490,22 @@ pub fn game_install() -> &'static GameInstall {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_diagnostic_line_is_one_redacted_line_and_the_log_rolls_over() {
+        let directory = tempfile::tempdir().unwrap();
+        let logs = directory.path().join("logs");
+        append_diagnostic(&logs, "plan", "first line\nsecond line");
+        let text = fs::read_to_string(logs.join("diagnostics.log")).unwrap();
+        assert_eq!(text.lines().count(), 1);
+        assert!(text.contains(" plan first line second line"));
+        fs::write(logs.join("diagnostics.log"), vec![b'x'; 600 * 1024]).unwrap();
+        append_diagnostic(&logs, "plan", "after rollover");
+        assert!(logs.join("diagnostics.previous.log").exists());
+        let text = fs::read_to_string(logs.join("diagnostics.log")).unwrap();
+        assert!(text.contains("after rollover"));
+        assert!(text.len() < 1024);
+    }
+
     #[test]
     fn steam_library_rows_are_read_with_escaped_backslashes() {
         let vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Program Files (x86)\\\\Steam\"\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\SteamLibrary\"\n\t\t\"apps\"\n\t}\n}\n";

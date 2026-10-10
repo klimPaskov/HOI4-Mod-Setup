@@ -8,7 +8,7 @@ package screens at a 1280 by 960 desktop viewport.
 No credential, account identity, private mod, or secret value appears in a
 public capture. The optional portrait workflow is provider-selectable for generic
 projects. RunPod runs API-first; computer control is opt-in and is not shown as
-a default setup route. Non-sourced portraits use native ImageGen.
+a default setup route. Non-sourced portraits use the configured image generator.
 The portrait workflow can be selected during setup and is linked from Ready
 after a successful setup.
 

@@ -4,8 +4,20 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
-## 0.4.0 - 2026-10-06
+## 0.4.0 - 2026-10-10
 
+- Install the Claude-first Agentic HOI4 Modding package: `CLAUDE.md`, `.claude/skills/`, and `.claude/agents/` are the canonical files, each specialist subagent has a fixed Claude model tier, and Codex, Cursor, Qoder, and OpenCode receive generated copies. Projects prepared with the earlier layout keep working and move to the new layout through **Check for updates**.
+- Make Claude Code the default primary coding environment and open the prepared project in it from the Ready screen.
+- Read the list of coding environments, their names, and the default from the source package instead of a fixed list in the app.
+- Fill in the Hearts of Iron IV and Workshop folders found through your Steam libraries in the installed instructions.
+- Add the optional HOI4 Live Tools workflow, with its live-testing skill and per-user setup guide.
+- Keep or remove guidance for any optional workflow the source package marks, without an app update.
+- Stop requiring specific HOI4 Agent Tools route names in the app; the pinned package version's own tool list decides.
+- Explain when the setup package needs a newer version of the app.
+- Keep the technical cause of a failed setup plan in a bounded diagnostics log in the application data folder, and point to it from the message.
+- Explain a Windows path that is too long and how to shorten or allow it.
+- Show a required component only once on the Components screen, even when an optional component depends on it.
+- Let package maintainers test unpublished package changes from a local checkout with `HOI4_MOD_SETUP_SOURCE_REPOSITORY`.
 - Fix Check for updates, which never reached the core with its confirmed review, and show the confirmable review on the Update screen.
 - Fix Repair, which could not plan for files with optional sections or adapted subagents and asked the user to resolve every healthy file.
 - Fix Remove components, which stopped at the setup checks, left an empty folder tree behind, and ended on a blocked readiness screen. It now removes the folders it emptied and ends on a summary of removed and kept files.
@@ -14,7 +26,7 @@ HOI4 Mod Setup follows semantic versioning.
 - Stop before changing any files when a running HOI4 MCP client would block the shared HOI4 Agent Tools reinstall, and explain the shared install.
 - Commit the initial Git snapshot in batches instead of two Git processes per file, cutting several minutes from a fresh setup.
 - Give the HOI4 MCP health check time for a cold start after installation, and name the running setup check on the progress screen.
-- Bundle HOI4 Agent Tools 3.9.0, whose Codex registration lets idle subagent servers exit.
+- Bundle HOI4 Agent Tools 3.10.0, which exits idle subagent servers and rebuilds the index of a large mod from its changed files only.
 - Add a quick start and a troubleshooting guide.
 - Make Claude the default setup assistant. **Sign in to Claude** runs your own
   installed Claude Code's sign-in, so the app never handles Claude credentials,

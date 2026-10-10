@@ -2902,9 +2902,14 @@ export function Components({ state, update }: { state: WizardState; update: (pat
   }, [state.sourceMode, state.pinnedRef, manifestRequest]);
 
   const rows = manifest?.components.map((component) => manifestRow(component, state.selectedComponents.includes(component.id), state.aiProvider, manifest.components)) ?? [];
+  // Optional components that only exist to support another optional choice
+  // (such as a portrait provider's helpers) are chosen through that choice.
+  // Required components always stay visible.
+  const optionalComponentIds = new Set((manifest?.components ?? []).filter((component) => component.optional).map((component) => component.id));
   const dependencyOnlyOptionalIds = new Set((manifest?.components ?? [])
     .filter((component) => component.optional)
-    .flatMap((component) => component.dependencies));
+    .flatMap((component) => component.dependencies)
+    .filter((id) => optionalComponentIds.has(id)));
   const visibleRows = rows.filter((component) => !component.coding_environment && !component.id.startsWith("workflow.") && !dependencyOnlyOptionalIds.has(component.id));
   const chatFiles = flattenedChatFiles(state, manifest);
   const chatSize = chatFiles.reduce((total, file) => total + (file.size ?? 0), 0);

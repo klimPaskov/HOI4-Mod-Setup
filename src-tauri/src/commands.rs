@@ -671,6 +671,15 @@ fn healthy_generated_bytes(
 }
 
 fn planning_command_error(error: AppError) -> String {
+    crate::paths::record_diagnostic("plan", &error.to_string());
+    let message = planning_user_message(error);
+    match crate::paths::diagnostics_log_path() {
+        Some(path) => format!("{message} Technical details: {}", path.display()),
+        None => message,
+    }
+}
+
+fn planning_user_message(error: AppError) -> String {
     match error {
         // Confirmation and session-binding checks share the credential
         // category with real sign-in failures, but the user fixes them by
@@ -691,6 +700,9 @@ fn planning_command_error(error: AppError) -> String {
             let lower = message.to_ascii_lowercase();
             if lower.contains("git lfs pointer") {
                 "The setup source contains a placeholder instead of a real file. Nothing was changed; try again after the source is fixed."
+                    .into()
+            } else if lower.contains("os error 206") || lower.contains("filename or extension is too long") {
+                "A file path is too long for Windows. Move the project to a shorter folder or turn on Windows long paths, then try again. Nothing was changed."
                     .into()
             } else if lower.contains("checksum") || lower.contains("sha-256") {
                 "The setup source did not pass verification. Nothing was changed; try again later."
@@ -9275,7 +9287,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
         assert_eq!(bootstrap.privilege, "current_user");
 
         let target = crate::mcp::reviewed_plan_target(&actions).unwrap();
-        assert_eq!(target.package_version, "3.9.0");
+        assert_eq!(target.package_version, "3.10.0");
         assert_eq!(target.required_tools.len(), 35);
         for route in [
             "hoi4.tech_inspect",
@@ -9689,7 +9701,7 @@ developer_instructions = "Work on the named files."
             AppError::Protocol(sentinel.into()),
             AppError::Serialization(sentinel.into()),
         ] {
-            let message = planning_command_error(error);
+            let message = planning_user_message(error);
             assert!(!message.contains(sentinel));
             assert!(!message.contains("provider-private-sentinel"));
             assert!(message.len() <= 160);
@@ -9702,17 +9714,18 @@ developer_instructions = "Work on the named files."
             AppError::Process(sentinel.into()),
             AppError::Merge(sentinel.into()),
         ] {
-            let message = planning_command_error(error);
+            let message = planning_user_message(error);
             assert!(!message.contains("provider-private-sentinel"));
             assert!(!message.contains("private"));
             assert!(message.len() <= 160);
         }
-        assert_eq!(
-            planning_command_error(AppError::InvalidInput(
-                "select at least one manifest component".into()
-            )),
-            "Select at least one manifest component"
-        );
+        let selected = planning_command_error(AppError::InvalidInput(
+            "select at least one manifest component".into(),
+        ));
+        assert!(selected.starts_with("Select at least one manifest component"));
+        assert!(selected.contains("Technical details:"));
+        assert!(selected.contains("diagnostics.log"));
+        assert!(!selected.contains("provider-private-sentinel"));
 
         let source = include_str!("commands.rs");
         assert!(source.contains(

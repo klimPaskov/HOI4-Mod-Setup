@@ -171,4 +171,50 @@ mod tests {
         std::env::remove_var(SOURCE_REPOSITORY_ENV);
         assert!(configured_repository().is_none());
     }
+
+    /// Manual check: HOI4_MOD_SETUP_SOURCE_REPOSITORY=<checkout> cargo test
+    /// local_source_serves_every_declared_file -- --ignored --nocapture
+    #[test]
+    #[ignore = "needs a local package checkout"]
+    fn local_source_serves_every_declared_file() {
+        let Some(_) = configured_repository() else {
+            eprintln!("{SOURCE_REPOSITORY_ENV} is not set; skipped");
+            return;
+        };
+        let client = crate::source::HttpSourceClient::new().unwrap();
+        let request = crate::source::SourceRequest {
+            mode: crate::models::SourceMode::Latest,
+            requested_ref: None,
+            release: None,
+        };
+        let resolution = crate::source::resolve_source(&client, &request).unwrap();
+        let revision = resolution.identity.resolved_revision.clone();
+        let tree = client.fetch_tree(&revision).unwrap();
+        let all = resolution
+            .manifest
+            .components
+            .iter()
+            .map(|component| component.id.clone())
+            .collect::<Vec<_>>();
+        let files = crate::source::select_component_files(&resolution.manifest, &all, &tree);
+        let files = match files {
+            Ok(files) => files,
+            Err(error) => panic!("selection failed: {error}"),
+        };
+        let mut failures = 0;
+        for file in &files {
+            let sha = file.expected_sha256.clone().unwrap();
+            if let Err(error) =
+                client.fetch_verified_file(&revision, &file.source_path, &sha, file.expected_size)
+            {
+                failures += 1;
+                eprintln!("{}: {error}", file.source_path);
+            }
+        }
+        eprintln!(
+            "{} files, {failures} failures, revision {revision}",
+            files.len()
+        );
+        assert_eq!(failures, 0);
+    }
 }

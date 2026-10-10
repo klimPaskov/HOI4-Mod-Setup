@@ -21,8 +21,6 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(windows)]
-use std::os::windows::ffi::OsStrExt;
-#[cfg(windows)]
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 
 #[cfg(windows)]
@@ -1206,14 +1204,56 @@ fn create_directory_impl(parent: &RootedDir, name: &OsStr) -> Result<(), AppErro
     }
 }
 
+/// Encode a path for a raw Win32 file API. Paths near or above the classic
+/// 260-character limit use the extended-length `\\?\` form so deep skill
+/// assets in long mod folders still install; shorter paths are unchanged.
 #[cfg(windows)]
-fn create_directory_impl(parent: &RootedDir, name: &OsStr) -> Result<(), AppError> {
-    let path = parent.path.join(name);
+pub(crate) fn windows_api_path(path: &Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    const LONG_PATH_THRESHOLD: usize = 240;
     let wide = path
         .as_os_str()
         .encode_wide()
-        .chain(Some(0))
+        .map(|unit| {
+            if unit == u16::from(b'/') {
+                u16::from(b'\\')
+            } else {
+                unit
+            }
+        })
         .collect::<Vec<_>>();
+    let plain = path.components().all(|component| {
+        !matches!(
+            component,
+            std::path::Component::CurDir | std::path::Component::ParentDir
+        )
+    });
+    if wide.len() < LONG_PATH_THRESHOLD || !plain || !path.is_absolute() {
+        return wide;
+    }
+    let text = String::from_utf16_lossy(&wide);
+    if text.starts_with(r"\\?\") || text.starts_with(r"\\.\") {
+        return wide;
+    }
+    let prefixed = if let Some(unc) = text.strip_prefix(r"\\") {
+        format!(r"\\?\UNC\{unc}")
+    } else {
+        format!(r"\\?\{text}")
+    };
+    std::ffi::OsStr::new(&prefixed).encode_wide().collect()
+}
+
+#[cfg(windows)]
+fn windows_api_path_z(path: &Path) -> Vec<u16> {
+    let mut wide = windows_api_path(path);
+    wide.push(0);
+    wide
+}
+
+#[cfg(windows)]
+fn create_directory_impl(parent: &RootedDir, name: &OsStr) -> Result<(), AppError> {
+    let path = parent.path.join(name);
+    let wide = windows_api_path_z(&path);
     let result = unsafe {
         windows_sys::Win32::Storage::FileSystem::CreateDirectoryW(wide.as_ptr(), std::ptr::null())
     };
@@ -1713,16 +1753,8 @@ fn rename_file_impl(
     };
     if replace && destination_exists {
         drop(source_file);
-        let source_wide = source_path
-            .as_os_str()
-            .encode_wide()
-            .chain(Some(0))
-            .collect::<Vec<_>>();
-        let destination_wide = destination_path
-            .as_os_str()
-            .encode_wide()
-            .chain(Some(0))
-            .collect::<Vec<_>>();
+        let source_wide = windows_api_path_z(&source_path);
+        let destination_wide = windows_api_path_z(&destination_path);
         let result = unsafe {
             ReplaceFileW(
                 destination_wide.as_ptr(),
@@ -1765,10 +1797,7 @@ fn open_windows_rename_source(parent: &RootedDir, source: &OsStr) -> Result<File
 /// Rename an opened file without replacing an existing destination.
 #[cfg(windows)]
 fn windows_rename_by_handle(source_file: &File, destination_path: &Path) -> io::Result<()> {
-    let destination = destination_path
-        .as_os_str()
-        .encode_wide()
-        .collect::<Vec<_>>();
+    let destination = windows_api_path(destination_path);
     let name_offset = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
     let name_bytes = destination
         .len()
@@ -1813,11 +1842,7 @@ fn create_windows_file(
     attributes: u32,
     share: u32,
 ) -> Result<File, AppError> {
-    let path = path
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
+    let path = windows_api_path_z(path);
     let handle = unsafe {
         CreateFileW(
             path.as_ptr(),
@@ -1901,13 +1926,7 @@ fn read_dir_names_impl(directory: &RootedDir) -> Result<Vec<OsString>, AppError>
     use std::os::windows::ffi::OsStringExt;
     const ERROR_NO_MORE_FILES: i32 = 18;
 
-    let pattern = directory
-        .path
-        .join("*")
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
+    let pattern = windows_api_path_z(&directory.path.join("*"));
     let mut data = unsafe { std::mem::zeroed::<WIN32_FIND_DATAW>() };
     let search = unsafe { FindFirstFileW(pattern.as_ptr(), &mut data as *mut _) };
     if search == INVALID_HANDLE_VALUE {
@@ -1999,6 +2018,65 @@ mod directory_sync_tests {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn long_windows_paths_use_the_extended_length_form() {
+        let short = Path::new(r"C:\mods\example\file.txt");
+        assert_eq!(
+            String::from_utf16_lossy(&windows_api_path(short)),
+            r"C:\mods\example\file.txt"
+        );
+        let long = PathBuf::from(r"C:\mods")
+            .join("a".repeat(120))
+            .join("b".repeat(120))
+            .join("c.png");
+        let encoded = String::from_utf16_lossy(&windows_api_path(&long));
+        assert!(encoded.starts_with(r"\\?\C:\mods\"));
+        assert!(!encoded.contains('/'));
+        let unc = PathBuf::from(r"\\server\share").join("d".repeat(250));
+        assert!(
+            String::from_utf16_lossy(&windows_api_path(&unc)).starts_with(r"\\?\UNC\server\share\")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn files_deeper_than_the_classic_path_limit_can_be_written_and_renamed() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut deep = directory.path().to_path_buf();
+        while deep.as_os_str().len() < 230 {
+            deep = deep.join("long_folder_name_segment");
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        let root = RootedDir::open(&deep).unwrap();
+        create_directory_impl(&root, OsStr::new("nested_folder_with_a_long_name")).unwrap();
+        let nested = RootedDir::open(&deep.join("nested_folder_with_a_long_name")).unwrap();
+        std::fs::write(
+            nested.path.join("source_file_with_a_long_name.tmp"),
+            b"data",
+        )
+        .unwrap();
+        rename_file_impl(
+            &nested,
+            OsStr::new("source_file_with_a_long_name.tmp"),
+            OsStr::new("destination_file_with_a_long_name.png"),
+            false,
+        )
+        .unwrap();
+        assert!(
+            nested
+                .path
+                .join("destination_file_with_a_long_name.png")
+                .as_os_str()
+                .len()
+                > 260
+        );
+        assert_eq!(
+            std::fs::read(nested.path.join("destination_file_with_a_long_name.png")).unwrap(),
+            b"data"
+        );
+    }
+
     use super::*;
 
     #[test]

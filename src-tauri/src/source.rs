@@ -2039,7 +2039,7 @@ mod tests {
             .expect("current MCP health declaration must be present");
         assert_eq!(
             mcp_health.parameters["package_version"].as_str(),
-            Some("3.9.0")
+            Some("3.10.0")
         );
         assert_eq!(
             mcp_health.parameters["required_tools"]

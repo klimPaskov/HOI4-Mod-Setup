@@ -6,6 +6,12 @@ HOI4 Mod Setup is a desktop wizard for preparing a Hearts of Iron IV mod for
 AI-assisted development. Start a new mod from its name and description, or
 choose an existing mod to add, update, or repair its development setup.
 
+The installed workflow is Claude-first: `CLAUDE.md`, the skills in
+`.claude/skills/`, and the specialist subagents in `.claude/agents/` are the
+canonical files, each subagent has a fixed Claude model tier, and the HOI4 Agent
+Tools MCP server is installed and registered for you. Codex, Cursor, Qoder, and
+OpenCode receive generated copies of the same rules, so you can use them too.
+
 The setup assistant can use Claude, Codex, Kimi, GLM, DeepSeek, a local model,
 or a custom provider. Claude is selected by default and signs in through your
 own Claude Code. This choice is only for
@@ -91,21 +97,27 @@ Select the instructions, skills, helpers, tools, and offline wiki you want.
 Required items stay selected so the project remains usable.
 
 Before the component list, choose **Coding environments**. Select exactly one
-primary client (Codex is the default), then add any combination of Claude Code,
-Cursor, Qoder, and OpenCode. The primary is removed from the additional choices
-automatically. Each selected client receives its complete native package while
-the shared `AGENTS.md`, skills, canonical `.codex/agents/*.toml`, sync tools,
-documentation, and selected workflows remain common. This client choice is
-independent of the setup assistant and of Core/Core plus 3D workflow profiles.
-For an existing project, the app detects installed clients and removes only
-unchanged managed files when one is deselected; modified files are preserved.
+primary client (Claude Code is the default), then add any combination of the
+other clients the source package declares, such as Codex, Cursor, Qoder, and
+OpenCode. The primary is removed from the additional choices automatically.
+The canonical `CLAUDE.md`, `.claude/skills/`, `.claude/agents/`, runtime
+synchronizers, documentation, and selected workflows are always installed;
+each additional client receives its generated package, for example
+`AGENTS.md`, the `.agents/skills/` copy, and `.codex/agents/*.toml` for Codex.
+This client choice is independent of the setup assistant and of the workflow
+profiles. For an existing project, the app detects installed clients and
+removes only unchanged managed files when one is deselected; modified files are
+preserved.
 
 ![Choose one primary coding environment and any additional clients](docs/screenshots/15-coding-environments.png)
 
-The component list comes from the exact published Agentic HOI4 Modding
-manifest. When that repository publishes changed skills, new skills, new
-subagents, or compatible new components, **Latest** mode can use them without a
-new HOI4 Mod Setup release. Update adds newly published default-profile
+The component list, the coding environments, and the optional workflows all
+come from the exact published Agentic HOI4 Modding manifest. When that
+repository publishes changed skills, new skills, new subagents, new clients, or
+compatible new components, **Latest** mode can use them without a new HOI4 Mod
+Setup release. The app also fills in the Hearts of Iron IV and Workshop folders
+it finds through your Steam libraries, so the instructions point at your real
+game files. Update adds newly published default-profile
 components while preserving earlier optional choices and local-file conflict
 review.
 
@@ -125,11 +137,17 @@ the app runs the verified source bootstrap to prepare `uv`, the bounded Blender
 adapter, Meshy, and the reviewed MCP routes. Missing credentials or tools leave
 only this optional workflow incomplete; they do not make core setup unusable.
 
-The HOI4 Agent Tools MCP integration includes the working Technology Tree
-Viewer routes `hoi4.tech_inspect`, `hoi4.tech_render`, and
-`hoi4.tech_compare` when advertised by the resolved source revision. Its
-verified package and app-owned health check work with every AI provider;
-provider-specific client registration remains separate.
+The HOI4 Agent Tools MCP integration installs the exact package version the
+source manifest records, checks the routes that version advertises, and
+registers the server for each selected client (the project `.mcp.json` for
+Claude Code). Its verified package and app-owned health check work with every
+AI provider.
+
+The optional **HOI4 Live Tools** workflow adds the `hoi4-live-testing` skill
+and a setup guide for the separate HOI4 Live Tools MCP server, which drives a
+running game on Windows for live feature tests. Because its install folder
+differs on every computer, you register that server once for your user with the
+command in the guide.
 
 The optional Super Events workflow adds the reusable popup, templates,
 examples, images, and supporting guidance needed to add more Super Events.
@@ -141,7 +159,7 @@ ComfyUI, RunPod, or Disabled for generic projects. Its expanded panel shows the
 minimum requirement: **16 GB VRAM and 25 GB storage**. Only the selected
 provider's instructions are installed. Sourced portraits use the pinned source
 or processing workflow; non-sourced fictional or impossible portraits use
-native ImageGen and never enter ComfyUI. See
+the configured image generator and never enter ComfyUI. See
 [`docs/32_comfyui_portrait_pipeline.md`](docs/32_comfyui_portrait_pipeline.md)
 for the current workflow and setup details.
 
@@ -174,16 +192,17 @@ recovery choices that still apply.
 ![Completed setup and readiness checks](docs/screenshots/08-ready.png)
 
 The Ready screen checks the project, instructions, selected tools, offline
-wiki, Git state, and optional workflows. **Open in Codex** becomes available
-when the required checks pass and the Codex project integration is installed,
-even when another AI performed setup analysis.
+wiki, Git state, and optional workflows. When the required checks pass, the
+main button opens the project in your primary client: **Open in Claude Code**
+starts Claude Code in a new terminal window in the project folder, and **Open
+in Codex** opens the Codex app when Codex is primary.
 
 If flattened ChatGPT files were selected, the Ready screen links directly to
 [ChatGPT Chat](https://chatgpt.com). When the optional portrait workflow is
 enabled, it also shows its persisted Cloud, Local, or RunPod readiness and
 canonical source guidance, or the explicit Disabled state. RunPod runs
 API-first; computer control is used only when explicitly requested.
-Non-sourced fictional or impossible portraits use native ImageGen. Disabled
+Non-sourced fictional or impossible portraits use the configured image generator. Disabled
 generic projects keep source-based portrait handling without ComfyUI-specific
 project files. See
 [`docs/32_comfyui_portrait_pipeline.md`](docs/32_comfyui_portrait_pipeline.md).
