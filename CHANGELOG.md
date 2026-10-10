@@ -8,6 +8,7 @@ HOI4 Mod Setup follows semantic versioning.
 
 - Fix Check for updates, which never reached the core with its confirmed review, and show the confirmable review on the Update screen.
 - Fix Repair, which could not plan for files with optional sections or adapted subagents and asked the user to resolve every healthy file.
+- Fix Remove components, which stopped at the setup checks, left an empty folder tree behind, and ended on a blocked readiness screen. It now removes the folders it emptied and ends on a summary of removed and kept files.
 - Recognize the subagents this app installs as valid when a project is scanned again.
 - Make Claude account updates plan correctly and keep reanalysis reliable by stating the identifier, folder, and component rules to the model.
 - Stop before changing any files when a running HOI4 MCP client would block the shared HOI4 Agent Tools reinstall, and explain the shared install.

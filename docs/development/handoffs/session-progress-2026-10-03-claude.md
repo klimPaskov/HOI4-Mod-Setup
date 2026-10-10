@@ -46,7 +46,7 @@ A background agent implemented displaced-leaf quarantine (`mutate_live_leaf`), n
 ## Blocked on user approval
 
 1. Done with user approval: the wiki fix `7b7d2a4` was pushed to `klimPaskov/Agentic-HOI4-Modding` `main`; the publish workflow committed the refreshed manifest `d4cd673`, which validates and lists the image as the real 11,604-byte file. The app's bundled manifest and source-audit inventory now use that exact blob.
-2. Publish an immutable `hoi4-agent-tools` release with a reproducible production closure (see `public-readiness-mcp-reproducibility.md`). The local `hoi4-agent-tools` checkout contains another session's uncommitted work.
+2. Done: `hoi4-agent-tools` 3.7.0 and later releases ship an enforced npm shrinkwrap, and the app bundles 3.9.0 (see `public-readiness-mcp-reproducibility.md`). Further `hoi4-agent-tools` releases belong to the MCP release session.
 3. Done with user approval: #75, #77, and #78 were closed as superseded with explanations; the candidate carries rustls 0.23.45, chacha20 0.10.2, React 19.3.0, and Tauri CLI 2.11.5, and `cargo audit` reports no vulnerabilities. #72 (GitHub Actions group) is still open and unreviewed.
 4. Candidate PR, version bump, tag, and signed release.
 

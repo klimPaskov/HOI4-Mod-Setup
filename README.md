@@ -197,6 +197,11 @@ or damaged files, change the portrait provider, add the 3D or Super Events
 workflow later, remove installed components, or recover an interrupted setup.
 Changes are shown for review before they are applied.
 
+**Remove components** deletes only the setup files the app installed and has
+not seen you change, then removes the folders that this leaves empty. Setup
+files you edited are shown for review first, and your own mod content is never
+touched.
+
 ![Package ChatGPT project sources](docs/screenshots/13-chat-sources.png)
 
 The source-package page shows the external download folder and the exact files
