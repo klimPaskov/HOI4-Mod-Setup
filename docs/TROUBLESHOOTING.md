@@ -182,8 +182,8 @@ python .tools/sync/sync_skills.py
 
 Add `--check` to any of them to see what is out of date without writing.
 
-## HOI4 Live Tools is not listed in Claude Code or Codex
+## HOI4 Live Tools is incomplete or not listed in a coding client
 
-**Cause:** HOI4 Live Tools is a separate program whose folder differs on every computer, so it is registered for your user rather than inside the mod.
+**Cause:** Setup installs HOI4 Live Tools for your user, outside the mod, and registers it in each coding client's user configuration. The readiness page shows **incomplete** with the reason when that did not finish: Python 3.9 or newer was not found (or is not the python.org build), the release could not be downloaded or did not match the pinned checksum (for example before it is published), PyPI was unreachable for the dependencies, the installed server did not answer, or a `hoi4-live` entry that belongs to another program already exists in a client configuration (it is left untouched).
 
-**Fix:** Follow `.claude/skills/hoi4-live-testing/references/setup.md` in the project: install the tools, set `HOI4_LIVE_PYTHON`, run the `selftest` command, then register the server with `claude mcp add --scope user hoi4-live -- "<install folder>\hoi4-live-tools.cmd"` (or the Codex entry in the guide) and restart the client.
+**Fix:** Correct the reason, then run **Check for updates** or **Repair** to run the setup again, or install it by hand: download the release, run `python install.py`, and restart the client (`python install.py status` lists what is installed and registered; the project's `.claude/skills/hoi4-live-playtest/references/setup.md` has the details and the troubleshooting table).

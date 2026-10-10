@@ -1673,17 +1673,30 @@ pub fn run_transaction(
         // remaining component keeps the state it already had.
         let removal = plan.maintenance_mode.as_deref() == Some("remove");
         if let Some(runner) = options.post_install_action_runner.filter(|_| !removal) {
-            let components = [crate::mcp::COMPONENT_ID, "workflow.3d"]
-                .into_iter()
-                .filter(|component_id| {
-                    effective_plan
-                        .optional_workflows
-                        .get(*component_id)
-                        .is_some_and(|state| {
-                            matches!(state.as_str(), "selected_pending" | "incomplete" | "ready")
-                        })
-                })
-                .collect::<Vec<_>>();
+            let components = [
+                crate::mcp::COMPONENT_ID,
+                "workflow.3d",
+                crate::mcp::LIVE_TOOLS_COMPONENT_ID,
+            ]
+            .into_iter()
+            .filter(|component_id| {
+                // A manifest that predates the HOI4 Live Tools bootstrap
+                // declares no action; the skill-only workflow has nothing to run.
+                *component_id != crate::mcp::LIVE_TOOLS_COMPONENT_ID
+                    || plan
+                        .external_actions
+                        .iter()
+                        .any(|action| action.component_id == *component_id)
+            })
+            .filter(|component_id| {
+                effective_plan
+                    .optional_workflows
+                    .get(*component_id)
+                    .is_some_and(|state| {
+                        matches!(state.as_str(), "selected_pending" | "incomplete" | "ready")
+                    })
+            })
+            .collect::<Vec<_>>();
             for (action_index, component_id) in components.into_iter().enumerate() {
                 let reviewed_actions = reviewed_external_action_evidence(plan, component_id)?;
                 if reviewed_actions.is_empty() {

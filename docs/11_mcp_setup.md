@@ -124,3 +124,18 @@ Remove only managed configuration contributions. Do not automatically uninstall 
 ## Security review
 
 Highlight global package installation, network code download, writes outside the project, broad Codex sandbox settings, and servers that receive secrets.
+
+## HOI4 Live Tools (optional workflow)
+
+HOI4 Live Tools is a separate Python MCP server that drives a running Hearts of Iron IV. The package publishes it as the optional `workflow.live_tools` component (the `hoi4-live-playtest` skill and its setup guide) that depends on the managed script component `mcp.hoi4_live.bootstrap` (`.tools/mcp/bootstrap_hoi4_live_tools.py`). It is not an npm package and is not registered in the project: its program lives under `%LOCALAPPDATA%\hoi4-live-tools` and its client entries in each client's user configuration.
+
+The component declares one reviewed command action (`live.bootstrap`) that the app validates against the same fixed shape as the 3D and MCP bootstraps: the target is the managed script, the only argument is `--quiet`, the privilege is the current user, and the network access, expected writes, and rollback boundary are declared. It also pins the release it installs (`release_version`, `release_url` on `https://github.com`, `release_sha256`, `release_size`); the script verifies the archive against its own copy of the pin, and a package contract test keeps the two equal. A package whose component declares no command stays a skill-only workflow.
+
+Flow, after the project files are written and verified:
+
+1. The app re-reads the managed script from the project and checks it against the plan's hash and size.
+2. It finds `python` on `PATH`, requires the Python Software Foundation publisher signature, and runs the script from a private verified copy with `-I --quiet`, no credentials, and a 30 minute limit.
+3. The script downloads the pinned archive over HTTPS (redirects only to GitHub hosts), checks size and SHA-256, extracts it safely to a temporary folder, and runs the release's `install.py`: private environment, dependency install, a start of the installed server that must list its tools, and an atomic, backed-up registration in the user configuration of the clients found (Claude Code, Codex, Cursor, OpenCode). A `hoi4-live` entry of another program is a conflict and is left untouched.
+4. Exit code 0 sets the workflow state to ready; any other result, a missing Python, or a failed publisher check sets it to incomplete with the script's message (bounded and redacted). The core setup stays usable either way.
+
+Removal removes only the managed project files. The installed program and the client entries are external tool state, reported and not removed (`python install.py uninstall` from the release removes them). The server's own contract, exit codes, and layout are in `docs/integration.md` of the HOI4 Live Tools repository.

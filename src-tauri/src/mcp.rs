@@ -111,6 +111,9 @@ impl<T: JsonlTransport> Drop for McpProtocol<T> {
 }
 
 pub const COMPONENT_ID: &str = "mcp.hoi4_agent_tools";
+/// The optional HOI4 Live Tools workflow, whose reviewed action installs the
+/// pinned release for the current user (it is not an MCP package of this app).
+pub const LIVE_TOOLS_COMPONENT_ID: &str = "workflow.live_tools";
 /// A first start right after installation loads native libraries that
 /// antivirus scanning may hold for many seconds.
 const MCP_HEALTH_TIMEOUT: Duration = Duration::from_secs(60);

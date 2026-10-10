@@ -30,7 +30,7 @@ Follow these steps to prepare a new or existing mod for AI-assisted development.
 
 13. **Open the prepared mod.** On **Project ready**, review the checks and choose **Open in Claude Code** (or the button for your primary client). Claude Code starts in a new terminal window in the project folder; approve the `hoi4_agent_tools` project server when it asks, then check it with `/mcp`. Choose **Finish** after reviewing readiness; optional workflow status can still need attention while core setup is ready. [Screenshot](screenshots/08-ready.png)
 
-14. **If you selected HOI4 Live Tools**, follow the setup guide linked on **Project ready** once to register the live-game server for your user.
+14. **If you selected HOI4 Live Tools**, setup installs the live-game server for your user and registers it for the coding clients it finds; check its row on **Project ready** and restart your coding client. If the row says incomplete, follow the [troubleshooting entry](TROUBLESHOOTING.md#hoi4-live-tools-is-incomplete-or-not-listed-in-a-coding-client).
 
 ## Working in the prepared mod
 

@@ -2470,6 +2470,9 @@ fn run_reviewed_post_install_actions(
     if component_id == crate::mcp::COMPONENT_ID {
         return run_reviewed_mcp_bootstrap(root, plan);
     }
+    if component_id == LIVE_TOOLS_COMPONENT_ID {
+        return run_reviewed_live_tools_bootstrap(root, plan);
+    }
     if component_id != "workflow.3d" {
         return Err(AppError::Transaction(format!(
             "unknown reviewed post-install component: {component_id}"
@@ -2780,11 +2783,152 @@ fn run_reviewed_mcp_bootstrap(
     })
 }
 
+// The optional HOI4 Live Tools workflow. Its reviewed action runs the managed
+// bootstrap script, which installs the release the package pins for the
+// current user and registers it in the user-level client configurations.
+use crate::mcp::LIVE_TOOLS_COMPONENT_ID;
+const LIVE_TOOLS_SCRIPT_COMPONENT_ID: &str = "mcp.hoi4_live.bootstrap";
+const LIVE_TOOLS_SCRIPT: &str = ".tools/mcp/bootstrap_hoi4_live_tools.py";
+
+fn live_tools_outcome(state: &str, evidence: impl Into<String>) -> PostInstallActionOutcome {
+    PostInstallActionOutcome {
+        component_id: LIVE_TOOLS_COMPONENT_ID.into(),
+        state: state.into(),
+        evidence: evidence.into(),
+    }
+}
+
+fn run_reviewed_live_tools_bootstrap(
+    root: &Path,
+    plan: &InstallationPlan,
+) -> Result<PostInstallActionOutcome, AppError> {
+    if Platform::current() != Platform::Windows {
+        return Ok(live_tools_outcome(
+            "unsupported_platform",
+            "the verified source declares no non-Windows HOI4 Live Tools route",
+        ));
+    }
+    let actions = plan
+        .external_actions
+        .iter()
+        .filter(|action| action.component_id == LIVE_TOOLS_COMPONENT_ID)
+        .collect::<Vec<_>>();
+    if actions.len() != 1 {
+        return Err(AppError::Transaction(
+            "the reviewed plan does not contain exactly one HOI4 Live Tools bootstrap action"
+                .into(),
+        ));
+    }
+    let action = actions[0];
+    let expected_arguments = [LIVE_TOOLS_SCRIPT, "--quiet"];
+    if action.command_source != "repository_script"
+        || action.platform != Platform::Windows
+        || action.arguments
+            != expected_arguments
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        || action.network_access == "not_declared"
+        || action.expected_writes.is_empty()
+        || action.privilege != "current_user"
+        || action.rollback_boundary == "not_declared_by_source"
+    {
+        return Err(AppError::Transaction(
+            "the reviewed HOI4 Live Tools bootstrap action is incomplete or changed".into(),
+        ));
+    }
+    let operation = plan
+        .operations
+        .iter()
+        .find(|operation| {
+            !operation.external
+                && operation.component_id == LIVE_TOOLS_SCRIPT_COMPONENT_ID
+                && operation
+                    .destination
+                    .eq_ignore_ascii_case(LIVE_TOOLS_SCRIPT)
+        })
+        .ok_or_else(|| {
+            AppError::Transaction(
+                "the reviewed HOI4 Live Tools bootstrap has no managed operation evidence".into(),
+            )
+        })?;
+    let script_bytes =
+        crate::flatten::read_regular_file_no_follow_under_root(root, LIVE_TOOLS_SCRIPT)?;
+    let expected_hash = operation
+        .result_sha256
+        .as_deref()
+        .or(operation.source_sha256.as_deref())
+        .ok_or_else(|| {
+            AppError::Transaction(
+                "the reviewed HOI4 Live Tools bootstrap has no checksum evidence".into(),
+            )
+        })?;
+    if sha256_bytes(&script_bytes) != expected_hash
+        || operation
+            .source_size
+            .is_some_and(|expected| expected != script_bytes.len() as u64)
+    {
+        return Err(AppError::PathSecurity(
+            "the reviewed HOI4 Live Tools bootstrap changed before execution".into(),
+        ));
+    }
+    let python = match crate::process::find_path_executable(&["python.exe", "python"]) {
+        Ok(python) => python,
+        Err(_) => {
+            return Ok(live_tools_outcome(
+                "incomplete",
+                "Python 3.9 or newer is unavailable for the HOI4 Live Tools installer",
+            ));
+        }
+    };
+    if crate::process::validate_executable_publisher(&python, "Python Software Foundation").is_err()
+    {
+        return Ok(live_tools_outcome(
+            "incomplete",
+            "Python publisher validation did not pass for the HOI4 Live Tools installer",
+        ));
+    }
+    let private_script = create_private_verified_script(&script_bytes)?;
+    let spec = crate::process::ProcessSpec {
+        executable: python.clone(),
+        executable_sha256: Some(sha256_file(&python)?),
+        args: vec![
+            "-I".into(),
+            private_script.display().to_string(),
+            "--quiet".into(),
+        ],
+        cwd: Some(root.to_path_buf()),
+        platform: Platform::Windows,
+        environment_names: vec![],
+        timeout_seconds: 30 * 60,
+        max_output_bytes: 2 * 1024 * 1024,
+    };
+    let run_result = spec.run(&[python], None);
+    remove_private_verified_script(&private_script)?;
+    Ok(match run_result {
+        Ok(result) if result.status_code == Some(0) && !result.timed_out => live_tools_outcome(
+            "ready",
+            "HOI4 Live Tools installed, verified, and registered",
+        ),
+        failure => live_tools_outcome(
+            "incomplete",
+            bootstrap_failure_details("HOI4 Live Tools setup", failure),
+        ),
+    })
+}
+
 fn mcp_bootstrap_failure_details(
     result: Result<crate::process::ProcessResult, AppError>,
 ) -> String {
+    bootstrap_failure_details("MCP package setup", result)
+}
+
+fn bootstrap_failure_details(
+    label: &str,
+    result: Result<crate::process::ProcessResult, AppError>,
+) -> String {
     let detail = match result {
-        Err(error) => format!("MCP package setup could not start: {error}"),
+        Err(error) => format!("{label} could not start: {error}"),
         Ok(result) => {
             let output = if result.stderr.trim().is_empty() {
                 result.stdout.trim()
@@ -2792,7 +2936,7 @@ fn mcp_bootstrap_failure_details(
                 result.stderr.trim()
             };
             format!(
-                "MCP package setup failed (exit={}, timed_out={}): {}",
+                "{label} failed (exit={}, timed_out={}): {}",
                 result
                     .status_code
                     .map_or_else(|| "none".into(), |code| code.to_string()),
@@ -7794,6 +7938,20 @@ fn build_maintenance_plan_blocking(
             );
         }
         actions
+    } else if mode != "remove"
+        && Platform::current() == Platform::Windows
+        && maintenance_components
+            .iter()
+            .any(|id| id == LIVE_TOOLS_COMPONENT_ID)
+    {
+        // HOI4 Live Tools carries its own reviewed bootstrap action, so it
+        // is planned even when the HOI4 Agent Tools MCP is not selected.
+        let manifest = if let Some(manifest) = maintenance_mcp_manifest.as_ref() {
+            manifest.clone()
+        } else {
+            resolve_installed_manifest(&lock).map_err(command_error)?
+        };
+        manifest_external_actions(&manifest, &[LIVE_TOOLS_COMPONENT_ID.to_string()])
     } else {
         Vec::new()
     };
@@ -9258,6 +9416,60 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
         assert!(!action.expected_writes.is_empty());
         assert_eq!(action.privilege, "current_user");
         assert_ne!(action.rollback_boundary, "not_declared_by_source");
+    }
+
+    #[test]
+    fn published_live_tools_action_preserves_reviewed_external_boundaries() {
+        let manifest = crate::source::parse_manifest(
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json"),
+            None,
+        )
+        .unwrap();
+
+        let actions = manifest_external_actions(&manifest, &[LIVE_TOOLS_COMPONENT_ID.into()]);
+        let action = actions
+            .iter()
+            .find(|action| action.component_id == LIVE_TOOLS_COMPONENT_ID)
+            .expect("the HOI4 Live Tools bootstrap action must be plan-visible");
+
+        assert_eq!(action.arguments, vec![LIVE_TOOLS_SCRIPT, "--quiet"]);
+        assert_ne!(action.network_access, "not_declared");
+        assert!(!action.expected_writes.is_empty());
+        assert_eq!(action.privilege, "current_user");
+        assert_ne!(action.rollback_boundary, "not_declared_by_source");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn live_tools_bootstrap_needs_exactly_one_reviewed_action() {
+        let project = tempdir().unwrap();
+        let mut plan: InstallationPlan = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-plan.example.json"
+        ))
+        .unwrap();
+        plan.maintenance_mode = None;
+        plan.external_actions.clear();
+
+        let error =
+            run_reviewed_post_install_actions(project.path(), &plan, LIVE_TOOLS_COMPONENT_ID)
+                .unwrap_err();
+        assert!(error.to_string().contains("exactly one HOI4 Live Tools"));
+    }
+
+    #[test]
+    fn managed_removal_never_restarts_the_live_tools_bootstrap() {
+        let project = tempdir().unwrap();
+        let mut plan: InstallationPlan = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-plan.example.json"
+        ))
+        .unwrap();
+        plan.maintenance_mode = Some("remove".into());
+        plan.external_actions.clear();
+
+        let error =
+            run_reviewed_post_install_actions(project.path(), &plan, LIVE_TOOLS_COMPONENT_ID)
+                .unwrap_err();
+        assert!(error.to_string().contains("managed removal"));
     }
 
     #[test]

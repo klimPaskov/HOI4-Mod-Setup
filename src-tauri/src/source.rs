@@ -1299,6 +1299,88 @@ pub fn validate_manifest(
                 ));
             }
         }
+        if component.id == crate::mcp::LIVE_TOOLS_COMPONENT_ID
+            && component
+                .validation
+                .iter()
+                .any(|rule| rule.kind == "command")
+        {
+            // A manifest that predates the installer declares no command and
+            // stays a skill-only workflow. One that declares it must pin the
+            // release by URL, SHA-256 and size and run only the managed script.
+            let actions = component
+                .validation
+                .iter()
+                .filter(|rule| rule.kind == "command" && rule.id == "live.bootstrap")
+                .collect::<Vec<_>>();
+            let invalid = |detail: &str| {
+                AppError::Source(format!(
+                    "the HOI4 Live Tools bootstrap action evidence is incomplete: {detail}"
+                ))
+            };
+            if actions.len() != 1
+                || component
+                    .validation
+                    .iter()
+                    .filter(|rule| rule.kind == "command")
+                    .count()
+                    != 1
+            {
+                return Err(invalid("exactly one reviewed action is required"));
+            }
+            let action = actions[0];
+            let text = |key: &str| action.parameters.get(key).and_then(Value::as_str);
+            let declared_text = |key: &str| text(key).is_some_and(|value| !value.trim().is_empty());
+            if action.target.as_deref() != Some(".tools/mcp/bootstrap_hoi4_live_tools.py")
+                || action
+                    .parameters
+                    .get("arguments")
+                    .and_then(Value::as_array)
+                    .is_none_or(|values| values.as_slice() != [Value::String("--quiet".into())])
+                || action
+                    .parameters
+                    .get("expected_writes")
+                    .and_then(Value::as_array)
+                    .is_none_or(Vec::is_empty)
+                || !declared_text("network_access")
+                || !declared_text("rollback_boundary")
+                || text("privilege") != Some("current_user")
+            {
+                return Err(invalid("target, arguments, writes, network, or privilege"));
+            }
+            let url = text("release_url").unwrap_or_default();
+            if !url.starts_with("https://github.com/")
+                || url.contains("..")
+                || !url.ends_with(".zip")
+            {
+                return Err(invalid(
+                    "release_url must be an https://github.com release archive",
+                ));
+            }
+            validate_sha256(text("release_sha256").unwrap_or_default())?;
+            if action
+                .parameters
+                .get("release_size")
+                .and_then(Value::as_u64)
+                .is_none_or(|size| size == 0)
+                || !declared_text("release_version")
+            {
+                return Err(invalid("release_size and release_version are required"));
+            }
+            if !manifest
+                .components
+                .iter()
+                .any(|candidate| candidate.id == "mcp.hoi4_live.bootstrap")
+                || !component
+                    .dependencies
+                    .iter()
+                    .any(|dependency| dependency == "mcp.hoi4_live.bootstrap")
+            {
+                return Err(invalid(
+                    "the managed bootstrap script component is not a dependency",
+                ));
+            }
+        }
         for platform in &component.platforms {
             if matches!(platform, ManifestPlatform::All)
                 && (component
@@ -1944,7 +2026,7 @@ mod tests {
         );
         assert!(manifest.profiles.iter().any(|profile| profile.default));
         assert_eq!(manifest.wiki.destination, "paradox_wiki/");
-        assert_eq!(manifest.components.len(), 55);
+        assert_eq!(manifest.components.len(), 56);
         for environment in crate::coding_environment::SUPPORTED {
             assert!(manifest
                 .components
@@ -2294,6 +2376,131 @@ mod tests {
                 .get("manifest_generated_for_revision")
                 .and_then(Value::as_str)
         );
+    }
+
+    fn live_tools_manifest_value() -> (Value, String) {
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
+        let inventory: Value = serde_json::from_str(include_str!(
+            "../../docs/source-audit/live_repository_inventory.json"
+        ))
+        .unwrap();
+        (
+            serde_json::from_slice(bytes).unwrap(),
+            inventory["manifest_generated_for_revision"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        )
+    }
+
+    fn live_tools_action(value: &mut Value) -> &mut Value {
+        value["components"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|component| component["id"] == "workflow.live_tools")
+            .unwrap()["validation"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|rule| rule["id"] == "live.bootstrap")
+            .unwrap()
+    }
+
+    #[test]
+    fn live_tools_bootstrap_pins_one_reviewed_release() {
+        let (value, revision) = live_tools_manifest_value();
+        let manifest =
+            parse_manifest(&serde_json::to_vec(&value).unwrap(), Some(&revision)).unwrap();
+        let component = manifest
+            .components
+            .iter()
+            .find(|component| component.id == "workflow.live_tools")
+            .expect("the HOI4 Live Tools workflow must be published");
+        let actions = component
+            .validation
+            .iter()
+            .filter(|rule| rule.kind == "command")
+            .collect::<Vec<_>>();
+        assert_eq!(actions.len(), 1);
+        let action = actions[0];
+        assert_eq!(
+            action.target.as_deref(),
+            Some(".tools/mcp/bootstrap_hoi4_live_tools.py")
+        );
+        assert_eq!(
+            action.parameters["arguments"],
+            serde_json::json!(["--quiet"])
+        );
+        assert!(action.parameters["release_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://github.com/klimPaskov/HOI4-Live-Tools/releases/download/"));
+        assert_eq!(
+            action.parameters["release_sha256"].as_str().unwrap().len(),
+            64
+        );
+        assert!(component
+            .dependencies
+            .iter()
+            .any(|dependency| dependency == "mcp.hoi4_live.bootstrap"));
+        let script = manifest
+            .components
+            .iter()
+            .find(|component| component.id == "mcp.hoi4_live.bootstrap")
+            .expect("the managed bootstrap script must be published");
+        assert_eq!(
+            script.destination.path,
+            ".tools/mcp/bootstrap_hoi4_live_tools.py"
+        );
+    }
+
+    #[test]
+    fn live_tools_bootstrap_requires_complete_reviewed_action_evidence() {
+        for (field, expected) in [
+            (
+                "rollback_boundary",
+                "HOI4 Live Tools bootstrap action evidence is incomplete",
+            ),
+            (
+                "network_access",
+                "HOI4 Live Tools bootstrap action evidence is incomplete",
+            ),
+            ("release_sha256", "invalid lowercase SHA-256"),
+            (
+                "release_size",
+                "HOI4 Live Tools bootstrap action evidence is incomplete",
+            ),
+        ] {
+            let (mut value, revision) = live_tools_manifest_value();
+            live_tools_action(&mut value)["parameters"]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            let error = parse_manifest(&serde_json::to_vec(&value).unwrap(), Some(&revision))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "{field}: {error}");
+        }
+        let (mut value, revision) = live_tools_manifest_value();
+        live_tools_action(&mut value)["parameters"]["arguments"] =
+            serde_json::json!(["--quiet", "--anything"]);
+        let error = parse_manifest(&serde_json::to_vec(&value).unwrap(), Some(&revision))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("HOI4 Live Tools bootstrap action evidence is incomplete"));
+    }
+
+    #[test]
+    fn live_tools_workflow_without_an_installer_stays_a_skill_only_workflow() {
+        let (mut value, revision) = live_tools_manifest_value();
+        value["components"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|component| component["id"] == "workflow.live_tools")
+            .unwrap()["validation"] = serde_json::json!([]);
+        parse_manifest(&serde_json::to_vec(&value).unwrap(), Some(&revision)).unwrap();
     }
 
     #[test]

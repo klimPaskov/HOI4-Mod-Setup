@@ -72,7 +72,7 @@ const manifestComponents = [
   component("wiki.snapshot", "Offline Paradox wiki", "A local reference installed under paradox_wiki/", "documentation", 586),
   component("workflow.3d", "3D models workflow", "Optional Meshy and bounded Blender adapter workflow", "workflow", 10, true, ["windows"]),
   component("workflow.super_events", "Super Events workflow", "Reusable event popup, templates, examples, and assets", "workflow", 9, true),
-  component("workflow.live_tools", "HOI4 Live Tools", "Live-testing skill and setup guide for the optional HOI4 Live Tools MCP server, which drives a running game on Windows", "workflow", 2, true, ["windows"]),
+  component("workflow.live_tools", "HOI4 Live Tools", "Installs the HOI4 Live Tools server for your user, registers it for your coding clients, and adds the live-playtest skill, so agents can test the mod in the running game on Windows", "workflow", 2, true, ["windows"]),
   component("workflow.portraits.core", "Complete portrait production contract", "Grounded source, generated portraits, processing, wiring, manifest, and handoff contract.", "skill", 1, true),
   component("workflow.portraits.router", "ComfyUI portrait-provider router", "Explicit Cloud, Local, or user-run RunPod selection contract", "workflow", 1, true),
   component("workflow.portraits.cloud", "Comfy Cloud portrait production", "Selected provider route", "workflow", 1, true),

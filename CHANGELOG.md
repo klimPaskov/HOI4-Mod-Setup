@@ -10,7 +10,7 @@ HOI4 Mod Setup follows semantic versioning.
 - Make Claude Code the default primary coding environment and open the prepared project in it from the Ready screen.
 - Read the list of coding environments, their names, and the default from the source package instead of a fixed list in the app.
 - Fill in the Hearts of Iron IV and Workshop folders found through your Steam libraries in the installed instructions.
-- Add the optional HOI4 Live Tools workflow, with its live-testing skill and per-user setup guide.
+- Add the optional HOI4 Live Tools workflow: setup checks for Python 3.9 or newer, downloads the release the package pins (size and SHA-256 verified), installs it for the current user with a private Python environment, confirms the server lists its tools, and registers it in the user configuration of the coding clients it finds. The workflow also adds the `hoi4-live-playtest` skill and setup guide. A package that predates the installer keeps the skill-only workflow.
 - Keep or remove guidance for any optional workflow the source package marks, without an app update.
 - Stop requiring specific HOI4 Agent Tools route names in the app; the pinned package version's own tool list decides.
 - Explain when the setup package needs a newer version of the app.

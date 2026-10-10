@@ -143,11 +143,18 @@ registers the server for each selected client (the project `.mcp.json` for
 Claude Code). Its verified package and app-owned health check work with every
 AI provider.
 
-The optional **HOI4 Live Tools** workflow adds the `hoi4-live-testing` skill
-and a setup guide for the separate HOI4 Live Tools MCP server, which drives a
-running game on Windows for live feature tests. Because its install folder
-differs on every computer, you register that server once for your user with the
-command in the guide.
+The optional **HOI4 Live Tools** workflow installs the separate HOI4 Live Tools
+MCP server, which drives a running game on Windows for live feature tests, and
+adds the `hoi4-live-playtest` skill and its setup guide. Setup runs the
+package's reviewed bootstrap: it checks for Python 3.9 or newer, downloads the
+release the package pins and verifies its size and SHA-256, installs it for
+your user under `%LOCALAPPDATA%\hoi4-live-tools` with a private Python
+environment, starts it once to confirm it lists its tools, and registers it in
+the user configuration of the coding clients it finds (Claude Code, Codex,
+Cursor, OpenCode). The result appears on the readiness page as ready or
+incomplete with the reason; the project files stay either way. The installed
+program and the client entries are external tool state: Remove leaves them, and
+`python install.py uninstall` from the HOI4 Live Tools release removes them.
 
 The optional Super Events workflow adds the reusable popup, templates,
 examples, images, and supporting guidance needed to add more Super Events.

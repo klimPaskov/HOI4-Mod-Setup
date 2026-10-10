@@ -107,7 +107,7 @@ const DEFAULT_COMPONENTS: ComponentRow[] = [
 ];
 
 const PORTRAIT_REPOSITORY = "https://github.com/klimPaskov/comfyui-hoi4-portraits";
-const LIVE_TOOLS_GUIDE = "https://github.com/klimPaskov/Agentic-HOI4-Modding/blob/main/.claude/skills/hoi4-live-testing/references/setup.md";
+const LIVE_TOOLS_GUIDE = "https://github.com/klimPaskov/Agentic-HOI4-Modding/blob/main/.claude/skills/hoi4-live-playtest/references/setup.md";
 const PORTRAIT_BRANCH = "codex/portrait-pipeline";
 const PORTRAIT_COMMIT = "b47222a77f2f6454704530865aa1441fad48bdd3";
 const PORTRAIT_RESOURCE_REQUIREMENT = "Minimum recommended to run this workflow: 16 GB VRAM and 25 GB storage.";
@@ -3437,7 +3437,7 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
           </div>
           {state.flattenForChat && <div className="callout info chatgpt-ready-callout"><ExternalLink href="https://chatgpt.com"><strong>ChatGPT Chat sources prepared</strong><span>Start planning in ChatGPT Chat <span aria-hidden="true">↗</span></span></ExternalLink></div>}
           {coreReady && portraitPipeline.enabled && <div className="portrait-workflow-note"><ExternalLink href={PORTRAIT_REPOSITORY}>Portrait production source and setup guidance <span aria-hidden="true">↗</span></ExternalLink></div>}
-          {coreReady && state.selectedComponents.includes("workflow.live_tools") && <div className="portrait-workflow-note"><ExternalLink href={LIVE_TOOLS_GUIDE}>HOI4 Live Tools setup guide <span aria-hidden="true">↗</span></ExternalLink><small className="muted">Register the live-game server once for your user; the guide is also installed in .claude/skills/hoi4-live-testing.</small></div>}
+          {coreReady && state.selectedComponents.includes("workflow.live_tools") && <div className="portrait-workflow-note"><ExternalLink href={LIVE_TOOLS_GUIDE}>HOI4 Live Tools setup guide <span aria-hidden="true">↗</span></ExternalLink><small className="muted">Setup installs the live-game server for your user and registers it for the coding clients it finds (see Readiness details for the result); restart your coding client afterwards. The guide is also installed in .claude/skills/hoi4-live-playtest.</small></div>}
           <details>
             <summary>Readiness details</summary>
             {report ? <div className="manifest-details">{report.checks.map((check) => <div key={check.id}><strong>{check.label}</strong><span>{check.status === "configured" || check.status === "pass" ? "Ready" : check.status === "unsupported_platform" ? "Not available on this computer" : check.status === "planned_unavailable" ? "Optional tool not installed" : check.status === "not_selected" ? "Not selected" : check.blocking ? "Action needed" : "Optional setup incomplete"}</span></div>)}</div> : <p className="muted">Details appear after the checks finish.</p>}
