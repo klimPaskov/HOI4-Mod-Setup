@@ -46,21 +46,23 @@ Detect only with evidence:
 - launcher descriptor
 - Git root, branch, remotes, ignore rules, and dirty state
 - documentation
-- `.agents/skills`
-- `.codex/agents`
+- canonical `.claude/skills` and legacy `.agents/skills`
+- canonical `.claude/agents` and generated `.codex/agents`
 - Codex config
 - MCP config
 - the fixed `.hoi4-mod-setup/install.lock.json` managed-installation marker
 - absolute paths and machine-local assumptions
 - possible install conflicts
 
-Detect native coding environments only inside the selected root: Codex
-(`.codex/config.toml` and canonical TOML agents), Claude Code (`CLAUDE.md`,
-`.claude/`, and `.mcp.json`), Cursor (`.cursor/`), Qoder (`.qoder/`), and
-OpenCode (`opencode.json` and `.opencode/`). Prefer the managed lock's recorded
-primary/additional selection; when it is absent, report detected clients and
-use Codex as the migration default. This finding is bounded setup evidence,
-not a reason to scan gameplay or media trees.
+Detect native coding environments only inside the selected root: Claude Code
+(`CLAUDE.md`, `.claude/`, and `.mcp.json`) is the canonical package; Codex
+(`.codex/config.toml` and generated TOML agents), Cursor (`.cursor/`), Qoder
+(`.qoder/`), and OpenCode (`opencode.json` and `.opencode/`) are native client
+surfaces. Prefer the managed lock's recorded primary/additional selection; for
+fresh installs the manifest default is Claude Code, while a legacy project
+without a recorded primary uses Codex as the compatibility migration default.
+This finding is bounded setup evidence, not a reason to scan gameplay or media
+trees.
 
 ## Launcher and standard-path boundary
 
@@ -157,12 +159,14 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
   or `docs/formables/` corpora before file inventory; those intentional
   exclusions do not make a scan partial. Classify every directory entry before
   charging the targeted entry-count, entry-name, path, file, or directory
-  budgets. Traverse skills only through `.agents/skills/<skill>/SKILL.md`,
-  canonical and native agents only through their direct files, and approved
-  documentation only through `docs/<section>/<file>`. Nested references,
+  budgets. Traverse skills only through `.claude/skills/<skill>/SKILL.md` or the
+  legacy `.agents/skills/<skill>/SKILL.md`, canonical and native agents only
+  through their direct files, and approved documentation only through
+  `docs/<section>/<file>`. Nested references,
   archives, and assets are not scan inputs. Read only bounded detector inputs:
-  project and launcher descriptors, thumbnail, root AGENTS/README and
-  `.gitignore`, approved docs, skills, subagent/Codex TOML, and the separately
+  project and launcher descriptors, thumbnail, root CLAUDE/AGENTS/README and
+  `.gitignore`, approved docs, skills, canonical Markdown subagents, generated
+  Codex TOML projections, and the separately
   bounded managed lock. Detector text is capped at 16 MiB per
   file and 256 MiB per scan; retained parser evidence is capped at 128 MiB.
 - Bind project-tree and launcher-parent enumeration, reads, and read-only Git

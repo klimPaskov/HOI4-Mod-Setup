@@ -13,17 +13,18 @@ A successful core setup leaves the selected mod project with:
 - a deterministic, valid, replaceable 600×600 solid-black `thumbnail.png`
 - a readable profile-specific initial mod folder structure
 - launcher discoverability without manual file creation or descriptor editing
-- an adapted `AGENTS.md` with template-only placeholder guidance removed
-- selected generic HOI4 skills and helper files
-- selected generic Codex subagents
-- Codex configuration
+- an adapted canonical `CLAUDE.md` with template-only placeholder guidance removed
+- its provider-neutral `AGENTS.md` projection
+- selected generic HOI4 skills and helper files from `.claude/skills/`
+- selected generic Markdown subagents from `.claude/agents/`
+- selected native development-client configuration
 - repository-declared MCP configuration
 - selected scripts, validators, templates, and documentation
 - an offline wiki under `<mod_project>/paradox_wiki/`
 - optional Git initialization or preservation
 - a project installation lock
 - a readiness report
-- **Open in Codex** enabled when every blocking requirement passes
+- **Open in <primary environment>** enabled when every blocking requirement passes
 
 ## Target users
 
@@ -51,7 +52,7 @@ Needs pinned installs, optional 3D support, exact provenance, update and repair,
 8. Package names and commands come from verified repository evidence.
 9. Every apply is reversible.
 10. Placeholder and unsupported states remain honest.
-11. Deterministic facts and Codex proposals are never presented as the same evidence class.
+11. Deterministic facts and selected-provider proposals are never presented as the same evidence class.
 12. A new project is not ready until both descriptors and the thumbnail pass validation.
 13. New-project identity conventions are generated from the mod name and brief; manual review is for edits, ambiguity, or external paths.
 
@@ -88,7 +89,7 @@ All semantic proposals use the selected setup profile:
 - script prefix and namespace proposal
 - descriptor tag proposal restricted to the current official Hearts of Iron IV Workshop categories
 - initial folder profile proposal
-- project-specific `AGENTS.md` adaptation without provider/model attribution
+- project-specific canonical instruction adaptation without provider/model attribution
 - skill and subagent recommendations
 - existing-project purpose and convention analysis
 - semantic conflict explanation
@@ -107,20 +108,24 @@ schema, and Rust remains the authority for deterministic facts and writes.
 
 Coding-client selection is a separate setup step from the setup assistant and
 from workflow profiles such as Core or Core plus 3D. Exactly one primary client
-is required (Codex by default); any supported clients may be added alongside it:
-Codex, Claude Code, Cursor, Qoder, and OpenCode. Changing the primary client
-automatically removes it from the additional list.
+is required. New installs use the manifest-declared default, currently Claude
+Code; Codex, Cursor, Qoder, and OpenCode may be added alongside it. Changing
+the primary client automatically removes it from the additional list.
 
 The resolved source manifest supplies a complete native package for each
-selected client. Codex keeps `.codex/agents/*.toml` as the canonical subagent
-source; Claude Code, Cursor, Qoder, and OpenCode projections are generated from
-those TOMLs and source-side synchronization checks reject drift. Runtime-neutral
-files (`AGENTS.md`, `.agents/skills/`, canonical subagents, `.tools/sync/`,
-shared docs, and selected workflows) are installed for every selection.
+selected client. `CLAUDE.md`, `.claude/skills/`, and `.claude/agents/` are the
+canonical instruction, skill, and subagent sources; `AGENTS.md`, `.agents/skills/`,
+`.codex/agents/`, and other client files are generated projections. The source
+workflow checks those projections for drift. The canonical package, adapted
+AGENTS projection, `.tools/sync/`, shared docs, and selected workflows are
+installed for every selection.
 
 The primary/additional selection is persisted in project state, plans, locks,
-and journals. Existing-project detection reports installed clients, defaults to
-Codex when no recorded primary exists, and never silently removes a client.
+and journals. Existing-project detection reports installed clients and preserves
+a valid recorded selection, including an older Codex primary. A legacy project
+without a recorded primary uses Codex as the compatibility migration default;
+new installs follow the resolved manifest default and never silently remove a
+client.
 Deselection previews all additions, updates, preserved conflicts, and removals;
 only unchanged managed files are removed, while modified or unmanaged files are
 kept.
@@ -191,10 +196,9 @@ The user selects one root. The scanner detects:
 - both descriptors
 - Git state
 - agentic setup structure and approved documentation
-- skills and helper tools
-- subagent TOMLs
-- `AGENTS.md`
-- Codex configuration
+- canonical skills and subagents plus generated client projections
+- `CLAUDE.md` and its `AGENTS.md` projection
+- native coding-client configuration
 - MCP definitions
 - absolute paths and project-specific examples
 - conflicts with incoming components
@@ -230,7 +234,7 @@ switch providers.
 - Exclude binaries, secrets, credential stores, Git objects, unapproved paths, and unrelated content.
 - Require output that validates against `schemas/codex-analysis.schema.json`.
 - Use the selected setup assistant for project identity, description, namespace and
-  prefix proposals, tags, folder profile, provider-neutral AGENTS adaptation,
+  prefix proposals, tags, folder profile, provider-neutral instruction adaptation,
   component recommendations, convention interpretation, and semantic conflict explanations.
 - Keep paths, hashes, descriptor validity, PNG validity, encodings, Git state, identifier syntax, collisions, manifest checks, and transaction safety under deterministic Rust ownership.
 - Label values as `Detected`, `Suggested by <selected setup assistant>`, or `Confirmed`.
@@ -306,9 +310,9 @@ Super Events is a provider-neutral optional component with no credential,
 environment variable, external command, or provider-specific readiness gate.
 When selected, `workflow.super_events` is resolved from the verified manifest at
 the one installation revision and selectively installs the generic managed tree
-at `.agents/skills/hoi4-super-events/`. Its only declared dependency is
+at `.claude/skills/hoi4-super-events/`. Its only declared dependency is
 `core.skills`. When declined, the tree is not downloaded or installed and the
-adapted `AGENTS.md` receives no Super Events-specific guidance. The optional
+adapted canonical instructions and AGENTS projection receive no Super Events-specific guidance. The optional
 state is visible in readiness and is carried through the managed lock and the
 read-only existing-project scan.
 
@@ -377,11 +381,11 @@ overwrite, and leaves the project unchanged.
 
 ### Readiness
 
-Check the internal descriptor, external launcher descriptor, external destination, descriptor agreement, thumbnail existence and decoding, selected structure, provider-neutral AGENTS, skills, subagents, setup-analysis provenance, independently selected client integrations, MCP, wiki integrity and page coverage, Git, environment variables, hashes, conflicts, external dependencies, and optional `workflow.3d`, `workflow.super_events`, and portrait-provider states. Setup-assistant configuration and confirmed analysis are blocking core checks; optional workflow states are not.
+Check the internal descriptor, external launcher descriptor, external destination, descriptor agreement, thumbnail existence and decoding, selected structure, provider-neutral `CLAUDE.md` and `AGENTS.md`, canonical skills and subagents, setup-analysis provenance, independently selected client integrations, MCP, wiki integrity and page coverage, Git, environment variables, hashes, conflicts, external dependencies, and optional `workflow.3d`, `workflow.super_events`, and portrait-provider states. Setup-assistant configuration and confirmed analysis are blocking core checks; optional workflow states are not.
 
-Open in Codex is enabled when blocking core checks pass and the Codex project
-integration is installed, regardless of which setup assistant produced the
-confirmed analysis.
+Open in the selected primary environment is enabled when blocking core checks
+pass. The setup assistant does not control that handoff; when Codex is selected,
+its project integration is the relevant opener.
 
 ## Non-functional requirements
 

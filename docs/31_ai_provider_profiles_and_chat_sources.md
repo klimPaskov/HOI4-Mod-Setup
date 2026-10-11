@@ -166,10 +166,13 @@ the selected package as read-only. When selected, the core stages a
 
 - the adapted project `AGENTS.md`;
 - the created or existing project `README.md`;
-- every selected `.agents/skills/<skill>/SKILL.md` as `<skill>.md`; and
-- every selected `.codex/agents/*.toml` subagent file.
+- every selected canonical `.claude/skills/<skill>/SKILL.md` as `<skill>.md`
+  (the legacy `.agents/skills/` root is supported); and
+- every selected canonical `.claude/agents/*.md` subagent file
+  (legacy Codex TOMLs are supported).
 
-The normal `.agents/skills/` and `.codex/agents/` trees remain intact. The
+The canonical trees and selected client projections remain intact. Duplicate
+projections do not enter the flattened package. The
 offline wiki, wiki media, descriptors, configuration, and workflow assets are
 not copied into this folder and do not count against its flattening limits. The
 flattened folder is generated through the same plan, conflict, backup,
@@ -198,8 +201,9 @@ regardless of the current planning-provider screen or installation lock. The
 page defaults to the native Downloads folder and shows:
 
 - `AGENTS.md` and `README.md`;
-- every direct `.agents/skills/<skill>/SKILL.md` as `<skill>.md`;
-- every direct `.codex/agents/*.toml`; and
+- every direct canonical skill `SKILL.md` as `<skill>.md`, with the legacy
+  `.agents/skills/` root supported;
+- direct canonical Claude Markdown subagents, or legacy Codex TOMLs; and
 - every other immediate root `*.md` file as an unchecked optional entry.
 
 Required entries are selected and disabled. Optional root Markdown can be

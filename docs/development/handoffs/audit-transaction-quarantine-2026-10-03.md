@@ -213,7 +213,7 @@ No existing hash-precondition, checkpoint, conflict, or fault test was weakened.
 
 ### Commands and results
 
-All cargo commands ran from `src-tauri` with `CARGO_TARGET_DIR=C:/Users/klimp/Documents/Projects/hoi4-mod-setup/target/quarantine-fix` on Windows.
+All cargo commands ran from `src-tauri` with `CARGO_TARGET_DIR=<repo-root>/target/quarantine-fix` on Windows.
 
 - Targeted `cargo test -p hoi4-mod-setup --all-features --lib -- quarantine checkpoint_replay rollback_ edit_after_placement forward_replace crash_ errors_after safe_fs concurrent_edit file_created managed_delete --test-threads=4`: 50 passed.
 - Targeted lock tests (`lock_commit_interrupted rollback_lock_`): 4 passed.

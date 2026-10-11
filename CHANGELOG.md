@@ -6,6 +6,12 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## 0.4.0 - 2026-10-10
 
+- Use the resolved package's coding-environment default when a fresh planning request omits the primary client, while preserving the legacy Codex default for older installations.
+- Add an isolated offline lifecycle gate for all components, import, repair, removal, rollback, and upgrade from the exact public 0.3.5 manifest.
+- Bound native Rust test concurrency without skipping process/Git tests, and isolate source verification from the user's cache and environment.
+- Keep the combined platform dependency inventories as internal release evidence; fix SBOM generation in a clean output directory and align the signing CLI with the locked version.
+- Refresh the headless walkthrough screenshots, Claude-first architecture documentation, release instructions, and living skills.
+
 - Install the Claude-first Agentic HOI4 Modding package: `CLAUDE.md`, `.claude/skills/`, and `.claude/agents/` are the canonical files, each specialist subagent has a fixed Claude model tier, and Codex, Cursor, Qoder, and OpenCode receive generated copies. Projects prepared with the earlier layout keep working and move to the new layout through **Check for updates**.
 - Make Claude Code the default primary coding environment and open the prepared project in it from the Ready screen.
 - Read the list of coding environments, their names, and the default from the source package instead of a fixed list in the app.
@@ -26,7 +32,7 @@ HOI4 Mod Setup follows semantic versioning.
 - Stop before changing any files when a running HOI4 MCP client would block the shared HOI4 Agent Tools reinstall, and explain the shared install.
 - Commit the initial Git snapshot in batches instead of two Git processes per file, cutting several minutes from a fresh setup.
 - Give the HOI4 MCP health check time for a cold start after installation, and name the running setup check on the progress screen.
-- Bundle HOI4 Agent Tools 3.10.0, which exits idle subagent servers and rebuilds the index of a large mod from its changed files only.
+- Install the manifest-pinned HOI4 Agent Tools 4.0.0 MCP contract; its complete runtime, package integrity, and advertised tool list are verified before readiness.
 - Add a quick start and a troubleshooting guide.
 - Make Claude the default setup assistant. **Sign in to Claude** runs your own
   installed Claude Code's sign-in, so the app never handles Claude credentials,

@@ -78,14 +78,19 @@ Choose latest, pinned commit, or pinned release. Select components and review au
 ### Coding environments
 
 After identity or scan review, choose exactly one primary coding environment;
-Codex is the default. Add any number of the other supported clients: Claude
-Code, Cursor, Qoder, and OpenCode. The primary is removed from the additional
-choices whenever it changes. This selection does not change the setup assistant
-or the Core/Core plus 3D workflow profile.
+new installs use the manifest-declared default (currently Claude Code). Add any
+number of the other supported clients: Codex, Cursor, Qoder, and OpenCode. The
+primary is removed from the additional choices whenever it changes. Existing
+projects preserve a valid recorded primary, including an older Codex selection;
+projects without one use Codex as the compatibility migration default. This
+selection does not change the setup assistant or the Core/Core plus 3D workflow
+profile.
 
 The plan always includes the runtime-neutral package and the complete manifest
-closure for each selected client. Existing projects show detected clients and
-recorded selections, preserve local files, and preview every add/update,
+closure for each selected client. `CLAUDE.md`, `.claude/skills/`, and
+`.claude/agents/` are canonical; AGENTS, Codex, and other client files are
+generated projections. Existing projects show detected clients and recorded
+selections, preserve local files, and preview every add/update,
 preserved conflict, and removal. Deselecting a client removes only unchanged
 managed files; modified or unmanaged files remain.
 
@@ -120,7 +125,8 @@ namespace only after source verification. It has no credential, environment
 variable, external command, or provider-specific route. Its state is optional
 and non-blocking, appears in readiness, and is remembered by the managed lock
 and the existing-project scan. If it is declined, do not install any part of
-the dependency closure or add Super Events-specific guidance to `AGENTS.md`.
+the dependency closure or add Super Events-specific guidance to `CLAUDE.md` or
+its `AGENTS.md` projection.
 
 The third row asks whether the user wants the HOI4 portrait workflow. When
 enabled, show the provider choice **Comfy Cloud**, **Local ComfyUI**, or
@@ -134,24 +140,26 @@ recommendation: 16 GB VRAM and 25 GB storage.
 
 Review server requirements, credential storage, external commands, Git mode, ignore rules, branch, optional commit, and optional remote.
 The MCP package and app-owned health check remain available for every setup
-assistant. Codex registration through `codex.config`, Open in Codex, and ChatGPT
-source packaging are development-client integrations independent of that choice.
+assistant. Codex registration through `codex.config`, opening the selected
+client, and ChatGPT source packaging are development-client integrations
+independent of that choice.
 
 ### Dry run and apply
 
 Show every create, merge, replace, rename, skip, external command, Git action, source revision, hash, and recovery rule. Next stays disabled while a blocking conflict is unresolved.
 
-Run the 12-stage transaction. Verify the launcher descriptor resolves to the project, both descriptors agree, the thumbnail decodes, and the selected scaffold exists. Then show readiness. Offer Open in Codex whenever the independently installed Codex project integration and core readiness checks pass.
+Run the 12-stage transaction. Verify the launcher descriptor resolves to the project, both descriptors agree, the thumbnail decodes, and the selected scaffold exists. Then show readiness. Offer opening the selected primary environment whenever core readiness and that client's verified opener requirements pass.
 
 ### Optional flattened Chat sources
 
 Regardless of the setup assistant, show the optional checkbox on Components under
 **Choose what to install**: **Prepare a flattened ChatGPT project-sources
 folder**. Show its filenames and available sizes there. Review its generated
-`chatgpt_project_sources/` operations. Skills become `<skill>.md`; selected
-subagents, adapted `AGENTS.md`, and created or existing `README.md` are
-included. Reject links, collisions, secret-shaped content, and oversized files
-before staging.
+`chatgpt_project_sources/` operations. Canonical
+`.claude/skills/<skill>/SKILL.md` files become `<skill>.md`; canonical
+`.claude/agents/*.md`, selected legacy subagents, adapted `AGENTS.md`, and
+created or existing `README.md` are included. Reject links, collisions,
+secret-shaped content, and oversized files before staging.
 After setup, recommend starting planning using ChatGPT “Chat”. Do not upload,
 open a conversation, or start planning automatically.
 
@@ -202,13 +210,18 @@ findings and do not justify reading unrelated mod content.
 
 Every deterministic finding shows value, confidence, evidence path, line or file set, impact, and recommendation. Required setup-assistant suggestions show the approved input manifest, selected provider/model/profile as analysis provenance, linked deterministic evidence, and separate confidence. The user can accept, edit, reject, or defer non-required proposals. Every field required for planning must be confirmed. The resulting project guidance does not identify that setup assistant as the future development client.
 
-### Existing AGENTS.md
+### Existing project instructions
 
-When present, compare previous installed base when available, local content, and incoming template. Preserve project restrictions. Highlight stale absolute paths, foreign project names, missing skill references, and security-sensitive changes.
+When `CLAUDE.md` or its `AGENTS.md` projection is present, compare the
+previous installed base when available, local content, and incoming templates.
+Preserve project restrictions. Highlight stale absolute paths, foreign project
+names, missing skill references, and security-sensitive changes.
 
-### Existing Codex and MCP
+### Existing coding-client and MCP configuration
 
-Parse TOML structurally. Show root settings, server IDs, commands, cwd, environment bindings, timeouts, sandbox, and approval policy. Never concatenate blind text fragments.
+Parse each detected native client configuration structurally. Show root settings,
+server IDs, commands, cwd, environment bindings, timeouts, sandbox, and approval
+policy. Never concatenate blind text fragments.
 
 ### Existing Git
 

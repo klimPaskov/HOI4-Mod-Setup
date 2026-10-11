@@ -1,7 +1,7 @@
 # Public readiness platform and release audit
 
 Audit date: 2026-09-28  
-Repository: `C:\Users\klimp\Documents\Projects\hoi4-mod-setup`  
+Repository: `<repo-root>`
 Branch: `codex/public-readiness-2026-09-28`  
 Audited release line: `0.3.5`  
 Mode: read only; this handoff is the only written artifact.

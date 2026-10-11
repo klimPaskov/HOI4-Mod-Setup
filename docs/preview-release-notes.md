@@ -1,10 +1,16 @@
-# HOI4 Mod Setup 0.2.5
+# HOI4 Mod Setup 0.4.0 preview
 
 Download the installer for your computer:
 
 - Windows: `HOI4-Mod-Setup-windows-x64-setup.exe`
 - Mac (Apple silicon): `HOI4-Mod-Setup-macos-arm64.dmg`
 - Mac (Intel): `HOI4-Mod-Setup-macos-x64.dmg`
+
+This candidate installs the Claude-first Agentic package, with canonical
+Claude instructions, skills, and specialist agents and generated projections
+for other coding environments. New installs default to Claude Code; existing
+Codex projects retain their selection when updating. It includes optional
+HOI4 Live Tools and the manifest-pinned HOI4 Agent Tools MCP contract.
 
 This build includes the current ComfyUI HOI4 portrait workflow with
 selected-provider instructions, adaptive source framing, native ImageGen

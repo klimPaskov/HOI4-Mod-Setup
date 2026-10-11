@@ -52,7 +52,7 @@ A background agent implemented displaced-leaf quarantine (`mutate_live_leaf`), n
 
 ## Test artifacts
 
-- Disposable legacy fixture: `C:\Users\klimp\Documents\Projects\hoi4-test-mods` (synthetic; safe to delete after testing).
+- Disposable legacy fixture: `<fixture-root>/hoi4-test-mods` (synthetic; safe to delete after testing).
 - No test mod has been written into the real HOI4 mod folder: the only create attempt stopped before project apply because of the LFS pointer, and its staging and journal live in app data as an interrupted, pre-apply transaction (`9043b5bf-...`) that recovery can discard.
 
 ## Native Linux run (2026-10-04)

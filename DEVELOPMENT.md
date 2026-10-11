@@ -51,6 +51,7 @@ The repository should expose stable scripts for normal work:
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm test:rust
 pnpm test:e2e:install
 pnpm test:e2e
 pnpm test:mcp-live
@@ -58,8 +59,27 @@ pnpm test:codex-live
 pnpm tauri dev
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
 ```
+
+`pnpm test:rust` is the stable Rust test entry point. It bounds the default
+test concurrency at four threads so local runs do not exhaust the machine; set
+`HOI4_TEST_RUST_THREADS` to an integer from 1 through 32 when a different
+bound is needed. The script rejects values outside that range and forwards the
+selected bound to the Rust test runner.
+
+For opt-in offline lifecycle/source/scanner acceptance, set
+`HOI4_MOD_SETUP_SOURCE_REPOSITORY` to an explicit absolute committed package
+checkout and run `pnpm test:offline`. Keep its historical Git objects when
+testing the public 0.3.5 upgrade. The script creates temporary application
+profiles and a synthetic 50,000-gameplay-file mod, retains the installed Rust
+toolchain homes, and runs source checks and real core transactions serially.
+Provider replies and external install actions are fakes. No shared desktop,
+real project, provider credential, paid service, or user MCP registration is
+used. `pnpm docs:screenshots` regenerates the sanitized public walkthrough
+images through Playwright without focusing a desktop window.
+The fixture also bypasses real Meshy-vault discovery: redirected profile
+folders alone do not isolate Credential Manager or Keychain. Missing source
+history and failed prerequisites stop the gate before scanner fixture creation.
 
 `pnpm test:e2e:install` installs Playwright's Chromium and its platform
 dependencies. `pnpm test:e2e` runs the actual React wizard in an isolated
@@ -84,7 +104,7 @@ On Windows, activate the MSVC environment before the all-feature Rust gates
 when using PowerShell:
 
 ```powershell
-cmd.exe /d /s /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && cargo fmt --all -- --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features'
+cmd.exe /d /s /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && cargo fmt --all -- --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && pnpm test:rust'
 cargo check --manifest-path fuzz/Cargo.toml --bins
 $env:HOI4_MOD_SETUP_TAURI="1"; $env:HOI4_MOD_SETUP_BUNDLE="nsis"; pnpm release:build
 pnpm release:verify
@@ -125,7 +145,8 @@ Fixtures should cover:
 - malformed descriptors
 - nested Git repositories
 - dirty Git state
-- pre-existing AGENTS, skills, subagents, Codex, and MCP configuration
+- pre-existing CLAUDE/AGENTS instructions, canonical or legacy skills,
+  subagents, native coding-client, and MCP configuration
 - local modifications to managed files
 - symlinks, junctions, case collisions, locked files, and cloud-synced folders
 - large projects and large wiki trees
@@ -146,7 +167,8 @@ Use the seven-phase navigation and minimal screen references. Do not turn develo
 
 Windows and macOS adapters must be tested on their actual platforms. Do not mark a route supported based only on compilation or similarity to another operating system.
 
-Signing, notarization, credential stores, filesystem links, application paths, and Open in Codex behavior need clean-machine evidence.
+Signing, notarization, credential stores, filesystem links, application paths,
+and opening the selected coding environment need clean-machine evidence.
 
 ## Git hooks
 

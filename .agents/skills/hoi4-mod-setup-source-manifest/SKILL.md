@@ -129,6 +129,10 @@ Never bless the current machine's changed hash or relax installed-tree checks.
   the published manifest's Git bytes, not a source checkout's converted bytes,
   and keep the bundled LF bytes identical. The source contract test compares
   both audit digest fields with the included manifest before release.
+- The explicitly configured local source validates each raw route's immutable
+  commit and reads with `git show <commit>:<path>`; it does not re-resolve every
+  raw file through `rev-parse`. Source verification uses an isolated cache and
+  bounded prefetch, and fails when the checkout is not supplied.
 - Runtime parsing compiles and applies
   `docs/schemas/remote-manifest.schema.json` as Draft 2020-12 before
   deserializing `RemoteManifest`. Unknown fields, including nested policy
@@ -139,7 +143,7 @@ Never bless the current machine's changed hash or relax installed-tree checks.
   applies each component's include/exclude rules, and rejects missing evidence
   or destination collisions before any selected blob is fetched. This is
   selective manifest isolation, not a filtered full-repository clone.
-- Multiple tree components may target the same managed directory only so disjoint selected-only packages can share standard `.agents/skills/` or `.codex/agents/` roots. The selected-file pass still canonicalizes every concrete destination and rejects any overlap before download or staging.
+- Multiple tree components may target the same managed directory only so disjoint selected-only packages can share the canonical `.claude/skills/` or `.claude/agents/` roots, or generated client roots such as `.agents/skills/` and `.codex/agents/`. The selected-file pass still canonicalizes every concrete destination and rejects any overlap before download or staging.
 - A selected component may have a deterministic project adaptation layer after source verification. Keep the upstream source path and checksum evidence unchanged, adapt only the reviewed destination/result bytes, and reject collisions among adapted destinations. For Super Events, the verified `hoi4ms_*` runtime source basenames are written as the confirmed project-prefix basenames; binary GFX/PSD assets keep their manifest destinations.
 - Marker-based text adaptation first checks for its marker pair in the raw bytes; source blobs without those markers, including binary assets, pass through unchanged and are never decoded as UTF-8.
 - An immutable install requires `generated_for_revision` in the manifest; the runtime schema and validator reject a manifest that cannot prove which commit produced its evidence.
@@ -167,6 +171,12 @@ Never bless the current machine's changed hash or relax installed-tree checks.
   fixed Meshy CLI marker. Never preserve or generate a project batch/Python
   credential launcher from source content.
 - `generated_for_revision` is required immutable provenance but may precede the publication commit because a manifest cannot contain the final hash of the commit that contains it. The resolver consumes the remote manifest at the resolved commit, and selective download fails closed when its per-file size or SHA-256 evidence does not match that same commit. A bundled bootstrap is never substituted for a newly resolved remote commit.
+- For unpublished package validation, `HOI4_MOD_SETUP_SOURCE_REPOSITORY` must
+  name an absolute committed Agentic HOI4 Modding checkout. The local source
+  adapter resolves its default branch and exact commits through Git, and the
+  ignored `local_source_serves_every_declared_file` test uses a temporary
+  `HttpSourceClient::with_cache_root` so verification does not depend on an
+  ambient application cache.
 - The Agentic source owns `scripts/generate_manifest_evidence.py` and
   `.github/workflows/publish-hoi4-mod-setup-manifest.yml`. Relevant source
   changes regenerate exact path/size/SHA-256 evidence for declared component
@@ -193,10 +203,11 @@ Never bless the current machine's changed hash or relax installed-tree checks.
   of those optional dependencies are in the selected closure. Use the same
   pattern for platform-specific MCP registrations; never place a Windows
   `.cmd` command in an all-platform source component.
-- The canonical agent authoring source is `.codex/agents/*.toml`. Source-side
-  synchronizers generate Claude Code, Cursor, Qoder, and OpenCode projections;
-  `--check` must fail on missing, stale, extra, or drifted projections before a
-  manifest is published.
+- The canonical authoring source is `CLAUDE.md`, `.claude/skills/**`, and
+  `.claude/agents/*.md`. Source-side synchronizers generate the adapted
+  `AGENTS.md` plus Codex, Cursor, Qoder, and OpenCode projections; `--check`
+  must fail on missing, stale, extra, or drifted projections before a manifest
+  is published.
 - Expected file evidence carries both SHA-256 and byte size into selected-file records, operations, locks, and readiness. Command-bearing validation rules become plan-visible, approval-bound external actions; their target, platform, and risk come from the verified manifest rather than renderer input. All-platform command declarations are bound to the current supported platform so they are not silently dropped.
 - The closed validation-parameter schema admits paired executable,
   interpreter, and runtime SHA-256/size identity fields plus bounded arguments,
@@ -204,11 +215,11 @@ Never bless the current machine's changed hash or relax installed-tree checks.
   Schema validation rejects unknown keys; deterministic Rust rejects an
   incomplete identity pair or an invalid lowercase SHA-256/size before any
   action can be planned.
-- Selected `.codex/agents/*.toml` bytes are verified before deterministic
-  adaptation. Staging adds the project-required `fork_context=false` spawn
-  rule to developer instructions when absent and rejects an explicit true
-  declaration; the operation keeps source SHA-256 evidence distinct from the
-  adapted result SHA-256.
+- Selected canonical `.claude/agents/*.md` bytes are verified before
+  deterministic projection. Generated Codex `.codex/agents/*.toml` bytes are
+  adapted at staging to add the project-required `fork_context=false` spawn
+  rule when absent and reject an explicit true declaration; the operation keeps
+  canonical source SHA-256 evidence distinct from the adapted projection hash.
 - The verified `core.agents` template is project-adapted only after download.
   Remove its complete template-only `## Placeholder Guide` section before the
   adapted bytes enter staging, conflict review, or the flattened Chat export.

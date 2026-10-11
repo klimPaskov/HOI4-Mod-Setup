@@ -22,7 +22,11 @@ Integrations capture also records the selected 3D
 row's automatic verified Meshy/Blender preparation copy and the stable
 3D/Super Events/portrait ordering.
 
-With `pnpm dev` running, open `http://localhost:1420/?screenshot=<name>` where
+Run `pnpm docs:screenshots` to regenerate all 15 captures in an isolated,
+headless Playwright browser, with runtime-error and layout checks. It never
+opens or focuses the shared desktop. GitHub Pages copies these same images.
+
+For manual inspection with `pnpm dev` running, open `http://localhost:1420/?screenshot=<name>` where
 `<name>` is one of `welcome`, `provider`, `existing`, `description`, `identity`,
 `components`, `workflows`, `mcp`, `git`, `dry-run`, `ready`, `maintenance`,
 `chat-sources`, `recovery`, or `environments`.

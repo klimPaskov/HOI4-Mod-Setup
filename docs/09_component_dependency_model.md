@@ -56,18 +56,20 @@ A pass, warning, or blocking check.
 
 The UI shows why every automatic dependency is selected.
 
-Every install also selects the runtime-neutral foundation (`core.agents`,
-`core.skills`, `core.subagents`, `runtime.agent_sync`, shared documentation,
-and the verified MCP bootstrap when declared). Native packages are then added
-for the one primary and any additional environments. `.codex/agents/*.toml` is
-the only subagent authoring source; other client trees are generated projections
-and are checked for drift in the source repository.
+Every install also selects the canonical foundation (`CLAUDE.md`,
+`.claude/skills/`, `.claude/agents/`, the adapted `AGENTS.md` projection,
+`runtime.agent_sync`, shared documentation, and the verified MCP bootstrap when
+declared). Native packages are then added for the one primary and any
+additional environments. The Claude instruction, skill, and Markdown-subagent
+files are the authoring source; `.agents/skills/`, `.codex/agents/`, and other
+client trees are generated projections and are checked for drift in the source
+repository.
 
-The verified Codex config may list optional agent registrations in its source
+The generated Codex config may list optional agent registrations in its source
 template. Deterministic adaptation removes the Portrait and Super Events
-registrations when their canonical TOMLs are absent from the selected workflow
-closure, preventing a default config from pointing at files that were not
-installed.
+registrations when their canonical Markdown subagents are absent from the
+selected workflow closure, preventing a client projection from pointing at
+files that were not installed.
 
 The component IDs shown below are the current published graph, not a frozen app
 enum. Source profiles and component definitions are loaded from the exact
@@ -93,7 +95,7 @@ conflict review still apply before selection becomes installable.
 | `docs.runtimes` | managed shared runtime guide | yes | all |
 | `wiki.snapshot` | managed tree | yes | all |
 | `docs.source` | repository reference | optional | all |
-| `core.claude.instructions` | adapted Claude Code instructions | Claude Code environment | all |
+| `core.claude.instructions` | adapted canonical instructions | yes | all |
 | `runtime.claude.mcp`, `runtime.cursor.mcp`, `runtime.qoder.mcp`, `runtime.opencode.mcp` | native MCP registration | optional | manifest-declared Windows route |
 | `workflow.3d` | optional workflow | no | current repository Windows route |
 | `workflow.super_events` | optional workflow | no | manifest-declared all-platform managed skill tree |
@@ -122,11 +124,14 @@ Outside project through a dedicated adapter and backup.
 
 ## Structured destinations
 
-TOML uses semantic tables and keys. JSON uses schema-aware paths and identity keys for arrays. AGENTS uses three-way text merge plus project adaptation. Directory trees use independent per-file ownership.
+TOML uses semantic tables and keys. JSON uses schema-aware paths and identity
+keys for arrays. `CLAUDE.md` is the canonical instruction merge/adaptation;
+`AGENTS.md` is its provider-neutral projection and is also reviewed as a
+three-way text merge. Directory trees use independent per-file ownership.
 
 ## Platform resolution
 
-A component is supported only when its platform declaration and every command-bearing dependency have a verified route. Unsupported optional components remain visible. A macOS core profile can omit or warn on a current Windows-only MCP component while still installing platform-neutral instructions, skills, subagents, Codex base config, and wiki.
+A component is supported only when its platform declaration and every command-bearing dependency have a verified route. Unsupported optional components remain visible. A macOS core profile can omit or warn on a current Windows-only MCP component while still installing platform-neutral instructions, skills, subagents, the selected client's base config, and wiki.
 
 `mcp.hoi4_agent_tools` and `workflow.3d` do not depend on `codex.config`.
 Their verified package, bootstrap, external-action review, and app-owned health
@@ -139,11 +144,14 @@ environment requirement, and contributes only its manifest-declared
 single selected-only skill and research-agent tree plus the reusable runtime. The
 core trees exclude `hoi4-super-events*/**` and
 `hoi4_super_event_*.toml`. Selecting it adds those packages and the
-corresponding guidance to the adapted `AGENTS.md` and marked sections of the
+corresponding guidance to the adapted `CLAUDE.md` and its `AGENTS.md` projection
+plus marked sections of the
 ordinary planning, events, assets, text/audio, and subagent skills; declining it
 strips those sections and adds none of the selected-only files.
 The component is provider-neutral and remains optional on both supported
-platforms when the verified manifest declares its `all` route.
+platforms when the verified manifest declares its `all` route. Its selected
+skill destination is the canonical `.claude/skills/hoi4-super-events/` tree;
+client-specific projections are added only for selected environments.
 
 Each enabled portrait provider depends on both the complete portrait contract
 and `workflow.portraits.router`, then adds exactly one provider skill, the
@@ -153,7 +161,7 @@ projects omit the complete portrait component closure.
 
 ## Readiness aggregation
 
-State derives from file integrity, dependencies, tools, environment, platform, conflicts, and validation. Setup-assistant configuration, confirmed provider analysis, and required launcher artifacts flow into core readiness. Open in Codex follows the installed `codex.config` development integration and core readiness, not the provider that performed setup analysis. Unselected or incomplete optional workflows do not.
+State derives from file integrity, dependencies, tools, environment, platform, conflicts, and validation. Setup-assistant configuration, confirmed provider analysis, and required launcher artifacts flow into core readiness. Opening the selected primary follows that environment's installed integration and core readiness, not the provider that performed setup analysis. Unselected or incomplete optional workflows do not.
 
 ## Removal
 

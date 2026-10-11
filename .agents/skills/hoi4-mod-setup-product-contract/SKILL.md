@@ -32,7 +32,7 @@ Read:
 
 ## Core invariants
 
-- The user selects a setup assistant and model at the start; Codex/ChatGPT is the default, and selected-provider authentication plus confirmed schema-valid analysis are required before Create, Import, Update, or Repair planning.
+- The user selects a setup assistant and model at the start; the Claude account/Claude Code route is the fresh default, and selected-provider authentication plus confirmed schema-valid analysis are required before Create, Import, Update, or Repair planning.
 - The setup assistant does not select or restrict the later development client. Provider optimization changes setup-time semantic conventions only; generated AGENTS/README content, installed development integrations, source trust, transaction safety, and readiness remain provider-independent.
 - New projects create both descriptors, a valid replaceable thumbnail, and the selected folder profile.
 - Latest-mode file components are dynamic source data. Compatible changed
@@ -56,14 +56,15 @@ Read:
 - Latest mode records an exact commit.
 - Pinned mode is reproducible.
 - Coding environments are a separate composable selection: exactly one primary
-  (Codex by default) plus any additional supported clients (Claude Code,
+  (Claude Code by default) plus any additional supported clients (Codex,
   Cursor, Qoder, or OpenCode). The resolved manifest owns each complete native
   package; the setup assistant and Core/Core plus 3D profiles do not encode
   environment combinations.
-- `.codex/agents/*.toml` is the canonical subagent source. Other native agent
-  projections are generated and drift-checked by the Agentic source workflow.
-  Runtime-neutral AGENTS, skills, canonical subagents, sync tools, docs, and
-  selected workflows are always shared.
+- `CLAUDE.md`, `.claude/skills/`, and `.claude/agents/` are the canonical
+  authoring package. The adapted `AGENTS.md`, `.agents/skills/`,
+  `.codex/agents/`, and other native client trees are generated projections and
+  must pass source-side drift checks. Runtime-neutral guidance, sync tools,
+  docs, and selected workflows remain shared.
 - User-modified files require a visible decision.
 - Secrets never enter target project files or locks.
 - Transactions are staged and reversible.

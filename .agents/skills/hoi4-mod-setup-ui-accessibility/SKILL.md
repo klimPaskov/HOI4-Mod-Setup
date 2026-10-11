@@ -31,10 +31,22 @@ Use seven grouped phases:
 - Install
 - Ready
 
-Setup-assistant selection is the first compact setup step and defaults to Codex. State in one sentence that this choice does not select the AI used for later development. Codex uses a compact ChatGPT sign-in with one primary action, one status line, a device-code fallback link, and a visible cancellation action while the App Server is waiting. Known hosted profiles auto-fill their verified model and address, show one fixed official API-key link, one secret field, and one Connect action, and place model/address overrides under Advanced. Local and custom profiles expose only the details they genuinely require. Usage-limited state preserves the draft and offers retry or refresh without pretending planning succeeded. Never show raw protocol logs, model billing details, or technical terms such as endpoint in the normal hosted-provider path.
+Setup-assistant selection is the first compact setup step and defaults to the
+Claude account/Claude Code route. State in one sentence that this choice does
+not select the AI used for later development. Claude Code uses its own concise
+account sign-in/check action and status; Codex uses a compact ChatGPT sign-in
+with one primary action, one status line, a device-code fallback link, and a
+visible cancellation action while the App Server is waiting. Known hosted
+profiles auto-fill their verified model and address, show one fixed official
+API-key link, one secret field, and one Connect action, and place model/address
+overrides under Advanced. Local and custom profiles expose only the details
+they genuinely require. Usage-limited state preserves the draft and offers
+retry or refresh without pretending planning succeeded. Never show raw
+protocol logs, model billing details, or technical terms such as endpoint in
+the normal hosted-provider path.
 
 The Components phase includes a dedicated Coding Environments step. Render one
-accessible radio group for the required primary (Codex selected initially) and a
+accessible radio group for the required primary (Claude Code selected initially) and a
 checkbox group for additional clients. Filter the current primary out of the
 additional group immediately when it changes. Keep the client selection visibly
 separate from setup-assistant and Core/Core plus 3D workflow choices; maintenance

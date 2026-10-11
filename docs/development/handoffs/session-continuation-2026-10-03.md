@@ -66,7 +66,7 @@ module with `rg --files`; there is no `src/model.ts`.
 
 ## Checkout and remote state
 
-- Workspace: `C:\Users\klimp\Documents\Projects\hoi4-mod-setup`.
+- Workspace: `<repo-root>`.
 - Branch: `codex/public-readiness-2026-09-28`.
 - HEAD: `249908a8f976fe5d2c1894eee2925f8fc0b007e5`.
 - Earlier candidate commit: `882998b` (source/provider readiness and Vitest
@@ -88,7 +88,7 @@ module with `rg --files`; there is no `src/model.ts`.
 ## Current source and MCP state
 
 The designated live workflow source is:
-`C:\Users\klimp\OneDrive\Documents\Paradox Interactive\Hearts of Iron IV\mod\agentic_hoi4_modding`.
+`<hoi4-user-mod-root>/agentic_hoi4_modding`.
 It was clean on main at
 `f13f462708618660700bb6881a3cfdf8927e932c`; remote main matched.
 
@@ -341,7 +341,7 @@ docs, acceptance coverage, and owning skills when behavior or invariants change.
 Prompt to paste into the next session:
 
 > Read `docs/development/handoffs/session-continuation-2026-10-03.md` in
-> `C:\Users\klimp\Documents\Projects\hoi4-mod-setup`. Set a goal to finish the
+> `<repo-root>`. Set a goal to finish the
 > full public-release readiness objective described there. Continue from the
 > current uncommitted candidate, including my new requirement for easy Claude
 > login, Claude as the default setup assistant, and Haiku 4.5 as its default

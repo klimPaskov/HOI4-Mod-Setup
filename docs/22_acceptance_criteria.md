@@ -33,7 +33,7 @@
 - NEW-15: The app does not fabricate a Workshop ID or `remote_file_id`.
 - NEW-16: A user-modified thumbnail is detected and never overwritten silently.
 - NEW-17: A valid existing thumbnail may replace the generated placeholder without blocking readiness.
-- NEW-18: Missing or invalid launcher artifacts block launcher-ready status and Open in Codex for a newly created project.
+- NEW-18: Missing or invalid launcher artifacts block launcher-ready status and opening the selected primary environment for a newly created project.
 - NEW-19: Entering a mod name and brief populates project ID, script prefix, primary namespace, descriptor tags, and starter folders before review; each remains editable and a manual edit is preserved.
 - NEW-20: Windows and macOS resolve the HOI4 user `mod` directory from the native user `Documents` location, including redirected Documents, without whole-computer search or a fixed guessed path.
 - NEW-21: A validated project ID auto-fills the new project root and external launcher descriptor filename before review.
@@ -79,14 +79,14 @@
   customizations, and session persistence disabled.
 - AI-01A: The first screen labels that choice as the setup assistant and states
   that it does not select or restrict the AI client used for later development.
-- AI-02: The selected setup profile changes semantic analysis only. Provider/model/profile provenance is retained in app-managed state, plan, lock, and maintenance review, but generated `AGENTS.md`, README, installed development-client components, and readiness remain provider-neutral.
+- AI-02: The selected setup profile changes semantic analysis only. Provider/model/profile provenance is retained in app-managed state, plan, lock, and maintenance review, but generated `CLAUDE.md`, its `AGENTS.md` projection, README, installed development-client components, and readiness remain provider-neutral.
 - AI-02A: The installed and flattened adapted `AGENTS.md` omit the source
   template's entire `## Placeholder Guide` section while preserving the first
   real project-instruction section.
 - AI-03: Provider changes clear stale analysis and cannot reuse a record from another provider or model.
 - AI-03C: Changing the setup assistant does not add, remove, select, or clear
-  `codex.config`, MCP components, flattened ChatGPT sources, Open in Codex, or
-  another development-client integration.
+  `codex.config`, MCP components, flattened ChatGPT sources, the selected
+  development-client opener, or another development-client integration.
 - AI-03A: Claude API key, Kimi, GLM, and DeepSeek fill verified model and address defaults automatically; their normal path shows an official API-key link, key field, and Connect action, while overrides remain under Advanced.
 - AI-03B: The app fetches the authenticated provider's live model catalog, shows
   the selected model's supported effort levels from Light through Max, defaults
@@ -99,7 +99,7 @@
   offers only its verified default effort until live capability metadata is
   available.
 - AI-04: A Components checkbox prepares `chatgpt_project_sources/` independently of the setup assistant; selecting a non-Codex setup provider neither hides nor clears it.
-- AI-05: Flattening renames `.agents/skills/<skill>/SKILL.md` to `<skill>.md` and includes selected subagents, adapted AGENTS, and README.
+- AI-05: Flattening renames canonical `.claude/skills/<skill>/SKILL.md` to `<skill>.md` and includes selected `.claude/agents/*.md` subagents, adapted AGENTS, and README; legacy `.agents`/`.codex` sources remain compatible when no canonical source is present.
 - AI-06: Flattening rejects links, case-insensitive collisions, secret-shaped content, and bounded file/aggregate-size violations.
 - AI-07: Flattening uses the normal dry-run, backup, staging, validation, apply, readiness, journal, and rollback path.
 - AI-08: The final recommendation says to start planning using ChatGPT “Chat” and performs no upload, conversation, or planning action.
@@ -157,18 +157,21 @@
 ## Coding environments
 
 - ENV-01: Setup includes a dedicated Coding Environments step with exactly one
-  primary selection; Codex is the default.
+  primary selection; new installs use the manifest-declared default, currently
+  Claude Code.
 - ENV-02: Additional selections allow any subset of the other supported
-  environments (Claude Code, Cursor, Qoder, and OpenCode), never include the
-  primary, and update automatically when the primary changes.
+  environments (Codex, Claude Code, Cursor, Qoder, and OpenCode), never include
+  the primary, and update automatically when the primary changes.
 - ENV-03: The manifest-declared native package is complete for every selected
   environment, while shared runtime-neutral components remain installed.
-- ENV-04: Codex TOML agents are canonical; Claude Code, Cursor, Qoder, and
-  OpenCode projections are generated from them and checked for drift.
+- ENV-04: `CLAUDE.md`, `.claude/skills/`, and `.claude/agents/` are canonical;
+  `AGENTS.md`, Codex, Cursor, Qoder, and OpenCode projections are generated and
+  checked for drift.
 - ENV-05: Environment selection is independent of Core/Core plus 3D workflow
   profiles and is resolved through composable manifest components.
-- ENV-06: Existing-project scans detect installed environments, default to
-  Codex when no primary is recorded, and preview additions, updates, preserved
+- ENV-06: Existing-project scans detect installed environments, preserve a
+  recorded primary such as Codex, use Codex as the compatibility default only
+  when no primary is recorded, and preview additions, updates, preserved
   conflicts, and removals without silently uninstalling a client.
 - ENV-07: Deselecting an environment removes only unchanged managed files;
   modified and unmanaged files remain, with state persisted through update,
@@ -213,9 +216,10 @@
 ## Super Events
 
 - SE-01: The Optional workflows screen shows **Super Events workflow** immediately after **3D models workflow**.
-- SE-02: Selecting it adds `workflow.super_events` and selectively downloads only the verified manifest-declared `.agents/skills/hoi4-super-events/` tree at the one bound source revision.
+- SE-02: Selecting it adds `workflow.super_events` and selectively downloads only the verified manifest-declared `.claude/skills/hoi4-super-events/` tree at the one bound source revision.
 - SE-03: The component is provider-neutral, depends only on `core.skills`, and requires no credential, environment variable, external command, or provider-specific health route.
-- SE-04: A declined install downloads neither the Super Events tree nor Super Events-specific `AGENTS.md` guidance.
+- SE-04: A declined install downloads neither the Super Events tree nor
+  Super Events-specific guidance in `CLAUDE.md` or its `AGENTS.md` projection.
 - SE-05: Super Events is visible in readiness as optional/non-blocking and its state is remembered in the managed lock and bounded scan summary.
 - SE-06: Update can add it from a target manifest; Repair can add it only when the same immutable locked source declares it, otherwise Repair directs the user to Update.
 - SE-07: Existing or modified Super Events files use normal ownership and conflict rules and are never silently overwritten.
@@ -317,7 +321,7 @@
 - RDY-01: Every required core and optional surface is checked.
 - RDY-02: Each check has status and evidence.
 - RDY-03: Internal descriptor, external launcher descriptor, launcher destination, descriptor agreement, and thumbnail integrity are blocking checks for a new project.
-- RDY-04: Core blocks disable Open in Codex.
+- RDY-04: Core blocks disable opening the selected primary environment.
 - RDY-05: Optional incomplete states do not disable it.
 - RDY-06: Codex authentication or selected-provider configuration and confirmed analysis are blocking core readiness checks.
 - RDY-07: A final report is stored.

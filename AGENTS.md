@@ -179,23 +179,27 @@ Use `hoi4-mod-setup-codex-integration` for changes to this boundary.
 ## 5B. Coding-environment selection
 
 The Components phase includes a separate **Coding Environments** step. Require
-exactly one primary environment, defaulting to Codex, and allow any additional
-selection from Claude Code, Cursor, Qoder, and OpenCode. The primary is never
+exactly one primary environment. New installs use the manifest-declared
+default (the current package defaults to Claude Code); any other supported
+environment may be selected as an additional client. The primary is never
 listed as an additional choice, and this selection is independent of the setup
 assistant and Core/Core plus 3D workflow profiles.
 
 Resolve complete native packages from manifest components tagged with
 `coding_environment`. Always include the shared runtime-neutral package:
-adapted `AGENTS.md`, `.agents/skills/`, canonical `.codex/agents/*.toml`,
-`.tools/sync/`, shared documentation, and selected workflows. The Codex TOMLs
-are the canonical subagent source; other client projections are generated and
-must pass source-side drift checks.
+canonical adapted `CLAUDE.md`, `.claude/skills/`, and `.claude/agents/`, the
+adapted `AGENTS.md` projection, `.tools/sync/`, shared documentation, and
+selected workflows. The Claude instruction, skill, and Markdown-subagent files
+are the source package; Codex, Cursor, Qoder, and OpenCode files are generated
+projections and must pass source-side drift checks.
 
 Persist primary and additional IDs in project state, plans, locks, and journals.
-Existing-project scans detect installed clients and default to Codex only when
-no primary is recorded. Update, repair, reinstall, rollback, and removal must
-preview client changes, preserve existing or modified files, and remove only
-unchanged managed files when a client is deselected. Use
+Existing-project scans preserve a valid recorded selection, including a prior
+Codex primary. Legacy projects without a recorded primary use Codex as the
+compatibility migration default; new installs follow the resolved manifest
+default. Update, repair, reinstall, rollback, and removal must preview client
+changes, preserve existing or modified files, and remove only unchanged
+managed files when a client is deselected. Use
 `hoi4-mod-setup-transactions` and `hoi4-mod-setup-source-manifest` for changes
 to this surface.
 
@@ -262,7 +266,10 @@ Managed content has one of four ownership types:
 
 Never silently replace a locally modified file. Compare base, local, and incoming content where a base exists. Offer only valid actions from keep, replace, merge, rename, and skip.
 
-Binary files never use text merge. TOML and JSON use structured merge. `AGENTS.md` uses three-way merge plus project adaptation. A merge result must validate before apply.
+Binary files never use text merge. TOML and JSON use structured merge.
+`CLAUDE.md` is the canonical instruction merge plus project adaptation;
+`AGENTS.md` is its provider-neutral projection and is also reviewed through a
+three-way merge. A merge result must validate before apply.
 
 ## 9. Credential and process rules
 
