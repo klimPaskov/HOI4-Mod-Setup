@@ -902,12 +902,15 @@ export default function App() {
       }
     }
     if (identity.projectId !== oldProjectId && (!gitHubRepository || gitHubRepository === oldProjectId)) gitHubRepository = identity.projectId;
-    const semanticEdit = Boolean(current.codexAnalysis) && Object.keys(semanticKeyByIdentityField).some((field) => Object.prototype.hasOwnProperty.call(patch, field));
+    // Core confirmation binds every identity value, including paths and
+    // advanced metadata, so each actual edit needs explicit reconfirmation.
+    const confirmationChanged = Boolean(current.codexAnalysis)
+      && JSON.stringify(identity) !== JSON.stringify(current.identity);
     return {
       ...current,
       identity,
       gitHubRepository,
-      codexAnalysisRecord: semanticEdit ? unconfirmedRecord(current.codexAnalysisRecord) : current.codexAnalysisRecord,
+      codexAnalysisRecord: confirmationChanged ? unconfirmedRecord(current.codexAnalysisRecord) : current.codexAnalysisRecord,
       identityOverrides: Array.from(overrides),
       semanticProposalOverrides: Array.from(semanticOverrides),
       transactionError: undefined,

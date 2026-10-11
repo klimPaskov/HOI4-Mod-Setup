@@ -321,6 +321,14 @@ remain unchanged on process, login, usage-limit, or schema failure. The new-proj
 renderer separately validates the user-confirmed launcher filename, descriptor
 agreement, and replaceable PNG placeholder; these are deterministic Rust checks.
 
+Core confirmation hashes the complete identity, including project and launcher
+paths and advanced metadata. Editing any identity value must clear the
+renderer confirmation while preserving the analysis record, expose the
+existing Confirm action, and block previews and navigation until the user
+reconfirms. Reconfirmation binds the edited values to the same core analysis;
+it does not require another provider turn. Do not weaken the core digest or
+silently reconfirm path edits. Test both path fields after confirmation.
+
 ## Corrective retry
 
 Every adapter (Codex App Server, provider API, Claude Code) allows

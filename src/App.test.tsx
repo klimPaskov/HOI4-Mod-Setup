@@ -1681,31 +1681,26 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(within(review).queryByText("descriptor_tags")).not.toBeInTheDocument();
   });
 
-  it("keeps an edited suggestion confirmable and the suggested tags when the name changes", async () => {
+  it("keeps edited suggestions and paths confirmable without rerunning analysis", async () => {
     enableTauriRuntime();
     const analysis = {
-      schema_version: "1.0.0",
+      ...semanticAnalysisFixture(),
       analysis_id: "analysis-edit",
-      mode: "new_project_identity" as const,
-      input_sha256: "a".repeat(64),
-      project_summary: "A focused alternate-history project.",
-      proposals: [
-        { key: "display_name", value: "Iron Dawn", confidence: 0.96, reason: "Uses the supplied mod name.", evidence_refs: [] },
-        { key: "descriptor_tags", value: ["Alternative History", "Military"], confidence: 0.88, reason: "Matches the brief.", evidence_refs: [] },
-      ],
+      proposals: semanticAnalysisFixture().proposals.map((proposal) => proposal.key === "descriptor_tags"
+        ? { ...proposal, value: ["Alternative History", "Military"] }
+        : proposal),
       component_recommendations: [],
-      warnings: [],
     };
     const record = { engine: "codex_app_server", auth_mode: "chatgpt", provider: "codex", model: "gpt-5.6-luna", analysis_id: "analysis-edit", schema_version: "1.0.0", input_sha256: "a".repeat(64), output_sha256: "b".repeat(64), confirmed_fields: [], confirmed_at: "" };
     vi.mocked(runCodexAnalysisResult).mockResolvedValue({ value: { analysis, record } as unknown as CodexAnalysisResult });
-    vi.mocked(confirmCodexAnalysis).mockResolvedValue({ ...record, confirmed_fields: ["display_name", "descriptor_tags"], confirmed_at: "2026-10-03T00:00:00Z" } as never);
+    vi.mocked(confirmCodexAnalysis).mockResolvedValue({ ...record, confirmed_fields: analysis.proposals.map((proposal) => proposal.key), confirmed_at: "2026-10-03T00:00:00Z" } as never);
 
     await renderAuthenticatedApp();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.change(screen.getByLabelText("Mod name"), { target: { value: "Iron Dawn" } });
     fireEvent.change(screen.getByLabelText("Mod description"), { target: { value: "An alternate-history military mod." } });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await screen.findByText("2 suggested values");
+    await screen.findByText("10 suggested values");
     expect(vi.mocked(runCodexAnalysisResult).mock.calls[0][0].constraints).toMatchObject({ requested_mod_name: "Iron Dawn" });
 
     const review = screen.getByRole("region", { name: "Codex proposal review" });
@@ -1716,6 +1711,27 @@ describe("HOI4 Mod Setup wizard", () => {
     await waitFor(() => expect(confirmCodexAnalysis).toHaveBeenCalledTimes(1));
     expect(vi.mocked(confirmCodexAnalysis).mock.calls[0][0]).toMatchObject({ analysis_id: "analysis-edit" });
     expect(vi.mocked(confirmCodexAnalysis).mock.calls[0][2]).toMatchObject({ identity: expect.objectContaining({ displayName: "Iron Dawn Reforged" }) });
+
+    const edits = [
+      { label: "Project folder", field: "projectRoot", value: "C:/mods/iron_dawn_reforged" },
+      { label: "Launcher descriptor path", field: "launcherDescriptorPath", value: "C:/mods/iron_dawn_reforged.mod", disclosure: "Launcher file location" },
+      { label: "Author", field: "author", value: "Mod team", disclosure: "Advanced project metadata" },
+    ];
+    for (const [index, edit] of edits.entries()) {
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Confirm Codex suggestions" })).not.toBeInTheDocument());
+      if (edit.disclosure) fireEvent.click(screen.getByText(edit.disclosure));
+      fireEvent.change(screen.getByLabelText(edit.label), { target: { value: edit.value } });
+      const confirm = screen.getByRole("button", { name: "Confirm Codex suggestions" });
+      expect(confirm).toBeEnabled();
+      for (const preview of screen.getAllByRole("button", { name: "Preview" })) expect(preview).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+      expect(screen.getByRole("heading", { name: "Project identity" })).toBeInTheDocument();
+      fireEvent.click(confirm);
+      await waitFor(() => expect(confirmCodexAnalysis).toHaveBeenCalledTimes(index + 2));
+      expect(vi.mocked(confirmCodexAnalysis).mock.calls[index + 1][0]).toMatchObject({ analysis_id: "analysis-edit" });
+      expect(vi.mocked(confirmCodexAnalysis).mock.calls[index + 1][2]).toMatchObject({ identity: expect.objectContaining({ [edit.field]: edit.value }) });
+    }
+    expect(runCodexAnalysisResult).toHaveBeenCalledTimes(1);
   });
 
   it("renders all ten semantic proposals as editable accessible review fields", () => {
