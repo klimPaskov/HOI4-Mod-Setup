@@ -279,7 +279,13 @@ or excessive active login IDs.
 Codex `thread/start` uses `sandbox: read-only`, `approvalPolicy: never`, and an
 empty temporary working directory that contains no target-project path. Codex
 `turn/start` receives the checked-in `docs/schemas/codex-analysis.schema.json`
-as its `outputSchema` and uses the current App Server policy shape
+as its `outputSchema` and the selected reasoning effort as `effort` on both
+initial and corrective turns. Do not copy the model catalog's
+`supportedReasoningEfforts[].reasoningEffort` field name into `turn/start`:
+that method accepts `effort`, and a missing override can leave the user's
+global effort setting in effect. Cover this distinction with a fake-transport
+test using a non-default selection on both turns. The turn uses the current
+App Server policy shape
 `{type: readOnly, networkAccess: false}`. Do not add legacy `readOnly.access`
 fields: current App Server schemas reject them. The schema itself binds the
 eight scalar proposal keys to string values and `descriptor_tags` and

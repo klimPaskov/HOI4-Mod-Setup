@@ -603,7 +603,7 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
                     "sandboxPolicy": read_only_no_project_access(),
                     "approvalPolicy": "never",
                     "model": model,
-                    "reasoningEffort": reasoning_effort
+                    "effort": reasoning_effort
                 }),
             )?;
             let turn_id = turn_id_from_start_response(&turn);
@@ -4158,6 +4158,55 @@ mod tests {
 
         assert!(error.contains("closed during account/read"));
         assert!(!protocol.is_alive());
+    }
+
+    #[test]
+    fn analysis_turns_send_selected_effort_using_the_protocol_field() {
+        let request = CodexAnalysisRequest {
+            mode: "new_project_identity".into(),
+            brief: "brief".into(),
+            evidence: Vec::new(),
+            constraints: json!({}),
+            analysis_purpose: None,
+            project_root: None,
+            scan_id: None,
+        };
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming: VecDeque::from([
+                response(
+                    1,
+                    json!({"account": {"type": "chatgpt", "authenticated": true}}),
+                ),
+                response(2, json!({"rateLimits": {"primary": {"usedPercent": 1}}})),
+                response(3, json!({"threadId": "thread-1"})),
+                response(4, json!({"turn": {"id": "turn-1"}})),
+                json!({"method": "turn/completed", "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed"}}}),
+                response(5, json!({"turn": {"id": "turn-2"}})),
+                json!({"method": "turn/completed", "params": {"threadId": "thread-1", "turn": {"id": "turn-2", "status": "completed"}}}),
+            ]),
+            alive: true,
+        };
+        let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
+
+        // A non-default selection must survive both the initial turn and the
+        // corrective turn after a completed response without structured output.
+        let error = protocol
+            .analyze(&request, "gpt-5.6-luna", "low")
+            .unwrap_err();
+        assert!(matches!(error, AppError::Serialization(_)));
+        let turns = protocol
+            .transport
+            .sent
+            .iter()
+            .filter(|message| message["method"] == "turn/start")
+            .collect::<Vec<_>>();
+        assert_eq!(turns.len(), 2);
+        for turn in turns {
+            assert_eq!(turn["params"]["effort"], "low");
+            assert!(turn["params"].get("reasoningEffort").is_none());
+        }
     }
 
     #[test]

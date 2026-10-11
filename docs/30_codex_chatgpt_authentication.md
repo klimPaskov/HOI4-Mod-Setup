@@ -174,7 +174,8 @@ Use a dedicated App Server thread for each Codex setup session. Start every sema
 - fetch the live model catalog through `model/list`; retain the checked-in
   `gpt-5.6-luna`/`xhigh` option when the catalog is empty or temporarily
   unreachable, without describing the fallback as a live result
-- show only the selected model's advertised reasoning-effort values and bind the reviewed model and effort to both `thread/start` and `turn/start`
+- show only the selected model's advertised reasoning-effort values; send the reviewed model to `thread/start` and `turn/start`, and the selected effort as `turn/start.params.effort` on every initial and corrective turn
+- keep the protocol field distinction: `model/list` advertises `supportedReasoningEfforts[].reasoningEffort`, but `turn/start` accepts `effort`, not `reasoningEffort`; sending the catalog field name does not supply the turn override and can leave the user's global effort setting in effect
 - `sandbox: read-only` on `thread/start`
 - `sandboxPolicy: { type: readOnly, networkAccess: false }` on `turn/start`
 - an empty temporary working directory, with no target-project path supplied
