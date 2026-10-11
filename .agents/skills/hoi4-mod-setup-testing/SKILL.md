@@ -65,6 +65,11 @@ Provide deterministic fakes for:
 - disk and permission failures
 
 Tests must not require a real Meshy key, ChatGPT login, or paid provider call.
+External-launcher fixtures use canonical owned temporary parents, formatted
+through `user_facing_path`, so macOS's `/var` alias does not weaken or trip the
+production no-symlink checks. Linux validates compilation and portable core
+contracts; test Windows/macOS default-profile policies explicitly and do not
+expect a Linux application-data or diagnostics route.
 Tests that mutate process-global command state must take the shared test-state
 guard so the default parallel Rust test runner cannot cross-contaminate evidence,
 session, cancellation, credential-health, or analysis assertions.

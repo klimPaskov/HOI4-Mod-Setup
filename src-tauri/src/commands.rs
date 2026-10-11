@@ -8766,8 +8766,11 @@ mod tests {
     #[test]
     fn project_identity_reads_nested_descriptor_fields() {
         let root = tempdir().unwrap();
-        let project_root = root.path().join("project");
-        let launcher = root.path().join("cold_war_curtain.mod");
+        let root_path = PathBuf::from(crate::paths::user_facing_path(
+            &root.path().canonicalize().unwrap(),
+        ));
+        let project_root = root_path.join("project");
+        let launcher = root_path.join("cold_war_curtain.mod");
         let state = serde_json::json!({
             "mode": "new",
             "identity": {
@@ -9749,10 +9752,23 @@ developer_instructions = "Work on the named files."
                     .any(|id| id == "mcp.hoi4_agent_tools.bootstrap"),
                 "shared MCP bootstrap missing for {primary}"
             );
-            assert!(
-                requested.iter().any(|id| id == "docs.runtimes"),
-                "new source-declared core default missing for {primary}"
-            );
+            // Linux is a compile/test host, not an app platform. Exercise both
+            // supported platform policies explicitly instead of assuming the
+            // host can select a desktop default profile.
+            for platform in [Platform::Windows, Platform::Macos] {
+                let mut supported_request = requested.clone();
+                add_supported_profile_components(
+                    &manifest,
+                    &mut supported_request,
+                    &default_profile_component_ids(&manifest).unwrap(),
+                    platform,
+                )
+                .unwrap();
+                assert!(
+                    supported_request.iter().any(|id| id == "docs.runtimes"),
+                    "new source-declared core default missing for {primary} on {platform:?}"
+                );
+            }
         }
         let state = serde_json::json!({
             "primaryCodingEnvironment": "cursor",
@@ -9941,8 +9957,12 @@ developer_instructions = "Work on the named files."
             "select at least one manifest component".into(),
         ));
         assert!(selected.starts_with("Select at least one manifest component"));
-        assert!(selected.contains("Technical details:"));
-        assert!(selected.contains("diagnostics.log"));
+        if cfg!(any(target_os = "windows", target_os = "macos")) {
+            assert!(selected.contains("Technical details:"));
+            assert!(selected.contains("diagnostics.log"));
+        } else {
+            assert!(!selected.contains("Technical details:"));
+        }
         assert!(!selected.contains("provider-private-sentinel"));
 
         let source = include_str!("commands.rs");
@@ -10067,7 +10087,10 @@ developer_instructions = "Work on the named files."
     #[test]
     fn renderer_cannot_authorize_an_arbitrary_external_launcher_file() {
         let parent = tempfile::tempdir().unwrap();
-        let project = parent.path().join("example");
+        let parent_path = PathBuf::from(crate::paths::user_facing_path(
+            &parent.path().canonicalize().unwrap(),
+        ));
+        let project = parent_path.join("example");
         std::fs::create_dir(&project).unwrap();
         let declared = crate::paths::user_facing_path(&project.canonicalize().unwrap());
         let declared = if cfg!(target_os = "windows") {
@@ -10075,13 +10098,13 @@ developer_instructions = "Work on the named files."
         } else {
             declared
         };
-        let candidate = parent.path().join("example.mod");
+        let candidate = parent_path.join("example.mod");
         std::fs::write(
             &candidate,
             format!("name=\"Example\"\npath=\"{declared}\"\n"),
         )
         .unwrap();
-        let arbitrary = parent.path().join("arbitrary.mod");
+        let arbitrary = parent_path.join("arbitrary.mod");
         std::fs::write(&arbitrary, "name=\"Private\"\n").unwrap();
 
         assert!(

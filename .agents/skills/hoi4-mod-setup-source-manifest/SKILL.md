@@ -109,6 +109,9 @@ Never bless the current machine's changed hash or relax installed-tree checks.
 - Copy source manifests through `git cat-file` at the immutable publication
   commit. Compute both audit digest fields from that same blob, preserving LF
   bytes; never substitute checkout bytes or edit generated evidence by hand.
+- Keep bundled source JSON artifacts marked `-text` in `.gitattributes`.
+  Checkout or index newline conversion must never change audited upstream
+  bytes; verify the committed blob and worktree against the same audit digest.
 - Current comparison behavior belongs to `hoi4.tech_inspect` mode `compare`.
   Removed route names cannot substitute for current inspectors in health tests.
 

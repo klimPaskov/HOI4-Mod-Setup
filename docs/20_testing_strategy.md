@@ -5,6 +5,13 @@ gate. It uses four test threads by default; `HOI4_TEST_RUST_THREADS` may set an
 integer from 1 through 32 for a local run. The script rejects values outside
 that range before invoking Cargo.
 
+External-launcher fixtures use canonical temporary parents and user-facing
+Windows paths. A macOS `/var` alias must not bypass production link rejection.
+Linux is a compile and portable-core test host: exercise Windows/macOS profile
+policies explicitly and do not assume a Linux application-data or diagnostics
+route. Bundled source JSON keeps exact upstream Git bytes through `-text`
+attributes; compare its committed SHA-256 with the source audit on every host.
+
 ## AI provider integration matrix
 
 Use a protocol fixture that emulates App Server JSONL without real account credentials in ordinary CI. Cover process absence, incompatible versions, initialize ordering, an existing ChatGPT session, browser login, exact per-`loginId` `account/login/cancel` behavior, isolated concurrent cancellation, device-code fallback, logout, account updates, usage limits, App Server crash, turn cancellation, output schema acceptance and rejection, proposal key/value type binding, unexpected fields, deterministic rejection of bad identifiers, token and account-data absence, and recovery while signed out. Add fake Anthropic, OpenAI-compatible, and loopback adapters for configured, missing-key, malformed-response, endpoint, redirect, bounded-response, provider-switch, and no-secret-persistence cases.
