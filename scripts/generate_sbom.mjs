@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
@@ -13,6 +13,7 @@ const cargoMetadataResult = spawnSync("cargo", ["metadata", "--format-version", 
   encoding: "utf8",
   maxBuffer: 64 * 1024 * 1024,
   stdio: ["ignore", "pipe", "pipe"],
+  windowsHide: true,
 });
 if (cargoMetadataResult.status !== 0) {
   throw new Error(`cargo metadata failed: ${cargoMetadataResult.stderr?.trim() || "unknown error"}`);
@@ -126,5 +127,6 @@ const sbom = {
   components: [...npmComponents, ...cargoComponents].sort((left, right) => left["bom-ref"].localeCompare(right["bom-ref"])),
 };
 
+await mkdir(resolve(outputPath, ".."), { recursive: true });
 await writeFile(outputPath, JSON.stringify(sbom, null, 2) + "\n", "utf8");
 console.log(`Generated CycloneDX dependency inventory (${sbom.components.length} components).`);

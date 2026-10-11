@@ -10,7 +10,7 @@ const root = resolve(import.meta.dirname, "..");
 const revision = "a".repeat(40);
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
-async function writeArtifact(input, name, platform, architecture, installerName) {
+async function writeArtifact(input, name, platform, architecture, installerName, signing = "community") {
   const artifact = join(input, name);
   const packages = join(artifact, "packages");
   await mkdir(packages, { recursive: true });
@@ -24,13 +24,22 @@ async function writeArtifact(input, name, platform, architecture, installerName)
   await writeFile(`${updater}.sig`, `signed-${name}`);
   await writeFile(join(artifact, "BUILD_METADATA.json"), JSON.stringify({
     product: "HOI4 Mod Setup", platform, architecture, sourceRevision: revision,
-    version: "0.2.0", signing: "community",
+    version: "0.2.0", signing,
   }));
-  await writeFile(join(artifact, "THIRD_PARTY_NOTICES.md"), "# Third-party notices\n\nReviewed test inventory.\n");
+  await writeFile(join(artifact, "THIRD_PARTY_NOTICES.md"), [
+    "# Third-party notices", "", "Reviewed test inventory.", "", "", "", "",
+    "## JavaScript dependencies", "", "| Package | Version | License | Homepage |", "| --- | --- | --- | --- |",
+    "| shared | 1 | MIT | https://example.invalid/shared |",
+    `| ${platform}-${architecture} | 1 | MIT | https://example.invalid/platform |`,
+    "", "## Rust dependencies", "", "| Package | Version | License | Source |", "| --- | --- | --- | --- |", "",
+  ].join("\n"));
   await writeFile(join(artifact, "SBOM.cdx.json"), JSON.stringify({
     bomFormat: "CycloneDX", specVersion: "1.5", version: 1,
     metadata: { component: { name: "hoi4-mod-setup", version: "0.2.0" } },
-    components: [{ "bom-ref": "pkg:test/shared@1", name: "shared", version: "1", type: "library" }],
+    components: [
+      { "bom-ref": "pkg:test/shared@1", name: "shared", version: "1", type: "library" },
+      { "bom-ref": `pkg:test/${platform}-${architecture}@1`, name: `${platform}-${architecture}`, version: "1", type: "library" },
+    ],
   }));
   await writeFile(join(artifact, "SIGNING_VERIFICATION.json"), JSON.stringify({
     schema_version: "1.0.0", source_revision: revision, platform, architecture,
@@ -59,7 +68,7 @@ test("curates signed installers and complete updater metadata", async () => {
     await writeArtifact(input, "hoi4-mod-setup-macos-arm64", "macos", "ARM64", "setup.dmg");
     await writeArtifact(input, "hoi4-mod-setup-macos-x64", "macos", "X64", "setup.dmg");
     const result = spawnSync(process.execPath, [join(root, "scripts", "prepare_release_assets.mjs"), input, output], {
-      cwd: root, encoding: "utf8",
+      cwd: root, encoding: "utf8", windowsHide: true,
       env: { ...process.env, GITHUB_SHA: revision, GITHUB_REF_NAME: "v0.2.0" },
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -75,7 +84,42 @@ test("curates signed installers and complete updater metadata", async () => {
       assert.match(target.url, /^https:\/\/github\.com\/klimPaskov\/HOI4-Mod-Setup\/releases\/download\/v0\.2\.0\//);
       assert.match(target.signature, /^signed-/);
     }
+    const combined = JSON.parse(await readFile(join(input, "SBOM.cdx.json"), "utf8"));
+    assert.deepEqual(combined.components.map((component) => component["bom-ref"]), [
+      "pkg:test/macos-ARM64@1", "pkg:test/macos-X64@1", "pkg:test/shared@1", "pkg:test/windows-X64@1",
+    ]);
+    const notices = await readFile(join(input, "THIRD_PARTY_NOTICES.md"), "utf8");
+    for (const dependency of ["shared", "macos-ARM64", "macos-X64", "windows-X64"]) {
+      assert.match(notices, new RegExp(`\\| ${dependency} \\| 1 \\| MIT`));
+    }
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
+});
+
+test("preview curation retains platform dependency unions outside public installers", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "hoi4-mod-setup-preview-test-"));
+  try {
+    const input = join(temporary, "input");
+    const output = join(temporary, "output");
+    await mkdir(input);
+    for (const [platform, architecture, extension] of [["windows", "X64", "exe"], ["macos", "ARM64", "dmg"], ["macos", "X64", "dmg"]]) {
+      await writeArtifact(input, `hoi4-mod-setup-preview-${platform}-${architecture.toLowerCase()}`, platform, architecture, `setup.${extension}`, "not_configured");
+    }
+    const result = spawnSync(process.execPath, [join(root, "scripts/prepare_preview_assets.mjs"), input, output], {
+      cwd: root, encoding: "utf8", windowsHide: true,
+      env: { ...process.env, GITHUB_SHA: revision, PREVIEW_TAG: "0.2.0" },
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual((await readdir(output)).sort(), [
+      "HOI4-Mod-Setup-macos-arm64.dmg", "HOI4-Mod-Setup-macos-x64.dmg",
+      "HOI4-Mod-Setup-windows-x64-setup.exe", "PREVIEW_RELEASE_NOTES.md",
+    ]);
+    const combined = JSON.parse(await readFile(join(input, "SBOM.cdx.json"), "utf8"));
+    assert.equal(combined.components.length, 4);
+    const notices = await readFile(join(input, "THIRD_PARTY_NOTICES.md"), "utf8");
+    for (const dependency of ["shared", "macos-ARM64", "macos-X64", "windows-X64"]) {
+      assert.match(notices, new RegExp(`\\| ${dependency} \\| 1 \\| MIT`));
+    }
+  } finally { await rm(temporary, { recursive: true, force: true }); }
 });
