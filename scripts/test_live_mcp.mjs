@@ -1,3 +1,4 @@
+import { stageVerifiedLocalTarball } from "./mcp_local_tarball.mjs";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
@@ -19,13 +20,14 @@ function requireEvidence() {
   if (process.platform !== "win32") {
     throw new Error("The current HOI4 Agent Tools MCP route is supported only on Windows.");
   }
-  if (!health || health.package_name !== "hoi4-agent-tools" || health.package_version !== "3.10.0") {
-    throw new Error("The bundled manifest does not declare the reviewed MCP 3.10.0 package.");
+  if (!health || health.package_name !== "hoi4-agent-tools" || health.package_version !== "4.0.0") {
+    throw new Error("The bundled manifest does not declare the reviewed MCP 4.0.0 package.");
   }
-  if (!Array.isArray(health.required_tools) || health.required_tools.length !== 35) {
+  if (!Array.isArray(health.required_tools) || health.required_tools.length !== 28) {
     throw new Error("The bundled MCP tool list does not match the current source contract.");
   }
-  if (!/^[a-f0-9]{64}$/.test(health.package_tree_sha256 ?? "")
+  if (!/^sha512-[A-Za-z0-9+/]{86}==$/.test(health.package_integrity ?? "")
+      || !/^[a-f0-9]{64}$/.test(health.package_tree_sha256 ?? "")
       || !/^[a-f0-9]{64}$/.test(health.runtime_entry_sha256 ?? "")
       || !Number.isSafeInteger(health.package_file_count)
       || !Number.isSafeInteger(health.runtime_entry_size)) {
@@ -308,16 +310,24 @@ const environment = {
 };
 
 try {
-  const integrityText = await runNode([
-    npmCli,
-    "view",
-    health.package_name + "@" + health.package_version,
-    "dist.integrity",
-    "--json",
-    "--registry=https://registry.npmjs.org",
-  ], { cwd: root, env: environment }, "integrity request");
-  if (JSON.parse(integrityText) !== health.package_integrity) {
-    throw new Error("npm registry integrity does not match the bundled manifest.");
+  const localTarball = process.env.HOI4_MCP_LOCAL_TARBALL;
+  let installSource = health.package_name + "@" + health.package_version;
+  if (localTarball !== undefined) {
+    installSource = await stageVerifiedLocalTarball(
+      localTarball, health.package_integrity, resolve(tempRoot, "verified-mcp.tgz"),
+    );
+  } else {
+    const integrityText = await runNode([
+      npmCli,
+      "view",
+      health.package_name + "@" + health.package_version,
+      "dist.integrity",
+      "--json",
+      "--registry=https://registry.npmjs.org",
+    ], { cwd: root, env: environment }, "integrity request");
+    if (JSON.parse(integrityText) !== health.package_integrity) {
+      throw new Error("npm registry integrity does not match the bundled manifest.");
+    }
   }
   await runNode([
     npmCli,
@@ -329,7 +339,7 @@ try {
     "--no-audit",
     "--no-fund",
     "--registry=https://registry.npmjs.org",
-    health.package_name + "@" + health.package_version,
+    installSource,
   ], { cwd: root, env: environment }, "package install", 180_000);
   const entry = await verifyInstalledPackage(tempPrefix);
   const tools = await probeTools(entry, environment, testProject);

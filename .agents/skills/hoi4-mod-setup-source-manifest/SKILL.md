@@ -90,6 +90,28 @@ hash captured from mutable transitive resolution can become uninstallable;
 fix it upstream with a bundled runtime or integrity-complete pinned closure.
 Never bless the current machine's changed hash or relax installed-tree checks.
 
+## Repeatable MCP package verification
+
+- Read exact package/version, integrity, complete tree hash/count, entry
+  hash/size, and required routes from the canonical manifest's MCP health rule.
+- For an unpublished candidate, use a reviewed local `npm pack` artifact and
+  set `HOI4_MCP_LOCAL_TARBALL` to its absolute path when running
+  `node scripts/test_live_mcp.mjs`. The script checks exact SHA-512, stages the
+  verified bytes, and skips only the registry integrity lookup. Full installed
+  tree, entry, optional npm lock, negotiated version/protocol, and tool checks
+  still run. Never infer package identity from the filename.
+- Run `node --test scripts/mcp_local_tarball.node-test.mjs` for the opt-in
+  boundary and Rust MCP/source/commands tests for route and manifest evidence.
+- Keep default registry smoke fail-closed for an unpublished version. Before
+  release, replace local-pack integrity with npm `dist.integrity`, recapture a
+  clean published-package tree and entry, regenerate source-owned evidence,
+  copy the committed manifest blob exactly, and pass the default smoke test.
+- Copy source manifests through `git cat-file` at the immutable publication
+  commit. Compute both audit digest fields from that same blob, preserving LF
+  bytes; never substitute checkout bytes or edit generated evidence by hand.
+- Current comparison behavior belongs to `hoi4.tech_inspect` mode `compare`.
+  Removed route names cannot substitute for current inspectors in health tests.
+
 ## Current implementation boundaries
 
 - The application consumes the single canonical `hoi4-mod-setup.manifest.json`

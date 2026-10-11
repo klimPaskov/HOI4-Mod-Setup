@@ -1067,7 +1067,7 @@ mod tests {
                     "id": 1,
                     "result": {
                         "protocolVersion": MCP_PROTOCOL_VERSION,
-                        "serverInfo": {"name": "hoi4-agent-tools", "version": "3.10.0"},
+                        "serverInfo": {"name": "hoi4-agent-tools", "version": "4.0.0"},
                         "capabilities": {"tools": {}}
                     }
                 }),
@@ -1096,7 +1096,7 @@ mod tests {
         assert!(error.to_string().contains("capabilities"));
         let error = validate_initialize_result(&json!({
             "protocolVersion": "2024-11-05",
-            "serverInfo": {"name": "hoi4-agent-tools", "version": "3.10.0"},
+            "serverInfo": {"name": "hoi4-agent-tools", "version": "4.0.0"},
             "capabilities": {"tools": {}}
         }))
         .unwrap_err();
@@ -1222,7 +1222,7 @@ mod tests {
     fn required_tools_capability_is_not_optional() {
         let initialized = json!({
             "protocolVersion": MCP_PROTOCOL_VERSION,
-            "serverInfo": {"name": "hoi4-agent-tools", "version": "3.10.0"},
+            "serverInfo": {"name": "hoi4-agent-tools", "version": "4.0.0"},
             "capabilities": {}
         });
         assert!(require_tools_capability(&initialized)
@@ -1285,6 +1285,31 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(!declared.is_empty());
         assert_eq!(target.required_tools, declared);
+    }
+
+    #[test]
+    fn removed_compare_route_cannot_satisfy_current_technology_inspectors() {
+        let manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+        ))
+        .unwrap();
+        let target = manifest_target(&manifest).unwrap();
+        let tools = target
+            .required_tools
+            .iter()
+            .filter(|tool| !matches!(tool.as_str(), "hoi4.tech_inspect" | "hoi4.tech_render"))
+            .map(|tool| json!({"name": tool}))
+            .chain(std::iter::once(json!({"name": "hoi4.tech_compare"})))
+            .collect::<Vec<_>>();
+        let error = validate_tools_result(&json!({"tools": tools}), &target.required_tools)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("hoi4.tech_inspect"));
+        assert!(error.contains("hoi4.tech_render"));
+        assert!(!target
+            .required_tools
+            .iter()
+            .any(|tool| tool == "hoi4.tech_compare"));
     }
 
     #[test]

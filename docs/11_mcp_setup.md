@@ -10,7 +10,7 @@ The inspected `.codex/config.toml` contains `hoi4_agent_tools` with command `hoi
 
 These findings drive the example manifest. They do not authorize macOS equivalents.
 
-The current source pins `hoi4-agent-tools@3.10.0` by npm SHA-512 integrity,
+The current source pins `hoi4-agent-tools@4.0.0` by npm SHA-512 integrity,
 canonical package-tree SHA-256 and file count, runtime-entry SHA-256 and size,
 and required tool names. The bootstrap and app independently verify the full
 installed package tree, so changing an imported sibling module fails before
@@ -19,8 +19,9 @@ and Node executes that copy, preventing a change between verification and
 spawn. The `.cmd` wrapper is used only to locate the current-user npm
 prefix and is never executed. Node must be a regular link-free executable with
 a valid OpenJS Foundation signature; its actual SHA-256 is captured and
-rechecked immediately at spawn. The 3.10.0 source snapshot declares 5,358
-package files and the current 35 required MCP routes. The application reads
+rechecked immediately at spawn. The 4.0.0 source snapshot declares the current
+28 required MCP routes and a bundled dependency tree; exact package file counts
+come from the canonical source manifest. The application reads
 the exact route list from the resolved manifest; no package, command, version,
 tool, or macOS route is invented.
 
@@ -68,7 +69,7 @@ Security-sensitive root values such as `approval_policy` and `sandbox_mode` rece
 6. Require the exact negotiated protocol version, the reviewed package version
    advertised by the server, and a `tools` capability.
 7. Call `tools/list` and require every source-advertised route, including all
-   three Technology Tree routes.
+   current Technology Tree inspectors and renderer.
 8. Stop cleanly.
 
 Do not run paid or mutating provider actions as generic health checks unless the repository declares a safe operation.
@@ -80,13 +81,14 @@ route remains unavailable and no same-named command is executed.
 
 The current HOI4 Agent Tools documentation and manifest describe focus, event,
 weighted-logic, scripted-GUI, map, technology, and doctrine routes. The
-Technology Tree Viewer is exposed through `hoi4.tech_inspect`,
-`hoi4.tech_render`, and `hoi4.tech_compare`. Show only the capabilities declared
-by the resolved manifest and refine them with the live MCP tool list. Those
-three Technology Tree routes are the application's permanent readiness
-baseline for the supported HOI4 Agent Tools integration. Manifest-only file and
+Technology Tree Viewer is exposed through `hoi4.tech_inspect` and
+`hoi4.tech_render`; comparisons use `hoi4.tech_inspect` with `mode: "compare"`.
+Show only the capabilities declared by the resolved manifest and refine them
+with the live MCP tool list. The current Technology Tree routes are checked through the exact package's
+manifest declaration. The removed `hoi4.tech_compare` route cannot satisfy
+`hoi4.tech_inspect` or `hoi4.tech_render`. Manifest-only file and
 documentation additions are dynamic; changing this executable route baseline
-requires a reviewed app release.
+requires compatibility review.
 
 ## Credentials
 
@@ -116,6 +118,24 @@ verify the complete tree against the manifest. Publish a bundled runtime or
 an integrity-complete pinned dependency closure when transitive resolution
 can drift; do not replace the expected hash with whichever tree a user's
 machine happens to contain, or bypass a failed check.
+
+## Local unpublished package verification
+
+`scripts/test_live_mcp.mjs` accepts `HOI4_MCP_LOCAL_TARBALL` only as an
+explicit absolute path. It checks the local tarball's exact SHA-512 against
+`package_integrity`, stages those verified bytes in its disposable prefix,
+and skips only the registry integrity lookup. Package version, hidden npm lock
+integrity when present, complete package-tree hash/count, runtime-entry
+hash/size, protocol/version negotiation, and required tools remain mandatory.
+The default path uses npm `dist.integrity` and fails closed while the pinned
+version is unpublished. The application and bootstrap keep their registry
+installation contract.
+
+TODO before publication is considered verified: replace local-pack integrity
+with the published npm `dist.integrity`, recapture the complete tree and entry
+from a clean published-package install, regenerate the canonical source
+manifest, copy its committed Git blob into the bundle, and rerun the default
+registry smoke test. Local smoke evidence does not prove npm publication.
 
 ## Removal
 

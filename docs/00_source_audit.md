@@ -5,9 +5,9 @@
 This planning package uses two evidence sets:
 
 1. The project files supplied with the request, including all Markdown skills, all supplied subagent TOML files, the project instruction file, the mechanics guide, and the current event, cluster, and scenario catalog CSV snapshots.
-2. The current audit resolves the live `klimPaskov/Agentic-HOI4-Modding` repository to published commit `a957ba3b6b3e23b315630809d5e7e73e2155682a` on `main` on 27 September 2026. That publication binds the complete portrait contract and provider router, the Technology Tree Viewer routes, the execution-locked Blender/Meshy 3D workflow, the verified `hoi4-agent-tools@3.6.0` package with 34 required tools, and native Codex, Claude Code, Cursor, Qoder, and OpenCode packages projected from canonical Codex agent TOMLs. The application resolves the remote manifest at runtime and retains the bundled copy only as offline bootstrap evidence.
+2. The current audit resolves the live `klimPaskov/Agentic-HOI4-Modding` repository to local committed candidate `0a32a5c3bf0a626d0320b84b7002a079ed6971bb` on `main` on 11 October 2026. That source candidate binds the complete portrait contract and provider router, the Technology Tree Viewer routes, the execution-locked Blender/Meshy 3D workflow, the verified unpublished local `hoi4-agent-tools@4.0.0` pack with 28 required tools, and native Codex, Claude Code, Cursor, Qoder, and OpenCode packages projected from canonical Codex agent TOMLs. The application resolves the remote manifest at runtime and retains the bundled copy only as offline bootstrap evidence.
 
-Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. The checked-in app manifest matches the published Agentic manifest byte-for-byte. Its `generated_for_revision` is `4f55856532b5be7549a7a44050ea083c1eeb4464`, the immutable source snapshot used to generate the current evidence.
+Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. The checked-in app manifest matches the committed local Agentic manifest Git blob byte-for-byte. Its `generated_for_revision` is `5b41e2c535108305f2eace5fe508066e30c6e2aa`, the immutable source snapshot used to generate the current evidence.
 
 ## Fully read and processed
 
@@ -53,22 +53,25 @@ that wording as a verified formal license. The current source manifest records
 both Agentic repository license evidence and wiki license status as
 `not_found`.
 
-The current root manifest at publication commit
-`a957ba3b6b3e23b315630809d5e7e73e2155682a` declares
-`generated_for_revision` `4f55856532b5be7549a7a44050ea083c1eeb4464`. Its 1,388
-declared file records, including the 5,099-file MCP package identity, were
+The current root manifest at local evidence commit
+`0a32a5c3bf0a626d0320b84b7002a079ed6971bb` declares
+`generated_for_revision` `5b41e2c535108305f2eace5fe508066e30c6e2aa`. Its 1,642
+declared file records, including the 5,223-file MCP package identity, were
 generated from immutable Git blob bytes before publication. The current wiki
 evidence covers 601 files and all 11 required pages; formal provenance and
 license evidence remain `repository_only` and `not_found` respectively.
 
-The manifest is now published upstream infrastructure. Runtime resolution
+The current repin is locally committed and has not been pushed or published.
+Before release, replace local-pack integrity with npm `dist.integrity` and
+recapture a clean published-package tree and entry. Runtime resolution
 still verifies the manifest and every selected blob against one exact source
 revision before staging.
 
 ### Corrected publication declarations
 
 The publication now names the implemented Technology Tree Viewer tools exactly
-as `hoi4.tech_inspect`, `hoi4.tech_render`, and `hoi4.tech_compare`. It also
+as `hoi4.tech_inspect` and `hoi4.tech_render`; comparison uses
+`hoi4.tech_inspect` with `mode: "compare"`. It also
 declares `uv` as a required 3D tool and binds the reviewed bootstrap arguments,
 network access, expected external writes, current-user privilege, and rollback
 boundary. The upstream workflow regenerates manifest file evidence whenever a

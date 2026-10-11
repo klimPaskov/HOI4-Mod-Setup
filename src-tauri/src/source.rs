@@ -2121,13 +2121,13 @@ mod tests {
             .expect("current MCP health declaration must be present");
         assert_eq!(
             mcp_health.parameters["package_version"].as_str(),
-            Some("3.10.0")
+            Some("4.0.0")
         );
         assert_eq!(
             mcp_health.parameters["required_tools"]
                 .as_array()
                 .map(Vec::len),
-            Some(35)
+            Some(28)
         );
         let workflow_3d = manifest
             .components
@@ -2138,7 +2138,7 @@ mod tests {
             .dependencies
             .iter()
             .any(|dependency| dependency == "codex.config"));
-        for tool in ["hoi4.tech_inspect", "hoi4.tech_render", "hoi4.tech_compare"] {
+        for tool in ["hoi4.tech_inspect", "hoi4.tech_render"] {
             assert!(mcp
                 .capabilities
                 .iter()

@@ -243,8 +243,9 @@
 - MCP-04: Secrets are not literal TOML values.
 - MCP-05: Unsupported commands do not run.
 - MCP-06: The Technology Tree Viewer is reported only when the resolved
-  revision declares the working `hoi4.tech_inspect`, `hoi4.tech_render`, and
-  `hoi4.tech_compare` routes; the live tool list refines readiness.
+  revision declares the working `hoi4.tech_inspect` and `hoi4.tech_render`
+  routes; comparisons use inspector mode `compare`, and the live tool list
+  refines readiness. A removed comparison route cannot satisfy the inspectors.
 - MCP-07: A newly published manifest profile, skill, subagent, documentation
   component, or file-only optional workflow can be selected and installed
   without a new app release when it satisfies the supported schema, platform,

@@ -9499,13 +9499,12 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
         assert_eq!(bootstrap.privilege, "current_user");
 
         let target = crate::mcp::reviewed_plan_target(&actions).unwrap();
-        assert_eq!(target.package_version, "3.10.0");
-        assert_eq!(target.required_tools.len(), 35);
+        assert_eq!(target.package_version, "4.0.0");
+        assert_eq!(target.required_tools.len(), 28);
         for route in [
             "hoi4.tech_inspect",
             "hoi4.tech_render",
-            "hoi4.tech_compare",
-            "hoi4.probability_sequence",
+            "hoi4.probability_analyze",
             "hoi4.job_inspect",
             "hoi4.job_cancel",
         ] {
