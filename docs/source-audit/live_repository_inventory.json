@@ -1,13 +1,13 @@
 {
   "repository": "klimPaskov/Agentic-HOI4-Modding",
-  "resolved_commit": "0a32a5c3bf0a626d0320b84b7002a079ed6971bb",
+  "resolved_commit": "b775a69997daf847ccc98f6c5a4d752085076c3d",
   "default_branch": "main",
   "inspection_date": "2026-10-11",
   "manifest_path": "hoi4-mod-setup.manifest.json",
-  "manifest_sha256": "1bfcf7f0437ba1840bd36e01240bd0d513af9f462f7b5623b28936d5d3fd340c",
-  "manifest_generated_for_revision": "5b41e2c535108305f2eace5fe508066e30c6e2aa",
+  "manifest_sha256": "b156c774ef1d4ff6d2a9968e2ea59fa276e483c724133def5e70aa2761f2fbf5",
+  "manifest_generated_for_revision": "2d556750517d83f7c0f3b3c1b7f4d0e0e7bfaff8",
   "manifest_worktree_state": "local_committed_candidate",
-  "workspace_manifest_sha256": "1bfcf7f0437ba1840bd36e01240bd0d513af9f462f7b5623b28936d5d3fd340c",
+  "workspace_manifest_sha256": "b156c774ef1d4ff6d2a9968e2ea59fa276e483c724133def5e70aa2761f2fbf5",
   "verified_root_entries": [
     ".claude/skills/",
     ".codex/",
@@ -25,7 +25,9 @@
     "AGENTS_chaos_redux.md",
     "AGENTS_template.md",
     "README.md",
-    "docs/systems/hoi4_agent_tools_mcp_integration.md"
+    "docs/systems/hoi4_agent_tools_mcp_integration.md",
+    ".tools/package_chatgpt_project_sources.py",
+    ".tools/package_chatgpt_project_sources.bat"
   ],
   "verified_skills": [
     "hoi4-3d-model-pipeline",
@@ -259,10 +261,11 @@
     "The offline wiki distribution and required page coverage were inspected. The body of every wiki article and every binary media file was not fully read.",
     "Binary reference assets under skill trees were not individually inspected because this task designs an installer rather than an asset workflow output.",
     "No formal repository or wiki license file was found at the tested paths. This is not a legal conclusion.",
-    "The 4.0.0 npm artifact is an unpublished local pack. Its SHA-512 and clean local installation tree are verified; registry publication is not claimed. Before release, replace integrity with npm dist.integrity and recapture a clean published-package tree and entry."
+    "The 4.0.0 npm artifact is an unpublished local pack. Its SHA-512 and clean local installation tree are verified; registry publication is not claimed. Before release, replace integrity with npm dist.integrity and recapture a clean published-package tree and entry.",
+    "ChatGPT source packaging is verified through manifest-selected installation into a tiny project, CLI bundle generation, archive-byte comparison, configurable dry-run, output refusal, and linked-file rejection. No public source publication or macOS launcher execution is claimed."
   ],
   "manifest_component_count": 56,
-  "manifest_file_evidence_count": 1642,
+  "manifest_file_evidence_count": 1645,
   "mcp_package_version": "4.0.0",
   "mcp_package_file_count": 5223,
   "mcp_required_tool_count": 28,

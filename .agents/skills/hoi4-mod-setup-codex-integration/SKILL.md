@@ -232,6 +232,16 @@ are summaries, never filesystem inputs. They remain bound to the core scan ID,
 canonical project root, finding/conflict reference, excerpt hash, and explicit
 evidence approval. Do not relax the generic absolute-path or `.git` rejection.
 
+## Optional ChatGPT sources
+
+Source flattening remains independent of the setup assistant and non-blocking.
+Show it as a minor install check; do not promote source status or a planning
+recommendation on Ready or completion. The manifest installs the reusable
+`.tools/package_chatgpt_project_sources.py` and Windows launcher for later
+user-invoked export. See `docs/33_chatgpt_source_packaging.md` and the UI/source
+skill supplements for the presentation and packaging boundaries. This export
+uses no provider login, model, or credentials.
+
 ## Current implementation boundary
 
 The Rust implementation is in `src-tauri/src/ai.rs` and `src-tauri/src/codex.rs`. It starts only an absolute
@@ -243,7 +253,7 @@ analysis, and confirmation commands
 through `src/lib/tauri.ts`; React never invokes the low-level Tauri bridge.
 `open_codex_login_url` accepts only the validated URL returned by Codex, while
 `open_external_url` accepts the fixed reviewed source, product repository,
-ChatGPT handoff, and Ready-screen portrait URLs. Both routes use the
+and Ready-screen portrait URLs. Both routes use the
 platform-owned browser executable and argument array. The Ready-screen opener
 launches the verified Codex executable with `codex app <project-root>`; do not
 substitute the interactive CLI `--cd` route.
@@ -356,7 +366,7 @@ Cover:
 - provider-neutral optional component recommendations, including the
   `workflow.super_events` registry ID/schema path and selected-vs-unselected
   AGENTS guidance
-- setup-assistant-independent flatten visibility, mapping, collision rejection, secret rejection, and recommendation copy
+- setup-assistant-independent flatten visibility, mapping, collision rejection, secret rejection, and optional setup-check presentation
 
 `pnpm test:codex-live` is an opt-in Windows smoke using the signed installed
 Codex executable named by `HOI4_CODEX_EXECUTABLE`. It reads only the current

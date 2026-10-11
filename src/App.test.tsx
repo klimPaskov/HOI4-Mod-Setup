@@ -1364,9 +1364,13 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByText(/Comfy Cloud: Not reported/i)).toBeInTheDocument();
   });
 
-  it("links prepared ChatGPT sources directly to ChatGPT Chat", () => {
-    render(<Ready state={{ ...readyState(), flattenForChat: true }} update={vi.fn()} onMaintenance={vi.fn()} />);
-    expect(screen.getByRole("link", { name: /ChatGPT Chat sources prepared/i })).toHaveAttribute("href", "https://chatgpt.com");
+  it("keeps optional ChatGPT source status out of Ready and its details", () => {
+    const state = readyState();
+    render(<Ready state={{ ...state, flattenForChat: true, readiness: { ...state.readiness!, checks: [...state.readiness!.checks, { id: "codex.chat_flatten", label: "ChatGPT Chat sources", status: "incomplete", blocking: false, message: "Optional source folder needs review" }] } }} update={vi.fn()} onMaintenance={vi.fn()} />);
+    fireEvent.click(screen.getByText("Readiness details"));
+    expect(screen.queryByText(/ChatGPT.*sources/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /ChatGPT/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open in Codex/i })).toBeEnabled();
   });
 
   it("moves focus to the new screen heading and names scan progress", async () => {
@@ -2145,7 +2149,7 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByText("Check the 3D workflow")).toBeInTheDocument();
   });
 
-  it("shows selected ChatGPT project files for a non-Codex setup assistant", () => {
+  it("keeps ChatGPT sources as a minor setup check for any assistant", () => {
     render(<DryRun state={{
       aiProvider: "deepseek",
       gitBranch: "main",
@@ -2154,7 +2158,8 @@ describe("HOI4 Mod Setup wizard", () => {
       plan: { operations: [], conflicts: [], external_actions: [], generated_artifacts: [] },
     } as unknown as WizardState} update={vi.fn()} />);
 
-    expect(screen.getByText("ChatGPT project files")).toBeInTheDocument();
+    expect(screen.getByText("ChatGPT source files")).toBeInTheDocument();
+    expect(screen.queryByText("ChatGPT project files")).not.toBeInTheDocument();
     expect(screen.getByText("Prepare changes to calculate")).toBeInTheDocument();
   });
 

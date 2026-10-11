@@ -355,8 +355,6 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .ready-check-list { margin: 0 -16px; }
 .ready-panel-action { width: fit-content; }
 .ready-panel-note { padding: 0 !important; }
-.chatgpt-ready-callout a { display: grid; gap: 4px; }
-.chatgpt-ready-callout span { color: var(--muted-strong); font-weight: 500; }
 .portrait-workflow-note { padding: 0; color: var(--muted-strong); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .portrait-workflow-note a { color: #a9bdff; font-weight: 700; text-underline-offset: 3px; }
 .portrait-workflow-note a:hover { color: white; }

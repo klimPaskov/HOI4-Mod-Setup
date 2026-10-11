@@ -204,9 +204,14 @@ main button opens the project in your primary client: **Open in Claude Code**
 starts Claude Code in a new terminal window in the project folder, and **Open
 in Codex** opens the Codex app when Codex is primary.
 
-If flattened ChatGPT files were selected, the Ready screen links directly to
-[ChatGPT Chat](https://chatgpt.com). When the optional portrait workflow is
-enabled, it also shows its persisted Cloud, Local, or RunPod readiness and
+ChatGPT source files are an optional setup check and stay out of the Ready
+summary. Installed projects include `.tools/package_chatgpt_project_sources.py`
+and its Windows `.bat` launcher. Run `python .tools/package_chatgpt_project_sources.py`
+to build a curated folder and `all-project-sources.zip` in Downloads; use
+`--dry-run`, `--include`, `--exclude`, or `--config` to review and adjust the
+selection. Choose a new `--output` folder for each export. The tool never uploads
+files. See the [source-packaging contract](docs/33_chatgpt_source_packaging.md).
+When the optional portrait workflow is enabled, it also shows its persisted Cloud, Local, or RunPod readiness and
 canonical source guidance, or the explicit Disabled state. RunPod runs
 API-first; computer control is used only when explicitly requested.
 Non-sourced fictional or impossible portraits use the configured image generator. Disabled

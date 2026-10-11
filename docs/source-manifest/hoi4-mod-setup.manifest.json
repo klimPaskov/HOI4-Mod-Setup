@@ -1,7 +1,7 @@
 {
   "schema_version": "3.0.0",
   "manifest_id": "agentic-hoi4-modding",
-  "generated_for_revision": "5b41e2c535108305f2eace5fe508066e30c6e2aa",
+  "generated_for_revision": "2d556750517d83f7c0f3b3c1b7f4d0e0e7bfaff8",
   "repository": {
     "provider": "github",
     "owner": "klimPaskov",
@@ -115,8 +115,8 @@
     },
     {
       "id": "runtime.agent_sync",
-      "display_name": "Runtime synchronizers",
-      "description": "Install the tools that regenerate AGENTS.md, the other runtimes' agents, and the skill copies from the canonical Claude files.",
+      "display_name": "Runtime synchronizers and project tools",
+      "description": "Install shared runtime synchronizers and the optional, user-invoked ChatGPT source packaging tool.",
       "category": "script",
       "optional": false,
       "platforms": [
@@ -124,11 +124,14 @@
       ],
       "source": {
         "kind": "tree",
-        "path": ".tools/sync",
+        "path": ".tools",
         "include": [
+          "sync/README.md",
+          "sync/*.py",
+          "sync/*.json",
           "README.md",
-          "*.py",
-          "*.json"
+          "package_chatgpt_project_sources.py",
+          "package_chatgpt_project_sources.bat"
         ],
         "exclude": [
           "**/__pycache__/**",
@@ -136,7 +139,7 @@
         ]
       },
       "destination": {
-        "path": ".tools/sync/",
+        "path": ".tools/",
         "ownership": "managed",
         "outside_project": false
       },
@@ -170,6 +173,21 @@
         "guidance size ceiling"
       ],
       "expected_files": [
+        {
+          "path": ".tools/README.md",
+          "sha256": "5004ab33392473c14b154c4297afa591af6f1cb84299fd7fe79bd853a7430531",
+          "size": 7430
+        },
+        {
+          "path": ".tools/package_chatgpt_project_sources.bat",
+          "sha256": "0deba9b49324ae69e6d433e676fe00c2745bcd4a25ca7f7276f815dd31d60ce0",
+          "size": 288
+        },
+        {
+          "path": ".tools/package_chatgpt_project_sources.py",
+          "sha256": "2e8c5ea5cd0dc049da950210b4447719faedbeba1e412c1c77f44929d9116e21",
+          "size": 7467
+        },
         {
           "path": ".tools/sync/README.md",
           "sha256": "70c8b17152cb8752992ffc805f54ca61465dc27972059405cc32ec644e31d0f6",
@@ -8635,8 +8653,8 @@
       "expected_files": [
         {
           "path": "README.md",
-          "sha256": "b7cb7569376f7290e93e9dd6ad8689cb9700a7fe6bcb903d0a380e2f4d3a8d24",
-          "size": 9130
+          "sha256": "208a495b9192c03ad161da60179b3f5e2762826a5029dbc77194f6690ec6f8d0",
+          "size": 9477
         }
       ]
     },
