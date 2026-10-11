@@ -106,6 +106,8 @@ Never bless the current machine's changed hash or relax installed-tree checks.
   short npm metadata operations retain their two-minute limit. Timeout errors
   name the stage. On a timeout, inspect the stage and retry from the script's
   fresh isolated prefix; never change measured tree or entry evidence to pass.
+  The live initialize/tools-list probe also allows two minutes for a cold
+  verified runtime and reads its client version from `package.json`.
 - Keep default registry smoke fail-closed for an unpublished version. Before
   release, replace local-pack integrity with npm `dist.integrity`, recapture a
   clean published-package tree and entry, regenerate source-owned evidence,

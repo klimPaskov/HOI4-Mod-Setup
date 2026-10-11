@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { createInterface } from "node:readline";
 
 const root = resolve(import.meta.dirname, "..");
+const clientVersion = JSON.parse(await readFile(resolve(root, "package.json"), "utf8")).version;
 const manifestPath = resolve(root, "docs", "source-manifest", "hoi4-mod-setup.manifest.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 const component = manifest.components.find((candidate) => candidate.id === "mcp.hoi4_agent_tools");
@@ -245,7 +246,7 @@ function probeTools(entry, childEnvironment, projectRoot) {
           + (diagnostic ? ": " + diagnostic.slice(0, 180) : ".")));
       }
     });
-    timer = setTimeout(() => finish(new Error("MCP initialize/tools/list exceeded its 15-second bound.")), 15_000);
+    timer = setTimeout(() => finish(new Error("MCP initialize/tools/list exceeded its 120-second bound.")), 120_000);
     child.stdin.write(JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
@@ -253,7 +254,7 @@ function probeTools(entry, childEnvironment, projectRoot) {
       params: {
         protocolVersion: "2025-11-25",
         capabilities: {},
-        clientInfo: { name: "hoi4-mod-setup-readiness", version: "0.3.5" },
+        clientInfo: { name: "hoi4-mod-setup-readiness", version: clientVersion },
       },
     }) + "\n");
   });
