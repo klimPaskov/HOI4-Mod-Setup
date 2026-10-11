@@ -99,6 +99,11 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - A publication job that intentionally omits source checkout must pass
   `--repo "$GITHUB_REPOSITORY"` to every `gh release` command; it must not rely
   on Git metadata being available in the runner workspace.
+- Supplemental tutorial videos may be uploaded only after the stable workflow
+  has published and verified the six installer/update assets. Compare each
+  video's uploaded size and SHA-256 with its source, keep media outside Git,
+  and link it from README and Pages. Videos never enter updater metadata or
+  the curated installer asset set.
 
 Use the package scripts as the stable local release surface: run
 `pnpm release:build`, `pnpm release:verify`, `pnpm desktop:e2e`, and

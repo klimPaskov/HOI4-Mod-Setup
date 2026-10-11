@@ -22,6 +22,8 @@ for Agentic HOI4 Modding.
 
 Follow the [Windows first-run guide](docs/QUICKSTART.md) to install the app and prepare your mod.
 
+[Watch the setup tutorial](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/setup_app_tutorial.mp4) · [See HOI4 Agent Tools in action](https://github.com/klimPaskov/Agentic-HOI4-Modding/releases/latest/download/hoi4_agent_tools_promo.mp4) · [Project guide](https://klimpaskov.github.io/HOI4-Mod-Setup/).
+
 ## Download
 
 - Windows: [Download the `.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-windows-x64-setup.exe)
@@ -31,8 +33,9 @@ Follow the [Windows first-run guide](docs/QUICKSTART.md) to install the app and 
 [View the latest release](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
 
 On Windows, run the downloaded setup file. On Mac, open the disk image and
-move HOI4 Mod Setup to Applications. Your computer may occasionally flag a new
-community build as harmful falsely. The project is safe and open source.
+move HOI4 Mod Setup to Applications. Community Windows builds are signed by
+ChaosX; community Mac builds use ad-hoc signing. See the release notes for the
+signing route used by your download.
 
 ## Using the app
 
