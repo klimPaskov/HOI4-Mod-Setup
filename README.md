@@ -7,6 +7,11 @@
 [![Guide](https://img.shields.io/badge/Guide-GitHub%20Pages-555555?logo=readthedocs&logoColor=white)](https://klimpaskov.github.io/HOI4-Mod-Setup/)
 [![Issues](https://img.shields.io/badge/Bugs%20%26%20Ideas-Issues-24292f?logo=github&logoColor=white)](https://github.com/klimPaskov/HOI4-Mod-Setup/issues)
 
+<!-- TODO-VIDEO-LINK: replace with the HOI4 Mod Setup video URL -->
+[![Watch the HOI4 Mod Setup video](docs/images/setup-app-demo-thumbnail.png)](https://www.youtube.com/@ChaosRedux)
+
+[Watch the video](https://www.youtube.com/@ChaosRedux)
+
 Prepare a new or existing Hearts of Iron IV mod for AI-assisted development.
 HOI4 Mod Setup creates the mod files, installs project instructions, skills,
 specialist subagents, tools, and an offline wiki, and opens your coding client.
@@ -63,8 +68,8 @@ For a new mod, enter its name and a short description.
 
 The app suggests a project ID, script prefix, namespace, tags, and starter
 folders. It fills the standard HOI4 mod location and launcher file. Edit any
-value before continuing. Setup creates both mod descriptors and a replaceable
-600x600 black thumbnail.
+value before continuing. Setup creates both `descriptor.mod` files and a replaceable
+600x600 black `thumbnail.png`.
 
 ![Review the generated project identity and locations](docs/screenshots/03-identity.png)
 
