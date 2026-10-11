@@ -67,7 +67,7 @@ const manifestComponents = [
   component("core.skills", "HOI4 workflow skills", "The canonical skill library in .claude/skills", "skill", 512),
   component("core.subagents", "Subagents", "Canonical Claude Code specialists with per-role model tiers", "subagent", 19),
   component("runtime.agent_sync", "Runtime synchronizers", "Regenerate AGENTS.md, other runtimes' agents, and skill copies", "script", 8),
-  component("mcp.hoi4_agent_tools", "HOI4 Agent Tools MCP", "HOI4-aware validation tools", "mcp", 0, true, ["windows"]),
+  component("mcp.hoi4_agent_tools", "HOI4 Agent Tools MCP", "HOI4 modding tools", "mcp", 0, true, ["windows"]),
   component("docs.mcp_integration", "HOI4 Agent Tools integration guide", "Capability, evidence, recovery, and troubleshooting contract", "documentation", 1),
   component("wiki.snapshot", "Offline Paradox wiki", "A local reference installed under paradox_wiki/", "documentation", 586),
   component("workflow.3d", "3D models workflow", "Optional Meshy and bounded Blender adapter workflow", "workflow", 10, true, ["windows"]),
@@ -153,7 +153,7 @@ const semanticAnalysis: CodexAnalysis = {
     { component_id: "core.skills", recommendation: "recommended", reason: "The brief calls for repeated HOI4 scripting and asset workflows." },
     { component_id: "workflow.3d", recommendation: "not_recommended", reason: "The brief does not require custom models at project creation." },
   ],
-  warnings: ["The project ID and namespace remain subject to deterministic validation."],
+  warnings: ["Check the project ID and namespace before continuing."],
 };
 
 const semanticAnalysisRecord: CodexAnalysisRecord = {

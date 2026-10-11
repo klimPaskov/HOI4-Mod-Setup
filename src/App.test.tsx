@@ -652,7 +652,7 @@ describe("HOI4 Mod Setup wizard", () => {
       expect(within(screen.getByLabelText("Model")).getByRole("option", { name: model === "claude-haiku-4-5-20251001" ? "Claude Haiku 4.5" : model })).toBeInTheDocument();
       if (provider === "codex") expect(within(screen.getByLabelText("Reasoning effort")).getAllByRole("option")).toHaveLength(1);
       else expect(screen.queryByLabelText("Reasoning effort")).not.toBeInTheDocument();
-      expect(await screen.findByText(/Using the verified built-in model/i)).toBeInTheDocument();
+      expect(await screen.findByText(/Using the built-in model/i)).toBeInTheDocument();
     }
   });
 
@@ -1463,7 +1463,7 @@ describe("HOI4 Mod Setup wizard", () => {
   it("keeps a truncated scan visibly partial and does not call it a full scan", () => {
     render(<Scan state={{ mode: "existing" } as unknown as WizardState} complete progress={{ stage: "complete", currentPath: ".", filesScanned: 20, directoriesScanned: 8, bytesRead: 8192 }} partial limitsHit={["scan.file_limit"]} canCancel={false} cancellationRequested={false} onCancel={vi.fn().mockResolvedValue(undefined)} />);
 
-    expect(screen.getByText("Read-only scan reached a safety limit")).toBeInTheDocument();
+    expect(screen.getByText("Scan incomplete")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/partial result/i);
     expect(screen.getByText(/Partial scan evidence saved for review/)).toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: "Project scan progress" })).toHaveAttribute("aria-valuetext", "Partial scan complete");
@@ -2063,15 +2063,15 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\atlantis_rising" } });
 
     expect(await screen.findByText("Stage 8 of 12")).toBeInTheDocument();
-    expect(screen.getByText(/Backup verified.*Project apply had not started.*3 files staged/)).toBeInTheDocument();
-    expect(screen.getByText("validation", { selector: "code" })).toBeInTheDocument();
+    expect(screen.getByText(/Backup checked.*Project changes had not started.*3 files prepared/)).toBeInTheDocument();
+    expect(screen.getByText("Check the prepared files", { selector: "code" })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /continue setup/i }).find((button) => button.classList.contains("recovery-card"))).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: /discard prepared files/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /undo changes/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /manage installed components/i })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText("Details", { selector: "summary" }));
-    expect(screen.getByText("Validation")).toBeInTheDocument();
+    expect(screen.getByText("Check the prepared files", { selector: "strong" })).toBeInTheDocument();
     const failureMessage = screen.getByText(/Launcher descriptor path did not match the selected project root/);
     expect(failureMessage).toHaveTextContent("[REDACTED]");
     expect(new TextEncoder().encode(failureMessage.textContent ?? "").length).toBeLessThanOrEqual(2048);
@@ -2335,7 +2335,7 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(within(prepareRow).getByText("50%")).toBeInTheDocument();
     expect(within(prepareRow).getByRole("progressbar", { name: "Prepare the setup progress" })).toHaveAttribute("aria-valuenow", "50");
     expect(within(screen.getByText("Check the project").closest(".timeline-row") as HTMLElement).getByText("100%")).toBeInTheDocument();
-    expect(within(screen.getByText("Validate the project").closest(".timeline-row") as HTMLElement).getByText("0%")).toBeInTheDocument();
+    expect(within(screen.getByText("Check the prepared files").closest(".timeline-row") as HTMLElement).getByText("0%")).toBeInTheDocument();
 
     await act(async () => finishInstallation?.({
       value: {

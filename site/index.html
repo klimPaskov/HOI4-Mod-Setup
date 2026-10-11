@@ -47,8 +47,8 @@
 <body>
   <header class="wrap">
     <div class="brand"><img src="icon.png" alt="">HOI4 Mod Setup</div>
-    <h1>Agentic Hearts of Iron IV modding, set up in minutes</h1>
-    <p class="lead">A desktop wizard that prepares a new or existing Hearts of Iron IV mod for AI-assisted development. It installs project instructions, HOI4 workflow skills, specialist subagents, the HOI4 Agent Tools MCP server, and an offline Paradox wiki, with Claude Code as the primary environment and generated copies for Codex, Cursor, Qoder, and OpenCode.</p>
+    <h1>Prepare your HOI4 mod for AI-assisted development</h1>
+    <p class="lead">Start a new mod or set up one you already have. Install project instructions, modding skills, specialist subagents, tools, and an offline wiki, then open your coding client.</p>
     <div class="actions">
       <a class="button primary" href="https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-windows-x64-setup.exe">Download for Windows</a>
       <a class="button" href="https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest">macOS and all releases</a>
@@ -62,24 +62,24 @@
     <section>
       <h2>What you get</h2>
       <div class="grid">
-        <div class="card"><h3>Claude-first instructions</h3><p>A complete <code>CLAUDE.md</code> adapted to your mod name, prefix, and game folder, plus its <code>AGENTS.md</code> copy for other clients.</p></div>
+        <div class="card"><h3>Project instructions</h3><p>Modding guidance adapted to your mod's name, prefix, and game folder, with Claude Code as the default client and packages for Codex, Cursor, Qoder, and OpenCode.</p></div>
         <div class="card"><h3>HOI4 workflow skills</h3><p>Events, decisions, focus trees, scripted GUIs, assets, frame animation, save inspection, and more, in <code>.claude/skills</code>.</p></div>
-        <div class="card"><h3>Specialist subagents</h3><p>Auditors, planners, and asset workers with fixed model tiers: Opus for the improvement loop planner, Sonnet for five demanding roles, Haiku for the rest.</p></div>
-        <div class="card"><h3>HOI4 Agent Tools MCP</h3><p>Focus, event, technology, GUI, map, probability, and documentation routes, installed at a verified version and registered for each client.</p></div>
+        <div class="card"><h3>Specialist subagents</h3><p>Planners, auditors, and asset workers for the different parts of your mod.</p></div>
+        <div class="card"><h3>HOI4 Agent Tools MCP</h3><p>Build focus trees, events, decisions and worlds. Preview windows and maps, fix scripts and balance AI choices with your agent.</p></div>
         <div class="card"><h3>Optional workflows</h3><p>3D models with Meshy and Blender, Super Events, ComfyUI portraits, and live game testing through HOI4 Live Tools.</p></div>
-        <div class="card"><h3>Safe by design</h3><p>Every change is shown in a dry run, applied as a transaction with backup and undo, and later updated, repaired, or removed from the same app.</p></div>
+        <div class="card"><h3>Setup you can maintain</h3><p>Update the modding package, repair missing setup files, change your coding clients, or add workflows later.</p></div>
       </div>
     </section>
 
     <section>
       <h2>How it works</h2>
       <ol class="steps">
-        <li><strong>Start a project.</strong> Create a new mod from a short description or import an existing one. Claude, signed in through your own Claude Code, analyses it by default.</li>
+        <li><strong>Start a project.</strong> Create a new mod from a short description or import an existing one. Claude, signed in through your own Claude Code, helps prepare its details by default.</li>
         <li><strong>Review the identity.</strong> Confirm the project ID, script prefix, tags, and folders the assistant suggests.</li>
         <li><strong>Pick your clients.</strong> Claude Code is the default primary environment; choose another primary or add Codex, Cursor, Qoder, or OpenCode if you use them.</li>
-        <li><strong>Choose components and workflows.</strong> Required items stay selected; optional workflows never block the core setup.</li>
-        <li><strong>Review and install.</strong> Inspect every file in the dry run, then install with live progress and safe recovery.</li>
-        <li><strong>Open the mod.</strong> Start Claude Code in the prepared project straight from the Ready screen.</li>
+        <li><strong>Choose components and workflows.</strong> Select your modding tools, offline wiki, and optional workflows.</li>
+        <li><strong>Review and install.</strong> Review the files and folders to add or update, then follow installation progress.</li>
+        <li><strong>Open the mod.</strong> Open the prepared project in your primary coding client.</li>
       </ol>
     </section>
 
@@ -87,10 +87,10 @@
       <h2>Screens</h2>
       <div class="gallery">
         <figure><img src="screenshots/01-welcome.jpg" alt="Start a mod project screen"><figcaption>Choose a new or existing mod and the setup assistant.</figcaption></figure>
-        <figure><img src="screenshots/15-coding-environments.png" alt="Coding environments screen"><figcaption>Claude Code is the primary environment.</figcaption></figure>
-        <figure><img src="screenshots/04-components.png" alt="Components screen"><figcaption>Canonical instructions, skills, subagents, and tools.</figcaption></figure>
+        <figure><img src="screenshots/15-coding-environments.png" alt="Coding environments screen"><figcaption>Choose your primary coding client and any additional clients.</figcaption></figure>
+        <figure><img src="screenshots/04-components.png" alt="Components screen"><figcaption>Choose instructions, skills, subagents, and tools.</figcaption></figure>
         <figure><img src="screenshots/05-integrations.png" alt="Optional workflows screen"><figcaption>3D, Super Events, portraits, and HOI4 Live Tools.</figcaption></figure>
-        <figure><img src="screenshots/09-dry-run.png" alt="Dry run review screen"><figcaption>Every file is reviewed before anything changes.</figcaption></figure>
+        <figure><img src="screenshots/09-dry-run.png" alt="Installation review screen"><figcaption>Review the files and folders to install.</figcaption></figure>
         <figure><img src="screenshots/12-maintenance.png" alt="Update and repair screen"><figcaption>Update, repair, or remove the setup later.</figcaption></figure>
       </div>
     </section>
@@ -108,9 +108,9 @@
       <table>
         <tr><th>Needed</th><th>Why</th></tr>
         <tr><td>Windows 10 or 11 (macOS for the core setup)</td><td>The HOI4 Agent Tools MCP, 3D, and HOI4 Live Tools routes are Windows-only.</td></tr>
-        <tr><td>Git</td><td>The project is initialized or preserved as a Git repository.</td></tr>
+        <tr><td>Git, if you choose Git setup</td><td>Keeps your mod's change history and connects it to a remote repository.</td></tr>
         <tr><td>Node.js LTS</td><td>Runs the HOI4 Agent Tools MCP server.</td></tr>
-        <tr><td>Claude Code, signed in</td><td>The default setup assistant and the primary coding environment.</td></tr>
+        <tr><td>A connected setup assistant</td><td>Claude Code is the default. You can also use Codex, Claude API key, Kimi, GLM, DeepSeek, a local model, or a custom provider. Choose your coding client separately.</td></tr>
         <tr><td>Python 3.9 or newer</td><td>The runtime synchronizers and the optional workflows.</td></tr>
       </table>
       <p>The app checks each tool and explains what is missing. See <a href="https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/docs/TROUBLESHOOTING.md">Troubleshooting</a>.</p>
