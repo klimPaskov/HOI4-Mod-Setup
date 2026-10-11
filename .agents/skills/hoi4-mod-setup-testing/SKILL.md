@@ -40,6 +40,13 @@ Use the smallest useful layer and keep high-risk behavior covered at more than o
 - performance tests
 - release artifact verification
 
+The stable Rust command is `pnpm test:rust`, which runs the workspace
+all-feature suite through `scripts/run_rust_tests.mjs`. It defaults to four
+Rust test threads because native tests start child processes; override
+`HOI4_TEST_RUST_THREADS` only with an integer from 1 through 32. Keep this
+bounded command as the normal native test entry point instead of asking
+contributors to call an internal Cargo invocation directly.
+
 ## Required fakes
 
 Provide deterministic fakes for:
@@ -75,9 +82,10 @@ session, cancellation, credential-health, or analysis assertions.
 - managed removal never deletes unowned content
 - secret-like values never survive serialization
 - one plan revision produces one file set
-- coding-environment validation covers Codex's default primary, exactly one
-  primary, primary/additional filtering, every supported primary and
-  multi-environment combination, and persisted selection migration
+- coding-environment validation covers Claude Code's fresh default primary,
+  exactly one primary, primary/additional filtering, every supported primary
+  and multi-environment combination, and persisted selection migration; a
+  missing primary in legacy state remains the Codex compatibility default
 - native package fixtures parse Codex, Claude Code, Cursor, Qoder, and OpenCode
   settings/MCP files and canonical agent projections; drift, missing files, and
   malformed runtime configuration fail readiness
@@ -174,6 +182,31 @@ session, cancellation, credential-health, or analysis assertions.
   check cannot start a second install, and a failed install preserves setup and
   exposes a retry
 
+For unpublished package validation, set `HOI4_MOD_SETUP_SOURCE_REPOSITORY` to
+an absolute committed Agentic HOI4 Modding checkout, then run `pnpm test:offline`.
+The script preserves installed Cargo/Rustup toolchain homes while isolating
+application HOME/USERPROFILE/APPDATA/LOCALAPPDATA and caches, runs opt-in tests
+serially with Cargo offline, and scans a synthetic 50,000-gameplay-file mod.
+Preflight the public source history and fail fast before constructing the large
+fixture. A reused fixture must be explicitly supplied and carry this runner's
+synthetic marker. Profile folders do not isolate Credential Manager/Keychain:
+the lifecycle fixture uses the test-only thread-local Meshy-vault override and
+strips credential/proxy/Git/Codex-home environment influence. Keep verified
+incoming bytes and their adapted result hashes for healthy Skip operations;
+modified/merged skips need explicit Keep conflicts. Upgrade rollback must
+assert that every newly created destination is absent, not only that old files
+and the previous lock were restored.
+Public 0.3.5 compatibility uses the unchanged, hash-bound manifest in
+`docs/fixtures/`; never regenerate that historical fixture. The ignored
+`offline_lifecycle::offline_all_component_install_import_repair_remove_and_rollback`
+acceptance test in `src-tauri/src/commands_lifecycle_tests.rs` then exercises
+planning, adaptation, staging, apply, readiness, repair, removal, and rollback
+without real provider or external-installer calls. The ignored
+`local_source_serves_every_declared_file` test uses a temporary
+`HttpSourceClient::with_cache_root` so source verification never depends on an
+ambient application cache. These are opt-in checks and should be reported as
+such when they are not run.
+
 ## Fault injection
 
 For every transaction operation, support controlled failure before and after the live mutation boundary. Verify journal state, recovery options, destination hashes, and absence of false success.
@@ -189,6 +222,8 @@ recovery remain separate required cases.
 
 Run `pnpm test:e2e:install` once to prepare Playwright Chromium, then
 `pnpm test:e2e` for the real headless-browser suite in `tests/browser/`.
+Run `pnpm docs:screenshots` to refresh all 15 public captures through the same
+headless suite; review the images and let Pages consume those exact files.
 `HOI4_TEST_BROWSER_PATH` can select an existing local browser executable.
 Keep the documentation-fixture screen loop, runtime-error and overflow checks,
 keyboard environment selection, signed-out management, and recovery interaction
@@ -284,7 +319,11 @@ from `fuzz/README.md` when parser behavior changes. Use the repository-owned
 scripts for validation and release gates: `pnpm validate`,
 `pnpm test:workflows`, `pnpm test:a11y`, `pnpm test:e2e`,
 `pnpm release:build`, `pnpm release:verify`, `pnpm desktop:e2e`, and
-`pnpm installer:e2e`.
+`pnpm installer:e2e`; use `pnpm test:release-assets` for the release curation
+fixture. The curation test verifies that the platform dependency inventories
+are unioned into internal `release-artifacts/` evidence, while preview
+curation writes the corresponding union under `preview-artifacts/`; workflows
+upload that evidence separately from public publication assets.
 The platform signing jobs verify changed package bytes and regenerate their
 complete internal artifact manifest before curation. Use
 `pnpm release:prepare` only for final publication-asset curation.

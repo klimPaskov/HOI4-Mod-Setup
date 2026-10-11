@@ -91,7 +91,7 @@ impl HttpSourceClient {
         Self::with_cache_root(cache_root()?)
     }
 
-    fn with_cache_root(cache_root: PathBuf) -> Result<Self, AppError> {
+    pub(crate) fn with_cache_root(cache_root: PathBuf) -> Result<Self, AppError> {
         let client = Client::builder()
             .user_agent("HOI4-Mod-Setup/0.1")
             .connect_timeout(Duration::from_secs(15))

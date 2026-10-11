@@ -17,7 +17,11 @@ pub const SOURCE_REPOSITORY_ENV: &str = "HOI4_MOD_SETUP_SOURCE_REPOSITORY";
 
 /// The configured local checkout, when the developer variable names one.
 pub fn configured_repository() -> Option<PathBuf> {
-    let value = std::env::var_os(SOURCE_REPOSITORY_ENV)?;
+    configured_repository_from_value(std::env::var_os(SOURCE_REPOSITORY_ENV))
+}
+
+fn configured_repository_from_value(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let value = value?;
     let root = PathBuf::from(value);
     (root.is_absolute() && root.join(".git").exists()).then_some(root)
 }
@@ -139,7 +143,11 @@ pub fn fetch(root: &Path, url: &reqwest::Url) -> Result<Vec<u8>, AppError> {
             Ok(serde_json::to_vec(&value).expect("local source JSON serializes"))
         }
         Some("raw.githubusercontent.com") if segments.len() >= 4 => {
-            let revision = exact_commit(root, segments[2])?;
+            // Resolution already supplied an immutable commit. `git show`
+            // verifies its object exists when it reads the blob; running
+            // rev-parse for each of thousands of files adds no evidence.
+            let revision = segments[2];
+            crate::source::validate_commit(revision)?;
             let path = segments[3..]
                 .iter()
                 .map(|segment| percent_decode(segment))
@@ -166,10 +174,10 @@ mod tests {
 
     #[test]
     fn a_relative_or_missing_checkout_is_never_used() {
-        std::env::set_var(SOURCE_REPOSITORY_ENV, "relative/path");
-        assert!(configured_repository().is_none());
-        std::env::remove_var(SOURCE_REPOSITORY_ENV);
-        assert!(configured_repository().is_none());
+        assert!(configured_repository_from_value(Some("relative/path".into())).is_none());
+        assert!(configured_repository_from_value(None).is_none());
+        let missing = tempfile::tempdir().unwrap().path().join("missing");
+        assert!(configured_repository_from_value(Some(missing.into_os_string())).is_none());
     }
 
     /// Manual check: HOI4_MOD_SETUP_SOURCE_REPOSITORY=<checkout> cargo test
@@ -177,11 +185,13 @@ mod tests {
     #[test]
     #[ignore = "needs a local package checkout"]
     fn local_source_serves_every_declared_file() {
-        let Some(_) = configured_repository() else {
-            eprintln!("{SOURCE_REPOSITORY_ENV} is not set; skipped");
-            return;
-        };
-        let client = crate::source::HttpSourceClient::new().unwrap();
+        assert!(
+            configured_repository().is_some(),
+            "Set {SOURCE_REPOSITORY_ENV} to an explicit committed package checkout."
+        );
+        let cache = tempfile::tempdir().unwrap();
+        let client =
+            crate::source::HttpSourceClient::with_cache_root(cache.path().to_path_buf()).unwrap();
         let request = crate::source::SourceRequest {
             mode: crate::models::SourceMode::Latest,
             requested_ref: None,
@@ -202,6 +212,19 @@ mod tests {
             Err(error) => panic!("selection failed: {error}"),
         };
         let mut failures = 0;
+        client.prefetch_verified_files(
+            &revision,
+            &files
+                .iter()
+                .map(|file| {
+                    (
+                        file.source_path.clone(),
+                        file.expected_sha256.clone().unwrap(),
+                        file.expected_size,
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
         for file in &files {
             let sha = file.expected_sha256.clone().unwrap();
             if let Err(error) =

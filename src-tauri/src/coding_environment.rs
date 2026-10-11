@@ -152,6 +152,28 @@ pub fn selection_from_value(value: &Value) -> Result<CodingEnvironmentSelection,
     Ok(selection)
 }
 
+/// Fresh planning follows the resolved package default. Persisted legacy
+/// state uses `selection_from_value` so a missing primary remains Codex.
+pub fn selection_from_manifest(
+    manifest: &RemoteManifest,
+    value: &Value,
+) -> Result<CodingEnvironmentSelection, AppError> {
+    if value.get("primaryCodingEnvironment").is_some()
+        || value.get("primary_coding_environment").is_some()
+        || value.pointer("/coding_environments/primary").is_some()
+    {
+        return selection_from_value(value);
+    }
+    let mut state = value.as_object().cloned().ok_or_else(|| {
+        AppError::InvalidInput("coding-environment selection must be an object".into())
+    })?;
+    state.insert(
+        "primaryCodingEnvironment".into(),
+        Value::String(default_primary(manifest)),
+    );
+    selection_from_value(&Value::Object(state))
+}
+
 /// Resolve all manifest components belonging to the selected environments.
 /// A package is considered incomplete when the manifest does not declare any
 /// component for a requested environment; this prevents a misleading partial
@@ -269,6 +291,36 @@ mod tests {
         assert_eq!(default_selection().primary, CLAUDE_CODE);
         assert!(default_selection().additional.is_empty());
         assert_eq!(default_primary(&published_manifest()), CLAUDE_CODE);
+    }
+
+    #[test]
+    fn fresh_selection_uses_the_package_default_and_preserves_legacy_selection() {
+        let mut manifest = published_manifest();
+        assert_eq!(
+            selection_from_manifest(&manifest, &json!({}))
+                .unwrap()
+                .primary,
+            CLAUDE_CODE
+        );
+        assert_eq!(selection_from_value(&json!({})).unwrap().primary, CODEX);
+        for state in [
+            json!({"primaryCodingEnvironment": "codex"}),
+            json!({"coding_environments": {"primary": "cursor"}}),
+        ] {
+            assert_eq!(
+                selection_from_manifest(&manifest, &state).unwrap(),
+                selection_from_value(&state).unwrap()
+            );
+        }
+        for definition in &mut manifest.coding_environments {
+            definition.default_primary = definition.id == CURSOR;
+        }
+        assert_eq!(
+            selection_from_manifest(&manifest, &json!({}))
+                .unwrap()
+                .primary,
+            CURSOR
+        );
     }
 
     #[test]

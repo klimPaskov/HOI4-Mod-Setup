@@ -10944,6 +10944,14 @@ mod tests {
         action
     }
 
+    fn reviewed_live_tools_external_action() -> ExternalAction {
+        let mut action = reviewed_three_d_external_action();
+        action.id = "external.workflow.live_tools.live.bootstrap".into();
+        action.component_id = crate::mcp::LIVE_TOOLS_COMPONENT_ID.into();
+        action.environment_names.clear();
+        action
+    }
+
     #[test]
     fn reviewed_post_install_action_updates_readiness_and_persisted_workflow_state() {
         let project = tempdir().unwrap();
@@ -11052,9 +11060,14 @@ mod tests {
             .insert(crate::mcp::COMPONENT_ID.into(), "selected_pending".into());
         plan.optional_workflows
             .insert("workflow.3d".into(), "selected_pending".into());
+        plan.optional_workflows.insert(
+            crate::mcp::LIVE_TOOLS_COMPONENT_ID.into(),
+            "selected_pending".into(),
+        );
         plan.external_actions = vec![
             reviewed_mcp_external_action(),
             reviewed_three_d_external_action(),
+            reviewed_live_tools_external_action(),
         ];
         let prepared = vec![PreparedFile {
             operation_id: "op-1".into(),
@@ -11063,7 +11076,7 @@ mod tests {
             expected_sha256: sha256_bytes(b"safe"),
         }];
 
-        for action_index in 0..2 {
+        for action_index in 0..3 {
             for fail_after in [false, true] {
                 let project = tempdir().unwrap();
                 let app = tempdir().unwrap();
@@ -11082,10 +11095,10 @@ mod tests {
                     },
                 )
                 .unwrap_err();
-                let component = if action_index == 0 {
-                    crate::mcp::COMPONENT_ID
-                } else {
-                    "workflow.3d"
+                let component = match action_index {
+                    0 => crate::mcp::COMPONENT_ID,
+                    1 => "workflow.3d",
+                    _ => crate::mcp::LIVE_TOOLS_COMPONENT_ID,
                 };
                 assert!(error.to_string().contains(component));
                 let journal = read_journal(
@@ -11104,6 +11117,64 @@ mod tests {
                     .exists());
             }
         }
+    }
+
+    #[test]
+    fn live_tools_failure_is_journaled_without_a_success_lock_and_rolls_back() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let mut plan = ready_plan(project.path());
+        plan.optional_workflows.insert(
+            crate::mcp::LIVE_TOOLS_COMPONENT_ID.into(),
+            "selected_pending".into(),
+        );
+        plan.external_actions = vec![reviewed_live_tools_external_action()];
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        fn fail_live(
+            _root: &Path,
+            _plan: &InstallationPlan,
+            _component: &str,
+        ) -> Result<PostInstallActionOutcome, AppError> {
+            Err(AppError::Process(
+                "Live Tools fixture installer exited unsuccessfully".into(),
+            ))
+        }
+        assert!(run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().to_path_buf()),
+                post_install_action_runner: Some(fail_live),
+                ..Default::default()
+            }
+        )
+        .is_err());
+        assert!(!project
+            .path()
+            .join(".hoi4-mod-setup/install.lock.json")
+            .exists());
+        let path = transaction_root(app.path(), plan.plan_id)
+            .transaction
+            .join("journal.json");
+        let mut journal = read_journal(&path).unwrap();
+        assert!(journal
+            .error
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("Live Tools fixture"));
+        assert_eq!(
+            journal.last_checkpoint,
+            "post-install-action-intent:workflow.live_tools"
+        );
+        rollback_transaction(project.path(), &mut journal, &path).unwrap();
+        assert!(!project.path().join("AGENTS.md").exists());
     }
 
     #[test]

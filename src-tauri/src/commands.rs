@@ -293,7 +293,16 @@ fn meshy_credential_reference() -> &'static Mutex<Option<CredentialReference>> {
     MESHY_CREDENTIAL_REFERENCE.get_or_init(|| Mutex::new(None))
 }
 
+#[cfg(test)]
+thread_local! {
+    static ISOLATE_MESHY_VAULT_FOR_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn current_meshy_credential_reference() -> Result<Option<CredentialReference>, AppError> {
+    #[cfg(test)]
+    if ISOLATE_MESHY_VAULT_FOR_TEST.with(std::cell::Cell::get) {
+        return Ok(None);
+    }
     let mut current = meshy_credential_reference().lock().map_err(|_| {
         AppError::Credential("Meshy credential reference store is unavailable".into())
     })?;
@@ -3636,18 +3645,12 @@ fn selected_ids(state: &Value, provider: &str) -> Vec<String> {
     selected
 }
 
-fn coding_environment_selection_from_state(
-    state: &Value,
-) -> Result<CodingEnvironmentSelection, AppError> {
-    coding_environment::selection_from_value(state)
-}
-
 fn requested_components_for_selection(
     manifest: &RemoteManifest,
     state: &Value,
     provider: &str,
 ) -> Result<(Vec<String>, CodingEnvironmentSelection), AppError> {
-    let selection = coding_environment_selection_from_state(state)?;
+    let selection = coding_environment::selection_from_manifest(manifest, state)?;
     let environment_ids = coding_environment::all_environment_component_ids(manifest);
     let mut requested = selected_ids(state, provider)
         .into_iter()
@@ -8525,6 +8528,10 @@ fn manual_open_in_codex_result(root: &Path) -> OpenInCodexResult {
 }
 
 #[cfg(test)]
+#[path = "commands_lifecycle_tests.rs"]
+mod lifecycle_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::Cell;
@@ -8533,7 +8540,7 @@ mod tests {
 
     static COMMAND_TEST_STATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
-    fn test_state_guard() -> MutexGuard<'static, ()> {
+    pub(super) fn test_state_guard() -> MutexGuard<'static, ()> {
         COMMAND_TEST_STATE_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
@@ -9095,7 +9102,7 @@ mod tests {
         assert!(!unselected.contains("Selected only."));
     }
 
-    fn test_portrait_config(provider: &str, enabled: bool) -> PortraitPipelineConfig {
+    pub(super) fn test_portrait_config(provider: &str, enabled: bool) -> PortraitPipelineConfig {
         PortraitPipelineConfig {
             enabled,
             provider: provider.into(),
