@@ -10,8 +10,6 @@
 <!-- TODO-VIDEO-LINK: replace with the HOI4 Mod Setup video URL -->
 [![Watch the HOI4 Mod Setup video](docs/images/setup-app-demo-thumbnail.png)](https://www.youtube.com/@ChaosRedux)
 
-[Watch the video](https://www.youtube.com/@ChaosRedux)
-
 Prepare a new or existing Hearts of Iron IV mod for AI-assisted development.
 HOI4 Mod Setup creates the mod files, installs project instructions, skills,
 specialist subagents, tools, and an offline wiki, and opens your coding client.
