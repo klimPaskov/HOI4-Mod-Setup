@@ -5,9 +5,9 @@
 This planning package uses two evidence sets:
 
 1. The project files supplied with the request, including all Markdown skills, all supplied subagent TOML files, the project instruction file, the mechanics guide, and the current event, cluster, and scenario catalog CSV snapshots.
-2. The current audit records the committed local candidate for `klimPaskov/Agentic-HOI4-Modding` in `source-audit/live_repository_inventory.json`. Read its `resolved_commit`, `manifest_sha256`, and `manifest_worktree_state` together; the repository's default branch is `main`, but a local candidate is not proof of publication there. That source candidate binds the complete portrait contract and provider router, the Technology Tree Viewer routes, the execution-locked Blender/Meshy 3D workflow, the verified unpublished local `hoi4-agent-tools@4.0.0` pack with 28 required tools, and native Codex, Claude Code, Cursor, Qoder, and OpenCode packages projected from canonical Codex agent TOMLs. The application resolves the remote manifest at runtime and retains the bundled copy only as offline bootstrap evidence.
+2. The current audit records the published `klimPaskov/Agentic-HOI4-Modding` revision in `source-audit/live_repository_inventory.json`. Its resolved commit, generated-source revision, and manifest SHA-256 identify exact immutable Git bytes. The package includes canonical Claude sources and native client projections, portraits, the offline wiki, bounded 3D tooling, the published HOI4 Agent Tools 4.0.0 contract, and the verified optional Windows Live Tools release. Runtime resolution still binds the manifest and selected files to one commit.
 
-Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. The checked-in app manifest matches the committed local Agentic manifest Git blob byte-for-byte. The inventory's `manifest_generated_for_revision` identifies the immutable source snapshot used to generate that evidence.
+Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. The checked-in app manifest matches the published Agentic manifest Git blob byte-for-byte. The inventory's `manifest_generated_for_revision` identifies the immutable source snapshot used to generate that evidence.
 
 ## Fully read and processed
 
@@ -35,7 +35,7 @@ sync inspected the added and changed contract surfaces, including:
 - the source-declared Codex and provider configuration
 - native Claude Code, Cursor, Qoder, and OpenCode settings, MCP files, maps,
   and projected agent trees
-- `.tools/sync/` generators and drift-check workflow for canonical Codex TOMLs
+- `.tools/sync/` generators and drift checks for canonical Claude sources
 
 Unchanged workflow prose remains covered by its prior full-read audit plus the
 new exact path, size, and SHA-256 inventory. The current sync does not claim a
@@ -45,27 +45,9 @@ fresh line-by-line semantic review of every unchanged wiki or workflow file.
 
 The body of every offline wiki article was not fully read. The installer design inspected the distribution, observed page set, required core page names, and snapshot marker. Binary media in the wiki and visual reference libraries were not individually inspected. Their paths, containment, hashes, and component ownership belong to installation validation.
 
-No formal root `LICENSE` file or `paradox_wiki/LICENSE` file was found in the
-audited Agentic HOI4 Modding source checkout at the tested paths. (The HOI4 Mod
-Setup application repository has its own Apache-2.0 `LICENSE`.) The Agentic
-repository README contains permissive wording, but this package does not treat
-that wording as a verified formal license. The current source manifest records
-both Agentic repository license evidence and wiki license status as
-`not_found`.
+The root `LICENSE` declares Apache-2.0 for original package code and guidance. Third-party material retains separate terms; the package license does not establish missing wiki or inherited visual-asset rights. Wiki provenance remains `repository_only` and its formal license status remains `not_found`.
 
-The current root manifest at local evidence commit
-`0a32a5c3bf0a626d0320b84b7002a079ed6971bb` declares
-`generated_for_revision` `5b41e2c535108305f2eace5fe508066e30c6e2aa`. Its 1,642
-declared file records, including the 5,223-file MCP package identity, were
-generated from immutable Git blob bytes before publication. The current wiki
-evidence covers 601 files and all 11 required pages; formal provenance and
-license evidence remain `repository_only` and `not_found` respectively.
-
-The current repin is locally committed and has not been pushed or published.
-Before release, replace local-pack integrity with npm `dist.integrity` and
-recapture a clean published-package tree and entry. Runtime resolution
-still verifies the manifest and every selected blob against one exact source
-revision before staging.
+The published manifest at `d05670e3838148e669913a5eaec681b1f6c1901d` was generated from `48707149408da09dcc57639564da4c5577faa9a0`. Its exact Git-blob SHA-256 is `663d9fc622cb2af3e66d25ed930027cc107fb0cd049550eb7e662824ef3f7dac`; it contains 1,645 file-evidence records. The MCP pin comes from npm registry integrity and a clean isolated published-package installation. Runtime resolution verifies every selected blob against the same immutable source revision before staging.
 
 ### Corrected publication declarations
 

@@ -102,6 +102,10 @@ Never bless the current machine's changed hash or relax installed-tree checks.
   still run. Never infer package identity from the filename.
 - Run `node --test scripts/mcp_local_tarball.node-test.mjs` for the opt-in
   boundary and Rust MCP/source/commands tests for route and manifest evidence.
+- The registry smoke bounds a cold Windows npm installation at ten minutes;
+  short npm metadata operations retain their two-minute limit. Timeout errors
+  name the stage. On a timeout, inspect the stage and retry from the script's
+  fresh isolated prefix; never change measured tree or entry evidence to pass.
 - Keep default registry smoke fail-closed for an unpublished version. Before
   release, replace local-pack integrity with npm `dist.integrity`, recapture a
   clean published-package tree and entry, regenerate source-owned evidence,

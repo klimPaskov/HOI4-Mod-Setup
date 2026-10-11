@@ -58,7 +58,7 @@ function runNode(args, options, stage, timeoutMs = 120_000) {
     child.stderr.on("data", collect(stderr));
     const timer = setTimeout(() => {
       if (child.exitCode === null) child.kill();
-      reject(new Error("The bounded npm operation timed out."));
+      reject(new Error(`${stage} exceeded the bounded ${Math.ceil(timeoutMs / 1000)} second limit.`));
     }, timeoutMs);
     child.once("error", () => {
       clearTimeout(timer);
@@ -340,7 +340,7 @@ try {
     "--no-fund",
     "--registry=https://registry.npmjs.org",
     installSource,
-  ], { cwd: root, env: environment }, "package install", 180_000);
+  ], { cwd: root, env: environment }, "package install", 600_000);
   const entry = await verifyInstalledPackage(tempPrefix);
   const tools = await probeTools(entry, environment, testProject);
   process.stdout.write("MCP live check passed: " + health.package_name + "@" + health.package_version

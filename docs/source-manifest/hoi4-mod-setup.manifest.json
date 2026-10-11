@@ -1,7 +1,7 @@
 {
   "schema_version": "3.0.0",
   "manifest_id": "agentic-hoi4-modding",
-  "generated_for_revision": "2d556750517d83f7c0f3b3c1b7f4d0e0e7bfaff8",
+  "generated_for_revision": "48707149408da09dcc57639564da4c5577faa9a0",
   "repository": {
     "provider": "github",
     "owner": "klimPaskov",
@@ -9,7 +9,7 @@
     "default_branch": "main",
     "web_url": "https://github.com/klimPaskov/Agentic-HOI4-Modding",
     "api_base": "https://api.github.com",
-    "license_evidence": "not_found"
+    "license_evidence": "verified"
   },
   "components": [
     {
@@ -1471,8 +1471,8 @@
       "expected_files": [
         {
           "path": ".claude/skills/hoi4-3d-model-pipeline/SKILL.md",
-          "sha256": "3606b6a4e26a8f0d9fac512f4a1584bd8135b302f55434e9d18f3744d9936b79",
-          "size": 4744
+          "sha256": "c4ff12f39d26feb917a81220805b909ed98c706f6b2b5e0ace2586072f8bcc0a",
+          "size": 4979
         },
         {
           "path": ".claude/skills/hoi4-3d-model-pipeline/references/motion-and-repair-qa.md",
@@ -4860,8 +4860,8 @@
       "expected_files": [
         {
           "path": ".claude/skills/hoi4-3d-model-pipeline/SKILL.md",
-          "sha256": "3606b6a4e26a8f0d9fac512f4a1584bd8135b302f55434e9d18f3744d9936b79",
-          "size": 4744
+          "sha256": "c4ff12f39d26feb917a81220805b909ed98c706f6b2b5e0ace2586072f8bcc0a",
+          "size": 4979
         },
         {
           "path": ".claude/skills/hoi4-3d-model-pipeline/references/motion-and-repair-qa.md",
@@ -8371,8 +8371,8 @@
       "expected_files": [
         {
           "path": ".tools/mcp/bootstrap_hoi4_agent_tools.py",
-          "sha256": "49102f0d0f3ba90798f5627ac21023d4096748f5cd5188e46dc2f000c471cbd2",
-          "size": 13333
+          "sha256": "7cbfbac4933639ebd990c6d4d19846c1dec49a26af690f967f061b26c196d9c4",
+          "size": 13243
         }
       ]
     },
@@ -8435,7 +8435,7 @@
           "parameters": {
             "package_name": "hoi4-agent-tools",
             "package_version": "4.0.0",
-            "package_integrity": "sha512-tKXBgbv/VTKU4HZg9Cuh3TUKclfN+53+RePmXY9HpLQoLpShlp7V5Bu/kToFoa+swGceD5yHbbSWFBq3qDx6aA==",
+            "package_integrity": "sha512-69+kEVewzGqs9cH/ATvy7siIRgsanmydIijUsMYGdiS4SPZoPvlKPLXJJQ8dAg/vwvbogphDMC95IRsW3Ptn0A==",
             "runtime_entry": "dist/bin/stdio.js",
             "runtime_entry_sha256": "e503ef634bcd473b5a7225f6752ff7d99c9897cb2126dac3eb2c4cc55859f24e",
             "runtime_entry_size": 4205,
@@ -8473,8 +8473,8 @@
             "expected_writes": [],
             "privilege": "current_user",
             "rollback_boundary": "The health action performs no writes and starts no tool call.",
-            "package_tree_sha256": "ef022750c45777dfc6f474af9d1db98396991ab99bb21c8b172b301cf2a87d73",
-            "package_file_count": 5223
+            "package_tree_sha256": "a848930a71432670993f3f214aa9005c02b1ef6e5ae12b41714932a6e942ff14",
+            "package_file_count": 5384
           }
         }
       ],
@@ -8553,7 +8553,7 @@
       "expected_files": [
         {
           "path": ".tools/mcp/bootstrap_hoi4_live_tools.py",
-          "sha256": "d43beeeb8bc5f09bdfff2fe84b2213804ee094c433697902517bccefb3c07575",
+          "sha256": "2e629cd1ad546e2a7e91a7b36b84a306143d125a713f2f192652270db9bb5970",
           "size": 9782
         }
       ]
@@ -8604,8 +8604,8 @@
       "expected_files": [
         {
           "path": "docs/systems/hoi4_agent_tools_mcp_integration.md",
-          "sha256": "0b9546ac4c62ebe071a030aa00bebb5aa863c892d8fc3ee94ab9cdb04c7fcd3c",
-          "size": 25850
+          "sha256": "2fcfc06a196172d7aad9e0890cc70a0a91965a6ad598c4068d671cc0a678a1a6",
+          "size": 25149
         }
       ]
     },
@@ -8653,8 +8653,8 @@
       "expected_files": [
         {
           "path": "README.md",
-          "sha256": "208a495b9192c03ad161da60179b3f5e2762826a5029dbc77194f6690ec6f8d0",
-          "size": 9477
+          "sha256": "3e832cc522d0ea94f1ab531870740791e2f8e9a2acd0c9ea9ab61026fdb9f876",
+          "size": 9497
         }
       ]
     },
@@ -10310,8 +10310,8 @@
         },
         {
           "path": ".tools/3d_pipeline/bootstrap_3d_workflow.py",
-          "sha256": "4562895503ae23f52fa6bfcff96d62454b12605a7ba3b8864cf9820eced6d0a4",
-          "size": 67701
+          "sha256": "dc11f5792c79fa3cc23eeda15a79ee3581858bee16834afd38d89620530490c8",
+          "size": 67957
         },
         {
           "path": ".tools/3d_pipeline/build_io_pdx_py313_compat.py",
@@ -10575,8 +10575,8 @@
             ],
             "release_version": "1.1.0",
             "release_url": "https://github.com/klimPaskov/HOI4-Live-Tools/releases/download/v1.1.0/hoi4-live-tools-1.1.0.zip",
-            "release_sha256": "f87e75e237bd794fb46156ed562bfc3691f6a65f03d089e104bddad4ab08a327",
-            "release_size": 1143979,
+            "release_sha256": "15d6d86b3d7d6d6795bd2a9598d56d312831ff8b4f9c518a38eec522c8c623e4",
+            "release_size": 1155994,
             "network_access": "Required to download the pinned HOI4 Live Tools release archive from https://github.com (checked against the pinned SHA-256 and size) and its Python dependencies (numpy, Pillow, opencv-python-headless) from https://pypi.org.",
             "expected_writes": [
               "%LOCALAPPDATA%/hoi4-live-tools/**",

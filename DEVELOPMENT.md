@@ -93,6 +93,9 @@ Tools package. It installs into a temporary prefix with npm user/global
 configuration isolated, verifies registry integrity, the complete package
 tree, the runtime entry, and the live initialize/tools-list contract. It does
 not invoke a tool or require an AI provider credential.
+Its fresh npm installation has a ten-minute bound for cold Windows dependency
+extraction; metadata requests retain a two-minute bound. A timeout names the
+stage and a retry creates another isolated prefix.
 `pnpm test:codex-live` is a manual Windows smoke for the signed installed
 Codex executable named by `HOI4_CODEX_EXECUTABLE`. It reads only the account
 type from the current Codex home, then uses a temporary home to start and cancel
