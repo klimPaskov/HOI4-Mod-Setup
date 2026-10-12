@@ -58,15 +58,16 @@ async function writeArtifact(input, name, platform, architecture, installerName,
   await writeFile(join(artifact, "ARTIFACTS.sha256"), JSON.stringify(files));
 }
 
-test("curates signed installers and complete updater metadata", async () => {
+for (const signing of ["community", "configured"]) {
+test(`curates ${signing} installers, release notes, and complete updater metadata`, async () => {
   const temporary = await mkdtemp(join(tmpdir(), "hoi4-mod-setup-release-test-"));
   try {
     const input = join(temporary, "input");
     const output = join(temporary, "output");
     await mkdir(input);
-    await writeArtifact(input, "hoi4-mod-setup-windows-x64", "windows", "X64", "setup.exe");
-    await writeArtifact(input, "hoi4-mod-setup-macos-arm64", "macos", "ARM64", "setup.dmg");
-    await writeArtifact(input, "hoi4-mod-setup-macos-x64", "macos", "X64", "setup.dmg");
+    await writeArtifact(input, "hoi4-mod-setup-windows-x64", "windows", "X64", "setup.exe", signing);
+    await writeArtifact(input, "hoi4-mod-setup-macos-arm64", "macos", "ARM64", "setup.dmg", signing);
+    await writeArtifact(input, "hoi4-mod-setup-macos-x64", "macos", "X64", "setup.dmg", signing);
     const result = spawnSync(process.execPath, [join(root, "scripts", "prepare_release_assets.mjs"), input, output], {
       cwd: root, encoding: "utf8", windowsHide: true,
       env: { ...process.env, GITHUB_SHA: revision, GITHUB_REF_NAME: "v0.2.0" },
@@ -77,6 +78,12 @@ test("curates signed installers and complete updater metadata", async () => {
       "HOI4-Mod-Setup-macos-x64.app.tar.gz", "HOI4-Mod-Setup-macos-x64.dmg",
       "HOI4-Mod-Setup-windows-x64-setup.exe", "RELEASE_NOTES.md", "latest.json",
     ]);
+    const releaseNotes = await readFile(join(output, "RELEASE_NOTES.md"), "utf8");
+    assert.equal(releaseNotes.split("\n").filter((line) => /^- (Windows|Mac)/.test(line)).length, 3);
+    for (const feature of ["GPTImage is the default", "Coding clients remain independent", "Update and repair", "Clausewitz MCP by smerss", "native Linux HOI4 1.19.2", "manual Linux game/server setup", "supports Windows only", "README", "Quickstart"]) assert.ok(releaseNotes.includes(feature), feature);
+    assert.equal(releaseNotes.includes("community certificate named ChaosX"), signing === "community");
+    assert.equal(releaseNotes.includes("not Apple-notarized"), signing === "community");
+    assert.doesNotMatch(releaseNotes, /false positive|flag.*harmful/i);
     const metadata = JSON.parse(await readFile(join(output, "latest.json"), "utf8"));
     assert.equal(metadata.version, "0.2.0");
     assert.deepEqual(Object.keys(metadata.platforms).sort(), ["darwin-aarch64", "darwin-x86_64", "windows-x86_64"]);
@@ -96,6 +103,8 @@ test("curates signed installers and complete updater metadata", async () => {
     await rm(temporary, { recursive: true, force: true });
   }
 });
+
+}
 
 test("preview curation retains platform dependency unions outside public installers", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "hoi4-mod-setup-preview-test-"));
