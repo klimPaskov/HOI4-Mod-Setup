@@ -23,8 +23,8 @@ Pre-releases use identifiers such as `v0.3.0-beta.1`.
 7. Update the changelog and version through the repository-owned release script.
 8. Update affected repo-local skills when release, signing, packaging, or validation steps changed.
 
-For 0.4.0, the version is already consistent across package, Cargo, lock, and
-Tauri metadata. Do not bump it again during validation. Run the local source
+Set the intended version once with `pnpm version:set -- MAJOR.MINOR.PATCH` and
+confirm package, Cargo, lock, and Tauri metadata agree. Run the local source
 gates before creating the release PR:
 
 ```powershell
@@ -37,6 +37,7 @@ pnpm test:release-assets
 pnpm test:workflows
 pnpm test:a11y
 pnpm test:e2e
+pnpm test:scratch-live
 pnpm validate
 pnpm validate:secrets
 cargo fmt --all -- --check
@@ -70,9 +71,8 @@ Record those results on the exact release candidate in an available dedicated
 desktop or clean CI runner. Do not run focus-changing native launch/installer
 smokes on a shared desktop.
 
-The local 0.4.0 counts, exact source revisions, workflow coverage, and remaining
-native/publication gates are recorded in
-[`docs/development/0.4.0-release-validation.md`](docs/development/0.4.0-release-validation.md).
+Record counts, exact source revisions, workflow coverage, and remaining
+native/publication gates in a versioned document under `docs/development/`.
 
 ## Tag and build
 

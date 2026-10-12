@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 
 const CLI_MARKER: &str = "--run-verified-meshy-mcp";
 const PACKAGE_NAME: &str = "@meshy-ai/meshy-mcp-server";
-const PACKAGE_VERSION: &str = "0.4.0";
+const PACKAGE_VERSION: &str = "0.6.2";
 const RUNTIME_TREE_SHA256: &str =
-    "720075e2b1e266208f435b08d8ab81609f5e5e1a247ca4680c51b5a4f00f2011";
-const RUNTIME_FILE_COUNT: u64 = 3916;
+    "3ad84a9d8f6a1c4ccd97fe8cc15d710d9102911960664ece373d79f0b32430db";
+const RUNTIME_FILE_COUNT: u64 = 3952;
 const RUNTIME_ENTRY: &str = "@meshy-ai/meshy-mcp-server/dist/index.js";
 const MAX_NODE_BYTES: u64 = 128 * 1024 * 1024;
 

@@ -4660,18 +4660,25 @@ fn manifest_external_actions(
                     let platform = component
                         .platforms
                         .iter()
-                        .map(|declared| match declared {
-                            ManifestPlatform::Windows => Some(Platform::Windows),
-                            ManifestPlatform::Macos => Some(Platform::Macos),
-                            // An all-platform command is still an action
-                            // for the current installation target. The
-                            // platform claim comes from the verified
-                            // manifest; no alternate route is invented.
-                            ManifestPlatform::All => Some(Platform::current()),
-                        })
-                        .next()
-                        .flatten()?;
-                    let target = rule.target.as_deref()?;
+                        .find(|declared| declared.supports(Platform::current()))
+                        .map(|_| Platform::current())
+                        .or_else(|| {
+                            component.platforms.first().map(|declared| match declared {
+                                ManifestPlatform::Windows => Platform::Windows,
+                                ManifestPlatform::Macos => Platform::Macos,
+                                ManifestPlatform::All => Platform::current(),
+                            })
+                        })?;
+                    // A Python validation target names the interpreter; its
+                    // repository script remains the reviewed first argument.
+                    // Execution still requires the app-owned script allowlist
+                    // and the installed operation's exact checksum evidence.
+                    let target = rule
+                        .parameters
+                        .get("script_path")
+                        .and_then(Value::as_str)
+                        .filter(|_| component.source.kind != SourceKind::Generated)
+                        .or(rule.target.as_deref())?;
                     Some(ExternalAction {
                         id: format!("external.{}.{}", component.id, rule.id),
                         component_id: component.id.clone(),
@@ -13002,7 +13009,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
         assert_eq!(bootstrap.privilege, "current_user");
 
         let target = crate::mcp::reviewed_plan_target(&actions).unwrap();
-        assert_eq!(target.package_version, "4.0.0");
+        assert_eq!(target.package_version, "4.0.3");
         assert_eq!(target.required_tools.len(), 28);
         for route in [
             "hoi4.tech_inspect",

@@ -1,6 +1,6 @@
 {
   "name": "hoi4-mod-setup",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "license": "Apache-2.0",
   "description": "Windows and macOS desktop wizard for preparing HOI4 mods for agentic development.",
@@ -21,6 +21,7 @@
     "test:e2e": "node scripts/run_e2e_smoke.mjs",
     "docs:screenshots": "node scripts/run_e2e_smoke.mjs --update-documentation",
     "test:mcp-live": "node scripts/test_live_mcp.mjs",
+    "test:scratch-live": "node scripts/run_scratch_install.mjs",
     "test:codex-live": "node scripts/test_live_codex.mjs",
     "test:claude-live": "cargo test -p hoi4-mod-setup --all-features --lib claude_code::tests::live_claude_code_route -- --ignored --nocapture",
     "test:e2e:install": "playwright install --with-deps chromium",

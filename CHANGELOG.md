@@ -4,6 +4,16 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+## 0.4.1 - 2026-10-13
+
+- Refresh the tested Agentic HOI4 Modding package, HOI4 Agent Tools, GPTImage and Meshy pins, with exact source and package integrity checks.
+- Keep Clausewitz MCP preselected after choosing live testing; HOI4 Live Tools remains the experimental alternative.
+- Include the package's current reference-tool workflow, split guidance and specialist model-tier verification.
+- Add real scratch installations for Claude Code and Codex, checking every selected skill and starting every registered server without paid tool calls.
+- Fix GPTImage installation plans to use the declared bootstrap script while preserving the reviewed arguments, hashes and process allowlist.
+- Choose the current supported platform for multi-platform commands, including GPTImage installation on macOS.
+- Resolve branch names containing a slash as one API path segment, so local candidate checkouts and GitHub default branches retain exact source identity.
+
 ## 0.4.0 - 2026-10-12
 
 - Choose an image-generation provider after choosing your coding clients. ChatGPT through GPTImage is the default; hosted APIs, local image tools, Codex image generation and manual art are available. Keep API keys in the operating-system credential store.

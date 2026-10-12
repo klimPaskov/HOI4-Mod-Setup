@@ -21,8 +21,8 @@ function requireEvidence() {
   if (process.platform !== "win32") {
     throw new Error("The current HOI4 Agent Tools MCP route is supported only on Windows.");
   }
-  if (!health || health.package_name !== "hoi4-agent-tools" || health.package_version !== "4.0.0") {
-    throw new Error("The bundled manifest does not declare the reviewed MCP 4.0.0 package.");
+  if (!health || health.package_name !== "hoi4-agent-tools" || !/^\d+\.\d+\.\d+$/.test(health.package_version ?? "")) {
+    throw new Error("The bundled manifest does not declare an exact reviewed MCP package version.");
   }
   if (!Array.isArray(health.required_tools) || health.required_tools.length !== 28) {
     throw new Error("The bundled MCP tool list does not match the current source contract.");

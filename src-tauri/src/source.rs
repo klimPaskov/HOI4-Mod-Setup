@@ -220,7 +220,7 @@ impl HttpSourceClient {
                     })?
                     .to_string();
                 let branch_json = self.get_json(
-                    &self.repo_url(&format!("branches/{}", encode_source_path(&branch))),
+                    &self.repo_url(&format!("branches/{}", Self::encode_path_segment(&branch))),
                 )?;
                 let commit = branch_json
                     .pointer("/commit/sha")
@@ -1984,6 +1984,52 @@ pub fn cache_key(source: &SourceIdentity, source_path: &str, sha256: &str) -> St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn latest_local_source_resolves_a_branch_with_a_slash() {
+        let repository = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let git = crate::git::find_git_executable().unwrap();
+        for arguments in [
+            vec!["init", "-b", "fix/source-pin"],
+            vec![
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "Source fixture",
+            ],
+        ] {
+            let mut command = std::process::Command::new(&git);
+            command
+                .arg("-C")
+                .arg(repository.path())
+                .args(arguments)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                );
+            crate::process::configure_child_no_console_window(&mut command);
+            assert!(command.output().unwrap().status.success());
+        }
+        let mut client = HttpSourceClient::with_cache_root(cache.path().to_owned()).unwrap();
+        client.local_repository = Some(repository.path().to_owned());
+        let (revision, branch, _) = client
+            .resolve_commit(&SourceRequest {
+                mode: SourceMode::Latest,
+                requested_ref: None,
+                release: None,
+            })
+            .unwrap();
+        assert_eq!(branch.as_deref(), Some("fix/source-pin"));
+        validate_commit(&revision).unwrap();
+    }
     use std::cell::Cell;
 
     fn component(id: &str, dependencies: &[&str]) -> ComponentDefinition {
@@ -2146,7 +2192,7 @@ mod tests {
             .expect("current MCP health declaration must be present");
         assert_eq!(
             mcp_health.parameters["package_version"].as_str(),
-            Some("4.0.0")
+            Some("4.0.3")
         );
         assert_eq!(
             mcp_health.parameters["required_tools"]

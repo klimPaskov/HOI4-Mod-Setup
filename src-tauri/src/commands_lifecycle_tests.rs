@@ -7,7 +7,43 @@ use super::*;
 mod offline_lifecycle {
     use super::*;
     use crate::transaction::{run_transaction, PostInstallActionOutcome, TransactionOptions};
+    use serde_json::json;
     use tempfile::tempdir;
+
+    #[test]
+    fn gptimage_plan_uses_the_declared_script_and_preserves_reviewed_arguments() {
+        let manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+        ))
+        .unwrap();
+        let actions = manifest_external_actions(&manifest, &["imagegen.gptimage".into()]);
+        assert_eq!(actions.len(), 1);
+        let action = &actions[0];
+        assert_eq!(action.arguments.len(), 7);
+        assert_eq!(action.arguments[0], IMAGEGEN_GPTIMAGE_BOOTSTRAP);
+        assert_eq!(action.arguments[1], "--package-root");
+        assert_eq!(
+            action.arguments[2],
+            "<project_root>/.tools/image_generation/providers/gptimage"
+        );
+        assert_eq!(action.verified_package_name.as_deref(), Some("gptimage"));
+        assert_eq!(action.verified_package_version.as_deref(), Some("0.1.0"));
+        assert_eq!(action.privilege, "current_user");
+        assert!(action.requires_approval);
+        assert!(!action.contains_secret);
+        if matches!(Platform::current(), Platform::Windows | Platform::Macos) {
+            let mut reordered = manifest;
+            reordered
+                .components
+                .iter_mut()
+                .find(|component| component.id == "imagegen.gptimage")
+                .unwrap()
+                .platforms = vec![ManifestPlatform::Macos, ManifestPlatform::Windows];
+            let reordered_actions =
+                manifest_external_actions(&reordered, &["imagegen.gptimage".into()]);
+            assert_eq!(reordered_actions[0].platform, Platform::current());
+        }
+    }
 
     #[test]
     fn fresh_planning_uses_the_resolved_manifest_default_when_primary_is_omitted() {
@@ -305,6 +341,351 @@ mod offline_lifecycle {
         );
         crate::transaction::bind_plan_external_parents(&mut plan).unwrap();
         (plan, prepared)
+    }
+
+    // Real, opt-in installers and MCP handshakes. Only semantic analysis is a
+    // fixture; no account, image generation, paid operation or gameplay call.
+    #[test]
+    #[ignore = "real GPTImage dependencies require an explicit committed package checkout"]
+    fn live_gptimage_installer_from_verified_source() {
+        let _guard = test_state_guard();
+        let _profile = IsolatedProfile::new();
+        let root = tempdir().unwrap();
+        let client = HttpSourceClient::new().unwrap();
+        let resolution = resolve_source(
+            &client,
+            &SourceRequest {
+                mode: SourceMode::Latest,
+                requested_ref: None,
+                release: None,
+            },
+        )
+        .unwrap();
+        let files = crate::source::select_component_files(
+            &resolution.manifest,
+            &[IMAGEGEN_GPTIMAGE_COMPONENT_ID.into()],
+            &client
+                .fetch_tree(&resolution.identity.resolved_revision)
+                .unwrap(),
+        )
+        .unwrap();
+        let mut plan: InstallationPlan = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-plan.example.json"
+        ))
+        .unwrap();
+        let template = plan.operations[0].clone();
+        plan.operations.clear();
+        plan.source = resolution.identity.clone();
+        plan.external_actions = manifest_external_actions(
+            &resolution.manifest,
+            &[IMAGEGEN_GPTIMAGE_COMPONENT_ID.into()],
+        );
+        for file in files {
+            let hash = file.expected_sha256.as_ref().unwrap();
+            let bytes = client
+                .fetch_verified_file(
+                    &resolution.identity.resolved_revision,
+                    &file.source_path,
+                    hash,
+                    file.expected_size,
+                )
+                .unwrap();
+            let destination = safe_join(root.path(), &file.destination).unwrap();
+            std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            std::fs::write(destination, bytes).unwrap();
+            let mut operation = template.clone();
+            operation.component_id = file.component_id;
+            operation.destination = file.destination;
+            operation.source_sha256 = Some(hash.clone());
+            operation.result_sha256 = Some(hash.clone());
+            operation.source_size = file.expected_size;
+            plan.operations.push(operation);
+        }
+        let outcome = run_reviewed_gptimage_bootstrap(root.path(), &plan).unwrap();
+        eprintln!(
+            "GPTImage real installer: {}: {}",
+            outcome.state, outcome.evidence
+        );
+        assert_eq!(outcome.state, "ready", "{}", outcome.evidence);
+    }
+
+    #[test]
+    #[ignore = "real Agent Tools installation requires an explicit committed package checkout"]
+    fn live_mcp_installer_from_verified_source() {
+        let _guard = test_state_guard();
+        let _profile = IsolatedProfile::new();
+        let root = tempdir().unwrap();
+        std::fs::write(
+            root.path().join("descriptor.mod"),
+            "name=\"MCP fixture\"\nsupported_version=\"1.19.*\"\n",
+        )
+        .unwrap();
+        let client = HttpSourceClient::new().unwrap();
+        let resolution = resolve_source(
+            &client,
+            &SourceRequest {
+                mode: SourceMode::Latest,
+                requested_ref: None,
+                release: None,
+            },
+        )
+        .unwrap();
+        let selected = vec![
+            "mcp.hoi4_agent_tools.bootstrap".into(),
+            "mcp.hoi4_agent_tools".into(),
+        ];
+        let files = crate::source::select_component_files(
+            &resolution.manifest,
+            &selected,
+            &client
+                .fetch_tree(&resolution.identity.resolved_revision)
+                .unwrap(),
+        )
+        .unwrap();
+        let mut plan: InstallationPlan = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-plan.example.json"
+        ))
+        .unwrap();
+        let template = plan.operations[0].clone();
+        plan.operations.clear();
+        plan.source = resolution.identity.clone();
+        plan.external_actions = manifest_external_actions(&resolution.manifest, &selected);
+        for file in files {
+            let hash = file.expected_sha256.as_ref().unwrap();
+            let bytes = client
+                .fetch_verified_file(
+                    &resolution.identity.resolved_revision,
+                    &file.source_path,
+                    hash,
+                    file.expected_size,
+                )
+                .unwrap();
+            let destination = safe_join(root.path(), &file.destination).unwrap();
+            std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            std::fs::write(destination, bytes).unwrap();
+            let mut operation = template.clone();
+            operation.component_id = file.component_id;
+            operation.destination = file.destination;
+            operation.source_sha256 = Some(hash.clone());
+            operation.result_sha256 = Some(hash.clone());
+            operation.source_size = file.expected_size;
+            plan.operations.push(operation);
+        }
+        let outcome = run_reviewed_mcp_bootstrap(root.path(), &plan).unwrap();
+        eprintln!(
+            "Agent Tools real installer: {}: {}",
+            outcome.state, outcome.evidence
+        );
+        assert_eq!(outcome.state, "ready", "{}", outcome.evidence);
+    }
+
+    #[test]
+    #[ignore = "live scratch acceptance installs published MCP packages into isolated profiles"]
+    fn live_scratch_install_starts_every_registered_server_for_claude_and_codex() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::process::{Command, Stdio};
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let _guard = test_state_guard();
+        let _profile = IsolatedProfile::new();
+        let revision = resolve_source(
+            &HttpSourceClient::new().unwrap(),
+            &SourceRequest {
+                mode: SourceMode::Latest,
+                requested_ref: None,
+                release: None,
+            },
+        )
+        .unwrap()
+        .identity
+        .resolved_revision;
+        for primary in ["claude_code", "codex"] {
+            let parent = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let root = parent.path().join("atlantis_rising");
+            let mut selection = state(&root, "new");
+            selection["sourceMode"] = json!("pinned_commit");
+            selection["pinnedRef"] = json!(revision);
+            selection["primaryCodingEnvironment"] = json!(primary);
+            selection["additionalCodingEnvironments"] = json!([if primary == "codex" {
+                "claude_code"
+            } else {
+                "codex"
+            }]);
+            selection["selectedComponents"] = json!([]);
+            selection["meshSelected"] = json!(false);
+            selection["superEventsSelected"] = json!(false);
+            selection["portraitPipeline"] = json!({"enabled":false,"provider":"disabled"});
+            selection["liveTesting"] = json!({"provider":"none"});
+            selection["imageGeneration"] =
+                json!({"primary_provider":"gptimage","additional_providers":[]});
+            eprintln!("scratch: {primary}: confirming the pinned source");
+            confirm(&mut selection);
+            eprintln!("scratch: {primary}: preparing the install plan");
+            let (mut plan, prepared) = build_plan(&selection).unwrap();
+            eprintln!(
+                "scratch: {primary}: applying {} files and real runtime installers",
+                prepared.len()
+            );
+            plan.approvals.dry_run_reviewed = true;
+            plan.approvals.external_actions_reviewed = true;
+            let (journal, lock) = run_transaction(
+                &root,
+                &plan,
+                &prepared,
+                &TransactionOptions {
+                    app_data_root: Some(app.path().to_owned()),
+                    post_install_action_runner: Some(run_reviewed_post_install_actions),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(journal.state, "completed");
+            eprintln!(
+                "scratch: {primary}: transaction completed; checking installed skills and servers"
+            );
+            assert_eq!(lock.primary_coding_environment, primary);
+            assert!(
+                lock.image_generation
+                    .as_ref()
+                    .unwrap()
+                    .installed_package_tree_sha256
+                    .is_some(),
+                "GPTImage installer did not finish: {:?}",
+                journal.stages[9].evidence
+            );
+            let target = crate::mcp::reviewed_plan_target(&plan.external_actions).unwrap();
+            let verified_tools = format!("verified_tools={}", target.required_tools.len());
+            assert!(
+                journal.stages[9].evidence.iter().any(|evidence| {
+                    evidence.starts_with("external-action:mcp.hoi4_agent_tools:ready:")
+                        && evidence.contains(&verified_tools)
+                }),
+                "the production installer did not complete the real MCP handshake"
+            );
+            for file in lock.files.iter().filter(|file| !file.external) {
+                assert!(
+                    root.join(&file.path).is_file(),
+                    "missing installed file {}",
+                    file.path
+                );
+            }
+            let skills = lock
+                .files
+                .iter()
+                .filter(|file| {
+                    file.path.starts_with(".claude/skills/") && file.path.ends_with("/SKILL.md")
+                })
+                .collect::<Vec<_>>();
+            assert!(!skills.is_empty());
+            for file in &skills {
+                let projection = file.path.replacen(".claude/skills/", ".agents/skills/", 1);
+                assert!(
+                    root.join(projection).is_file(),
+                    "missing Codex skill projection {}",
+                    file.path
+                );
+            }
+            let claude: Value =
+                serde_json::from_slice(&std::fs::read(root.join(".mcp.json")).unwrap()).unwrap();
+            let codex: toml::Value =
+                toml::from_str(&std::fs::read_to_string(root.join(".codex/config.toml")).unwrap())
+                    .unwrap();
+            let expected = ["hoi4_agent_tools", "hoi4_image_gptimage"];
+            let claude_servers = claude["mcpServers"].as_object().unwrap();
+            let codex_servers = codex["mcp_servers"].as_table().unwrap();
+            assert_eq!(claude_servers.len(), expected.len());
+            assert_eq!(codex_servers.len(), expected.len());
+            for server in expected {
+                assert!(claude_servers.contains_key(server));
+                assert!(codex_servers.contains_key(server));
+            }
+            let mut command =
+                Command::new(crate::process::find_path_executable(&["node.exe", "node"]).unwrap());
+            command
+                .arg(root.join(".tools/image_generation/providers/gptimage/src/server.js"))
+                .current_dir(&root)
+                .env_clear()
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            for name in [
+                "PATH",
+                "SystemRoot",
+                "HOME",
+                "USERPROFILE",
+                "APPDATA",
+                "LOCALAPPDATA",
+                "TEMP",
+                "TMP",
+            ] {
+                if let Some(value) = std::env::var_os(name) {
+                    command.env(name, value);
+                }
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x0800_0000);
+            }
+            let mut child = command.spawn().unwrap();
+            let stdout = child.stdout.take().unwrap();
+            let (sender, receiver) = mpsc::channel();
+            let reader = std::thread::spawn(move || {
+                for line in BufReader::new(stdout).lines().take(64) {
+                    if sender.send(line).is_err() {
+                        break;
+                    }
+                }
+            });
+            let stdin = child.stdin.as_mut().unwrap();
+            writeln!(stdin, "{}", json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"setup-scratch-acceptance","version":env!("CARGO_PKG_VERSION")}}})).unwrap();
+            let handshake = (|| {
+                let response: Value = serde_json::from_str(
+                    &receiver
+                        .recv_timeout(Duration::from_secs(120))
+                        .map_err(|_| "GPTImage initialize timed out")?
+                        .map_err(|_| "GPTImage stdout failed")?,
+                )
+                .map_err(|_| "GPTImage emitted invalid JSON")?;
+                if response["id"] != 1 || response["result"]["serverInfo"]["name"] != "gptimage" {
+                    return Err("GPTImage initialize failed");
+                }
+                writeln!(
+                    stdin,
+                    "{}",
+                    json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+                )
+                .map_err(|_| "GPTImage notification failed")?;
+                writeln!(
+                    stdin,
+                    "{}",
+                    json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}})
+                )
+                .map_err(|_| "GPTImage tools/list send failed")?;
+                let response: Value = serde_json::from_str(
+                    &receiver
+                        .recv_timeout(Duration::from_secs(120))
+                        .map_err(|_| "GPTImage tools/list timed out")?
+                        .map_err(|_| "GPTImage stdout failed")?,
+                )
+                .map_err(|_| "GPTImage emitted invalid JSON")?;
+                if response["id"] != 2
+                    || response["result"]["tools"]
+                        .as_array()
+                        .is_none_or(Vec::is_empty)
+                {
+                    return Err("GPTImage tools/list failed");
+                }
+                Ok(())
+            })();
+            let _ = child.kill();
+            let _ = child.wait();
+            reader.join().unwrap();
+            handshake.unwrap();
+            eprintln!("scratch install: primary={primary}; skills={}; both clients registered; Agent Tools {} and GPTImage initialize/tools-list passed", skills.len(), target.package_version);
+        }
     }
 
     #[test]
