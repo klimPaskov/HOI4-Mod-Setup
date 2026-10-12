@@ -81,6 +81,16 @@ Install the manifest-declared wiki tree at `<mod_project>/paradox_wiki/`. Valida
 
 ## MCP and external tools
 
+For a repository command whose target names Python, render its declared
+`script_path` as the first reviewed argument. Keep the interpreter in the
+process adapter; never execute it as a substitute for the installed script.
+The app-owned allowlist, operation hash, source size and full command arguments
+must still pass before execution. Cover this with a manifest-backed plan test
+and a real scratch installation.
+Multi-platform actions select the current supported platform regardless of
+declaration order. Preserve unsupported declarations as unsupported evidence;
+never translate a Windows command into a new route by inference.
+
 MCP servers and external dependencies are components. Their command, arguments, tools, environment variable names, health checks, supported platforms, and update behavior come from verified repository evidence. A similar command on another platform is not support evidence.
 
 For npm runtimes, verify that the exact published artifacts pin the complete
@@ -91,6 +101,13 @@ fix it upstream with a bundled runtime or integrity-complete pinned closure.
 Never bless the current machine's changed hash or relax installed-tree checks.
 
 ## Repeatable MCP package verification
+
+- Run `pnpm test:scratch-live` with an explicit committed source checkout to
+  exercise real installations with Claude Code and Codex as primary in turn.
+  It uses isolated profiles, verifies all selected skill projections and both
+  clients' registrations, and starts Agent Tools and GPTImage for initialize
+  and tools/list. Only setup analysis is a fixture. It makes no paid tool calls.
+  Test other selected providers separately with their prerequisites available.
 
 - Read exact package/version, integrity, complete tree hash/count, entry
   hash/size, and required routes from the canonical manifest's MCP health rule.
@@ -314,4 +331,4 @@ external-action tests pass.
 
 The live-testing catalog binds the reviewed source revision, exact native Linux game version, platforms and route. Register only selected coding clients; Clausewitz stays a to-do until Linux readiness is explicitly confirmed. Keep LiveTools bootstrap registration disabled because the app owns project registrations.
 
-New-project UI defaults to the tested `package-2026-10-12` release. The explicit Latest option still resolves the default branch to an exact commit, and existing projects retain their reviewed source choice.
+New-project UI defaults to the tested `package-2026-10-13` release. The explicit Latest option still resolves the default branch to an exact commit, and existing projects retain their reviewed source choice.

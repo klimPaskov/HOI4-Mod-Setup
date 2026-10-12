@@ -170,6 +170,10 @@ mod tests {
         assert_eq!(percent_decode("a%20b").unwrap(), "a b");
         assert_eq!(percent_decode("plain").unwrap(), "plain");
         assert!(percent_decode("bad%zz").is_err());
+        assert_eq!(
+            percent_decode("fix%2Fsource-pin").unwrap(),
+            "fix/source-pin"
+        );
     }
 
     #[test]

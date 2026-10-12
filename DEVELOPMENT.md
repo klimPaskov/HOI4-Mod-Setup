@@ -55,6 +55,7 @@ pnpm test:rust
 pnpm test:e2e:install
 pnpm test:e2e
 pnpm test:mcp-live
+pnpm test:scratch-live
 pnpm test:codex-live
 pnpm tauri dev
 cargo fmt --check
@@ -104,6 +105,15 @@ type from the current Codex home, then uses a temporary home to start and cancel
 browser and device-code login attempts. It never opens a login URL or prints an
 email, account ID, verification code, token, or rate-limit value; completing a
 sign-in still requires a user-owned browser session and is not automated.
+
+`pnpm test:scratch-live` requires an explicit committed source checkout in
+`HOI4_MOD_SETUP_SOURCE_REPOSITORY`. It runs real setup transactions with Claude
+Code and Codex as the primary client in turn. Each scratch mod includes both
+clients, the full selected skill set, Agent Tools and GPTImage. It installs their
+actual runtimes and performs initialize/tools-list handshakes. Only setup
+analysis is a fixture; no sign-in, paid image call, or game operation runs.
+Profiles, registrations and projects are temporary. Other optional servers
+need their own prerequisites and separate checks.
 
 On Windows, activate the MSVC environment before the all-feature Rust gates
 when using PowerShell:
