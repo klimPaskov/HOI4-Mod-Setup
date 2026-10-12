@@ -1351,7 +1351,16 @@ pub fn validate_manifest(
                     .parameters
                     .get("arguments")
                     .and_then(Value::as_array)
-                    .is_none_or(|values| values.as_slice() != [Value::String("--quiet".into())])
+                    .is_none_or(|values| {
+                        values.as_slice()
+                            != [
+                                Value::String("--quiet".into()),
+                                Value::String("--register".into()),
+                                Value::String("none".into()),
+                            ]
+                            && (manifest.live_testing.is_some()
+                                || values.as_slice() != [Value::String("--quiet".into())])
+                    })
                 || action
                     .parameters
                     .get("expected_writes")
@@ -1451,6 +1460,7 @@ pub fn validate_manifest(
         ));
     }
     validate_dependency_cycles(&components)?;
+    crate::live_testing::validate_catalog(manifest)?;
     validate_manifest_destinations(&manifest.components)?;
     let wiki_component = components
         .get(&manifest.wiki.component_id)
@@ -2041,7 +2051,7 @@ mod tests {
         );
         assert!(manifest.profiles.iter().any(|profile| profile.default));
         assert_eq!(manifest.wiki.destination, "paradox_wiki/");
-        assert_eq!(manifest.components.len(), 56);
+        assert_eq!(manifest.components.len(), 59);
         for environment in crate::coding_environment::SUPPORTED {
             assert!(manifest
                 .components
@@ -2445,7 +2455,7 @@ mod tests {
         );
         assert_eq!(
             action.parameters["arguments"],
-            serde_json::json!(["--quiet"])
+            serde_json::json!(["--quiet", "--register", "none"])
         );
         assert!(action.parameters["release_url"]
             .as_str()
@@ -2509,6 +2519,7 @@ mod tests {
     #[test]
     fn live_tools_workflow_without_an_installer_stays_a_skill_only_workflow() {
         let (mut value, revision) = live_tools_manifest_value();
+        value.as_object_mut().unwrap().remove("live_testing");
         value["components"]
             .as_array_mut()
             .unwrap()
@@ -3043,6 +3054,7 @@ mod tests {
             signing: None,
             coding_environments: Vec::new(),
             image_generation: None,
+            live_testing: None,
         }
     }
 }

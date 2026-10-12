@@ -1,5 +1,5 @@
 import { findingDisplayValue, findingLabel } from "../findings";
-import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderProfile, AppUpdateStatus, ChatSourcesPackageResult, ChatSourcesPreview, CodexAccountStatus, CodexAnalysisConfirmationValues, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, CodingEnvironmentId, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationSelection, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
+import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderProfile, AppUpdateStatus, ChatSourcesPackageResult, ChatSourcesPreview, CodexAccountStatus, CodexAnalysisConfirmationValues, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, CodingEnvironmentId, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
   id: string;
@@ -108,7 +108,7 @@ interface TauriCommandMap {
   preview_descriptors: { args: { state: WizardState }; result: GeneratedArtifactPreview[] };
   preview_installation_conflict: { args: { planId: string; path: string }; result: ConflictPreview };
   build_installation_plan: { args: { state: WizardState }; result: InstallationPlan };
-  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; analysisOverride?: CodexAnalysisRecord | null; addOptionalComponents?: string[]; portraitPipeline?: WizardState["portraitPipeline"]; imageGeneration?: ImageGenerationSelection; primaryCodingEnvironment?: CodingEnvironmentId; additionalCodingEnvironments?: CodingEnvironmentId[]; analysisConfirmationValues?: CodexAnalysisConfirmationValues }; result: InstallationPlan };
+  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; analysisOverride?: CodexAnalysisRecord | null; addOptionalComponents?: string[]; portraitPipeline?: WizardState["portraitPipeline"]; imageGeneration?: ImageGenerationSelection; liveTesting?: LiveTestingSelection; primaryCodingEnvironment?: CodingEnvironmentId; additionalCodingEnvironments?: CodingEnvironmentId[]; analysisConfirmationValues?: CodexAnalysisConfirmationValues }; result: InstallationPlan };
   approve_installation: { args: { planId: string }; result: void };
   resolve_installation_conflict: { args: { planId: string; path: string; choice: string }; result: InstallationPlan };
   apply_installation: { args: { planId: string; projectRoot: string }; result: TransactionJournal };
@@ -529,10 +529,11 @@ export async function resolveInstallationConflict(planId: string, path: string, 
   return invokeCommand("resolve_installation_conflict", { planId, path, choice });
 }
 
-export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord, addOptionalComponents: string[] = [], portraitPipeline?: WizardState["portraitPipeline"], primaryCodingEnvironment?: CodingEnvironmentId, additionalCodingEnvironments?: CodingEnvironmentId[], analysisConfirmationValues?: CodexAnalysisConfirmationValues, imageGeneration?: ImageGenerationSelection): Promise<InstallationPlan | null> {
+export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord, addOptionalComponents: string[] = [], portraitPipeline?: WizardState["portraitPipeline"], primaryCodingEnvironment?: CodingEnvironmentId, additionalCodingEnvironments?: CodingEnvironmentId[], analysisConfirmationValues?: CodexAnalysisConfirmationValues, imageGeneration?: ImageGenerationSelection, liveTesting?: LiveTestingSelection): Promise<InstallationPlan | null> {
   const args: TauriCommandMap["build_maintenance_plan"]["args"] = { mode, projectRoot, analysisOverride: codexAnalysis ?? null, addOptionalComponents };
   if (portraitPipeline) args.portraitPipeline = portraitPipeline;
   if (imageGeneration) args.imageGeneration = imageGeneration;
+  if (liveTesting) args.liveTesting = liveTesting;
   if (primaryCodingEnvironment) args.primaryCodingEnvironment = primaryCodingEnvironment;
   if (analysisConfirmationValues) args.analysisConfirmationValues = analysisConfirmationValues;
   // An empty array is meaningful: it explicitly deselects every additional
@@ -543,10 +544,11 @@ export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstal
 }
 
 export async function buildMaintenancePlanResult(...parameters: Parameters<typeof buildMaintenancePlan>): Promise<CommandResult<InstallationPlan>> {
-  const [mode, projectRoot, codexAnalysis, addOptionalComponents = [], portraitPipeline, primaryCodingEnvironment, additionalCodingEnvironments, analysisConfirmationValues, imageGeneration] = parameters;
+  const [mode, projectRoot, codexAnalysis, addOptionalComponents = [], portraitPipeline, primaryCodingEnvironment, additionalCodingEnvironments, analysisConfirmationValues, imageGeneration, liveTesting] = parameters;
   const args: TauriCommandMap["build_maintenance_plan"]["args"] = { mode, projectRoot, analysisOverride: codexAnalysis ?? null, addOptionalComponents };
   if (portraitPipeline) args.portraitPipeline = portraitPipeline;
   if (imageGeneration) args.imageGeneration = imageGeneration;
+  if (liveTesting) args.liveTesting = liveTesting;
   if (primaryCodingEnvironment) args.primaryCodingEnvironment = primaryCodingEnvironment;
   if (analysisConfirmationValues) args.analysisConfirmationValues = analysisConfirmationValues;
   if (additionalCodingEnvironments !== undefined) args.additionalCodingEnvironments = additionalCodingEnvironments;

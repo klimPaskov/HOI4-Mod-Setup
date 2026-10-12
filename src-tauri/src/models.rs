@@ -359,6 +359,8 @@ pub struct RemoteManifest {
     /// Provider descriptions and route metadata supplied by manifest v4.
     #[serde(default)]
     pub image_generation: Option<serde_json::Value>,
+    #[serde(default)]
+    pub live_testing: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -398,6 +400,25 @@ pub struct ImageGenerationSelection {
     pub installed_package_tree_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_package_lock_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct LiveTestingSelection {
+    pub provider: String,
+    pub linux_ready: bool,
+    pub wsl_distribution: String,
+    pub ssh_host: String,
+}
+impl Default for LiveTestingSelection {
+    fn default() -> Self {
+        Self {
+            provider: "clausewitz_mcp".into(),
+            linux_ready: false,
+            wsl_distribution: String::new(),
+            ssh_host: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -902,6 +923,8 @@ pub struct InstallationPlan {
     pub portrait_pipeline: Option<PortraitPipelineConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_generation: Option<ImageGenerationSelection>,
+    #[serde(default)]
+    pub live_testing: Option<LiveTestingSelection>,
     pub operations: Vec<PlanOperation>,
     pub conflicts: Vec<PlanConflict>,
     #[serde(default)]
@@ -1026,6 +1049,8 @@ pub struct InstallationLock {
     pub portrait_pipeline: Option<PortraitPipelineConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_generation: Option<ImageGenerationSelection>,
+    #[serde(default)]
+    pub live_testing: Option<LiveTestingSelection>,
     pub local_modifications: Vec<LocalModification>,
     #[serde(default)]
     pub rollback_records: Vec<String>,

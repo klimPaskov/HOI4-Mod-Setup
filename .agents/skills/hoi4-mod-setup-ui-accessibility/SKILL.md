@@ -269,3 +269,5 @@ identity documents, private projects, or secret values.
 ## Update this skill when
 
 Update this skill when phase grouping, screen structure, disclosure rules, component conventions, accessibility target, interaction states, screenshot process, or visual regression workflow changes.
+
+Live testing uses the shared `workflow.live_testing` opt-in and a separate provider step immediately after Optional workflows. Clausewitz MCP requires explicit Linux readiness confirmation, supports deferred configuration, and credits smerss. Only safe WSL distribution names and SSH host aliases are collected. Maintenance restores the non-secret selection and Ready distinguishes registration from verified gameplay.

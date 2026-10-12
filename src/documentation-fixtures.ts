@@ -1,25 +1,8 @@
-import type { ChatSourcesPreview, CodexAnalysis, CodexAnalysisRecord, InstallationPlan, ManifestComponentPreview, ReadinessReport, SemanticConventions, WizardState } from "./types";
+import sourceManifest from "../docs/source-manifest/hoi4-mod-setup.manifest.json";
+import type { ChatSourcesPreview, CodexAnalysis, CodexAnalysisRecord, InstallationPlan, ManifestComponentPreview, ReadinessReport, SemanticConventions, SourceManifestPreview, WizardState } from "./types";
 
-export const DOCUMENTATION_SCENARIOS = [
-  "welcome",
-  "provider",
-  "existing",
-  "description",
-  "identity",
-  "components",
-  "environments",
-  "image-generation",
-  "workflows",
-  "mcp",
-  "git",
-  "dry-run",
-  "ready",
-  "maintenance",
-  "chat-sources",
-  "recovery",
-] as const;
-
-export type DocumentationScenario = typeof DOCUMENTATION_SCENARIOS[number];
+import { DOCUMENTATION_SCENARIOS, type DocumentationScenario } from "./documentation-scenarios";
+export { DOCUMENTATION_SCENARIOS } from "./documentation-scenarios";
 
 function selectedScenario(): DocumentationScenario | undefined {
   if (!import.meta.env.DEV || typeof window === "undefined") return undefined;
@@ -73,7 +56,7 @@ const manifestComponents = [
   component("wiki.snapshot", "Offline Paradox wiki", "A local reference installed under paradox_wiki/", "documentation", 586),
   component("workflow.3d", "3D models workflow", "Optional Meshy and bounded Blender adapter workflow", "workflow", 10, true, ["windows"]),
   component("workflow.super_events", "Super Events workflow", "Reusable event popup, templates, examples, and assets", "workflow", 9, true),
-  component("workflow.live_tools", "HOI4 Live Tools", "Installs the HOI4 Live Tools server for your user, registers it for your coding clients, and adds the live-playtest skill, so agents can test the mod in the running game on Windows", "workflow", 2, true, ["windows"]),
+  component("workflow.live_testing", "Live testing", "Choose a provider for testing the running game", "workflow", 2, true),
   component("workflow.portraits.core", "Complete portrait production contract", "Grounded source, generated portraits, processing, wiring, manifest, and handoff contract.", "skill", 1, true),
   component("workflow.portraits.router", "ComfyUI portrait-provider router", "Explicit Cloud, Local, or user-run RunPod selection contract", "workflow", 1, true),
   component("workflow.portraits.cloud", "Comfy Cloud portrait production", "Selected provider route", "workflow", 1, true),
@@ -130,7 +113,15 @@ const manifest = {
     { id: "qoder", display_name: "Qoder", description: "Project instructions, skills, agents, and MCP" },
     { id: "opencode", display_name: "OpenCode", description: "Project instructions, skills, agents, and MCP" },
   ],
-  image_generation: {
+  live_testing: (sourceManifest as unknown as SourceManifestPreview).live_testing ?? {
+    default_provider: "clausewitz_mcp",
+    providers: [
+      { id: "clausewitz_mcp", display_name: "Clausewitz MCP", description: "Linux game and server; configure now or later.", requirements: ["Native Linux HOI4 1.19.2 and a separately prepared server."], supported_platforms: ["windows", "macos"], supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"], experimental: false, route: { kind: "linux_stdio", server_id: "clausewitz_mcp" }, guidance: ["WSL on Windows; Linux and SSH on macOS."], supported_game_version: "1.19.2", attribution: { author: "smerss", url: "https://github.com/smerss/Clausewitz-MCP", license: "See upstream license", license_url: "https://github.com/smerss/Clausewitz-MCP/blob/main/LICENSE" } },
+      { id: "hoi4_live_tools", display_name: "HOI4 Live Tools (experimental)", description: "Slower and not fully tested; verified Windows package only.", requirements: ["Windows; Python and the public Live Tools package."], supported_platforms: ["windows"], supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"], experimental: true, route: { kind: "local_package", component_id: "workflow.live_tools" }, guidance: ["The macOS scaffold is incomplete."] },
+      { id: "none", display_name: "None", description: "Disable live testing.", requirements: [], supported_platforms: ["all"], supported_coding_environments: [], experimental: false, route: { kind: "none" }, guidance: [] },
+    ],
+  },
+  image_generation: (sourceManifest as unknown as SourceManifestPreview).image_generation ?? {
     default_provider: "gptimage",
     providers: [
       { id: "gptimage", display_name: "ChatGPT subscription (GPTImage)", description: "Use the local GPTImage server with your ChatGPT plan.", availability: "supported", requirements: ["ChatGPT plan and browser sign-in."], good_for: ["Concept art", "Reference images"], cost_summary: "No separate image API bill; plan limits apply.", models: ["GPT Image"], supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"], route: { kind: "local_package", auth_method: "chatgpt_subscription", component_id: "imagegen.gptimage", tool_names: { generate: "generate_image", auth_status: "image_auth_status" } }, capabilities: { reference_images: { supported: true, max_count: 5, notes: "Pass the image paths and explain what to copy." }, image_edits: false, transparent_background: { native: false, notes: "PNG output may have an opaque background." }, size_limits: { notes: "Follow the selected route's size limits." }, one_image_per_call: true, fallback_if_no_alpha: "Use background removal and check the saved alpha.", fallback_if_no_edits: "Make a new version from references." } },
@@ -218,7 +209,7 @@ const plan: InstallationPlan = {
   ai_provider: "claude_account",
   ai_model: "claude-haiku-4-5-20251001",
   flatten_chat_sources: true,
-  selected_components: ["core.claude.instructions", "core.agents", "core.skills", "core.subagents", "runtime.agent_sync", "runtime.claude", "runtime.claude.mcp", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot", "workflow.super_events", "workflow.live_tools", "workflow.portraits.router", ...portraitComponentIds],
+  selected_components: ["core.claude.instructions", "core.agents", "core.skills", "core.subagents", "runtime.agent_sync", "runtime.claude", "runtime.claude.mcp", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot", "workflow.super_events", "workflow.live_testing", "workflow.portraits.router", ...portraitComponentIds],
   wiki_required_pages: ["Hearts of Iron 4 Wiki", "Modding"],
   generated_artifacts: [
     { component_id: "chat.flattened", destination: "chatgpt_project_sources/AGENTS.md", content: "Project instructions", expected_sha256: "documentation-preview" },
@@ -306,7 +297,7 @@ export function documentationFixture(base: WizardState): WizardState {
       title: item.display_name,
       detail: item.description ?? "Setup component",
       size: item.expected_files.length === 1 ? "1 file" : `${item.expected_files.length} files`,
-      selected: !["workflow.3d", "workflow.super_events", "workflow.live_tools", ...allPortraitComponentIds].includes(item.id),
+      selected: !["workflow.3d", "workflow.super_events", "workflow.live_testing", ...allPortraitComponentIds].includes(item.id),
       required: !item.optional,
     })),
     selectedComponents: ["core.claude.instructions", "core.agents", "core.skills", "core.subagents", "runtime.agent_sync", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot"],
@@ -341,13 +332,14 @@ export function documentationFixture(base: WizardState): WizardState {
   if (scenario === "existing") return { ...common, screen: "identity", mode: "existing", recoveryEntry: true };
   if (scenario === "components") return { ...common, screen: "components", flattenForChat: true };
   if (scenario === "environments") return { ...common, screen: "environments", primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["claude_code"] };
+  if (scenario === "live-testing") return { ...common, screen: "live-testing", selectedComponents: [...common.selectedComponents, "workflow.live_testing"] };
   if (scenario === "image-generation") return { ...common, screen: "image-generation", primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["claude_code"], imageGeneration: { primary_provider: "gptimage", additional_providers: ["openai_api"], route_settings: {}, credential_references: {} } };
-  if (scenario === "workflows") return { ...common, screen: "workflows", meshSelected: true, superEventsSelected: true, portraitPipeline: runpodPortrait, selectedComponents: [...common.selectedComponents, "workflow.3d", "workflow.super_events", "workflow.live_tools", ...portraitComponentIds] };
+  if (scenario === "workflows") return { ...common, screen: "workflows", meshSelected: true, superEventsSelected: true, portraitPipeline: runpodPortrait, selectedComponents: [...common.selectedComponents, "workflow.3d", "workflow.super_events", "workflow.live_testing", ...portraitComponentIds] };
   if (scenario === "mcp") return { ...common, screen: "mcp", meshSelected: true, meshKeyStatus: "present", selectedComponents: [...common.selectedComponents, "workflow.3d"] };
   if (scenario === "git") return { ...common, screen: "git", gitOnlineAction: "create_public_github", gitHubRepository: "atlantis-rising" };
   if (scenario === "dry-run") return { ...common, screen: "dry-run", plan, flattenForChat: true, superEventsSelected: true };
   if (scenario === "ready") return { ...common, screen: "ready", plan, readiness, flattenForChat: true, superEventsSelected: true, portraitPipeline: runpodPortrait, installedSuperEventsState: "ready", selectedComponents: [...common.selectedComponents, ...portraitComponentIds] };
-  if (scenario === "maintenance") return { ...common, screen: "update", mode: "existing", plan, readiness, existingInstallationDetected: true, installedWorkflow3dState: "not_selected", installedSuperEventsState: "ready", superEventsSelected: true };
+  if (scenario === "maintenance") return { ...common, screen: "update", mode: "existing", plan, readiness, selectedComponents: [...common.selectedComponents, "workflow.live_testing"], existingInstallationDetected: true, installedWorkflow3dState: "not_selected", installedSuperEventsState: "ready", superEventsSelected: true };
   if (scenario === "recovery") {
     const stageIds = ["preflight", "repository source resolution", "selective download", "checksum verification", "dry-run review", "backup", "staging", "validation", "apply", "post-install checks", "readiness report", "rollback record"];
     return {

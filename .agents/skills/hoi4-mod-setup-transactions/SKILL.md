@@ -456,3 +456,7 @@ Transaction work is complete only when the twelve stages, journal and
 predecessor-lock evidence, backup/staging/apply boundaries, readiness gate,
 rollback record, maintenance path, and fault scenarios agree; optional
 external actions never turn into implicit core success.
+
+Image and live-testing provider changes are reviewed transaction inputs. Remove only unchanged managed registrations for deselected providers or clients, preserve unrelated and user-modified routes, and regenerate provider guidance with exactly one complete marker pair. Incomplete optional runtime outcomes stay incomplete in the lock and readiness report; registration is not gameplay verification.
+
+Large adapted asset skills keep a short provider section and read the generated `.tools/image_generation/selected-provider.md` from the project root. Maintain that reference through the same reviewed artifact, backup and removal flow; selected routes must never push a root SKILL.md over the package byte ceiling.

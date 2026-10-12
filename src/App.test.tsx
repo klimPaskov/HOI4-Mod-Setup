@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { analysisBrief, ChatSources, CodingEnvironments, Components, DryRun, Findings, Git, Identity, ImageGenerationSetup, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
+import App, { analysisBrief, ChatSources, CodingEnvironments, Components, DryRun, Findings, Git, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import type { AiAccountStatus, AiProviderId, ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
@@ -114,6 +114,8 @@ function semanticAnalysisFixture() {
 
 describe("HOI4 Mod Setup wizard", () => {
   it("starts new projects with the Atlantis Rising example", () => {
+    expect(initialState.sourceMode).toBe("pinned_release");
+    expect(initialState.pinnedRef).toBe("package-2026-10-12");
     expect(initialState.identity.displayName).toBe("Atlantis Rising");
     expect(initialState.description).toBe("An Atlantis total conversion with a new Atlantic island, naval expansion, custom units, national focuses, and original mechanics.");
     expect(initialState.aiProvider).toBe("claude_account");
@@ -212,7 +214,8 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.change(input, { target: { value: "sk-test-image-key" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Store" })[0]);
     await waitFor(() => expect(storeImageGenerationCredential).toHaveBeenCalledWith("openai_api", "api_key", "sk-test-image-key"));
-    expect(screen.getByText(/credential stored on this computer/i)).toBeInTheDocument();
+    expect(await screen.findByText(/credential stored on this computer/i)).toBeInTheDocument();
+    expect(input).toHaveValue("");
   });
 
   it("provides sanitized development-only states for public screenshots", () => {
@@ -2508,5 +2511,48 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByText("Requires core.agents")).toBeInTheDocument();
     expect(screen.getByText("1 file · destination: .agents/skills/")).toBeInTheDocument();
     expect(screen.getByText(".agents/skills/example/SKILL.md")).toBeInTheDocument();
+  });
+});
+
+
+describe("live testing selection", () => {
+  it("defaults to deferred Clausewitz and clears the workflow when disabled", () => {
+    window.history.replaceState({}, "", "/?screenshot=live-testing");
+    const state = documentationFixture(initialState)!;
+    const update = vi.fn();
+    render(<LiveTestingSetup state={state} update={update} />);
+    expect(screen.getByRole("radio", { name: /^Clausewitz MCP/ })).toBeChecked();
+    expect(screen.getByRole("checkbox")).not.toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: /^None/ }));
+    expect(update.mock.calls[0][0].liveTesting.provider).toBe("none");
+    expect(update.mock.calls[0][0].selectedComponents).not.toContain("workflow.live_testing");
+  });
+  it("requires an SSH alias only when the Linux route is confirmed on macOS", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Macintosh Mac OS X");
+    expect(liveTestingSelectionValid(initialState)).toBe(true);
+    const ready = { ...initialState, liveTesting: { ...initialState.liveTesting, linux_ready: true } };
+    expect(liveTestingSelectionValid(ready)).toBe(false);
+    expect(liveTestingSelectionValid({ ...ready, liveTesting: { ...ready.liveTesting, ssh_host: "linux-game" } })).toBe(true);
+    expect(liveTestingSelectionValid({ ...ready, liveTesting: { ...ready.liveTesting, ssh_host: "user@host" } })).toBe(false);
+  });
+  it("rejects unsafe WSL distribution names", () => {
+    expect(liveTestingSelectionValid({ ...initialState, liveTesting: { ...initialState.liveTesting, wsl_distribution: "Ubuntu; command" } })).toBe(false);
+    expect(liveTestingSelectionValid(initialState)).toBe(true);
+  });
+  it("keeps a failed live runtime installation as a to-do", () => {
+    const state: WizardState = {
+      ...initialState,
+      selectedComponents: ["workflow.live_testing", "workflow.live_tools"],
+      liveTesting: { provider: "hoi4_live_tools", linux_ready: false, wsl_distribution: "", ssh_host: "" },
+      readiness: {
+        coreReady: true,
+        openInCodex: false,
+        blockingCheckIds: [],
+        checks: [{ id: "workflow.live_testing", label: "Live testing", status: "warn", blocking: false, message: "Runtime installation failed." }],
+      } as NonNullable<WizardState["readiness"]>,
+    };
+    render(<Ready state={state} update={vi.fn()} onMaintenance={vi.fn()} />);
+    expect(screen.getByText("To-do", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText("Configured", { exact: true })).not.toBeInTheDocument();
   });
 });

@@ -326,7 +326,9 @@ describe("typed scanner bridge", () => {
   it("passes the selected image providers into the reviewed maintenance plan", async () => {
     invoke.mockResolvedValue({ plan_id: "maintenance-plan" });
     const imageGeneration = { primary_provider: "openai_api", additional_providers: ["gptimage"], route_settings: {}, credential_references: { "openai_api.api_key": "credential://image_generation_api_key/openai_api_api_key" } };
-    await buildMaintenancePlanResult("update", "C:/mods/example", undefined, [], undefined, "claude_code", [], undefined, imageGeneration);
+    const liveTesting = { provider: "clausewitz_mcp", linux_ready: false, wsl_distribution: "Ubuntu", ssh_host: "" };
+    await buildMaintenancePlanResult("update", "C:/mods/example", undefined, [], undefined, "claude_code", [], undefined, imageGeneration, liveTesting);
+    expect(invoke).toHaveBeenCalledWith("build_maintenance_plan", expect.objectContaining({ liveTesting }));
     expect(invoke).toHaveBeenCalledWith("build_maintenance_plan", expect.objectContaining({ imageGeneration }));
   });
 });

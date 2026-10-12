@@ -28,11 +28,19 @@
   ],
   "allOf": [
     {
-      "if": { "properties": { "schema_version": { "const": "1.1.0" } } },
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": "1.1.0"
+          }
+        }
+      },
       "then": {
         "properties": {
           "transaction": {
-            "required": ["project_root_identity"],
+            "required": [
+              "project_root_identity"
+            ],
             "properties": {
               "project_root_identity": {
                 "type": "string",
@@ -44,27 +52,82 @@
       }
     },
     {
-      "if": { "properties": { "schema_version": { "const": "1.0.0" } } },
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": "1.0.0"
+          }
+        }
+      },
       "then": {
         "properties": {
           "operations": {
-            "items": { "properties": { "external_parent_identity": false } }
+            "items": {
+              "properties": {
+                "external_parent_identity": false
+              }
+            }
           }
         }
       }
     },
     {
-      "if": { "properties": { "ai_provider": { "enum": ["codex", "claude_account"] } } },
-      "then": { "properties": { "ai_endpoint": { "type": ["null", "string"], "maxLength": 0 } } }
+      "if": {
+        "properties": {
+          "ai_provider": {
+            "enum": [
+              "codex",
+              "claude_account"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "ai_endpoint": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "maxLength": 0
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "ai_provider": { "enum": ["claude", "kimi", "glm", "deepseek", "local", "custom"] } } },
-      "then": { "required": ["ai_endpoint"], "properties": { "ai_endpoint": { "type": "string", "minLength": 1 } } }
+      "if": {
+        "properties": {
+          "ai_provider": {
+            "enum": [
+              "claude",
+              "kimi",
+              "glm",
+              "deepseek",
+              "local",
+              "custom"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "ai_endpoint"
+        ],
+        "properties": {
+          "ai_endpoint": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
     }
   ],
   "properties": {
     "schema_version": {
-      "enum": ["1.0.0", "1.1.0"]
+      "enum": [
+        "1.0.0",
+        "1.1.0"
+      ]
     },
     "plan_id": {
       "type": "string",
@@ -74,38 +137,74 @@
       "type": "string"
     },
     "script_prefix": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "pattern": "^[a-z_][a-z0-9_]{0,63}$"
     },
     "primary_namespace": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "pattern": "^[a-z_][a-z0-9_]{0,63}$"
     },
     "ai_provider": {
-      "enum": ["codex", "claude_account", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+      "enum": [
+        "codex",
+        "claude_account",
+        "claude",
+        "kimi",
+        "glm",
+        "deepseek",
+        "local",
+        "custom"
+      ]
     },
     "ai_model": {
       "type": "string",
       "minLength": 1
     },
     "ai_reasoning_effort": {
-      "enum": ["low", "medium", "high", "xhigh", "max"]
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
     },
     "ai_endpoint": {
-      "type": ["string", "null"]
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "ai_optimization_profile": {
       "type": "string",
       "minLength": 1
     },
     "primary_coding_environment": {
-      "enum": ["codex", "claude_code", "cursor", "qoder", "opencode"]
+      "enum": [
+        "codex",
+        "claude_code",
+        "cursor",
+        "qoder",
+        "opencode"
+      ]
     },
     "additional_coding_environments": {
       "type": "array",
       "uniqueItems": true,
       "items": {
-        "enum": ["codex", "claude_code", "cursor", "qoder", "opencode"]
+        "enum": [
+          "codex",
+          "claude_code",
+          "cursor",
+          "qoder",
+          "opencode"
+        ]
       }
     },
     "flatten_chat_sources": {
@@ -194,11 +293,25 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "provider", "reference"],
+        "required": [
+          "name",
+          "provider",
+          "reference"
+        ],
         "properties": {
-          "name": { "const": "MESHY_API_KEY" },
-          "provider": { "enum": ["windows_credential_manager", "macos_keychain"] },
-          "reference": { "type": "string", "pattern": "^credential://meshy_api_key/(?:default|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$" }
+          "name": {
+            "const": "MESHY_API_KEY"
+          },
+          "provider": {
+            "enum": [
+              "windows_credential_manager",
+              "macos_keychain"
+            ]
+          },
+          "reference": {
+            "type": "string",
+            "pattern": "^credential://meshy_api_key/(?:default|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
+          }
         }
       }
     },
@@ -214,12 +327,30 @@
           "expected_sha256"
         ],
         "properties": {
-          "component_id": { "type": "string" },
-          "destination": { "type": "string" },
-          "content": { "type": "string" },
-          "expected_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-          "external": { "type": "boolean" },
-          "bytes": { "type": "array", "items": { "type": "integer", "minimum": 0, "maximum": 255 } }
+          "component_id": {
+            "type": "string"
+          },
+          "destination": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "expected_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "external": {
+            "type": "boolean"
+          },
+          "bytes": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            }
+          }
         }
       }
     },
@@ -325,18 +456,42 @@
           "minItems": 12,
           "maxItems": 12,
           "prefixItems": [
-            { "const": "preflight" },
-            { "const": "repository source resolution" },
-            { "const": "selective download" },
-            { "const": "checksum verification" },
-            { "const": "dry-run review" },
-            { "const": "backup" },
-            { "const": "staging" },
-            { "const": "validation" },
-            { "const": "apply" },
-            { "const": "post-install checks" },
-            { "const": "readiness report" },
-            { "const": "rollback record" }
+            {
+              "const": "preflight"
+            },
+            {
+              "const": "repository source resolution"
+            },
+            {
+              "const": "selective download"
+            },
+            {
+              "const": "checksum verification"
+            },
+            {
+              "const": "dry-run review"
+            },
+            {
+              "const": "backup"
+            },
+            {
+              "const": "staging"
+            },
+            {
+              "const": "validation"
+            },
+            {
+              "const": "apply"
+            },
+            {
+              "const": "post-install checks"
+            },
+            {
+              "const": "readiness report"
+            },
+            {
+              "const": "rollback record"
+            }
           ],
           "items": false
         },
@@ -376,7 +531,10 @@
           ]
         },
         "project_root_identity": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^(unix:[0-9a-f]+:[0-9a-f]+|windows-v2:[0-9a-f]{16}:[0-9a-f]{32})$"
         }
       }
@@ -424,23 +582,57 @@
       ],
       "properties": {
         "engine": {
-          "enum": ["codex_app_server", "claude_code_cli", "provider_api"]
+          "enum": [
+            "codex_app_server",
+            "claude_code_cli",
+            "provider_api"
+          ]
         },
         "auth_mode": {
-          "enum": ["chatgpt", "claude_account", "api_key", "local_endpoint"]
+          "enum": [
+            "chatgpt",
+            "claude_account",
+            "api_key",
+            "local_endpoint"
+          ]
         },
         "provider": {
-          "enum": ["codex", "claude_account", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+          "enum": [
+            "codex",
+            "claude_account",
+            "claude",
+            "kimi",
+            "glm",
+            "deepseek",
+            "local",
+            "custom"
+          ]
         },
         "model": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "reasoning_effort": {
-          "type": ["string", "null"],
-          "enum": ["low", "medium", "high", "xhigh", "max", null]
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            null
+          ]
         },
         "optimization_profile": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "analysis_id": {
           "type": "string",
@@ -495,6 +687,9 @@
           "pattern": "^[0-9a-f]{64}$"
         }
       }
+    },
+    "live_testing": {
+      "$ref": "#/$defs/live_testing"
     }
   },
   "$defs": {
@@ -516,31 +711,109 @@
         "mcp_registered"
       ],
       "properties": {
-        "enabled": { "type": "boolean" },
-        "provider": { "enum": ["cloud", "local", "runpod", "disabled"] },
-        "provider_status": { "type": "string", "minLength": 1 },
-        "workflow_repository": { "type": "string", "format": "uri" },
-        "workflow_branch": { "type": "string", "minLength": 1 },
-        "workflow_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-        "preferred_workflow": { "enum": ["source", "processing_only"] },
-        "local_comfyui_root": { "type": "string" },
-        "local_server_url": { "type": "string" },
-        "runpod_url": { "type": "string" },
-        "runpod_workspace": { "type": "string" },
-        "mcp_registered": { "type": "boolean" }
+        "enabled": {
+          "type": "boolean"
+        },
+        "provider": {
+          "enum": [
+            "cloud",
+            "local",
+            "runpod",
+            "disabled"
+          ]
+        },
+        "provider_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflow_repository": {
+          "type": "string",
+          "format": "uri"
+        },
+        "workflow_branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflow_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "preferred_workflow": {
+          "enum": [
+            "source",
+            "processing_only"
+          ]
+        },
+        "local_comfyui_root": {
+          "type": "string"
+        },
+        "local_server_url": {
+          "type": "string"
+        },
+        "runpod_url": {
+          "type": "string"
+        },
+        "runpod_workspace": {
+          "type": "string"
+        },
+        "mcp_registered": {
+          "type": "boolean"
+        }
       }
     },
     "image_generation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["primary_provider", "additional_providers", "route_settings", "credential_references"],
+      "required": [
+        "primary_provider",
+        "additional_providers",
+        "route_settings",
+        "credential_references"
+      ],
       "properties": {
-        "primary_provider": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
-        "additional_providers": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" } },
-        "route_settings": { "type": "object", "additionalProperties": { "type": "object", "additionalProperties": { "type": "string", "maxLength": 1024 } } },
-        "credential_references": { "type": "object", "additionalProperties": { "type": "string", "pattern": "^credential://image_generation_api_key/[a-z0-9_-]{1,64}$" } },
-        "installed_package_tree_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
-        "installed_package_lock_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
+        "primary_provider": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "additional_providers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "route_settings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        },
+        "credential_references": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^credential://image_generation_api_key/[a-z0-9_-]{1,64}$"
+          }
+        },
+        "installed_package_tree_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "installed_package_lock_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        }
       }
     },
     "download_ledger_entry": {
@@ -560,17 +833,56 @@
         "executable"
       ],
       "properties": {
-        "operation_id": { "type": "string", "minLength": 1 },
-        "source_path": { "type": "string", "minLength": 1 },
-        "destination": { "type": "string", "minLength": 1 },
-        "source_revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-        "manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "size": { "type": "integer", "minimum": 0 },
-        "component_id": { "type": "string", "minLength": 1 },
-        "ownership": { "enum": ["managed", "merged", "generated", "external"] },
-        "platform": { "enum": ["windows", "macos", "all"] },
-        "executable": { "type": "boolean" }
+        "operation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "destination": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "component_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ownership": {
+          "enum": [
+            "managed",
+            "merged",
+            "generated",
+            "external"
+          ]
+        },
+        "platform": {
+          "enum": [
+            "windows",
+            "macos",
+            "all"
+          ]
+        },
+        "executable": {
+          "type": "boolean"
+        }
       }
     },
     "wiki_metadata": {
@@ -583,10 +895,17 @@
       ],
       "properties": {
         "snapshot_marker": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "required_media_policy": {
-          "enum": ["all_declared", "referenced_only", "none"]
+          "enum": [
+            "all_declared",
+            "referenced_only",
+            "none"
+          ]
         },
         "source_status": {
           "type": "string",
@@ -602,7 +921,9 @@
         },
         "notes": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -751,10 +1072,16 @@
         }
       },
       "if": {
-        "properties": { "external": { "const": false } }
+        "properties": {
+          "external": {
+            "const": false
+          }
+        }
       },
       "then": {
-        "properties": { "external_parent_identity": false }
+        "properties": {
+          "external_parent_identity": false
+        }
       }
     },
     "conflictDecision": {
@@ -844,25 +1171,37 @@
           ]
         },
         "executable": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "arguments": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "working_directory": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "environment_names": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "network_access": {
           "type": "string"
         },
         "expected_writes": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "privilege": {
           "type": "string"
@@ -932,28 +1271,46 @@
           "minimum": 0
         },
         "verified_package_name": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 128
         },
         "verified_package_version": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
         },
         "verified_package_integrity": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 256
         },
         "verified_package_tree_sha256": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^[0-9a-f]{64}$"
         },
         "verified_package_file_count": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 1,
           "maximum": 10000
         },
         "verified_runtime_entry": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "maxLength": 256
         },
         "required_tool_names": {
@@ -964,6 +1321,41 @@
             "type": "string",
             "maxLength": 256
           }
+        }
+      }
+    },
+    "live_testing": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "linux_ready",
+        "wsl_distribution",
+        "ssh_host"
+      ],
+      "properties": {
+        "provider": {
+          "enum": [
+            "clausewitz_mcp",
+            "hoi4_live_tools",
+            "none"
+          ]
+        },
+        "linux_ready": {
+          "type": "boolean"
+        },
+        "wsl_distribution": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_.-]*$"
+        },
+        "ssh_host": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^([A-Za-z0-9][A-Za-z0-9_.-]*)?$"
         }
       }
     }

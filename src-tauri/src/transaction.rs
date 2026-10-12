@@ -5547,6 +5547,12 @@ fn build_transaction_readiness(
         dependency_status: "pass".into(),
         workflow_3d_state,
         workflow_super_events_state,
+        live_testing: plan.live_testing.clone(),
+        live_testing_runtime_state: plan
+            .optional_workflows
+            .get("workflow.live_tools")
+            .cloned()
+            .unwrap_or_default(),
         portrait_provider,
         portrait_provider_status,
         source_license_status: plan
@@ -6025,6 +6031,10 @@ fn build_lock(
             .portrait_pipeline
             .clone()
             .or_else(|| previous_lock.and_then(|lock| lock.portrait_pipeline.clone())),
+        live_testing: plan
+            .live_testing
+            .clone()
+            .or_else(|| previous_lock.and_then(|lock| lock.live_testing.clone())),
         image_generation: plan
             .image_generation
             .clone()
@@ -8904,6 +8914,7 @@ mod tests {
             optional_workflows: Default::default(),
             portrait_pipeline: None,
             image_generation: None,
+            live_testing: None,
             operations: vec![PlanOperation {
                 id: "op-1".into(),
                 component_id: "core.agents".into(),
@@ -11273,6 +11284,71 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_live_runtime_persists_a_warning_without_claiming_gameplay_verification() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let mut plan = ready_plan(project.path());
+        plan.live_testing = Some(crate::models::LiveTestingSelection {
+            provider: "hoi4_live_tools".into(),
+            ..Default::default()
+        });
+        plan.optional_workflows.insert(
+            crate::mcp::LIVE_TOOLS_COMPONENT_ID.into(),
+            "selected_pending".into(),
+        );
+        plan.external_actions = vec![reviewed_live_tools_external_action()];
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        fn incomplete_live(
+            _root: &Path,
+            _plan: &InstallationPlan,
+            component: &str,
+        ) -> Result<PostInstallActionOutcome, AppError> {
+            Ok(PostInstallActionOutcome {
+                component_id: component.into(),
+                state: "incomplete".into(),
+                evidence: "fixture runtime installation incomplete".into(),
+            })
+        }
+        let (_, lock) = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                post_install_action_runner: Some(incomplete_live),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            lock.optional_workflows[crate::mcp::LIVE_TOOLS_COMPONENT_ID].state,
+            "incomplete"
+        );
+        let report: ReadinessReport = serde_json::from_slice(
+            &std::fs::read(
+                transaction_root(app.path(), plan.plan_id)
+                    .transaction
+                    .join(READINESS_FILE),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let live = report
+            .checks
+            .iter()
+            .find(|check| check.id == "workflow.live_testing")
+            .unwrap();
+        assert_eq!(live.status, "warn");
+        assert!(!live.blocking);
+        assert_eq!(live.evidence[0].value["gameplay_verified"], false);
+    }
+
+    #[test]
     fn live_tools_failure_is_journaled_without_a_success_lock_and_rolls_back() {
         let project = tempdir().unwrap();
         let app = tempdir().unwrap();
@@ -12479,6 +12555,7 @@ mod tests {
             optional_workflows: std::collections::BTreeMap::new(),
             portrait_pipeline: None,
             image_generation: None,
+            live_testing: None,
             local_modifications: vec![],
             rollback_records: vec![],
         };
@@ -12546,6 +12623,7 @@ mod tests {
             optional_workflows: Default::default(),
             portrait_pipeline: None,
             image_generation: None,
+            live_testing: None,
             local_modifications: vec![],
             rollback_records: vec![],
         };

@@ -116,6 +116,8 @@ struct SourceManifestPreview {
     coding_environments: Vec<CodingEnvironmentDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
     image_generation: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    live_testing: Option<Value>,
     /// Set when a developer serves the package from a local checkout.
     local_source: Option<String>,
 }
@@ -1386,11 +1388,39 @@ fn open_external_url(url: String) -> Result<(), String> {
 }
 
 fn is_allowed_external_url(url: &str) -> bool {
-    const ALLOWED_URLS: [&str; 4] = [
+    const ALLOWED_URLS: &[&str] = &[
         "https://github.com/klimPaskov/Agentic-HOI4-Modding",
         "https://github.com/klimPaskov/HOI4-Mod-Setup",
         "https://github.com/klimPaskov/comfyui-hoi4-portraits",
         "https://chatgpt.com",
+        "https://github.com/smerss/Clausewitz-MCP",
+        "https://github.com/klimPaskov/hoi4-mod-setup/blob/main/docs/LIVE_TESTING_LINUX.md",
+        "https://github.com/klimPaskov/Agentic-HOI4-Modding/blob/main/.claude/skills/hoi4-live-playtest/references/setup.md",
+        "https://github.com/klimPaskov/Agentic-HOI4-Modding/blob/main/.claude/skills/hoi4-live-playtest/references/hoi4-live-tools.md",
+        "https://developers.openai.com/api/docs/guides/image-generation/",
+        "https://ai.google.dev/gemini-api/docs/image-generation",
+        "https://fal.ai/pricing",
+        "https://replicate.com/docs",
+        "https://bfl.ai/models/flux-3-image",
+        "https://platform.stability.ai/docs/getting-started/stable-image",
+        "https://developer.ideogram.ai/",
+        "https://www.recraft.ai/docs",
+        "https://docs.leonardo.ai/docs/connect-to-leonardoai-mcp",
+        "https://developer.adobe.com/firefly-services/docs/firefly-api/",
+        "https://docs.x.ai/developers/model-capabilities/imagine",
+        "https://www.together.ai/models/flux-2-pro",
+        "https://openrouter.ai/docs/guides/features/images",
+        "https://docs.comfy.org/",
+        "https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/API",
+        "https://github.com/lllyasviel/stable-diffusion-webui-forge",
+        "https://github.com/openai/codex/blob/main/codex-rs/skills/src/assets/samples/imagegen/SKILL.md",
+        "https://cloud.google.com/vertex-ai/generative-ai/docs/models/imagen/4-0-generate-001",
+        "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-mai-image",
+        "https://docs.aws.amazon.com/bedrock/latest/userguide/stable-image-services.html",
+        "https://huggingface.co/docs/inference-providers/index",
+        "https://github.com/midjourney/docs/blob/main/data/faq.txt",
+        "https://github.com/klimPaskov/HOI4-Live-Tools",
+        "https://klimpaskov.github.io/Agentic-HOI4-Modding/",
     ];
     ALLOWED_URLS.contains(&url)
         || ai::provider_profiles()
@@ -3357,7 +3387,7 @@ fn run_reviewed_live_tools_bootstrap(
         ));
     }
     let action = actions[0];
-    let expected_arguments = [LIVE_TOOLS_SCRIPT, "--quiet"];
+    let expected_arguments = [LIVE_TOOLS_SCRIPT, "--quiet", "--register", "none"];
     if action.command_source != "repository_script"
         || action.platform != Platform::Windows
         || action.arguments
@@ -3433,6 +3463,8 @@ fn run_reviewed_live_tools_bootstrap(
             "-I".into(),
             private_script.display().to_string(),
             "--quiet".into(),
+            "--register".into(),
+            "none".into(),
         ],
         cwd: Some(root.to_path_buf()),
         platform: Platform::Windows,
@@ -3445,7 +3477,7 @@ fn run_reviewed_live_tools_bootstrap(
     Ok(match run_result {
         Ok(result) if result.status_code == Some(0) && !result.timed_out => live_tools_outcome(
             "ready",
-            "HOI4 Live Tools installed, verified, and registered",
+            "HOI4 Live Tools runtime installed and verified; project registration is managed by Setup",
         ),
         failure => live_tools_outcome(
             "incomplete",
@@ -4094,6 +4126,7 @@ fn preview_source_manifest_blocking(
         profiles: resolution.manifest.profiles,
         coding_environments,
         image_generation: resolution.manifest.image_generation.clone(),
+        live_testing: resolution.manifest.live_testing.clone(),
         local_source: crate::local_source::configured_repository()
             .map(|root| root.display().to_string()),
     })
@@ -4257,6 +4290,8 @@ fn requested_components_for_selection(
             }
         }
     }
+    let live = crate::live_testing::from_state(state, manifest, &requested, Platform::current())?;
+    crate::live_testing::components(&mut requested, &live, manifest)?;
     Ok((requested, selection))
 }
 
@@ -5724,8 +5759,8 @@ fn image_generation_provider_guidance(
                 arguments
                     .iter()
                     .map(|(role, argument)| match argument.as_str() {
-                        Some(name) => format!("{role} → `{name}`"),
-                        None => format!("{role} → not supported by this tool"),
+                        Some(name) => format!("{role}: `{name}`"),
+                        None => format!("{role}: not supported by this tool"),
                     })
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -5779,22 +5814,47 @@ fn image_generation_provider_guidance(
     Ok(sections.join("\n\n"))
 }
 
+const IMAGE_GUIDANCE_REFERENCE: &str = ".tools/image_generation/selected-provider.md";
+const SKILL_BYTE_LIMIT: usize = 58_000;
+
+fn image_generation_additional_provider_summary(selection: &ImageGenerationSelection) -> String {
+    if selection.additional_providers.is_empty() {
+        "none".into()
+    } else {
+        selection
+            .additional_providers
+            .iter()
+            .map(|id| format!("`{id}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
 fn adapt_image_generation_guidance(
     bytes: &[u8],
     manifest: &RemoteManifest,
     selection: &ImageGenerationSelection,
 ) -> Result<Vec<u8>, AppError> {
-    let text = match std::str::from_utf8(bytes) {
-        Ok(text) if text.contains("<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:START -->") => {
-            text
-        }
-        _ => return Ok(bytes.to_vec()),
-    };
     let start_marker = "<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:START -->";
     let end_marker = "<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:END -->";
-    let start = text.find(start_marker).ok_or_else(|| {
-        AppError::Source("image provider instructions have an incomplete marker".into())
-    })?;
+    let start_count = bytes
+        .windows(start_marker.len())
+        .filter(|window| *window == start_marker.as_bytes())
+        .count();
+    let end_count = bytes
+        .windows(end_marker.len())
+        .filter(|window| *window == end_marker.as_bytes())
+        .count();
+    if start_count == 0 && end_count == 0 {
+        return Ok(bytes.to_vec());
+    }
+    if start_count != 1 || end_count != 1 {
+        return Err(AppError::Source(
+            "image provider instructions require exactly one complete marker block".into(),
+        ));
+    }
+    let text = std::str::from_utf8(bytes).map_err(|error| AppError::Source(error.to_string()))?;
+    let start = text.find(start_marker).unwrap();
     let content_start = start + start_marker.len();
     let end = text[content_start..]
         .find(end_marker)
@@ -5802,17 +5862,57 @@ fn adapt_image_generation_guidance(
         .ok_or_else(|| {
             AppError::Source("image provider instructions have an incomplete marker".into())
         })?;
-    if text[end + end_marker.len()..].contains(start_marker) {
-        return Err(AppError::Source(
-            "image provider instructions contain more than one marker block".into(),
-        ));
-    }
     let guidance = image_generation_provider_guidance(manifest, selection)?;
-    let mut output = String::with_capacity(text.len() + guidance.len());
-    output.push_str(&text[..start]);
-    output.push_str(&guidance);
-    output.push_str(&text[end + end_marker.len()..]);
-    Ok(output.into_bytes())
+    let compose = |content: &str| {
+        format!(
+            "{}{}{}",
+            &text[..start],
+            content,
+            &text[end + end_marker.len()..]
+        )
+        .into_bytes()
+    };
+    let inline = compose(&guidance);
+    if inline.len() <= SKILL_BYTE_LIMIT {
+        return Ok(inline);
+    }
+    Ok(compose(&format!(
+        "### Selected image providers\nPrimary: `{}`. Additional providers: {}.\nRead project-root `{IMAGE_GUIDANCE_REFERENCE}` before using image tools; it contains every selected provider, tool input, limit, and fallback. Make one image per call. Transparent PNGs must contain at least one pixel with alpha below 255; follow the reference's background-removal fallback when native alpha is unavailable.\n",
+        selection.primary_provider, image_generation_additional_provider_summary(selection)
+    )))
+}
+
+fn image_generation_guidance_artifact(
+    manifest: &RemoteManifest,
+    selection: &ImageGenerationSelection,
+) -> Result<Option<GeneratedArtifact>, AppError> {
+    let providers = image_generation_provider_rows(manifest, selection)?;
+    if providers.is_empty() {
+        return Ok(None);
+    }
+    let routes = providers
+        .iter()
+        .map(|provider| {
+            format!(
+                "- `{}`: route `{}`, server `{}`.",
+                provider["id"].as_str().unwrap_or_default(),
+                provider["route"]["kind"].as_str().unwrap_or("manual"),
+                provider["route"]["server_id"].as_str().unwrap_or("none")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let content = format!("# Selected image providers\n\nPrimary: `{}`. Additional providers: {}.\n\n{routes}\n\n{}\n",
+        selection.primary_provider, image_generation_additional_provider_summary(selection),
+        image_generation_provider_guidance(manifest, selection)?);
+    Ok(Some(GeneratedArtifact {
+        component_id: "image_generation.guidance".into(),
+        destination: IMAGE_GUIDANCE_REFERENCE.into(),
+        expected_sha256: sha256_bytes(content.as_bytes()),
+        content,
+        external: false,
+        bytes: None,
+    }))
 }
 
 fn image_generation_config_artifact(
@@ -6079,6 +6179,7 @@ fn image_client_config_artifacts(
     selection: &ImageGenerationSelection,
     coding_environments: &CodingEnvironmentSelection,
     already_selected_destinations: &[String],
+    live_selection: &LiveTestingSelection,
 ) -> Result<Vec<GeneratedArtifact>, AppError> {
     let provider_rows = image_generation_provider_rows(manifest, selection)?;
     let mut artifacts = Vec::new();
@@ -6126,7 +6227,19 @@ fn image_client_config_artifacts(
         let has_managed_image_route = source_bytes
             .windows(b"hoi4_image_".len())
             .any(|window| window == b"hoi4_image_");
-        if !has_route_for_environment && !has_managed_image_route {
+        let has_live_route =
+            crate::live_testing::route(live_selection, Platform::current())?.is_some();
+        let has_managed_live_route = source_bytes
+            .windows(b"clausewitz_linux".len())
+            .any(|w| w == b"clausewitz_linux")
+            || source_bytes
+                .windows(b"hoi4-live".len())
+                .any(|w| w == b"hoi4-live");
+        if !has_route_for_environment
+            && !has_managed_image_route
+            && !has_live_route
+            && !has_managed_live_route
+        {
             continue;
         }
         let adapted = adapt_image_generation_client_config(
@@ -6136,6 +6249,7 @@ fn image_client_config_artifacts(
             selection,
             coding_environments,
             root,
+            live_selection,
         )?;
         if adapted == source_bytes {
             continue;
@@ -6194,7 +6308,9 @@ fn append_maintenance_image_client_config_operations(
         }
         let locally_unmodified = match (&local_sha, previous) {
             (None, _) => false,
-            (Some(hash), Some(previous)) => hash == &previous.installed_sha256,
+            (Some(hash), Some(previous)) => {
+                !previous.preserved_local && hash == &previous.installed_sha256
+            }
             _ => false,
         };
         let local_state = if local_sha.is_none() {
@@ -6209,7 +6325,14 @@ fn append_maintenance_image_client_config_operations(
         } else {
             OperationAction::Generate
         };
-        let operation_id = format!("maintenance-image-client-config-{index:03}");
+        let operation_id = format!(
+            "maintenance-image-client-config-{}-{index:03}",
+            artifact.component_id.replace('.', "-")
+        );
+        operations.retain(|operation| {
+            operation.external || operation.destination != artifact.destination
+        });
+        prepared.retain(|file| file.destination != artifact.destination);
         operations.push(PlanOperation {
             id: operation_id.clone(),
             component_id: artifact.component_id.clone(),
@@ -6250,6 +6373,62 @@ fn append_maintenance_image_client_config_operations(
 }
 
 fn adapt_image_generation_client_config(
+    bytes: &[u8],
+    destination: &str,
+    manifest: &RemoteManifest,
+    selection: &ImageGenerationSelection,
+    coding_environments: &CodingEnvironmentSelection,
+    project_root: &Path,
+    live_selection: &LiveTestingSelection,
+) -> Result<Vec<u8>, AppError> {
+    let guided = crate::live_testing::guidance(bytes, manifest, live_selection)?;
+    let image_bytes = adapt_image_only_client_config(
+        &guided,
+        destination,
+        manifest,
+        selection,
+        coding_environments,
+        project_root,
+    )?;
+    let normalized = destination.replace('\\', "/").to_ascii_lowercase();
+    let environment = match normalized.as_str() {
+        ".mcp.json" => Some(coding_environment::CLAUDE_CODE),
+        ".cursor/mcp.json" => Some(coding_environment::CURSOR),
+        ".qoder/mcp.json" => Some(coding_environment::QODER),
+        "opencode.json" => Some(coding_environment::OPENCODE),
+        ".codex/config.toml" => Some(coding_environment::CODEX),
+        _ => None,
+    };
+    let disabled = LiveTestingSelection {
+        provider: "none".into(),
+        ..Default::default()
+    };
+    let live_selection = if environment.is_some_and(|id| {
+        !coding_environment::selected_environment_ids(coding_environments)
+            .iter()
+            .any(|selected| selected == id)
+    }) {
+        &disabled
+    } else {
+        live_selection
+    };
+    let adapted = crate::live_testing::adapt_config(
+        &image_bytes,
+        destination,
+        live_selection,
+        Platform::current(),
+    )?;
+    if (normalized == "skill.md" || normalized.ends_with("/skill.md"))
+        && adapted.len() > SKILL_BYTE_LIMIT
+    {
+        return Err(AppError::Source(format!(
+            "adapted skill exceeds the {SKILL_BYTE_LIMIT}-byte limit: {destination}"
+        )));
+    }
+    Ok(adapted)
+}
+
+fn adapt_image_only_client_config(
     bytes: &[u8],
     destination: &str,
     manifest: &RemoteManifest,
@@ -7042,6 +7221,12 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         &resolution.manifest,
         &coding_environment_selection,
     )?;
+    let live_testing = crate::live_testing::from_state(
+        state,
+        &resolution.manifest,
+        &requested,
+        Platform::current(),
+    )?;
     if requested.is_empty() {
         return Err(AppError::InvalidInput(
             "select at least one manifest component".into(),
@@ -7163,6 +7348,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             &image_generation,
             &coding_environment_selection,
             &root,
+            &live_testing,
         )?;
         let incoming_sha256 = sha256_bytes(&bytes);
         let source_destination = safe_join(&root, &adapted_destination)?;
@@ -7276,6 +7462,11 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     {
         generated.push(image_config);
     }
+    if let Some(guidance) =
+        image_generation_guidance_artifact(&resolution.manifest, &image_generation)?
+    {
+        generated.push(guidance);
+    }
     let selected_config_destinations = selections
         .iter()
         .map(|selection| selection.destination.clone())
@@ -7286,6 +7477,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         &image_generation,
         &coding_environment_selection,
         &selected_config_destinations,
+        &live_testing,
     )?);
     if mode == "new" || mode == "existing" {
         let description = string_field(state, "description").unwrap_or_default();
@@ -7384,7 +7576,8 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             },
             "credential_references": credential_references.clone(),
             "portrait_pipeline": portrait_pipeline.clone(),
-            "image_generation": image_generation.clone()
+            "image_generation": image_generation.clone(),
+            "live_testing": live_testing.clone()
         }))?;
         generated.push(GeneratedArtifact {
             component_id: "project.state".into(),
@@ -7605,6 +7798,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         optional_workflows,
         portrait_pipeline: Some(portrait_pipeline),
         image_generation: Some(image_generation),
+        live_testing: Some(live_testing),
         operations,
         conflicts,
         external_actions,
@@ -8256,6 +8450,9 @@ fn is_image_generation_guidance_path(path: &str) -> bool {
     let path = path.replace('\\', "/").to_ascii_lowercase();
     path.ends_with("claude.md")
         || path.ends_with("agents.md")
+        || path.ends_with("/hoi4-live-testing/skill.md")
+        || path.ends_with("/hoi4-live-tools/skill.md")
+        || path.ends_with("/hoi4-debug/skill.md")
         || path.ends_with("/hoi4-feature-assets/skill.md")
         || path.ends_with("/hoi4-feature-assets/references/asset-source-rules.md")
         || [
@@ -8265,6 +8462,27 @@ fn is_image_generation_guidance_path(path: &str) -> bool {
         ]
         .iter()
         .any(|name| path.ends_with(name))
+}
+
+fn validate_generated_maintenance_content(
+    destination: &str,
+    source: &[u8],
+    adapted: &[u8],
+    expected_sha256: &str,
+) -> Result<(), AppError> {
+    // A client config is recomposed from its verified generated baseline and
+    // current user settings. Other generated artifacts retain their exact hash.
+    let verified = if is_image_generation_client_config_path(destination) {
+        source
+    } else {
+        adapted
+    };
+    if sha256_bytes(verified) != expected_sha256 {
+        return Err(AppError::Transaction(format!(
+            "maintenance generated checksum mismatch: {destination}"
+        )));
+    }
+    Ok(())
 }
 
 fn is_image_generation_client_config_path(path: &str) -> bool {
@@ -8291,6 +8509,7 @@ async fn build_maintenance_plan(
     additional_coding_environments: Option<Vec<String>>,
     analysis_confirmation_values: Option<Value>,
     image_generation: Option<Value>,
+    live_testing: Option<Value>,
 ) -> Result<InstallationPlan, String> {
     run_blocking_command("maintenance-plan", move || {
         build_maintenance_plan_blocking(
@@ -8303,6 +8522,7 @@ async fn build_maintenance_plan(
             additional_coding_environments,
             analysis_confirmation_values,
             image_generation,
+            live_testing,
         )
     })
     .await
@@ -8319,6 +8539,7 @@ fn build_maintenance_plan_blocking(
     additional_coding_environments: Option<Vec<String>>,
     analysis_confirmation_values: Option<Value>,
     image_generation_value: Option<Value>,
+    live_testing_value: Option<Value>,
 ) -> Result<InstallationPlan, String> {
     let root = validate_project_root_or_destination(Path::new(&project_root))
         .map(|(root, _)| root)
@@ -8336,6 +8557,11 @@ fn build_maintenance_plan_blocking(
         .map_err(command_error)?;
     let lock = read_project_lock(&root).map_err(command_error)?;
     let image_generation_input = image_generation_value;
+    let mut selected_live_testing = Some(
+        lock.live_testing
+            .clone()
+            .unwrap_or_else(|| crate::live_testing::legacy_selection(&lock.components)),
+    );
     let coding_environment_selection = if mode == "remove" {
         CodingEnvironmentSelection {
             primary: lock.primary_coding_environment.clone(),
@@ -8545,6 +8771,25 @@ fn build_maintenance_plan_blocking(
         let incoming_environment_ids =
             coding_environment::all_environment_component_ids(&resolution.manifest);
         requested.retain(|id| !incoming_environment_ids.contains(id));
+        let live_state = serde_json::json!({"live_testing": live_testing_value.clone().unwrap_or_else(|| serde_json::to_value(selected_live_testing.as_ref().unwrap()).unwrap())});
+        let mut live_requested = requested.clone();
+        if live_testing_value.is_some()
+            && !live_requested
+                .iter()
+                .any(|id| id == "workflow.live_testing")
+        {
+            live_requested.push("workflow.live_testing".into());
+        }
+        let live_selection = crate::live_testing::from_state(
+            &live_state,
+            &resolution.manifest,
+            &live_requested,
+            Platform::current(),
+        )
+        .map_err(command_error)?;
+        crate::live_testing::components(&mut requested, &live_selection, &resolution.manifest)
+            .map_err(command_error)?;
+        selected_live_testing = Some(live_selection);
         let image_state = image_generation_state_for_maintenance(
             image_generation_input.as_ref(),
             &lock,
@@ -8746,6 +8991,7 @@ fn build_maintenance_plan_blocking(
                             image_selection,
                             &coding_environment_selection,
                             &root,
+                            selected_live_testing.as_ref().unwrap(),
                         )?
                     } else {
                         desired_bytes
@@ -8849,6 +9095,7 @@ fn build_maintenance_plan_blocking(
         };
         if coding_environment_selection != locked_selection
             || image_generation_input.is_some()
+            || live_testing_value.is_some()
             || !lock
                 .components
                 .iter()
@@ -8892,6 +9139,29 @@ fn build_maintenance_plan_blocking(
                 })
                 .map(|component| component.id.clone())
                 .collect::<Vec<_>>();
+            let live_state = serde_json::json!({"live_testing": live_testing_value.clone().unwrap_or_else(|| serde_json::to_value(selected_live_testing.as_ref().unwrap()).unwrap())});
+            let mut live_requested = active_requested.clone();
+            if live_testing_value.is_some()
+                && !live_requested
+                    .iter()
+                    .any(|id| id == "workflow.live_testing")
+            {
+                live_requested.push("workflow.live_testing".into());
+            }
+            let live_selection = crate::live_testing::from_state(
+                &live_state,
+                &resolution.manifest,
+                &live_requested,
+                Platform::current(),
+            )
+            .map_err(command_error)?;
+            crate::live_testing::components(
+                &mut active_requested,
+                &live_selection,
+                &resolution.manifest,
+            )
+            .map_err(command_error)?;
+            selected_live_testing = Some(live_selection);
             let image_state = image_generation_state_for_maintenance(
                 image_generation_input.as_ref(),
                 &lock,
@@ -8920,11 +9190,40 @@ fn build_maintenance_plan_blocking(
                     desired_image_ids.push(component_id.to_owned());
                 }
             }
+            let live_ids = active_requested
+                .iter()
+                .filter(|id| {
+                    matches!(
+                        id.as_str(),
+                        "workflow.live_testing" | "workflow.live_tools" | "mcp.hoi4_live.bootstrap"
+                    )
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            desired_image_ids.extend(
+                expand_components(&resolution.manifest, &live_ids)
+                    .map_err(command_error)?
+                    .into_iter()
+                    .filter(|id| {
+                        matches!(
+                            id.as_str(),
+                            "workflow.live_testing"
+                                | "workflow.live_tools"
+                                | "mcp.hoi4_live.bootstrap"
+                        )
+                    }),
+            );
             let current_image_ids = lock
                 .components
                 .iter()
                 .filter(|component| {
-                    component.id.starts_with("imagegen.")
+                    (component.id.starts_with("imagegen.")
+                        || matches!(
+                            component.id.as_str(),
+                            "workflow.live_testing"
+                                | "workflow.live_tools"
+                                | "mcp.hoi4_live.bootstrap"
+                        ))
                         && !matches!(
                             component.state.as_str(),
                             "removed" | "not_selected" | "unsupported_platform"
@@ -8944,7 +9243,8 @@ fn build_maintenance_plan_blocking(
                 .difference(&desired_image_set)
                 .cloned()
                 .collect::<std::collections::HashSet<_>>();
-            let image_selection_changed = lock.image_generation.as_ref() != Some(&desired_image);
+            let image_selection_changed = lock.image_generation.as_ref() != Some(&desired_image)
+                || lock.live_testing != selected_live_testing;
             if !add_image_ids.is_empty() {
                 let expanded = expand_components(&resolution.manifest, &add_image_ids)
                     .map_err(command_error)?;
@@ -9004,7 +9304,13 @@ fn build_maintenance_plan_blocking(
                         .map_err(command_error)?,
                 );
             }
-            maintenance_components.retain(|id| !id.starts_with("imagegen."));
+            maintenance_components.retain(|id| {
+                !id.starts_with("imagegen.")
+                    && !matches!(
+                        id.as_str(),
+                        "workflow.live_testing" | "workflow.live_tools" | "mcp.hoi4_live.bootstrap"
+                    )
+            });
             maintenance_components.extend(desired_image_ids.clone());
             selected_image_generation = Some(desired_image);
             image_generation_manifest = Some(resolution.manifest.clone());
@@ -9446,6 +9752,12 @@ fn build_maintenance_plan_blocking(
             )
             .map_err(command_error)?
         };
+        let bytes = if is_image_generation_client_config_path(&operation.destination) {
+            merge_existing_image_client_config(&root, &operation.destination, &bytes)
+                .map_err(command_error)?
+        } else {
+            bytes
+        };
         let bytes = if let (Some(manifest), Some(selection)) = (
             image_generation_manifest.as_ref(),
             selected_image_generation.as_ref(),
@@ -9459,17 +9771,21 @@ fn build_maintenance_plan_blocking(
                 selection,
                 &coding_environment_selection,
                 &root,
+                selected_live_testing.as_ref().unwrap(),
             )
             .map_err(command_error)?
         } else {
             bytes
         };
         let actual = sha256_bytes(&bytes);
-        if generated_source && actual != expected {
-            return Err(format!(
-                "maintenance generated checksum mismatch: {}",
-                operation.destination
-            ));
+        if generated_source {
+            validate_generated_maintenance_content(
+                &operation.destination,
+                &source_bytes,
+                &bytes,
+                expected,
+            )
+            .map_err(command_error)?;
         }
         // A remote source was verified against its manifest SHA-256 when it
         // was fetched. Adaptation then legitimately changes many files (the
@@ -9478,6 +9794,19 @@ fn build_maintenance_plan_blocking(
         // adapted bytes become this operation's result hash, including for
         // a skipped file: its prepared bytes are what Use new would install,
         // while a skip itself is verified against the unchanged local hash.
+        if is_image_generation_client_config_path(&operation.destination)
+            && operation.action == OperationAction::Skip
+            && operation.local_state == LocalState::Unmodified
+            && operation.resolution.is_none()
+            && operation.local_sha256.as_deref() != Some(actual.as_str())
+        {
+            operation.action = if generated_source {
+                OperationAction::Generate
+            } else {
+                OperationAction::Replace
+            };
+            operation.rollback = RollbackAction::RestoreBackup;
+        }
         operation.result_sha256 = Some(actual.clone());
         prepared.push(PreparedFile {
             operation_id: operation.id.clone(),
@@ -9584,6 +9913,7 @@ fn build_maintenance_plan_blocking(
                 selection,
                 &coding_environment_selection,
                 &client_config_destinations,
+                selected_live_testing.as_ref().unwrap(),
             )
             .map_err(command_error)?;
             append_maintenance_image_client_config_operations(
@@ -9595,65 +9925,57 @@ fn build_maintenance_plan_blocking(
             )
             .map_err(command_error)?;
             generated_artifacts.extend(client_config_artifacts);
+            if let Some(guidance) =
+                image_generation_guidance_artifact(manifest, selection).map_err(command_error)?
+            {
+                append_maintenance_image_client_config_operations(
+                    std::slice::from_ref(&guidance),
+                    &mut operations,
+                    &mut prepared,
+                    &lock,
+                    &root,
+                )
+                .map_err(command_error)?;
+                generated_artifacts.push(guidance);
+            } else if let Some(previous) = lock
+                .files
+                .iter()
+                .find(|file| file.component_id == "image_generation.guidance" && !file.external)
+            {
+                let obsolete = InstallationLock {
+                    files: vec![previous.clone()],
+                    ..lock.clone()
+                };
+                operations.retain(|operation| {
+                    operation.external || operation.destination != previous.path
+                });
+                prepared.retain(|file| file.destination != previous.path);
+                operations.extend(
+                    crate::transaction::managed_removal_operations(&obsolete, &root)
+                        .map_err(command_error)?,
+                );
+            }
             if let Some(artifact) =
                 image_generation_config_artifact(manifest, selection).map_err(command_error)?
             {
-                let destination_path =
-                    safe_join(&root, &artifact.destination).map_err(command_error)?;
-                let local_sha = if destination_path.is_file() {
-                    Some(sha256_file(&destination_path).map_err(command_error)?)
-                } else {
-                    None
-                };
-                let local_state = match local_sha.as_deref() {
-                    None => LocalState::Absent,
-                    Some(hash) if hash == artifact.expected_sha256 => LocalState::Unmodified,
-                    Some(_) => LocalState::Modified,
-                };
-                let action = if local_state == LocalState::Absent {
-                    OperationAction::Generate
-                } else {
-                    OperationAction::Skip
-                };
-                let operation_id = "maintenance-image-generation-config".to_string();
-                operations.push(PlanOperation {
-                    id: operation_id.clone(),
-                    component_id: artifact.component_id.clone(),
-                    ownership: Some(Ownership::Generated),
-                    location_scope: Some("project".into()),
-                    action,
-                    source_path: Some(format!("generated:{}", artifact.destination)),
-                    destination: artifact.destination.clone(),
-                    source_sha256: Some(artifact.expected_sha256.clone()),
-                    source_size: Some(artifact.content.len() as u64),
-                    platform: Some(ManifestPlatform::All),
-                    executable: false,
-                    result_sha256: (action == OperationAction::Generate)
-                        .then_some(artifact.expected_sha256.clone()),
-                    base_sha256: None,
-                    local_sha256: local_sha.clone(),
-                    local_state,
-                    resolution: None,
-                    external: false,
-                    rollback: if local_sha.is_some() && action == OperationAction::Generate {
-                        RollbackAction::RestoreBackup
-                    } else {
-                        RollbackAction::RemoveCreated
-                    },
-                    external_parent_identity: None,
-                });
-                prepared.push(crate::models::PreparedFile {
-                    operation_id,
-                    destination: artifact.destination.clone(),
-                    bytes: artifact.content.as_bytes().to_vec(),
-                    expected_sha256: artifact.expected_sha256.clone(),
-                });
+                append_maintenance_image_client_config_operations(
+                    std::slice::from_ref(&artifact),
+                    &mut operations,
+                    &mut prepared,
+                    &lock,
+                    &root,
+                )
+                .map_err(command_error)?;
                 generated_artifacts.push(artifact);
             } else if let Some(previous) = lock.files.iter().find(|file| {
                 file.path == ".hoi4-setup/image_generation.json"
                     && file.component_id == "image_generation.config"
                     && !file.external
             }) {
+                operations.retain(|operation| {
+                    operation.external || operation.destination != previous.path
+                });
+                prepared.retain(|file| file.destination != previous.path);
                 let path = safe_join(&root, &previous.path).map_err(command_error)?;
                 let local_sha = if path.is_file() {
                     Some(sha256_file(&path).map_err(command_error)?)
@@ -10025,6 +10347,7 @@ fn build_maintenance_plan_blocking(
         optional_workflows,
         portrait_pipeline: Some(portrait_pipeline),
         image_generation: selected_image_generation,
+        live_testing: selected_live_testing,
         operations,
         conflicts,
         external_actions,
@@ -10645,6 +10968,7 @@ mod tests {
             },
             signing: None,
             coding_environments: Vec::new(),
+            live_testing: None,
             image_generation: Some(serde_json::json!({
                 "default_provider": "openai_api",
                 "providers": [{
@@ -10783,6 +11107,376 @@ mod tests {
     }
 
     #[test]
+    fn many_image_providers_use_a_bounded_skill_and_complete_managed_reference() {
+        let manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+        ))
+        .unwrap();
+        let providers = manifest.image_generation.as_ref().unwrap()["providers"]
+            .as_array()
+            .unwrap();
+        let image = ImageGenerationSelection {
+            primary_provider: "openai_api".into(),
+            additional_providers: providers
+                .iter()
+                .filter_map(|row| row["id"].as_str())
+                .filter(|id| *id != "openai_api" && *id != "none")
+                .map(str::to_owned)
+                .collect(),
+            ..Default::default()
+        };
+        let skill = format!("---\nname: bounded\ndescription: fixture\n---\n{}\n<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:START -->\nold\n<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:END -->\n", "x".repeat(56_800));
+        let adapted = adapt_image_generation_guidance(skill.as_bytes(), &manifest, &image).unwrap();
+        assert!(adapted.len() <= SKILL_BYTE_LIMIT);
+        assert!(String::from_utf8(adapted)
+            .unwrap()
+            .contains(IMAGE_GUIDANCE_REFERENCE));
+        let reference = image_generation_guidance_artifact(&manifest, &image)
+            .unwrap()
+            .unwrap();
+        for id in std::iter::once(&image.primary_provider).chain(image.additional_providers.iter())
+        {
+            assert!(reference.content.contains(&format!("`{id}`")), "{id}");
+        }
+        assert!(reference.content.contains("one image per call"));
+        assert!(reference.content.contains("alpha below 255"));
+        assert!(reference.content.contains("If unavailable:"));
+        assert!(reference.content.contains("output_path:"));
+        let root = tempfile::tempdir().unwrap();
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        lock.files.clear();
+        let mut operations = vec![];
+        let mut prepared = vec![];
+        append_maintenance_image_client_config_operations(
+            std::slice::from_ref(&reference),
+            &mut operations,
+            &mut prepared,
+            &lock,
+            root.path(),
+        )
+        .unwrap();
+        assert_eq!(operations[0].action, OperationAction::Generate);
+        assert_eq!(operations[0].component_id, "image_generation.guidance");
+        assert_eq!(operations[0].rollback, RollbackAction::RemoveCreated);
+        assert_eq!(prepared[0].bytes, reference.content.as_bytes());
+        let mut baseline: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let mut file = baseline.files[0].clone();
+        file.path = IMAGE_GUIDANCE_REFERENCE.into();
+        file.component_id = reference.component_id.clone();
+        file.external = false;
+        file.ownership = Ownership::Generated;
+        file.source_path = format!("generated:{IMAGE_GUIDANCE_REFERENCE}");
+        file.source_sha256 = reference.expected_sha256.clone();
+        file.installed_sha256 = reference.expected_sha256.clone();
+        file.source_size = Some(reference.content.len() as u64);
+        file.installed_size = file.source_size;
+        file.generated_content = Some(reference.content.clone());
+        baseline.files = vec![file];
+        std::fs::create_dir_all(root.path().join(".tools/image_generation")).unwrap();
+        std::fs::write(
+            root.path().join(IMAGE_GUIDANCE_REFERENCE),
+            reference.content.as_bytes(),
+        )
+        .unwrap();
+        let replacement = image_generation_guidance_artifact(
+            &manifest,
+            &ImageGenerationSelection {
+                primary_provider: "none".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .unwrap();
+        append_maintenance_image_client_config_operations(
+            std::slice::from_ref(&replacement),
+            &mut operations,
+            &mut prepared,
+            &baseline,
+            root.path(),
+        )
+        .unwrap();
+        assert_eq!(operations.len(), 1);
+        assert_eq!(operations[0].action, OperationAction::Generate);
+        assert_eq!(operations[0].rollback, RollbackAction::RestoreBackup);
+        assert_eq!(prepared[0].bytes, replacement.content.as_bytes());
+        let removal =
+            crate::transaction::managed_removal_operations(&baseline, root.path()).unwrap();
+        assert_eq!(removal[0].action, OperationAction::DeleteManaged);
+        std::fs::write(
+            root.path().join(IMAGE_GUIDANCE_REFERENCE),
+            "user modification",
+        )
+        .unwrap();
+        let preservation =
+            crate::transaction::managed_removal_operations(&baseline, root.path()).unwrap();
+        assert_eq!(preservation[0].action, OperationAction::Skip);
+        assert_eq!(preservation[0].local_state, LocalState::Modified);
+    }
+
+    #[test]
+    fn generated_client_recomposition_verifies_baseline_and_replaces_old_repair_operation() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".codex")).unwrap();
+        let destination = ".codex/config.toml";
+        let baseline = b"custom = 42\n[mcp_servers.unrelated]\ncommand='safe'\n[mcp_servers.hoi4-live]\ncommand='old'\n";
+        std::fs::write(root.path().join(destination), baseline).unwrap();
+        let manifest = image_generation_test_manifest();
+        let image = ImageGenerationSelection {
+            primary_provider: "openai_api".into(),
+            ..Default::default()
+        };
+        let environments = CodingEnvironmentSelection {
+            primary: "codex".into(),
+            additional: vec![],
+        };
+        let live = LiveTestingSelection {
+            linux_ready: true,
+            ssh_host: "hoi4-linux".into(),
+            ..Default::default()
+        };
+        let artifacts = image_client_config_artifacts(
+            root.path(),
+            &manifest,
+            &image,
+            &environments,
+            &[],
+            &live,
+        )
+        .unwrap();
+        let artifact = artifacts
+            .iter()
+            .find(|artifact| artifact.destination == destination)
+            .unwrap();
+        let incoming = artifact.content.as_bytes();
+        assert!(artifact.content.contains("unrelated"));
+        assert!(artifact.content.contains("custom = 42"));
+        assert!(artifact.content.contains("clausewitz_linux"));
+        assert!(artifact.content.contains("hoi4_image_openai_api"));
+        assert!(!artifact.content.contains("hoi4-live"));
+        validate_generated_maintenance_content(
+            destination,
+            baseline,
+            incoming,
+            &sha256_bytes(baseline),
+        )
+        .unwrap();
+        assert!(validate_generated_maintenance_content(
+            destination,
+            b"corrupt",
+            incoming,
+            &sha256_bytes(baseline)
+        )
+        .is_err());
+        assert!(validate_generated_maintenance_content(
+            "README.md",
+            baseline,
+            incoming,
+            &sha256_bytes(baseline)
+        )
+        .is_err());
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let mut file = lock.files[0].clone();
+        file.path = destination.into();
+        file.external = false;
+        file.component_id = artifact.component_id.clone();
+        file.source_path = format!("generated:{destination}");
+        file.source_sha256 = sha256_bytes(baseline);
+        file.source_size = Some(baseline.len() as u64);
+        file.installed_sha256 = sha256_bytes(baseline);
+        file.installed_size = Some(baseline.len() as u64);
+        file.ownership = Ownership::Merged;
+        file.generated_content = Some(String::from_utf8(baseline.to_vec()).unwrap());
+        lock.files = vec![file];
+        let mut operations = crate::transaction::repair_operations(&lock, root.path()).unwrap();
+        assert_eq!(operations.len(), 1);
+        let mut prepared = vec![PreparedFile {
+            operation_id: operations[0].id.clone(),
+            destination: destination.into(),
+            bytes: baseline.to_vec(),
+            expected_sha256: sha256_bytes(baseline),
+        }];
+        append_maintenance_image_client_config_operations(
+            &artifacts,
+            &mut operations,
+            &mut prepared,
+            &lock,
+            root.path(),
+        )
+        .unwrap();
+        assert_eq!(
+            operations
+                .iter()
+                .filter(|operation| operation.destination == destination)
+                .count(),
+            1
+        );
+        assert_eq!(
+            prepared
+                .iter()
+                .filter(|file| file.destination == destination)
+                .count(),
+            1
+        );
+        assert_eq!(operations[0].action, OperationAction::Generate);
+        assert_eq!(operations[0].rollback, RollbackAction::RestoreBackup);
+        assert_eq!(prepared[0].bytes, incoming);
+        lock.files[0].preserved_local = true;
+        append_maintenance_image_client_config_operations(
+            &artifacts,
+            &mut operations,
+            &mut prepared,
+            &lock,
+            root.path(),
+        )
+        .unwrap();
+        assert_eq!(operations.len(), 1);
+        assert_eq!(operations[0].action, OperationAction::Skip);
+        assert_eq!(operations[0].resolution.as_deref(), Some("review_required"));
+    }
+
+    #[test]
+    fn maintenance_live_config_changes_are_reviewed_and_reversible() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".codex")).unwrap();
+        let destination = ".codex/config.toml";
+        std::fs::write(root.path().join(destination), "custom = 42\n").unwrap();
+        let manifest = image_generation_test_manifest();
+        let image = ImageGenerationSelection {
+            primary_provider: "openai_api".into(),
+            ..Default::default()
+        };
+        let environments = CodingEnvironmentSelection {
+            primary: "codex".into(),
+            additional: vec![],
+        };
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        lock.files.clear();
+        for live in [
+            LiveTestingSelection {
+                linux_ready: true,
+                ssh_host: "hoi4-linux".into(),
+                ..Default::default()
+            },
+            LiveTestingSelection {
+                provider: "none".into(),
+                ..Default::default()
+            },
+            LiveTestingSelection {
+                linux_ready: true,
+                ssh_host: "hoi4-linux".into(),
+                ..Default::default()
+            },
+        ] {
+            let artifacts = image_client_config_artifacts(
+                root.path(),
+                &manifest,
+                &image,
+                &environments,
+                &[],
+                &live,
+            )
+            .unwrap();
+            let mut operations = vec![];
+            let mut prepared = vec![];
+            append_maintenance_image_client_config_operations(
+                &artifacts,
+                &mut operations,
+                &mut prepared,
+                &lock,
+                root.path(),
+            )
+            .unwrap();
+            let operation = operations
+                .iter()
+                .find(|op| op.destination == destination)
+                .unwrap();
+            assert_eq!(operation.action, OperationAction::Skip);
+            assert_eq!(operation.resolution.as_deref(), Some("review_required"));
+            assert_eq!(operation.rollback, RollbackAction::RestoreBackup);
+            let incoming = prepared
+                .iter()
+                .find(|file| file.destination == destination)
+                .unwrap();
+            let text = std::str::from_utf8(&incoming.bytes).unwrap();
+            assert!(text.contains("custom = 42"));
+            assert_eq!(text.contains("clausewitz_linux"), live.provider != "none");
+            std::fs::write(root.path().join(destination), &incoming.bytes).unwrap();
+        }
+    }
+
+    #[test]
+    fn live_routes_are_recomposed_only_for_selected_coding_clients() {
+        let manifest = image_generation_test_manifest();
+        let selection = ImageGenerationSelection {
+            primary_provider: "openai_api".into(),
+            ..Default::default()
+        };
+        let live = LiveTestingSelection {
+            linux_ready: true,
+            ssh_host: "hoi4-linux".into(),
+            ..Default::default()
+        };
+        for (destination, environment) in [
+            (".mcp.json", "claude_code"),
+            (".cursor/mcp.json", "cursor"),
+            (".qoder/mcp.json", "qoder"),
+            ("opencode.json", "opencode"),
+            (".codex/config.toml", "codex"),
+        ] {
+            let source = if destination.ends_with(".toml") {
+                b"[mcp_servers.unrelated]\ncommand='safe'\n[mcp_servers.hoi4-live]\ncommand='old'\n"
+                    .to_vec()
+            } else {
+                let key = if destination == "opencode.json" {
+                    "mcp"
+                } else {
+                    "mcpServers"
+                };
+                serde_json::to_vec(&serde_json::json!({key:{"unrelated":{"command":"safe"},"hoi4-live":{"command":"old"}},"custom":42})).unwrap()
+            };
+            for selected in [true, false] {
+                let environments = CodingEnvironmentSelection {
+                    primary: if selected {
+                        environment
+                    } else if environment == "codex" {
+                        "claude_code"
+                    } else {
+                        "codex"
+                    }
+                    .into(),
+                    additional: vec![],
+                };
+                let bytes = adapt_image_generation_client_config(
+                    &source,
+                    destination,
+                    &manifest,
+                    &selection,
+                    &environments,
+                    Path::new("C:/mods/example"),
+                    &live,
+                )
+                .unwrap();
+                let text = String::from_utf8(bytes).unwrap();
+                assert_eq!(text.contains("clausewitz_linux"), selected, "{destination}");
+                assert!(!text.contains("hoi4-live"));
+                assert!(text.contains("unrelated"));
+            }
+        }
+    }
+
+    #[test]
     fn image_provider_adaptation_replaces_markers_and_removes_old_client_routes() {
         let mut manifest = image_generation_test_manifest();
         let providers = manifest
@@ -10807,7 +11501,7 @@ mod tests {
         let guided = adapt_image_generation_guidance(b"Before\n<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:START -->\nplaceholder\n<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:END -->\nAfter", &manifest, &selection).unwrap();
         let guided = String::from_utf8(guided).unwrap();
         assert!(guided.contains("Tools: generate: `generate_image`"));
-        assert!(guided.contains("output_path → not supported by this tool"));
+        assert!(guided.contains("output_path: not supported by this tool"));
         assert!(guided.contains("Maximum image area: 8294400 pixels."));
         assert!(guided.contains("one image per call"));
         assert!(guided.contains("at least one pixel with alpha below 255"));
@@ -10825,6 +11519,10 @@ mod tests {
             &selection,
             &environments,
             Path::new("C:/mods/example"),
+            &LiveTestingSelection {
+                provider: "none".into(),
+                ..Default::default()
+            },
         )
         .unwrap();
         let adapted: Value = serde_json::from_slice(&adapted).unwrap();
@@ -10847,6 +11545,10 @@ mod tests {
                 additional: vec![],
             },
             Path::new("C:/mods/example"),
+            &LiveTestingSelection {
+                provider: "none".into(),
+                ..Default::default()
+            },
         )
         .unwrap();
         let adapted: toml::Value = std::str::from_utf8(&adapted).unwrap().parse().unwrap();
@@ -10875,6 +11577,10 @@ mod tests {
                     additional: vec![],
                 },
                 Path::new("C:/mods/example"),
+                &LiveTestingSelection {
+                    provider: "none".into(),
+                    ..Default::default()
+                },
             )
             .unwrap();
             let adapted: Value = serde_json::from_slice(&adapted).unwrap();
@@ -10896,6 +11602,10 @@ mod tests {
                 additional: vec![],
             },
             Path::new("C:/mods/example"),
+            &LiveTestingSelection {
+                provider: "none".into(),
+                ..Default::default()
+            },
         )
         .unwrap();
         let adapted: Value = serde_json::from_slice(&adapted).unwrap();
@@ -10924,7 +11634,7 @@ mod tests {
             &no_provider,
             &environments,
             Path::new("C:/mods/example"),
-        )
+        &LiveTestingSelection { provider: "none".into(), ..Default::default() })
         .unwrap();
         let adapted: Value = serde_json::from_slice(&adapted).unwrap();
         assert_eq!(adapted["mcpServers"]["user_tool"]["command"], "keep");
@@ -10995,6 +11705,10 @@ mod tests {
             &selection,
             &environments,
             &windows_paths,
+            &LiveTestingSelection {
+                provider: "none".into(),
+                ..Default::default()
+            },
         )
         .unwrap();
         assert!(windows_artifacts.is_empty());
@@ -11008,6 +11722,10 @@ mod tests {
             &selection,
             &environments,
             &macos_paths,
+            &LiveTestingSelection {
+                provider: "none".into(),
+                ..Default::default()
+            },
         )
         .unwrap();
         assert_eq!(
@@ -11032,6 +11750,10 @@ mod tests {
             &selection,
             &environments,
             &macos_paths,
+            &LiveTestingSelection {
+                provider: "none".into(),
+                ..Default::default()
+            },
         )
         .unwrap();
         let lock: InstallationLock = serde_json::from_str(include_str!(
@@ -11066,6 +11788,10 @@ mod tests {
                 &selection,
                 &environments,
                 &macos_paths,
+                &LiveTestingSelection {
+                    provider: "none".into(),
+                    ..Default::default()
+                },
             )
             .unwrap();
             append_maintenance_image_client_config_operations(
@@ -11204,7 +11930,10 @@ mod tests {
         assert!(message.contains("exit=1"));
         assert!(!message.contains("private-test-value"));
         assert!(message.contains("REDACTED"));
-        let message = mcp_bootstrap_failure_details(Ok(output("界".repeat(3000))));
+        let message = mcp_bootstrap_failure_details(Ok(output(
+            "ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¾ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢"
+                .repeat(3000),
+        )));
         assert!(message.len() <= 2048);
         assert!(message.ends_with("..."));
         for padding in 1880..2048 {
@@ -12057,7 +12786,10 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
             .find(|action| action.component_id == LIVE_TOOLS_COMPONENT_ID)
             .expect("the HOI4 Live Tools bootstrap action must be plan-visible");
 
-        assert_eq!(action.arguments, vec![LIVE_TOOLS_SCRIPT, "--quiet"]);
+        assert_eq!(
+            action.arguments,
+            vec![LIVE_TOOLS_SCRIPT, "--quiet", "--register", "none"]
+        );
         assert_ne!(action.network_access, "not_declared");
         assert!(!action.expected_writes.is_empty());
         assert_eq!(action.privilege, "current_user");
@@ -12429,6 +13161,42 @@ developer_instructions = "Work on the named files."
     fn login_url_opener_rejects_untrusted_urls_before_process_resolution() {
         let error = open_codex_login_url("javascript:alert(1)".into()).unwrap_err();
         assert!(error.contains("invalid HTTPS authentication URL"));
+    }
+
+    #[test]
+    fn published_provider_documentation_and_live_guides_are_exactly_allowlisted() {
+        let manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+        ))
+        .unwrap();
+        for catalog in [
+            manifest.image_generation.as_ref(),
+            manifest.live_testing.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            for row in catalog["providers"].as_array().unwrap() {
+                if let Some(url) = row["documentation_url"].as_str() {
+                    assert!(is_allowed_external_url(url), "{url}");
+                    assert!(!is_allowed_external_url(&format!("{url}?unreviewed=1")));
+                    assert!(!is_allowed_external_url(&format!("{url}#unreviewed")));
+                }
+            }
+        }
+        for url in ["https://github.com/smerss/Clausewitz-MCP", "https://github.com/klimPaskov/hoi4-mod-setup/blob/main/docs/LIVE_TESTING_LINUX.md", "https://github.com/klimPaskov/Agentic-HOI4-Modding/blob/main/.claude/skills/hoi4-live-playtest/references/setup.md", "https://github.com/klimPaskov/Agentic-HOI4-Modding/blob/main/.claude/skills/hoi4-live-playtest/references/hoi4-live-tools.md"] {
+            assert!(is_allowed_external_url(url));
+        }
+        for url in [
+            "javascript:alert(1)",
+            "https://github.com.evil.example/smerss/Clausewitz-MCP",
+            "https://github.com/other/Clausewitz-MCP",
+            "https://user:password@github.com/smerss/Clausewitz-MCP",
+            "https://github.com/smerss/Clausewitz-MCP/issues",
+            "http://github.com/smerss/Clausewitz-MCP",
+        ] {
+            assert!(!is_allowed_external_url(url));
+        }
     }
 
     #[test]
@@ -13748,6 +14516,7 @@ developer_instructions = "Work on the named files."
                 optional_workflows: BTreeMap::new(),
                 portrait_pipeline: None,
                 image_generation: None,
+                live_testing: None,
                 operations: vec![agents, readme, skill, subagent],
                 conflicts: vec![
                     PlanConflict {

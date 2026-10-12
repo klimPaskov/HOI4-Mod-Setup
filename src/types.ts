@@ -6,6 +6,7 @@ export type ScreenId =
   | "findings"
   | "environments"
   | "image-generation"
+  | "live-testing"
   | "components"
   | "workflows"
   | "mesh"
@@ -490,6 +491,33 @@ export interface ManifestComponentPreview {
   update: { strategy: string; remove_obsolete: boolean; preserve_local_additions: boolean };
 }
 
+export interface LiveTestingSelection {
+  provider: string;
+  linux_ready: boolean;
+  wsl_distribution: string;
+  ssh_host: string;
+}
+
+export interface LiveTestingProviderDefinition {
+  id: string;
+  display_name: string;
+  description: string;
+  requirements: string[];
+  documentation_url?: string | null;
+  supported_platforms: string[];
+  supported_coding_environments: string[];
+  experimental: boolean;
+  route: { kind: string; server_id?: string | null; component_id?: string | null; source_repository?: string | null; source_revision?: string | null };
+  guidance: string[];
+  supported_game_version?: string | null;
+  attribution?: { author: string; url: string; license: string; license_url: string } | null;
+}
+
+export interface LiveTestingCatalog {
+  default_provider: string;
+  providers: LiveTestingProviderDefinition[];
+}
+
 export interface SourceManifestPreview {
   schema_version: string;
   manifest_id: string;
@@ -499,6 +527,7 @@ export interface SourceManifestPreview {
   profiles: Array<{ id: string; display_name: string; components: string[]; default: boolean }>;
   coding_environments?: CodingEnvironmentDefinition[];
   image_generation?: ImageGenerationCatalog;
+  live_testing?: LiveTestingCatalog;
   local_source?: string | null;
 }
 
@@ -624,6 +653,7 @@ export interface InstallationPlan {
     mcp_registered: boolean;
   } | null;
   image_generation?: ImageGenerationSelection | null;
+  live_testing?: LiveTestingSelection | null;
   operations: InstallationPlanOperation[];
   conflicts: InstallationPlanConflict[];
   external_actions?: InstallationExternalAction[];
@@ -710,6 +740,8 @@ export interface WizardState {
   primaryCodingEnvironment: CodingEnvironmentId;
   additionalCodingEnvironments: CodingEnvironmentId[];
   imageGeneration: ImageGenerationSelection;
+  liveTesting: LiveTestingSelection;
+  liveTestingVisited?: boolean;
   imageGenerationCredentialDrafts: Record<string, string>;
   installedCodingEnvironments?: CodingEnvironmentId[];
   selectedComponents: string[];

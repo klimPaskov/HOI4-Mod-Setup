@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -102,9 +103,7 @@ def validate_json_examples() -> None:
     manifest = json.loads(
         (PLANNING / "source-manifest" / "hoi4-mod-setup.manifest.json").read_text(encoding="utf-8")
     )
-    manifest_schema = json.loads(
-        (PLANNING / "schemas" / "remote-manifest.schema.json").read_text(encoding="utf-8")
-    )
+    manifest_schema = load_manifest_schema(manifest)
     errors = sorted(
         Draft202012Validator(manifest_schema).iter_errors(manifest),
         key=lambda error: list(error.path),
@@ -112,6 +111,19 @@ def validate_json_examples() -> None:
     if errors:
         formatted = "; ".join(error.message for error in errors[:5])
         fail(f"canonical source manifest does not validate: {formatted}")
+
+
+def load_manifest_schema(manifest: dict) -> dict:
+    version = manifest.get("schema_version")
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        fail("canonical source manifest has an unsupported schema_version")
+    schema_name = {
+        "3": "remote-manifest.schema.json",
+        "4": "remote-manifest.v4.schema.json",
+    }.get(version.split(".")[0])
+    if schema_name is None:
+        fail("canonical source manifest has an unsupported schema_version")
+    return json.loads((PLANNING / "schemas" / schema_name).read_text(encoding="utf-8"))
 
 
 def validate_schema_contracts() -> None:
