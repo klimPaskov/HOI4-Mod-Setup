@@ -26,12 +26,54 @@
   ],
   "allOf": [
     {
-      "if": { "properties": { "ai_provider": { "enum": ["codex", "claude_account"] } } },
-      "then": { "properties": { "ai_endpoint": { "type": ["null", "string"], "maxLength": 0 } } }
+      "if": {
+        "properties": {
+          "ai_provider": {
+            "enum": [
+              "codex",
+              "claude_account"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "ai_endpoint": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "maxLength": 0
+          }
+        }
+      }
     },
     {
-      "if": { "properties": { "ai_provider": { "enum": ["claude", "kimi", "glm", "deepseek", "local", "custom"] } } },
-      "then": { "required": ["ai_endpoint"], "properties": { "ai_endpoint": { "type": "string", "minLength": 1 } } }
+      "if": {
+        "properties": {
+          "ai_provider": {
+            "enum": [
+              "claude",
+              "kimi",
+              "glm",
+              "deepseek",
+              "local",
+              "custom"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "ai_endpoint"
+        ],
+        "properties": {
+          "ai_endpoint": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
     }
   ],
   "properties": {
@@ -42,38 +84,74 @@
       "type": "string"
     },
     "script_prefix": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "pattern": "^[a-z_][a-z0-9_]{0,63}$"
     },
     "primary_namespace": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "pattern": "^[a-z_][a-z0-9_]{0,63}$"
     },
     "ai_provider": {
-      "enum": ["codex", "claude_account", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+      "enum": [
+        "codex",
+        "claude_account",
+        "claude",
+        "kimi",
+        "glm",
+        "deepseek",
+        "local",
+        "custom"
+      ]
     },
     "ai_model": {
       "type": "string",
       "minLength": 1
     },
     "ai_reasoning_effort": {
-      "enum": ["low", "medium", "high", "xhigh", "max"]
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
     },
     "ai_endpoint": {
-      "type": ["string", "null"]
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "ai_optimization_profile": {
       "type": "string",
       "minLength": 1
     },
     "primary_coding_environment": {
-      "enum": ["codex", "claude_code", "cursor", "qoder", "opencode"]
+      "enum": [
+        "codex",
+        "claude_code",
+        "cursor",
+        "qoder",
+        "opencode"
+      ]
     },
     "additional_coding_environments": {
       "type": "array",
       "uniqueItems": true,
       "items": {
-        "enum": ["codex", "claude_code", "cursor", "qoder", "opencode"]
+        "enum": [
+          "codex",
+          "claude_code",
+          "cursor",
+          "qoder",
+          "opencode"
+        ]
       }
     },
     "flatten_chat_sources": {
@@ -264,6 +342,9 @@
     "portrait_pipeline": {
       "$ref": "#/$defs/portrait_pipeline"
     },
+    "image_generation": {
+      "$ref": "#/$defs/image_generation"
+    },
     "local_modifications": {
       "type": "array",
       "items": {
@@ -303,7 +384,10 @@
       "not": {}
     },
     "codex_analysis": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": false,
       "required": [
         "engine",
@@ -319,7 +403,11 @@
       ],
       "properties": {
         "engine": {
-          "enum": ["codex_app_server", "claude_code_cli", "provider_api"]
+          "enum": [
+            "codex_app_server",
+            "claude_code_cli",
+            "provider_api"
+          ]
         },
         "analysis_id": {
           "type": "string",
@@ -349,20 +437,50 @@
           "format": "date-time"
         },
         "auth_mode": {
-          "enum": ["chatgpt", "claude_account", "api_key", "local_endpoint"]
+          "enum": [
+            "chatgpt",
+            "claude_account",
+            "api_key",
+            "local_endpoint"
+          ]
         },
         "provider": {
-          "enum": ["codex", "claude_account", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+          "enum": [
+            "codex",
+            "claude_account",
+            "claude",
+            "kimi",
+            "glm",
+            "deepseek",
+            "local",
+            "custom"
+          ]
         },
         "model": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "reasoning_effort": {
-          "type": ["string", "null"],
-          "enum": ["low", "medium", "high", "xhigh", "max", null]
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            null
+          ]
         },
         "optimization_profile": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "account_identity_persisted": {
           "const": false
@@ -390,6 +508,9 @@
           "pattern": "^[0-9a-f]{64}$"
         }
       }
+    },
+    "live_testing": {
+      "$ref": "#/$defs/live_testing"
     }
   },
   "$defs": {
@@ -411,18 +532,109 @@
         "mcp_registered"
       ],
       "properties": {
-        "enabled": { "type": "boolean" },
-        "provider": { "enum": ["cloud", "local", "runpod", "disabled"] },
-        "provider_status": { "type": "string", "minLength": 1 },
-        "workflow_repository": { "type": "string", "format": "uri" },
-        "workflow_branch": { "type": "string", "minLength": 1 },
-        "workflow_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-        "preferred_workflow": { "enum": ["source", "processing_only"] },
-        "local_comfyui_root": { "type": "string" },
-        "local_server_url": { "type": "string" },
-        "runpod_url": { "type": "string" },
-        "runpod_workspace": { "type": "string" },
-        "mcp_registered": { "type": "boolean" }
+        "enabled": {
+          "type": "boolean"
+        },
+        "provider": {
+          "enum": [
+            "cloud",
+            "local",
+            "runpod",
+            "disabled"
+          ]
+        },
+        "provider_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflow_repository": {
+          "type": "string",
+          "format": "uri"
+        },
+        "workflow_branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflow_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "preferred_workflow": {
+          "enum": [
+            "source",
+            "processing_only"
+          ]
+        },
+        "local_comfyui_root": {
+          "type": "string"
+        },
+        "local_server_url": {
+          "type": "string"
+        },
+        "runpod_url": {
+          "type": "string"
+        },
+        "runpod_workspace": {
+          "type": "string"
+        },
+        "mcp_registered": {
+          "type": "boolean"
+        }
+      }
+    },
+    "image_generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary_provider",
+        "additional_providers",
+        "route_settings",
+        "credential_references"
+      ],
+      "properties": {
+        "primary_provider": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "additional_providers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "route_settings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        },
+        "credential_references": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^credential://image_generation_api_key/[a-z0-9_-]{1,64}$"
+          }
+        },
+        "installed_package_tree_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "installed_package_lock_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        }
       }
     },
     "wiki_metadata": {
@@ -435,10 +647,17 @@
       ],
       "properties": {
         "snapshot_marker": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "required_media_policy": {
-          "enum": ["all_declared", "referenced_only", "none"]
+          "enum": [
+            "all_declared",
+            "referenced_only",
+            "none"
+          ]
         },
         "source_status": {
           "type": "string",
@@ -454,7 +673,9 @@
         },
         "notes": {
           "type": "array",
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -561,6 +782,41 @@
             "external_launcher",
             "application_data"
           ]
+        }
+      }
+    },
+    "live_testing": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "linux_ready",
+        "wsl_distribution",
+        "ssh_host"
+      ],
+      "properties": {
+        "provider": {
+          "enum": [
+            "clausewitz_mcp",
+            "hoi4_live_tools",
+            "none"
+          ]
+        },
+        "linux_ready": {
+          "type": "boolean"
+        },
+        "wsl_distribution": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_.-]*$"
+        },
+        "ssh_host": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^([A-Za-z0-9][A-Za-z0-9_.-]*)?$"
         }
       }
     }

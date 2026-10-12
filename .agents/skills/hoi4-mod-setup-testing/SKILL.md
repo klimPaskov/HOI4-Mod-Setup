@@ -299,6 +299,12 @@ without starting a helper process.
 
 ## Release gates
 
+Repository validation selects the supported remote manifest schema from the
+canonical fixture's schema version. Keep legacy v3 and provider-contract v4
+selection and unsupported-version rejection covered by `pnpm test:manifest`.
+Browser tests import scenario names from `src/documentation-scenarios.ts`;
+keep that module independent of bundled JSON and browser-only fixture code.
+
 A release is blocked by:
 
 - failing schema examples
@@ -357,3 +363,5 @@ Vite cold module compilation is not charged to the first wizard assertion.
 ## Update this skill when
 
 Update this skill when test commands, fixture layout, fake interfaces, property invariants, fault injection, platform matrix, performance thresholds, accessibility checks, or release gates change.
+
+Provider tests cover Windows and macOS planning, selected-client registration, deferred Linux setup, provider replacement and removal, preserved custom routes, rollback, and incomplete optional runtime outcomes. Browser coverage uses synthetic app states and blank credential fields; it does not establish real provider or game behavior.

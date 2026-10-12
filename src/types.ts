@@ -5,6 +5,8 @@ export type ScreenId =
   | "scan"
   | "findings"
   | "environments"
+  | "image-generation"
+  | "live-testing"
   | "components"
   | "workflows"
   | "mesh"
@@ -33,6 +35,60 @@ export interface CodingEnvironmentDefinition {
   description?: string | null;
   default_primary?: boolean;
   open_command?: string | null;
+}
+
+export interface ImageGenerationProviderDefinition {
+  id: string;
+  display_name: string;
+  description: string;
+  availability: "supported" | "conditional" | "manual_only" | string;
+  requirements: string[];
+  good_for: string[];
+  cost_summary: string;
+  documentation_url?: string | null;
+  models: string[];
+  supported_coding_environments: CodingEnvironmentId[];
+  route: {
+    kind: "stdio_adapter" | "local_package" | "remote_http" | "native" | "manual" | string;
+    auth_method: string;
+    server_id?: string | null;
+    url?: string | null;
+    component_id?: string | null;
+    runtime_entry?: string | null;
+    api_protocol?: string | null;
+    api_base_url?: string | null;
+    default_model?: string | null;
+    supported_models?: string[];
+    tool_names?: Record<string, string>;
+    tool_arguments?: Record<string, string | null>;
+    credential_fields?: Array<{ id: string; display_name: string; environment_name: string }>;
+    requires_primary_coding_environment?: CodingEnvironmentId | null;
+  };
+  capabilities: {
+    reference_images?: { supported: boolean; max_count?: number | null; notes?: string };
+    image_edits?: boolean;
+    background_removal?: boolean;
+    transparent_background?: { native?: boolean; notes?: string };
+    size_limits?: { accepts_dimensions?: boolean; maximum_width_px?: number | null; maximum_height_px?: number | null; maximum_pixels?: number | null; notes?: string };
+    one_image_per_call?: boolean;
+    alpha_verification?: string;
+    fallback_if_no_alpha?: string;
+    fallback_if_no_edits?: string;
+  };
+}
+
+export interface ImageGenerationCatalog {
+  default_provider: string;
+  providers: ImageGenerationProviderDefinition[];
+}
+
+export interface ImageGenerationSelection {
+  primary_provider: string;
+  additional_providers: string[];
+  route_settings: Record<string, Record<string, string>>;
+  credential_references: Record<string, string>;
+  installed_package_tree_sha256?: string | null;
+  installed_package_lock_sha256?: string | null;
 }
 
 export interface CodingEnvironmentSelection {
@@ -435,6 +491,33 @@ export interface ManifestComponentPreview {
   update: { strategy: string; remove_obsolete: boolean; preserve_local_additions: boolean };
 }
 
+export interface LiveTestingSelection {
+  provider: string;
+  linux_ready: boolean;
+  wsl_distribution: string;
+  ssh_host: string;
+}
+
+export interface LiveTestingProviderDefinition {
+  id: string;
+  display_name: string;
+  description: string;
+  requirements: string[];
+  documentation_url?: string | null;
+  supported_platforms: string[];
+  supported_coding_environments: string[];
+  experimental: boolean;
+  route: { kind: string; server_id?: string | null; component_id?: string | null; source_repository?: string | null; source_revision?: string | null };
+  guidance: string[];
+  supported_game_version?: string | null;
+  attribution?: { author: string; url: string; license: string; license_url: string } | null;
+}
+
+export interface LiveTestingCatalog {
+  default_provider: string;
+  providers: LiveTestingProviderDefinition[];
+}
+
 export interface SourceManifestPreview {
   schema_version: string;
   manifest_id: string;
@@ -443,6 +526,8 @@ export interface SourceManifestPreview {
   components: ManifestComponentPreview[];
   profiles: Array<{ id: string; display_name: string; components: string[]; default: boolean }>;
   coding_environments?: CodingEnvironmentDefinition[];
+  image_generation?: ImageGenerationCatalog;
+  live_testing?: LiveTestingCatalog;
   local_source?: string | null;
 }
 
@@ -567,6 +652,8 @@ export interface InstallationPlan {
     runpod_workspace?: string;
     mcp_registered: boolean;
   } | null;
+  image_generation?: ImageGenerationSelection | null;
+  live_testing?: LiveTestingSelection | null;
   operations: InstallationPlanOperation[];
   conflicts: InstallationPlanConflict[];
   external_actions?: InstallationExternalAction[];
@@ -652,6 +739,10 @@ export interface WizardState {
   aiProfiles?: AiProviderProfile[];
   primaryCodingEnvironment: CodingEnvironmentId;
   additionalCodingEnvironments: CodingEnvironmentId[];
+  imageGeneration: ImageGenerationSelection;
+  liveTesting: LiveTestingSelection;
+  liveTestingVisited?: boolean;
+  imageGenerationCredentialDrafts: Record<string, string>;
   installedCodingEnvironments?: CodingEnvironmentId[];
   selectedComponents: string[];
   components: ComponentRow[];

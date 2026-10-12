@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, packageChatSources, pickChatSourcesFolder, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewChatSources, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, packageChatSources, pickChatSourcesFolder, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewChatSources, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
-import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPreview, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
+import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPreview, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
 
 const PHASES: Array<{ id: PhaseId; label: string }> = [
@@ -18,13 +18,13 @@ const PHASES: Array<{ id: PhaseId; label: string }> = [
 export interface CodingEnvironmentOption { id: CodingEnvironmentId; label: string; detail: string; defaultPrimary?: boolean }
 
 /** Used until the source manifest is loaded, and for manifests that predate
- * environment declarations. Claude Code is the canonical environment. */
+ * environment declarations. */
 export const CODING_ENVIRONMENTS: CodingEnvironmentOption[] = [
-  { id: "claude_code", label: "Claude Code", detail: "Canonical CLAUDE.md, skills, and agents in .claude, plus MCP", defaultPrimary: true },
-  { id: "codex", label: "Codex", detail: "AGENTS.md, the .agents/skills copy, generated .codex agents, and MCP" },
-  { id: "cursor", label: "Cursor", detail: "Generated .cursor agents, project settings, map, and MCP" },
-  { id: "qoder", label: "Qoder", detail: "Generated .qoder agents, project settings, map, and MCP" },
-  { id: "opencode", label: "OpenCode", detail: "Generated OpenCode agents, project config, map, and MCP" },
+  { id: "claude_code", label: "Claude Code", detail: "Project instructions, skills, agents, and MCP", defaultPrimary: true },
+  { id: "codex", label: "Codex", detail: "Project instructions, skills, agents, and MCP" },
+  { id: "cursor", label: "Cursor", detail: "Project instructions, skills, agents, and MCP" },
+  { id: "qoder", label: "Qoder", detail: "Project instructions, skills, agents, and MCP" },
+  { id: "opencode", label: "OpenCode", detail: "Project instructions, skills, agents, and MCP" },
 ];
 
 export const DEFAULT_PRIMARY_CODING_ENVIRONMENT: CodingEnvironmentId = "claude_code";
@@ -36,7 +36,7 @@ export function codingEnvironmentOptions(manifest?: SourceManifestPreview | null
   return declared.map((environment) => ({
     id: environment.id,
     label: environment.display_name,
-    detail: environment.description ?? CODING_ENVIRONMENTS.find((candidate) => candidate.id === environment.id)?.detail ?? "",
+    detail: CODING_ENVIRONMENTS.find((candidate) => candidate.id === environment.id)?.detail ?? "Project instructions, skills, agents, and MCP",
     defaultPrimary: environment.default_primary === true,
   }));
 }
@@ -98,7 +98,7 @@ const INITIAL_SCAN_PROGRESS: ScanProgress = {
 };
 
 const DEFAULT_COMPONENTS: ComponentRow[] = [
-  { id: "core.claude.instructions", title: "Project instructions", detail: "Canonical CLAUDE.md adapted to your mod", size: "—", selected: true, required: true },
+  { id: "core.claude.instructions", title: "Project instructions", detail: "Shared instructions adapted to your mod and selected clients", size: "—", selected: true, required: true },
   { id: "core.agents", title: "AGENTS.md", detail: "The same instructions for Codex and other clients", size: "—", selected: true, required: true },
   { id: "core.skills", title: "Skills", detail: "Current HOI4 workflow skills", size: "—", selected: true, required: true },
   { id: "core.subagents", title: "Subagents", detail: "Specialist agents with per-role model tiers", size: "—", selected: true, required: true },
@@ -274,8 +274,8 @@ export const initialState: WizardState = {
   projectPathsOverridden: false,
   projectPathStatus: "resolving",
   description: DEFAULT_DESCRIPTION,
-  sourceMode: "latest",
-  pinnedRef: "",
+  sourceMode: "pinned_release",
+  pinnedRef: "package-2026-10-12",
   aiProvider: "claude_account",
   aiModel: CLAUDE_HAIKU_MODEL,
   aiReasoningEffort: "high",
@@ -285,6 +285,9 @@ export const initialState: WizardState = {
   aiProfiles: undefined,
   primaryCodingEnvironment: DEFAULT_PRIMARY_CODING_ENVIRONMENT,
   additionalCodingEnvironments: [],
+  imageGeneration: { primary_provider: "gptimage", additional_providers: [], route_settings: {}, credential_references: {} },
+  liveTesting: { provider: "clausewitz_mcp", linux_ready: false, wsl_distribution: "", ssh_host: "" },
+  imageGenerationCredentialDrafts: {},
   installedCodingEnvironments: [],
   selectedComponents: DEFAULT_COMPONENTS.filter((component) => component.selected).map((component) => component.id),
   components: DEFAULT_COMPONENTS,
@@ -333,6 +336,8 @@ const SCREEN_PHASE: Record<ScreenId, PhaseId> = {
   scan: "review",
   findings: "review",
   environments: "components",
+  "image-generation": "components",
+  "live-testing": "integrations",
   components: "components",
   workflows: "integrations",
   mesh: "integrations",
@@ -354,6 +359,8 @@ const screenCopy: Record<ScreenId, { title: string; supporting?: string; status?
   scan: { title: "Scanning project", supporting: "Checking the mod's setup files.", status: { label: "Scanning", tone: "info" } },
   findings: { title: "Confirm scan findings", supporting: "Edit only the values that are wrong." },
   environments: { title: "Coding environments", supporting: "Choose the client that should be primary, then add any other clients you use." },
+  "live-testing": { title: "Live testing", supporting: "Choose how your coding clients can test the running game." },
+  "image-generation": { title: "Image generation", supporting: "Choose how your coding clients can create or edit mod artwork." },
   components: { title: "Choose what to install", supporting: "Recommended components are selected.", status: { label: "Recommended", tone: "info" } },
   workflows: { title: "Optional workflows", supporting: "These choices never block the core setup." },
   mesh: { title: "3D model workflow", supporting: "Connect Meshy.ai; provider charges may apply.", status: { label: "Key required", tone: "review" } },
@@ -389,7 +396,7 @@ export function detectedChatSourcesAvailable(findings: ScanFinding[]): boolean {
   return agents || count("skill.inventory") > 0 || count("subagent.inventory") > 0;
 }
 
-function managedInstallationDetails(findings: ScanFinding[]): { present: boolean; valid: boolean; componentIds: string[]; workflow3d: WorkflowState; superEvents: WorkflowState; meshKeyConfigured: boolean; chatSourcesAvailable: boolean; primaryCodingEnvironment: CodingEnvironmentId; additionalCodingEnvironments: CodingEnvironmentId[]; detectedCodingEnvironments: CodingEnvironmentId[]; portraitPipeline?: Partial<PortraitPipelineState> & { provider_status?: PortraitProviderStatus } } {
+function managedInstallationDetails(findings: ScanFinding[]): { present: boolean; valid: boolean; componentIds: string[]; workflow3d: WorkflowState; superEvents: WorkflowState; meshKeyConfigured: boolean; chatSourcesAvailable: boolean; primaryCodingEnvironment: CodingEnvironmentId; additionalCodingEnvironments: CodingEnvironmentId[]; detectedCodingEnvironments: CodingEnvironmentId[]; imageGeneration?: ImageGenerationSelection; liveTesting?: LiveTestingSelection; portraitPipeline?: Partial<PortraitPipelineState> & { provider_status?: PortraitProviderStatus } } {
   const detectedSources = detectedChatSourcesAvailable(findings);
   const environmentFinding = findings.find((candidate) => candidate.id === "coding.environments");
   let detectedCodingEnvironments: CodingEnvironmentId[] = [];
@@ -410,7 +417,7 @@ function managedInstallationDetails(findings: ScanFinding[]): { present: boolean
   const detectedPrimary: CodingEnvironmentId = detectedCodingEnvironments.length === 0 || detectedCodingEnvironments.includes(DEFAULT_PRIMARY_CODING_ENVIRONMENT) ? DEFAULT_PRIMARY_CODING_ENVIRONMENT : detectedCodingEnvironments[0];
   if (!finding) return { present: false, valid: false, componentIds: [], workflow3d: "not_selected", superEvents: "not_selected", meshKeyConfigured: false, chatSourcesAvailable: detectedSources, primaryCodingEnvironment: detectedPrimary, additionalCodingEnvironments: detectedCodingEnvironments.filter((id) => id !== detectedPrimary), detectedCodingEnvironments };
   try {
-    const value = JSON.parse(finding.value) as { present?: boolean; valid?: boolean; component_ids?: string[]; workflow_3d_state?: WorkflowState; workflow_super_events_state?: WorkflowState; workflow_3d_key_configured?: boolean; primary_coding_environment?: string; additional_coding_environments?: string[]; portrait_provider?: PortraitProviderId; portrait_provider_status?: PortraitProviderStatus; portrait_enabled?: boolean; portrait_workflow_commit?: string; portrait_preferred_workflow?: PortraitPipelineState["preferredWorkflow"]; portrait_mcp_registered?: boolean };
+    const value = JSON.parse(finding.value) as { present?: boolean; valid?: boolean; component_ids?: string[]; workflow_3d_state?: WorkflowState; workflow_super_events_state?: WorkflowState; workflow_3d_key_configured?: boolean; primary_coding_environment?: string; additional_coding_environments?: string[]; image_generation?: ImageGenerationSelection; live_testing?: LiveTestingSelection; portrait_provider?: PortraitProviderId; portrait_provider_status?: PortraitProviderStatus; portrait_enabled?: boolean; portrait_workflow_commit?: string; portrait_preferred_workflow?: PortraitPipelineState["preferredWorkflow"]; portrait_mcp_registered?: boolean };
     const installedComponents = new Set(value.component_ids ?? []);
     const recorded = [value.primary_coding_environment, ...(value.additional_coding_environments ?? [])].filter((id): id is string => typeof id === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(id));
     const recordedOptions = Array.from(new Set([...CODING_ENVIRONMENTS.map((environment) => environment.id), ...recorded])).map((id) => CODING_ENVIRONMENTS.find((environment) => environment.id === id) ?? { id, label: id, detail: "" });
@@ -426,6 +433,8 @@ function managedInstallationDetails(findings: ScanFinding[]): { present: boolean
       primaryCodingEnvironment: selection.primary,
       additionalCodingEnvironments: selection.additional,
       detectedCodingEnvironments,
+      imageGeneration: value.image_generation,
+      liveTesting: value.live_testing ?? (installedComponents.has("workflow.live_tools") ? { provider: "hoi4_live_tools", linux_ready: false, wsl_distribution: "", ssh_host: "" } : undefined),
       portraitPipeline: value.portrait_provider ? {
         enabled: value.portrait_enabled !== false,
         provider: value.portrait_provider,
@@ -476,9 +485,11 @@ function nextScreen(state: WizardState): ScreenId {
     case "identity": return state.recoveryEntry ? "recovery" : state.mode === "existing" ? "scan" : "environments";
     case "scan": return "findings";
     case "findings": return "environments";
-    case "environments": return "components";
+    case "environments": return "image-generation";
+    case "image-generation": return "components";
     case "components": return "workflows";
-    case "workflows": return state.meshSelected && meshWorkflowAvailable(state) ? "mesh" : "mcp";
+    case "workflows": return state.selectedComponents.includes("workflow.live_testing") ? "live-testing" : state.meshSelected && meshWorkflowAvailable(state) ? "mesh" : "mcp";
+    case "live-testing": return state.meshSelected && meshWorkflowAvailable(state) ? "mesh" : "mcp";
     case "mesh": return "mcp";
     case "mcp": return "git";
     case "git": return "dry-run";
@@ -498,11 +509,13 @@ function previousScreen(state: WizardState): ScreenId {
     case "identity": return state.recoveryEntry ? "welcome" : state.mode === "existing" ? "welcome" : "description";
     case "scan": return "identity";
     case "findings": return "scan";
-    case "components": return "environments";
+    case "components": return "image-generation";
+    case "image-generation": return "environments";
     case "environments": return state.mode === "existing" ? "findings" : "identity";
     case "workflows": return "components";
-    case "mesh": return "workflows";
-    case "mcp": return state.meshSelected ? "mesh" : "workflows";
+    case "live-testing": return "workflows";
+    case "mesh": return state.selectedComponents.includes("workflow.live_testing") || state.liveTestingVisited ? "live-testing" : "workflows";
+    case "mcp": return state.meshSelected ? "mesh" : state.selectedComponents.includes("workflow.live_testing") || state.liveTestingVisited ? "live-testing" : "workflows";
     case "git": return "mcp";
     case "dry-run": return "git";
     case "install": return "dry-run";
@@ -739,6 +752,8 @@ export default function App() {
           installedComponentIds: managed.componentIds,
           primaryCodingEnvironment: managed.primaryCodingEnvironment,
           additionalCodingEnvironments: managed.additionalCodingEnvironments,
+          imageGeneration: managed.imageGeneration ?? current.imageGeneration,
+          liveTesting: managed.liveTesting ?? current.liveTesting,
           installedCodingEnvironments: managed.detectedCodingEnvironments,
           maintenanceOptionalSelections: [],
           chatSourcesAvailable: managed.chatSourcesAvailable,
@@ -1371,6 +1386,7 @@ export default function App() {
   };
   const startMaintenance = async (mode: "update" | "repair" | "reinstall" | "remove") => {
     if (maintenancePending) return;
+    if (mode !== "remove" && !liveTestingSelectionValid(state)) { update({ transactionError: "Review the live testing distribution name or SSH host alias." }); return; }
     setMaintenancePending(true);
     update({ transactionError: "Preparing the review…" });
     try {
@@ -1395,7 +1411,7 @@ export default function App() {
           : []),
       ]
       : [];
-    const planResult = await buildMaintenancePlanResult(mode, state.identity.projectRoot, state.maintenanceCodexAnalysisRecord, addOptionalComponents, state.portraitPipeline, state.primaryCodingEnvironment, state.additionalCodingEnvironments, state.codexAnalysis ? buildAnalysisConfirmationValues(state) : undefined);
+    const planResult = await buildMaintenancePlanResult(mode, state.identity.projectRoot, state.maintenanceCodexAnalysisRecord, addOptionalComponents, state.portraitPipeline, state.primaryCodingEnvironment, state.additionalCodingEnvironments, state.codexAnalysis ? buildAnalysisConfirmationValues(state) : undefined, state.imageGeneration, state.liveTesting);
     const plan = planResult.value;
     if (!plan) {
       update({ transactionError: planResult.error ? `The maintenance plan is unavailable: ${planResult.error}` : "The maintenance plan is unavailable. Nothing was changed." });
@@ -2024,6 +2040,11 @@ function canAdvanceFromScreen(
         && selection.additional.length === (state.additionalCodingEnvironments ?? []).length
         && !selection.additional.includes(selection.primary);
     }
+    case "live-testing": return liveTestingSelectionValid(state);
+    case "image-generation":
+      return Boolean(state.imageGeneration?.primary_provider)
+        && [...new Set([state.imageGeneration.primary_provider, ...state.imageGeneration.additional_providers])]
+          .every((id) => providerAvailableForSelection(id, state));
     case "components":
       return planningReady
         && Boolean(state.manifestPreview || !isTauriRuntime())
@@ -2059,6 +2080,8 @@ function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) 
     case "scan": return <Scan state={state} complete={scanComplete} error={scanError} progress={scanProgress} partial={scanPartial} limitsHit={scanLimitsHit} canCancel={Boolean(scanRequestId)} cancellationRequested={scanCancellationRequested} onCancel={onCancelScan} />;
     case "findings": return <Findings state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} findings={findings} selected={selectedFinding} setSelected={setSelectedFinding} setFindings={setFindings} onConfirmAnalysis={onConfirmAnalysis} onManageExisting={() => onMaintenance("update")} onPackageChatSources={onPackageChatSources} />;
     case "environments": return <CodingEnvironments state={state} update={update} />;
+    case "live-testing": return <LiveTestingSetup state={state} update={update} />;
+    case "image-generation": return <ImageGenerationSetup state={state} update={update} />;
     case "components": return <Components state={state} update={update} />;
     case "workflows": return <Workflows state={state} update={update} />;
     case "mesh": return <Mesh state={state} update={update} />;
@@ -2801,8 +2824,7 @@ function flattenedChatFiles(state: WizardState, manifest: SourceManifestPreview 
 
 export function CodingEnvironments({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
   const options = codingEnvironmentOptions(state.manifestPreview);
-  const selection = normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments, options);
-  const defaultLabel = options.find((environment) => environment.defaultPrimary)?.label ?? options[0]?.label ?? "Claude Code";
+  const selection = import.meta.env.DEV && new URLSearchParams(window.location.search).get("coding-environments") === "none" && state.primaryCodingEnvironment === "" ? { primary: "", additional: state.additionalCodingEnvironments } : normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments, options);
   const choosePrimary = (primary: CodingEnvironmentId) => {
     const next = normalizeCodingEnvironmentSelection(primary, selection.additional, options);
     update({ primaryCodingEnvironment: next.primary, additionalCodingEnvironments: next.additional, plan: undefined, transactionError: undefined });
@@ -2817,7 +2839,7 @@ export function CodingEnvironments({ state, update }: { state: WizardState; upda
   return <div className="stack narrow">
     <section className="panel">
       <PanelTitle title="Primary environment" />
-      <p className="muted">The coding client you will mainly use. {defaultLabel} is selected by default; its skills, agents, and instructions are the canonical files that the other clients' files are generated from.</p>
+      <p className="muted">Choose any supported coding client as primary; setup creates matching project files for the clients you select.</p>
       <div className="coding-environment-options" role="radiogroup" aria-label="Primary coding environment">
         {options.map((environment) => <label className="coding-environment-option" key={environment.id}>
           <input type="radio" name="primary-coding-environment" value={environment.id} checked={selection.primary === environment.id} onChange={() => choosePrimary(environment.id)} />
@@ -2837,6 +2859,166 @@ export function CodingEnvironments({ state, update }: { state: WizardState; upda
         </label>)}
       </div>
     </section>
+  </div>;
+}
+
+function providerAvailableForSelection(id: string, state: WizardState): boolean {
+  const provider = state.manifestPreview?.image_generation?.providers.find((candidate) => candidate.id === id);
+  if (!provider) return id === "none" || (!isTauriRuntime() && ["gptimage", "midjourney_manual"].includes(id));
+  if (provider.route.requires_primary_coding_environment && provider.route.requires_primary_coding_environment !== state.primaryCodingEnvironment) return false;
+  const selected = [state.primaryCodingEnvironment, ...state.additionalCodingEnvironments];
+  return selected.some((environment) => provider.supported_coding_environments.includes(environment));
+}
+
+export function liveTestingSelectionValid(state: WizardState): boolean {
+  const selection = state.liveTesting;
+  if (!selection || selection.provider !== "clausewitz_mcp") return true;
+  if (selection.wsl_distribution && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(selection.wsl_distribution)) return false;
+  return currentUiPlatform() !== "macos" || !selection.linux_ready || /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(selection.ssh_host);
+}
+
+export function LiveTestingSetup({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
+  const catalog = state.manifestPreview?.live_testing;
+  const selection = state.liveTesting;
+  const provider = catalog?.providers.find((item) => item.id === selection.provider);
+  const save = (patch: Partial<LiveTestingSelection>) => {
+    const next = { ...selection, ...patch };
+    update({ liveTesting: next, liveTestingVisited: state.liveTestingVisited || state.screen === "live-testing", plan: undefined, transactionError: undefined,
+      selectedComponents: next.provider === "none" ? state.selectedComponents.filter((id) => id !== "workflow.live_testing" && id !== "workflow.live_tools") : Array.from(new Set([...state.selectedComponents.filter((id) => id !== "workflow.live_tools"), "workflow.live_testing"])),
+      maintenanceOptionalSelections: next.provider === "none" ? (state.maintenanceOptionalSelections ?? []).filter((id) => id !== "workflow.live_testing" && id !== "workflow.live_tools") : state.maintenanceOptionalSelections,
+    });
+  };
+  return <div className="stack narrow"><section className="panel form-panel workflow-provider-panel"><PanelTitle title="Live testing provider" />{catalog ? <div className="radio-row" role="radiogroup" aria-label="Live testing provider">{catalog.providers.map((item) => <label className="radio-option" key={item.id}><input type="radio" name="live-testing-provider" disabled={!item.supported_platforms.some((platform) => platform === "all" || platform === currentUiPlatform())} checked={selection.provider === item.id} onChange={() => save({ provider: item.id, linux_ready: false })} /><span><strong>{item.display_name}</strong><small>{item.description}</small></span></label>)}</div> : <p className="muted">Live testing providers are unavailable in this source version.</p>}
+    {selection.provider === "clausewitz_mcp" && <div className="workflow-provider-fields"><p className="muted">Clausewitz MCP by <ExternalLink href="https://github.com/smerss/Clausewitz-MCP">smerss</ExternalLink> currently supports native Linux HOI4 1.19.2 only. Prepare the Linux game and server separately.</p><p className="muted">{currentUiPlatform() === "macos" ? "Use a Linux machine or virtual machine through SSH." : "Use a Linux game and server in WSL."} <ExternalLink href="https://github.com/klimPaskov/hoi4-mod-setup/blob/main/docs/LIVE_TESTING_LINUX.md">Linux setup guide</ExternalLink></p><label className="radio-option"><input type="checkbox" checked={selection.linux_ready} onChange={(event) => save({ linux_ready: event.target.checked })} /><span>I confirm a compatible Linux game and Clausewitz MCP server are ready</span></label>{currentUiPlatform() === "macos" ? <Field label="SSH host alias" value={selection.ssh_host} onChange={(ssh_host) => save({ ssh_host })} placeholder="Linux host alias from your SSH configuration" /> : <Field label="WSL distribution (optional)" value={selection.wsl_distribution} onChange={(wsl_distribution) => save({ wsl_distribution })} placeholder="Ubuntu" />}<p className="muted">{selection.linux_ready ? "Setup will register the selected route after reviewing the plan." : "Configure later: setup records a to-do and does not register the server."}</p>{!liveTestingSelectionValid(state) && <p role="alert">Use a safe distribution name or SSH host alias; a ready SSH route requires its alias.</p>}</div>}
+    {selection.provider === "hoi4_live_tools" && <p className="muted">Experimental, slower, and not fully tested. The current public package verifies Windows only; the macOS scaffold is incomplete.</p>}
+    {provider && <details><summary>Requirements and guidance</summary><div className="manifest-details">{[...provider.requirements, ...provider.guidance].map((text, index) => <span key={index}>{text}</span>)}{provider.supported_game_version && <span>Supported game version: {provider.supported_game_version}</span>}{provider.attribution && <span>By {provider.attribution.author}; license: {provider.attribution.license}</span>}</div></details>}
+  </section></div>;
+}
+
+export function ImageGenerationSetup({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
+  const [loadMessage, setLoadMessage] = useState("Loading image providers…");
+  const [savingKey, setSavingKey] = useState<string>();
+  const [message, setMessage] = useState("");
+  const catalog = state.manifestPreview?.image_generation;
+  const selection: ImageGenerationSelection = state.imageGeneration ?? { primary_provider: "gptimage", additional_providers: [], route_settings: {}, credential_references: {} };
+  const drafts = state.imageGenerationCredentialDrafts ?? {};
+
+  useEffect(() => {
+    if (catalog || !isTauriRuntime()) {
+      setLoadMessage(catalog ? "Image providers loaded." : "Provider details are available from the setup source.");
+      return;
+    }
+    let active = true;
+    void previewSourceManifestResult(state.sourceMode, state.pinnedRef).then((result) => {
+      if (!active) return;
+      if (!result.value) {
+        setLoadMessage(result.error ?? "The provider list could not be loaded. Go back and try again.");
+        return;
+      }
+      const known = result.value.image_generation?.providers.some((provider) => provider.id === selection.primary_provider);
+      update({ manifestPreview: result.value, imageGeneration: { ...selection, primary_provider: known ? selection.primary_provider : result.value.image_generation?.default_provider ?? "none" } });
+      setLoadMessage("Image providers loaded.");
+    });
+    return () => { active = false; };
+  }, [catalog, state.sourceMode, state.pinnedRef]);
+
+  const fallbackManual: ImageGenerationProviderDefinition = {
+    id: "none", display_name: "None — I will make art myself", description: "Use artwork you create or source yourself.", availability: "supported", requirements: ["No account or install."], good_for: ["Your own artwork"], cost_summary: "No provider charge.", models: [], supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"], route: { kind: "manual", auth_method: "none" }, capabilities: { reference_images: { supported: false, notes: "Add your own files to the project." }, image_edits: false, transparent_background: { native: false, notes: "Check the alpha in the files you add." }, size_limits: { notes: "Use the required asset dimensions." }, one_image_per_call: true, fallback_if_no_alpha: "Edit the image yourself and check its alpha.", fallback_if_no_edits: "Edit the image yourself." },
+  };
+  const providers = catalog?.providers ?? [fallbackManual];
+  const selectedIds = [...new Set([selection.primary_provider, ...selection.additional_providers])];
+  const compatible = (provider: ImageGenerationProviderDefinition) => {
+    if (provider.route.requires_primary_coding_environment && provider.route.requires_primary_coding_environment !== state.primaryCodingEnvironment) return false;
+    const environments = [state.primaryCodingEnvironment, ...state.additionalCodingEnvironments].filter(Boolean);
+    return environments.length === 0 || environments.some((environment) => provider.supported_coding_environments.includes(environment));
+  };
+  const saveSelection = (next: ImageGenerationSelection) => update({ imageGeneration: next, plan: undefined, transactionError: undefined });
+  const choosePrimary = (id: string) => saveSelection({ ...selection, primary_provider: id, additional_providers: id === "none" ? [] : selection.additional_providers.filter((candidate) => candidate !== id) });
+  const toggleExtra = (id: string, checked: boolean) => {
+    const extras = checked ? [...new Set([...selection.additional_providers, id])] : selection.additional_providers.filter((candidate) => candidate !== id);
+    saveSelection({ ...selection, additional_providers: selection.primary_provider === "none" ? [] : extras.filter((candidate) => candidate !== selection.primary_provider) });
+  };
+  const saveCredential = async (provider: ImageGenerationProviderDefinition, fieldId: string) => {
+    const key = `${provider.id}.${fieldId}`;
+    const value = drafts[key]?.trim();
+    if (!value) return;
+    setSavingKey(key);
+    const reference = await storeImageGenerationCredential(provider.id, fieldId, value);
+    setSavingKey(undefined);
+    if (!reference) {
+      setMessage(`Could not store the ${provider.display_name} credential. Check credential storage and try again.`);
+      return;
+    }
+    const nextDrafts = { ...drafts };
+    delete nextDrafts[key];
+    saveSelection({ ...selection, credential_references: { ...selection.credential_references, [key]: reference.reference } });
+    update({ imageGenerationCredentialDrafts: nextDrafts });
+    setMessage(`${provider.display_name} credential stored on this computer.`);
+  };
+  const deleteCredential = async (provider: ImageGenerationProviderDefinition, fieldId: string) => {
+    const key = `${provider.id}.${fieldId}`;
+    if (!await removeImageGenerationCredential(provider.id, fieldId)) {
+      setMessage(`Could not remove the ${provider.display_name} credential.`);
+      return;
+    }
+    const refs = { ...selection.credential_references };
+    delete refs[key];
+    saveSelection({ ...selection, credential_references: refs });
+    setMessage(`${provider.display_name} credential removed from this computer.`);
+  };
+  const setRouteSetting = (providerId: string, key: string, value: string) => saveSelection({
+    ...selection,
+    route_settings: { ...selection.route_settings, [providerId]: { ...selection.route_settings[providerId], [key]: value } },
+  });
+
+  useEffect(() => {
+    if (!catalog || !isTauriRuntime()) return;
+    let active = true;
+    void Promise.all(selectedIds.flatMap((providerId) => {
+      const provider = providers.find((candidate) => candidate.id === providerId);
+      return (provider?.route.credential_fields ?? []).map(async (field) => {
+        const key = `${providerId}.${field.id}`;
+        if (selection.credential_references[key]) return null;
+        const reference = await readImageGenerationCredential(providerId, field.id);
+        return reference ? [key, reference.reference] as const : null;
+      });
+    })).then((values) => {
+      if (!active) return;
+      const refs = Object.fromEntries(values.filter((value): value is readonly [string, string] => value !== null));
+      if (Object.keys(refs).length) saveSelection({ ...selection, credential_references: { ...selection.credential_references, ...refs } });
+    });
+    return () => { active = false; };
+  }, [catalog, selectedIds.join(","), selection.credential_references]);
+
+  const primary = providers.find((provider) => provider.id === selection.primary_provider);
+  return <div className="stack narrow">
+    <section className="panel">
+      <PanelTitle title="Choose an image provider" />
+      <p className="muted">Pick one main provider. Add others for different models or switch later in Update and repair. Keys stay in this computer's credential store.</p>
+      {!catalog && <p className="muted" role="status">{loadMessage}</p>}
+      {catalog && <div className="image-provider-list" role="radiogroup" aria-label="Primary image provider">{providers.map((provider) => {
+        const usable = compatible(provider);
+        const selected = selection.primary_provider === provider.id;
+        return <article className={`image-provider-card${selected ? " selected" : ""}${!usable ? " unavailable" : ""}`} key={provider.id}>
+          <label className="image-provider-choice"><input type="radio" name="primary-image-provider" value={provider.id} checked={selected} disabled={!usable} onChange={() => choosePrimary(provider.id)} /><span><strong>{provider.display_name}</strong><small>{provider.description}</small></span>{selected && <Status label="Primary" tone="info" />}</label>
+          <div className="image-provider-details"><span>{provider.cost_summary}</span><span>{provider.good_for.join(" · ")}</span><small>{provider.requirements.join(" ")}</small>{provider.models.length > 0 && <small>Models: {provider.models.join(", ")}</small>}{!usable && <small role="note">This provider needs a coding client that supports it.</small>}{provider.documentation_url && <ExternalLink href={provider.documentation_url}>Provider details <span aria-hidden="true">↗</span></ExternalLink>}</div>
+          {selectedIds.includes(provider.id) && provider.route.credential_fields?.map((field) => {
+            const key = `${provider.id}.${field.id}`;
+            const saved = Boolean(selection.credential_references[key]);
+            return <div className="image-provider-secret" key={field.id}><label className="field-label" htmlFor={`image-secret-${key}`}>{field.display_name}</label><div className="input-with-action"><input id={`image-secret-${key}`} className="text-input" type="password" autoComplete="off" value={drafts[key] ?? ""} onChange={(event) => update({ imageGenerationCredentialDrafts: { ...drafts, [key]: event.target.value } })} /><button type="button" className="input-action" disabled={!drafts[key]?.trim() || savingKey === key} onClick={() => void saveCredential(provider, field.id)}>{savingKey === key ? "Saving…" : "Store"}</button>{saved && <button type="button" className="text-button" onClick={() => void deleteCredential(provider, field.id)}>Delete</button>}</div><small className="muted">{saved ? "Stored in the operating-system credential vault." : "Needed only for this provider. The key is not added to project files."}</small></div>;
+          })}
+          {selectedIds.includes(provider.id) && ["comfyui", "automatic1111"].includes(provider.route.api_protocol ?? "") && <div className="image-provider-secret"><Field label="Local image server" value={selection.route_settings[provider.id]?.server_url ?? provider.route.api_base_url ?? ""} onChange={(value) => setRouteSetting(provider.id, "server_url", value)} placeholder={provider.route.api_base_url ?? "http://127.0.0.1:8188"} mono /><Field label="Model or checkpoint (optional)" value={selection.route_settings[provider.id]?.checkpoint ?? ""} onChange={(value) => setRouteSetting(provider.id, "checkpoint", value)} /></div>}
+          {selectedIds.includes(provider.id) && provider.route.api_protocol === "microsoft_foundry" && <div className="image-provider-secret"><Field label="Deployment name" value={selection.route_settings[provider.id]?.deployment_name ?? ""} onChange={(value) => setRouteSetting(provider.id, "deployment_name", value)} /></div>}
+          {selectedIds.includes(provider.id) && provider.route.api_protocol === "aws_bedrock" && <div className="image-provider-secret"><Field label="AWS region" value={selection.route_settings[provider.id]?.region ?? "us-west-2"} onChange={(value) => setRouteSetting(provider.id, "region", value)} placeholder="us-west-2" /></div>}
+          {selectedIds.includes(provider.id) && (provider.route.supported_models?.length ?? 0) > 0 && <label className="field image-provider-secret"><span className="field-label">Model</span><select className="text-input" value={selection.route_settings[provider.id]?.model ?? provider.route.default_model ?? provider.route.supported_models?.[0] ?? ""} onChange={(event) => setRouteSetting(provider.id, "model", event.target.value)}>{provider.route.supported_models?.map((model, index) => <option key={model} value={model}>{provider.models[index] ?? model}</option>)}</select></label>}
+          {!selected && provider.id !== "none" && provider.availability !== "manual_only" && <label className="image-provider-extra"><input type="checkbox" checked={selection.additional_providers.includes(provider.id)} disabled={!usable || selection.primary_provider === "none"} onChange={(event) => toggleExtra(provider.id, event.target.checked)} /><span>Add as an optional provider</span></label>}
+          {provider.availability === "manual_only" && <p className="muted">Manual use only; no app connection or MCP registration.</p>}
+        </article>;
+      })}</div>}
+      {message && <p role="status" className="muted">{message}</p>}
+      <p className="muted" aria-live="polite">{loadMessage}</p>
+    </section>
+    {catalog && <section className="panel"><PanelTitle title="What the selected provider supports" /><div className="list-row"><strong>References</strong><span>{primary?.capabilities.reference_images?.notes ?? "Check the selected provider's model limits."}</span></div><div className="list-row"><strong>Transparent images</strong><span>{primary?.capabilities.transparent_background?.notes ?? "Check the selected provider's model limits."}</span></div><div className="list-row"><strong>Edits</strong><span>{primary?.capabilities.image_edits ? "Reference edits are available on supported models." : "This provider may make a new image from references instead of editing."}</span></div><p className="muted">The asset instructions will use these limits. Each image request is made separately, and generated transparency is checked after saving.</p></section>}
   </div>;
 }
 
@@ -2960,6 +3142,7 @@ export function Workflows({ state, update }: { state: WizardState; update: (patc
     component.optional
     && component.id.startsWith("workflow.")
     && !dependencyOnlyWorkflowIds.has(component.id)
+    && component.id !== "workflow.live_tools"
     && component.id !== "workflow.3d"
     && component.id !== "workflow.super_events"
     && !component.id.startsWith("workflow.portraits")
@@ -2977,7 +3160,7 @@ export function Workflows({ state, update }: { state: WizardState; update: (patc
         ? Array.from(new Set([...(state.maintenanceOptionalSelections ?? []), id]))
         : (state.maintenanceOptionalSelections ?? []).filter((componentId) => componentId !== id)
       : state.maintenanceOptionalSelections;
-    update({ ...patch, selectedComponents, maintenanceOptionalSelections });
+    update({ ...patch, selectedComponents, maintenanceOptionalSelections, ...(id === "workflow.live_testing" ? { liveTesting: { ...state.liveTesting, provider: checked ? state.liveTesting.provider === "none" ? "clausewitz_mcp" : state.liveTesting.provider : "none", linux_ready: checked && state.liveTesting.provider !== "none" ? state.liveTesting.linux_ready : false } } : {}) });
   };
   const portrait = state.portraitPipeline ?? DEFAULT_PORTRAIT_PIPELINE;
   const portraitComponents = manifestComponents.filter((component) => ["workflow.portraits.cloud", "workflow.portraits.local", "workflow.portraits.runpod"].includes(component.id));
@@ -3381,6 +3564,10 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
   const gitHashes = readinessRow(report, ["git.project", "hashes.managed", "conflicts.resolved", "dependencies.core"]);
   const mesh = readinessRow(report, ["workflow.3d"]);
   const superEvents = readinessRow(report, ["workflow.super_events"]);
+  const liveSelected = state.liveTesting?.provider !== "none" && state.selectedComponents.some((id) => id === "workflow.live_testing" || id === "workflow.live_tools");
+  const liveCheck = report?.checks.find((check) => check.id === "workflow.live_testing");
+  const liveStatus = !liveSelected ? "Not selected" : !report ? "Checking" : liveCheck?.status === "pass" ? "Configured" : "To-do";
+
   const portraits = readinessRow(report, ["workflow.portraits"]);
   const portraitProviderLabel = portraitPipeline.provider === "cloud" ? "Comfy Cloud" : portraitPipeline.provider === "local" ? "Local ComfyUI" : portraitPipeline.provider === "runpod" ? "RunPod" : "Disabled";
   const runMcpCheck = async () => {
@@ -3439,7 +3626,7 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
         <section className="panel ready-options-panel">
           <div className="ready-check-list">
             <CheckRow label="3D model workflow" status={mesh.status} tone={mesh.tone} />
-            <CheckRow label="Super Events workflow" status={superEvents.status} tone={superEvents.tone} />
+            <CheckRow label="Super Events workflow" status={superEvents.status} tone={superEvents.tone} /><CheckRow label="Live testing" status={liveStatus} tone={!liveSelected ? "muted" : liveStatus === "To-do" ? "review" : "info"} />
             <CheckRow label="Portrait production" status={portraitPipeline.enabled ? `${portraitProviderLabel}: ${portraits.status}` : "Disabled"} tone={portraitPipeline.enabled ? portraits.tone : "muted"} />
           </div>
           {coreReady && portraitPipeline.enabled && <div className="portrait-workflow-note"><ExternalLink href={PORTRAIT_REPOSITORY}>Portrait production source and setup guidance <span aria-hidden="true">↗</span></ExternalLink></div>}
@@ -3564,7 +3751,7 @@ function PortraitMaintenanceSetup({
 
 function MaintenanceCodingEnvironmentOptions({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
   const options = codingEnvironmentOptions(state.manifestPreview);
-  const selection = normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments, options);
+  const selection = import.meta.env.DEV && new URLSearchParams(window.location.search).get("coding-environments") === "none" && state.primaryCodingEnvironment === "" ? { primary: "", additional: state.additionalCodingEnvironments } : normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments, options);
   const choosePrimary = (primary: CodingEnvironmentId) => {
     const next = normalizeCodingEnvironmentSelection(primary, selection.additional, options);
     update({ primaryCodingEnvironment: next.primary, additionalCodingEnvironments: next.additional, plan: undefined, transactionError: undefined });
@@ -3584,7 +3771,7 @@ export function Update({ state, update, updateIdentity, updateDescription, findi
   const portraits = portraitPipeline.enabled ? `${portraitPipeline.provider} · ${portraitPipeline.providerStatus}` : "Disabled";
   const providerLabel = aiProviderLabel(state.aiProvider, state.aiProfiles);
   const reanalysisLabel = state.maintenanceEvidenceReady ? state.maintenanceCodexAnalysisRecord ? "Run again" : `Run ${providerLabel} reanalysis` : "Scan the project";
-  return <div className="stack"><div className="action-grid"><ActionTile title="Check for updates" detail="Compare this project with a newer setup." onClick={() => onStartMaintenance("update")} /><ActionTile title="Repair installation" detail="Restore missing or damaged setup files." onClick={() => onStartMaintenance("repair")} /><ActionTile title="Remove components" detail="Review the files before removing app-managed setup." onClick={() => onStartMaintenance("remove")} /><ActionTile title="Recover interrupted setup" detail="Continue or undo an interrupted change." onClick={() => onMaintenance("recovery")} />{state.chatSourcesAvailable && onPackageChatSources && <ActionTile title="Package ChatGPT project sources" detail="Choose detected files and download a source ZIP." onClick={() => void onPackageChatSources()} />}</div><MaintenanceCodingEnvironmentOptions state={state} update={update} /><MaintenanceWorkflowOptions state={state} update={update} /><section className="panel"><PanelTitle title={`${providerLabel} review`} /><p className="muted">Review the project before updating its setup.</p><button type="button" className="button secondary" onClick={() => void onReanalyze()}>{reanalysisLabel}</button>{state.maintenanceEvidenceReady && <details open><summary>{modelVisibleFindings(findings).length} approved findings</summary><div className="manifest-details">{modelVisibleFindings(findings).map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small><button type="button" className="text-button" aria-pressed="true" onClick={() => setFindings((current) => current.map((candidate) => candidate.id === finding.id ? { ...candidate, status: "rejected" } : candidate))}>Exclude</button></div>)}</div></details>}{state.maintenanceCodexAnalysisRecord && <p className="muted" role="status">Review returned. Confirm the {providerLabel} suggestions before checking for updates.</p>}{state.maintenanceCodexAnalysisRecord && state.codexAnalysis && onConfirmAnalysis && <CodexReview state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onConfirmAnalysis={onConfirmAnalysis} />}</section><section className="panel"><PanelTitle title="Installed state" /><CheckRow label="Core setup" status={plan ? `${plan.operations.length} planned changes` : "No plan loaded"} tone={plan ? "info" : "muted"} /><CheckRow label="Optional 3D workflow" status={optional3d} tone={state.meshSelected ? "review" : "muted"} /><CheckRow label="Super Events workflow" status={superEvents} tone={state.superEventsSelected ? "review" : "muted"} /><CheckRow label="Portrait production" status={portraits} tone={portraitPipeline.enabled ? "review" : "muted"} /><CheckRow label="Modified files" status={plan ? String(plan.conflicts.length) : "Not evaluated"} tone={plan?.conflicts.length ? "review" : "muted"} />{plan && <details open><summary>Reviewed changes</summary><p className="muted">Modified files remain visible until resolved.</p></details>}</section></div>;
+  return <div className="stack"><div className="action-grid"><ActionTile title="Check for updates" detail="Compare this project with a newer setup." onClick={() => onStartMaintenance("update")} /><ActionTile title="Repair installation" detail="Restore missing or damaged setup files." onClick={() => onStartMaintenance("repair")} /><ActionTile title="Remove components" detail="Review the files before removing app-managed setup." onClick={() => onStartMaintenance("remove")} /><ActionTile title="Recover interrupted setup" detail="Continue or undo an interrupted change." onClick={() => onMaintenance("recovery")} />{state.chatSourcesAvailable && onPackageChatSources && <ActionTile title="Package ChatGPT project sources" detail="Choose detected files and download a source ZIP." onClick={() => void onPackageChatSources()} />}</div><MaintenanceCodingEnvironmentOptions state={state} update={update} /><ImageGenerationSetup state={state} update={update} /><MaintenanceWorkflowOptions state={state} update={update} />{state.manifestPreview?.components.some((item) => item.id === "workflow.live_testing") && <section className="panel"><ToggleRow label="Live testing" detail="Choose a live-game testing provider" checked={state.liveTesting?.provider !== "none" && [...state.selectedComponents, ...(state.maintenanceOptionalSelections ?? []), ...(state.installedComponentIds ?? [])].includes("workflow.live_testing")} onChange={(checked) => update({ selectedComponents: checked ? [...state.selectedComponents, "workflow.live_testing"] : state.selectedComponents.filter((id) => id !== "workflow.live_testing"), maintenanceOptionalSelections: checked ? [...(state.maintenanceOptionalSelections ?? []), "workflow.live_testing"] : (state.maintenanceOptionalSelections ?? []).filter((id) => id !== "workflow.live_testing"), liveTesting: { ...state.liveTesting, provider: checked ? "clausewitz_mcp" : "none", linux_ready: false }, plan: undefined })} /></section>}{[...state.selectedComponents, ...(state.installedComponentIds ?? []), ...(state.maintenanceOptionalSelections ?? [])].some((id) => id === "workflow.live_testing" || id === "workflow.live_tools") && <LiveTestingSetup state={state} update={update} />}<section className="panel"><PanelTitle title="Project review" /><p className="muted">Review the project before updating its setup.</p><button type="button" className="button secondary" onClick={() => void onReanalyze()}>{reanalysisLabel}</button>{state.maintenanceEvidenceReady && <details open><summary>{modelVisibleFindings(findings).length} approved findings</summary><div className="manifest-details">{modelVisibleFindings(findings).map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small><button type="button" className="text-button" aria-pressed="true" onClick={() => setFindings((current) => current.map((candidate) => candidate.id === finding.id ? { ...candidate, status: "rejected" } : candidate))}>Exclude</button></div>)}</div></details>}{state.maintenanceCodexAnalysisRecord && <p className="muted" role="status">Review returned. Confirm the {providerLabel} suggestions before checking for updates.</p>}{state.maintenanceCodexAnalysisRecord && state.codexAnalysis && onConfirmAnalysis && <CodexReview state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onConfirmAnalysis={onConfirmAnalysis} />}</section><section className="panel"><PanelTitle title="Installed state" /><CheckRow label="Core setup" status={plan ? `${plan.operations.length} planned changes` : "No plan loaded"} tone={plan ? "info" : "muted"} /><CheckRow label="Optional 3D workflow" status={optional3d} tone={state.meshSelected ? "review" : "muted"} /><CheckRow label="Super Events workflow" status={superEvents} tone={state.superEventsSelected ? "review" : "muted"} /><CheckRow label="Portrait production" status={portraits} tone={portraitPipeline.enabled ? "review" : "muted"} /><CheckRow label="Modified files" status={plan ? String(plan.conflicts.length) : "Not evaluated"} tone={plan?.conflicts.length ? "review" : "muted"} />{plan && <details open><summary>Reviewed changes</summary><p className="muted">Modified files remain visible until resolved.</p></details>}</section></div>;
 }
 
 export function ChatSources({ state, update, onPickFolder }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onPickFolder: () => Promise<void> }) {

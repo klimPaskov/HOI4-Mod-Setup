@@ -308,6 +308,91 @@ mod offline_lifecycle {
     }
 
     #[test]
+    #[ignore = "offline skill ceiling regression requires an explicit committed package checkout"]
+    fn offline_image_guidance_preserves_the_published_feature_assets_skill_byte_ceiling() {
+        let _guard = test_state_guard();
+        let _profile = IsolatedProfile::new();
+        let client = HttpSourceClient::new().unwrap();
+        let resolution = resolve_source(
+            &client,
+            &SourceRequest {
+                mode: SourceMode::Latest,
+                requested_ref: None,
+                release: None,
+            },
+        )
+        .unwrap();
+        let source_path = ".claude/skills/hoi4-feature-assets/SKILL.md";
+        let evidence = resolution
+            .manifest
+            .components
+            .iter()
+            .flat_map(|component| component.expected_files.iter())
+            .find(|file| file.path == source_path)
+            .unwrap();
+        let source = client
+            .fetch_verified_file(
+                &resolution.identity.resolved_revision,
+                source_path,
+                evidence.sha256.as_deref().unwrap(),
+                evidence.size,
+            )
+            .unwrap();
+        let providers = resolution.manifest.image_generation.as_ref().unwrap()["providers"]
+            .as_array()
+            .unwrap();
+        let image = ImageGenerationSelection {
+            primary_provider: "openai_api".into(),
+            additional_providers: providers
+                .iter()
+                .filter_map(|row| row["id"].as_str())
+                .filter(|id| *id != "openai_api" && *id != "none")
+                .map(str::to_owned)
+                .collect(),
+            ..Default::default()
+        };
+        let guided =
+            adapt_image_generation_guidance(&source, &resolution.manifest, &image).unwrap();
+        let root = tempdir().unwrap();
+        let adapted = adapt_image_generation_client_config(
+            &guided,
+            source_path,
+            &resolution.manifest,
+            &image,
+            &CodingEnvironmentSelection {
+                primary: "codex".into(),
+                additional: vec![],
+            },
+            root.path(),
+            &LiveTestingSelection {
+                provider: "none".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            adapted.len() <= SKILL_BYTE_LIMIT,
+            "published skill adapted to {} bytes",
+            adapted.len()
+        );
+        assert!(std::str::from_utf8(&adapted)
+            .unwrap()
+            .contains(IMAGE_GUIDANCE_REFERENCE));
+        let reference = image_generation_guidance_artifact(&resolution.manifest, &image)
+            .unwrap()
+            .unwrap();
+        for id in std::iter::once(&image.primary_provider).chain(image.additional_providers.iter())
+        {
+            assert!(
+                reference.content.contains(&format!("`{id}`")),
+                "missing {id}"
+            );
+        }
+        assert!(reference.content.contains("one image per call"));
+        assert!(reference.content.contains("alpha below 255"));
+    }
+
+    #[test]
     #[ignore = "offline acceptance requires an explicit committed package checkout"]
     fn offline_all_component_install_import_repair_remove_and_rollback() {
         let _guard = test_state_guard();

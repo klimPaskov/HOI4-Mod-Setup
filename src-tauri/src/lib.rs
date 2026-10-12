@@ -75,3 +75,5 @@ pub fn run_desktop() {
 
 #[cfg(feature = "desktop")]
 mod commands;
+
+pub mod live_testing;

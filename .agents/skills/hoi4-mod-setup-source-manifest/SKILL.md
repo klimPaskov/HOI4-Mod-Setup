@@ -311,3 +311,7 @@ selected files, sizes, hashes, platform evidence, required wiki-page list, and
 the manifest's wiki provenance/media metadata;
 unsupported routes remain explicit; and the relevant hostile-source and
 external-action tests pass.
+
+The live-testing catalog binds the reviewed source revision, exact native Linux game version, platforms and route. Register only selected coding clients; Clausewitz stays a to-do until Linux readiness is explicitly confirmed. Keep LiveTools bootstrap registration disabled because the app owns project registrations.
+
+New-project UI defaults to the tested `package-2026-10-12` release. The explicit Latest option still resolves the default branch to an exact commit, and existing projects retain their reviewed source choice.

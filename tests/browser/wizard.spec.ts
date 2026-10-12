@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { DOCUMENTATION_SCENARIOS } from "../../src/documentation-fixtures";
+import { DOCUMENTATION_SCENARIOS } from "../../src/documentation-scenarios";
 import { resolve } from "node:path";
 
 const screenshotNames: Record<string, string> = {
@@ -8,6 +8,8 @@ const screenshotNames: Record<string, string> = {
   git: "07-git.png", ready: "08-ready.png", "dry-run": "09-dry-run.png",
   provider: "10-provider-selection.png", existing: "11-existing-project.png", maintenance: "12-maintenance.png",
   "chat-sources": "13-chat-sources.png", recovery: "14-recovery.png", environments: "15-coding-environments.png",
+  "image-generation": "16-image-generation.png",
+  "live-testing": "17-live-testing.png",
 };
 
 // Browser coverage uses synthetic, development-only state. Native commands,
@@ -53,10 +55,132 @@ test("each coding environment can be primary without becoming an additional choi
   await expect(radios.nth(1)).toBeChecked();
 });
 
+test("image-generation setup displays provider costs and lets the user add another route", async ({ page }) => {
+  await page.goto("/?screenshot=image-generation");
+  await expect(page.getByRole("heading", { name: "Image generation" })).toBeVisible();
+  await expect(page.getByText(/No separate image API bill/)).toBeVisible();
+  const subscription = page.getByRole("radio", { name: /ChatGPT subscription \(GPTImage\)/ });
+  const openAi = page.getByRole("radio", { name: /OpenAI Images API/ });
+  await expect(subscription).toBeChecked();
+  await expect(page.locator(".image-provider-card").nth(1).locator("input[type=checkbox]")).toBeChecked();
+  await expect(page.getByText("Transparent images")).toBeVisible();
+  await openAi.check();
+  await expect(openAi).toBeChecked();
+  await expect(subscription).not.toBeChecked();
+  await page.getByLabel("Add as an optional provider", { exact: true }).first().uncheck();
+  await expect(page.getByLabel("Add as an optional provider", { exact: true }).first()).not.toBeChecked();
+});
+
+test("maintenance repair sends the changed image provider in its reviewed plan request", async ({ page }) => {
+  await page.addInitScript(() => {
+    const calls: Array<{ command: string; args: Record<string, unknown> }> = [];
+    (window as unknown as Record<string, unknown>).__HOI4_TEST_COMMANDS__ = calls;
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      invoke: async (command: string, args: Record<string, unknown>) => {
+        calls.push({ command, args });
+        if (command === "build_maintenance_plan") throw "captured by browser test";
+        return null;
+      },
+    };
+  });
+  await page.goto("/?screenshot=maintenance");
+  const openAi = page.getByRole("radio", { name: /OpenAI Images API/ });
+  await openAi.check();
+  await expect(openAi).toBeChecked();
+
+  await page.getByRole("button", { name: "Repair installation" }).click();
+  await expect(page.getByRole("alert")).toContainText("captured by browser test");
+
+  const call = await page.evaluate(() =>
+    (window as unknown as { __HOI4_TEST_COMMANDS__: Array<{ command: string; args: Record<string, unknown> }> })
+      .__HOI4_TEST_COMMANDS__
+      .find((entry) => entry.command === "build_maintenance_plan"),
+  );
+  expect(call?.args.mode).toBe("repair");
+  expect(call?.args.imageGeneration).toMatchObject({
+    primary_provider: "openai_api",
+    additional_providers: [],
+  });
+});
+
 test("pre-apply recovery presents details and safe choices", async ({ page }) => {
   await page.goto("/?screenshot=recovery");
   await expect(page.locator("#screen-title")).toBeVisible();
   await page.getByText("Details", { exact: true }).click();
   await expect(page.getByText("Launcher descriptor path did not match the selected project root.", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
+});
+
+
+test("live testing follows workflows and disabling it advances to integrations", async ({ page }) => {
+  await page.goto("/?screenshot=workflows");
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(page.locator("#screen-title")).toHaveText("Live testing");
+  await page.getByRole("radio", { name: /^None/ }).check();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(page.locator("#screen-title")).not.toHaveText("Live testing");
+});
+
+for (const platform of ["windows", "macos"] as const) {
+test(`maintenance sends the changed live testing provider on ${platform}`, async ({ page }) => {
+  await page.addInitScript((selectedPlatform) => Object.defineProperty(navigator, "userAgent", { get: () => selectedPlatform === "macos" ? "Macintosh Mac OS X" : "Windows NT 10.0" }), platform);
+  await page.addInitScript(() => {
+    const calls: Array<{ command: string; args: Record<string, unknown> }> = [];
+    (window as unknown as Record<string, unknown>).__HOI4_TEST_COMMANDS__ = calls;
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke: async (command: string, args: Record<string, unknown>) => { calls.push({ command, args }); if (command === "build_maintenance_plan") throw "captured live testing request"; return null; } };
+  });
+  await page.goto("/?screenshot=maintenance");
+  const isMac = await page.evaluate(() => /macintosh|mac os x/i.test(navigator.userAgent));
+  const liveProviders = page.getByRole("radiogroup", { name: "Live testing provider" });
+  if (isMac) {
+    await liveProviders.getByRole("radio", { name: /^None/ }).click();
+    await expect(liveProviders).toHaveCount(0);
+  } else {
+    await liveProviders.getByRole("radio", { name: /HOI4 Live Tools \(experimental\)/ }).check();
+  }
+  await page.getByRole("button", { name: "Repair installation" }).click();
+  await expect(page.getByRole("alert")).toContainText("captured live testing request");
+  const call = await page.evaluate(() => (window as unknown as { __HOI4_TEST_COMMANDS__: Array<{ command: string; args: Record<string, unknown> }> }).__HOI4_TEST_COMMANDS__.find((entry) => entry.command === "build_maintenance_plan"));
+  expect(call?.args.liveTesting).toEqual({ provider: isMac ? "none" : "hoi4_live_tools", linux_ready: false, wsl_distribution: "", ssh_host: "" });
+});
+}
+
+
+test("review captures can show coding environments with no client preselected", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto("/?screenshot=environments&coding-environments=none");
+  await expect(page.getByRole("radio")).toHaveCount(5);
+  await expect(page.locator('input[type="radio"]:checked')).toHaveCount(0);
+  await expect(page.locator('input[type="checkbox"]:checked')).toHaveCount(0);
+});
+
+
+test("macOS Clausewitz readiness requires an SSH alias and disables Live Tools", async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, "userAgent", { get: () => "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)" }));
+  await page.goto("/?screenshot=live-testing");
+  await expect(page.getByRole("radio", { name: /HOI4 Live Tools/ })).toBeDisabled();
+  const ready = page.getByRole("checkbox", { name: /I confirm a compatible Linux game/ });
+  await ready.focus();
+  await page.keyboard.press("Space");
+  await expect(ready).toBeChecked();
+  await expect(page.getByRole("button", { name: "Next", exact: true })).toBeDisabled();
+  await expect(page.getByRole("alert")).toContainText("a ready SSH route requires its alias");
+  await page.getByLabel("SSH host alias").fill("user@host");
+  await expect(page.getByRole("button", { name: "Next", exact: true })).toBeDisabled();
+  await page.getByLabel("SSH host alias").fill("linux-game");
+  await expect(page.getByRole("button", { name: "Next", exact: true })).toBeEnabled();
+});
+
+test("Windows Clausewitz confirmation is keyboard accessible and can be deferred", async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, "userAgent", { get: () => "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }));
+  await page.goto("/?screenshot=live-testing");
+  await expect(page.getByRole("radio", { name: /HOI4 Live Tools/ })).toBeEnabled();
+  const ready = page.getByRole("checkbox", { name: /I confirm a compatible Linux game/ });
+  await expect(ready).not.toBeChecked();
+  await expect(page.getByText("Configure later: setup records a to-do and does not register the server.")).toBeVisible();
+  await ready.focus();
+  await page.keyboard.press("Space");
+  await expect(ready).toBeChecked();
+  await page.getByLabel("WSL distribution (optional)").fill("Ubuntu");
+  await expect(page.getByRole("button", { name: "Next", exact: true })).toBeEnabled();
 });

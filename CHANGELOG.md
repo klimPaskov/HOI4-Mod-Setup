@@ -4,7 +4,12 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
-## 0.4.0 - 2026-10-10
+## 0.4.0 - 2026-10-12
+
+- Choose an image-generation provider after choosing your coding clients. ChatGPT through GPTImage is the default; hosted APIs, local image tools, Codex image generation and manual art are available. Keep API keys in the operating-system credential store.
+- Change image and live-testing providers through update or repair. Review the changed tools and instructions while preserving your custom files and registrations.
+- Choose Clausewitz MCP, experimental HOI4 Live Tools, or manual live testing. Clausewitz MCP by smerss needs native Linux HOI4 1.19.2 and manual setup; follow the new Windows WSL and macOS Linux guide. Unconfirmed setup remains a to-do.
+- Use the tested Agentic package release by default for new projects, and keep coding-agent choice independent from the setup assistant.
 
 - Use the resolved package's coding-environment default when a fresh planning request omits the primary client, while preserving the legacy Codex default for older installations.
 - Add an isolated offline lifecycle gate for all components, import, repair, removal, rollback, and upgrade from the exact public 0.3.5 manifest.
@@ -16,7 +21,7 @@ HOI4 Mod Setup follows semantic versioning.
 - Make Claude Code the default primary coding environment and open the prepared project in it from the Ready screen.
 - Read the list of coding environments, their names, and the default from the source package instead of a fixed list in the app.
 - Fill in the Hearts of Iron IV and Workshop folders found through your Steam libraries in the installed instructions.
-- Add the optional HOI4 Live Tools workflow: setup checks for Python 3.9 or newer, downloads the release the package pins (size and SHA-256 verified), installs it for the current user with a private Python environment, confirms the server lists its tools, and registers it in the user configuration of the coding clients it finds. The workflow also adds the `hoi4-live-playtest` skill and setup guide. A package that predates the installer keeps the skill-only workflow.
+- Add the optional HOI4 Live Tools workflow: setup checks for Python 3.9 or newer, downloads the release the package pins (size and SHA-256 verified), installs it for the current user with a private Python environment, confirms the server lists its tools, and registers it in the project configuration of the coding clients you select. The workflow also adds the `hoi4-live-playtest` skill and setup guide. A package that predates the installer keeps the skill-only workflow.
 - Keep or remove guidance for any optional workflow the source package marks, without an app update.
 - Stop requiring specific HOI4 Agent Tools route names in the app; the pinned package version's own tool list decides.
 - Explain when the setup package needs a newer version of the app.

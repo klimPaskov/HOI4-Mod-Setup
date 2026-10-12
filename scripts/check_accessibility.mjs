@@ -25,22 +25,26 @@ const requiredAppTokens = [
   'aria-pressed',
   'tabIndex={-1}',
   'onKeyDown={closeDisclosureOnEscape}',
+  'role="radiogroup" aria-label="Live testing provider"',
+  'type="radio" name="live-testing-provider"',
+  'I confirm a compatible Linux game and Clausewitz MCP server are ready',
+  'label="SSH host alias"',
+  'label="WSL distribution (optional)"',
   'openInCodex',
   'openExternalUrlResult',
 ];
 
 const requiredPhaseLabels = ["Project", "Review", "Components", "Integrations", "Git", "Install", "Ready", "Overview", "Update", "Conflicts", "Recovery"];
-const requiredScreens = ["welcome", "description", "identity", "scan", "findings", "environments", "components", "workflows", "mesh", "mcp", "git", "dry-run", "install", "ready", "update", "chat-sources", "conflict", "recovery"];
+const requiredScreens = ["welcome", "description", "identity", "scan", "findings", "environments", "image-generation", "live-testing", "components", "workflows", "mesh", "mcp", "git", "dry-run", "install", "ready", "update", "chat-sources", "conflict", "recovery"];
 const optionalWorkflowTitles = [
   "3D models workflow",
   "Super Events workflow",
   "ComfyUI portrait production",
 ];
-const requiredCssTokens = [":focus-visible", "prefers-reduced-motion", "@media (min-width: 1920px)", "@media (max-width: 560px)", "overflow: auto", ".visually-hidden", ".button.primary:disabled", ".toggle-row > span:last-child", ".path-preview", "overflow-wrap: anywhere", "min-width: 0", ".provider-panel", ".provider-help", ".coding-environment-options", ".coding-environment-option:has(input:focus-visible)"];
+const requiredCssTokens = [":focus-visible", "prefers-reduced-motion", "@media (min-width: 1920px)", "@media (max-width: 560px)", "overflow: auto", ".visually-hidden", ".button.primary:disabled", ".toggle-row > span:last-child", ".path-preview", "overflow-wrap: anywhere", "min-width: 0", ".provider-panel", ".provider-help", ".coding-environment-options", ".coding-environment-option:has(input:focus-visible)", ".image-provider-card", ".image-provider-choice"];
 const requiredTypeTokens = ["conflictChoice?: ConflictChoice", "recoveryChoice: RecoveryChoice", "interface InstallationPlan", "interface TransactionJournal"];
-const requiredTauriTokens = ["interface TauriCommandMap", "isTauriRuntime", '"codex_account_read"', '"codex_login_start"', '"codex_login_cancel"', '"open_codex_login_url"', '"codex_analyze"', '"confirm_codex_analysis"', '"pick_project_folder"', '"pick_launcher_folder"', '"scan_project"', '"cancel_scan"', '"scan-progress"', '"preview_source_manifest"', '"preview_installation_conflict"', '"build_installation_plan"', '"build_maintenance_plan"', '"approve_installation"', '"resolve_installation_conflict"', '"apply_installation"', '"rollback_installation"', '"open_in_codex"', '"pick_chat_sources_folder"', '"preview_chat_sources"', '"package_chat_sources"', "Promise<InstallationPlan | null>", "Promise<TransactionJournal | null>"];
+const requiredTauriTokens = ["interface TauriCommandMap", "isTauriRuntime", '"codex_account_read"', '"codex_login_start"', '"codex_login_cancel"', '"open_codex_login_url"', '"codex_analyze"', '"confirm_codex_analysis"', '"pick_project_folder"', '"pick_launcher_folder"', '"scan_project"', '"cancel_scan"', '"scan-progress"', '"preview_source_manifest"', '"preview_installation_conflict"', '"build_installation_plan"', '"build_maintenance_plan"', '"store_image_generation_credential"', '"image_generation_credential_status"', '"remove_image_generation_credential"', '"approve_installation"', '"resolve_installation_conflict"', '"apply_installation"', '"rollback_installation"', '"open_in_codex"', '"pick_chat_sources_folder"', '"preview_chat_sources"', '"package_chat_sources"', "Promise<InstallationPlan | null>", "Promise<TransactionJournal | null>"];
 
-if (requiredScreens.length !== 18) throw new Error(`expected 18 screens, found ${requiredScreens.length}`);
 for (const token of requiredAppTokens) if (!app.includes(token)) throw new Error(`missing UI accessibility hook: ${token}`);
 for (const label of requiredPhaseLabels) if (!app.includes(`label: "${label}"`)) throw new Error(`missing phase label: ${label}`);
 for (const screen of requiredScreens) {
@@ -74,4 +78,4 @@ for (const token of requiredTypeTokens) if (!types.includes(token)) throw new Er
 for (const token of requiredTauriTokens) if (!tauri.includes(token)) throw new Error(`missing typed Tauri boundary hook: ${token}`);
 if (app.includes("import(\"./lib/tauri\")") || app.includes("invokeCommand")) throw new Error("App.tsx must use named typed Tauri wrappers, not the low-level invoker");
 
-console.log("Accessibility contract covers seven setup phases, four maintenance phases, 18 screens, keyboard/focus hooks, coding-environment containment, disclosure escape handling, reduced motion, scaling, ordered declarative workflow titles, one completed-Ready portrait link, and the typed Tauri boundary.");
+console.log(`Accessibility contract covers seven setup phases, four maintenance phases, ${requiredScreens.length} screens, native live-testing controls, provider-card keyboard access, OS-vault credential actions, coding-environment containment, reduced motion, scaling, and the typed Tauri boundary.`);

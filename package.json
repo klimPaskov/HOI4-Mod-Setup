@@ -14,7 +14,7 @@
     "test": "vitest run",
     "test:rust": "node scripts/run_rust_tests.mjs",
     "test:offline": "node scripts/run_offline_acceptance.mjs",
-    "test:manifest": "python -m unittest scripts/test_generate_manifest_evidence.py",
+    "test:manifest": "python -m unittest scripts/test_generate_manifest_evidence.py scripts/test_validate_repository.py",
     "test:release-assets": "node --test scripts/prepare_release_assets.node-test.mjs scripts/windows_installer_registry.node-test.mjs",
     "test:workflows": "python scripts/check_workflow_security.py",
     "test:a11y": "node scripts/check_accessibility.mjs",

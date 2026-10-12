@@ -444,6 +444,10 @@ pub struct ReadinessInput {
     #[serde(default)]
     pub workflow_super_events_state: String,
     #[serde(default)]
+    pub live_testing: Option<LiveTestingSelection>,
+    #[serde(default)]
+    pub live_testing_runtime_state: String,
+    #[serde(default)]
     pub portrait_provider: String,
     #[serde(default)]
     pub portrait_provider_status: String,
@@ -501,6 +505,8 @@ impl Default for ReadinessInput {
             dependency_status: "pass".into(),
             workflow_3d_state: "not_selected".into(),
             workflow_super_events_state: "not_selected".into(),
+            live_testing: None,
+            live_testing_runtime_state: String::new(),
             portrait_provider: "disabled".into(),
             portrait_provider_status: "not_selected".into(),
             source_license_status: "unknown".into(),
@@ -843,6 +849,21 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         "Selected component dependencies are complete and supported.",
         "manifest",
     );
+    if let Some(selection) = input.live_testing.as_ref() {
+        if selection.provider != "none" {
+            let configured = if selection.provider == "hoi4_live_tools" {
+                matches!(input.live_testing_runtime_state.as_str(), "ready")
+            } else {
+                selection.linux_ready
+            };
+            checks.push(ReadinessCheck {
+                    id: "workflow.live_testing".into(), category: "workflow".into(), label: "Live testing".into(),
+                    status: if configured { "pass" } else { "warn" }.into(), blocking: false,
+                    message: Some(if configured { "Provider configured. Gameplay has not been verified." } else if selection.provider == "hoi4_live_tools" { "HOI4 Live Tools runtime installation is incomplete. Gameplay has not been verified." } else { "Todo: confirm the Linux environment before registering Clausewitz MCP." }.into()),
+                    evidence: vec![ReadinessEvidence {kind: "provider_state".into(), value: json!({"provider":selection.provider,"linux_ready":selection.linux_ready,"gameplay_verified":false}), path: Some(".hoi4-mod-setup/install.lock.json".into())}],
+                });
+        }
+    }
     add_workflow_3d_check(&mut checks, &input.workflow_3d_state);
     add_super_events_check(&mut checks, &input.workflow_super_events_state);
     add_portrait_check(
@@ -1646,6 +1667,8 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         dependency_status: dependency_status.into(),
         workflow_3d_state,
         workflow_super_events_state,
+        live_testing_runtime_state: lock.as_ref().and_then(|lock| lock.optional_workflows.get("workflow.live_tools")).map(|workflow| workflow.state.clone()).unwrap_or_default(),
+        live_testing: lock.as_ref().map(|lock| lock.live_testing.clone().unwrap_or_else(|| crate::live_testing::legacy_selection(&lock.components))),
         portrait_provider,
         portrait_provider_status,
         source_license_status,
@@ -2082,5 +2105,56 @@ mod tests {
         .unwrap();
 
         assert!(wiki_link_integrity(project.path()).is_empty());
+    }
+}
+#[cfg(test)]
+mod live_provider_readiness_tests {
+    use super::*;
+    #[test]
+    fn live_tools_requires_completed_runtime_installation() {
+        for (state, expected) in [
+            ("", "warn"),
+            ("selected_pending", "warn"),
+            ("incomplete", "warn"),
+            ("ready", "pass"),
+        ] {
+            let report = evaluate(&ReadinessInput {
+                live_testing: Some(LiveTestingSelection {
+                    provider: "hoi4_live_tools".into(),
+                    ..Default::default()
+                }),
+                live_testing_runtime_state: state.into(),
+                ..Default::default()
+            });
+            let row = report
+                .checks
+                .iter()
+                .find(|check| check.id == "workflow.live_testing")
+                .unwrap();
+            assert_eq!(row.status, expected);
+            assert!(!row.blocking);
+            assert_eq!(row.evidence[0].value["gameplay_verified"], false);
+        }
+    }
+
+    #[test]
+    fn live_readiness_distinguishes_confirmation_from_gameplay_verification() {
+        for (ready, expected) in [(false, "warn"), (true, "pass")] {
+            let report = evaluate(&ReadinessInput {
+                live_testing: Some(LiveTestingSelection {
+                    linux_ready: ready,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
+            let row = report
+                .checks
+                .iter()
+                .find(|check| check.id == "workflow.live_testing")
+                .unwrap();
+            assert_eq!(row.status, expected);
+            assert!(!row.blocking);
+            assert_eq!(row.evidence[0].value["gameplay_verified"], false);
+        }
     }
 }

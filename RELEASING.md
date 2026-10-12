@@ -109,11 +109,9 @@ For the prepared 0.4.0 candidate, the maintainer's publication sequence is:
    presents all three installer links. Confirm GitHub Pages uses GitHub Actions;
    merging the page changes into `main` runs `Publish project page`, or dispatch
    that workflow manually if Pages needs its first deployment.
-7. After the gated workflow has finished publishing and verifying its six
-   installer/update assets, attach `setup_app_tutorial.mp4` as supplemental
-   release media. Verify the upload's size and SHA-256 against the original.
-   README and Pages link to that asset and the Agentic package's MCP demo;
-   videos stay outside Git and never enter updater metadata or asset curation.
+7. Keep the README video placeholder until the editors provide an approved
+   video link. Video editing and delivery are separate from the installer
+   release. Media stays outside Git and updater metadata.
 
 ## Public release assets
 

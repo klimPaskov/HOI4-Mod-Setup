@@ -161,17 +161,37 @@
     "ai": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider", "model", "reasoning_effort", "optimization_profile"],
+      "required": [
+        "provider",
+        "model",
+        "reasoning_effort",
+        "optimization_profile"
+      ],
       "properties": {
         "provider": {
-          "enum": ["codex", "claude_account", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+          "enum": [
+            "codex",
+            "claude_account",
+            "claude",
+            "kimi",
+            "glm",
+            "deepseek",
+            "local",
+            "custom"
+          ]
         },
         "model": {
           "type": "string",
           "minLength": 1
         },
         "reasoning_effort": {
-          "enum": ["low", "medium", "high", "xhigh", "max"]
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
         },
         "optimization_profile": {
           "type": "string",
@@ -182,16 +202,31 @@
     "coding_environments": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["primary", "additional"],
+      "required": [
+        "primary",
+        "additional"
+      ],
       "properties": {
         "primary": {
-          "enum": ["codex", "claude_code", "cursor", "qoder", "opencode"]
+          "enum": [
+            "codex",
+            "claude_code",
+            "cursor",
+            "qoder",
+            "opencode"
+          ]
         },
         "additional": {
           "type": "array",
           "uniqueItems": true,
           "items": {
-            "enum": ["codex", "claude_code", "cursor", "qoder", "opencode"]
+            "enum": [
+              "codex",
+              "claude_code",
+              "cursor",
+              "qoder",
+              "opencode"
+            ]
           }
         }
       }
@@ -237,18 +272,152 @@
         "mcp_registered"
       ],
       "properties": {
-        "enabled": { "type": "boolean" },
-        "provider": { "enum": ["cloud", "local", "runpod", "disabled"] },
-        "provider_status": { "type": "string", "minLength": 1 },
-        "workflow_repository": { "type": "string", "format": "uri" },
-        "workflow_branch": { "type": "string", "minLength": 1 },
-        "workflow_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-        "preferred_workflow": { "enum": ["source", "processing_only"] },
-        "local_comfyui_root": { "type": "string" },
-        "local_server_url": { "type": "string" },
-        "runpod_url": { "type": "string" },
-        "runpod_workspace": { "type": "string" },
-        "mcp_registered": { "type": "boolean" }
+        "enabled": {
+          "type": "boolean"
+        },
+        "provider": {
+          "enum": [
+            "cloud",
+            "local",
+            "runpod",
+            "disabled"
+          ]
+        },
+        "provider_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflow_repository": {
+          "type": "string",
+          "format": "uri"
+        },
+        "workflow_branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflow_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "preferred_workflow": {
+          "enum": [
+            "source",
+            "processing_only"
+          ]
+        },
+        "local_comfyui_root": {
+          "type": "string"
+        },
+        "local_server_url": {
+          "type": "string"
+        },
+        "runpod_url": {
+          "type": "string"
+        },
+        "runpod_workspace": {
+          "type": "string"
+        },
+        "mcp_registered": {
+          "type": "boolean"
+        }
+      }
+    },
+    "live_testing": {
+      "$ref": "#/$defs/live_testing"
+    },
+    "image_generation": {
+      "$ref": "#/$defs/image_generation"
+    }
+  },
+  "$defs": {
+    "live_testing": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "linux_ready",
+        "wsl_distribution",
+        "ssh_host"
+      ],
+      "properties": {
+        "provider": {
+          "enum": [
+            "clausewitz_mcp",
+            "hoi4_live_tools",
+            "none"
+          ]
+        },
+        "linux_ready": {
+          "type": "boolean"
+        },
+        "wsl_distribution": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_.-]*$"
+        },
+        "ssh_host": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^([A-Za-z0-9][A-Za-z0-9_.-]*)?$"
+        }
+      }
+    },
+    "image_generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary_provider",
+        "additional_providers",
+        "route_settings",
+        "credential_references"
+      ],
+      "properties": {
+        "primary_provider": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "additional_providers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "route_settings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        },
+        "credential_references": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^credential://image_generation_api_key/[a-z0-9_-]{1,64}$"
+          }
+        },
+        "installed_package_tree_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "installed_package_lock_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        }
       }
     }
   }

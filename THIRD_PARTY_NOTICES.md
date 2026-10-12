@@ -348,7 +348,7 @@ Inventory counts: 160 JavaScript packages and 360 Rust packages.
 | proptest | 1.11.0 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | quick-error | 1.2.3 | MIT/Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | quick-xml | 0.41.0 | MIT | registry+https://github.com/rust-lang/crates.io-index |
-| quinn-proto | 0.11.16 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
+| quinn-proto | 0.11.19 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | quinn-udp | 0.5.15 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | quinn | 0.11.11 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | quote | 1.0.47 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |

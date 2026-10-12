@@ -15,10 +15,10 @@ HOI4 Mod Setup creates the mod files, installs project instructions, skills,
 specialist subagents, tools, and an offline wiki, and opens your coding client.
 You can update the setup, repair it, or add workflows later.
 
-Claude Code is the default coding environment. Codex, Cursor, Qoder, and
+Choose any supported coding client. Codex, Claude Code, Cursor, Qoder, and
 OpenCode can use the same modding guidance through their own client packages.
 The workflow comes from [Agentic HOI4 Modding](https://github.com/klimPaskov/Agentic-HOI4-Modding).
-It also installs [HOI4 Agent Tools](https://github.com/klimPaskov/hoi4-agent-tools), which lets your agent build focus trees, events, decisions and maps, and [HOI4 Live Tools](https://github.com/klimPaskov/HOI4-Live-Tools) for testing in the running game.
+It also installs [HOI4 Agent Tools](https://github.com/klimPaskov/hoi4-agent-tools), which lets your agent build focus trees, events, decisions and maps, and offers optional live testing with [Clausewitz MCP by smerss](https://github.com/smerss/Clausewitz-MCP) or experimental [HOI4 Live Tools](https://github.com/klimPaskov/HOI4-Live-Tools).
 
 ## Download
 
@@ -32,10 +32,9 @@ ChaosX; community Mac builds use ad-hoc signing. See the
 [release notes](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
 for your download's signing details.
 
-Follow the [Windows first-run guide](docs/QUICKSTART.md),
-[watch the setup tutorial](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/setup_app_tutorial.mp4),
+Follow the [first-run guide](docs/QUICKSTART.md) for Windows and macOS,
 or visit the [project guide](https://klimpaskov.github.io/HOI4-Mod-Setup/).
-[See HOI4 Agent Tools in action](https://github.com/klimPaskov/Agentic-HOI4-Modding/releases/latest/download/hoi4_agent_tools_promo.mp4).
+Updated video guides will be shared on [Chaos Redux on YouTube](https://www.youtube.com/@ChaosRedux).
 
 ## Using the app
 
@@ -46,12 +45,10 @@ or visit the [project guide](https://klimpaskov.github.io/HOI4-Mod-Setup/).
 Choose **Create new mod** or **Import existing mod**. The setup assistant helps
 prepare the mod's details; choose your coding environment separately later.
 
-Claude is selected by default and signs in through your own Claude Code.
-Choose **Sign in to Claude** to open its browser sign-in. If Claude Code is
-missing, the app links to Anthropic's setup page. Codex uses ChatGPT sign-in.
-Claude API key, Kimi, GLM, and DeepSeek use a provider API key, with connection
-details filled in for you. Local and custom providers use the address supplied
-by your model service. Choose a model and a reasoning level when supported.
+The setup assistant that plans the mod is separate from the coding client you
+choose later. Select any supported assistant provider and use its account
+sign-in, API key, or local connection. Choose a model and reasoning level when
+the provider offers them.
 
 To work on a mod you already have, choose **Manage an existing project** and
 select its folder. The app finds its launcher file and installed setup.
@@ -76,10 +73,19 @@ subagents, client configuration, and Git state, then shows what needs attention.
 
 ### Choose your coding clients and components
 
-Select one primary coding environment and any additional clients you use.
-Claude Code is the default; Codex, Cursor, Qoder, and OpenCode are also supported.
+Select any supported coding client as your main one, then add other clients you use.
+Codex, Claude Code, Cursor, Qoder, and OpenCode are supported.
 
 ![Choose one primary coding environment and any additional clients](docs/screenshots/15-coding-environments.png)
+
+### Choose how to make images
+
+Pick a main image provider and add optional providers. ChatGPT through GPTImage
+is selected by default. The list also includes image APIs, local servers, Codex
+image generation when Codex is the main client, and a choice to make art yourself.
+The app stores API keys in the operating-system credential store.
+
+![Choose an image-generation provider](docs/screenshots/16-image-generation.png)
 
 Choose instructions, skills, tools, and the offline wiki. The app adapts the
 guidance to your mod and fills the game and Workshop folders it finds through
@@ -108,11 +114,14 @@ not include the offline wiki. Review its files and sizes before installation.
 - **ComfyUI portrait production** supports Comfy Cloud, Local ComfyUI, or RunPod.
   Its expanded panel shows the 16 GB VRAM and 25 GB storage recommendation.
   See the [portrait workflow guide](docs/32_comfyui_portrait_pipeline.md).
-- **HOI4 Live Tools** adds live game testing on Windows. Its setup needs Python
-  3.9 or newer and installs a separate program under
-  `%LOCALAPPDATA%\hoi4-live-tools`. Removing project components leaves this
-  program and its client entries installed; use `python install.py uninstall`
-  from the HOI4 Live Tools release to remove them.
+- **Live testing** opens a separate provider step. Clausewitz MCP by smerss is
+  the default and requires native Linux HOI4 1.19.2 and a separately prepared
+  Linux server: WSL on Windows, or a Linux machine/VM through SSH on macOS.
+  Follow the [Linux setup guide](docs/LIVE_TESTING_LINUX.md), then explicitly
+  confirm readiness. Configure later records a to-do without registration.
+  HOI4 Live Tools is experimental, slower, and not fully tested; its current
+  public package verifies Windows only, with an incomplete macOS scaffold.
+  None disables live testing. The next capture is `17-live-testing.png`.
 
 HOI4 Agent Tools installs and registers its MCP server for your selected coding
 clients on Windows, including `.mcp.json` for Claude Code. It works independently
@@ -148,9 +157,9 @@ prepared files. The app offers the actions available for that installation.
 
 ![Completed setup and project checks](docs/screenshots/08-ready.png)
 
-The Ready screen shows the project and tool checks. **Open in Claude Code**
-starts a terminal in the mod folder; **Open in Codex** opens the Codex app when
-Codex is primary. Optional workflows show their own setup status.
+The Ready screen shows the project and tool checks. **Open in your primary
+client** starts that client in the mod folder when it is available. Optional
+workflows show their own setup status.
 
 For ChatGPT, use the prepared project-source files to start planning. The app
 does not upload them. Installed projects also include

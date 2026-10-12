@@ -1,13 +1,13 @@
 {
   "repository": "klimPaskov/Agentic-HOI4-Modding",
-  "resolved_commit": "d05670e3838148e669913a5eaec681b1f6c1901d",
+  "resolved_commit": "2ee1e8160f3ac58a6cdd01ef64a913c7661d2367",
   "default_branch": "main",
-  "inspection_date": "2026-10-11",
+  "inspection_date": "2026-10-12",
   "manifest_path": "hoi4-mod-setup.manifest.json",
-  "manifest_sha256": "663d9fc622cb2af3e66d25ed930027cc107fb0cd049550eb7e662824ef3f7dac",
-  "manifest_generated_for_revision": "48707149408da09dcc57639564da4c5577faa9a0",
+  "manifest_sha256": "7de5090932084aa7d7fbf03ba1027b879f216ac6e3250cb12aea593bb91909a2",
+  "manifest_generated_for_revision": "1f82de026d639aaedaf3b62020d9bd40dc0b2c82",
   "manifest_worktree_state": "published_committed_snapshot",
-  "workspace_manifest_sha256": "663d9fc622cb2af3e66d25ed930027cc107fb0cd049550eb7e662824ef3f7dac",
+  "workspace_manifest_sha256": "7de5090932084aa7d7fbf03ba1027b879f216ac6e3250cb12aea593bb91909a2",
   "verified_root_entries": [
     ".claude/skills/",
     ".codex/",
@@ -244,8 +244,8 @@
   "verified_findings": [
     "The repository provides canonical Claude instructions, skills, and Markdown agents; generated coding-client projections; portrait workflows; MCP integration; bounded 3D tooling; and an offline wiki.",
     "The portrait component graph separates the complete production contract and explicit router from Cloud, Local, and RunPod skills; disabled projects do not receive those components.",
-    "The selected portrait provider lock uses comfyui-hoi4-portraits b47222a and its current eight-file model manifest; non-sourced fictional or impossible portraits use native ImageGen.",
-    "The provider-neutral MCP component uses hoi4-agent-tools.cmd through a Windows-only verified bootstrap; published canonical manifest 4.0.0 evidence binds its 5,223-file bundled dependency tree and all 28 required routes. Codex adds structural TOML registration separately.",
+    "The portrait contract uses the project's selected image-generation route for generated portraits.",
+    "The provider-neutral MCP component uses hoi4-agent-tools.cmd through a Windows-only verified bootstrap; published canonical manifest evidence binds its complete bundled dependency tree and required routes. Codex adds structural TOML registration separately.",
     "The published MCP capability list names the working hoi4.tech_inspect and hoi4.tech_render Technology Tree Viewer routes; comparisons use tech_inspect mode compare.",
     "The current 3D bootstrap, production blender_hoi4 adapter, and wrappers use Windows paths, .cmd wrappers, PowerShell guidance, winget, and blender.exe discovery.",
     "The published 3D component declares uv and binds the reviewed automatic bootstrap arguments, network access, expected writes, privilege, and rollback boundary.",
@@ -253,7 +253,8 @@
     "The Meshy runtime uses an exact npm lock and complete 3,916-file runtime identity; the project config delegates credential-bearing execution to the external app-owned launcher, which privately copies and revalidates the runtime and exact publisher-checked Node bytes. Blender MCP is resolved to an exact commit at bootstrap and io_pdx_mesh is pinned to release 0.91 with exact size and SHA-256 evidence.",
     "The wiki snapshot has a distribution marker but no formal source or license metadata was verified.",
     "Exact-commit content must be authoritative because repository directory views and cached listings can lag or differ.",
-    "The canonical core profile includes docs.runtimes, and the optional Claude Code instructions source uses agents_adaptation_v1 with a single-authority choice."
+    "The canonical core profile includes docs.runtimes, and the optional Claude Code instructions source uses agents_adaptation_v1 with a single-authority choice.",
+    "The manifest image and live-testing catalogs bind selected route guidance and MCP registrations. Clausewitz is pinned to its reviewed Linux HOI4 1.19.2 source; Live Tools remains experimental and Windows verified."
   ],
   "verification_limits": [
     "Every current manifest-declared skill and subagent path was re-inventoried with immutable Git-blob evidence. Changed contract surfaces, including the published MCP 4.0.0 package, Claude Code instruction template, docs.runtimes profile addition, portrait router, and bounded 3D adapter, were inspected; unchanged workflow prose relies on the prior full-read audit plus current path, size, and SHA-256 verification.",
@@ -261,10 +262,11 @@
     "Binary reference assets under skill trees were not individually inspected because this task designs an installer rather than an asset workflow output.",
     "The root Apache-2.0 license declaration is verified. No separate formal wiki license was found; third-party rights are not inferred from the package license.",
     "The npm 4.0.0 artifact is published with verified registry integrity and provenance. A fresh isolated installation supplies the exact full tree, file count, runtime entry, and required 28-tool contract.",
-    "ChatGPT source packaging is verified through manifest-selected installation into a tiny project, CLI bundle generation, archive-byte comparison, configurable dry-run, output refusal, and linked-file rejection. The exact source revision is public; the Windows packaging launcher does not establish macOS launcher execution."
+    "ChatGPT source packaging is verified through manifest-selected installation into a tiny project, CLI bundle generation, archive-byte comparison, configurable dry-run, output refusal, and linked-file rejection. The exact source revision is public; the Windows packaging launcher does not establish macOS launcher execution.",
+    "The provider table, selected route adapters, live/bootstrap contracts, and template markers were inspected. API-provider calls and real Linux gameplay were not exercised; selection and registration tests establish configuration behavior only."
   ],
-  "manifest_component_count": 56,
-  "manifest_file_evidence_count": 1645,
+  "manifest_component_count": 59,
+  "manifest_file_evidence_count": 1664,
   "mcp_package_version": "4.0.0",
   "mcp_package_file_count": 5384,
   "mcp_required_tool_count": 28,

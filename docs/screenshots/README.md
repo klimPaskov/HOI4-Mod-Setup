@@ -3,7 +3,7 @@
 These full-window captures are used beside the matching steps in the
 user-facing [README](../../README.md). They show the current Project, Review,
 Components, Integrations, Git, Install, Ready, maintenance, and ChatGPT source
-package screens at a 1280 by 960 desktop viewport.
+package screens. Earlier captures use a 1280 by 960 viewport; the coding-client, image-generation and live-testing captures use 1920 by 1080.
 
 No credential, account identity, private mod, or secret value appears in a
 public capture. The optional portrait workflow is provider-selectable for generic
@@ -37,3 +37,5 @@ navigation completion alone is not proof that React has rendered the fixture.
 Check the page for runtime errors and visually inspect the actual capture for
 blank areas or missing content. Keep the capture's real file format and matching
 extension (PNG or JPEG), then verify its README link before committing.
+
+The `live-testing` fixture produces `17-live-testing.png`; the current capture includes the provider choices and Linux setup to-do. For requested review captures, use 1920 by 1080 and append `&coding-environments=none` to the screenshot URL to clear all coding-environment selections before capture. Never use a real account or credential.
