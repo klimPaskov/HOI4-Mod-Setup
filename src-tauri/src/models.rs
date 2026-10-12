@@ -7,8 +7,8 @@ use uuid::Uuid;
 /// Manifest majors this build reads. Major 2 is the Codex-canonical layout
 /// (`.agents/skills`, `.codex/agents`); major 3 is the Claude-first layout
 /// (`.claude/skills`, `.claude/agents`) with declared coding environments.
-pub const SUPPORTED_MANIFEST_MAJORS: [u64; 2] = [2, 3];
-pub const CURRENT_MANIFEST_MAJOR: u64 = 3;
+pub const SUPPORTED_MANIFEST_MAJORS: [u64; 3] = [2, 3, 4];
+pub const CURRENT_MANIFEST_MAJOR: u64 = 4;
 
 pub const TRANSACTION_STAGES: [&str; 12] = [
     "preflight",
@@ -356,6 +356,9 @@ pub struct RemoteManifest {
     /// omit it and use the built-in list.
     #[serde(default)]
     pub coding_environments: Vec<CodingEnvironmentDefinition>,
+    /// Provider descriptions and route metadata supplied by manifest v4.
+    #[serde(default)]
+    pub image_generation: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -376,6 +379,25 @@ pub struct CodingEnvironmentSelection {
     pub primary: String,
     #[serde(default)]
     pub additional: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ImageGenerationSelection {
+    pub primary_provider: String,
+    #[serde(default)]
+    pub additional_providers: Vec<String>,
+    #[serde(default)]
+    pub route_settings: BTreeMap<String, BTreeMap<String, String>>,
+    /// Opaque references only; secret values never enter the plan or project.
+    #[serde(default)]
+    pub credential_references: BTreeMap<String, String>,
+    /// Verified local dependency tree created by the GPTImage bootstrap. It
+    /// lets a later provider change remove only the exact tree Setup installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_package_tree_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_package_lock_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -878,6 +900,8 @@ pub struct InstallationPlan {
     pub optional_workflows: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub portrait_pipeline: Option<PortraitPipelineConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_generation: Option<ImageGenerationSelection>,
     pub operations: Vec<PlanOperation>,
     pub conflicts: Vec<PlanConflict>,
     #[serde(default)]
@@ -1000,6 +1024,8 @@ pub struct InstallationLock {
     pub optional_workflows: BTreeMap<String, OptionalWorkflowLock>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub portrait_pipeline: Option<PortraitPipelineConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_generation: Option<ImageGenerationSelection>,
     pub local_modifications: Vec<LocalModification>,
     #[serde(default)]
     pub rollback_records: Vec<String>,

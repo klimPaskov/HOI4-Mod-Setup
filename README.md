@@ -15,7 +15,7 @@ HOI4 Mod Setup creates the mod files, installs project instructions, skills,
 specialist subagents, tools, and an offline wiki, and opens your coding client.
 You can update the setup, repair it, or add workflows later.
 
-Claude Code is the default coding environment. Codex, Cursor, Qoder, and
+Choose any supported coding client. Codex, Claude Code, Cursor, Qoder, and
 OpenCode can use the same modding guidance through their own client packages.
 The workflow comes from [Agentic HOI4 Modding](https://github.com/klimPaskov/Agentic-HOI4-Modding).
 It also installs [HOI4 Agent Tools](https://github.com/klimPaskov/hoi4-agent-tools), which lets your agent build focus trees, events, decisions and maps, and [HOI4 Live Tools](https://github.com/klimPaskov/HOI4-Live-Tools) for testing in the running game.
@@ -46,12 +46,10 @@ or visit the [project guide](https://klimpaskov.github.io/HOI4-Mod-Setup/).
 Choose **Create new mod** or **Import existing mod**. The setup assistant helps
 prepare the mod's details; choose your coding environment separately later.
 
-Claude is selected by default and signs in through your own Claude Code.
-Choose **Sign in to Claude** to open its browser sign-in. If Claude Code is
-missing, the app links to Anthropic's setup page. Codex uses ChatGPT sign-in.
-Claude API key, Kimi, GLM, and DeepSeek use a provider API key, with connection
-details filled in for you. Local and custom providers use the address supplied
-by your model service. Choose a model and a reasoning level when supported.
+The setup assistant that plans the mod is separate from the coding client you
+choose later. Select any supported assistant provider and use its account
+sign-in, API key, or local connection. Choose a model and reasoning level when
+the provider offers them.
 
 To work on a mod you already have, choose **Manage an existing project** and
 select its folder. The app finds its launcher file and installed setup.
@@ -76,10 +74,19 @@ subagents, client configuration, and Git state, then shows what needs attention.
 
 ### Choose your coding clients and components
 
-Select one primary coding environment and any additional clients you use.
-Claude Code is the default; Codex, Cursor, Qoder, and OpenCode are also supported.
+Select any supported coding client as your main one, then add other clients you use.
+Codex, Claude Code, Cursor, Qoder, and OpenCode are supported.
 
 ![Choose one primary coding environment and any additional clients](docs/screenshots/15-coding-environments.png)
+
+### Choose how to make images
+
+Pick a main image provider and add optional providers. ChatGPT through GPTImage
+is selected by default. The list also includes image APIs, local servers, Codex
+image generation when Codex is the main client, and a choice to make art yourself.
+The app stores API keys in the operating-system credential store.
+
+![Choose an image-generation provider](docs/screenshots/16-image-generation.png)
 
 Choose instructions, skills, tools, and the offline wiki. The app adapts the
 guidance to your mod and fills the game and Workshop folders it finds through
@@ -148,9 +155,9 @@ prepared files. The app offers the actions available for that installation.
 
 ![Completed setup and project checks](docs/screenshots/08-ready.png)
 
-The Ready screen shows the project and tool checks. **Open in Claude Code**
-starts a terminal in the mod folder; **Open in Codex** opens the Codex app when
-Codex is primary. Optional workflows show their own setup status.
+The Ready screen shows the project and tool checks. **Open in your primary
+client** starts that client in the mod folder when it is available. Optional
+workflows show their own setup status.
 
 For ChatGPT, use the prepared project-source files to start planning. The app
 does not upload them. Installed projects also include

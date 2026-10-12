@@ -8,6 +8,7 @@ export const DOCUMENTATION_SCENARIOS = [
   "identity",
   "components",
   "environments",
+  "image-generation",
   "workflows",
   "mcp",
   "git",
@@ -62,10 +63,10 @@ function component(
 }
 
 const manifestComponents = [
-  component("core.claude.instructions", "Project instructions (canonical CLAUDE.md)", "CLAUDE.md adapted to the mod; AGENTS.md is generated from it", "core", 1),
+  component("core.claude.instructions", "Project instructions", "Shared instructions adapted to the mod and selected clients", "core", 1),
   component("core.agents", "Project instructions (AGENTS.md)", "The same rules for Codex, Cursor, Qoder, OpenCode, and DSH", "core", 1),
-  component("core.skills", "HOI4 workflow skills", "The canonical skill library in .claude/skills", "skill", 512),
-  component("core.subagents", "Subagents", "Canonical Claude Code specialists with per-role model tiers", "subagent", 19),
+  component("core.skills", "HOI4 workflow skills", "Workflow skills for the clients you selected", "skill", 512),
+  component("core.subagents", "Subagents", "Specialist agents for the clients you selected", "subagent", 19),
   component("runtime.agent_sync", "Runtime synchronizers", "Regenerate AGENTS.md, other runtimes' agents, and skill copies", "script", 8),
   component("mcp.hoi4_agent_tools", "HOI4 Agent Tools MCP", "HOI4 modding tools", "mcp", 0, true, ["windows"]),
   component("docs.mcp_integration", "HOI4 Agent Tools integration guide", "Capability, evidence, recovery, and troubleshooting contract", "documentation", 1),
@@ -123,12 +124,22 @@ const manifest = {
     default: true,
   }],
   coding_environments: [
-    { id: "claude_code", display_name: "Claude Code", description: "Canonical CLAUDE.md, skills, and agents in .claude, shared settings, and project MCP registration", default_primary: true },
-    { id: "codex", display_name: "Codex", description: "AGENTS.md, the .agents/skills copy, generated .codex agents, and Codex MCP configuration" },
-    { id: "cursor", display_name: "Cursor", description: "Generated .cursor agents, project settings, map, and MCP" },
-    { id: "qoder", display_name: "Qoder", description: "Generated .qoder agents, project settings, map, and MCP" },
-    { id: "opencode", display_name: "OpenCode", description: "Generated .opencode agents, opencode.json, map, and MCP" },
+    { id: "claude_code", display_name: "Claude Code", description: "Project instructions, skills, agents, and MCP", default_primary: true },
+    { id: "codex", display_name: "Codex", description: "Project instructions, skills, agents, and MCP" },
+    { id: "cursor", display_name: "Cursor", description: "Project instructions, skills, agents, and MCP" },
+    { id: "qoder", display_name: "Qoder", description: "Project instructions, skills, agents, and MCP" },
+    { id: "opencode", display_name: "OpenCode", description: "Project instructions, skills, agents, and MCP" },
   ],
+  image_generation: {
+    default_provider: "gptimage",
+    providers: [
+      { id: "gptimage", display_name: "ChatGPT subscription (GPTImage)", description: "Use the local GPTImage server with your ChatGPT plan.", availability: "supported", requirements: ["ChatGPT plan and browser sign-in."], good_for: ["Concept art", "Reference images"], cost_summary: "No separate image API bill; plan limits apply.", models: ["GPT Image"], supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"], route: { kind: "local_package", auth_method: "chatgpt_subscription", component_id: "imagegen.gptimage", tool_names: { generate: "generate_image", auth_status: "image_auth_status" } }, capabilities: { reference_images: { supported: true, max_count: 5, notes: "Pass the image paths and explain what to copy." }, image_edits: false, transparent_background: { native: false, notes: "PNG output may have an opaque background." }, size_limits: { notes: "Follow the selected route's size limits." }, one_image_per_call: true, fallback_if_no_alpha: "Use background removal and check the saved alpha.", fallback_if_no_edits: "Make a new version from references." } },
+      { id: "openai_api", display_name: "OpenAI Images API", description: "Use image models with a key saved on this computer.", availability: "supported", requirements: ["OpenAI API key."], good_for: ["Image edits", "Transparent output"], cost_summary: "Pay per image; quality and size change the price.", models: ["GPT Image 2.5", "GPT Image 2", "GPT Image 1.5"], supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"], route: { kind: "stdio_adapter", auth_method: "api_key_vault", component_id: "imagegen.runtime", api_protocol: "openai_images", api_base_url: "https://api.openai.com/v1", default_model: "gpt-image-2.5-sunburst", supported_models: ["gpt-image-2.5-sunburst", "gpt-image-2", "gpt-image-1.5"], credential_fields: [{ id: "api_key", display_name: "OpenAI API key", environment_name: "OPENAI_API_KEY" }] }, capabilities: { reference_images: { supported: true, max_count: 16, notes: "Reference limits vary by model." }, image_edits: true, transparent_background: { native: true, notes: "Supported models can return transparent images; check the alpha." }, size_limits: { accepts_dimensions: true, maximum_width_px: 3840, maximum_height_px: 3840, notes: "Use model-supported dimensions." }, one_image_per_call: true, fallback_if_no_alpha: "Use a configured background-removal route.", fallback_if_no_edits: "Make a new version from references." } },
+      { id: "gemini_api", display_name: "Google Gemini images (Nano Banana)", description: "Use Google's image models through AI Studio.", availability: "supported", requirements: ["Google AI Studio API key."], good_for: ["Reference-guided edits", "Several visual styles"], cost_summary: "Pay per image; size and model affect the price.", models: ["Nano Banana 2.1", "Nano Banana Pro"], supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"], route: { kind: "stdio_adapter", auth_method: "api_key_vault", component_id: "imagegen.runtime", api_protocol: "gemini_generate_content", default_model: "gemini-3.1-flash-image", credential_fields: [{ id: "api_key", display_name: "Google AI Studio API key", environment_name: "GEMINI_API_KEY" }] }, capabilities: { reference_images: { supported: true, max_count: 14, notes: "Limits depend on the model." }, image_edits: true, transparent_background: { native: false, notes: "Native alpha is not documented." }, size_limits: { accepts_dimensions: true, maximum_width_px: 4096, maximum_height_px: 4096, notes: "Limits depend on the model." }, one_image_per_call: true, fallback_if_no_alpha: "Use a configured background-removal route.", fallback_if_no_edits: "Make a new version from references." } },
+      { id: "fal_ai", display_name: "fal.ai", description: "Choose among many hosted image models.", availability: "supported", requirements: ["fal API key."], good_for: ["FLUX", "Recraft", "Ideogram", "Seedream"], cost_summary: "Pay per model run; prices vary.", models: ["FLUX", "Recraft", "Ideogram", "Seedream", "Nano Banana"], supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"], route: { kind: "stdio_adapter", auth_method: "api_key_vault", component_id: "imagegen.runtime", api_protocol: "fal_queue", default_model: "fal-ai/flux-2-pro", credential_fields: [{ id: "api_key", display_name: "fal API key", environment_name: "FAL_KEY" }] }, capabilities: { reference_images: { supported: true, max_count: 1, notes: "Limits depend on model." }, image_edits: true, transparent_background: { native: false, notes: "Some models support transparency." }, size_limits: { notes: "Limits depend on model." }, one_image_per_call: true, fallback_if_no_alpha: "Use a configured background-removal route.", fallback_if_no_edits: "Make a new version from references." } },
+      { id: "none", display_name: "None — I will make art myself", description: "Use artwork you create or source yourself.", availability: "supported", requirements: ["No account or install."], good_for: ["Your own artwork"], cost_summary: "No provider charge.", models: [], supported_coding_environments: ["claude_code", "codex", "cursor", "qoder", "opencode"], route: { kind: "manual", auth_method: "none" }, capabilities: { reference_images: { supported: false, notes: "Add your own files to the project." }, image_edits: false, transparent_background: { native: false, notes: "Check alpha in the files you add." }, size_limits: { notes: "Use HOI4 asset size rules." }, one_image_per_call: true, fallback_if_no_alpha: "Edit the image yourself and check its alpha.", fallback_if_no_edits: "Edit the image yourself." } },
+    ],
+  },
 };
 
 const semanticAnalysis: CodexAnalysis = {
@@ -299,8 +310,8 @@ export function documentationFixture(base: WizardState): WizardState {
       required: !item.optional,
     })),
     selectedComponents: ["core.claude.instructions", "core.agents", "core.skills", "core.subagents", "runtime.agent_sync", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot"],
-    primaryCodingEnvironment: "claude_code",
-    additionalCodingEnvironments: [],
+    primaryCodingEnvironment: "codex",
+    additionalCodingEnvironments: ["claude_code"],
     folderProfile: ["common", "events", "gfx", "interface", "localisation/english"],
     codexAnalysis: semanticAnalysis,
     codexAnalysisRecord: semanticAnalysisRecord,
@@ -329,7 +340,8 @@ export function documentationFixture(base: WizardState): WizardState {
   if (scenario === "identity") return { ...common, screen: "identity", mode: "new", codexAnalysis: semanticAnalysis, codexAnalysisRecord: semanticAnalysisRecord, conventions: semanticConventions, semanticComponentRecommendations: semanticAnalysis.component_recommendations };
   if (scenario === "existing") return { ...common, screen: "identity", mode: "existing", recoveryEntry: true };
   if (scenario === "components") return { ...common, screen: "components", flattenForChat: true };
-  if (scenario === "environments") return { ...common, screen: "environments", primaryCodingEnvironment: "claude_code", additionalCodingEnvironments: ["codex"] };
+  if (scenario === "environments") return { ...common, screen: "environments", primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["claude_code"] };
+  if (scenario === "image-generation") return { ...common, screen: "image-generation", primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["claude_code"], imageGeneration: { primary_provider: "gptimage", additional_providers: ["openai_api"], route_settings: {}, credential_references: {} } };
   if (scenario === "workflows") return { ...common, screen: "workflows", meshSelected: true, superEventsSelected: true, portraitPipeline: runpodPortrait, selectedComponents: [...common.selectedComponents, "workflow.3d", "workflow.super_events", "workflow.live_tools", ...portraitComponentIds] };
   if (scenario === "mcp") return { ...common, screen: "mcp", meshSelected: true, meshKeyStatus: "present", selectedComponents: [...common.selectedComponents, "workflow.3d"] };
   if (scenario === "git") return { ...common, screen: "git", gitOnlineAction: "create_public_github", gitHubRepository: "atlantis-rising" };

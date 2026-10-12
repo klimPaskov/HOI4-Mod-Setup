@@ -264,6 +264,9 @@
     "portrait_pipeline": {
       "$ref": "#/$defs/portrait_pipeline"
     },
+    "image_generation": {
+      "$ref": "#/$defs/image_generation"
+    },
     "local_modifications": {
       "type": "array",
       "items": {
@@ -423,6 +426,19 @@
         "runpod_url": { "type": "string" },
         "runpod_workspace": { "type": "string" },
         "mcp_registered": { "type": "boolean" }
+      }
+    },
+    "image_generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary_provider", "additional_providers", "route_settings", "credential_references"],
+      "properties": {
+        "primary_provider": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "additional_providers": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" } },
+        "route_settings": { "type": "object", "additionalProperties": { "type": "object", "additionalProperties": { "type": "string", "maxLength": 1024 } } },
+        "credential_references": { "type": "object", "additionalProperties": { "type": "string", "pattern": "^credential://image_generation_api_key/[a-z0-9_-]{1,64}$" } },
+        "installed_package_tree_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "installed_package_lock_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" }
       }
     },
     "wiki_metadata": {

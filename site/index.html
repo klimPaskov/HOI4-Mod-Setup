@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>HOI4 Mod Setup</title>
-  <meta name="description" content="A desktop wizard that prepares a Hearts of Iron IV mod for AI-assisted development with Claude Code, Codex, and other coding agents.">
+  <meta name="description" content="A desktop wizard that prepares a Hearts of Iron IV mod for the coding client and image provider you choose.">
   <link rel="icon" href="icon.png">
   <style>
     :root {
@@ -55,14 +55,15 @@
       <a class="button" href="https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/docs/QUICKSTART.md">Quick start</a>
       <a class="button" href="https://www.youtube.com/playlist?list=PLh6JmuEabQioc4V8IYGEsMtqiw-xemeX3">Video tutorials</a>
     </div>
-    <figure class="shot"><img src="screenshots/08-ready.png" alt="The Ready screen of HOI4 Mod Setup with every core check passing and an Open in Claude Code button"></figure>
+    <figure class="shot"><img src="screenshots/08-ready.png" alt="The Ready screen of HOI4 Mod Setup with project checks and a button to open a coding client"></figure>
   </header>
 
   <main class="wrap">
     <section>
       <h2>What you get</h2>
       <div class="grid">
-        <div class="card"><h3>Project instructions</h3><p>Modding guidance adapted to your mod's name, prefix, and game folder, with Claude Code as the default client and packages for Codex, Cursor, Qoder, and OpenCode.</p></div>
+        <div class="card"><h3>Project instructions</h3><p>Modding guidance adapted to your mod and coding client. Choose any supported client and add the others you use.</p></div>
+        <div class="card"><h3>Image generation</h3><p>Choose a main image provider, add optional providers, and change them later. API keys stay in the Windows or macOS credential store.</p></div>
         <div class="card"><h3>HOI4 workflow skills</h3><p>Events, decisions, focus trees, scripted GUIs, assets, frame animation, save inspection, and more, in <code>.claude/skills</code>.</p></div>
         <div class="card"><h3>Specialist subagents</h3><p>Planners, auditors, and asset workers for the different parts of your mod.</p></div>
         <div class="card"><h3>HOI4 Agent Tools MCP</h3><p>Build focus trees, events, decisions and worlds. Preview windows and maps, fix scripts and balance AI choices with your agent.</p></div>
@@ -74,9 +75,10 @@
     <section>
       <h2>How it works</h2>
       <ol class="steps">
-        <li><strong>Start a project.</strong> Create a new mod from a short description or import an existing one. Claude, signed in through your own Claude Code, helps prepare its details by default.</li>
+        <li><strong>Start a project.</strong> Create a new mod from a short description or import an existing one. Your chosen setup assistant helps prepare its details.</li>
         <li><strong>Review the identity.</strong> Confirm the project ID, script prefix, tags, and folders the assistant suggests.</li>
-        <li><strong>Pick your clients.</strong> Claude Code is the default primary environment; choose another primary or add Codex, Cursor, Qoder, or OpenCode if you use them.</li>
+        <li><strong>Pick your clients.</strong> Choose any supported primary coding client, then add other clients you use.</li>
+        <li><strong>Choose an image provider.</strong> Pick a main image provider, add optional providers, or change the choice later.</li>
         <li><strong>Choose components and workflows.</strong> Select your modding tools, offline wiki, and optional workflows.</li>
         <li><strong>Review and install.</strong> Review the files and folders to add or update, then follow installation progress.</li>
         <li><strong>Open the mod.</strong> Open the prepared project in your primary coding client.</li>
@@ -87,7 +89,8 @@
       <h2>Screens</h2>
       <div class="gallery">
         <figure><img src="screenshots/01-welcome.jpg" alt="Start a mod project screen"><figcaption>Choose a new or existing mod and the setup assistant.</figcaption></figure>
-        <figure><img src="screenshots/15-coding-environments.png" alt="Coding environments screen"><figcaption>Choose your primary coding client and any additional clients.</figcaption></figure>
+        <figure><img src="screenshots/15-coding-environments.png" alt="Coding environments screen"><figcaption>Choose any supported coding client and add other clients you use.</figcaption></figure>
+        <figure><img src="screenshots/16-image-generation.png" alt="Image generation provider screen"><figcaption>Choose a main image provider and add optional providers.</figcaption></figure>
         <figure><img src="screenshots/04-components.png" alt="Components screen"><figcaption>Choose instructions, skills, subagents, and tools.</figcaption></figure>
         <figure><img src="screenshots/05-integrations.png" alt="Optional workflows screen"><figcaption>3D, Super Events, portraits, and HOI4 Live Tools.</figcaption></figure>
         <figure><img src="screenshots/09-dry-run.png" alt="Installation review screen"><figcaption>Review the files and folders to install.</figcaption></figure>
@@ -110,7 +113,7 @@
         <tr><td>Windows 10 or 11 (macOS for the core setup)</td><td>The HOI4 Agent Tools MCP, 3D, and HOI4 Live Tools routes are Windows-only.</td></tr>
         <tr><td>Git, if you choose Git setup</td><td>Keeps your mod's change history and connects it to a remote repository.</td></tr>
         <tr><td>Node.js LTS</td><td>Runs the HOI4 Agent Tools MCP server.</td></tr>
-        <tr><td>A connected setup assistant</td><td>Claude Code is the default. You can also use Codex, Claude API key, Kimi, GLM, DeepSeek, a local model, or a custom provider. Choose your coding client separately.</td></tr>
+        <tr><td>A connected setup assistant</td><td>Choose from supported account sign-in, API key, local model, and custom provider options. Choose your coding client separately.</td></tr>
         <tr><td>Python 3.9 or newer</td><td>The runtime synchronizers and the optional workflows.</td></tr>
       </table>
       <p>The app checks each tool and explains what is missing. See <a href="https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/docs/TROUBLESHOOTING.md">Troubleshooting</a>.</p>

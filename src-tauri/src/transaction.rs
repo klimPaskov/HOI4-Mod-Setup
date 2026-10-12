@@ -242,7 +242,10 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
             )
         })
         && plan.generated_artifacts.is_empty()
-        && plan.external_actions.is_empty()
+        && plan.external_actions.iter().all(|action| {
+            action.id == "external.imagegen.gptimage.cleanup"
+                && action.component_id == "imagegen.gptimage"
+        })
         && plan.git_setup.is_none();
     if let Some(codex_analysis) = plan.codex_analysis.as_ref() {
         crate::codex::validate_confirmed_record(codex_analysis)?;
@@ -1670,23 +1673,36 @@ pub fn run_transaction(
         post_install_checks(&project_root, project_directory, plan, &mut journal, &store)?;
         project_directory.verify_bound_to_path()?;
         // A removal sets nothing up: it only deletes managed files, and any
-        // remaining component keeps the state it already had.
+        // remaining component keeps the state it already had. GPTImage is the
+        // exception: its dependencies live outside the managed file list and
+        // have a separately reviewed, hash-bound cleanup action.
         let removal = plan.maintenance_mode.as_deref() == Some("remove");
-        if let Some(runner) = options.post_install_action_runner.filter(|_| !removal) {
+        let removal_has_image_cleanup = removal
+            && plan
+                .external_actions
+                .iter()
+                .any(|action| action.id == "external.imagegen.gptimage.cleanup");
+        if let Some(runner) = options
+            .post_install_action_runner
+            .filter(|_| !removal || removal_has_image_cleanup)
+        {
             let components = [
                 crate::mcp::COMPONENT_ID,
                 "workflow.3d",
                 crate::mcp::LIVE_TOOLS_COMPONENT_ID,
+                "imagegen.gptimage",
             ]
             .into_iter()
             .filter(|component_id| {
                 // A manifest that predates the HOI4 Live Tools bootstrap
                 // declares no action; the skill-only workflow has nothing to run.
-                *component_id != crate::mcp::LIVE_TOOLS_COMPONENT_ID
-                    || plan
-                        .external_actions
-                        .iter()
-                        .any(|action| action.component_id == *component_id)
+                !matches!(
+                    *component_id,
+                    crate::mcp::LIVE_TOOLS_COMPONENT_ID | "imagegen.gptimage"
+                ) || plan
+                    .external_actions
+                    .iter()
+                    .any(|action| action.component_id == *component_id)
             })
             .filter(|component_id| {
                 effective_plan
@@ -1694,6 +1710,11 @@ pub fn run_transaction(
                     .get(*component_id)
                     .is_some_and(|state| {
                         matches!(state.as_str(), "selected_pending" | "incomplete" | "ready")
+                            || (*component_id == "imagegen.gptimage"
+                                && state == "not_selected"
+                                && plan.external_actions.iter().any(|action| {
+                                    action.id == "external.imagegen.gptimage.cleanup"
+                                }))
                     })
             })
             .collect::<Vec<_>>();
@@ -1727,7 +1748,7 @@ pub fn run_transaction(
                 }
                 if !matches!(
                     outcome.state.as_str(),
-                    "ready" | "incomplete" | "unsupported_platform"
+                    "ready" | "incomplete" | "unsupported_platform" | "not_selected"
                 ) {
                     return Err(AppError::Transaction(format!(
                         "post-install action returned an invalid state for {}",
@@ -1746,6 +1767,38 @@ pub fn run_transaction(
                 effective_plan
                     .optional_workflows
                     .insert(outcome.component_id.clone(), outcome.state.clone());
+                if outcome.component_id == "imagegen.gptimage" {
+                    if outcome.evidence == "package-tree-removed" {
+                        if let Some(selection) = effective_plan.image_generation.as_mut() {
+                            selection.installed_package_tree_sha256 = None;
+                            selection.installed_package_lock_sha256 = None;
+                        }
+                    } else {
+                        let tree_hash = outcome
+                            .evidence
+                            .split(';')
+                            .find_map(|part| part.strip_prefix("package-tree-sha256:"));
+                        let lock_hash = outcome
+                            .evidence
+                            .split(';')
+                            .find_map(|part| part.strip_prefix("package-lock-sha256:"));
+                        if let (Some(tree_hash), Some(lock_hash)) = (tree_hash, lock_hash) {
+                            if crate::source::validate_sha256(tree_hash).is_err()
+                                || crate::source::validate_sha256(lock_hash).is_err()
+                            {
+                                return Err(AppError::Transaction(
+                                    "GPTImage returned an invalid dependency integrity hash".into(),
+                                ));
+                            }
+                            if let Some(selection) = effective_plan.image_generation.as_mut() {
+                                selection.installed_package_tree_sha256 =
+                                    Some(tree_hash.to_owned());
+                                selection.installed_package_lock_sha256 =
+                                    Some(lock_hash.to_owned());
+                            }
+                        }
+                    }
+                }
                 let evidence = redact_secrets(&outcome.evidence, &[])
                     .chars()
                     .take(768)
@@ -5972,6 +6025,10 @@ fn build_lock(
             .portrait_pipeline
             .clone()
             .or_else(|| previous_lock.and_then(|lock| lock.portrait_pipeline.clone())),
+        image_generation: plan
+            .image_generation
+            .clone()
+            .or_else(|| previous_lock.and_then(|lock| lock.image_generation.clone())),
         local_modifications,
         rollback_records,
     })
@@ -8846,6 +8903,7 @@ mod tests {
             credential_references: vec![],
             optional_workflows: Default::default(),
             portrait_pipeline: None,
+            image_generation: None,
             operations: vec![PlanOperation {
                 id: "op-1".into(),
                 component_id: "core.agents".into(),
@@ -10849,6 +10907,91 @@ mod tests {
     }
 
     #[test]
+    fn managed_removal_runs_only_the_reviewed_gptimage_dependency_cleanup() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let initial_plan = ready_plan(project.path());
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        let (_, installed_lock) = run_test_transaction(
+            project.path(),
+            &initial_plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let mut removal_plan = ready_plan(project.path());
+        removal_plan.maintenance_mode = Some("remove".into());
+        removal_plan.plan_id = Uuid::new_v4();
+        removal_plan.codex_analysis = None;
+        removal_plan.generated_artifacts.clear();
+        removal_plan.git_setup = None;
+        removal_plan.operations =
+            managed_removal_operations(&installed_lock, project.path()).unwrap();
+        removal_plan
+            .optional_workflows
+            .insert("imagegen.gptimage".into(), "not_selected".into());
+        removal_plan.external_actions = vec![ExternalAction {
+            id: "external.imagegen.gptimage.cleanup".into(),
+            component_id: "imagegen.gptimage".into(),
+            platform: Platform::current(),
+            command_source: "app_managed_cleanup".into(),
+            executable: None,
+            arguments: vec![".tools/image_generation/providers/gptimage/node_modules".into()],
+            working_directory: Some("<project_root>".into()),
+            environment_names: vec![],
+            network_access: "none".into(),
+            expected_writes: vec![
+                ".tools/image_generation/providers/gptimage/node_modules/**".into()
+            ],
+            privilege: "current_user".into(),
+            rollback_boundary: "node_modules package-tree hash and directory identity".into(),
+            display_command: Some("Remove unchanged Setup-managed GPTImage dependencies".into()),
+            risk: "medium".into(),
+            requires_approval: true,
+            contains_secret: false,
+            verified_executable_sha256: None,
+            verified_executable_size: None,
+            verified_interpreter_sha256: None,
+            verified_interpreter_size: None,
+            verified_runtime_sha256: None,
+            verified_runtime_size: None,
+            verified_package_name: None,
+            verified_package_version: None,
+            verified_package_integrity: None,
+            verified_package_tree_sha256: None,
+            verified_package_file_count: None,
+            verified_runtime_entry: None,
+            required_tool_names: vec![],
+        }];
+        let error = run_test_transaction(
+            project.path(),
+            &removal_plan,
+            &[],
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                post_install_action_runner: Some(failing_image_cleanup_action),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("reviewed GPTImage cleanup action ran"),
+            "unexpected removal error: {error:?}"
+        );
+    }
+
+    #[test]
     fn managed_removal_validation_does_not_require_codex_semantics() {
         let mut plan = plan();
         plan.maintenance_mode = Some("remove".into());
@@ -10880,6 +11023,16 @@ mod tests {
     ) -> Result<PostInstallActionOutcome, AppError> {
         Err(AppError::Transaction(
             "reviewed 3D bootstrap failed before readiness".into(),
+        ))
+    }
+
+    fn failing_image_cleanup_action(
+        _project_root: &Path,
+        _plan: &InstallationPlan,
+        _component_id: &str,
+    ) -> Result<PostInstallActionOutcome, AppError> {
+        Err(AppError::Transaction(
+            "reviewed GPTImage cleanup action ran".into(),
         ))
     }
 
@@ -12325,6 +12478,7 @@ mod tests {
             merge_choices: vec![],
             optional_workflows: std::collections::BTreeMap::new(),
             portrait_pipeline: None,
+            image_generation: None,
             local_modifications: vec![],
             rollback_records: vec![],
         };
@@ -12391,6 +12545,7 @@ mod tests {
             merge_choices: vec![],
             optional_workflows: Default::default(),
             portrait_pipeline: None,
+            image_generation: None,
             local_modifications: vec![],
             rollback_records: vec![],
         };

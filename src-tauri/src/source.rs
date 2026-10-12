@@ -883,12 +883,27 @@ pub fn parse_manifest(bytes: &[u8], revision: Option<&str>) -> Result<RemoteMani
 
 fn validate_manifest_schema(value: &Value) -> Result<(), AppError> {
     static SCHEMA: OnceLock<Value> = OnceLock::new();
-    let schema = SCHEMA.get_or_init(|| {
-        serde_json::from_str(include_str!(
-            "../../docs/schemas/remote-manifest.schema.json"
-        ))
-        .expect("checked-in remote manifest schema must be valid JSON")
-    });
+    static SCHEMA_V4: OnceLock<Value> = OnceLock::new();
+    let major = value
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .and_then(|version| version.split('.').next())
+        .and_then(|version| version.parse::<u64>().ok());
+    let schema = if major == Some(4) {
+        SCHEMA_V4.get_or_init(|| {
+            serde_json::from_str(include_str!(
+                "../../docs/schemas/remote-manifest.v4.schema.json"
+            ))
+            .expect("checked-in v4 remote manifest schema must be valid JSON")
+        })
+    } else {
+        SCHEMA.get_or_init(|| {
+            serde_json::from_str(include_str!(
+                "../../docs/schemas/remote-manifest.schema.json"
+            ))
+            .expect("checked-in remote manifest schema must be valid JSON")
+        })
+    };
     let validator = jsonschema::draft202012::new(schema).map_err(|error| {
         AppError::Source(format!(
             "checked-in remote manifest schema cannot be compiled: {error}"
@@ -3027,6 +3042,7 @@ mod tests {
             },
             signing: None,
             coding_environments: Vec::new(),
+            image_generation: None,
         }
     }
 }

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildMaintenancePlan, cancelCodexLogin, cancelScan, confirmCodexAnalysis, evaluateReadiness, inspectLocalPortraitProvider, installLocalPortraitWorkflows, openExternalUrlResult, packageChatSources, pickChatSourcesFolder, previewChatSources, previewDescriptors, readMeshyCredential, runAiAnalysis, runCodexAnalysis, scanProject } from "./tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildMaintenancePlan, buildMaintenancePlanResult, cancelCodexLogin, cancelScan, confirmCodexAnalysis, evaluateReadiness, inspectLocalPortraitProvider, installLocalPortraitWorkflows, openExternalUrlResult, packageChatSources, pickChatSourcesFolder, previewChatSources, previewDescriptors, readMeshyCredential, runAiAnalysis, runCodexAnalysis, scanProject } from "./tauri";
 import type { AiAnalysisRequest, CodexAnalysisRequest, ScanProgress, WizardState } from "../types";
 
 const { invoke, listen, unlisten } = vi.hoisted(() => ({
@@ -312,13 +312,21 @@ describe("typed scanner bridge", () => {
 
   it("never serializes the Meshy password draft in state-bearing core commands", async () => {
     invoke.mockResolvedValue([]);
-    const state = { meshKeyDraft: "test-meshy-draft-not-for-transport" } as unknown as WizardState;
+    const state = { meshKeyDraft: "test-meshy-draft-not-for-transport", imageGenerationCredentialDrafts: { "openai_api.api_key": "test-image-draft-not-for-transport" } } as unknown as WizardState;
 
     await previewDescriptors(state);
     await buildInstallationPlan(state);
 
-    expect(invoke).toHaveBeenNthCalledWith(1, "preview_descriptors", { state: { meshKeyDraft: "" } });
-    expect(invoke).toHaveBeenNthCalledWith(2, "build_installation_plan", { state: { meshKeyDraft: "" } });
+    expect(invoke).toHaveBeenNthCalledWith(1, "preview_descriptors", { state: { meshKeyDraft: "", imageGenerationCredentialDrafts: {} } });
+    expect(invoke).toHaveBeenNthCalledWith(2, "build_installation_plan", { state: { meshKeyDraft: "", imageGenerationCredentialDrafts: {} } });
     expect(JSON.stringify(invoke.mock.calls)).not.toContain("test-meshy-draft-not-for-transport");
+    expect(JSON.stringify(invoke.mock.calls)).not.toContain("test-image-draft-not-for-transport");
+  });
+
+  it("passes the selected image providers into the reviewed maintenance plan", async () => {
+    invoke.mockResolvedValue({ plan_id: "maintenance-plan" });
+    const imageGeneration = { primary_provider: "openai_api", additional_providers: ["gptimage"], route_settings: {}, credential_references: { "openai_api.api_key": "credential://image_generation_api_key/openai_api_api_key" } };
+    await buildMaintenancePlanResult("update", "C:/mods/example", undefined, [], undefined, "claude_code", [], undefined, imageGeneration);
+    expect(invoke).toHaveBeenCalledWith("build_maintenance_plan", expect.objectContaining({ imageGeneration }));
   });
 });

@@ -1,14 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { analysisBrief, ChatSources, CodingEnvironments, Components, DryRun, Findings, Git, Identity, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
-import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, rollbackInstallationResult, runCodexAnalysisResult, startClaudeLogin, startCodexLogin, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
+import App, { analysisBrief, ChatSources, CodingEnvironments, Components, DryRun, Findings, Git, Identity, ImageGenerationSetup, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
+import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import type { AiAccountStatus, AiProviderId, ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
 });
 
 afterEach(() => {
@@ -174,9 +174,45 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(group).toHaveClass("coding-environment-options");
     expect(container.querySelectorAll(".coding-environment-option")).toHaveLength(5);
     expect(container.querySelectorAll(".coding-environment-copy")).toHaveLength(5);
-    expect(within(group).getByText("Codex").closest(".coding-environment-copy")).toHaveTextContent(/AGENTS\.md, the \.agents\/skills copy/);
+    expect(within(group).getByText("Codex").closest(".coding-environment-copy")).toHaveTextContent(/project instructions, skills, agents, and MCP/i);
     expect(container.querySelector(".coding-environment-option")).toHaveTextContent(/Claude Code/);
     expect(screen.getByRole("group", { name: /additional coding environments/i })).toContainElement(screen.getByRole("checkbox", { name: /Cursor/ }));
+  });
+
+  it("shows the default image route and keeps the primary separate from optional routes", () => {
+    window.history.replaceState({}, "", "/?screenshot=image-generation");
+    const fixture = documentationFixture(readyState());
+    function ControlledImageStep() {
+      const [state, setState] = useState(fixture);
+      return <ImageGenerationSetup state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
+    }
+    render(<ControlledImageStep />);
+    expect(screen.getByRole("radio", { name: /ChatGPT subscription \(GPTImage\)/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /OpenAI Images API/ })).not.toBeChecked();
+    expect(screen.getAllByLabelText("Add as an optional provider", { selector: "input" })[0]).toBeChecked();
+    expect(screen.getByText(/No separate image API bill/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Model")).toHaveValue("gpt-image-2.5-sunburst");
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "gpt-image-2" } });
+    expect(screen.getByLabelText("Model")).toHaveValue("gpt-image-2");
+    fireEvent.click(screen.getByRole("radio", { name: /OpenAI Images API/ }));
+    expect(screen.getByRole("radio", { name: /OpenAI Images API/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /ChatGPT subscription \(GPTImage\)/ })).not.toBeChecked();
+  });
+
+  it("sends image API keys to the OS vault bridge and clears the password draft", async () => {
+    window.history.replaceState({}, "", "/?screenshot=image-generation");
+    const fixture = documentationFixture(readyState());
+    vi.mocked(storeImageGenerationCredential).mockResolvedValue({ name: "IMAGE_GENERATION_API_KEY", provider: "windows_credential_manager", reference: "credential://image_generation_api_key/openai_api_api_key", provider_id: "openai_api_api_key" });
+    function ControlledImageStep() {
+      const [state, setState] = useState({ ...fixture, imageGenerationCredentialDrafts: {} });
+      return <ImageGenerationSetup state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
+    }
+    render(<ControlledImageStep />);
+    const input = screen.getByLabelText("OpenAI API key");
+    fireEvent.change(input, { target: { value: "sk-test-image-key" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Store" })[0]);
+    await waitFor(() => expect(storeImageGenerationCredential).toHaveBeenCalledWith("openai_api", "api_key", "sk-test-image-key"));
+    expect(screen.getByText(/credential stored on this computer/i)).toBeInTheDocument();
   });
 
   it("provides sanitized development-only states for public screenshots", () => {
@@ -198,8 +234,8 @@ describe("HOI4 Mod Setup wizard", () => {
     const fixture = documentationFixture(readyState());
 
     expect(fixture.screen).toBe("environments");
-    expect(fixture.primaryCodingEnvironment).toBe("claude_code");
-    expect(fixture.additionalCodingEnvironments).toEqual(["codex"]);
+    expect(fixture.primaryCodingEnvironment).toBe("codex");
+    expect(fixture.additionalCodingEnvironments).toEqual(["claude_code"]);
     expect(fixture.identity.projectRoot).toContain("C:\\Users\\Player\\");
   });
 
@@ -873,6 +909,8 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await screen.findByRole("heading", { name: "Coding environments" });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByRole("heading", { name: "Image generation" });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await screen.findByRole("heading", { name: "Choose what to install" });
     fireEvent.click(screen.getByText("Choose source version"));
     fireEvent.change(screen.getByLabelText("Version"), { target: { value: "pinned_commit" } });
@@ -1238,6 +1276,7 @@ describe("HOI4 Mod Setup wizard", () => {
     await renderAuthenticatedApp();
     fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
@@ -2134,7 +2173,7 @@ describe("HOI4 Mod Setup wizard", () => {
     await renderAuthenticatedApp();
     fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 8; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     expect(screen.getByText("Unresolved conflicts")).toBeInTheDocument();
     expect(screen.getByText("Plan unavailable")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /start installation/i })).toBeDisabled();
@@ -2238,7 +2277,7 @@ describe("HOI4 Mod Setup wizard", () => {
     await renderAuthenticatedApp();
     fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 8; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
 
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     expect(screen.getByRole("button", { name: "Preparing changes…" })).toBeDisabled();
@@ -2260,7 +2299,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\cold_war_curtain" } });
-    for (let index = 0; index < 6; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
 
@@ -2321,7 +2360,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\active" } });
-    for (let index = 0; index < 6; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
 
@@ -2363,7 +2402,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\failing" } });
-    for (let index = 0; index < 6; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: /start installation/i }));

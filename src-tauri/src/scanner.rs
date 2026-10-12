@@ -2845,6 +2845,7 @@ fn detect_managed_installation(
             "portrait_workflow_commit": portrait_pipeline.map(|portrait| portrait.workflow_commit.clone()),
             "portrait_preferred_workflow": portrait_pipeline.map(|portrait| portrait.preferred_workflow.clone()),
             "portrait_mcp_registered": portrait_pipeline.is_some_and(|portrait| portrait.mcp_registered),
+            "image_generation": lock.image_generation,
         }),
         "accepted",
         evidence(

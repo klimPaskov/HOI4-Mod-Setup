@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 pub const MESHY_ENVIRONMENT_NAME: &str = "MESHY_API_KEY";
 pub const AI_PROVIDER_ENVIRONMENT_NAME: &str = "AI_PROVIDER_API_KEY";
+pub const IMAGE_GENERATION_ENVIRONMENT_NAME: &str = "IMAGE_GENERATION_API_KEY";
 const MAX_SECRET_INPUT_BYTES: usize = 64 * 1024;
 const MESHY_STABLE_REFERENCE: &str = "credential://meshy_api_key/default";
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -208,6 +209,9 @@ pub fn validate_credential_reference(reference: &CredentialReference) -> Result<
     if reference.name == AI_PROVIDER_ENVIRONMENT_NAME {
         return validate_ai_provider_credential_reference(reference);
     }
+    if reference.name == IMAGE_GENERATION_ENVIRONMENT_NAME {
+        return validate_image_generation_credential_reference(reference);
+    }
     Err(AppError::Credential(
         "credential reference is not a supported application credential".into(),
     ))
@@ -392,6 +396,79 @@ pub fn validate_ai_provider_credential_for(
         ));
     }
     Ok(())
+}
+
+pub fn image_generation_credential_scope(provider: &str, field: &str) -> Result<String, AppError> {
+    validate_provider_scope(provider)?;
+    validate_provider_scope(field)?;
+    let scope = format!("{provider}_{field}");
+    validate_provider_scope(&scope)?;
+    Ok(scope)
+}
+
+pub fn image_generation_credential_reference(
+    provider: &str,
+    field: &str,
+) -> Result<CredentialReference, AppError> {
+    let scope = image_generation_credential_scope(provider, field)?;
+    Ok(CredentialReference {
+        name: IMAGE_GENERATION_ENVIRONMENT_NAME.into(),
+        provider: provider_name(Platform::current()).into(),
+        reference: format!("credential://image_generation_api_key/{scope}"),
+        provider_id: Some(scope),
+    })
+}
+
+pub fn validate_image_generation_credential_reference(
+    reference: &CredentialReference,
+) -> Result<(), AppError> {
+    if reference.name != IMAGE_GENERATION_ENVIRONMENT_NAME {
+        return Err(AppError::Credential(
+            "image provider credential has an unexpected environment name".into(),
+        ));
+    }
+    let scope = reference
+        .provider_id
+        .as_deref()
+        .ok_or_else(|| AppError::Credential("image provider credential scope is missing".into()))?;
+    validate_provider_scope(scope)?;
+    if reference.provider != provider_name(Platform::current())
+        || reference.reference != format!("credential://image_generation_api_key/{scope}")
+        || reference.reference.len() > 512
+        || reference.reference.chars().any(char::is_whitespace)
+    {
+        return Err(AppError::Credential(
+            "only an image-provider credential from this computer may be changed".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_image_generation_credential_for(
+    reference: &CredentialReference,
+    provider: &str,
+    field: &str,
+) -> Result<(), AppError> {
+    validate_image_generation_credential_reference(reference)?;
+    let expected = image_generation_credential_scope(provider, field)?;
+    if reference.provider_id.as_deref() != Some(expected.as_str()) {
+        return Err(AppError::Credential(
+            "image provider credential is scoped to a different provider field".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn save_image_generation_key<S: CredentialStore>(
+    store: &S,
+    provider: &str,
+    field: &str,
+    value: &str,
+) -> Result<CredentialReference, AppError> {
+    let scope = image_generation_credential_scope(provider, field)?;
+    let reference = store.save_scoped(IMAGE_GENERATION_ENVIRONMENT_NAME, &scope, value)?;
+    validate_image_generation_credential_for(&reference, provider, field)?;
+    Ok(reference)
 }
 
 pub fn validate_secret_input(name: &str, value: &str) -> Result<(), AppError> {
@@ -587,6 +664,28 @@ mod tests {
         assert_eq!(saved.reference, reconstructed.reference);
         validate_ai_provider_credential_for(&reconstructed, "claude").unwrap();
         assert_eq!(store.read(&reconstructed).unwrap(), "provider_secret");
+    }
+
+    #[test]
+    fn image_generation_credentials_are_provider_field_scoped_and_keep_values_out_of_references() {
+        let store = MemoryCredentialStore::default();
+        let secret = "image-provider-secret-value";
+        let reference = save_image_generation_key(&store, "openai_api", "api_key", secret).unwrap();
+        validate_image_generation_credential_for(&reference, "openai_api", "api_key").unwrap();
+        assert_eq!(reference.name, IMAGE_GENERATION_ENVIRONMENT_NAME);
+        assert_eq!(
+            reference.reference,
+            "credential://image_generation_api_key/openai_api_api_key"
+        );
+        assert_eq!(store.read(&reference).unwrap(), secret);
+        assert!(!serde_json::to_string(&reference).unwrap().contains(secret));
+        assert!(
+            validate_image_generation_credential_for(&reference, "gemini_api", "api_key").is_err()
+        );
+        assert!(
+            validate_image_generation_credential_for(&reference, "openai_api", "service_key")
+                .is_err()
+        );
     }
 
     #[test]

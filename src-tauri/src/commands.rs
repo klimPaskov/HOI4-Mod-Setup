@@ -8,9 +8,11 @@ use crate::codex::{
 };
 use crate::coding_environment;
 use crate::credentials::{
-    discover_meshy_credential_reference, provider_name, save_ai_provider_key, save_meshy_key,
-    validate_ai_provider_credential_for, validate_credential_reference, CredentialStore,
-    OsCredentialStore, ScopedSecretEnvironment, MESHY_ENVIRONMENT_NAME,
+    discover_meshy_credential_reference, image_generation_credential_reference, provider_name,
+    save_ai_provider_key, save_image_generation_key, save_meshy_key,
+    validate_ai_provider_credential_for, validate_credential_reference,
+    validate_image_generation_credential_for, CredentialStore, OsCredentialStore,
+    ScopedSecretEnvironment, MESHY_ENVIRONMENT_NAME,
 };
 use crate::descriptors::generated_artifacts as render_generated_artifacts;
 use crate::merge::{
@@ -112,6 +114,8 @@ struct SourceManifestPreview {
     components: Vec<ComponentDefinition>,
     profiles: Vec<Profile>,
     coding_environments: Vec<CodingEnvironmentDefinition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_generation: Option<Value>,
     /// Set when a developer serves the package from a local checkout.
     local_source: Option<String>,
 }
@@ -900,6 +904,9 @@ pub fn run() {
             ai_account_read,
             store_ai_provider_credential,
             remove_ai_provider_credential,
+            store_image_generation_credential,
+            image_generation_credential_status,
+            remove_image_generation_credential,
             claude_login_start,
             claude_login_wait,
             claude_login_cancel,
@@ -1088,6 +1095,75 @@ fn remove_ai_provider_credential(provider: String) -> Result<bool, String> {
     let reference = ai_credential_reference(provider.trim())
         .ok_or_else(|| "no stored credential exists for the selected provider".to_string())?;
     validate_ai_provider_credential_for(&reference, provider.trim()).map_err(command_error)?;
+    OsCredentialStore
+        .delete(&reference)
+        .map_err(command_error)?;
+    Ok(true)
+}
+
+fn image_generation_credential_field_supported(provider: &str, field: &str) -> bool {
+    match provider {
+        "openai_api"
+        | "gemini_api"
+        | "fal_ai"
+        | "replicate"
+        | "black_forest_labs"
+        | "stability_ai"
+        | "ideogram"
+        | "recraft"
+        | "leonardo"
+        | "xai_grok"
+        | "together_ai"
+        | "openrouter"
+        | "huggingface_inference" => field == "api_key",
+        "adobe_firefly" => matches!(field, "ims_token" | "service_key"),
+        "vertex_imagen" => field == "service_account",
+        "microsoft_foundry" => matches!(field, "resource_url" | "api_key"),
+        "aws_bedrock" => matches!(field, "access_key" | "secret_key"),
+        _ => false,
+    }
+}
+
+#[tauri::command(async)]
+fn store_image_generation_credential(
+    provider: String,
+    field: String,
+    value: String,
+) -> Result<CredentialReference, String> {
+    let provider = provider.trim();
+    let field = field.trim();
+    if !image_generation_credential_field_supported(provider, field) {
+        return Err("That image provider credential field is not supported.".into());
+    }
+    save_image_generation_key(&OsCredentialStore, provider, field, &value).map_err(command_error)
+}
+
+#[tauri::command(async)]
+fn image_generation_credential_status(
+    provider: String,
+    field: String,
+) -> Result<Option<CredentialReference>, String> {
+    let provider = provider.trim();
+    let field = field.trim();
+    if !image_generation_credential_field_supported(provider, field) {
+        return Err("That image provider credential field is not supported.".into());
+    }
+    let reference =
+        image_generation_credential_reference(provider, field).map_err(command_error)?;
+    validate_image_generation_credential_for(&reference, provider, field).map_err(command_error)?;
+    Ok(OsCredentialStore.read(&reference).ok().map(|_| reference))
+}
+
+#[tauri::command(async)]
+fn remove_image_generation_credential(provider: String, field: String) -> Result<bool, String> {
+    let provider = provider.trim();
+    let field = field.trim();
+    if !image_generation_credential_field_supported(provider, field) {
+        return Err("That image provider credential field is not supported.".into());
+    }
+    let reference =
+        image_generation_credential_reference(provider, field).map_err(command_error)?;
+    validate_image_generation_credential_for(&reference, provider, field).map_err(command_error)?;
     OsCredentialStore
         .delete(&reference)
         .map_err(command_error)?;
@@ -2482,6 +2558,16 @@ fn run_reviewed_post_install_actions(
     if component_id == LIVE_TOOLS_COMPONENT_ID {
         return run_reviewed_live_tools_bootstrap(root, plan);
     }
+    if component_id == IMAGEGEN_GPTIMAGE_COMPONENT_ID {
+        if plan
+            .external_actions
+            .iter()
+            .any(|action| action.id == "external.imagegen.gptimage.cleanup")
+        {
+            return run_reviewed_gptimage_cleanup(root, plan);
+        }
+        return run_reviewed_gptimage_bootstrap(root, plan);
+    }
     if component_id != "workflow.3d" {
         return Err(AppError::Transaction(format!(
             "unknown reviewed post-install component: {component_id}"
@@ -2651,6 +2737,448 @@ fn run_reviewed_post_install_actions(
             result.timed_out
         ),
     })
+}
+
+const IMAGEGEN_GPTIMAGE_COMPONENT_ID: &str = "imagegen.gptimage";
+const IMAGEGEN_GPTIMAGE_BOOTSTRAP: &str = ".tools/image_generation/providers/gptimage/bootstrap.py";
+const IMAGEGEN_GPTIMAGE_PACKAGE_ROOT: &str = ".tools/image_generation/providers/gptimage";
+const IMAGEGEN_GPTIMAGE_NODE_MODULES: &str =
+    ".tools/image_generation/providers/gptimage/node_modules";
+
+fn image_provider_selected(selection: Option<&ImageGenerationSelection>, id: &str) -> bool {
+    selection.is_some_and(|selection| {
+        selection.primary_provider == id
+            || selection
+                .additional_providers
+                .iter()
+                .any(|candidate| candidate == id)
+    })
+}
+
+fn reviewed_gptimage_cleanup_action() -> ExternalAction {
+    ExternalAction {
+        id: "external.imagegen.gptimage.cleanup".into(),
+        component_id: IMAGEGEN_GPTIMAGE_COMPONENT_ID.into(),
+        platform: Platform::current(),
+        command_source: "app_managed_cleanup".into(),
+        executable: Some("HOI4 Mod Setup".into()),
+        arguments: vec![IMAGEGEN_GPTIMAGE_NODE_MODULES.into()],
+        working_directory: Some("<project_root>".into()),
+        environment_names: Vec::new(),
+        network_access: "none".into(),
+        expected_writes: vec![format!("{IMAGEGEN_GPTIMAGE_NODE_MODULES}/**")],
+        privilege: "current_user".into(),
+        rollback_boundary: "Removes only the exact dependency tree that Setup recorded after GPTImage installation. A changed tree is kept.".into(),
+        display_command: Some("Remove the GPTImage server dependencies from this project if they match Setup's saved integrity hash.".into()),
+        risk: "medium".into(),
+        requires_approval: true,
+        contains_secret: false,
+        verified_executable_sha256: None,
+        verified_executable_size: None,
+        verified_interpreter_sha256: None,
+        verified_interpreter_size: None,
+        verified_runtime_sha256: None,
+        verified_runtime_size: None,
+        verified_package_name: None,
+        verified_package_version: None,
+        verified_package_integrity: None,
+        verified_package_tree_sha256: None,
+        verified_package_file_count: None,
+        verified_runtime_entry: None,
+        required_tool_names: Vec::new(),
+    }
+}
+
+fn gptimage_bootstrap_outcome(
+    state: &str,
+    evidence: impl Into<String>,
+) -> PostInstallActionOutcome {
+    PostInstallActionOutcome {
+        component_id: IMAGEGEN_GPTIMAGE_COMPONENT_ID.into(),
+        state: state.into(),
+        evidence: evidence.into(),
+    }
+}
+
+fn expected_gptimage_file_hash(
+    plan: &InstallationPlan,
+    root: &Path,
+    relative: &str,
+) -> Result<String, AppError> {
+    if let Some(operation) = plan.operations.iter().find(|operation| {
+        operation.component_id == IMAGEGEN_GPTIMAGE_COMPONENT_ID
+            && operation.destination == relative
+    }) {
+        return operation
+            .result_sha256
+            .clone()
+            .or_else(|| operation.source_sha256.clone())
+            .ok_or_else(|| {
+                AppError::Transaction("the reviewed GPTImage file has no checksum".into())
+            });
+    }
+    let lock = read_project_lock(root)?;
+    lock.files
+        .iter()
+        .find(|file| file.component_id == IMAGEGEN_GPTIMAGE_COMPONENT_ID && file.path == relative)
+        .map(|file| file.installed_sha256.clone())
+        .ok_or_else(|| {
+            AppError::Transaction("the installed GPTImage file has no lock evidence".into())
+        })
+}
+
+fn run_reviewed_gptimage_bootstrap(
+    root: &Path,
+    plan: &InstallationPlan,
+) -> Result<PostInstallActionOutcome, AppError> {
+    let actions = plan
+        .external_actions
+        .iter()
+        .filter(|action| action.component_id == IMAGEGEN_GPTIMAGE_COMPONENT_ID)
+        .collect::<Vec<_>>();
+    if actions.len() != 1 {
+        return Err(AppError::Transaction(
+            "the reviewed GPTImage setup action is missing or duplicated".into(),
+        ));
+    }
+    let action = actions[0];
+    let reviewed_arguments = &action.arguments;
+    let expected_tree_sha256 = reviewed_arguments
+        .get(4)
+        .filter(|value| Regex::new(r"^[0-9a-f]{64}$").unwrap().is_match(value))
+        .ok_or_else(|| {
+            AppError::Transaction(
+                "the reviewed GPTImage source-tree hash is missing or invalid".into(),
+            )
+        })?;
+    let expected_lock_sha256 = reviewed_arguments
+        .get(6)
+        .filter(|value| Regex::new(r"^[0-9a-f]{64}$").unwrap().is_match(value))
+        .ok_or_else(|| {
+            AppError::Transaction(
+                "the reviewed GPTImage lockfile hash is missing or invalid".into(),
+            )
+        })?;
+    if action.command_source != "repository_script"
+        || action.platform != Platform::current()
+        || action.arguments.len() != 7
+        || action.arguments.first().map(String::as_str) != Some(IMAGEGEN_GPTIMAGE_BOOTSTRAP)
+        || action.arguments.get(1).map(String::as_str) != Some("--package-root")
+        || action.arguments.get(2).map(String::as_str)
+            != Some("<project_root>/.tools/image_generation/providers/gptimage")
+        || action.arguments.get(3).map(String::as_str) != Some("--expected-tree-sha256")
+        || action.arguments.get(5).map(String::as_str) != Some("--expected-lock-sha256")
+        || action.network_access == "not_declared"
+        || action.expected_writes.is_empty()
+        || action.privilege != "current_user"
+        || action.rollback_boundary == "not_declared_by_source"
+        || action.verified_package_name.as_deref() != Some("gptimage")
+        || action.verified_package_version.as_deref() != Some("0.1.0")
+    {
+        return Err(AppError::Transaction(
+            "the reviewed GPTImage setup action is incomplete or changed".into(),
+        ));
+    }
+    if !action
+        .expected_writes
+        .iter()
+        .any(|path| path == ".tools/image_generation/providers/gptimage/node_modules/**")
+        || !action
+            .network_access
+            .to_ascii_lowercase()
+            .contains("npm registry")
+        || !action
+            .rollback_boundary
+            .to_ascii_lowercase()
+            .contains("node_modules")
+    {
+        return Err(AppError::Transaction(
+            "the reviewed GPTImage network, write, or rollback boundary is incomplete".into(),
+        ));
+    }
+    let package_root = safe_join(root, IMAGEGEN_GPTIMAGE_PACKAGE_ROOT)?;
+    let package_json_path = format!("{IMAGEGEN_GPTIMAGE_PACKAGE_ROOT}/package.json");
+    let package_json =
+        crate::flatten::read_regular_file_no_follow_under_root(root, &package_json_path)?;
+    if sha256_bytes(&package_json) != expected_gptimage_file_hash(plan, root, &package_json_path)? {
+        return Err(AppError::PathSecurity(
+            "the installed GPTImage package metadata changed after review".into(),
+        ));
+    }
+    let package: Value = serde_json::from_slice(&package_json).map_err(|_| {
+        AppError::Source("the installed GPTImage package metadata is invalid".into())
+    })?;
+    if package.get("name").and_then(Value::as_str) != Some("gptimage")
+        || package.get("version").and_then(Value::as_str) != Some("0.1.0")
+    {
+        return Err(AppError::PathSecurity(
+            "the installed GPTImage package does not match its reviewed version".into(),
+        ));
+    }
+    let package_lock_path = format!("{IMAGEGEN_GPTIMAGE_PACKAGE_ROOT}/package-lock.json");
+    let expected_lock_hash = expected_gptimage_file_hash(plan, root, &package_lock_path)?;
+    if expected_lock_sha256 != &expected_lock_hash {
+        return Err(AppError::Transaction(
+            "the reviewed GPTImage lockfile hash differs from the selected package file".into(),
+        ));
+    }
+    let lock_bytes =
+        crate::flatten::read_regular_file_no_follow_under_root(root, &package_lock_path)?;
+    if sha256_bytes(&lock_bytes) != expected_lock_hash {
+        return Err(AppError::PathSecurity(
+            "the installed GPTImage package lock changed after review".into(),
+        ));
+    }
+    let script_bytes =
+        crate::flatten::read_regular_file_no_follow_under_root(root, IMAGEGEN_GPTIMAGE_BOOTSTRAP)?;
+    let expected_script_hash =
+        expected_gptimage_file_hash(plan, root, IMAGEGEN_GPTIMAGE_BOOTSTRAP)?;
+    if sha256_bytes(&script_bytes) != expected_script_hash {
+        return Err(AppError::PathSecurity(
+            "the GPTImage bootstrap script changed after review".into(),
+        ));
+    }
+    let python = match crate::process::find_path_executable(&[
+        "python.exe",
+        "python3.exe",
+        "python",
+        "python3",
+    ]) {
+        Ok(path) => path,
+        Err(_) => {
+            return Ok(gptimage_bootstrap_outcome(
+                "incomplete",
+                "Python 3 is unavailable for GPTImage setup",
+            ))
+        }
+    };
+    if Platform::current() == Platform::Windows
+        && crate::process::validate_executable_publisher(&python, "Python Software Foundation")
+            .is_err()
+    {
+        return Ok(gptimage_bootstrap_outcome(
+            "incomplete",
+            "Python publisher validation did not pass for GPTImage setup",
+        ));
+    }
+    let node_modules_path = package_root.join("node_modules");
+    let previous_tree_hash = plan
+        .image_generation
+        .as_ref()
+        .and_then(|selection| selection.installed_package_tree_sha256.as_deref());
+    let previous_lock_hash = plan
+        .image_generation
+        .as_ref()
+        .and_then(|selection| selection.installed_package_lock_sha256.as_deref());
+    if node_modules_path.is_dir() && previous_lock_hash == Some(expected_lock_hash.as_str()) {
+        if let (Some(expected), Ok(actual)) = (
+            previous_tree_hash,
+            crate::mcp::package_tree_sha256(&node_modules_path),
+        ) {
+            if expected == actual {
+                return Ok(gptimage_bootstrap_outcome(
+                    "ready",
+                    format!(
+                        "package-tree-sha256:{actual};package-lock-sha256:{expected_lock_hash}"
+                    ),
+                ));
+            }
+        }
+    }
+    let node = match crate::process::find_path_executable(&["node.exe", "node"]) {
+        Ok(path) => path,
+        Err(_) => {
+            return Ok(gptimage_bootstrap_outcome(
+                "incomplete",
+                "Node.js LTS is unavailable for GPTImage setup",
+            ))
+        }
+    };
+    if Platform::current() == Platform::Windows
+        && crate::process::validate_executable_publisher(&node, "OpenJS Foundation").is_err()
+    {
+        return Ok(gptimage_bootstrap_outcome(
+            "incomplete",
+            "Node.js publisher validation did not pass for GPTImage setup",
+        ));
+    }
+    let node_version = crate::process::ProcessSpec {
+        executable: node.clone(),
+        executable_sha256: Some(sha256_file(&node)?),
+        args: vec!["--version".into()],
+        cwd: Some(root.to_path_buf()),
+        platform: Platform::current(),
+        environment_names: Vec::new(),
+        timeout_seconds: 10,
+        max_output_bytes: 4096,
+    }
+    .run(std::slice::from_ref(&node), None);
+    let major = node_version.ok().and_then(|result| {
+        result
+            .stdout
+            .trim()
+            .strip_prefix('v')
+            .and_then(|version| version.split('.').next())
+            .and_then(|value| value.parse::<u64>().ok())
+    });
+    if major.is_none_or(|major| major < 20) {
+        return Ok(gptimage_bootstrap_outcome(
+            "incomplete",
+            "Node.js 20 or newer is required for GPTImage setup",
+        ));
+    }
+    let private_script = create_private_verified_script(&script_bytes)?;
+    let spec = crate::process::ProcessSpec {
+        executable: python.clone(),
+        executable_sha256: Some(sha256_file(&python)?),
+        args: vec![
+            "-I".into(),
+            private_script.display().to_string(),
+            "--package-root".into(),
+            package_root.display().to_string(),
+            "--expected-tree-sha256".into(),
+            expected_tree_sha256.clone(),
+            "--expected-lock-sha256".into(),
+            expected_lock_sha256.clone(),
+        ],
+        cwd: Some(root.to_path_buf()),
+        platform: Platform::current(),
+        environment_names: Vec::new(),
+        timeout_seconds: 12 * 60,
+        max_output_bytes: 128 * 1024,
+    };
+    let run = spec.run(&[python], None);
+    remove_private_verified_script(&private_script)?;
+    Ok(match run {
+        Ok(result) if result.status_code == Some(0) && !result.timed_out => {
+            match crate::mcp::package_tree_sha256(&node_modules_path) {
+                Ok(hash) => gptimage_bootstrap_outcome(
+                    "ready",
+                    format!("package-tree-sha256:{hash};package-lock-sha256:{expected_lock_hash}"),
+                ),
+                Err(error) => gptimage_bootstrap_outcome(
+                    "incomplete",
+                    format!(
+                        "the installed GPTImage dependencies could not be verified: {}",
+                        redact_secrets(&error.to_string(), &[])
+                    ),
+                ),
+            }
+        }
+        failure => gptimage_bootstrap_outcome(
+            "incomplete",
+            bootstrap_failure_details("GPTImage setup", failure),
+        ),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GptimageCleanupResult {
+    Removed,
+    AlreadyAbsent,
+    ModifiedKept,
+}
+
+fn remove_gptimage_dependencies_if_unchanged(
+    root: &Path,
+    expected_tree: &str,
+) -> Result<GptimageCleanupResult, AppError> {
+    crate::source::validate_sha256(expected_tree).map_err(|_| {
+        AppError::Transaction("the installed GPTImage dependency hash is invalid".into())
+    })?;
+    let node_modules = safe_join(root, IMAGEGEN_GPTIMAGE_NODE_MODULES)?;
+    let metadata = match std::fs::symlink_metadata(&node_modules) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(GptimageCleanupResult::AlreadyAbsent)
+        }
+        Err(error) => {
+            return Err(AppError::Transaction(format!(
+                "could not inspect GPTImage dependencies: {error}"
+            )))
+        }
+    };
+    if crate::security::is_link_metadata(&metadata) || !metadata.is_dir() {
+        return Ok(GptimageCleanupResult::ModifiedKept);
+    }
+    let opened = match RootedDir::open_read(&node_modules) {
+        Ok(opened) => opened,
+        Err(_) => return Ok(GptimageCleanupResult::ModifiedKept),
+    };
+    let identity = opened.identity_token()?;
+    let actual_tree = match crate::mcp::package_tree_sha256(&node_modules) {
+        Ok(hash) => hash,
+        Err(_) => return Ok(GptimageCleanupResult::ModifiedKept),
+    };
+    let reopened = match RootedDir::open_read(&node_modules) {
+        Ok(reopened) => reopened,
+        Err(_) => return Ok(GptimageCleanupResult::ModifiedKept),
+    };
+    if reopened.identity_token()? != identity || actual_tree != expected_tree {
+        return Ok(GptimageCleanupResult::ModifiedKept);
+    }
+    let package_root = safe_join(root, IMAGEGEN_GPTIMAGE_PACKAGE_ROOT)?;
+    let package_directory = RootedDir::open(&package_root)?;
+    if !package_directory.remove_tree_if_identity("node_modules", &identity)? {
+        return Ok(GptimageCleanupResult::ModifiedKept);
+    }
+    Ok(GptimageCleanupResult::Removed)
+}
+
+fn run_reviewed_gptimage_cleanup(
+    root: &Path,
+    plan: &InstallationPlan,
+) -> Result<PostInstallActionOutcome, AppError> {
+    let actions = plan
+        .external_actions
+        .iter()
+        .filter(|action| action.id == "external.imagegen.gptimage.cleanup")
+        .collect::<Vec<_>>();
+    if actions.len() != 1 {
+        return Err(AppError::Transaction(
+            "the reviewed GPTImage cleanup action is missing or duplicated".into(),
+        ));
+    }
+    let action = actions[0];
+    if action.component_id != IMAGEGEN_GPTIMAGE_COMPONENT_ID
+        || action.command_source != "app_managed_cleanup"
+        || action.platform != Platform::current()
+        || action.arguments.as_slice() != [IMAGEGEN_GPTIMAGE_NODE_MODULES]
+        || action.network_access != "none"
+        || action.privilege != "current_user"
+        || action.expected_writes.as_slice() != [format!("{IMAGEGEN_GPTIMAGE_NODE_MODULES}/**")]
+    {
+        return Err(AppError::Transaction(
+            "the reviewed GPTImage cleanup action is incomplete or changed".into(),
+        ));
+    }
+    let Some(expected_tree) = plan
+        .image_generation
+        .as_ref()
+        .and_then(|selection| selection.installed_package_tree_sha256.as_deref())
+    else {
+        return Ok(gptimage_bootstrap_outcome(
+            "not_selected",
+            "no Setup-managed GPTImage dependency tree was recorded; nothing was removed",
+        ));
+    };
+    crate::source::validate_sha256(expected_tree).map_err(|_| {
+        AppError::Transaction("the installed GPTImage dependency hash is invalid".into())
+    })?;
+    match remove_gptimage_dependencies_if_unchanged(root, expected_tree)? {
+        GptimageCleanupResult::Removed => Ok(gptimage_bootstrap_outcome(
+            "not_selected",
+            "package-tree-removed",
+        )),
+        GptimageCleanupResult::AlreadyAbsent => Ok(gptimage_bootstrap_outcome(
+            "not_selected",
+            "GPTImage dependencies were already absent",
+        )),
+        GptimageCleanupResult::ModifiedKept => Ok(gptimage_bootstrap_outcome(
+            "not_selected",
+            "GPTImage dependencies changed after Setup installed them; the modified tree was kept",
+        )),
+    }
 }
 
 fn run_reviewed_mcp_bootstrap(
@@ -3565,6 +4093,7 @@ fn preview_source_manifest_blocking(
         components: resolution.manifest.components,
         profiles: resolution.manifest.profiles,
         coding_environments,
+        image_generation: resolution.manifest.image_generation.clone(),
         local_source: crate::local_source::configured_repository()
             .map(|root| root.display().to_string()),
     })
@@ -3710,7 +4239,290 @@ fn requested_components_for_selection(
             requested.push(id);
         }
     }
+    let image_selection = image_generation_selection_from_state(state, manifest, &selection)?;
+    for provider in image_generation_provider_rows(manifest, &image_selection)? {
+        let component_id = provider
+            .pointer("/route/component_id")
+            .and_then(Value::as_str);
+        if let Some(component_id) = component_id {
+            if !manifest
+                .components
+                .iter()
+                .any(|component| component.id == component_id)
+            {
+                return Err(AppError::Source(format!("image provider component is missing from the verified manifest: {component_id}")));
+            }
+            if !requested.iter().any(|selected| selected == component_id) {
+                requested.push(component_id.to_owned());
+            }
+        }
+    }
     Ok((requested, selection))
+}
+
+fn image_generation_selection_from_state(
+    state: &Value,
+    manifest: &RemoteManifest,
+    environments: &CodingEnvironmentSelection,
+) -> Result<ImageGenerationSelection, AppError> {
+    let catalog = manifest.image_generation.as_ref();
+    let default_provider = catalog
+        .and_then(|value| value.get("default_provider"))
+        .and_then(Value::as_str)
+        .unwrap_or("none");
+    let selection_value = state.get("imageGeneration").cloned().unwrap_or_else(|| {
+        serde_json::json!({
+            "primary_provider": default_provider,
+            "additional_providers": [],
+            "route_settings": {},
+            "credential_references": {}
+        })
+    });
+    let mut selection: ImageGenerationSelection =
+        serde_json::from_value(selection_value).map_err(|_| {
+            AppError::InvalidInput("image provider selection has an invalid format".into())
+        })?;
+    // These fields are maintenance evidence from the trusted installation
+    // lock, never renderer input.
+    selection.installed_package_tree_sha256 = None;
+    selection.installed_package_lock_sha256 = None;
+    if selection.primary_provider.trim().is_empty() {
+        selection.primary_provider = default_provider.to_owned();
+    }
+    let table = catalog
+        .and_then(|value| value.get("providers"))
+        .and_then(Value::as_array);
+    if table.is_none()
+        && selection.primary_provider == "none"
+        && selection.additional_providers.is_empty()
+    {
+        return Ok(selection);
+    }
+    let table = table.ok_or_else(|| {
+        AppError::Source("choose no image provider for this older source package".into())
+    })?;
+    let find = |id: &str| {
+        table
+            .iter()
+            .find(|provider| provider.get("id").and_then(Value::as_str) == Some(id))
+    };
+    if find(&selection.primary_provider).is_none() {
+        return Err(AppError::InvalidInput(
+            "choose an image provider from the verified source list".into(),
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    if selection.additional_providers.len() > 8
+        || selection.additional_providers.iter().any(|id| {
+            id == &selection.primary_provider || !seen.insert(id.as_str()) || find(id).is_none()
+        })
+    {
+        return Err(AppError::InvalidInput(
+            "optional image providers must be unique choices from the source list".into(),
+        ));
+    }
+    if selection.primary_provider == "none" && !selection.additional_providers.is_empty() {
+        return Err(AppError::InvalidInput(
+            "choose image providers or choose none".into(),
+        ));
+    }
+    let selected = std::iter::once(selection.primary_provider.as_str())
+        .chain(selection.additional_providers.iter().map(String::as_str))
+        .collect::<Vec<_>>();
+    let environments_selected = coding_environment::selected_environment_ids(environments);
+    for id in &selected {
+        let provider = find(id).expect("provider verified above");
+        let supported = provider
+            .get("supported_coding_environments")
+            .and_then(Value::as_array)
+            .is_some_and(|values| {
+                values.iter().filter_map(Value::as_str).any(|environment| {
+                    environments_selected
+                        .iter()
+                        .any(|selected| selected == environment)
+                })
+            });
+        if !supported {
+            return Err(AppError::InvalidInput(format!(
+                "{} does not support a selected coding client",
+                provider
+                    .get("display_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("The image provider")
+            )));
+        }
+        if let Some(required_primary) = provider
+            .pointer("/route/requires_primary_coding_environment")
+            .and_then(Value::as_str)
+        {
+            if environments.primary != required_primary {
+                return Err(AppError::InvalidInput(
+                    "Codex image generation requires Codex as the primary coding client".into(),
+                ));
+            }
+        }
+        let settings = selection.route_settings.get(*id);
+        if let Some(settings) = settings {
+            let protocol = provider
+                .pointer("/route/api_protocol")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let supported_models = provider
+                .pointer("/route/supported_models")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>();
+            let allowed = match protocol {
+                "comfyui" | "automatic1111" => &["server_url", "checkpoint"][..],
+                "microsoft_foundry" => &["deployment_name"][..],
+                "aws_bedrock" => &["region", "model"][..],
+                _ if !supported_models.is_empty() => &["model"][..],
+                _ => &[][..],
+            };
+            if settings.keys().any(|key| !allowed.contains(&key.as_str())) {
+                return Err(AppError::InvalidInput(format!(
+                    "{} has a setting that is not supported by this model route",
+                    provider
+                        .get("display_name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("This provider")
+                )));
+            }
+            if let Some(model) = settings.get("model") {
+                if !supported_models.iter().any(|allowed| allowed == model) {
+                    return Err(AppError::InvalidInput(
+                        "choose a model from the selected provider's supported model list".into(),
+                    ));
+                }
+            }
+            if let Some(server_url) = settings.get("server_url") {
+                let parsed = reqwest::Url::parse(server_url).map_err(|_| {
+                    AppError::InvalidInput("enter a valid local image-server address".into())
+                })?;
+                if !matches!(parsed.scheme(), "http" | "https")
+                    || !parsed
+                        .host_str()
+                        .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1"))
+                    || parsed.username() != ""
+                    || parsed.password().is_some()
+                {
+                    return Err(AppError::InvalidInput(
+                        "local image servers must use a loopback address on this computer".into(),
+                    ));
+                }
+            }
+        }
+    }
+    selection.credential_references.retain(|key, _| {
+        key.split_once('.')
+            .is_some_and(|(provider, _)| selected.contains(&provider))
+    });
+    for key in selection.credential_references.keys() {
+        let (provider, field) = key.split_once('.').ok_or_else(|| {
+            AppError::Credential("image credential reference has an invalid field name".into())
+        })?;
+        if !image_generation_credential_field_supported(provider, field)
+            || !selected.contains(&provider)
+        {
+            return Err(AppError::Credential(
+                "image credential reference is not for a selected provider".into(),
+            ));
+        }
+        let expected = image_generation_credential_reference(provider, field)?;
+        if selection.credential_references.get(key) != Some(&expected.reference) {
+            return Err(AppError::Credential(
+                "image credential reference does not match its provider field".into(),
+            ));
+        }
+    }
+    Ok(selection)
+}
+
+fn image_generation_provider_rows<'a>(
+    manifest: &'a RemoteManifest,
+    selection: &ImageGenerationSelection,
+) -> Result<Vec<&'a Value>, AppError> {
+    let rows = manifest
+        .image_generation
+        .as_ref()
+        .and_then(|table| table.get("providers"))
+        .and_then(Value::as_array);
+    if rows.is_none()
+        && selection.primary_provider == "none"
+        && selection.additional_providers.is_empty()
+    {
+        return Ok(Vec::new());
+    }
+    let rows = rows.ok_or_else(|| {
+        AppError::Source("the verified source manifest has no image provider table".into())
+    })?;
+    let selected =
+        std::iter::once(&selection.primary_provider).chain(selection.additional_providers.iter());
+    selected
+        .map(|id| {
+            rows.iter()
+                .find(|row| row.get("id").and_then(Value::as_str) == Some(id.as_str()))
+                .ok_or_else(|| {
+                    AppError::InvalidInput(
+                        "selected image provider is missing from the source table".into(),
+                    )
+                })
+        })
+        .collect()
+}
+
+fn image_generation_state_for_maintenance(
+    supplied: Option<&Value>,
+    lock: &InstallationLock,
+    environments: &CodingEnvironmentSelection,
+) -> Value {
+    let mut state = serde_json::Map::new();
+    state.insert(
+        "primaryCodingEnvironment".into(),
+        Value::String(environments.primary.clone()),
+    );
+    state.insert(
+        "additionalCodingEnvironments".into(),
+        serde_json::json!(environments.additional),
+    );
+    if let Some(value) = supplied {
+        state.insert("imageGeneration".into(), value.clone());
+    } else if let Some(value) = lock
+        .image_generation
+        .as_ref()
+        .and_then(|value| serde_json::to_value(value).ok())
+    {
+        state.insert("imageGeneration".into(), value);
+    }
+    Value::Object(state)
+}
+
+fn apply_image_generation_component_selection(
+    requested: &mut Vec<String>,
+    manifest: &RemoteManifest,
+    selection: &ImageGenerationSelection,
+) -> Result<(), AppError> {
+    requested.retain(|id| !id.starts_with("imagegen."));
+    for provider in image_generation_provider_rows(manifest, selection)? {
+        if let Some(component_id) = provider
+            .pointer("/route/component_id")
+            .and_then(Value::as_str)
+        {
+            if !manifest
+                .components
+                .iter()
+                .any(|component| component.id == component_id)
+            {
+                return Err(AppError::Source(format!("image provider component is missing from the verified manifest: {component_id}")));
+            }
+            requested.push(component_id.to_owned());
+        }
+    }
+    requested.sort();
+    requested.dedup();
+    Ok(())
 }
 
 fn add_supported_profile_components(
@@ -4881,6 +5693,723 @@ fn adapt_component_blocks(
     Ok(output.into_bytes())
 }
 
+fn image_generation_provider_guidance(
+    manifest: &RemoteManifest,
+    selection: &ImageGenerationSelection,
+) -> Result<String, AppError> {
+    let mut sections = Vec::new();
+    for provider in image_generation_provider_rows(manifest, selection)? {
+        let name = provider
+            .get("display_name")
+            .and_then(Value::as_str)
+            .unwrap_or("Image provider");
+        let route = provider.get("route").unwrap_or(&Value::Null);
+        let tools = route
+            .get("tool_names")
+            .and_then(Value::as_object)
+            .map(|tools| {
+                tools
+                    .iter()
+                    .filter_map(|(role, name)| {
+                        name.as_str().map(|name| format!("{role}: `{name}`"))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        let tool_arguments = route
+            .get("tool_arguments")
+            .and_then(Value::as_object)
+            .map(|arguments| {
+                arguments
+                    .iter()
+                    .map(|(role, argument)| match argument.as_str() {
+                        Some(name) => format!("{role} → `{name}`"),
+                        None => format!("{role} → not supported by this tool"),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        let dynamic_tools = route.get("api_protocol").and_then(Value::as_str) == Some("mcp_proxy")
+            || route.get("kind").and_then(Value::as_str) == Some("remote_http") && tools.is_empty();
+        let tools = if dynamic_tools {
+            "The server lists its tools when it connects; use the names returned by MCP tools/list."
+                .into()
+        } else if tools.is_empty() {
+            "No image tool is registered for this route.".into()
+        } else {
+            tools
+        };
+        let capabilities = provider.get("capabilities").unwrap_or(&Value::Null);
+        let references = capabilities
+            .pointer("/reference_images/notes")
+            .and_then(Value::as_str)
+            .unwrap_or("Use reference images only when this provider supports them.");
+        let limits = capabilities
+            .pointer("/size_limits/notes")
+            .and_then(Value::as_str)
+            .unwrap_or("Follow the selected model's size limits.");
+        let maximum_pixels = capabilities
+            .pointer("/size_limits/maximum_pixels")
+            .and_then(Value::as_u64)
+            .map(|pixels| format!(" Maximum image area: {pixels} pixels."))
+            .unwrap_or_default();
+        let alpha = capabilities
+            .pointer("/transparent_background/notes")
+            .and_then(Value::as_str)
+            .unwrap_or("Check whether this route supports transparent output.");
+        let fallback_alpha = capabilities
+            .get("fallback_if_no_alpha")
+            .and_then(Value::as_str)
+            .unwrap_or("Use a configured background-removal route or ask the maintainer.");
+        let edits = capabilities
+            .get("image_edits")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let fallback_edits = capabilities
+            .get("fallback_if_no_edits")
+            .and_then(Value::as_str)
+            .unwrap_or("Generate a new variation from the reference or ask the maintainer.");
+        sections.push(format!(
+            "### {name}\n- Tools: {tools}\n- Tool inputs: {tool_arguments}\n- References: {references}\n- Size: {limits}{maximum_pixels}\n- Transparent backgrounds: {alpha} If unavailable: {fallback_alpha}\n- Reference edits: {} If unavailable: {fallback_edits}\n- Make one image per call. For a transparent image, check that the saved PNG has at least one pixel with alpha below 255; an alpha channel alone does not prove that pixels are transparent.",
+            if edits { "supported on compatible models." } else { "not available on this route." }
+        ));
+    }
+    Ok(sections.join("\n\n"))
+}
+
+fn adapt_image_generation_guidance(
+    bytes: &[u8],
+    manifest: &RemoteManifest,
+    selection: &ImageGenerationSelection,
+) -> Result<Vec<u8>, AppError> {
+    let text = match std::str::from_utf8(bytes) {
+        Ok(text) if text.contains("<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:START -->") => {
+            text
+        }
+        _ => return Ok(bytes.to_vec()),
+    };
+    let start_marker = "<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:START -->";
+    let end_marker = "<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:END -->";
+    let start = text.find(start_marker).ok_or_else(|| {
+        AppError::Source("image provider instructions have an incomplete marker".into())
+    })?;
+    let content_start = start + start_marker.len();
+    let end = text[content_start..]
+        .find(end_marker)
+        .map(|offset| content_start + offset)
+        .ok_or_else(|| {
+            AppError::Source("image provider instructions have an incomplete marker".into())
+        })?;
+    if text[end + end_marker.len()..].contains(start_marker) {
+        return Err(AppError::Source(
+            "image provider instructions contain more than one marker block".into(),
+        ));
+    }
+    let guidance = image_generation_provider_guidance(manifest, selection)?;
+    let mut output = String::with_capacity(text.len() + guidance.len());
+    output.push_str(&text[..start]);
+    output.push_str(&guidance);
+    output.push_str(&text[end + end_marker.len()..]);
+    Ok(output.into_bytes())
+}
+
+fn image_generation_config_artifact(
+    manifest: &RemoteManifest,
+    selection: &ImageGenerationSelection,
+) -> Result<Option<GeneratedArtifact>, AppError> {
+    let mut providers = serde_json::Map::new();
+    for provider in image_generation_provider_rows(manifest, selection)? {
+        if provider.pointer("/route/kind").and_then(Value::as_str) != Some("stdio_adapter") {
+            continue;
+        }
+        let id = provider
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AppError::Source("image provider is missing its id".into()))?;
+        let credential_references = selection
+            .credential_references
+            .iter()
+            .filter_map(|(key, value)| {
+                key.strip_prefix(&format!("{id}."))
+                    .map(|field| (field.to_owned(), Value::String(value.clone())))
+            })
+            .collect::<serde_json::Map<_, _>>();
+        let settings = selection
+            .route_settings
+            .get(id)
+            .cloned()
+            .unwrap_or_default();
+        providers.insert(
+            id.to_owned(),
+            serde_json::json!({
+                "id": id,
+                "display_name": provider.get("display_name"),
+                "route": provider.get("route"),
+                "capabilities": provider.get("capabilities"),
+                "credential_references": credential_references,
+                "settings": settings,
+            }),
+        );
+    }
+    if providers.is_empty() {
+        return Ok(None);
+    }
+    let content = serde_json::to_string_pretty(&serde_json::json!({
+        "schema_version": "1.0.0",
+        "primary_provider": selection.primary_provider,
+        "additional_providers": selection.additional_providers,
+        "providers": providers,
+    }))?;
+    Ok(Some(GeneratedArtifact {
+        component_id: "image_generation.config".into(),
+        destination: ".hoi4-setup/image_generation.json".into(),
+        expected_sha256: sha256_bytes(content.as_bytes()),
+        content,
+        external: false,
+        bytes: None,
+    }))
+}
+
+fn image_server_route(provider: &Value, _project_root: &Path) -> Option<serde_json::Value> {
+    let route = provider.get("route")?;
+    let id = provider.get("id")?.as_str()?;
+    let kind = route.get("kind")?.as_str()?;
+    let (command, args): (String, Vec<String>) = match kind {
+        "stdio_adapter" => (
+            if cfg!(windows) { "python" } else { "python3" }.into(),
+            vec![
+                ".tools/image_generation/runtime/server.py".into(),
+                "--provider".into(),
+                id.into(),
+            ],
+        ),
+        "local_package" if id == "gptimage" => (
+            "node".into(),
+            vec![".tools/image_generation/providers/gptimage/src/server.js".into()],
+        ),
+        _ => return None,
+    };
+    Some(serde_json::json!({
+        "command": command,
+        "args": args,
+        "cwd": ".",
+    }))
+}
+
+fn image_client_config_path(environment: &str) -> Option<&'static str> {
+    match environment {
+        coding_environment::CLAUDE_CODE => Some(".mcp.json"),
+        coding_environment::CODEX => Some(".codex/config.toml"),
+        coding_environment::CURSOR => Some(".cursor/mcp.json"),
+        coding_environment::QODER => Some(".qoder/mcp.json"),
+        coding_environment::OPENCODE => Some("opencode.json"),
+        _ => None,
+    }
+}
+
+fn image_client_config_ownership(
+    exists_before_setup: bool,
+    prior_ownership: Option<Ownership>,
+) -> Ownership {
+    prior_ownership.unwrap_or(if exists_before_setup {
+        Ownership::Merged
+    } else {
+        Ownership::Generated
+    })
+}
+
+fn image_client_config_source_destinations(
+    manifest: &RemoteManifest,
+    coding_environments: &CodingEnvironmentSelection,
+    platform: Platform,
+) -> Vec<String> {
+    let selected = coding_environment::selected_environment_ids(coding_environments);
+    manifest
+        .components
+        .iter()
+        .filter(|component| {
+            component
+                .coding_environment
+                .as_ref()
+                .is_some_and(|environment| selected.iter().any(|selected| selected == environment))
+                && component
+                    .platforms
+                    .iter()
+                    .any(|declared| declared.supports(platform))
+        })
+        .map(|component| component.destination.path.clone())
+        .collect()
+}
+
+fn image_client_config_default(environment: &str) -> &'static [u8] {
+    if environment == coding_environment::CODEX {
+        b""
+    } else {
+        b"{}"
+    }
+}
+
+fn merge_json_objects_preserving_local(
+    incoming: &mut serde_json::Map<String, Value>,
+    local: serde_json::Map<String, Value>,
+) {
+    for (key, local_value) in local {
+        match (incoming.get_mut(&key), local_value) {
+            (Some(Value::Object(incoming_object)), Value::Object(local_object)) => {
+                merge_json_objects_preserving_local(incoming_object, local_object);
+            }
+            (_, local_value) => {
+                incoming.insert(key, local_value);
+            }
+        }
+    }
+}
+
+fn merge_toml_tables_preserving_local(
+    incoming: &mut toml::map::Map<String, toml::Value>,
+    local: toml::map::Map<String, toml::Value>,
+) {
+    for (key, local_value) in local {
+        match (incoming.get_mut(&key), local_value) {
+            (Some(toml::Value::Table(incoming_table)), toml::Value::Table(local_table)) => {
+                merge_toml_tables_preserving_local(incoming_table, local_table);
+            }
+            (_, local_value) => {
+                incoming.insert(key, local_value);
+            }
+        }
+    }
+}
+
+fn merge_existing_image_client_config(
+    root: &Path,
+    destination: &str,
+    incoming: &[u8],
+) -> Result<Vec<u8>, AppError> {
+    let path = safe_join(root, destination)?;
+    let local_bytes = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => {
+            if crate::security::is_link_metadata(&metadata) || !metadata.is_file() {
+                return Err(AppError::PathSecurity(format!(
+                    "coding client configuration is not a regular file: {destination}"
+                )));
+            }
+            crate::flatten::read_regular_file_no_follow_under_root(root, destination)?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(incoming.to_vec()),
+        Err(error) => {
+            return Err(AppError::Transaction(format!(
+                "could not inspect coding client configuration {destination}: {error}"
+            )))
+        }
+    };
+    let normalized = destination.replace('\\', "/").to_ascii_lowercase();
+    if normalized == ".codex/config.toml" {
+        let incoming_text = std::str::from_utf8(incoming).map_err(|error| {
+            AppError::Source(format!("Codex configuration is not UTF-8: {error}"))
+        })?;
+        let local_text = std::str::from_utf8(&local_bytes).map_err(|error| {
+            AppError::Source(format!("Codex configuration is not UTF-8: {error}"))
+        })?;
+        let mut incoming_value = incoming_text.parse::<toml::Value>().map_err(|error| {
+            AppError::Source(format!("Codex configuration is not valid TOML: {error}"))
+        })?;
+        let local_value = local_text.parse::<toml::Value>().map_err(|error| {
+            AppError::Source(format!("Codex configuration is not valid TOML: {error}"))
+        })?;
+        let (Some(incoming_table), Some(local_table)) = (
+            incoming_value.as_table_mut(),
+            local_value.as_table().cloned(),
+        ) else {
+            return Err(AppError::Source(
+                "Codex configuration is not a TOML table".into(),
+            ));
+        };
+        merge_toml_tables_preserving_local(incoming_table, local_table);
+        return toml::to_string_pretty(&incoming_value)
+            .map(|value| value.into_bytes())
+            .map_err(|error| {
+                AppError::Source(format!("Codex configuration could not be merged: {error}"))
+            });
+    }
+    let mut incoming_value: Value = serde_json::from_slice(incoming).map_err(|error| {
+        AppError::Source(format!(
+            "coding client configuration is not valid JSON: {error}"
+        ))
+    })?;
+    let local_value: Value = serde_json::from_slice(&local_bytes).map_err(|error| {
+        AppError::Source(format!(
+            "existing coding client configuration is not valid JSON: {error}"
+        ))
+    })?;
+    let (Some(incoming_object), Some(local_object)) = (
+        incoming_value.as_object_mut(),
+        local_value.as_object().cloned(),
+    ) else {
+        return Err(AppError::Source(
+            "coding client configuration is not a JSON object".into(),
+        ));
+    };
+    merge_json_objects_preserving_local(incoming_object, local_object);
+    serde_json::to_vec_pretty(&incoming_value).map_err(|error| {
+        AppError::Source(format!(
+            "coding client configuration could not be merged: {error}"
+        ))
+    })
+}
+
+fn managed_image_server_ids(manifest: &RemoteManifest) -> std::collections::HashSet<String> {
+    manifest
+        .image_generation
+        .as_ref()
+        .and_then(|catalog| catalog.get("providers"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|provider| provider.get("id").and_then(Value::as_str))
+        .map(|id| format!("hoi4_image_{id}"))
+        .collect()
+}
+
+fn image_client_config_artifacts(
+    root: &Path,
+    manifest: &RemoteManifest,
+    selection: &ImageGenerationSelection,
+    coding_environments: &CodingEnvironmentSelection,
+    already_selected_destinations: &[String],
+) -> Result<Vec<GeneratedArtifact>, AppError> {
+    let provider_rows = image_generation_provider_rows(manifest, selection)?;
+    let mut artifacts = Vec::new();
+    for environment in coding_environment::selected_environment_ids(coding_environments) {
+        let Some(destination) = image_client_config_path(&environment) else {
+            continue;
+        };
+        let destination_key = canonical_relative_key(destination)
+            .map_err(|error| AppError::Source(error.to_string()))?;
+        if already_selected_destinations.iter().any(|path| {
+            canonical_relative_key(path).is_ok_and(|selected| selected == destination_key)
+        }) {
+            continue;
+        }
+        let path = safe_join(root, destination)?;
+        let source_bytes = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                if crate::security::is_link_metadata(&metadata) || !metadata.is_file() {
+                    return Err(AppError::PathSecurity(format!(
+                        "coding client configuration is not a regular file: {destination}"
+                    )));
+                }
+                crate::flatten::read_regular_file_no_follow_under_root(root, destination)?
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                image_client_config_default(&environment).to_vec()
+            }
+            Err(error) => {
+                return Err(AppError::Transaction(format!(
+                    "could not inspect coding client configuration {destination}: {error}"
+                )))
+            }
+        };
+        let has_route_for_environment = provider_rows.iter().any(|provider| {
+            provider
+                .get("supported_coding_environments")
+                .and_then(Value::as_array)
+                .is_some_and(|values| {
+                    values
+                        .iter()
+                        .any(|value| value.as_str() == Some(environment.as_str()))
+                })
+                && image_server_route(provider, root).is_some()
+        });
+        let has_managed_image_route = source_bytes
+            .windows(b"hoi4_image_".len())
+            .any(|window| window == b"hoi4_image_");
+        if !has_route_for_environment && !has_managed_image_route {
+            continue;
+        }
+        let adapted = adapt_image_generation_client_config(
+            &source_bytes,
+            destination,
+            manifest,
+            selection,
+            coding_environments,
+            root,
+        )?;
+        if adapted == source_bytes {
+            continue;
+        }
+        let content = String::from_utf8(adapted).map_err(|error| {
+            AppError::Source(format!(
+                "coding client configuration is not valid UTF-8: {error}"
+            ))
+        })?;
+        artifacts.push(GeneratedArtifact {
+            component_id: format!("image_generation.client_config.{environment}"),
+            destination: destination.into(),
+            expected_sha256: sha256_bytes(content.as_bytes()),
+            content,
+            external: false,
+            bytes: None,
+        });
+    }
+    Ok(artifacts)
+}
+
+fn append_maintenance_image_client_config_operations(
+    artifacts: &[GeneratedArtifact],
+    operations: &mut Vec<PlanOperation>,
+    prepared: &mut Vec<PreparedFile>,
+    lock: &InstallationLock,
+    root: &Path,
+) -> Result<(), AppError> {
+    for (index, artifact) in artifacts.iter().enumerate() {
+        let path = safe_join(root, &artifact.destination)?;
+        let local_sha = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                if crate::security::is_link_metadata(&metadata) || !metadata.is_file() {
+                    return Err(AppError::PathSecurity(format!(
+                        "coding client configuration is not a regular file: {}",
+                        artifact.destination
+                    )));
+                }
+                Some(sha256_file(&path)?)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(AppError::Transaction(format!(
+                    "could not inspect coding client configuration {}: {error}",
+                    artifact.destination
+                )))
+            }
+        };
+        let previous = lock.files.iter().find(|file| {
+            file.path == artifact.destination
+                && file.component_id == artifact.component_id
+                && !file.external
+        });
+        if local_sha.as_deref() == Some(artifact.expected_sha256.as_str()) {
+            continue;
+        }
+        let locally_unmodified = match (&local_sha, previous) {
+            (None, _) => false,
+            (Some(hash), Some(previous)) => hash == &previous.installed_sha256,
+            _ => false,
+        };
+        let local_state = if local_sha.is_none() {
+            LocalState::Absent
+        } else if locally_unmodified {
+            LocalState::Unmodified
+        } else {
+            LocalState::Modified
+        };
+        let action = if local_state == LocalState::Modified {
+            OperationAction::Skip
+        } else {
+            OperationAction::Generate
+        };
+        let operation_id = format!("maintenance-image-client-config-{index:03}");
+        operations.push(PlanOperation {
+            id: operation_id.clone(),
+            component_id: artifact.component_id.clone(),
+            ownership: Some(image_client_config_ownership(
+                local_sha.is_some(),
+                previous.map(|file| file.ownership),
+            )),
+            location_scope: Some("project".into()),
+            action,
+            source_path: Some(format!("generated:{}", artifact.destination)),
+            destination: artifact.destination.clone(),
+            source_sha256: Some(artifact.expected_sha256.clone()),
+            source_size: Some(artifact.content.len() as u64),
+            platform: Some(ManifestPlatform::All),
+            executable: false,
+            result_sha256: (action == OperationAction::Generate)
+                .then_some(artifact.expected_sha256.clone()),
+            base_sha256: previous.map(|file| file.source_sha256.clone()),
+            local_sha256: local_sha,
+            local_state,
+            resolution: (local_state == LocalState::Modified).then_some("review_required".into()),
+            external: false,
+            rollback: if local_state == LocalState::Absent {
+                RollbackAction::RemoveCreated
+            } else {
+                RollbackAction::RestoreBackup
+            },
+            external_parent_identity: None,
+        });
+        prepared.push(PreparedFile {
+            operation_id,
+            destination: artifact.destination.clone(),
+            bytes: artifact.content.as_bytes().to_vec(),
+            expected_sha256: artifact.expected_sha256.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn adapt_image_generation_client_config(
+    bytes: &[u8],
+    destination: &str,
+    manifest: &RemoteManifest,
+    selection: &ImageGenerationSelection,
+    coding_environments: &CodingEnvironmentSelection,
+    project_root: &Path,
+) -> Result<Vec<u8>, AppError> {
+    let normalized = destination.replace('\\', "/").to_ascii_lowercase();
+    let environment = if normalized == ".mcp.json" {
+        Some(coding_environment::CLAUDE_CODE)
+    } else if normalized == ".cursor/mcp.json" {
+        Some(coding_environment::CURSOR)
+    } else if normalized == ".qoder/mcp.json" {
+        Some(coding_environment::QODER)
+    } else if normalized == "opencode.json" {
+        Some(coding_environment::OPENCODE)
+    } else if normalized == ".codex/config.toml" {
+        Some(coding_environment::CODEX)
+    } else {
+        None
+    };
+    let Some(environment) = environment.filter(|environment| {
+        coding_environment::selected_environment_ids(coding_environments)
+            .iter()
+            .any(|selected| selected == environment)
+    }) else {
+        return Ok(bytes.to_vec());
+    };
+    let providers = image_generation_provider_rows(manifest, selection)?;
+    let managed_server_ids = managed_image_server_ids(manifest);
+    if environment == coding_environment::CODEX {
+        let text = std::str::from_utf8(bytes).map_err(|error| {
+            AppError::Source(format!("Codex configuration is not UTF-8: {error}"))
+        })?;
+        let mut config = text.parse::<toml::Value>().map_err(|error| {
+            AppError::Source(format!("Codex configuration is not valid TOML: {error}"))
+        })?;
+        let table = config
+            .as_table_mut()
+            .ok_or_else(|| AppError::Source("Codex configuration is not a TOML table".into()))?;
+        let mcp = table
+            .entry("mcp_servers")
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+            .as_table_mut()
+            .ok_or_else(|| AppError::Source("Codex MCP settings are not a TOML table".into()))?;
+        mcp.retain(|id, _| !managed_server_ids.contains(id));
+        for provider in providers {
+            if !provider
+                .get("supported_coding_environments")
+                .and_then(Value::as_array)
+                .is_some_and(|values| {
+                    values
+                        .iter()
+                        .any(|value| value.as_str() == Some(environment))
+                })
+            {
+                continue;
+            }
+            let id = provider
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let Some(route) = image_server_route(provider, project_root) else {
+                continue;
+            };
+            let command = route
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let args = route
+                .get("args")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(|value| toml::Value::String(value.into()))
+                .collect();
+            let mut fields = toml::map::Map::new();
+            fields.insert("command".into(), toml::Value::String(command.into()));
+            fields.insert("args".into(), toml::Value::Array(args));
+            fields.insert("cwd".into(), toml::Value::String(".".into()));
+            fields.insert("enabled".into(), toml::Value::Boolean(true));
+            mcp.insert(format!("hoi4_image_{id}"), toml::Value::Table(fields));
+        }
+        if mcp.is_empty() {
+            table.remove("mcp_servers");
+        }
+        return toml::to_string_pretty(&config)
+            .map(|value| value.into_bytes())
+            .map_err(|error| {
+                AppError::Source(format!(
+                    "Codex MCP configuration could not be written: {error}"
+                ))
+            });
+    }
+    let mut config: Value = serde_json::from_slice(bytes).map_err(|error| {
+        AppError::Source(format!(
+            "coding client MCP configuration is not valid JSON: {error}"
+        ))
+    })?;
+    let root = config.as_object_mut().ok_or_else(|| {
+        AppError::Source("coding client MCP settings are not a JSON object".into())
+    })?;
+    let key = if environment == coding_environment::OPENCODE {
+        "mcp"
+    } else {
+        "mcpServers"
+    };
+    let routes = root
+        .entry(key)
+        .or_insert_with(|| Value::Object(serde_json::Map::new()))
+        .as_object_mut()
+        .ok_or_else(|| AppError::Source("coding client MCP routes are not a JSON object".into()))?;
+    routes.retain(|id, _| !managed_server_ids.contains(id));
+    for provider in providers {
+        if !provider
+            .get("supported_coding_environments")
+            .and_then(Value::as_array)
+            .is_some_and(|values| {
+                values
+                    .iter()
+                    .any(|value| value.as_str() == Some(environment))
+            })
+        {
+            continue;
+        }
+        let id = provider
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let Some(route) = image_server_route(provider, project_root) else {
+            continue;
+        };
+        let server_id = format!("hoi4_image_{id}");
+        if environment == coding_environment::OPENCODE {
+            let mut command = vec![route["command"].clone()];
+            command.extend(route["args"].as_array().cloned().unwrap_or_default());
+            routes.insert(
+                server_id,
+                serde_json::json!({
+                    "type": "local",
+                    "command": command,
+                    "enabled": true,
+                    "cwd": ".",
+                }),
+            );
+        } else {
+            routes.insert(server_id, route);
+        }
+    }
+    if routes.is_empty() {
+        root.remove(key);
+    }
+    serde_json::to_vec_pretty(&config).map_err(|error| {
+        AppError::Source(format!(
+            "coding client MCP configuration could not be written: {error}"
+        ))
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn adapt_component_specific_source(
     component_id: &str,
@@ -5508,6 +7037,11 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     validate_analysis_source_binding(&codex_analysis, &resolution.identity)?;
     let (requested, coding_environment_selection) =
         requested_components_for_selection(&resolution.manifest, state, &ai_provider)?;
+    let image_generation = image_generation_selection_from_state(
+        state,
+        &resolution.manifest,
+        &coding_environment_selection,
+    )?;
     if requested.is_empty() {
         return Err(AppError::InvalidInput(
             "select at least one manifest component".into(),
@@ -5614,6 +7148,21 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             three_d_selected,
             &portrait_pipeline,
             &download_selected,
+        )?;
+        let bytes = if is_image_generation_client_config_path(&adapted_destination) {
+            merge_existing_image_client_config(&root, &adapted_destination, &bytes)?
+        } else {
+            bytes
+        };
+        let bytes =
+            adapt_image_generation_guidance(&bytes, &resolution.manifest, &image_generation)?;
+        let bytes = adapt_image_generation_client_config(
+            &bytes,
+            &adapted_destination,
+            &resolution.manifest,
+            &image_generation,
+            &coding_environment_selection,
+            &root,
         )?;
         let incoming_sha256 = sha256_bytes(&bytes);
         let source_destination = safe_join(&root, &adapted_destination)?;
@@ -5722,6 +7271,22 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     // review operation for each one; an existing descriptor is not evidence
     // that the other two routes are valid.
     let mut generated = render_generated_artifacts(&identity)?;
+    if let Some(image_config) =
+        image_generation_config_artifact(&resolution.manifest, &image_generation)?
+    {
+        generated.push(image_config);
+    }
+    let selected_config_destinations = selections
+        .iter()
+        .map(|selection| selection.destination.clone())
+        .collect::<Vec<_>>();
+    generated.extend(image_client_config_artifacts(
+        &root,
+        &resolution.manifest,
+        &image_generation,
+        &coding_environment_selection,
+        &selected_config_destinations,
+    )?);
     if mode == "new" || mode == "existing" {
         let description = string_field(state, "description").unwrap_or_default();
         let readme = project_readme(
@@ -5818,7 +7383,8 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                 "documentation_convention": conventions.documentation_convention
             },
             "credential_references": credential_references.clone(),
-            "portrait_pipeline": portrait_pipeline.clone()
+            "portrait_pipeline": portrait_pipeline.clone(),
+            "image_generation": image_generation.clone()
         }))?;
         generated.push(GeneratedArtifact {
             component_id: "project.state".into(),
@@ -5913,6 +7479,11 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             component_id: artifact.component_id.clone(),
             ownership: Some(if artifact.component_id == "git.ignore" {
                 Ownership::Merged
+            } else if artifact
+                .component_id
+                .starts_with("image_generation.client_config.")
+            {
+                image_client_config_ownership(had_existing_destination, None)
             } else {
                 Ownership::Generated
             }),
@@ -6033,6 +7604,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         credential_references,
         optional_workflows,
         portrait_pipeline: Some(portrait_pipeline),
+        image_generation: Some(image_generation),
         operations,
         conflicts,
         external_actions,
@@ -6591,7 +8163,13 @@ fn append_additional_component_operations(
         .map(|file| (file.path.as_str(), file.external))
         .collect::<std::collections::HashSet<_>>();
     for (index, selection) in selections.iter().enumerate() {
-        let refresh_managed_agents = refresh_agents && selection.component_id == "core.agents";
+        let refresh_managed_agents = refresh_agents
+            && (selection.component_id == "core.agents"
+                || selection.component_id == "core.claude.instructions"
+                || is_image_generation_client_config_path(&selection.destination)
+                || ((selection.component_id == "core.skills"
+                    || selection.component_id == "core.subagents")
+                    && is_image_generation_guidance_path(&selection.destination)));
         let adapted_destination = adapt_super_events_destination(
             &selection.component_id,
             &selection.destination,
@@ -6619,7 +8197,7 @@ fn append_additional_component_operations(
         let current_locked_file = refresh_managed_agents
             .then(|| {
                 lock.files.iter().find(|file| {
-                    file.component_id == "core.agents"
+                    file.component_id == selection.component_id
                         && file.path == adapted_destination
                         && !file.external
                 })
@@ -6674,6 +8252,33 @@ fn append_additional_component_operations(
     Ok(())
 }
 
+fn is_image_generation_guidance_path(path: &str) -> bool {
+    let path = path.replace('\\', "/").to_ascii_lowercase();
+    path.ends_with("claude.md")
+        || path.ends_with("agents.md")
+        || path.ends_with("/hoi4-feature-assets/skill.md")
+        || path.ends_with("/hoi4-feature-assets/references/asset-source-rules.md")
+        || [
+            "hoi4-generated-feature-art.md",
+            "hoi4-icon-artist.md",
+            "hoi4-portrait-creator.md",
+        ]
+        .iter()
+        .any(|name| path.ends_with(name))
+}
+
+fn is_image_generation_client_config_path(path: &str) -> bool {
+    matches!(
+        path.replace('\\', "/").to_ascii_lowercase().as_str(),
+        ".mcp.json"
+            | ".codex/config.toml"
+            | ".cursor/mcp.json"
+            | ".qoder/mcp.json"
+            | "opencode.json"
+            | ".opencode/mcp.json"
+    )
+}
+
 #[tauri::command(async)]
 #[allow(clippy::too_many_arguments)]
 async fn build_maintenance_plan(
@@ -6685,6 +8290,7 @@ async fn build_maintenance_plan(
     primary_coding_environment: Option<String>,
     additional_coding_environments: Option<Vec<String>>,
     analysis_confirmation_values: Option<Value>,
+    image_generation: Option<Value>,
 ) -> Result<InstallationPlan, String> {
     run_blocking_command("maintenance-plan", move || {
         build_maintenance_plan_blocking(
@@ -6696,6 +8302,7 @@ async fn build_maintenance_plan(
             primary_coding_environment,
             additional_coding_environments,
             analysis_confirmation_values,
+            image_generation,
         )
     })
     .await
@@ -6711,6 +8318,7 @@ fn build_maintenance_plan_blocking(
     primary_coding_environment: Option<String>,
     additional_coding_environments: Option<Vec<String>>,
     analysis_confirmation_values: Option<Value>,
+    image_generation_value: Option<Value>,
 ) -> Result<InstallationPlan, String> {
     let root = validate_project_root_or_destination(Path::new(&project_root))
         .map(|(root, _)| root)
@@ -6727,6 +8335,7 @@ fn build_maintenance_plan_blocking(
         .transpose()
         .map_err(command_error)?;
     let lock = read_project_lock(&root).map_err(command_error)?;
+    let image_generation_input = image_generation_value;
     let coding_environment_selection = if mode == "remove" {
         CodingEnvironmentSelection {
             primary: lock.primary_coding_environment.clone(),
@@ -6895,6 +8504,8 @@ fn build_maintenance_plan_blocking(
     let mut wiki_required_pages = lock.wiki_required_pages.clone();
     let mut wiki_metadata = lock.wiki_metadata.clone();
     let mut maintenance_mcp_manifest: Option<RemoteManifest> = None;
+    let mut image_generation_manifest: Option<RemoteManifest> = None;
+    let mut selected_image_generation = lock.image_generation.clone();
     if !portrait_pipeline.enabled {
         maintenance_components.retain(|id| !id.starts_with("workflow.portraits"));
     }
@@ -6934,6 +8545,33 @@ fn build_maintenance_plan_blocking(
         let incoming_environment_ids =
             coding_environment::all_environment_component_ids(&resolution.manifest);
         requested.retain(|id| !incoming_environment_ids.contains(id));
+        let image_state = image_generation_state_for_maintenance(
+            image_generation_input.as_ref(),
+            &lock,
+            &coding_environment_selection,
+        );
+        let mut desired_image = image_generation_selection_from_state(
+            &image_state,
+            &resolution.manifest,
+            &coding_environment_selection,
+        )
+        .map_err(command_error)?;
+        if let Some(installed_image) = lock.image_generation.as_ref() {
+            desired_image.installed_package_tree_sha256 =
+                installed_image.installed_package_tree_sha256.clone();
+            desired_image.installed_package_lock_sha256 =
+                installed_image.installed_package_lock_sha256.clone();
+        }
+        selected_image_generation = Some(desired_image);
+        apply_image_generation_component_selection(
+            &mut requested,
+            &resolution.manifest,
+            selected_image_generation
+                .as_ref()
+                .expect("selection was set"),
+        )
+        .map_err(command_error)?;
+        image_generation_manifest = Some(resolution.manifest.clone());
         if resolution
             .manifest
             .components
@@ -7089,6 +8727,29 @@ fn build_maintenance_plan_blocking(
                     &portrait_pipeline,
                     &maintenance_components,
                 )?;
+                let desired_bytes = if is_image_generation_client_config_path(&destination) {
+                    merge_existing_image_client_config(&root, &destination, &desired_bytes)?
+                } else {
+                    desired_bytes
+                };
+                let desired_bytes =
+                    if let Some(image_selection) = selected_image_generation.as_ref() {
+                        let guided = adapt_image_generation_guidance(
+                            &desired_bytes,
+                            &resolution.manifest,
+                            image_selection,
+                        )?;
+                        adapt_image_generation_client_config(
+                            &guided,
+                            &destination,
+                            &resolution.manifest,
+                            image_selection,
+                            &coding_environment_selection,
+                            &root,
+                        )?
+                    } else {
+                        desired_bytes
+                    };
                 Ok(LockedFile {
                     path: destination,
                     location_scope: Some("project".into()),
@@ -7187,6 +8848,7 @@ fn build_maintenance_plan_blocking(
             additional: lock.additional_coding_environments.clone(),
         };
         if coding_environment_selection != locked_selection
+            || image_generation_input.is_some()
             || !lock
                 .components
                 .iter()
@@ -7230,6 +8892,174 @@ fn build_maintenance_plan_blocking(
                 })
                 .map(|component| component.id.clone())
                 .collect::<Vec<_>>();
+            let image_state = image_generation_state_for_maintenance(
+                image_generation_input.as_ref(),
+                &lock,
+                &coding_environment_selection,
+            );
+            let mut desired_image = image_generation_selection_from_state(
+                &image_state,
+                &resolution.manifest,
+                &coding_environment_selection,
+            )
+            .map_err(command_error)?;
+            if let Some(installed_image) = lock.image_generation.as_ref() {
+                desired_image.installed_package_tree_sha256 =
+                    installed_image.installed_package_tree_sha256.clone();
+                desired_image.installed_package_lock_sha256 =
+                    installed_image.installed_package_lock_sha256.clone();
+            }
+            let mut desired_image_ids = Vec::new();
+            for provider in image_generation_provider_rows(&resolution.manifest, &desired_image)
+                .map_err(command_error)?
+            {
+                if let Some(component_id) = provider
+                    .pointer("/route/component_id")
+                    .and_then(Value::as_str)
+                {
+                    desired_image_ids.push(component_id.to_owned());
+                }
+            }
+            let current_image_ids = lock
+                .components
+                .iter()
+                .filter(|component| {
+                    component.id.starts_with("imagegen.")
+                        && !matches!(
+                            component.state.as_str(),
+                            "removed" | "not_selected" | "unsupported_platform"
+                        )
+                })
+                .map(|component| component.id.clone())
+                .collect::<std::collections::HashSet<_>>();
+            let desired_image_set = desired_image_ids
+                .iter()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>();
+            let add_image_ids = desired_image_set
+                .difference(&current_image_ids)
+                .cloned()
+                .collect::<Vec<_>>();
+            let remove_image_ids = current_image_ids
+                .difference(&desired_image_set)
+                .cloned()
+                .collect::<std::collections::HashSet<_>>();
+            let image_selection_changed = lock.image_generation.as_ref() != Some(&desired_image);
+            if !add_image_ids.is_empty() {
+                let expanded = expand_components(&resolution.manifest, &add_image_ids)
+                    .map_err(command_error)?;
+                let support = crate::source::resolve_platform_support(
+                    &resolution.manifest,
+                    &expanded,
+                    Platform::current(),
+                )
+                .map_err(command_error)?;
+                if support.iter().any(|item| item.state == "blocked") {
+                    return Err(
+                        "a selected image provider has no verified route on this computer".into(),
+                    );
+                }
+                let supported = expanded
+                    .into_iter()
+                    .filter(|id| {
+                        support.iter().any(|item| {
+                            item.component_id == id.as_str() && item.state == "supported"
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let tree = client
+                    .fetch_tree(&resolution.identity.resolved_revision)
+                    .map_err(command_error)?;
+                let selections = select_component_files(&resolution.manifest, &supported, &tree)
+                    .map_err(command_error)?;
+                append_additional_component_operations(
+                    &mut operations,
+                    &selections,
+                    &lock,
+                    &root,
+                    &maintenance_identity(&lock, &root),
+                    false,
+                )
+                .map_err(command_error)?;
+            }
+            if !remove_image_ids.is_empty() {
+                operations.retain(|operation| !remove_image_ids.contains(&operation.component_id));
+                let obsolete = InstallationLock {
+                    components: lock
+                        .components
+                        .iter()
+                        .filter(|component| remove_image_ids.contains(&component.id))
+                        .cloned()
+                        .collect(),
+                    files: lock
+                        .files
+                        .iter()
+                        .filter(|file| remove_image_ids.contains(&file.component_id))
+                        .cloned()
+                        .collect(),
+                    ..lock.clone()
+                };
+                operations.extend(
+                    crate::transaction::managed_removal_operations(&obsolete, &root)
+                        .map_err(command_error)?,
+                );
+            }
+            maintenance_components.retain(|id| !id.starts_with("imagegen."));
+            maintenance_components.extend(desired_image_ids.clone());
+            selected_image_generation = Some(desired_image);
+            image_generation_manifest = Some(resolution.manifest.clone());
+            if image_selection_changed {
+                let selected_environments =
+                    coding_environment::selected_environment_ids(&coding_environment_selection);
+                let refresh_ids = resolution
+                    .manifest
+                    .components
+                    .iter()
+                    .filter(|component| {
+                        [
+                            "core.claude.instructions",
+                            "core.agents",
+                            "core.skills",
+                            "core.subagents",
+                            "codex.config",
+                        ]
+                        .contains(&component.id.as_str())
+                            || component
+                                .coding_environment
+                                .as_deref()
+                                .is_some_and(|environment| {
+                                    selected_environments.iter().any(|id| id == environment)
+                                })
+                    })
+                    .map(|component| component.id.clone())
+                    .collect::<Vec<_>>();
+                if !refresh_ids.is_empty() {
+                    let expanded = expand_components(&resolution.manifest, &refresh_ids)
+                        .map_err(command_error)?;
+                    let tree = client
+                        .fetch_tree(&resolution.identity.resolved_revision)
+                        .map_err(command_error)?;
+                    let selections = select_component_files(&resolution.manifest, &expanded, &tree)
+                        .map_err(command_error)?
+                        .into_iter()
+                        .filter(|selection| {
+                            is_image_generation_guidance_path(&selection.destination)
+                                || is_image_generation_client_config_path(&selection.destination)
+                        })
+                        .collect::<Vec<_>>();
+                    if !selections.is_empty() {
+                        append_additional_component_operations(
+                            &mut operations,
+                            &selections,
+                            &lock,
+                            &root,
+                            &maintenance_identity(&lock, &root),
+                            true,
+                        )
+                        .map_err(command_error)?;
+                    }
+                }
+            }
             for component_id in &add_optional_components {
                 if !active_requested.iter().any(|id| id == component_id) {
                     active_requested.push(component_id.clone());
@@ -7616,6 +9446,24 @@ fn build_maintenance_plan_blocking(
             )
             .map_err(command_error)?
         };
+        let bytes = if let (Some(manifest), Some(selection)) = (
+            image_generation_manifest.as_ref(),
+            selected_image_generation.as_ref(),
+        ) {
+            let guided = adapt_image_generation_guidance(&bytes, manifest, selection)
+                .map_err(command_error)?;
+            adapt_image_generation_client_config(
+                &guided,
+                &operation.destination,
+                manifest,
+                selection,
+                &coding_environment_selection,
+                &root,
+            )
+            .map_err(command_error)?
+        } else {
+            bytes
+        };
         let actual = sha256_bytes(&bytes);
         if generated_source && actual != expected {
             return Err(format!(
@@ -7720,6 +9568,135 @@ fn build_maintenance_plan_blocking(
         }
     }
     let mut generated_artifacts = Vec::new();
+    if mode != "remove" {
+        if let (Some(manifest), Some(selection)) = (
+            image_generation_manifest.as_ref(),
+            selected_image_generation.as_ref(),
+        ) {
+            let client_config_destinations = image_client_config_source_destinations(
+                manifest,
+                &coding_environment_selection,
+                Platform::current(),
+            );
+            let client_config_artifacts = image_client_config_artifacts(
+                &root,
+                manifest,
+                selection,
+                &coding_environment_selection,
+                &client_config_destinations,
+            )
+            .map_err(command_error)?;
+            append_maintenance_image_client_config_operations(
+                &client_config_artifacts,
+                &mut operations,
+                &mut prepared,
+                &lock,
+                &root,
+            )
+            .map_err(command_error)?;
+            generated_artifacts.extend(client_config_artifacts);
+            if let Some(artifact) =
+                image_generation_config_artifact(manifest, selection).map_err(command_error)?
+            {
+                let destination_path =
+                    safe_join(&root, &artifact.destination).map_err(command_error)?;
+                let local_sha = if destination_path.is_file() {
+                    Some(sha256_file(&destination_path).map_err(command_error)?)
+                } else {
+                    None
+                };
+                let local_state = match local_sha.as_deref() {
+                    None => LocalState::Absent,
+                    Some(hash) if hash == artifact.expected_sha256 => LocalState::Unmodified,
+                    Some(_) => LocalState::Modified,
+                };
+                let action = if local_state == LocalState::Absent {
+                    OperationAction::Generate
+                } else {
+                    OperationAction::Skip
+                };
+                let operation_id = "maintenance-image-generation-config".to_string();
+                operations.push(PlanOperation {
+                    id: operation_id.clone(),
+                    component_id: artifact.component_id.clone(),
+                    ownership: Some(Ownership::Generated),
+                    location_scope: Some("project".into()),
+                    action,
+                    source_path: Some(format!("generated:{}", artifact.destination)),
+                    destination: artifact.destination.clone(),
+                    source_sha256: Some(artifact.expected_sha256.clone()),
+                    source_size: Some(artifact.content.len() as u64),
+                    platform: Some(ManifestPlatform::All),
+                    executable: false,
+                    result_sha256: (action == OperationAction::Generate)
+                        .then_some(artifact.expected_sha256.clone()),
+                    base_sha256: None,
+                    local_sha256: local_sha.clone(),
+                    local_state,
+                    resolution: None,
+                    external: false,
+                    rollback: if local_sha.is_some() && action == OperationAction::Generate {
+                        RollbackAction::RestoreBackup
+                    } else {
+                        RollbackAction::RemoveCreated
+                    },
+                    external_parent_identity: None,
+                });
+                prepared.push(crate::models::PreparedFile {
+                    operation_id,
+                    destination: artifact.destination.clone(),
+                    bytes: artifact.content.as_bytes().to_vec(),
+                    expected_sha256: artifact.expected_sha256.clone(),
+                });
+                generated_artifacts.push(artifact);
+            } else if let Some(previous) = lock.files.iter().find(|file| {
+                file.path == ".hoi4-setup/image_generation.json"
+                    && file.component_id == "image_generation.config"
+                    && !file.external
+            }) {
+                let path = safe_join(&root, &previous.path).map_err(command_error)?;
+                let local_sha = if path.is_file() {
+                    Some(sha256_file(&path).map_err(command_error)?)
+                } else {
+                    None
+                };
+                let local_state = match local_sha.as_deref() {
+                    None => LocalState::Absent,
+                    Some(hash) if hash == previous.installed_sha256 => LocalState::Unmodified,
+                    Some(_) => LocalState::Modified,
+                };
+                if local_state != LocalState::Absent {
+                    let action = if local_state == LocalState::Unmodified {
+                        OperationAction::DeleteManaged
+                    } else {
+                        OperationAction::Skip
+                    };
+                    operations.push(PlanOperation {
+                        id: "maintenance-image-generation-config-remove".into(),
+                        component_id: "image_generation.config".into(),
+                        ownership: Some(Ownership::Generated),
+                        location_scope: Some("project".into()),
+                        action,
+                        source_path: Some(format!("generated:{}", previous.path)),
+                        destination: previous.path.clone(),
+                        source_sha256: Some(previous.source_sha256.clone()),
+                        source_size: previous.installed_size,
+                        platform: Some(previous.platform.unwrap_or(ManifestPlatform::All)),
+                        executable: false,
+                        result_sha256: None,
+                        base_sha256: Some(previous.source_sha256.clone()),
+                        local_sha256: local_sha,
+                        local_state,
+                        resolution: (local_state == LocalState::Modified)
+                            .then_some("review_required".into()),
+                        external: false,
+                        rollback: RollbackAction::RestoreBackup,
+                        external_parent_identity: None,
+                    });
+                }
+            }
+        }
+    }
     if lock.flatten_chat_sources && mode != "remove" {
         operations.retain(|operation| {
             !operation
@@ -7737,7 +9714,7 @@ fn build_maintenance_plan_blocking(
             .map_err(command_error)?;
         let flat = crate::flatten::build_artifacts(&flatten_prepared, &[], &root)
             .map_err(command_error)?;
-        generated_artifacts = flat.clone();
+        generated_artifacts.extend(flat.clone());
         for (index, artifact) in flat.iter().enumerate() {
             let destination_path =
                 safe_join(&root, &artifact.destination).map_err(command_error)?;
@@ -7922,7 +9899,7 @@ fn build_maintenance_plan_blocking(
         },
     );
     let mcp_selected = mode != "remove" && component_ids_include_mcp(&maintenance_components);
-    let external_actions = if mcp_selected {
+    let mut external_actions = if mcp_selected {
         // Update already resolved the target manifest above. Repair and
         // reinstall may add Codex to a lock that did not contain it, so load
         // the immutable locked manifest lazily for that transition as well.
@@ -7958,6 +9935,47 @@ fn build_maintenance_plan_blocking(
     } else {
         Vec::new()
     };
+    let gptimage_selected = image_provider_selected(selected_image_generation.as_ref(), "gptimage");
+    if gptimage_selected
+        && !external_actions
+            .iter()
+            .any(|action| action.id.starts_with("external.imagegen.gptimage."))
+    {
+        let manifest = if let Some(manifest) = image_generation_manifest.as_ref() {
+            manifest.clone()
+        } else {
+            resolve_installed_manifest(&lock).map_err(command_error)?
+        };
+        external_actions.extend(manifest_external_actions(
+            &manifest,
+            &[IMAGEGEN_GPTIMAGE_COMPONENT_ID.into()],
+        ));
+    }
+    let gptimage_installed_with_receipt = lock.components.iter().any(|component| {
+        component.id == IMAGEGEN_GPTIMAGE_COMPONENT_ID
+            && !matches!(
+                component.state.as_str(),
+                "removed" | "not_selected" | "unsupported_platform"
+            )
+    }) && lock
+        .image_generation
+        .as_ref()
+        .and_then(|selection| selection.installed_package_tree_sha256.as_ref())
+        .is_some();
+    let gptimage_cleanup_required =
+        (mode == "remove" || !gptimage_selected) && gptimage_installed_with_receipt;
+    if gptimage_cleanup_required {
+        external_actions.push(reviewed_gptimage_cleanup_action());
+    }
+    optional_workflows.insert(
+        IMAGEGEN_GPTIMAGE_COMPONENT_ID.into(),
+        if gptimage_selected {
+            "selected_pending"
+        } else {
+            "not_selected"
+        }
+        .into(),
+    );
     let external_actions_reviewed = external_actions.is_empty();
     if let Some(record) = codex_analysis.as_ref() {
         validate_analysis_source_binding(record, &plan_source).map_err(command_error)?;
@@ -8006,6 +10024,7 @@ fn build_maintenance_plan_blocking(
         credential_references,
         optional_workflows,
         portrait_pipeline: Some(portrait_pipeline),
+        image_generation: selected_image_generation,
         operations,
         conflicts,
         external_actions,
@@ -8561,6 +10580,602 @@ mod tests {
             descriptor_tags: Vec::new(),
             launcher_descriptor_path: None,
         }
+    }
+
+    fn image_generation_test_manifest() -> RemoteManifest {
+        let environments =
+            serde_json::json!(["claude_code", "codex", "cursor", "qoder", "opencode"]);
+        let route = serde_json::json!({
+            "kind": "stdio_adapter", "auth_method": "api_key_vault", "server_id": "hoi4_image_openai_api",
+            "url": null, "component_id": "imagegen.runtime", "runtime_entry": ".tools/image_generation/runtime/server.py",
+            "api_protocol": "openai_images", "api_base_url": "https://api.openai.com/v1", "default_model": "gpt-image-2",
+            "supported_models": ["gpt-image-2"],
+            "tool_names": {"generate": "generate_image"}, "tool_arguments": {"prompt": "prompt", "output_path": null},
+            "credential_fields": [{"id": "api_key", "display_name": "OpenAI API key", "environment_name": "OPENAI_API_KEY"}],
+            "requires_primary_coding_environment": null,
+        });
+        let capabilities = serde_json::json!({
+            "reference_images": {"supported": true, "max_count": 4, "notes": "Pass reference files by path."},
+            "image_edits": true,
+            "transparent_background": {"native": true, "notes": "Request transparency and verify the PNG alpha."},
+            "size_limits": {"accepts_dimensions": true, "maximum_width_px": 3840, "maximum_height_px": 3840, "maximum_pixels": 8_294_400, "notes": "Use model-supported dimensions."},
+            "one_image_per_call": true,
+            "alpha_verification": "Check the saved alpha.",
+            "fallback_if_no_alpha": "Use background removal and check the saved alpha.",
+            "fallback_if_no_edits": "Make a new image from the reference.",
+        });
+        RemoteManifest {
+            schema_version: "4.0.0".into(),
+            manifest_id: "image-test".into(),
+            generated_for_revision: None,
+            repository: RepositoryDescriptor {
+                provider: "github".into(),
+                owner: "owner".into(),
+                name: "repo".into(),
+                default_branch: "main".into(),
+                web_url: None,
+                api_base: None,
+                license_evidence: None,
+            },
+            components: Vec::new(),
+            profiles: Vec::new(),
+            wiki: WikiDefinition {
+                component_id: "wiki.snapshot".into(),
+                destination: "paradox_wiki/".into(),
+                snapshot_marker: None,
+                required_pages: vec![],
+                required_media_policy: "none".into(),
+                provenance: WikiProvenance {
+                    source_status: "unknown".into(),
+                    license_status: "unknown".into(),
+                    notes: vec![],
+                },
+            },
+            update_policy: ManifestUpdatePolicy {
+                latest: LatestPolicy {
+                    resolve_default_branch: true,
+                    record_commit: true,
+                },
+                pinned: PinnedPolicy {
+                    allow_commit: true,
+                    allow_release: true,
+                },
+                rollback_retention: 1,
+                manifest_cache_ttl_seconds: None,
+            },
+            signing: None,
+            coding_environments: Vec::new(),
+            image_generation: Some(serde_json::json!({
+                "default_provider": "openai_api",
+                "providers": [{
+                    "id": "openai_api", "display_name": "OpenAI Images API", "description": "Images with a saved API key.",
+                    "availability": "supported", "requirements": ["An API key."], "good_for": ["Reference edits"],
+                    "cost_summary": "Pay per image.", "models": ["GPT Image"], "supported_coding_environments": environments,
+                    "route": route, "capabilities": capabilities,
+                }, {
+                    "id": "none", "display_name": "None", "description": "Manual art.",
+                    "availability": "supported", "requirements": [], "good_for": [],
+                    "cost_summary": "No provider charge.", "models": [],
+                    "supported_coding_environments": environments,
+                    "route": {"kind": "manual", "auth_method": "none"},
+                    "capabilities": {}
+                }]
+            })),
+        }
+    }
+
+    #[test]
+    fn image_selection_is_manifest_bound_and_project_config_contains_only_vault_references() {
+        let manifest = image_generation_test_manifest();
+        let environments = CodingEnvironmentSelection {
+            primary: "cursor".into(),
+            additional: vec!["codex".into()],
+        };
+        let reference = image_generation_credential_reference("openai_api", "api_key").unwrap();
+        let value = serde_json::json!({"imageGeneration": {
+            "primary_provider": "openai_api", "additional_providers": [], "route_settings": {},
+            "credential_references": {"openai_api.api_key": reference.reference}
+        }});
+        let selection =
+            image_generation_selection_from_state(&value, &manifest, &environments).unwrap();
+        let artifact = image_generation_config_artifact(&manifest, &selection)
+            .unwrap()
+            .unwrap();
+        assert_eq!(artifact.destination, ".hoi4-setup/image_generation.json");
+        assert!(artifact
+            .content
+            .contains("credential://image_generation_api_key/openai_api_api_key"));
+        assert!(!artifact.content.contains("actual-secret-value"));
+        assert!(artifact.content.contains("openai_images"));
+
+        let selected_model = serde_json::json!({"imageGeneration": {
+            "primary_provider": "openai_api", "additional_providers": [],
+            "route_settings": {"openai_api": {"model": "gpt-image-2"}},
+            "credential_references": {"openai_api.api_key": reference.reference}
+        }});
+        let model_selection =
+            image_generation_selection_from_state(&selected_model, &manifest, &environments)
+                .unwrap();
+        assert_eq!(
+            model_selection.route_settings["openai_api"]["model"],
+            "gpt-image-2"
+        );
+        let mut aws_manifest = manifest.clone();
+        let aws_provider = aws_manifest
+            .image_generation
+            .as_mut()
+            .and_then(Value::as_object_mut)
+            .and_then(|catalog| catalog.get_mut("providers"))
+            .and_then(Value::as_array_mut)
+            .and_then(|providers| providers.first_mut())
+            .unwrap();
+        aws_provider["id"] = Value::String("aws_bedrock".into());
+        aws_provider["route"]["api_protocol"] = Value::String("aws_bedrock".into());
+        aws_provider["route"]["supported_models"] =
+            serde_json::json!(["stability.stable-image-ultra-v1:1"]);
+        aws_provider["route"]["default_model"] =
+            Value::String("stability.stable-image-ultra-v1:1".into());
+        aws_provider["models"] = serde_json::json!(["Stable Image Ultra"]);
+        let aws_settings = serde_json::json!({"imageGeneration": {
+            "primary_provider": "aws_bedrock", "additional_providers": [],
+            "route_settings": {"aws_bedrock": {"region": "eu-west-1", "model": "stability.stable-image-ultra-v1:1"}},
+            "credential_references": {}
+        }});
+        let aws_selection =
+            image_generation_selection_from_state(&aws_settings, &aws_manifest, &environments)
+                .unwrap();
+        assert_eq!(
+            aws_selection.route_settings["aws_bedrock"]["region"],
+            "eu-west-1"
+        );
+        assert_eq!(
+            aws_selection.route_settings["aws_bedrock"]["model"],
+            "stability.stable-image-ultra-v1:1"
+        );
+        let arbitrary_model = serde_json::json!({"imageGeneration": {
+            "primary_provider": "openai_api", "additional_providers": [],
+            "route_settings": {"openai_api": {"model": "arbitrary-model"}}, "credential_references": {}
+        }});
+        assert!(
+            image_generation_selection_from_state(&arbitrary_model, &manifest, &environments)
+                .is_err()
+        );
+
+        let invalid = serde_json::json!({"imageGeneration": {
+            "primary_provider": "not-in-manifest", "additional_providers": [], "route_settings": {}, "credential_references": {}
+        }});
+        assert!(image_generation_selection_from_state(&invalid, &manifest, &environments).is_err());
+    }
+
+    #[test]
+    fn gptimage_cleanup_removes_only_the_recorded_dependency_tree() {
+        let project = tempdir().unwrap();
+        let package_root = project.path().join(IMAGEGEN_GPTIMAGE_PACKAGE_ROOT);
+        let node_modules = package_root.join("node_modules");
+        std::fs::create_dir_all(node_modules.join("sample")).unwrap();
+        std::fs::write(
+            node_modules.join("sample/package.json"),
+            b"{\"name\":\"sample\"}",
+        )
+        .unwrap();
+        let expected = crate::mcp::package_tree_sha256(&node_modules).unwrap();
+
+        assert_eq!(
+            remove_gptimage_dependencies_if_unchanged(project.path(), &expected).unwrap(),
+            GptimageCleanupResult::Removed
+        );
+        assert!(!node_modules.exists());
+
+        std::fs::create_dir_all(node_modules.join("sample")).unwrap();
+        std::fs::write(node_modules.join("sample/package.json"), b"installed tree").unwrap();
+        let recorded = crate::mcp::package_tree_sha256(&node_modules).unwrap();
+        std::fs::write(node_modules.join("sample/local-change.txt"), b"keep me").unwrap();
+        assert_eq!(
+            remove_gptimage_dependencies_if_unchanged(project.path(), &recorded).unwrap(),
+            GptimageCleanupResult::ModifiedKept
+        );
+        assert!(node_modules.join("sample/local-change.txt").exists());
+
+        assert_eq!(
+            remove_gptimage_dependencies_if_unchanged(project.path(), &recorded).unwrap(),
+            GptimageCleanupResult::ModifiedKept
+        );
+    }
+
+    #[test]
+    fn image_provider_adaptation_replaces_markers_and_removes_old_client_routes() {
+        let mut manifest = image_generation_test_manifest();
+        let providers = manifest
+            .image_generation
+            .as_mut()
+            .and_then(Value::as_object_mut)
+            .and_then(|catalog| catalog.get_mut("providers"))
+            .and_then(Value::as_array_mut)
+            .unwrap();
+        let mut old_provider = providers[0].clone();
+        old_provider["id"] = Value::String("old_provider".into());
+        old_provider["route"]["server_id"] = Value::String("hoi4_image_old_provider".into());
+        providers.push(old_provider);
+        let selection = ImageGenerationSelection {
+            primary_provider: "openai_api".into(),
+            additional_providers: vec![],
+            route_settings: BTreeMap::new(),
+            credential_references: BTreeMap::new(),
+            installed_package_tree_sha256: None,
+            installed_package_lock_sha256: None,
+        };
+        let guided = adapt_image_generation_guidance(b"Before\n<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:START -->\nplaceholder\n<!-- HOI4_MOD_SETUP:IMAGE_GENERATION_PROVIDER:END -->\nAfter", &manifest, &selection).unwrap();
+        let guided = String::from_utf8(guided).unwrap();
+        assert!(guided.contains("Tools: generate: `generate_image`"));
+        assert!(guided.contains("output_path → not supported by this tool"));
+        assert!(guided.contains("Maximum image area: 8294400 pixels."));
+        assert!(guided.contains("one image per call"));
+        assert!(guided.contains("at least one pixel with alpha below 255"));
+        assert!(!guided.contains("placeholder"));
+
+        let environments = CodingEnvironmentSelection {
+            primary: "claude_code".into(),
+            additional: vec![],
+        };
+        let config = br#"{"mcpServers":{"hoi4_image_old_provider":{"command":"old"},"hoi4_image_custom":{"command":"keep"},"hoi4_agent_tools":{"command":"hoi4"}}}"#;
+        let adapted = adapt_image_generation_client_config(
+            config,
+            ".mcp.json",
+            &manifest,
+            &selection,
+            &environments,
+            Path::new("C:/mods/example"),
+        )
+        .unwrap();
+        let adapted: Value = serde_json::from_slice(&adapted).unwrap();
+        assert!(adapted["mcpServers"].get("hoi4_image_openai_api").is_some());
+        assert!(adapted["mcpServers"]
+            .get("hoi4_image_old_provider")
+            .is_none());
+        assert!(adapted["mcpServers"].get("hoi4_image_custom").is_some());
+        assert!(adapted["mcpServers"].get("hoi4_agent_tools").is_some());
+        assert_eq!(adapted["mcpServers"]["hoi4_image_openai_api"]["cwd"], ".");
+
+        let codex = b"[mcp_servers.hoi4_image_old_provider]\ncommand = \"old\"\n";
+        let adapted = adapt_image_generation_client_config(
+            codex,
+            ".codex/config.toml",
+            &manifest,
+            &selection,
+            &CodingEnvironmentSelection {
+                primary: "codex".into(),
+                additional: vec![],
+            },
+            Path::new("C:/mods/example"),
+        )
+        .unwrap();
+        let adapted: toml::Value = std::str::from_utf8(&adapted).unwrap().parse().unwrap();
+        assert!(adapted["mcp_servers"]
+            .get("hoi4_image_openai_api")
+            .is_some());
+        assert!(adapted["mcp_servers"]
+            .get("hoi4_image_old_provider")
+            .is_none());
+        assert_eq!(
+            adapted["mcp_servers"]["hoi4_image_openai_api"]["cwd"].as_str(),
+            Some(".")
+        );
+
+        for (environment, destination) in
+            [("cursor", ".cursor/mcp.json"), ("qoder", ".qoder/mcp.json")]
+        {
+            let existing = br#"{"mcpServers":{"other":{"command":"keep"},"hoi4_image_old_provider":{"command":"old"}}}"#;
+            let adapted = adapt_image_generation_client_config(
+                existing,
+                destination,
+                &manifest,
+                &selection,
+                &CodingEnvironmentSelection {
+                    primary: environment.into(),
+                    additional: vec![],
+                },
+                Path::new("C:/mods/example"),
+            )
+            .unwrap();
+            let adapted: Value = serde_json::from_slice(&adapted).unwrap();
+            assert_eq!(adapted["mcpServers"]["other"]["command"], "keep");
+            assert!(adapted["mcpServers"]
+                .get("hoi4_image_old_provider")
+                .is_none());
+            assert_eq!(adapted["mcpServers"]["hoi4_image_openai_api"]["cwd"], ".");
+        }
+
+        let opencode = br#"{"theme":"dark","mcp":{"other":{"type":"local","command":["existing"]},"hoi4_image_old_provider":{"type":"local","command":["old"]},"hoi4_image_custom":{"type":"local","command":["keep"]}}}"#;
+        let adapted = adapt_image_generation_client_config(
+            opencode,
+            "opencode.json",
+            &manifest,
+            &selection,
+            &CodingEnvironmentSelection {
+                primary: "opencode".into(),
+                additional: vec![],
+            },
+            Path::new("C:/mods/example"),
+        )
+        .unwrap();
+        let adapted: Value = serde_json::from_slice(&adapted).unwrap();
+        assert_eq!(adapted["theme"], "dark");
+        assert!(adapted["mcp"].get("hoi4_image_openai_api").is_some());
+        assert!(adapted["mcp"]["hoi4_image_openai_api"]["command"].is_array());
+        assert_eq!(adapted["mcp"]["hoi4_image_openai_api"]["type"], "local");
+        assert_eq!(adapted["mcp"]["hoi4_image_openai_api"]["enabled"], true);
+        assert_eq!(adapted["mcp"]["hoi4_image_openai_api"]["cwd"], ".");
+        assert_eq!(adapted["mcp"]["other"]["command"][0], "existing");
+        assert!(adapted["mcp"].get("hoi4_image_old_provider").is_none());
+        assert!(adapted["mcp"].get("hoi4_image_custom").is_some());
+
+        let no_provider = ImageGenerationSelection {
+            primary_provider: "none".into(),
+            additional_providers: vec![],
+            route_settings: BTreeMap::new(),
+            credential_references: BTreeMap::new(),
+            installed_package_tree_sha256: None,
+            installed_package_lock_sha256: None,
+        };
+        let adapted = adapt_image_generation_client_config(
+            br#"{"mcpServers":{"user_tool":{"command":"keep"},"hoi4_image_openai_api":{"command":"old"},"hoi4_image_old_provider":{"command":"older"}}}"#,
+            ".mcp.json",
+            &manifest,
+            &no_provider,
+            &environments,
+            Path::new("C:/mods/example"),
+        )
+        .unwrap();
+        let adapted: Value = serde_json::from_slice(&adapted).unwrap();
+        assert_eq!(adapted["mcpServers"]["user_tool"]["command"], "keep");
+        assert!(adapted["mcpServers"].get("hoi4_image_openai_api").is_none());
+        assert!(adapted["mcpServers"]
+            .get("hoi4_image_old_provider")
+            .is_none());
+    }
+
+    #[test]
+    fn selected_image_clients_get_reviewable_config_artifacts_on_windows_and_macos() {
+        let mut manifest = image_generation_test_manifest();
+        let client_components = [
+            ("claude_code", ".mcp.json", "windows"),
+            ("codex", ".codex/config.toml", "all"),
+            ("cursor", ".cursor/mcp.json", "windows"),
+            ("qoder", ".qoder/mcp.json", "windows"),
+            ("opencode", "opencode.json", "all"),
+        ];
+        manifest.components = client_components
+            .iter()
+            .map(|(environment, path, platform)| {
+                serde_json::from_value(serde_json::json!({
+                    "id": format!("runtime.{environment}.config"),
+                    "display_name": format!("{environment} config"),
+                    "category": "environment",
+                    "coding_environment": environment,
+                    "optional": true,
+                    "platforms": [platform],
+                    "source": { "kind": "file", "path": path },
+                    "destination": { "path": path, "ownership": "merged" },
+                    "dependencies": [],
+                    "conflict_policy": "replace_if_unmodified",
+                    "validation": [],
+                    "update": { "strategy": "replace_if_unmodified", "remove_obsolete": false }
+                }))
+                .unwrap()
+            })
+            .collect();
+        let environments = CodingEnvironmentSelection {
+            primary: "claude_code".into(),
+            additional: vec![
+                "codex".into(),
+                "cursor".into(),
+                "qoder".into(),
+                "opencode".into(),
+            ],
+        };
+        let selection = ImageGenerationSelection {
+            primary_provider: "openai_api".into(),
+            additional_providers: vec![],
+            route_settings: BTreeMap::new(),
+            credential_references: BTreeMap::new(),
+            installed_package_tree_sha256: None,
+            installed_package_lock_sha256: None,
+        };
+        let root = tempdir().unwrap();
+        std::fs::write(
+            root.path().join(".mcp.json"),
+            br#"{"mcpServers":{"user_tool":{"command":"keep"}}}"#,
+        )
+        .unwrap();
+        let windows_paths =
+            image_client_config_source_destinations(&manifest, &environments, Platform::Windows);
+        let windows_artifacts = image_client_config_artifacts(
+            root.path(),
+            &manifest,
+            &selection,
+            &environments,
+            &windows_paths,
+        )
+        .unwrap();
+        assert!(windows_artifacts.is_empty());
+
+        let macos_paths =
+            image_client_config_source_destinations(&manifest, &environments, Platform::Macos);
+        assert_eq!(macos_paths, vec![".codex/config.toml", "opencode.json"]);
+        let macos_artifacts = image_client_config_artifacts(
+            root.path(),
+            &manifest,
+            &selection,
+            &environments,
+            &macos_paths,
+        )
+        .unwrap();
+        assert_eq!(
+            macos_artifacts
+                .iter()
+                .map(|artifact| artifact.destination.as_str())
+                .collect::<Vec<_>>(),
+            vec![".mcp.json", ".cursor/mcp.json", ".qoder/mcp.json"]
+        );
+        for artifact in macos_artifacts {
+            assert!(artifact.content.contains("hoi4_image_openai_api"));
+            if artifact.destination == ".mcp.json" {
+                let config: Value = serde_json::from_str(&artifact.content).unwrap();
+                assert_eq!(config["mcpServers"]["user_tool"]["command"], "keep");
+            }
+        }
+
+        let operation_root = tempdir().unwrap();
+        let operation_artifacts = image_client_config_artifacts(
+            operation_root.path(),
+            &manifest,
+            &selection,
+            &environments,
+            &macos_paths,
+        )
+        .unwrap();
+        let lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let mut operations = Vec::new();
+        let mut prepared = Vec::new();
+        append_maintenance_image_client_config_operations(
+            &operation_artifacts,
+            &mut operations,
+            &mut prepared,
+            &lock,
+            operation_root.path(),
+        )
+        .unwrap();
+        assert_eq!(operations.len(), 3);
+        assert_eq!(prepared.len(), 3);
+        assert!(operations.iter().all(|operation| {
+            operation.action == OperationAction::Generate && !operation.external
+        }));
+        assert!(operations
+            .iter()
+            .all(|operation| operation.ownership == Some(Ownership::Generated)));
+
+        let existing_config_operations = {
+            let mut operations = Vec::new();
+            let mut prepared = Vec::new();
+            let existing_artifacts = image_client_config_artifacts(
+                root.path(),
+                &manifest,
+                &selection,
+                &environments,
+                &macos_paths,
+            )
+            .unwrap();
+            append_maintenance_image_client_config_operations(
+                &existing_artifacts,
+                &mut operations,
+                &mut prepared,
+                &lock,
+                root.path(),
+            )
+            .unwrap();
+            operations
+        };
+        assert_eq!(
+            existing_config_operations
+                .iter()
+                .find(|operation| operation.destination == ".mcp.json")
+                .unwrap()
+                .ownership,
+            Some(Ownership::Merged)
+        );
+
+        assert_eq!(
+            image_client_config_ownership(false, None),
+            Ownership::Generated
+        );
+        assert_eq!(image_client_config_ownership(true, None), Ownership::Merged);
+        assert_eq!(
+            image_client_config_ownership(true, Some(Ownership::Generated)),
+            Ownership::Generated
+        );
+        assert_eq!(
+            image_client_config_ownership(true, Some(Ownership::Merged)),
+            Ownership::Merged
+        );
+    }
+
+    #[test]
+    fn app_removal_preserves_existing_client_config_and_deletes_app_created_config() {
+        let root = tempdir().unwrap();
+        let preexisting_path = ".mcp.json";
+        let preexisting_bytes = br#"{"mcpServers":{"user_tool":{"command":"keep"},"hoi4_image_openai_api":{"command":"image"}}}"#;
+        std::fs::write(root.path().join(preexisting_path), preexisting_bytes).unwrap();
+        let generated_path = ".cursor/mcp.json";
+        let generated_bytes = br#"{"mcpServers":{"hoi4_image_openai_api":{"command":"image"}}}"#;
+        std::fs::create_dir_all(root.path().join(".cursor")).unwrap();
+        std::fs::write(root.path().join(generated_path), generated_bytes).unwrap();
+
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        lock.files = vec![
+            LockedFile {
+                path: preexisting_path.into(),
+                location_scope: Some("project".into()),
+                component_id: "image_generation.client_config.claude_code".into(),
+                source_path: format!("generated:{preexisting_path}"),
+                source_revision: lock.source.revision.clone(),
+                source_sha256: sha256_bytes(preexisting_bytes),
+                source_size: Some(preexisting_bytes.len() as u64),
+                base_sha256: None,
+                installed_sha256: sha256_bytes(preexisting_bytes),
+                installed_size: Some(preexisting_bytes.len() as u64),
+                ownership: image_client_config_ownership(true, None),
+                preserved_local: false,
+                external: false,
+                generated_content: Some(String::from_utf8(preexisting_bytes.to_vec()).unwrap()),
+                generated_bytes: None,
+                executable: false,
+                platform: Some(ManifestPlatform::All),
+            },
+            LockedFile {
+                path: generated_path.into(),
+                location_scope: Some("project".into()),
+                component_id: "image_generation.client_config.cursor".into(),
+                source_path: format!("generated:{generated_path}"),
+                source_revision: lock.source.revision.clone(),
+                source_sha256: sha256_bytes(generated_bytes),
+                source_size: Some(generated_bytes.len() as u64),
+                base_sha256: None,
+                installed_sha256: sha256_bytes(generated_bytes),
+                installed_size: Some(generated_bytes.len() as u64),
+                ownership: image_client_config_ownership(false, None),
+                preserved_local: false,
+                external: false,
+                generated_content: Some(String::from_utf8(generated_bytes.to_vec()).unwrap()),
+                generated_bytes: None,
+                executable: false,
+                platform: Some(ManifestPlatform::All),
+            },
+        ];
+        let operations =
+            crate::transaction::managed_removal_operations(&lock, root.path()).unwrap();
+        let preexisting = operations
+            .iter()
+            .find(|operation| operation.destination == preexisting_path)
+            .unwrap();
+        assert_eq!(preexisting.action, OperationAction::Skip);
+        assert_eq!(
+            preexisting.resolution.as_deref(),
+            Some("reverse_merge_required")
+        );
+        let generated = operations
+            .iter()
+            .find(|operation| operation.destination == generated_path)
+            .unwrap();
+        assert_eq!(generated.action, OperationAction::DeleteManaged);
+        assert!(std::fs::read_to_string(root.path().join(preexisting_path))
+            .unwrap()
+            .contains("user_tool"));
     }
 
     #[test]
@@ -11132,6 +13747,7 @@ developer_instructions = "Work on the named files."
                 credential_references: Vec::new(),
                 optional_workflows: BTreeMap::new(),
                 portrait_pipeline: None,
+                image_generation: None,
                 operations: vec![agents, readme, skill, subagent],
                 conflicts: vec![
                     PlanConflict {

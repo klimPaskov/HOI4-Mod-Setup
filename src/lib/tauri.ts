@@ -1,5 +1,5 @@
 import { findingDisplayValue, findingLabel } from "../findings";
-import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderProfile, AppUpdateStatus, ChatSourcesPackageResult, ChatSourcesPreview, CodexAccountStatus, CodexAnalysisConfirmationValues, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, CodingEnvironmentId, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
+import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderProfile, AppUpdateStatus, ChatSourcesPackageResult, ChatSourcesPreview, CodexAccountStatus, CodexAnalysisConfirmationValues, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, CodingEnvironmentId, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationSelection, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
   id: string;
@@ -70,6 +70,9 @@ interface TauriCommandMap {
   ai_account_read: { args: { provider: string; model: string; reasoningEffort: string; endpoint: string }; result: AiAccountStatus };
   store_ai_provider_credential: { args: { provider: string; value: string }; result: boolean };
   remove_ai_provider_credential: { args: { provider: string }; result: boolean };
+  store_image_generation_credential: { args: { provider: string; field: string; value: string }; result: CredentialReference };
+  image_generation_credential_status: { args: { provider: string; field: string }; result: CredentialReference | null };
+  remove_image_generation_credential: { args: { provider: string; field: string }; result: boolean };
   ai_analyze: { args: { request: AiAnalysisRequest }; result: CodexAnalysisResult };
   approve_scan_evidence: { args: { projectRoot: string; scanId: string; evidence: Array<{ reference: string; path: string; excerpt: string; excerpt_sha256: string; confidence?: number | null }> }; result: void };
   codex_account_read: { args: Record<string, never>; result: CodexAccountStatus };
@@ -105,7 +108,7 @@ interface TauriCommandMap {
   preview_descriptors: { args: { state: WizardState }; result: GeneratedArtifactPreview[] };
   preview_installation_conflict: { args: { planId: string; path: string }; result: ConflictPreview };
   build_installation_plan: { args: { state: WizardState }; result: InstallationPlan };
-  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; analysisOverride?: CodexAnalysisRecord | null; addOptionalComponents?: string[]; portraitPipeline?: WizardState["portraitPipeline"]; primaryCodingEnvironment?: CodingEnvironmentId; additionalCodingEnvironments?: CodingEnvironmentId[]; analysisConfirmationValues?: CodexAnalysisConfirmationValues }; result: InstallationPlan };
+  build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; analysisOverride?: CodexAnalysisRecord | null; addOptionalComponents?: string[]; portraitPipeline?: WizardState["portraitPipeline"]; imageGeneration?: ImageGenerationSelection; primaryCodingEnvironment?: CodingEnvironmentId; additionalCodingEnvironments?: CodingEnvironmentId[]; analysisConfirmationValues?: CodexAnalysisConfirmationValues }; result: InstallationPlan };
   approve_installation: { args: { planId: string }; result: void };
   resolve_installation_conflict: { args: { planId: string; path: string; choice: string }; result: InstallationPlan };
   apply_installation: { args: { planId: string; projectRoot: string }; result: TransactionJournal };
@@ -217,6 +220,19 @@ export async function storeAiProviderCredential(provider: string, value: string)
 
 export async function removeAiProviderCredential(provider: string): Promise<boolean> {
   return (await invokeCommand("remove_ai_provider_credential", { provider })) === true;
+}
+
+export async function storeImageGenerationCredential(provider: string, field: string, value: string): Promise<CredentialReference | null> {
+  if (!value.trim()) return null;
+  return invokeCommand("store_image_generation_credential", { provider, field, value });
+}
+
+export async function readImageGenerationCredential(provider: string, field: string): Promise<CredentialReference | null> {
+  return invokeCommand("image_generation_credential_status", { provider, field });
+}
+
+export async function removeImageGenerationCredential(provider: string, field: string): Promise<boolean> {
+  return (await invokeCommandResult("remove_image_generation_credential", { provider, field })).error === undefined;
 }
 
 export async function startClaudeLogin(): Promise<CommandResult<string>> {
@@ -501,7 +517,8 @@ export async function buildInstallationPlanResult(state: WizardState): Promise<C
 function stateForCore(state: WizardState): WizardState {
   // Meshy input is a password draft. Keep the field for the typed command
   // shape, but never serialize its value across the renderer/core boundary.
-  return { ...state, meshKeyDraft: "" };
+  const { imageGenerationCredentialDrafts: _discardedDrafts, ...safeState } = state;
+  return { ...safeState, meshKeyDraft: "", imageGenerationCredentialDrafts: {} };
 }
 
 export async function approveInstallation(planId: string): Promise<boolean> {
@@ -512,9 +529,10 @@ export async function resolveInstallationConflict(planId: string, path: string, 
   return invokeCommand("resolve_installation_conflict", { planId, path, choice });
 }
 
-export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord, addOptionalComponents: string[] = [], portraitPipeline?: WizardState["portraitPipeline"], primaryCodingEnvironment?: CodingEnvironmentId, additionalCodingEnvironments?: CodingEnvironmentId[], analysisConfirmationValues?: CodexAnalysisConfirmationValues): Promise<InstallationPlan | null> {
+export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstall" | "remove", projectRoot: string, codexAnalysis?: CodexAnalysisRecord, addOptionalComponents: string[] = [], portraitPipeline?: WizardState["portraitPipeline"], primaryCodingEnvironment?: CodingEnvironmentId, additionalCodingEnvironments?: CodingEnvironmentId[], analysisConfirmationValues?: CodexAnalysisConfirmationValues, imageGeneration?: ImageGenerationSelection): Promise<InstallationPlan | null> {
   const args: TauriCommandMap["build_maintenance_plan"]["args"] = { mode, projectRoot, analysisOverride: codexAnalysis ?? null, addOptionalComponents };
   if (portraitPipeline) args.portraitPipeline = portraitPipeline;
+  if (imageGeneration) args.imageGeneration = imageGeneration;
   if (primaryCodingEnvironment) args.primaryCodingEnvironment = primaryCodingEnvironment;
   if (analysisConfirmationValues) args.analysisConfirmationValues = analysisConfirmationValues;
   // An empty array is meaningful: it explicitly deselects every additional
@@ -525,9 +543,10 @@ export async function buildMaintenancePlan(mode: "update" | "repair" | "reinstal
 }
 
 export async function buildMaintenancePlanResult(...parameters: Parameters<typeof buildMaintenancePlan>): Promise<CommandResult<InstallationPlan>> {
-  const [mode, projectRoot, codexAnalysis, addOptionalComponents = [], portraitPipeline, primaryCodingEnvironment, additionalCodingEnvironments, analysisConfirmationValues] = parameters;
+  const [mode, projectRoot, codexAnalysis, addOptionalComponents = [], portraitPipeline, primaryCodingEnvironment, additionalCodingEnvironments, analysisConfirmationValues, imageGeneration] = parameters;
   const args: TauriCommandMap["build_maintenance_plan"]["args"] = { mode, projectRoot, analysisOverride: codexAnalysis ?? null, addOptionalComponents };
   if (portraitPipeline) args.portraitPipeline = portraitPipeline;
+  if (imageGeneration) args.imageGeneration = imageGeneration;
   if (primaryCodingEnvironment) args.primaryCodingEnvironment = primaryCodingEnvironment;
   if (analysisConfirmationValues) args.analysisConfirmationValues = analysisConfirmationValues;
   if (additionalCodingEnvironments !== undefined) args.additionalCodingEnvironments = additionalCodingEnvironments;

@@ -198,6 +198,14 @@ fn package_tree_identity(files: &[(String, Vec<u8>)]) -> (String, u64) {
     (format!("{:x}", digest.finalize()), files.len() as u64)
 }
 
+/// Hash a link-free installed package directory without copying it. This is
+/// used for generated runtimes whose files are not part of the downloaded
+/// component manifest, such as the GPTImage dependency tree.
+pub(crate) fn package_tree_sha256(root: &Path) -> Result<String, AppError> {
+    let files = read_installed_package_tree(root)?;
+    Ok(package_tree_identity(&files).0)
+}
+
 fn verify_optional_npm_lock_integrity(
     bin_root: &Path,
     package_name: &str,
