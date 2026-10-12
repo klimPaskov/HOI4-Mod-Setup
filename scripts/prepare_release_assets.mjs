@@ -216,8 +216,9 @@ for (const artifactDirectory of expectedNames) {
   });
 }
 
-mergeSbomInventories(sbomInventories);
-mergeThirdPartyNotices(noticeInventories);
+// Keep the union with internal build evidence, outside the public asset set.
+await writeFile(resolve(inputRoot, "SBOM.cdx.json"), JSON.stringify(mergeSbomInventories(sbomInventories), null, 2) + "\n", "utf8");
+await writeFile(resolve(inputRoot, "THIRD_PARTY_NOTICES.md"), mergeThirdPartyNotices(noticeInventories), "utf8");
 
 await writeFile(resolve(outputRoot, "latest.json"), JSON.stringify({
   version: releaseVersion,

@@ -26,6 +26,13 @@ different root are explicit discovery conflicts, never silently selected. A
 candidate count beyond the 512-file bound is also an explicit review state,
 not a truncated successful discovery.
 
+The accepted launcher finding retains its real absolute path in the displayed
+value, but identifies its semantic evidence as
+`@approved-launcher/descriptor.mod`. This is a reserved summary reference,
+never a filesystem path to open. It remains bound to the current completed
+scan, exact excerpt hash, project, and explicit evidence approval. Other
+absolute evidence paths remain rejected by the provider boundary.
+
 The UI visibly presents the candidate path and match before the scan starts.
 The user confirms by continuing, chooses **Scan without launcher file**, or
 cancels by going back. Selecting the root authorizes only this bounded parse of
@@ -33,6 +40,13 @@ direct-parent candidates; declared target paths are compared as normalized
 text and are never opened. Only a confirmed candidate is added to the approved
 companion paths and scanner input. A declined or absent candidate produces an
 internal-only scan and does not grant permission to read another path.
+
+Aggregate scan evidence uses reserved `@scan/git-summary`,
+`@scan/coding-environments`, and `@scan/absolute-paths` identifiers instead of
+`.` or raw `.git` paths. These identifiers and `@approved-launcher/descriptor.mod`
+are summaries, never filesystem inputs. They remain bound to the core scan ID,
+canonical project root, finding/conflict reference, excerpt hash, and explicit
+evidence approval. Do not relax the generic absolute-path or `.git` rejection.
 
 ## Two-layer analysis contract
 
@@ -44,9 +58,9 @@ launcher registration, thumbnail decoding, Git state, component inventory,
 agentic configuration, conflicts, and platform support.
 
 The provider layer owns project purpose, normalized description, display name
-and ID proposals, prefix and namespace proposals, folder profile, `AGENTS.md`
-adaptation direction, component recommendations, convention interpretation,
-and concise conflict explanation.
+and ID proposals, prefix and namespace proposals, folder profile, canonical
+instruction adaptation direction, component recommendations, convention
+interpretation, and concise conflict explanation.
 
 Codex uses ChatGPT-managed authentication through the official local App
 Server. Other hosted providers use an explicit endpoint and OS-vault key;
@@ -62,33 +76,40 @@ provider has write access.
 2. **Descriptors and thumbnail:** internal and launcher descriptor fields,
    duplicate keys, quoting, supported versions, path agreement, thumbnail
    existence, decoding, dimensions, color mode, hash, and replacement state.
-3. **Targeted setup inventory:** root `AGENTS.md` and `README.md`, `.agents/skills`,
-   `.codex/agents`, `.codex/config.toml`, approved documentation, descriptors,
-   thumbnail, Git metadata, and the managed setup lock. Ordinary HOI4 gameplay,
-   localisation, media, content dumps, and generated documentation corpora are
-   outside this setup scan and are neither opened nor counted. Directory entries
-   are classified before targeted file, path, and directory-sort budgets are
-   charged, so a large gameplay directory cannot hide or truncate relevant setup
-   evidence.
+   The parser accepts real launcher-written descriptors: multi-line `{ ... }`
+   blocks such as `tags={`, repeated `replace_path` lines, a UTF-8 BOM, and
+   `#` comments outside quotes. An unclosed block or another duplicated key
+   remains a malformed descriptor.
+3. **Targeted setup inventory:** root `CLAUDE.md`, `AGENTS.md`, and `README.md`,
+   canonical `.claude/skills` and `.claude/agents`, legacy `.agents/skills` and
+   `.codex/agents`, native client configuration, approved documentation,
+   descriptors, thumbnail, Git metadata, and the managed setup lock. Ordinary
+   HOI4 gameplay, localisation, media, content dumps, and generated
+   documentation corpora are outside this setup scan and are neither opened nor
+   counted. Directory entries are classified before targeted file, path, and
+   directory-sort budgets are charged, so a large gameplay directory cannot
+   hide or truncate relevant setup evidence.
 4. **Git:** repository root, branch, detached state, commit, dirty buckets,
    remotes, submodules, hooks, ignore files, linked worktrees, and tracked
    secret-like paths using bounded read-only commands.
 5. **Documentation and instructions:** bounded AGENTS, README, and approved-doc
    inventory plus machine-local absolute-path locations; the scan does not
    turn arbitrary project prose into a deterministic fact.
-6. **Skills and subagents:** skill count and frontmatter validity, subagent TOML
-   count and parse validity, and an exact top-level `fork_context=false` gate.
+6. **Skills and subagents:** canonical Claude skill count and frontmatter
+   validity, Markdown-subagent validity, legacy/generated skill and subagent
+   surfaces, and an exact top-level `fork_context=false` gate where applicable.
    Helpers, assets, and model choices are reviewed later through selected
    component and merge previews rather than executed or inferred by the scan.
-   Native Codex, Claude Code, Cursor, Qoder, and OpenCode files are detected
+   Native Claude Code, Codex, Cursor, Qoder, and OpenCode files are detected
    inside the selected root. A validated managed lock supplies the recorded
    primary and additional environment selection; loose files are merged into
-   the detected set, and Codex is the migration default only when no valid
-   recorded selection exists.
-7. **Codex and MCP:** structural TOML validity, configuration presence, and MCP
-   server IDs. Commands, arguments, cwd, environment names, timeouts, sandbox,
-   approval policy, and feature flags remain visible in the later structured
-   merge preview; the scanner never executes or semantically interprets them.
+   the detected set, and Codex is the compatibility migration default only
+   when no valid recorded selection exists.
+7. **Coding-client and MCP configuration:** structural TOML/JSON validity,
+   configuration presence, and MCP server IDs across the detected clients.
+   Commands, arguments, cwd, environment names, timeouts, sandbox, approval
+   policy, and feature flags remain visible in the later structured merge
+   preview; the scanner never executes or semantically interprets them.
 8. **Conflict synthesis:** path, platform, dependency, ownership,
     generated-destination, launcher, thumbnail, and Git risks against the
     selected remote manifest.
@@ -121,9 +142,9 @@ semantic proposal set. Rust rejects malformed, incomplete, credential-shaped,
 account-shaped, or extra fields before any proposal is shown as confirmed.
 
 The selected provider may suggest project purpose, namespace and prefix,
-component and skill selection, AGENTS adaptation, naming and localisation
-conventions, an initial folder profile, project-specific paths requiring
-review, and human-judgment conflicts. No provider can override deterministic
+component and skill selection, canonical instruction adaptation, naming and
+localisation conventions, an initial folder profile, project-specific paths
+requiring review, and human-judgment conflicts. No provider can override deterministic
 facts, create operations, write files, select conflict resolutions, or mark
 readiness checks passed.
 
@@ -196,8 +217,9 @@ relevant entries / 8 MiB of relevant entry names. Case-collision keys use
 Unicode lowercase normalization and share the same conflict budget. Unix
 rejects backslash-bearing relative scan candidates instead of letting a later
 shared reader reinterpret the literal name as a separator. Skill traversal
-stops after `.agents/skills/<skill>/SKILL.md`, canonical
-subagent and client-agent traversal stops after the direct agent file, and
+stops after canonical `.claude/skills/<skill>/SKILL.md` (or the legacy
+`.agents/skills/<skill>/SKILL.md`), canonical subagent and client-agent
+traversal stops after the direct agent file, and
 approved documentation traversal stops after `docs/<section>/<file>`; nested
 references, assets, archives, and generated corpora are not scan inputs.
 Malformed agentic
@@ -252,7 +274,8 @@ analysis until an untruncated scan completes; limits remain visible.
 ## Required fixtures and tests
 
 - empty new project and normal existing mod;
-- local AGENTS rules, skills, subagents, Codex/MCP configuration, nested
+- local CLAUDE/AGENTS rules, canonical or legacy skills, subagents, native
+  coding-client/MCP configuration, nested
   worktree, cloud-synced root, and link escape;
 - very large gameplay/media/content-dump trees proving they are not inventoried
   or read and do not make the targeted scan partial;
@@ -274,7 +297,7 @@ analysis until an untruncated scan completes; limits remain visible.
 - malformed, linked, oversized, and unreadable managed-lock states.
 - selected, unselected, and incomplete `workflow.super_events` lock summaries;
   the unselected case must not synthesize the skill tree or Super Events
-  guidance in `AGENTS.md`.
+  guidance in `CLAUDE.md` or its `AGENTS.md` projection.
 
 The scan result may store analysis ID, input/output digests, proposal keys,
 provider/model/profile, and confirmation state. It must not store account

@@ -7,8 +7,8 @@ package screens at a 1280 by 960 desktop viewport.
 
 No credential, account identity, private mod, or secret value appears in a
 public capture. The optional portrait workflow is provider-selectable for generic
-projects. Chaos Redux uses RunPod API-first; computer control is opt-in and is
-not shown as a default setup route. Non-sourced portraits use native ImageGen.
+projects. RunPod runs API-first; computer control is opt-in and is not shown as
+a default setup route. Non-sourced portraits use the configured image generator.
 The portrait workflow can be selected during setup and is linked from Ready
 after a successful setup.
 
@@ -17,12 +17,16 @@ The captures are implementation evidence, not the design references in
 documentation fixture in `src/documentation-fixtures.ts`; the fixture is
 available only in a development build and cannot activate in a packaged app.
 The Integrations and Ready captures show the generic RunPod route with setup
-still required; Cloud and Local remain available in the generic app but are
-not Chaos Redux routes. The Integrations capture also records the selected 3D
+still required; Cloud and Local remain available as the other providers. The
+Integrations capture also records the selected 3D
 row's automatic verified Meshy/Blender preparation copy and the stable
 3D/Super Events/portrait ordering.
 
-With `pnpm dev` running, open `http://localhost:1420/?screenshot=<name>` where
+Run `pnpm docs:screenshots` to regenerate all 15 captures in an isolated,
+headless Playwright browser, with runtime-error and layout checks. It never
+opens or focuses the shared desktop. GitHub Pages copies these same images.
+
+For manual inspection with `pnpm dev` running, open `http://localhost:1420/?screenshot=<name>` where
 `<name>` is one of `welcome`, `provider`, `existing`, `description`, `identity`,
 `components`, `workflows`, `mcp`, `git`, `dry-run`, `ready`, `maintenance`,
 `chat-sources`, `recovery`, or `environments`.

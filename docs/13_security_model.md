@@ -60,7 +60,53 @@ evidence checks pass.
 
 ## Path security
 
+JSON persistence validates decoded string values and object keys for
+credential-shaped content, as well as rejecting forbidden secret field names.
+The check runs before serialization so JSON quoting cannot turn an already
+redacted diagnostic into a false credential failure. Nested and embedded
+secret-shaped text remains rejected, preserving the previous file on failure.
+
 Normalize Unicode and separators, reject absolute managed destinations and parent traversal, resolve links, verify final parent containment, detect case collisions, reject Windows device names and alternate data streams, and block archive-link escapes.
+
+`src-tauri/src/safe_fs.rs` provides no-follow rooted filesystem operations.
+Unix child operations use retained directory descriptors and `*at` calls.
+Windows root acquisition now walks the selected path lexically from its volume
+or share root, rejects reparse points at each opened component, and uses the
+128-bit `FILE_ID_INFO` identifier. Mutation roots retain stricter directory
+handles. Transaction orchestration still reopens roots through path-based
+wrappers between many operations, so this is not an end-to-end capability
+boundary.
+
+Existing-project scans record the opened root identity; semantic review and
+plan construction reject a different directory at the same path. Reviewed
+plans record that identity, or the existing parent identity for a new project.
+Journals retain root and parent identities; recovery rejects identity drift,
+and project-root creation uses the reviewed parent handle. A root identity is
+not proof of ownership: an empty root whose creation was interrupted before
+the identity checkpoint is retained with its observed identity and is never
+deleted by rollback. Schema 1.0 journals without identity remain inspect-only.
+
+Forward project-file backup, apply, verification, lock construction, and lock
+commit retain one reviewed project handle. Managed rollback file/lock changes
+and finalization's project-file and success-lock checks retain it as well.
+External destination parents are bound by directory identity when the installation plan is built, read through the same handle as the reviewed destination hash, or by the backup stage for a parent that did not exist at review; transaction start, backup, apply, post-install checks, final verification, finalization, rollback, and the rollback child backup read and change them only through a retained handle with that identity, and refuse a different directory or a link at the same path.
+A missing bound parent stops recovery of an operation that may have changed its destination rather than reading as an absent file.
+Application-data transaction storage (the application-data root and each transaction's `transactions/`, `backups/`, and `staging/` folders) is bound by directory identity in the journal's optional `app_data_identity`: within a call the journal, plan, checkpoint log, readiness report, rollback record, backups, and staged bytes are read and written only through retained handles, and resume, staging discard, finalization, rollback, and incomplete-journal discovery refuse a folder whose identity differs from the journal before they write anything.
+Journals from before the binding keep path-based access, and the evidence detects a replaced, copied, or linked folder, not a journal forged by someone who can already write application data.
+Created-root cleanup, Git, external actions, and readiness still have path-based boundaries.
+A regular
+destination that is replaced or deleted is first moved, through the retained
+parent handle, to a journaled quarantine name in the same folder, hashed, and
+compared with the reviewed precondition. Changed bytes are moved back and the
+operation fails as a conflict; matching bytes are replaced with a no-replace
+rename and the quarantine is removed only after the success checkpoint.
+Rollback restores surviving quarantined bytes instead of overwriting them.
+Application-data folders are reopened by path between calls and compared with the journal there, the external launcher parent handle is reopened at each step rather than retained across stages, and on Unix a writer that already held the file open can still write to the quarantined copy after verification.
+These cross-stage
+races remain release gates. Windows directory entries are flushed through a
+second write handle whose 128-bit file identity must match the retained
+handle; only filesystems without directory flush support are accepted
+without it.
 
 ## Portrait provider security
 

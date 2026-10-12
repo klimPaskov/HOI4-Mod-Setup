@@ -215,7 +215,8 @@ fn discover_candidates(project_root: &Path) -> Result<Vec<Candidate>, AppError> 
         true,
     )?;
 
-    let skills_root = project_root.join(".agents/skills");
+    let skill_root = crate::readiness::canonical_skill_root(project_root);
+    let skills_root = project_root.join(skill_root);
     if !path_is_link(&skills_root)? && skills_root.is_dir() {
         for entry in fs::read_dir(&skills_root)? {
             let entry = entry?;
@@ -229,7 +230,7 @@ fn discover_candidates(project_root: &Path) -> Result<Vec<Candidate>, AppError> 
                     "a skill directory has a non-Unicode name".into(),
                 ));
             };
-            let source = format!(".agents/skills/{name}/SKILL.md");
+            let source = format!("{skill_root}/{name}/SKILL.md");
             add_candidate(
                 project_root,
                 &mut candidates,
@@ -241,7 +242,13 @@ fn discover_candidates(project_root: &Path) -> Result<Vec<Candidate>, AppError> 
         }
     }
 
-    let subagents_root = project_root.join(".codex/agents");
+    let agent_root = crate::readiness::canonical_agent_root(project_root);
+    let agent_extension = if agent_root == ".claude/agents" {
+        ".md"
+    } else {
+        ".toml"
+    };
+    let subagents_root = project_root.join(agent_root);
     if !path_is_link(&subagents_root)? && subagents_root.is_dir() {
         for entry in fs::read_dir(&subagents_root)? {
             let entry = entry?;
@@ -255,10 +262,10 @@ fn discover_candidates(project_root: &Path) -> Result<Vec<Candidate>, AppError> 
                     "a subagent file has a non-Unicode name".into(),
                 ));
             };
-            if !name.to_ascii_lowercase().ends_with(".toml") {
+            if !name.to_ascii_lowercase().ends_with(agent_extension) {
                 continue;
             }
-            let source = format!(".codex/agents/{name}");
+            let source = format!("{agent_root}/{name}");
             add_candidate(
                 project_root,
                 &mut candidates,

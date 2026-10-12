@@ -2,10 +2,12 @@
 //!
 //! Coding environments are deliberately independent from the setup assistant
 //! AI provider and from workflow profiles.  The source manifest declares the
-//! component closure for each environment; this module only validates the
-//! user's small, non-secret selection and resolves those declarations.
+//! environments it supports and the component closure for each of them; this
+//! module only validates the user's small, non-secret selection and resolves
+//! those declarations.  The built-in list covers older manifests that predate
+//! environment declarations.
 
-use crate::models::{CodingEnvironmentSelection, RemoteManifest};
+use crate::models::{CodingEnvironmentDefinition, CodingEnvironmentSelection, RemoteManifest};
 use crate::AppError;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -16,17 +18,76 @@ pub const CURSOR: &str = "cursor";
 pub const QODER: &str = "qoder";
 pub const OPENCODE: &str = "opencode";
 
-pub const SUPPORTED: [&str; 5] = [CODEX, CLAUDE_CODE, CURSOR, QODER, OPENCODE];
+/// Environments with built-in readiness checks and display names. A manifest
+/// may declare more; they are validated from their installed files.
+pub const SUPPORTED: [&str; 5] = [CLAUDE_CODE, CODEX, CURSOR, QODER, OPENCODE];
 
 pub fn default_selection() -> CodingEnvironmentSelection {
     CodingEnvironmentSelection {
-        primary: CODEX.into(),
+        primary: CLAUDE_CODE.into(),
         additional: Vec::new(),
     }
 }
 
+/// An environment identifier is a short lowercase token. Whether a package
+/// exists for it is decided by the manifest when components are resolved.
 pub fn is_supported(value: &str) -> bool {
-    SUPPORTED.contains(&value)
+    let mut characters = value.chars();
+    matches!(characters.next(), Some('a'..='z'))
+        && value.len() <= 64
+        && characters.all(|character| matches!(character, 'a'..='z' | '0'..='9' | '_'))
+}
+
+fn built_in_definition(id: &str) -> CodingEnvironmentDefinition {
+    let (display_name, description) = match id {
+        CLAUDE_CODE => (
+            "Claude Code",
+            "CLAUDE.md, .claude settings, agents, map, and MCP",
+        ),
+        CODEX => ("Codex", "Native .codex configuration and agents"),
+        CURSOR => ("Cursor", ".cursor agents, project settings, map, and MCP"),
+        QODER => ("Qoder", ".qoder agents, project settings, map, and MCP"),
+        _ => ("OpenCode", ".opencode agents, opencode.json, map, and MCP"),
+    };
+    CodingEnvironmentDefinition {
+        id: id.into(),
+        display_name: display_name.into(),
+        description: Some(description.into()),
+        default_primary: id == CLAUDE_CODE,
+        open_command: match id {
+            CLAUDE_CODE => Some("claude".into()),
+            CODEX => Some("codex".into()),
+            _ => None,
+        },
+    }
+}
+
+/// The environments a manifest offers, in display order.
+pub fn definitions(manifest: &RemoteManifest) -> Vec<CodingEnvironmentDefinition> {
+    if !manifest.coding_environments.is_empty() {
+        return manifest.coding_environments.clone();
+    }
+    let declared = manifest
+        .components
+        .iter()
+        .filter_map(|component| component.coding_environment.as_deref())
+        .collect::<HashSet<_>>();
+    SUPPORTED
+        .iter()
+        .filter(|id| declared.contains(**id))
+        .map(|id| built_in_definition(id))
+        .collect()
+}
+
+/// The manifest's default primary environment, or Claude Code.
+pub fn default_primary(manifest: &RemoteManifest) -> String {
+    let definitions = definitions(manifest);
+    definitions
+        .iter()
+        .find(|definition| definition.default_primary)
+        .or_else(|| definitions.first())
+        .map(|definition| definition.id.clone())
+        .unwrap_or_else(|| CLAUDE_CODE.into())
 }
 
 pub fn validate_selection(selection: &CodingEnvironmentSelection) -> Result<(), AppError> {
@@ -89,6 +150,28 @@ pub fn selection_from_value(value: &Value) -> Result<CodingEnvironmentSelection,
     };
     validate_selection(&selection)?;
     Ok(selection)
+}
+
+/// Fresh planning follows the resolved package default. Persisted legacy
+/// state uses `selection_from_value` so a missing primary remains Codex.
+pub fn selection_from_manifest(
+    manifest: &RemoteManifest,
+    value: &Value,
+) -> Result<CodingEnvironmentSelection, AppError> {
+    if value.get("primaryCodingEnvironment").is_some()
+        || value.get("primary_coding_environment").is_some()
+        || value.pointer("/coding_environments/primary").is_some()
+    {
+        return selection_from_value(value);
+    }
+    let mut state = value.as_object().cloned().ok_or_else(|| {
+        AppError::InvalidInput("coding-environment selection must be an object".into())
+    })?;
+    state.insert(
+        "primaryCodingEnvironment".into(),
+        Value::String(default_primary(manifest)),
+    );
+    selection_from_value(&Value::Object(state))
 }
 
 /// Resolve all manifest components belonging to the selected environments.
@@ -158,33 +241,44 @@ pub fn selected_environment_ids(selection: &CodingEnvironmentSelection) -> Vec<S
     result
 }
 
+pub fn mcp_registration_component_id(environment: &str) -> Option<&'static str> {
+    match environment {
+        CLAUDE_CODE => Some("runtime.claude.mcp"),
+        CURSOR => Some("runtime.cursor.mcp"),
+        QODER => Some("runtime.qoder.mcp"),
+        OPENCODE => Some("runtime.opencode.mcp"),
+        _ => None,
+    }
+}
+
 /// Compatibility helper for lock reconciliation. Future source manifests may
 /// add more environment component IDs; current IDs are kept here so a
 /// deselected package cannot be resurrected by a legacy lock append.
 pub fn is_known_environment_component_id(id: &str) -> bool {
-    matches!(
-        id,
-        "codex.config"
-            | "mcp.hoi4_agent_tools"
-            | "core.claude.instructions"
-            | "runtime.claude"
-            | "runtime.claude.mcp"
-            | "runtime.cursor"
-            | "runtime.cursor.mcp"
-            | "runtime.qoder"
-            | "runtime.qoder.mcp"
-            | "runtime.opencode"
-            | "runtime.opencode.config"
-            | "runtime.opencode.mcp"
-            | "runtime.claude.portrait_agent"
-            | "runtime.claude.super_event_agents"
-            | "runtime.cursor.portrait_agent"
-            | "runtime.cursor.super_event_agents"
-            | "runtime.qoder.portrait_agent"
-            | "runtime.qoder.super_event_agents"
-            | "runtime.opencode.portrait_agent"
-            | "runtime.opencode.super_event_agents"
-    )
+    id.starts_with("runtime.")
+        || matches!(
+            id,
+            "codex.config"
+                | "mcp.hoi4_agent_tools"
+                | "core.claude.instructions"
+                | "runtime.claude"
+                | "runtime.claude.mcp"
+                | "runtime.cursor"
+                | "runtime.cursor.mcp"
+                | "runtime.qoder"
+                | "runtime.qoder.mcp"
+                | "runtime.opencode"
+                | "runtime.opencode.config"
+                | "runtime.opencode.mcp"
+                | "runtime.claude.portrait_agent"
+                | "runtime.claude.super_event_agents"
+                | "runtime.cursor.portrait_agent"
+                | "runtime.cursor.super_event_agents"
+                | "runtime.qoder.portrait_agent"
+                | "runtime.qoder.super_event_agents"
+                | "runtime.opencode.portrait_agent"
+                | "runtime.opencode.super_event_agents"
+        )
 }
 
 #[cfg(test)]
@@ -193,9 +287,63 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn codex_is_the_default_primary_environment() {
-        assert_eq!(default_selection().primary, CODEX);
+    fn claude_code_is_the_default_primary_environment() {
+        assert_eq!(default_selection().primary, CLAUDE_CODE);
         assert!(default_selection().additional.is_empty());
+        assert_eq!(default_primary(&published_manifest()), CLAUDE_CODE);
+    }
+
+    #[test]
+    fn fresh_selection_uses_the_package_default_and_preserves_legacy_selection() {
+        let mut manifest = published_manifest();
+        assert_eq!(
+            selection_from_manifest(&manifest, &json!({}))
+                .unwrap()
+                .primary,
+            CLAUDE_CODE
+        );
+        assert_eq!(selection_from_value(&json!({})).unwrap().primary, CODEX);
+        for state in [
+            json!({"primaryCodingEnvironment": "codex"}),
+            json!({"coding_environments": {"primary": "cursor"}}),
+        ] {
+            assert_eq!(
+                selection_from_manifest(&manifest, &state).unwrap(),
+                selection_from_value(&state).unwrap()
+            );
+        }
+        for definition in &mut manifest.coding_environments {
+            definition.default_primary = definition.id == CURSOR;
+        }
+        assert_eq!(
+            selection_from_manifest(&manifest, &json!({}))
+                .unwrap()
+                .primary,
+            CURSOR
+        );
+    }
+
+    #[test]
+    fn environment_identifiers_are_short_lowercase_tokens() {
+        assert!(is_supported("claude_code"));
+        assert!(is_supported("windsurf"));
+        assert!(!is_supported(""));
+        assert!(!is_supported("Claude"));
+        assert!(!is_supported("2code"));
+        assert!(!is_supported("../codex"));
+    }
+
+    #[test]
+    fn declared_environments_come_from_the_manifest_in_order() {
+        let manifest = published_manifest();
+        let ids = definitions(&manifest)
+            .into_iter()
+            .map(|definition| definition.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ids.first().map(String::as_str), Some(CLAUDE_CODE));
+        for id in SUPPORTED {
+            assert!(ids.iter().any(|declared| declared == id));
+        }
     }
 
     #[test]
@@ -206,6 +354,28 @@ mod tests {
         })
         .unwrap_err();
         assert!(error.to_string().contains("cannot also be additional"));
+    }
+
+    #[test]
+    fn optional_mcp_registration_ids_are_bounded_to_verified_environments() {
+        assert_eq!(
+            mcp_registration_component_id(CLAUDE_CODE),
+            Some("runtime.claude.mcp")
+        );
+        assert_eq!(
+            mcp_registration_component_id(CURSOR),
+            Some("runtime.cursor.mcp")
+        );
+        assert_eq!(
+            mcp_registration_component_id(QODER),
+            Some("runtime.qoder.mcp")
+        );
+        assert_eq!(
+            mcp_registration_component_id(OPENCODE),
+            Some("runtime.opencode.mcp")
+        );
+        assert_eq!(mcp_registration_component_id(CODEX), None);
+        assert_eq!(mcp_registration_component_id("dsh"), None);
     }
 
     #[test]

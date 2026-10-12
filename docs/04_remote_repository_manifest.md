@@ -185,6 +185,8 @@ The application creates a reviewed output such as a descriptor, adapted AGENTS, 
 
 ## Hash model
 
+A downloaded file whose bytes are an unresolved Git LFS pointer (they begin with `version https://git-lfs.github.com/spec/v1`) is rejected during download verification even when its SHA-256 matches the evidence, because the evidence then describes the pointer instead of the declared file. The source manifest generator fails closed on the same condition.
+
 SHA-256 is the content-integrity source. Git blob SHA may be recorded as additional evidence. The plan stores source revision, source path, source hash, size, destination, local hash, previous base hash, and deterministic result hash when available. Interrupted blob reads retain only a bounded partial cache entry; a validated range retry may resume it, and no partial bytes enter staging.
 
 ## Path security

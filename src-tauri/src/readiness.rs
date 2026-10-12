@@ -73,34 +73,106 @@ fn bounded_agent_files(root: &Path, suffix: &str) -> Option<Vec<PathBuf>> {
     Some(files)
 }
 
-pub(crate) fn valid_agents_file(project_root: &Path) -> bool {
-    let path = project_root.join("AGENTS.md");
-    fs::symlink_metadata(&path)
+fn valid_instruction_file(path: &Path) -> bool {
+    fs::symlink_metadata(path)
         .ok()
-        .is_some_and(|metadata| metadata.is_file() && !path_has_link_component(&path))
+        .is_some_and(|metadata| metadata.is_file() && !path_has_link_component(path))
         && fs::read_to_string(path).ok().is_some_and(|text| {
-            !text.trim().is_empty() && !text.contains("{{PROJECT_") && !text.contains("<PROJECT_")
+            !text.trim().is_empty()
+                && !text.contains("{{PROJECT_")
+                && !text.contains("<PROJECT_")
+                && !text.contains("[MOD_NAME]")
+                && !text.contains("[MOD_PREFIX]")
         })
 }
 
+/// AGENTS.md must be valid; the canonical CLAUDE.md must be valid too when
+/// the project has one.
+pub(crate) fn valid_agents_file(project_root: &Path) -> bool {
+    let claude = project_root.join("CLAUDE.md");
+    valid_instruction_file(&project_root.join("AGENTS.md"))
+        && (!claude.exists() || valid_instruction_file(&claude))
+}
+
+/// Canonical skill library first (`.claude/skills`, manifest major 3), then
+/// the runtime copy or the older canonical location (`.agents/skills`).
+pub(crate) const SKILL_ROOTS: [&str; 2] = [".claude/skills", ".agents/skills"];
+/// Canonical Claude Code agents first, then Codex agent files.
+pub(crate) const AGENT_ROOTS: [&str; 2] = [".claude/agents", ".codex/agents"];
+
+/// The folder that holds the project's canonical skills.
+pub(crate) fn canonical_skill_root(project_root: &Path) -> &'static str {
+    SKILL_ROOTS
+        .into_iter()
+        .find(|root| project_root.join(root).is_dir())
+        .unwrap_or(SKILL_ROOTS[0])
+}
+
+/// The folder that holds the project's canonical subagents.
+pub(crate) fn canonical_agent_root(project_root: &Path) -> &'static str {
+    if bounded_agent_files(&project_root.join(AGENT_ROOTS[0]), ".md")
+        .is_some_and(|files| !files.is_empty())
+        || !project_root.join(AGENT_ROOTS[1]).is_dir()
+    {
+        AGENT_ROOTS[0]
+    } else {
+        AGENT_ROOTS[1]
+    }
+}
+
+fn valid_frontmatter_files(files: &[PathBuf]) -> bool {
+    files.iter().all(|path| {
+        fs::read_to_string(path).ok().is_some_and(|text| {
+            let text = text.replace("\r\n", "\n");
+            text.starts_with("---\n") && text.contains("\nname:") && text.contains("\ndescription:")
+        })
+    })
+}
+
+/// Every skill tree that exists must be complete and parse; at least one must.
 pub(crate) fn valid_skill_tree(project_root: &Path) -> bool {
-    let root = project_root.join(".agents/skills");
-    let Some(files) = bounded_agent_files(&root, "SKILL.md") else {
-        return false;
-    };
-    !files.is_empty()
-        && files.iter().all(|path| {
-            fs::read_to_string(path).ok().is_some_and(|text| {
-                text.starts_with("---\n")
-                    && text.contains("\nname:")
-                    && text.contains("\ndescription:")
-            })
-        })
+    let mut found = false;
+    for root in SKILL_ROOTS {
+        let root = project_root.join(root);
+        if !root.exists() {
+            continue;
+        }
+        let Some(files) = bounded_agent_files(&root, "SKILL.md") else {
+            return false;
+        };
+        if files.is_empty() || !valid_frontmatter_files(&files) {
+            return false;
+        }
+        found = true;
+    }
+    found
 }
 
+/// Canonical Claude Code agents need valid frontmatter; Codex agent files,
+/// when present, must parse and start without inherited context. At least one
+/// of the two trees must exist.
 pub(crate) fn valid_subagent_tree(project_root: &Path) -> bool {
-    let root = project_root.join(".codex/agents");
-    let Some(files) = bounded_agent_files(&root, ".toml") else {
+    let claude = project_root.join(AGENT_ROOTS[0]);
+    let codex = project_root.join(AGENT_ROOTS[1]);
+    let claude_files = if claude.exists() {
+        match bounded_agent_files(&claude, ".md") {
+            Some(files) => files,
+            None => return false,
+        }
+    } else {
+        Vec::new()
+    };
+    if !valid_frontmatter_files(&claude_files) {
+        return false;
+    }
+    if !codex.exists() {
+        return !claude_files.is_empty();
+    }
+    valid_codex_subagent_tree(&codex)
+}
+
+fn valid_codex_subagent_tree(root: &Path) -> bool {
+    let Some(files) = bounded_agent_files(root, ".toml") else {
         return false;
     };
     !files.is_empty()
@@ -137,10 +209,19 @@ fn valid_text_file(path: &Path) -> bool {
 }
 
 /// Validate the complete native package for one coding client. Native
-/// projections are generated from the canonical Codex TOMLs by the source
-/// synchronizer; readiness checks their presence and parseability without
-/// executing a client.
-pub(crate) fn valid_coding_environment(project_root: &Path, environment: &str) -> bool {
+/// projections are generated from the canonical Claude Code files by the
+/// source synchronizers; readiness checks their presence and parseability
+/// without executing a client.
+#[cfg(test)]
+fn valid_coding_environment(project_root: &Path, environment: &str) -> bool {
+    valid_coding_environment_with_mcp(project_root, environment, true)
+}
+
+pub(crate) fn valid_coding_environment_with_mcp(
+    project_root: &Path,
+    environment: &str,
+    require_native_mcp_registration: bool,
+) -> bool {
     match environment {
         "codex" => {
             fs::read_to_string(project_root.join(".codex/config.toml"))
@@ -155,11 +236,13 @@ pub(crate) fn valid_coding_environment(project_root: &Path, environment: &str) -
                 && bounded_agent_files(&project_root.join(".claude/agents"), ".md").is_some_and(
                     |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
                 )
-                && valid_json_file(&project_root.join(".mcp.json"))
+                && (!require_native_mcp_registration
+                    || valid_json_file(&project_root.join(".mcp.json")))
         }
         "cursor" => {
             valid_text_file(&project_root.join(".cursor/agent-map.md"))
-                && valid_json_file(&project_root.join(".cursor/mcp.json"))
+                && (!require_native_mcp_registration
+                    || valid_json_file(&project_root.join(".cursor/mcp.json")))
                 && valid_json_file(&project_root.join(".cursor/settings.json"))
                 && bounded_agent_files(&project_root.join(".cursor/agents"), ".md").is_some_and(
                     |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
@@ -167,7 +250,8 @@ pub(crate) fn valid_coding_environment(project_root: &Path, environment: &str) -
         }
         "qoder" => {
             valid_json_file(&project_root.join(".qoder/settings.json"))
-                && valid_json_file(&project_root.join(".qoder/mcp.json"))
+                && (!require_native_mcp_registration
+                    || valid_json_file(&project_root.join(".qoder/mcp.json")))
                 && valid_text_file(&project_root.join(".qoder/agent-map.md"))
                 && bounded_agent_files(&project_root.join(".qoder/agents"), ".md").is_some_and(
                     |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
@@ -176,14 +260,34 @@ pub(crate) fn valid_coding_environment(project_root: &Path, environment: &str) -
         "opencode" => {
             valid_json_file(&project_root.join("opencode.json"))
                 && valid_json_file(&project_root.join(".opencode/settings.json"))
-                && valid_json_file(&project_root.join(".opencode/mcp.json"))
+                && (!require_native_mcp_registration
+                    || valid_json_file(&project_root.join(".opencode/mcp.json")))
                 && valid_text_file(&project_root.join(".opencode/agent-map.md"))
                 && bounded_agent_files(&project_root.join(".opencode/agent"), ".md").is_some_and(
                     |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
                 )
         }
-        _ => false,
+        // An environment declared only by the manifest has no built-in layout
+        // check; its installed files are verified by the managed-file checks.
+        _ => crate::coding_environment::is_supported(environment),
     }
+}
+
+fn native_mcp_registration_required(
+    components: &[LockComponent],
+    environment: &str,
+    platform: Platform,
+) -> bool {
+    if platform != Platform::Windows {
+        return false;
+    }
+    let Some(component_id) = crate::coding_environment::mcp_registration_component_id(environment)
+    else {
+        return false;
+    };
+    components.iter().any(|component| {
+        component.id == component_id && mcp_component_is_selected(&component.state)
+    })
 }
 
 pub(crate) fn flattened_artifact_status(
@@ -409,6 +513,9 @@ impl Default for ReadinessInput {
 
 pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
     let mut checks = Vec::new();
+    let project_path = Path::new(&input.project_root);
+    let skill_root = format!("{}/", canonical_skill_root(project_path));
+    let agent_root = format!("{}/", canonical_agent_root(project_path));
     let ai_provider = if input.ai_provider.trim().is_empty() {
         "codex"
     } else {
@@ -535,8 +642,8 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         "codex",
         input.agents_valid,
         true,
-        "AGENTS.md is present and contains no unresolved template tokens.",
-        "AGENTS.md",
+        "Project instructions are present and contain no unresolved template tokens.",
+        "CLAUDE.md and AGENTS.md",
     );
     add_bool_check(
         &mut checks,
@@ -546,7 +653,7 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         input.skills_valid,
         true,
         "Selected skills are present and valid.",
-        ".agents/skills/",
+        &skill_root,
     );
     add_bool_check(
         &mut checks,
@@ -555,8 +662,8 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         "subagent",
         input.subagents_valid,
         true,
-        "Selected subagent definitions parse and require fork_context=false.",
-        ".codex/agents/",
+        "Subagent definitions parse and start without inherited conversation context.",
+        &agent_root,
     );
     add_bool_check(
         &mut checks,
@@ -593,19 +700,28 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
     } else {
         "ai.authenticated"
     };
+    let provider_label = crate::ai::profile(ai_provider)
+        .map(|profile| profile.display_name)
+        .unwrap_or_else(|| ai_provider.to_string());
     let auth_label = if ai_provider == "codex" {
         "ChatGPT Codex authentication".to_string()
+    } else if ai_provider == crate::claude_code::PROVIDER_ID {
+        "Claude account sign-in".to_string()
     } else {
-        format!("{ai_provider} connection")
+        format!("{provider_label} connection")
     };
     let auth_message = if ai_provider == "codex" {
         "The official Codex App Server reported an authenticated ChatGPT account during setup."
             .to_string()
+    } else if ai_provider == crate::claude_code::PROVIDER_ID {
+        "Claude Code reported a signed-in Claude account during setup.".to_string()
     } else {
-        format!("The {ai_provider} provider connection is available for semantic planning.")
+        format!("The {provider_label} provider connection is available for semantic planning.")
     };
     let auth_path = if ai_provider == "codex" {
         "codex app-server account/read"
+    } else if ai_provider == crate::claude_code::PROVIDER_ID {
+        "claude auth status"
     } else {
         "OS credential vault or local endpoint"
     };
@@ -627,13 +743,13 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
     let analysis_label = if ai_provider == "codex" {
         "ChatGPT Codex analysis".to_string()
     } else {
-        format!("{ai_provider} semantic analysis")
+        format!("{provider_label} semantic analysis")
     };
     let analysis_message = if ai_provider == "codex" {
         "Required schema-constrained Codex proposals were confirmed before planning.".to_string()
     } else {
         format!(
-            "Required schema-constrained {ai_provider} proposals were confirmed before planning."
+            "Required schema-constrained {provider_label} proposals were confirmed before planning."
         )
     };
     add_bool_check(
@@ -773,18 +889,8 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         codex: ReadinessCodexSummary {
             provider: ai_provider.into(),
             model: ai_model.into(),
-            integration: if ai_provider == "codex" {
-                "codex_app_server".into()
-            } else {
-                "provider_api".into()
-            },
-            auth_mode: if ai_provider == "codex" {
-                "chatgpt".into()
-            } else if ai_provider == "local" {
-                "local_endpoint".into()
-            } else {
-                "api_key".into()
-            },
+            integration: crate::ai::integration_and_auth_mode(ai_provider).0.into(),
+            auth_mode: crate::ai::integration_and_auth_mode(ai_provider).1.into(),
             authenticated_during_setup: authenticated,
             analysis_status: persisted_analysis_status.into(),
             confirmed_field_count,
@@ -1463,7 +1569,16 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         if crate::coding_environment::validate_selection(selection).is_ok()
             && crate::coding_environment::selected_environment_ids(selection)
                 .iter()
-                .all(|environment| valid_coding_environment(project_root, environment))
+                .all(|environment| {
+                    let require_mcp = lock.as_ref().is_some_and(|lock| {
+                        native_mcp_registration_required(
+                            &lock.components,
+                            environment,
+                            Platform::current(),
+                        )
+                    });
+                    valid_coding_environment_with_mcp(project_root, environment, require_mcp)
+                })
         {
             "pass"
         } else {
@@ -1636,7 +1751,7 @@ mod tests {
             subagents_valid: true,
             codex_valid: true,
             ai_provider: "deepseek".into(),
-            ai_model: "deepseek-v4-flash".into(),
+            ai_model: "deepseek-flash".into(),
             ai_authenticated: true,
             ai_analysis_status: "confirmed".into(),
             ai_confirmed_field_count: 10,
@@ -1673,7 +1788,7 @@ mod tests {
             subagents_valid: true,
             codex_valid: false,
             ai_provider: "deepseek".into(),
-            ai_model: "deepseek-v4-flash".into(),
+            ai_model: "deepseek-flash".into(),
             ai_authenticated: true,
             ai_analysis_status: "confirmed".into(),
             ai_confirmed_field_count: 1,
@@ -1708,7 +1823,7 @@ mod tests {
             subagents_valid: true,
             codex_valid: true,
             ai_provider: "deepseek".into(),
-            ai_model: "deepseek-v4-flash".into(),
+            ai_model: "deepseek-flash".into(),
             ai_authenticated: true,
             ai_analysis_status: "confirmed".into(),
             ai_confirmed_field_count: 10,
@@ -1807,7 +1922,10 @@ mod tests {
         write("CLAUDE.md", "# Claude\n");
         write(".claude/settings.json", "{}\n");
         write(".claude/agent-map.md", "# Agents\n");
-        write(".claude/agents/example.md", "# Example\n");
+        write(
+            ".claude/agents/example.md",
+            "---\nname: example\ndescription: Example agent.\nmodel: haiku\n---\n\nBody.\n",
+        );
         write(".mcp.json", "{\"mcpServers\":{}}\n");
         write(".cursor/settings.json", "{}\n");
         write(".cursor/mcp.json", "{}\n");
@@ -1831,6 +1949,61 @@ mod tests {
         }
         fs::write(project.path().join(".cursor/settings.json"), "not json").unwrap();
         assert!(!valid_coding_environment(project.path(), "cursor"));
+    }
+
+    #[test]
+    fn unsupported_native_mcp_registration_does_not_block_environment_readiness() {
+        let project = tempfile::tempdir().unwrap();
+        let write = |relative: &str, content: &str| {
+            let path = project.path().join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        };
+        write(".cursor/settings.json", "{}\n");
+        write(".cursor/agent-map.md", "# Agents\n");
+        write(".cursor/agents/example.md", "# Example\n");
+
+        assert!(valid_coding_environment_with_mcp(
+            project.path(),
+            "cursor",
+            false
+        ));
+        assert!(!valid_coding_environment_with_mcp(
+            project.path(),
+            "cursor",
+            true
+        ));
+    }
+
+    #[test]
+    fn native_mcp_registration_requirement_tracks_platform_support() {
+        let installed = LockComponent {
+            id: "runtime.cursor.mcp".into(),
+            version: None,
+            state: "installed".into(),
+            source_revision: None,
+            validation: Some("pass".into()),
+        };
+        assert!(native_mcp_registration_required(
+            std::slice::from_ref(&installed),
+            "cursor",
+            Platform::Windows
+        ));
+        assert!(!native_mcp_registration_required(
+            std::slice::from_ref(&installed),
+            "cursor",
+            Platform::Macos
+        ));
+
+        let unsupported = LockComponent {
+            state: "unsupported_platform".into(),
+            ..installed
+        };
+        assert!(!native_mcp_registration_required(
+            &[unsupported],
+            "cursor",
+            Platform::Windows
+        ));
     }
 
     #[test]

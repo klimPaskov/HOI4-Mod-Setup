@@ -179,18 +179,28 @@ credential-shaped exclusions as visible security findings.
 - caches: `~/Library/Caches/HOI4 Mod Setup/`
 - credentials: Keychain
 
-## Open in Codex
+## Open in the selected coding environment
 
-Use a platform adapter that detects a supported Codex app or CLI, previews the exact project-opening action, and opens the selected root. If no opener is found, keep readiness pass and show the path plus manual instructions.
+Use a platform adapter that previews the exact project-opening action for the
+selected primary environment and opens the selected root. Claude Code starts in
+a terminal window, Codex uses its verified desktop opener, and other clients
+show manual instructions unless the manifest and platform adapter provide a
+verified opener. If no opener is found, keep readiness pass and show the path
+plus manual instructions.
 
-This is a development-client handoff. It depends on the installed Codex project
-integration and core readiness, not on which setup assistant produced the
-semantic analysis. Launching the local Codex app does not require HOI4 Mod
-Setup to repeat or retain the setup-time App Server account session.
+This is a development-client handoff. It depends on core readiness and the
+selected client's installed integration, not on which setup assistant produced
+the semantic analysis. Opening Codex does not require HOI4 Mod Setup to repeat
+or retain the setup-time App Server account session.
 
-The Tauri command returns a typed non-error result for this opener-unavailable case. The React Ready screen announces the manual path without downgrading readiness; authentication, invalid-root, readiness, and process failures remain errors.
+The Tauri command returns a typed non-error result for the opener-unavailable
+case. The React Ready screen announces the manual path without downgrading
+readiness; authentication, invalid-root, readiness, and process failures
+remain errors.
 
-When the verified Codex executable is available, the desktop opener runs `codex app <project-root>` so the project opens in the Codex desktop application rather than an interactive terminal session.
+When the verified Codex executable is available, the desktop opener runs
+`codex app <project-root>` so the project opens in the Codex desktop application
+rather than an interactive terminal session.
 
 ## Portrait provider routes
 

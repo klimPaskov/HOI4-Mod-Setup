@@ -50,6 +50,7 @@ screenshots.
 | `.github/workflows/security.yml` | Secret-pattern, npm audit, and Cargo audit checks |
 | `.github/workflows/release.yml` | Exact-tag Windows and macOS build, signing, verification, and release publication |
 | `.github/workflows/development-preview.yml` | Manually requested cross-platform prerelease evidence |
+| `.github/workflows/pages.yml` | Public project page assembled from `site/` and sanitized screenshots |
 
 All workflows call the repository-owned commands in `package.json`. Production
 actions are pinned to reviewed immutable revisions.
@@ -60,7 +61,7 @@ actions are pinned to reviewed immutable revisions.
 | --- | --- |
 | `.agents/skills/` | Living workflow knowledge updated with implementation |
 | `.codex/agents/` | Narrow project subagents |
-| `docs/development/handoffs/` | Temporary local audit handoffs; these are removed before release |
+| `docs/development/handoffs/` | Sanitized historical audit evidence; new temporary handoffs remain local |
 
 ## Integrity command
 

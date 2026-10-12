@@ -71,7 +71,10 @@ jobs:
       - name: Accessibility contract
         if: steps.detect.outputs.present == 'true'
         run: pnpm test:a11y
-      - name: Browser smoke contract
+      - name: Install browser test runtime
+        if: steps.detect.outputs.present == 'true'
+        run: pnpm test:e2e:install
+      - name: Browser wizard tests
         if: steps.detect.outputs.present == 'true'
         run: pnpm test:e2e
 
@@ -103,6 +106,10 @@ jobs:
           rustup toolchain install 1.88.0 --profile minimal
           rustup default 1.88.0
           rustup component add rustfmt clippy --toolchain 1.88.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.detect.outputs.present == 'true'
+        with:
+          node-version: "22"
       - name: Install Linux Tauri dependencies
         if: steps.detect.outputs.present == 'true' && matrix.os == 'ubuntu-latest'
         run: |
@@ -128,7 +135,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Test Rust
         if: steps.detect.outputs.present == 'true'
-        run: cargo test --workspace
+        run: node scripts/run_rust_tests.mjs
 
   fuzz:
     name: Fuzz target compilation
@@ -201,6 +208,7 @@ jobs:
         if: steps.detect.outputs.present == 'true'
         shell: bash
         run: |
+          pnpm test:e2e:install
           pnpm lint
           pnpm typecheck
           pnpm test -- --run

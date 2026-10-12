@@ -25,7 +25,9 @@ Read:
   `docs/screenshots/README.md`. Wait for the expected heading and controls,
   inspect the captured image, and keep its format, extension, and README link
   consistent; a completed navigation can still produce a blank capture.
-- Document the provider-neutral setup in README, including Codex default, explicit setup-assistant/model selection, honest local/hosted routes, its separation from later development clients, and the independent ChatGPT project-source flatten option.
+- Regenerate documentation captures with `pnpm docs:screenshots`; the headless
+  browser suite owns the mapping and Pages reuses `docs/screenshots/` directly.
+- Document the provider-neutral setup in README, including the Claude account/Claude Code default, explicit setup-assistant/model selection, honest local/hosted routes, its separation from later development clients, and the independent ChatGPT project-source flatten option.
 - Use pull requests for `main`.
 - Require stable status checks through a ruleset.
 - Keep CODEOWNERS current for sensitive paths.
@@ -40,6 +42,10 @@ Read:
 Use focused branches and Conventional Commit messages. Rebase personal branches on current `main` before review. Use `--force-with-lease` only on a personal review branch. Never force-push or delete protected release history.
 
 ## CI rules
+
+- Every job running `pnpm test:e2e` first runs `pnpm test:e2e:install` to
+  install the pinned Playwright browser and required OS libraries. This gate
+  now executes browser interactions rather than checking HTML source text.
 
 - Default workflow permissions are read-only.
 - Source builds use repository-owned scripts.
@@ -74,6 +80,12 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - The manually dispatched `development-preview.yml` uses `scripts/prepare_preview_assets.mjs` to recheck exact source, platform, architecture, package hashes, and notices before publishing one user-facing semantic-version prerelease; the workflow refuses to reuse a published tag, receives no stable signing credentials, and keeps the GitHub prerelease label.
 - Preview and stable publication scripts use deterministic installer names (`HOI4-Mod-Setup-windows-x64-setup.exe`, `HOI4-Mod-Setup-macos-arm64.dmg`, and `HOI4-Mod-Setup-macos-x64.dmg`). Preview release notes lead with three direct installer bullets. Hashes, metadata, provenance, notices, and SBOM remain in CI evidence and are verified before publication. Stable releases add `latest.json` and the two signed macOS app archives beside the three installers.
 - Platform-native lockfiles can contain legitimate optional packages for only one runner (for example, a Windows or macOS bundler). Preview and stable curation therefore require identical source, package, and platform evidence but merge the verified platform SBOM and third-party notice inventories into one deterministic union; they must not reject a release merely because those inventories differ by platform.
+- `scripts/prepare_release_assets.mjs` writes the stable union back to the
+  internal `release-artifacts/` evidence root, and
+  `scripts/prepare_preview_assets.mjs` writes the preview union back to
+  `preview-artifacts/`. The workflows upload those dependency-evidence files
+  separately from the public publication assets; curation must not put the
+  internal inventories into the public asset set.
 - `scripts/generate_sbom.mjs` derives a CycloneDX dependency inventory from the locked pnpm and Cargo metadata and places `SBOM.cdx.json` in native release output. `scripts/generate_third_party_notices.mjs` separately derives the human-readable license inventory. Neither is a substitute for reviewing bundled assets or complete dependency license text.
 - Every signing route changes package bytes after the unsigned build manifest. The platform signing job verifies the resulting signature, records package-bound evidence, and regenerates the complete internal artifact manifest before curation.
 - The reusable ChaosX community PFX and encoded password live only in encrypted
@@ -87,6 +99,11 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - A publication job that intentionally omits source checkout must pass
   `--repo "$GITHUB_REPOSITORY"` to every `gh release` command; it must not rely
   on Git metadata being available in the runner workspace.
+- Supplemental tutorial videos may be uploaded only after the stable workflow
+  has published and verified the six installer/update assets. Compare each
+  video's uploaded size and SHA-256 with its source, keep media outside Git,
+  and link it from README and Pages. Videos never enter updater metadata or
+  the curated installer asset set.
 
 Use the package scripts as the stable local release surface: run
 `pnpm release:build`, `pnpm release:verify`, `pnpm desktop:e2e`, and

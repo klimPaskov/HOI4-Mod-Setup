@@ -1,14 +1,13 @@
 use crate::models::{ComponentDefinition, SourceKind};
+use crate::safe_fs::RootedDir;
 use crate::AppError;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 use unicode_normalization::UnicodeNormalization;
-use uuid::Uuid;
 
 /// Normalizes a manifest or project-relative path without following links.
 /// Absolute paths, traversal, alternate data streams, device names, and empty
@@ -313,102 +312,65 @@ pub fn sha256_bytes(bytes: &[u8]) -> String {
 }
 
 pub fn sha256_file(path: &Path) -> Result<String, AppError> {
-    let mut file = File::open(path).map_err(|error| AppError::Transaction(error.to_string()))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 64];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|error| AppError::Transaction(error.to_string()))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(hex::encode(hasher.finalize()))
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::PathSecurity("hashed file has no parent directory".into()))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| AppError::PathSecurity("hashed file name is not valid UTF-8".into()))?;
+    RootedDir::open_read(parent)?.hash_file(name)
 }
 
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
     let parent = path
         .parent()
         .ok_or_else(|| AppError::Transaction("atomic write has no parent".into()))?;
-    fs::create_dir_all(parent)?;
-    let temporary = parent.join(format!(
-        ".{}.{}.tmp",
-        path.file_name().unwrap().to_string_lossy(),
-        Uuid::new_v4()
-    ));
-    let result = (|| {
-        let mut file = File::create(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        replace_existing_file(&temporary, path)?;
-        if let Ok(directory) = File::open(parent) {
-            let _ = directory.sync_all();
-        }
-        Ok::<(), std::io::Error>(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result.map_err(|error| {
-        AppError::Transaction(format!(
-            "atomic write failed for {}: {error}",
-            path.display()
-        ))
-    })
-}
-
-#[cfg(windows)]
-fn replace_existing_file(temporary: &Path, destination: &Path) -> Result<(), std::io::Error> {
-    use std::os::windows::ffi::OsStrExt;
-    let destination_wide = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let temporary_wide = temporary
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    if destination.exists() {
-        let replaced = unsafe {
-            windows_sys::Win32::Storage::FileSystem::ReplaceFileW(
-                destination_wide.as_ptr(),
-                temporary_wide.as_ptr(),
-                std::ptr::null(),
-                0,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            )
-        };
-        if replaced == 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        Ok(())
-    } else {
-        fs::rename(temporary, destination)
-    }
-}
-
-#[cfg(not(windows))]
-fn replace_existing_file(temporary: &Path, destination: &Path) -> Result<(), std::io::Error> {
-    fs::rename(temporary, destination)
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            AppError::PathSecurity("atomic write file name is not valid UTF-8".into())
+        })?;
+    RootedDir::open_or_create(parent)?.write_atomic(name, bytes)
 }
 
 pub fn atomic_write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), AppError> {
+    atomic_write(path, &persistable_json_bytes(value)?)
+}
+
+/// Serialize a value for persistence after the same secret checks that
+/// `atomic_write_json` applies. Callers that write through a retained
+/// `RootedDir` use these bytes instead of reopening the file by path.
+pub fn persistable_json_bytes<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, AppError> {
     let json = serde_json::to_value(value)?;
     reject_secret_like_keys(&json)?;
-    let bytes = serde_json::to_vec_pretty(&json)?;
-    let text = String::from_utf8_lossy(&bytes);
-    if contains_credential_shaped_content(&text) {
+    // Inspect decoded values, not JSON punctuation. Otherwise an already
+    // redacted assignment at the end of a string consumes its closing quote
+    // on a second redaction pass and falsely prevents journal persistence.
+    if json_contains_credential_shaped_content(&json) {
         return Err(AppError::Credential(
             "credential-shaped content is not serializable".into(),
         ));
     }
-    atomic_write(path, &bytes)
+    Ok(serde_json::to_vec_pretty(&json)?)
+}
+
+fn json_contains_credential_shaped_content(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(text) => contains_credential_shaped_content(text),
+        serde_json::Value::Array(items) => {
+            items.iter().any(json_contains_credential_shaped_content)
+        }
+        serde_json::Value::Object(items) => items.iter().any(|(key, value)| {
+            contains_credential_shaped_content(key)
+                // Preserve assignment-shaped key detection (for example
+                // "provider.api_key") without inspecting serialized values.
+                || contains_credential_shaped_content(&format!("{key}=[FIELD_VALUE]"))
+                || json_contains_credential_shaped_content(value)
+        }),
+        _ => false,
+    }
 }
 
 /// Detect credential-shaped content while allowing the exact non-secret
@@ -416,8 +378,11 @@ pub fn atomic_write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<
 /// merely starts with the placeholder remains detectable because the token
 /// replacement requires word boundaries.
 pub fn contains_credential_shaped_content(value: &str) -> bool {
-    let placeholder = Regex::new(r"\bmsy_your_actual_key_here\b")
-        .expect("static documented Meshy placeholder regex");
+    static PLACEHOLDER: OnceLock<Regex> = OnceLock::new();
+    let placeholder = PLACEHOLDER.get_or_init(|| {
+        Regex::new(r"\bmsy_your_actual_key_here\b")
+            .expect("static documented Meshy placeholder regex")
+    });
     let inspected = placeholder.replace_all(value, "[DOCUMENTED_MESHY_KEY_PLACEHOLDER]");
     redact_secrets(&inspected, &[]) != inspected
 }
@@ -667,6 +632,39 @@ mod tests {
         assert!(!output.contains(&secret_value));
         assert!(output.contains(&format!("{secret_name}=[REDACTED]")));
         assert!(contains_credential_shaped_content(&input));
+    }
+
+    #[test]
+    fn json_persistence_accepts_redacted_string_endings_but_rejects_nested_secrets() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("journal.json");
+        let secret = ["private", "persistence", "value"].join("-");
+        let unsafe_message = format!("setup failed: client_secret={secret}");
+        let safe =
+            serde_json::json!({"stages": [{"evidence": [redact_secrets(&unsafe_message, &[])]}]});
+        atomic_write_json(&path, &safe).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&fs::read(&path).unwrap()).unwrap(),
+            safe
+        );
+        assert!(!fs::read_to_string(&path).unwrap().contains(&secret));
+        let unsafe_value = serde_json::json!({"stages": [{"evidence": [unsafe_message]}]});
+        assert!(atomic_write_json(&path, &unsafe_value).is_err());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&fs::read(&path).unwrap()).unwrap(),
+            safe
+        );
+        // A serialized JSON object embedded inside a string remains untrusted.
+        let nested = serde_json::json!({"message": format!(r#"{{"client_secret":"{secret}"}}"#)});
+        assert!(atomic_write_json(&path, &nested).is_err());
+        for key in [
+            "provider.api_key",
+            "config-client_secret",
+            "custom_access_token",
+        ] {
+            let disguised = serde_json::json!({(key): "plain-value-without-a-provider-prefix"});
+            assert!(atomic_write_json(&path, &disguised).is_err(), "{key}");
+        }
     }
 
     #[test]

@@ -97,9 +97,37 @@ URL carried by the reviewed profile; Rust must still compare it against the
 exact allowlist before invoking the system browser. Do not describe API-key
 entry as OAuth or account login.
 
+For JSON persistence, inspect decoded string values and object keys for
+credential-shaped content before serialization; keep the separate forbidden
+key check. Do not run the shape detector over serialized JSON punctuation:
+an already redacted assignment at a string boundary must remain persistable.
+Test nested arrays/objects, embedded JSON strings, secret rejection without
+replacing existing bytes, and a redacted assignment at the end of a message.
+
 ## Filesystem
 
 - Normalize and contain every path.
+- Transaction reads and mutations go through `src-tauri/src/safe_fs.rs` and
+  its `RootedDir`: Unix file operations are relative to retained descriptors;
+  Windows root acquisition walks lexical components without canonicalizing
+  through a possible junction, retains ancestor handles, opens leaves without
+  following reparse points, and inspects the raw reparse attribute. Windows
+  identity tokens use nonzero `FILE_ID_INFO` 128-bit IDs. Use `open_read` for
+  read-only roots so hashing an executable or cache does not deny ordinary
+  delete sharing; mutation roots retain stricter directory handles.
+- Existing-project scans, plans, and journals bind the project-root identity;
+  new projects bind the parent and journal the created root. Schema 1.0
+  identity-less journals remain inspect-only. Identity checks still do not
+  retain the verified handle through every transaction call.
+  Application-data transaction storage is identity-bound in the journal (`app_data_identity`) and read and written through retained handles within a call; later calls refuse a replaced, copied, or linked folder before writing, while legacy journals without the field keep path-based access.
+  External destination parents are bound in the reviewed plan (identity and reviewed hash read through one handle), carried into the journal, and read and changed only through retained handles with that identity; a missing bound parent stops recovery of an operation that may have changed its destination.
+  Live
+  replace and delete go through `mutate_live_leaf`: a journaled same-folder
+  quarantine, hash verification against the precondition, a no-replace
+  placement, and removal only after the success checkpoint (see
+  `hoi4-mod-setup-transactions`). Keep the remaining P1 blockers open until all
+  path-reopening helpers use the same verified handles and native swap tests
+  cover recovery on both platforms.
 - Reject traversal, absolute destination, reserved names, case collisions, and invalid encodings.
 - Enforce total path, segment, and depth limits before filesystem access.
 - Defend against symlink and junction swaps between validation and apply.
@@ -110,12 +138,15 @@ entry as OAuth or account login.
 - Use the shared `is_link_metadata` boundary for filesystem metadata; on Windows it treats reparse points/junctions as links, not only `is_symlink()` results.
 - On macOS, treat the OS-owned `/etc`, `/tmp`, and `/var` aliases into
   `/private` as path-prefix aliases, not project links; still reject every
-  link or reparse point below the selected root. Canonicalize the selected
-  root before containment checks so temporary and user paths work on both
-  supported platforms.
+  link or reparse point below the selected root. Apply platform-specific root
+  handling: preserve the macOS aliases and walk Windows paths lexically through
+  no-follow handles rather than canonicalizing across a junction.
 - Use safe archive extraction with file count, size, ratio, depth, and path limits.
 - Do not follow project links outside approved roots.
 - Keep backup and staging permissions restrictive.
+- The transaction source regression catches selected direct `std::fs` calls;
+  it does not prove that path-helper wrappers retain or revalidate the reviewed
+  root identity. Inspect the complete call chain.
 
 ## Processes
 
@@ -161,10 +192,22 @@ entry as OAuth or account login.
   `/dev/fd` pathname to the child.
   Discover submodule paths by reading the bounded `.gitmodules` file directly;
   never start recursive submodule processes during a scan.
-- Account-bearing Codex and secret-bearing optional workflow processes require
-  a canonical, unlinked executable whose platform signature publisher matches
-  the reviewed vendor immediately before spawn. A matching filename or stable
-  hash alone does not establish provenance.
+- Account-bearing Codex and Claude Code processes and secret-bearing optional
+  workflow processes require a canonical, unlinked executable whose platform
+  signature publisher matches the reviewed vendor immediately before spawn. A
+  matching filename or stable hash alone does not establish provenance.
+  Reviewed identities are exact: OpenAI (`OpenAI OpCo, LLC`, Apple team
+  `2DC432GLL2`) and Anthropic (`Anthropic, PBC`, Apple team `Q6L2SF6YDW`).
+  A launcher symbolic link at a documented install location may be resolved
+  once; the resolved target must be an unlinked regular file.
+  `validate_executable_publisher` remembers a success for the exact path,
+  content SHA-256, and publisher for the rest of the app run, because platform
+  signature checks of large clients take tens of seconds. It always re-hashes
+  first, never remembers a failure, and records only when the bytes are
+  unchanged after the check; spawn-time hash validation is unchanged.
+- Non-secret passthrough variables for a reviewed tool go through
+  `ProcessSpec::run_reviewed_tool`, which rejects names containing key, token,
+  secret, password, or credential markers and every `ANTHROPIC_*` name.
 - The isolated Windows launcher environment restores only the non-secret
   drive/home routing variables needed by native applications (`SystemDrive`,
   `HOMEDRIVE`, and `HOMEPATH`); never replace their values with literal
@@ -203,7 +246,7 @@ entry as OAuth or account login.
   package file through no-follow containment, require the canonical full-tree
   identity, materialize the verified bytes into a private tree, and execute
   only that private runtime entry;
-  allow at most 32 MiB per package file, 256 MiB for the complete tree, and
+  allow at most 32 MiB per package file, 512 MiB for the complete tree (an enforced npm shrinkwrap installs every platform's optional Sharp binaries, about 280 MiB), and
   10,000 files. Verify a hidden npm lock when the installed npm version emits
   one, but do not require that optional file when exact registry integrity and
   the complete manifest-bound package-tree identity both pass;
@@ -312,6 +355,13 @@ finding regex compilation is an avoidable large-project scan bottleneck.
 Update this skill when credential storage, redaction, path containment, archive rules, process policy, source trust, updater trust, Git safety, GitHub Actions permissions, or security test expectations change.
 
 ## AI provider and ChatGPT authentication rules
+
+Claude Code owns Claude account sign-in, credential storage, and refresh for
+the default `claude_account` route. The app runs `claude auth login` with
+closed standard input and never offers its own Claude.ai login, reads Claude
+Code's credential store, accepts a pasted authorization code, or keeps email,
+organization, or plan fields from `claude auth status`. Anthropic's Claude Code
+terms forbid third-party Claude.ai login and credential intermediation.
 
 Codex App Server owns ChatGPT OAuth, token persistence, and refresh. The app uses managed browser login and device code only. It never reads Codex auth storage, implements an API-key fallback, accepts externally managed tokens, or persists full account identity, plan, usage, or rate-limit data. Treat approved analysis input as a disclosure surface and test redaction, root boundaries, and support bundles.
 

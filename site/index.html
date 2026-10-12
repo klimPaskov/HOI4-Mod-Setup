@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HOI4 Mod Setup</title>
+  <meta name="description" content="A desktop wizard that prepares a Hearts of Iron IV mod for AI-assisted development with Claude Code, Codex, and other coding agents.">
+  <link rel="icon" href="icon.png">
+  <style>
+    :root {
+      --bg: #0b0f17; --panel: #121a28; --panel-2: #172235; --line: #26344b;
+      --text: #e6ecf6; --muted: #9fb0c8; --accent: #7c8cff; --accent-2: #5fd3a6;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    a { color: #a9bdff; }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+    header { padding: 72px 0 40px; }
+    .brand { display: flex; align-items: center; gap: 12px; color: var(--muted); font-weight: 700; letter-spacing: .02em; }
+    .brand img { width: 40px; height: 40px; }
+    h1 { margin: 18px 0 12px; font-size: clamp(34px, 6vw, 56px); line-height: 1.08; letter-spacing: -.02em; }
+    .lead { max-width: 760px; color: var(--muted); font-size: 19px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+    .button { display: inline-block; padding: 12px 20px; border-radius: 10px; font-weight: 700; text-decoration: none; border: 1px solid var(--line); color: var(--text); background: var(--panel); }
+    .button.primary { background: linear-gradient(135deg, #7c8cff, #6a5cff); border-color: transparent; color: white; }
+    .shot { margin: 8px 0 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,.45); }
+    .shot img { display: block; width: 100%; height: auto; }
+    section { padding: 48px 0; border-top: 1px solid var(--line); }
+    h2 { font-size: 28px; margin: 0 0 18px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+    .card h3 { margin: 0 0 8px; font-size: 17px; }
+    .card p { margin: 0; color: var(--muted); font-size: 15px; }
+    ol.steps { padding-left: 22px; }
+    ol.steps li { margin: 8px 0; }
+    .gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+    .gallery figure { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+    .gallery img { display: block; width: 100%; height: auto; }
+    .gallery figcaption { padding: 10px 14px; color: var(--muted); font-size: 14px; }
+    table { width: 100%; border-collapse: collapse; font-size: 15px; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    code { background: var(--panel-2); border-radius: 6px; padding: 1px 6px; font-size: 14px; }
+    footer { padding: 40px 0 56px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); }
+  </style>
+</head>
+<body>
+  <header class="wrap">
+    <div class="brand"><img src="icon.png" alt="">HOI4 Mod Setup</div>
+    <h1>Agentic Hearts of Iron IV modding, set up in minutes</h1>
+    <p class="lead">A desktop wizard that prepares a new or existing Hearts of Iron IV mod for AI-assisted development. It installs project instructions, HOI4 workflow skills, specialist subagents, the HOI4 Agent Tools MCP server, and an offline Paradox wiki, with Claude Code as the primary environment and generated copies for Codex, Cursor, Qoder, and OpenCode.</p>
+    <div class="actions">
+      <a class="button primary" href="https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-windows-x64-setup.exe">Download for Windows</a>
+      <a class="button" href="https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest">macOS and all releases</a>
+      <a class="button" href="https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/docs/QUICKSTART.md">Quick start</a>
+      <a class="button" href="https://www.youtube.com/playlist?list=PLh6JmuEabQioc4V8IYGEsMtqiw-xemeX3">Video tutorials</a>
+    </div>
+    <figure class="shot"><img src="screenshots/08-ready.png" alt="The Ready screen of HOI4 Mod Setup with every core check passing and an Open in Claude Code button"></figure>
+  </header>
+
+  <main class="wrap">
+    <section>
+      <h2>What you get</h2>
+      <div class="grid">
+        <div class="card"><h3>Claude-first instructions</h3><p>A complete <code>CLAUDE.md</code> adapted to your mod name, prefix, and game folder, plus its <code>AGENTS.md</code> copy for other clients.</p></div>
+        <div class="card"><h3>HOI4 workflow skills</h3><p>Events, decisions, focus trees, scripted GUIs, assets, frame animation, save inspection, and more, in <code>.claude/skills</code>.</p></div>
+        <div class="card"><h3>Specialist subagents</h3><p>Auditors, planners, and asset workers with fixed model tiers: Opus for the improvement loop planner, Sonnet for five demanding roles, Haiku for the rest.</p></div>
+        <div class="card"><h3>HOI4 Agent Tools MCP</h3><p>Focus, event, technology, GUI, map, probability, and documentation routes, installed at a verified version and registered for each client.</p></div>
+        <div class="card"><h3>Optional workflows</h3><p>3D models with Meshy and Blender, Super Events, ComfyUI portraits, and live game testing through HOI4 Live Tools.</p></div>
+        <div class="card"><h3>Safe by design</h3><p>Every change is shown in a dry run, applied as a transaction with backup and undo, and later updated, repaired, or removed from the same app.</p></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>How it works</h2>
+      <ol class="steps">
+        <li><strong>Start a project.</strong> Create a new mod from a short description or import an existing one. Claude, signed in through your own Claude Code, analyses it by default.</li>
+        <li><strong>Review the identity.</strong> Confirm the project ID, script prefix, tags, and folders the assistant suggests.</li>
+        <li><strong>Pick your clients.</strong> Claude Code is the default primary environment; choose another primary or add Codex, Cursor, Qoder, or OpenCode if you use them.</li>
+        <li><strong>Choose components and workflows.</strong> Required items stay selected; optional workflows never block the core setup.</li>
+        <li><strong>Review and install.</strong> Inspect every file in the dry run, then install with live progress and safe recovery.</li>
+        <li><strong>Open the mod.</strong> Start Claude Code in the prepared project straight from the Ready screen.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Screens</h2>
+      <div class="gallery">
+        <figure><img src="screenshots/01-welcome.jpg" alt="Start a mod project screen"><figcaption>Choose a new or existing mod and the setup assistant.</figcaption></figure>
+        <figure><img src="screenshots/15-coding-environments.png" alt="Coding environments screen"><figcaption>Claude Code is the primary environment.</figcaption></figure>
+        <figure><img src="screenshots/04-components.png" alt="Components screen"><figcaption>Canonical instructions, skills, subagents, and tools.</figcaption></figure>
+        <figure><img src="screenshots/05-integrations.png" alt="Optional workflows screen"><figcaption>3D, Super Events, portraits, and HOI4 Live Tools.</figcaption></figure>
+        <figure><img src="screenshots/09-dry-run.png" alt="Dry run review screen"><figcaption>Every file is reviewed before anything changes.</figcaption></figure>
+        <figure><img src="screenshots/12-maintenance.png" alt="Update and repair screen"><figcaption>Update, repair, or remove the setup later.</figcaption></figure>
+      </div>
+    </section>
+
+    <section>
+      <h2>Watch the workflow</h2>
+      <div class="grid">
+        <div class="card"><h3>Setup tutorial</h3><p><a href="https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/setup_app_tutorial.mp4">Watch or download the setup tutorial</a> to follow project creation, review, installation, and maintenance.</p></div>
+        <div class="card"><h3>HOI4 Agent Tools demo</h3><p><a href="https://github.com/klimPaskov/Agentic-HOI4-Modding/releases/latest/download/hoi4_agent_tools_promo.mp4">Watch or download the MCP demo</a> to see source previews and modding tools.</p></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Requirements</h2>
+      <table>
+        <tr><th>Needed</th><th>Why</th></tr>
+        <tr><td>Windows 10 or 11 (macOS for the core setup)</td><td>The HOI4 Agent Tools MCP, 3D, and HOI4 Live Tools routes are Windows-only.</td></tr>
+        <tr><td>Git</td><td>The project is initialized or preserved as a Git repository.</td></tr>
+        <tr><td>Node.js LTS</td><td>Runs the HOI4 Agent Tools MCP server.</td></tr>
+        <tr><td>Claude Code, signed in</td><td>The default setup assistant and the primary coding environment.</td></tr>
+        <tr><td>Python 3.9 or newer</td><td>The runtime synchronizers and the optional workflows.</td></tr>
+      </table>
+      <p>The app checks each tool and explains what is missing. See <a href="https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/docs/TROUBLESHOOTING.md">Troubleshooting</a>.</p>
+    </section>
+  </main>
+
+  <footer class="wrap">
+    Open source under the Apache License 2.0 · <a href="https://github.com/klimPaskov/HOI4-Mod-Setup">Source code</a> · <a href="https://github.com/klimPaskov/Agentic-HOI4-Modding">Agentic HOI4 Modding package</a> · <a href="https://discord.gg/rAXesGcT2t">Discord</a>
+  </footer>
+</body>
+</html>

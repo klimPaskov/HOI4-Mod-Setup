@@ -5,12 +5,14 @@
 
 pub mod ai;
 pub mod chat_sources;
+pub mod claude_code;
 pub mod codex;
 pub mod coding_environment;
 pub mod credentials;
 pub mod descriptors;
 pub mod flatten;
 pub mod git;
+pub mod local_source;
 pub mod mcp;
 pub mod merge;
 pub mod meshy;
@@ -20,6 +22,7 @@ pub mod paths;
 pub mod portraits;
 pub mod process;
 pub mod readiness;
+mod safe_fs;
 pub mod scanner;
 pub mod security;
 pub mod source;

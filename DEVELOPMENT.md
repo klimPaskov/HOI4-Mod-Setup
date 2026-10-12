@@ -51,18 +51,65 @@ The repository should expose stable scripts for normal work:
 pnpm lint
 pnpm typecheck
 pnpm test
+pnpm test:rust
+pnpm test:e2e:install
 pnpm test:e2e
+pnpm test:mcp-live
+pnpm test:codex-live
 pnpm tauri dev
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
 ```
+
+`pnpm test:rust` is the stable Rust test entry point. It bounds the default
+test concurrency at four threads so local runs do not exhaust the machine; set
+`HOI4_TEST_RUST_THREADS` to an integer from 1 through 32 when a different
+bound is needed. The script rejects values outside that range and forwards the
+selected bound to the Rust test runner.
+
+For opt-in offline lifecycle/source/scanner acceptance, set
+`HOI4_MOD_SETUP_SOURCE_REPOSITORY` to an explicit absolute committed package
+checkout and run `pnpm test:offline`. Keep its historical Git objects when
+testing the public 0.3.5 upgrade. The script creates temporary application
+profiles and a synthetic 50,000-gameplay-file mod, retains the installed Rust
+toolchain homes, and runs source checks and real core transactions serially.
+Provider replies and external install actions are fakes. No shared desktop,
+real project, provider credential, paid service, or user MCP registration is
+used. `pnpm docs:screenshots` regenerates the sanitized public walkthrough
+images through Playwright without focusing a desktop window.
+The fixture also bypasses real Meshy-vault discovery: redirected profile
+folders alone do not isolate Credential Manager or Keychain. Missing source
+history and failed prerequisites stop the gate before scanner fixture creation.
+
+`pnpm test:e2e:install` installs Playwright's Chromium and its platform
+dependencies. `pnpm test:e2e` runs the actual React wizard in an isolated
+headless browser against synthetic development fixtures, including keyboard
+selection, signed-out management, recovery details, runtime errors, and narrow
+viewports. For an existing local browser, set `HOI4_TEST_BROWSER_PATH` to its
+absolute executable path instead of installing Chromium. These browser tests
+do not replace native IPC, authentication, installation, or rollback tests.
+`pnpm test:mcp-live` is a Windows-only smoke for the manifest-pinned HOI4 Agent
+Tools package. It installs into a temporary prefix with npm user/global
+configuration isolated, verifies registry integrity, the complete package
+tree, the runtime entry, and the live initialize/tools-list contract. It does
+not invoke a tool or require an AI provider credential.
+Its fresh npm installation has a ten-minute bound for cold Windows dependency
+extraction; metadata requests retain a two-minute bound. A timeout names the
+stage and a retry creates another isolated prefix.
+The initialize/tools-list probe has a two-minute cold-start bound and uses the
+version in `package.json` for its client identity.
+`pnpm test:codex-live` is a manual Windows smoke for the signed installed
+Codex executable named by `HOI4_CODEX_EXECUTABLE`. It reads only the account
+type from the current Codex home, then uses a temporary home to start and cancel
+browser and device-code login attempts. It never opens a login URL or prints an
+email, account ID, verification code, token, or rate-limit value; completing a
+sign-in still requires a user-owned browser session and is not automated.
 
 On Windows, activate the MSVC environment before the all-feature Rust gates
 when using PowerShell:
 
 ```powershell
-cmd.exe /d /s /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && cargo fmt --all -- --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo test --workspace --all-features'
+cmd.exe /d /s /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && cargo fmt --all -- --check && cargo clippy --workspace --all-targets --all-features -- -D warnings && pnpm test:rust'
 cargo check --manifest-path fuzz/Cargo.toml --bins
 $env:HOI4_MOD_SETUP_TAURI="1"; $env:HOI4_MOD_SETUP_BUNDLE="nsis"; pnpm release:build
 pnpm release:verify
@@ -103,7 +150,8 @@ Fixtures should cover:
 - malformed descriptors
 - nested Git repositories
 - dirty Git state
-- pre-existing AGENTS, skills, subagents, Codex, and MCP configuration
+- pre-existing CLAUDE/AGENTS instructions, canonical or legacy skills,
+  subagents, native coding-client, and MCP configuration
 - local modifications to managed files
 - symlinks, junctions, case collisions, locked files, and cloud-synced folders
 - large projects and large wiki trees
@@ -124,7 +172,8 @@ Use the seven-phase navigation and minimal screen references. Do not turn develo
 
 Windows and macOS adapters must be tested on their actual platforms. Do not mark a route supported based only on compilation or similarity to another operating system.
 
-Signing, notarization, credential stores, filesystem links, application paths, and Open in Codex behavior need clean-machine evidence.
+Signing, notarization, credential stores, filesystem links, application paths,
+and opening the selected coding environment need clean-machine evidence.
 
 ## Git hooks
 
@@ -151,3 +200,9 @@ Do not add tokens or account exports to `.env`, fixtures, snapshots, or logs. Ma
 ## Required auth fixtures
 
 Development uses a fake App Server for normal tests. Real-account tests are opt-in and must not run in CI. The fake covers browser login, device code, account updates, usage limits, schema-valid turns, malformed turns, process exit, and redacted logs.
+
+The browser harness builds development-only synthetic routes into the ignored
+`artifacts/browser-fixture` directory, then serves that fixture on loopback
+port 1421. It never reuses a running user app or enables fixtures in the normal
+production output. Build readiness is awaited before browser tests start, so
+Vite cold module compilation is not charged to the first wizard assertion.

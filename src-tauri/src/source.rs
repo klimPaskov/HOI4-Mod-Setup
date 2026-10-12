@@ -82,6 +82,8 @@ pub struct HttpSourceClient {
     owner: String,
     name: String,
     cache_root: PathBuf,
+    /// Developer-only local checkout that replaces GitHub for package testing.
+    local_repository: Option<PathBuf>,
 }
 
 impl HttpSourceClient {
@@ -89,7 +91,7 @@ impl HttpSourceClient {
         Self::with_cache_root(cache_root()?)
     }
 
-    fn with_cache_root(cache_root: PathBuf) -> Result<Self, AppError> {
+    pub(crate) fn with_cache_root(cache_root: PathBuf) -> Result<Self, AppError> {
         let client = Client::builder()
             .user_agent("HOI4-Mod-Setup/0.1")
             .connect_timeout(Duration::from_secs(15))
@@ -110,6 +112,7 @@ impl HttpSourceClient {
             api_base: "https://api.github.com".to_string(),
             owner: SOURCE_OWNER.to_string(),
             name: SOURCE_NAME.to_string(),
+            local_repository: crate::local_source::configured_repository(),
             cache_root,
         })
     }
@@ -125,6 +128,15 @@ impl HttpSourceClient {
             return Err(AppError::Source(format!(
                 "source URL is not an approved HTTPS endpoint: {url}"
             )));
+        }
+        if let Some(root) = &self.local_repository {
+            let bytes = crate::local_source::fetch(root, &parsed)?;
+            if bytes.len() > limit {
+                return Err(AppError::Source(
+                    "source response exceeds its bounded size limit".into(),
+                ));
+            }
+            return Ok(bytes);
         }
         let response = self
             .client
@@ -385,6 +397,33 @@ impl HttpSourceClient {
         Ok(bytes)
     }
 
+    /// Warm the immutable, hash-addressed cache for many declared files with a
+    /// small fixed number of parallel HTTPS fetches. Every file is still
+    /// verified by size and SHA-256 before it is cached. Errors are ignored
+    /// here: the caller's ordered fetch repeats any miss and reports it with
+    /// full context. Files are de-duplicated by hash so two workers never
+    /// write the same cache entry.
+    pub fn prefetch_verified_files(&self, revision: &str, files: &[(String, String, Option<u64>)]) {
+        const WORKERS: usize = 8;
+        let mut seen = std::collections::BTreeSet::new();
+        let unique = files
+            .iter()
+            .filter(|(_, sha256, _)| seen.insert(sha256.clone()))
+            .collect::<Vec<_>>();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..WORKERS.min(unique.len()) {
+                scope.spawn(|| loop {
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((path, sha256, size)) = unique.get(index) else {
+                        break;
+                    };
+                    let _ = self.fetch_verified_file(revision, path, sha256, *size);
+                });
+            }
+        });
+    }
+
     /// Fetch a manifest-declared blob using an immutable, hash-addressed cache.
     /// Cache entries are accepted only after both the declared size and SHA-256
     /// match; a corrupted entry is ignored and replaced by a fresh HTTPS fetch.
@@ -524,6 +563,15 @@ impl HttpSourceClient {
             return Err(AppError::Source(
                 "verified source blob URL is not an approved endpoint".into(),
             ));
+        }
+        if let Some(root) = &self.local_repository {
+            let bytes = crate::local_source::fetch(root, &parsed)?;
+            if bytes.len() > limit {
+                return Err(AppError::Source(
+                    "source blob response exceeds its bounded size limit".into(),
+                ));
+            }
+            return Ok(bytes);
         }
         let offset = partial.len();
         let mut request = self
@@ -899,10 +947,43 @@ pub fn validate_manifest(
         .next()
         .and_then(|value| value.parse::<u64>().ok())
         .ok_or_else(|| AppError::Source("manifest schema_version is invalid".into()))?;
-    if major != SUPPORTED_MANIFEST_MAJOR {
-        return Err(AppError::Source(format!(
-            "unsupported manifest major {major}; supported major is {SUPPORTED_MANIFEST_MAJOR}"
-        )));
+    if !SUPPORTED_MANIFEST_MAJORS.contains(&major) {
+        return Err(AppError::Source(if major > CURRENT_MANIFEST_MAJOR {
+            format!(
+                "the setup package uses manifest format {major}, which needs a newer HOI4 Mod Setup. Update the app, then try again"
+            )
+        } else {
+            format!(
+                "the setup package uses manifest format {major}, which this app no longer reads"
+            )
+        }));
+    }
+    let declared_environments = manifest
+        .coding_environments
+        .iter()
+        .map(|environment| environment.id.as_str())
+        .collect::<HashSet<_>>();
+    if declared_environments.len() != manifest.coding_environments.len()
+        || manifest.coding_environments.iter().any(|environment| {
+            !crate::coding_environment::is_supported(&environment.id)
+                || environment.display_name.trim().is_empty()
+                || environment.display_name.chars().count() > 64
+        })
+        || manifest
+            .coding_environments
+            .iter()
+            .filter(|environment| environment.default_primary)
+            .count()
+            > 1
+    {
+        return Err(AppError::Source(
+            "the manifest coding-environment declarations are invalid".into(),
+        ));
+    }
+    if major >= 3 && manifest.coding_environments.is_empty() {
+        return Err(AppError::Source(
+            "the manifest does not declare its coding environments".into(),
+        ));
     }
     if manifest.manifest_id.trim().is_empty()
         || !Regex::new(r"^[a-z0-9][a-z0-9._-]*$")
@@ -969,8 +1050,28 @@ pub fn validate_manifest(
                 component.id
             )));
         }
+        if let Some(engine) = component.source.template_engine.as_deref() {
+            let supported_engine = match (component.id.as_str(), engine) {
+                ("core.agents" | "core.claude.instructions", "agents_adaptation_v1") => {
+                    component.source.kind == SourceKind::File
+                }
+                ("mcp.hoi4_agent_tools", "mcp_config_v1") => {
+                    component.source.kind == SourceKind::Generated
+                }
+                _ => false,
+            };
+            if !supported_engine {
+                return Err(AppError::Source(format!(
+                    "component {} declares an unsupported template engine: {engine}",
+                    component.id
+                )));
+            }
+        }
         if let Some(environment) = component.coding_environment.as_deref() {
-            if !crate::coding_environment::is_supported(environment) {
+            if !crate::coding_environment::is_supported(environment)
+                || (!declared_environments.is_empty()
+                    && !declared_environments.contains(environment))
+            {
                 return Err(AppError::Source(format!(
                     "component {} declares an unsupported coding environment: {environment}",
                     component.id
@@ -1195,6 +1296,88 @@ pub fn validate_manifest(
             {
                 return Err(AppError::Source(
                     "the MCP bootstrap reviewed action evidence is incomplete".into(),
+                ));
+            }
+        }
+        if component.id == crate::mcp::LIVE_TOOLS_COMPONENT_ID
+            && component
+                .validation
+                .iter()
+                .any(|rule| rule.kind == "command")
+        {
+            // A manifest that predates the installer declares no command and
+            // stays a skill-only workflow. One that declares it must pin the
+            // release by URL, SHA-256 and size and run only the managed script.
+            let actions = component
+                .validation
+                .iter()
+                .filter(|rule| rule.kind == "command" && rule.id == "live.bootstrap")
+                .collect::<Vec<_>>();
+            let invalid = |detail: &str| {
+                AppError::Source(format!(
+                    "the HOI4 Live Tools bootstrap action evidence is incomplete: {detail}"
+                ))
+            };
+            if actions.len() != 1
+                || component
+                    .validation
+                    .iter()
+                    .filter(|rule| rule.kind == "command")
+                    .count()
+                    != 1
+            {
+                return Err(invalid("exactly one reviewed action is required"));
+            }
+            let action = actions[0];
+            let text = |key: &str| action.parameters.get(key).and_then(Value::as_str);
+            let declared_text = |key: &str| text(key).is_some_and(|value| !value.trim().is_empty());
+            if action.target.as_deref() != Some(".tools/mcp/bootstrap_hoi4_live_tools.py")
+                || action
+                    .parameters
+                    .get("arguments")
+                    .and_then(Value::as_array)
+                    .is_none_or(|values| values.as_slice() != [Value::String("--quiet".into())])
+                || action
+                    .parameters
+                    .get("expected_writes")
+                    .and_then(Value::as_array)
+                    .is_none_or(Vec::is_empty)
+                || !declared_text("network_access")
+                || !declared_text("rollback_boundary")
+                || text("privilege") != Some("current_user")
+            {
+                return Err(invalid("target, arguments, writes, network, or privilege"));
+            }
+            let url = text("release_url").unwrap_or_default();
+            if !url.starts_with("https://github.com/")
+                || url.contains("..")
+                || !url.ends_with(".zip")
+            {
+                return Err(invalid(
+                    "release_url must be an https://github.com release archive",
+                ));
+            }
+            validate_sha256(text("release_sha256").unwrap_or_default())?;
+            if action
+                .parameters
+                .get("release_size")
+                .and_then(Value::as_u64)
+                .is_none_or(|size| size == 0)
+                || !declared_text("release_version")
+            {
+                return Err(invalid("release_size and release_version are required"));
+            }
+            if !manifest
+                .components
+                .iter()
+                .any(|candidate| candidate.id == "mcp.hoi4_live.bootstrap")
+                || !component
+                    .dependencies
+                    .iter()
+                    .any(|dependency| dependency == "mcp.hoi4_live.bootstrap")
+            {
+                return Err(invalid(
+                    "the managed bootstrap script component is not a dependency",
                 ));
             }
         }
@@ -1681,6 +1864,8 @@ fn add_source_file(
     Ok(())
 }
 
+const GIT_LFS_POINTER_PREFIX: &[u8] = b"version https://git-lfs.github.com/spec/v1";
+
 pub fn verify_download(
     selection: &SelectedSourceFile,
     bytes: &[u8],
@@ -1708,6 +1893,14 @@ pub fn verify_download(
                 selection.source_path
             )));
         }
+    }
+    // A committed Git LFS pointer hashes correctly against Git-blob evidence
+    // but is a placeholder, not the declared file; reject it before staging.
+    if bytes.starts_with(GIT_LFS_POINTER_PREFIX) {
+        return Err(AppError::Source(format!(
+            "source file is an unresolved Git LFS pointer: {}",
+            selection.source_path
+        )));
     }
     Ok(DownloadedFile {
         operation_id: String::new(),
@@ -1833,7 +2026,7 @@ mod tests {
         );
         assert!(manifest.profiles.iter().any(|profile| profile.default));
         assert_eq!(manifest.wiki.destination, "paradox_wiki/");
-        assert_eq!(manifest.components.len(), 45);
+        assert_eq!(manifest.components.len(), 56);
         for environment in crate::coding_environment::SUPPORTED {
             assert!(manifest
                 .components
@@ -1849,6 +2042,15 @@ mod tests {
             .components
             .iter()
             .any(|component| component == "docs.mcp_integration"));
+        assert!(core_profile
+            .components
+            .iter()
+            .any(|component| component == "docs.runtimes"));
+        assert!(manifest.components.iter().any(|component| {
+            component.id == "core.claude.instructions"
+                && component.source.template_engine.as_deref() == Some("agents_adaptation_v1")
+                && component.destination.path == "CLAUDE.md"
+        }));
         assert!(manifest
             .components
             .iter()
@@ -1912,6 +2114,21 @@ mod tests {
             .dependencies
             .iter()
             .any(|dependency| dependency == "mcp.hoi4_agent_tools.bootstrap"));
+        let mcp_health = mcp
+            .validation
+            .iter()
+            .find(|rule| rule.id == "mcp.hoi4.health")
+            .expect("current MCP health declaration must be present");
+        assert_eq!(
+            mcp_health.parameters["package_version"].as_str(),
+            Some("4.0.0")
+        );
+        assert_eq!(
+            mcp_health.parameters["required_tools"]
+                .as_array()
+                .map(Vec::len),
+            Some(28)
+        );
         let workflow_3d = manifest
             .components
             .iter()
@@ -1921,7 +2138,7 @@ mod tests {
             .dependencies
             .iter()
             .any(|dependency| dependency == "codex.config"));
-        for tool in ["hoi4.tech_inspect", "hoi4.tech_render", "hoi4.tech_compare"] {
+        for tool in ["hoi4.tech_inspect", "hoi4.tech_render"] {
             assert!(mcp
                 .capabilities
                 .iter()
@@ -1953,6 +2170,22 @@ mod tests {
             .components
             .iter()
             .all(|component| component.id != "workflow.lora_comfyui_interest"));
+    }
+
+    #[test]
+    fn unknown_component_template_engine_fails_closed() {
+        let mut manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+        ))
+        .unwrap();
+        let component = manifest
+            .components
+            .iter_mut()
+            .find(|component| component.id == "core.claude.instructions")
+            .unwrap();
+        component.source.template_engine = Some("future_unreviewed_engine".into());
+        let error = validate_manifest(&manifest, None).unwrap_err();
+        assert!(error.to_string().contains("unsupported template engine"));
     }
 
     #[test]
@@ -2050,9 +2283,9 @@ mod tests {
             .map(|file| file.path.as_str())
             .collect::<HashSet<_>>();
         for expected in [
-            ".agents/skills/hoi4-super-events/SKILL.md",
-            ".agents/skills/hoi4-super-events/assets/examples/contact_sheet.png",
-            ".agents/skills/hoi4-super-events/assets/examples/super_event_world_in_fury.png",
+            ".claude/skills/hoi4-super-events/SKILL.md",
+            ".claude/skills/hoi4-super-events/assets/examples/contact_sheet.png",
+            ".claude/skills/hoi4-super-events/assets/examples/super_event_world_in_fury.png",
             "interface/hoi4ms_super_events.gui",
             "interface/hoi4ms_super_events.gfx",
             "common/scripted_guis/hoi4ms_super_events.txt",
@@ -2063,17 +2296,21 @@ mod tests {
             "gfx/super_events/super_event_template.psd",
             "gfx/super_events/super_event_image_template_457x328.psd",
             "docs/super_events/README.md",
-            ".codex/agents/hoi4_super_event_quote_researcher.toml",
-            ".codex/agents/hoi4_super_event_audio_researcher.toml",
-            ".codex/agents/hoi4_super_event_art_researcher.toml",
+            ".claude/agents/hoi4-super-event-quote-researcher.md",
+            ".claude/agents/hoi4-super-event-audio-researcher.md",
+            ".claude/agents/hoi4-super-event-art-researcher.md",
         ] {
             assert!(paths.contains(expected), "{expected}");
         }
 
+        // A Git tree lists each path once even when two components (such as
+        // a canonical skill and its runtime copy) read the same source file.
+        let mut seen_paths = HashSet::new();
         let tree = manifest
             .components
             .iter()
             .flat_map(|component| component.expected_files.iter())
+            .filter(|file| seen_paths.insert(file.path.clone()))
             .map(|file| TreeEntry {
                 path: file.path.clone(),
                 kind: "blob".into(),
@@ -2090,17 +2327,17 @@ mod tests {
             .iter()
             .filter(|file| {
                 file.destination
-                    .starts_with(".agents/skills/hoi4-super-events")
+                    .starts_with(".claude/skills/hoi4-super-events")
                     && file.destination.ends_with("/SKILL.md")
             })
             .collect::<Vec<_>>();
         assert_eq!(super_event_skills.len(), 1);
         assert_eq!(
             super_event_skills[0].destination,
-            ".agents/skills/hoi4-super-events/SKILL.md"
+            ".claude/skills/hoi4-super-events/SKILL.md"
         );
         assert!(selected_files.iter().any(|file| {
-            file.destination == ".codex/agents/hoi4_super_event_audio_researcher.toml"
+            file.destination == ".claude/agents/hoi4-super-event-audio-researcher.md"
         }));
     }
 
@@ -2139,6 +2376,131 @@ mod tests {
                 .get("manifest_generated_for_revision")
                 .and_then(Value::as_str)
         );
+    }
+
+    fn live_tools_manifest_value() -> (Value, String) {
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
+        let inventory: Value = serde_json::from_str(include_str!(
+            "../../docs/source-audit/live_repository_inventory.json"
+        ))
+        .unwrap();
+        (
+            serde_json::from_slice(bytes).unwrap(),
+            inventory["manifest_generated_for_revision"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        )
+    }
+
+    fn live_tools_action(value: &mut Value) -> &mut Value {
+        value["components"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|component| component["id"] == "workflow.live_tools")
+            .unwrap()["validation"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|rule| rule["id"] == "live.bootstrap")
+            .unwrap()
+    }
+
+    #[test]
+    fn live_tools_bootstrap_pins_one_reviewed_release() {
+        let (value, revision) = live_tools_manifest_value();
+        let manifest =
+            parse_manifest(&serde_json::to_vec(&value).unwrap(), Some(&revision)).unwrap();
+        let component = manifest
+            .components
+            .iter()
+            .find(|component| component.id == "workflow.live_tools")
+            .expect("the HOI4 Live Tools workflow must be published");
+        let actions = component
+            .validation
+            .iter()
+            .filter(|rule| rule.kind == "command")
+            .collect::<Vec<_>>();
+        assert_eq!(actions.len(), 1);
+        let action = actions[0];
+        assert_eq!(
+            action.target.as_deref(),
+            Some(".tools/mcp/bootstrap_hoi4_live_tools.py")
+        );
+        assert_eq!(
+            action.parameters["arguments"],
+            serde_json::json!(["--quiet"])
+        );
+        assert!(action.parameters["release_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://github.com/klimPaskov/HOI4-Live-Tools/releases/download/"));
+        assert_eq!(
+            action.parameters["release_sha256"].as_str().unwrap().len(),
+            64
+        );
+        assert!(component
+            .dependencies
+            .iter()
+            .any(|dependency| dependency == "mcp.hoi4_live.bootstrap"));
+        let script = manifest
+            .components
+            .iter()
+            .find(|component| component.id == "mcp.hoi4_live.bootstrap")
+            .expect("the managed bootstrap script must be published");
+        assert_eq!(
+            script.destination.path,
+            ".tools/mcp/bootstrap_hoi4_live_tools.py"
+        );
+    }
+
+    #[test]
+    fn live_tools_bootstrap_requires_complete_reviewed_action_evidence() {
+        for (field, expected) in [
+            (
+                "rollback_boundary",
+                "HOI4 Live Tools bootstrap action evidence is incomplete",
+            ),
+            (
+                "network_access",
+                "HOI4 Live Tools bootstrap action evidence is incomplete",
+            ),
+            ("release_sha256", "invalid lowercase SHA-256"),
+            (
+                "release_size",
+                "HOI4 Live Tools bootstrap action evidence is incomplete",
+            ),
+        ] {
+            let (mut value, revision) = live_tools_manifest_value();
+            live_tools_action(&mut value)["parameters"]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            let error = parse_manifest(&serde_json::to_vec(&value).unwrap(), Some(&revision))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "{field}: {error}");
+        }
+        let (mut value, revision) = live_tools_manifest_value();
+        live_tools_action(&mut value)["parameters"]["arguments"] =
+            serde_json::json!(["--quiet", "--anything"]);
+        let error = parse_manifest(&serde_json::to_vec(&value).unwrap(), Some(&revision))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("HOI4 Live Tools bootstrap action evidence is incomplete"));
+    }
+
+    #[test]
+    fn live_tools_workflow_without_an_installer_stays_a_skill_only_workflow() {
+        let (mut value, revision) = live_tools_manifest_value();
+        value["components"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|component| component["id"] == "workflow.live_tools")
+            .unwrap()["validation"] = serde_json::json!([]);
+        parse_manifest(&serde_json::to_vec(&value).unwrap(), Some(&revision)).unwrap();
     }
 
     #[test]
@@ -2411,6 +2773,32 @@ mod tests {
     }
 
     #[test]
+    fn verified_download_rejects_an_unresolved_git_lfs_pointer() {
+        let bytes: &[u8] = b"version https://git-lfs.github.com/spec/v1\noid sha256:0c87ae522997ef55ebb907eee55a25391e8e5dcdc52a75dec09ad52e73abbe66\nsize 11604\n";
+        let selection = SelectedSourceFile {
+            component_id: "wiki.snapshot".into(),
+            source_path: "paradox_wiki/media/image.jpg".into(),
+            destination: "paradox_wiki/media/image.jpg".into(),
+            ownership: Ownership::Managed,
+            expected_sha256: Some(sha256_bytes(bytes)),
+            expected_size: Some(bytes.len() as u64),
+            executable: false,
+            platform: ManifestPlatform::All,
+        };
+
+        let error = verify_download(
+            &selection,
+            bytes,
+            "599497ea2f93612d9094461c6fde114fc87a5c0f",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("unresolved Git LFS pointer"));
+        assert!(error.contains("paradox_wiki/media/image.jpg"));
+    }
+
+    #[test]
     fn verified_download_rejects_wrong_size() {
         let bytes = b"incoming";
         let selection = SelectedSourceFile {
@@ -2455,6 +2843,42 @@ mod tests {
 
         assert_eq!(returned, trusted);
         assert_eq!(fs::read(&cache_path).unwrap(), replacement);
+    }
+
+    #[test]
+    fn prefetch_reuses_verified_cache_entries_and_tolerates_duplicates() {
+        let root = tempfile::tempdir().unwrap();
+        let client = HttpSourceClient::with_cache_root(root.path().to_path_buf()).unwrap();
+        let revision = "599497ea2f93612d9094461c6fde114fc87a5c0f";
+        let mut files = Vec::new();
+        for index in 0..20 {
+            let bytes = format!("cached file {index}").into_bytes();
+            let sha256 = sha256_bytes(&bytes);
+            let cache_path = client.cache_root.join("blobs").join(revision).join(&sha256);
+            fs::create_dir_all(cache_path.parent().unwrap()).unwrap();
+            fs::write(&cache_path, &bytes).unwrap();
+            files.push((
+                format!("core/{index}.txt"),
+                sha256.clone(),
+                Some(bytes.len() as u64),
+            ));
+            files.push((
+                format!("copy/{index}.txt"),
+                sha256,
+                Some(bytes.len() as u64),
+            ));
+        }
+
+        client.prefetch_verified_files(revision, &files);
+
+        for (path, sha256, size) in &files {
+            let bytes = client
+                .fetch_verified_file_with_download(revision, path, sha256, *size, |_, _, _| {
+                    panic!("prefetched files must be served from the verified cache")
+                })
+                .unwrap();
+            assert_eq!(sha256_bytes(&bytes), *sha256);
+        }
     }
 
     #[test]
@@ -2602,6 +3026,7 @@ mod tests {
                 manifest_cache_ttl_seconds: None,
             },
             signing: None,
+            coding_environments: Vec::new(),
         }
     }
 }

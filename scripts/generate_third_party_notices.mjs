@@ -14,6 +14,7 @@ function run(command, args) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: 32 * 1024 * 1024,
+    windowsHide: true,
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {

@@ -1,8 +1,10 @@
 //! Provider-neutral semantic analysis adapters.
 //!
-//! Codex remains the default and keeps its official App Server ownership. All
-//! known hosted providers use checked-in verified defaults and an OS-vault
-//! credential, while local and custom routes use explicit addresses. The
+//! The Claude account route is the default: it runs the user's own installed
+//! Claude Code, which owns sign-in (see `claude_code`). Codex keeps its
+//! official App Server ownership. All known hosted API providers use
+//! checked-in verified defaults and an OS-vault credential, while local and
+//! custom routes use explicit addresses. The
 //! project never receives a secret or a raw
 //! provider response; only the schema-validated proposal record crosses into
 //! the planning boundary.
@@ -38,6 +40,17 @@ pub struct AiProviderConfig {
 pub fn provider_profiles() -> Vec<AiProviderProfile> {
     [
         (
+            crate::claude_code::PROVIDER_ID,
+            "Claude",
+            "claude_code_cli",
+            false,
+            "Claude account setup analysis",
+            Some(crate::claude_code::DEFAULT_MODEL),
+            Some("high"),
+            None,
+            Some(crate::claude_code::SETUP_URL),
+        ),
+        (
             "codex",
             "Codex",
             "codex_app_server",
@@ -50,11 +63,11 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
         ),
         (
             "claude",
-            "Claude",
+            "Claude API key",
             "anthropic_messages",
             true,
             "Claude setup analysis",
-            Some("claude-sonnet-5"),
+            Some(crate::claude_code::DEFAULT_MODEL),
             Some("high"),
             Some("https://api.anthropic.com/v1/messages"),
             Some("https://platform.claude.com/settings/keys"),
@@ -87,7 +100,7 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             "openai_compatible",
             true,
             "DeepSeek setup analysis",
-            Some("deepseek-v4-flash"),
+            Some("deepseek-flash"),
             Some("high"),
             Some("https://api.deepseek.com/chat/completions"),
             Some("https://platform.deepseek.com/api_keys"),
@@ -144,6 +157,19 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
     .collect()
 }
 
+/// Non-secret integration and authentication labels persisted in readiness
+/// reports and project state for a provider ID.
+pub fn integration_and_auth_mode(provider: &str) -> (&'static str, &'static str) {
+    match provider {
+        "codex" => ("codex_app_server", "chatgpt"),
+        crate::claude_code::PROVIDER_ID => {
+            (crate::claude_code::ENGINE, crate::claude_code::AUTH_MODE)
+        }
+        "local" => ("provider_api", "local_endpoint"),
+        _ => ("provider_api", "api_key"),
+    }
+}
+
 pub fn profile(provider: &str) -> Option<AiProviderProfile> {
     provider_profiles()
         .into_iter()
@@ -170,7 +196,10 @@ pub fn validate_config(config: &AiProviderConfig) -> Result<AiProviderProfile, A
         ));
     }
     validate_reasoning_effort(&config.reasoning_effort)?;
-    if config.provider == "codex" {
+    if config.provider == crate::claude_code::PROVIDER_ID {
+        crate::claude_code::validate_model(&config.model)?;
+    }
+    if config.provider == "codex" || config.provider == crate::claude_code::PROVIDER_ID {
         validate_endpoint_for_provider(&config.provider, Some(config.endpoint.as_str()))?;
         return Ok(profile);
     }
@@ -203,13 +232,23 @@ pub fn validate_endpoint_for_provider(
     provider: &str,
     endpoint: Option<&str>,
 ) -> Result<(), AppError> {
-    let profile = profile(provider.trim())
+    let provider = provider.trim();
+    let profile = profile(provider)
         .ok_or_else(|| AppError::InvalidInput("unsupported AI provider".into()))?;
     let value = endpoint.unwrap_or_default().trim();
     if provider == "codex" {
         if !value.is_empty() {
             return Err(AppError::InvalidInput(
                 "Codex uses the local App Server and does not accept a provider endpoint".into(),
+            ));
+        }
+        return Ok(());
+    }
+    if provider == crate::claude_code::PROVIDER_ID {
+        if !value.is_empty() {
+            return Err(AppError::InvalidInput(
+                "the Claude account route uses Claude Code and does not accept a provider endpoint"
+                    .into(),
             ));
         }
         return Ok(());
@@ -249,7 +288,22 @@ pub fn validate_endpoint_for_provider(
             "AI provider endpoint contains credential-shaped content".into(),
         ));
     }
-    let _ = profile;
+    if provider != "custom" && provider != "local" {
+        let expected = profile
+            .default_endpoint
+            .as_deref()
+            .and_then(|value| reqwest::Url::parse(value).ok())
+            .ok_or_else(|| {
+                AppError::InvalidInput(
+                    "the selected hosted provider has no reviewed endpoint".into(),
+                )
+            })?;
+        if parsed.origin() != expected.origin() {
+            return Err(AppError::Credential(
+                "known provider keys may only be sent to the provider's reviewed HTTPS origin; use the custom provider for another host".into(),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -271,6 +325,9 @@ pub fn account_status<S: CredentialStore>(
             }
         }
     };
+    if config.provider == crate::claude_code::PROVIDER_ID {
+        return crate::claude_code::account_status(&config.model);
+    }
     let authenticated = if profile.requires_credential {
         config
             .credential_reference
@@ -304,6 +361,9 @@ pub fn list_models<S: CredentialStore>(
         return Err(AppError::InvalidInput(
             "Codex models use the App Server catalog".into(),
         ));
+    }
+    if config.provider == crate::claude_code::PROVIDER_ID {
+        return Ok(crate::claude_code::builtin_models());
     }
     let mut url = reqwest::Url::parse(&config.endpoint)
         .map_err(|_| AppError::InvalidInput("AI provider endpoint must be a valid URL".into()))?;
@@ -379,6 +439,11 @@ pub fn list_models<S: CredentialStore>(
             let default_reasoning_effort = entry
                 .get("default_reasoning_effort")
                 .or_else(|| entry.get("defaultReasoningEffort"))
+                .or_else(|| {
+                    entry
+                        .get("effort")
+                        .and_then(|effort| effort.get("default_level"))
+                })
                 .and_then(Value::as_str)
                 .filter(|effort| efforts.iter().any(|candidate| candidate == effort))
                 .map(ToOwned::to_owned)
@@ -414,7 +479,9 @@ pub fn list_models<S: CredentialStore>(
 }
 
 fn supported_efforts(provider: &str, model: &str) -> Vec<String> {
-    let levels = if provider == "deepseek" || (provider == "claude" && model.contains("sonnet-5")) {
+    let levels = if provider == "deepseek" {
+        &["low", "high", "max"][..]
+    } else if provider == "claude" && model.contains("sonnet-5") {
         &["low", "medium", "high", "xhigh", "max"][..]
     } else if provider == "claude"
         && (model.contains("4-6")
@@ -432,7 +499,12 @@ fn supported_efforts(provider: &str, model: &str) -> Vec<String> {
 fn advertised_efforts(entry: &Value) -> Option<Vec<String>> {
     let values = entry
         .get("supported_reasoning_efforts")
-        .or_else(|| entry.get("supportedReasoningEfforts"))?
+        .or_else(|| entry.get("supportedReasoningEfforts"))
+        .or_else(|| {
+            entry
+                .get("effort")
+                .and_then(|effort| effort.get("supported_levels"))
+        })?
         .as_array()?;
     let mut efforts = values
         .iter()
@@ -454,6 +526,9 @@ pub fn analyze<S: CredentialStore>(
     request: &AiAnalysisRequest,
 ) -> Result<CodexAnalysisResult, AppError> {
     let profile = validate_config(config)?;
+    if config.provider == crate::claude_code::PROVIDER_ID {
+        return crate::claude_code::analyze(request, &profile.optimization_profile);
+    }
     let input_sha256 = analysis_input_sha256(&request.analysis)?;
     let prompt = analysis_prompt_for_provider(
         &request.analysis,
@@ -476,21 +551,42 @@ pub fn analyze<S: CredentialStore>(
             "provider credential store returned an empty value".into(),
         ));
     }
-    let response = request_provider(
-        &config.provider,
-        &profile.protocol,
-        &config.endpoint,
-        &config.model,
-        &config.reasoning_effort,
-        &prompt,
-        secret.as_deref(),
-    )?;
-    let analysis = validate_analysis_output(
-        response,
-        &request.analysis,
-        &input_sha256,
-        &request.analysis.evidence,
-    )?;
+    // A rejected proposal set gets one corrective request; the deterministic
+    // validator is never relaxed.
+    let mut turn_prompt = prompt.clone();
+    let mut attempt = 0;
+    let analysis = loop {
+        attempt += 1;
+        let validated = request_provider(
+            &config.provider,
+            &profile.protocol,
+            &config.endpoint,
+            &config.model,
+            &config.reasoning_effort,
+            &turn_prompt,
+            secret.as_deref(),
+        )
+        .and_then(|response| {
+            validate_analysis_output(
+                response,
+                &request.analysis,
+                &input_sha256,
+                &request.analysis.evidence,
+            )
+        });
+        match validated {
+            Ok(analysis) => break analysis,
+            Err(error) => match crate::codex::correctable_output_error(&error) {
+                Some(reason) if attempt < crate::codex::ANALYSIS_ATTEMPTS => {
+                    turn_prompt = format!(
+                        "{prompt}\n\n{}",
+                        crate::codex::corrective_analysis_prompt(reason, &input_sha256)
+                    );
+                }
+                _ => return Err(error),
+            },
+        }
+    };
     let output_sha256 = crate::security::sha256_bytes(&serde_json::to_vec(&analysis)?);
     Ok(CodexAnalysisResult {
         analysis: analysis.clone(),
@@ -603,11 +699,13 @@ fn request_provider(
         .send()
         .map_err(|error| AppError::Process(format!("AI provider request failed: {error}")))?;
     let status = response.status();
+    // Transport-level failures are Process or Protocol errors so they are
+    // never mistaken for a rejected proposal set and retried.
     if response
         .content_length()
         .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
     {
-        return Err(AppError::Serialization(
+        return Err(AppError::Process(
             "AI provider response exceeded the bounded response limit".into(),
         ));
     }
@@ -617,7 +715,7 @@ fn request_provider(
         .read_to_end(&mut bytes)
         .map_err(|error| AppError::Process(format!("AI provider response failed: {error}")))?;
     if bytes.len() > MAX_RESPONSE_BYTES {
-        return Err(AppError::Serialization(
+        return Err(AppError::Process(
             "AI provider response exceeded the bounded response limit".into(),
         ));
     }
@@ -627,7 +725,9 @@ fn request_provider(
             status.as_u16()
         )));
     }
-    let envelope: Value = serde_json::from_slice(&bytes)?;
+    let envelope: Value = serde_json::from_slice(&bytes).map_err(|_| {
+        AppError::Protocol("AI provider returned an unreadable response envelope".into())
+    })?;
     extract_structured_output(&envelope)
 }
 
@@ -673,14 +773,22 @@ mod tests {
         let profiles = provider_profiles();
         assert_eq!(
             profiles.first().map(|profile| profile.id.as_str()),
-            Some("codex")
+            Some(crate::claude_code::PROVIDER_ID)
         );
+        let claude_account = profiles.first().unwrap();
+        assert_eq!(
+            claude_account.default_model.as_deref(),
+            Some("claude-haiku-4-5-20251001")
+        );
+        assert!(!claude_account.requires_credential);
+        assert!(claude_account.default_endpoint.is_none());
+        assert!(profiles.iter().any(|profile| profile.id == "codex"));
         assert!(profiles.iter().any(|profile| profile.id == "claude"));
         assert!(profiles.iter().any(|profile| profile.id == "custom"));
         for (id, model, endpoint, account_url) in [
             (
                 "claude",
-                "claude-sonnet-5",
+                "claude-haiku-4-5-20251001",
                 "https://api.anthropic.com/v1/messages",
                 "https://platform.claude.com/settings/keys",
             ),
@@ -698,7 +806,7 @@ mod tests {
             ),
             (
                 "deepseek",
-                "deepseek-v4-flash",
+                "deepseek-flash",
                 "https://api.deepseek.com/chat/completions",
                 "https://platform.deepseek.com/api_keys",
             ),
@@ -731,8 +839,15 @@ mod tests {
         }
         assert!(validate_reasoning_effort("ultra").is_err());
         assert_eq!(
-            supported_efforts("deepseek", "deepseek-v4-flash"),
-            vec!["low", "medium", "high", "xhigh", "max"]
+            supported_efforts("deepseek", "deepseek-flash"),
+            vec!["low", "high", "max"]
+        );
+        assert_eq!(
+            advertised_efforts(&json!({
+                "id": "deepseek-flash",
+                "effort": {"supported_levels": ["low", "high", "max"], "default_level": "high"}
+            })),
+            Some(vec!["low".into(), "high".into(), "max".into()])
         );
     }
 
@@ -747,7 +862,7 @@ mod tests {
     fn remote_endpoints_require_https_and_no_embedded_credentials() {
         let config = AiProviderConfig {
             provider: "deepseek".into(),
-            model: "deepseek-chat".into(),
+            model: "deepseek-flash".into(),
             reasoning_effort: "high".into(),
             endpoint: "http://example.invalid/v1/chat/completions".into(),
             credential_reference: None,
@@ -793,8 +908,65 @@ mod tests {
         assert!(validate_endpoint_for_provider("claude", None).is_err());
         assert!(
             validate_endpoint_for_provider("claude", Some("https://api.example.invalid/v1"))
-                .is_ok()
+                .is_err()
         );
+        assert!(validate_endpoint_for_provider(
+            "claude",
+            Some("https://api.anthropic.com/v1/messages")
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn claude_account_route_uses_no_endpoint_or_api_key() {
+        assert!(validate_endpoint_for_provider(crate::claude_code::PROVIDER_ID, None).is_ok());
+        assert!(validate_endpoint_for_provider(
+            crate::claude_code::PROVIDER_ID,
+            Some("https://api.anthropic.com/v1/messages")
+        )
+        .is_err());
+        let config = AiProviderConfig {
+            provider: crate::claude_code::PROVIDER_ID.into(),
+            model: crate::claude_code::DEFAULT_MODEL.into(),
+            reasoning_effort: "high".into(),
+            endpoint: String::new(),
+            credential_reference: None,
+        };
+        assert!(validate_config(&config).is_ok());
+        let mut injected = config.clone();
+        injected.model = "--dangerously-skip-permissions".into();
+        assert!(validate_config(&injected).is_err());
+        let models = list_models(&MemoryCredentialStore::default(), &config).unwrap();
+        assert_eq!(models[0].id, crate::claude_code::DEFAULT_MODEL);
+        // Haiku 4.5 does not support effort on either Claude route.
+        assert_eq!(
+            supported_efforts("claude", crate::claude_code::DEFAULT_MODEL),
+            vec!["high"]
+        );
+    }
+
+    #[test]
+    fn known_provider_credentials_cannot_be_routed_to_an_unreviewed_origin() {
+        assert!(validate_endpoint_for_provider(
+            "deepseek",
+            Some("https://api.deepseek.com/v1/chat/completions")
+        )
+        .is_ok());
+        for endpoint in [
+            "https://attacker.example/v1/chat/completions",
+            "https://api.deepseek.com.attacker.example/v1/chat/completions",
+            "https://api.deepseek.com:444/v1/chat/completions",
+        ] {
+            assert!(
+                validate_endpoint_for_provider("deepseek", Some(endpoint)).is_err(),
+                "accepted unreviewed origin: {endpoint}"
+            );
+        }
+        assert!(validate_endpoint_for_provider(
+            "custom",
+            Some("https://custom.example/v1/chat/completions")
+        )
+        .is_ok());
     }
 
     #[test]
@@ -814,7 +986,7 @@ mod tests {
             }),
         };
         assert!(validate_config(&config).is_err());
-        config.model = "deepseek-chat".into();
+        config.model = "deepseek-flash".into();
         config.endpoint = format!("https://provider.example/v1/token/{test_key}");
         assert!(validate_config(&config).is_err());
     }

@@ -312,13 +312,13 @@
           ]
         },
         "engine": {
-          "const": "codex_app_server"
+          "enum": ["codex_app_server", "claude_code_cli", "provider_api"]
         },
         "auth_mode": {
-          "const": "chatgpt"
+          "enum": ["chatgpt", "claude_account", "api_key", "local_endpoint"]
         },
         "transport": {
-          "const": "stdio_jsonl"
+          "enum": ["stdio_jsonl", "process_stdio", "https"]
         },
         "model": {
           "type": [

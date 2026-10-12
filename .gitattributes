@@ -1,5 +1,8 @@
 * text=auto eol=lf
 
+# Upstream audit artifacts retain their exact committed bytes and SHA-256.
+docs/source-manifest/*.json -text
+
 *.bat text eol=crlf
 *.cmd text eol=crlf
 *.ps1 text eol=crlf

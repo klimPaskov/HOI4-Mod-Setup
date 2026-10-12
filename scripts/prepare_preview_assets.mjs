@@ -193,8 +193,8 @@ for (const artifactDirectory of expectedEntries) {
   });
 }
 
-mergeSbomInventories(sbomInventories);
-mergeThirdPartyNotices(noticeInventories);
+await writeFile(resolve(inputRoot, "SBOM.cdx.json"), JSON.stringify(mergeSbomInventories(sbomInventories), null, 2) + "\n", "utf8");
+await writeFile(resolve(inputRoot, "THIRD_PARTY_NOTICES.md"), mergeThirdPartyNotices(noticeInventories), "utf8");
 
 const downloadBase = previewTag
   ? `https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/${encodeURIComponent(previewTag)}`

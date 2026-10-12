@@ -18,10 +18,61 @@ Pre-releases use identifiers such as `v0.3.0-beta.1`.
 2. Confirm schema migrations and rollback behavior.
 3. Confirm the remote workflow manifest is compatible with the application release.
 4. Confirm user-facing README, release notes, support status, and known limitations.
-5. Run `pnpm release:notices` and `pnpm release:sbom`; review the generated `THIRD_PARTY_NOTICES.md` and `SBOM.cdx.json` together with bundled assets and dependency license text.
+5. Run `pnpm release:notices THIRD_PARTY_NOTICES.md` to refresh the checked-in notices, then `pnpm release:sbom` for `dist/release/SBOM.cdx.json`. Native builds also generate both inventories under `dist/release/`. Review them together with bundled assets and dependency license text.
 6. Confirm no credentials or private paths are present in artifacts, logs, source maps, or debug symbols.
 7. Update the changelog and version through the repository-owned release script.
 8. Update affected repo-local skills when release, signing, packaging, or validation steps changed.
+
+For 0.4.0, the version is already consistent across package, Cargo, lock, and
+Tauri metadata. Do not bump it again during validation. Run the local source
+gates before creating the release PR:
+
+```powershell
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm test:manifest
+pnpm test:release-assets
+pnpm test:workflows
+pnpm test:a11y
+pnpm test:e2e
+pnpm validate
+pnpm validate:secrets
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+pnpm test:rust
+cargo check --manifest-path fuzz/Cargo.toml --bins
+pnpm audit --audit-level high
+cargo audit
+```
+
+`pnpm test:rust` runs every non-opt-in Rust unit, integration, property, and
+fault test with all features and four test threads. Set
+`HOI4_TEST_RUST_THREADS` from 1 to 32 only for a dedicated runner. Install
+Playwright once with `pnpm test:e2e:install` if needed. Activate MSVC as described
+in `DEVELOPMENT.md` when the Windows toolchain requires it.
+
+Set `HOI4_MOD_SETUP_SOURCE_REPOSITORY` to an explicit local package checkout and
+run `pnpm test:offline`. This verifies every declared committed blob, exercises
+fresh all-component installation/import/repair/removal/rollback and the exact
+public 0.3.5 source layout upgrade, then scans a synthetic 50,000-file mod.
+The application profiles, projects, and caches are temporary. Provider replies
+and external installers are fakes; no real account, paid service, MCP tool call,
+or shared desktop is used. `pnpm docs:screenshots` refreshes the 15 public
+captures through the same headless browser gate. Review the captures before
+commit; the Pages workflow consumes them directly.
+
+These checks do not substitute for signed native-package tests on Windows x64,
+macOS arm64, and macOS x64, real launcher/game loading, completed browser or
+device-code sign-in, OS-vault round trips, or updater replacement/restart/retry.
+Record those results on the exact release candidate in an available dedicated
+desktop or clean CI runner. Do not run focus-changing native launch/installer
+smokes on a shared desktop.
+
+The local 0.4.0 counts, exact source revisions, workflow coverage, and remaining
+native/publication gates are recorded in
+[`docs/development/0.4.0-release-validation.md`](docs/development/0.4.0-release-validation.md).
 
 ## Tag and build
 
@@ -35,6 +86,34 @@ git push origin vX.Y.Z
 ```
 
 The tag workflow should build from that exact commit. Release jobs must not modify source and then publish uncommitted output.
+
+For the prepared 0.4.0 candidate, the maintainer's publication sequence is:
+
+1. Push the local review branch and open a PR into `main`; finish source and
+   native platform gates and merge through the protected branch.
+2. Confirm the live Agentic package publication resolves to the tested exact
+   revision. A bundled local candidate or a local MCP tarball is development
+   evidence, not proof that users can fetch that package from GitHub/npm.
+3. Confirm the protected `release` environment's publication variable,
+   platform signing settings, community/official signing credentials, and
+   Tauri private updater key match the configuration below.
+4. From a clean checkout, run `git switch main`, `git pull --ff-only`,
+   `git tag -a v0.4.0 -m "HOI4 Mod Setup v0.4.0"`, and
+   `git push origin v0.4.0`. The workflow requires that tag to target current
+   `main` and rejects an already published version.
+5. Approve the protected release environment when requested and let the tag
+   workflow verify, sign, curate, create its draft, compare all six uploaded
+   public assets, and publish. Do not manually upload or undraft unverified
+   assets. Retain the internal signing/provenance/dependency artifacts.
+6. Confirm `latest.json` contains all three updater targets and the release
+   presents all three installer links. Confirm GitHub Pages uses GitHub Actions;
+   merging the page changes into `main` runs `Publish project page`, or dispatch
+   that workflow manually if Pages needs its first deployment.
+7. After the gated workflow has finished publishing and verifying its six
+   installer/update assets, attach `setup_app_tutorial.mp4` as supplemental
+   release media. Verify the upload's size and SHA-256 against the original.
+   README and Pages link to that asset and the Agentic package's MCP demo;
+   videos stay outside Git and never enter updater metadata or asset curation.
 
 ## Public release assets
 
@@ -146,6 +225,11 @@ password; no keychain password secret is required.
 Both community and official signing change the package after the unsigned build
 manifest is written. Each signing job recalculates the complete internal
 artifact manifest only after verifying the signed package.
+
+Stable and preview curation preserve the deterministic union of the three
+platform SBOMs and notice inventories under the downloaded `release-artifacts/`
+or `preview-artifacts/` root. Each workflow uploads that combined evidence as a
+separate internal artifact; it never enters the public installer/update set.
 
 ## Public source gate
 

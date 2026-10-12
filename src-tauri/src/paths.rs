@@ -334,8 +334,202 @@ pub fn validate_project_root_or_destination(path: &Path) -> Result<(PathBuf, boo
     Ok((candidate, false))
 }
 
+/// Append one technical line to the bounded diagnostics log in application
+/// data. User-facing messages stay short; this file keeps the underlying
+/// cause for troubleshooting. Failures to log are ignored, and unit tests
+/// never write to the real application data folder.
+pub fn record_diagnostic(context: &str, detail: &str) {
+    if cfg!(test) {
+        return;
+    }
+    if let Ok(root) = application_data_root() {
+        append_diagnostic(&root.join("logs"), context, detail);
+    }
+}
+
+fn append_diagnostic(directory: &Path, context: &str, detail: &str) {
+    const MAX_BYTES: u64 = 512 * 1024;
+    if fs::create_dir_all(directory).is_err() {
+        return;
+    }
+    let path = directory.join("diagnostics.log");
+    if fs::metadata(&path).is_ok_and(|metadata| metadata.len() > MAX_BYTES) {
+        let _ = fs::rename(&path, directory.join("diagnostics.previous.log"));
+    }
+    let line = format!(
+        "{} {} {}\n",
+        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        context,
+        crate::security::redact_secrets(&detail.replace(['\r', '\n'], " "), &[])
+    );
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        use std::io::Write;
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+/// The diagnostics log location shown to users.
+pub fn diagnostics_log_path() -> Option<PathBuf> {
+    application_data_root()
+        .ok()
+        .map(|root| root.join("logs").join("diagnostics.log"))
+}
+
+/// Where Hearts of Iron IV and its Workshop content live on this computer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameInstall {
+    /// The game folder, written with forward slashes.
+    pub game_dir: String,
+    /// The Workshop content folder for Hearts of Iron IV (app 394360).
+    pub workshop_dir: String,
+    /// False when no install was found and these are the platform defaults.
+    pub detected: bool,
+}
+
+const HOI4_STEAM_FOLDER: &str = "steamapps/common/Hearts of Iron IV";
+const HOI4_WORKSHOP_FOLDER: &str = "steamapps/workshop/content/394360";
+
+fn forward_slashes(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
+/// Library roots listed in Steam's `libraryfolders.vdf` (`"path" "..."` rows).
+pub(crate) fn steam_library_paths(vdf: &str) -> Vec<PathBuf> {
+    vdf.lines()
+        .filter_map(|line| {
+            let mut quoted = line.split('"').skip(1).step_by(2);
+            match (quoted.next(), quoted.next()) {
+                (Some(key), Some(value)) if key.eq_ignore_ascii_case("path") => {
+                    Some(PathBuf::from(value.replace("\\\\", "\\")))
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn steam_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if cfg!(target_os = "windows") {
+        for variable in ["ProgramFiles(x86)", "ProgramFiles"] {
+            if let Some(base) = env::var_os(variable) {
+                roots.push(PathBuf::from(base).join("Steam"));
+            }
+        }
+        if let Some(system_root) = env::var_os("SystemRoot") {
+            let reg = PathBuf::from(system_root).join("System32").join("reg.exe");
+            if reg.is_file() {
+                let mut command = std::process::Command::new(reg);
+                command.args(["query", r"HKCU\Software\Valve\Steam", "/v", "SteamPath"]);
+                crate::process::configure_child_no_console_window(&mut command);
+                if let Ok(output) = command.output() {
+                    let text = String::from_utf8_lossy(&output.stdout);
+                    if let Some(value) = text
+                        .lines()
+                        .find(|line| line.contains("SteamPath"))
+                        .and_then(|line| line.split("REG_SZ").nth(1))
+                    {
+                        roots.insert(0, PathBuf::from(value.trim()));
+                    }
+                }
+            }
+        }
+    } else if let Some(home) = env::var_os("HOME") {
+        roots.push(PathBuf::from(home).join("Library/Application Support/Steam"));
+    }
+    roots
+}
+
+/// Find the installed game through the Steam libraries, falling back to the
+/// default Steam location of the platform so instructions stay usable.
+pub fn detect_game_install() -> GameInstall {
+    let mut libraries = Vec::new();
+    for root in steam_roots() {
+        if !libraries.contains(&root) {
+            libraries.push(root.clone());
+        }
+        let vdf = root.join("steamapps").join("libraryfolders.vdf");
+        if let Ok(text) = fs::read_to_string(vdf) {
+            for library in steam_library_paths(&text) {
+                if !libraries.contains(&library) {
+                    libraries.push(library);
+                }
+            }
+        }
+    }
+    for library in &libraries {
+        let game = library.join(HOI4_STEAM_FOLDER);
+        if game.is_dir() {
+            return GameInstall {
+                game_dir: forward_slashes(&game),
+                workshop_dir: forward_slashes(&library.join(HOI4_WORKSHOP_FOLDER)),
+                detected: true,
+            };
+        }
+    }
+    let default_library = if cfg!(target_os = "windows") {
+        PathBuf::from("C:/Program Files (x86)/Steam")
+    } else {
+        libraries
+            .first()
+            .cloned()
+            .unwrap_or_else(|| PathBuf::from("~/Library/Application Support/Steam"))
+    };
+    GameInstall {
+        game_dir: forward_slashes(&default_library.join(HOI4_STEAM_FOLDER)),
+        workshop_dir: forward_slashes(&default_library.join(HOI4_WORKSHOP_FOLDER)),
+        detected: false,
+    }
+}
+
+/// The detected install, looked up once per app run.
+pub fn game_install() -> &'static GameInstall {
+    static INSTALL: std::sync::OnceLock<GameInstall> = std::sync::OnceLock::new();
+    INSTALL.get_or_init(detect_game_install)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_diagnostic_line_is_one_redacted_line_and_the_log_rolls_over() {
+        let directory = tempfile::tempdir().unwrap();
+        let logs = directory.path().join("logs");
+        append_diagnostic(&logs, "plan", "first line\nsecond line");
+        let text = fs::read_to_string(logs.join("diagnostics.log")).unwrap();
+        assert_eq!(text.lines().count(), 1);
+        assert!(text.contains(" plan first line second line"));
+        fs::write(logs.join("diagnostics.log"), vec![b'x'; 600 * 1024]).unwrap();
+        append_diagnostic(&logs, "plan", "after rollover");
+        assert!(logs.join("diagnostics.previous.log").exists());
+        let text = fs::read_to_string(logs.join("diagnostics.log")).unwrap();
+        assert!(text.contains("after rollover"));
+        assert!(text.len() < 1024);
+    }
+
+    #[test]
+    fn steam_library_rows_are_read_with_escaped_backslashes() {
+        let vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Program Files (x86)\\\\Steam\"\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\SteamLibrary\"\n\t\t\"apps\"\n\t}\n}\n";
+        assert_eq!(
+            steam_library_paths(vdf),
+            vec![
+                PathBuf::from("C:\\Program Files (x86)\\Steam"),
+                PathBuf::from("D:\\SteamLibrary")
+            ]
+        );
+    }
+
+    #[test]
+    fn the_game_install_always_names_a_game_and_workshop_folder() {
+        let install = detect_game_install();
+        assert!(install
+            .game_dir
+            .ends_with("steamapps/common/Hearts of Iron IV"));
+        assert!(install
+            .workshop_dir
+            .ends_with("steamapps/workshop/content/394360"));
+        assert!(!install.game_dir.contains('\\'));
+    }
+
     use super::*;
     use tempfile::tempdir;
 

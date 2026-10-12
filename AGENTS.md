@@ -4,7 +4,7 @@ This file governs development of the **HOI4 Mod Setup** desktop application. It 
 
 ## 1. Product promise
 
-HOI4 Mod Setup prepares a new or existing Hearts of Iron IV mod for agentic development with a user-selected AI provider. Codex is the default.
+HOI4 Mod Setup prepares a new or existing Hearts of Iron IV mod for agentic development with a user-selected AI provider. Claude, signed in through the user's own Claude Code with Claude Haiku 4.5, is the default setup assistant.
 
 Every implementation must preserve these promises:
 
@@ -105,7 +105,7 @@ Keep core domain logic independent from UI components and platform APIs. Platfor
 
 ## 5. Repository source rules
 
-Use "C:\Users\klimp\OneDrive\Documents\Paradox Interactive\Hearts of Iron IV\mod\agentic_hoi4_modding" as the live workflow source.
+The live workflow source is the public [Agentic HOI4 Modding](https://github.com/klimPaskov/Agentic-HOI4-Modding) repository. To test unpublished package changes end to end, set `HOI4_MOD_SETUP_SOURCE_REPOSITORY` to the absolute path of a local checkout before starting the app; it then serves the checkout's committed files in place of GitHub.
 
 The application must:
 
@@ -142,9 +142,11 @@ Use `hoi4-mod-setup-source-manifest` for changes to this surface.
 
 ## 5A. AI provider authentication and Codex App Server
 
-Codex remains the default provider. ChatGPT sign-in is a core prerequisite for Codex Create, Import, Update, and Repair planning. Use the official local `codex app-server` process over stdio JSONL. Do not implement an application-owned OAuth service or an OpenAI API-key fallback for the Codex route.
+The default setup assistant is the Claude account route (`claude_account`). It runs the user's own installed, unmodified, Anthropic-signed Claude Code: `claude auth login` owns sign-in, `claude auth status --json` supplies a non-identifying summary, and analysis is one isolated print-mode turn with tools, MCP servers, customizations, and session persistence disabled, run in an empty working directory with Claude Haiku 4.5 by default. Anthropic does not permit third-party apps to offer Claude.ai login or to collect, store, or intermediate Claude credentials, so never build an app-owned Claude OAuth flow, read Claude Code's credential store, accept a pasted authorization code, or forward `ANTHROPIC_*` credentials to the child. The full boundary is in `docs/31_ai_provider_profiles_and_chat_sources.md`.
 
-The first setup screen also supports the bounded provider registry in `docs/31_ai_provider_profiles_and_chat_sources.md`. Claude, Kimi, GLM, and DeepSeek use checked-in model/address defaults verified against official provider documentation plus an OS-vault API key; those non-secret defaults remain editable under Advanced. Custom hosted routes require an explicit HTTPS address and OS-vault API key. Local models require an explicit loopback HTTP address and do not claim a hosted account. The app must not invent provider URLs, login routes, packages, commands, model names, MCP servers, or platform support.
+Codex remains a first-class provider. ChatGPT sign-in is a core prerequisite for Codex Create, Import, Update, and Repair planning. Use the official local `codex app-server` process over stdio JSONL. Do not implement an application-owned OAuth service or an OpenAI API-key fallback for the Codex route.
+
+The first setup screen also supports the bounded provider registry in `docs/31_ai_provider_profiles_and_chat_sources.md`. Claude API key, Kimi, GLM, and DeepSeek use checked-in model/address defaults verified against official provider documentation plus an OS-vault API key; those non-secret defaults remain editable under Advanced. Custom hosted routes require an explicit HTTPS address and OS-vault API key. Local models require an explicit loopback HTTP address and do not claim a hosted account. The app must not invent provider URLs, login routes, packages, commands, model names, MCP servers, or platform support.
 
 Required behavior:
 
@@ -177,23 +179,27 @@ Use `hoi4-mod-setup-codex-integration` for changes to this boundary.
 ## 5B. Coding-environment selection
 
 The Components phase includes a separate **Coding Environments** step. Require
-exactly one primary environment, defaulting to Codex, and allow any additional
-selection from Claude Code, Cursor, Qoder, and OpenCode. The primary is never
+exactly one primary environment. New installs use the manifest-declared
+default (the current package defaults to Claude Code); any other supported
+environment may be selected as an additional client. The primary is never
 listed as an additional choice, and this selection is independent of the setup
 assistant and Core/Core plus 3D workflow profiles.
 
 Resolve complete native packages from manifest components tagged with
 `coding_environment`. Always include the shared runtime-neutral package:
-adapted `AGENTS.md`, `.agents/skills/`, canonical `.codex/agents/*.toml`,
-`.tools/sync/`, shared documentation, and selected workflows. The Codex TOMLs
-are the canonical subagent source; other client projections are generated and
-must pass source-side drift checks.
+canonical adapted `CLAUDE.md`, `.claude/skills/`, and `.claude/agents/`, the
+adapted `AGENTS.md` projection, `.tools/sync/`, shared documentation, and
+selected workflows. The Claude instruction, skill, and Markdown-subagent files
+are the source package; Codex, Cursor, Qoder, and OpenCode files are generated
+projections and must pass source-side drift checks.
 
 Persist primary and additional IDs in project state, plans, locks, and journals.
-Existing-project scans detect installed clients and default to Codex only when
-no primary is recorded. Update, repair, reinstall, rollback, and removal must
-preview client changes, preserve existing or modified files, and remove only
-unchanged managed files when a client is deselected. Use
+Existing-project scans preserve a valid recorded selection, including a prior
+Codex primary. Legacy projects without a recorded primary use Codex as the
+compatibility migration default; new installs follow the resolved manifest
+default. Update, repair, reinstall, rollback, and removal must preview client
+changes, preserve existing or modified files, and remove only unchanged
+managed files when a client is deselected. Use
 `hoi4-mod-setup-transactions` and `hoi4-mod-setup-source-manifest` for changes
 to this surface.
 
@@ -260,7 +266,10 @@ Managed content has one of four ownership types:
 
 Never silently replace a locally modified file. Compare base, local, and incoming content where a base exists. Offer only valid actions from keep, replace, merge, rename, and skip.
 
-Binary files never use text merge. TOML and JSON use structured merge. `AGENTS.md` uses three-way merge plus project adaptation. A merge result must validate before apply.
+Binary files never use text merge. TOML and JSON use structured merge.
+`CLAUDE.md` is the canonical instruction merge plus project adaptation;
+`AGENTS.md` is its provider-neutral projection and is also reviewed through a
+three-way merge. A merge result must validate before apply.
 
 ## 9. Credential and process rules
 

@@ -113,12 +113,14 @@
         "integration": {
           "enum": [
             "codex_app_server",
+            "claude_code_cli",
             "provider_api"
           ]
         },
         "auth_mode": {
           "enum": [
             "chatgpt",
+            "claude_account",
             "api_key",
             "local_endpoint"
           ]
@@ -162,7 +164,7 @@
       "required": ["provider", "model", "reasoning_effort", "optimization_profile"],
       "properties": {
         "provider": {
-          "enum": ["codex", "claude", "kimi", "glm", "deepseek", "local", "custom"]
+          "enum": ["codex", "claude_account", "claude", "kimi", "glm", "deepseek", "local", "custom"]
         },
         "model": {
           "type": "string",
@@ -191,6 +193,29 @@
           "items": {
             "enum": ["codex", "claude_code", "cursor", "qoder", "opencode"]
           }
+        }
+      }
+    },
+    "project_conventions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agents_profile",
+        "localisation_convention",
+        "documentation_convention"
+      ],
+      "properties": {
+        "agents_profile": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "localisation_convention": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "documentation_convention": {
+          "type": "string",
+          "maxLength": 256
         }
       }
     },

@@ -107,8 +107,9 @@ Do not display permanent keyboard shortcut hints in the footer. Keyboard support
 4. **Existing project scan**: visible bounded launcher-candidate confirmation before one progress surface with current scan stage, detected count, and cancel or pause.
 5. **Finding review**: compact finding list and one selected finding. Show evidence only for the selected item.
 6. **Component selection**: recommended component rows, sizes, one collapsed dependency and file-list control.
-7. **Coding environments**: one required primary radio group, with Codex
-   selected initially, and a separate checkbox group for additional clients.
+7. **Coding environments**: one required primary radio group, with the
+   manifest-declared default (currently Claude Code) selected initially, and a
+   separate checkbox group for additional clients.
    Render each primary choice as a bounded grid card with an independent name,
    description, and status cell. Descriptions wrap inside the card, the active
    primary is absent from additional choices, and the grid becomes one column
@@ -128,7 +129,11 @@ Do not display permanent keyboard shortcut hints in the footer. Keyboard support
 11. **Git setup**: three choices, branch and commit fields for the selected choice, remote and advanced options collapsed.
 12. **Install review**: change counts, a read-only summary of selected ChatGPT project files, short plan summary, preflight state, and a lazily rendered full file-and-folder plan on demand. Show starter directories as **Create folder** entries and never as `.gitkeep` files. Keep the preparation panel aligned to the same maximum width as the review below it.
 13. **Installation progress**: one progress bar with the current `x of y files` count, percentage, and time estimate; six grouped stages; transaction log collapsed.
-14. **Final readiness**: one success state, an Open in Codex action when the Codex project integration is installed regardless of setup assistant, grouped core checks, compact 3D/Super Events state, portrait provider state when selected, and a direct `https://chatgpt.com` handoff when flattened Chat sources were prepared.
+14. **Final readiness**: one success state, an Open in the selected primary
+   environment action when its verified opener requirements pass, grouped core
+   checks, compact 3D/Super Events state, portrait provider state when selected,
+   and a direct `https://chatgpt.com` handoff when flattened Chat sources were
+   prepared.
 15. **Update and repair**: four primary maintenance actions, the ChatGPT project-source package action when eligible, and a short installed-state list.
 16. **ChatGPT project-source package**: destination folder, selected source files, required-file lock state, optional root Markdown toggles, and one package action.
 17. **Merge conflict review**: local and incoming comparison, resolution choices, result preview after selection.

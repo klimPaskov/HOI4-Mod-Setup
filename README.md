@@ -6,10 +6,23 @@ HOI4 Mod Setup is a desktop wizard for preparing a Hearts of Iron IV mod for
 AI-assisted development. Start a new mod from its name and description, or
 choose an existing mod to add, update, or repair its development setup.
 
-The setup assistant can use Codex, Claude, Kimi, GLM, DeepSeek, a local model,
-or a custom provider. Codex is selected by default. This choice is only for
+The installed workflow is Claude-first: `CLAUDE.md`, the skills in
+`.claude/skills/`, and the specialist subagents in `.claude/agents/` are the
+canonical files, each subagent has a fixed Claude model tier, and the HOI4 Agent
+Tools MCP server is installed and registered for you. Codex, Cursor, Qoder, and
+OpenCode receive generated copies of the same rules, so you can use them too.
+
+The setup assistant can use Claude, Codex, Kimi, GLM, DeepSeek, a local model,
+or a custom provider. Claude is selected by default and signs in through your
+own Claude Code. This choice is only for
 analyzing and preparing the mod; it does not choose the AI client you use later
 for Agentic HOI4 Modding.
+
+## Quick start
+
+Follow the [Windows first-run guide](docs/QUICKSTART.md) to install the app and prepare your mod.
+
+[Watch the setup tutorial](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/setup_app_tutorial.mp4) · [See HOI4 Agent Tools in action](https://github.com/klimPaskov/Agentic-HOI4-Modding/releases/latest/download/hoi4_agent_tools_promo.mp4) · [Project guide](https://klimpaskov.github.io/HOI4-Mod-Setup/).
 
 ## Download
 
@@ -20,8 +33,9 @@ for Agentic HOI4 Modding.
 [View the latest release](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
 
 On Windows, run the downloaded setup file. On Mac, open the disk image and
-move HOI4 Mod Setup to Applications. Your computer may occasionally flag a new
-community build as harmful falsely. The project is safe and open source.
+move HOI4 Mod Setup to Applications. Community Windows builds are signed by
+ChaosX; community Mac builds use ad-hoc signing. See the release notes for the
+signing route used by your download.
 
 ## Using the app
 
@@ -32,13 +46,18 @@ reviewed the changes and started installation.
 
 ![Create a new mod or import an existing one](docs/screenshots/01-welcome.jpg)
 
-Choose **Create new mod** or **Import existing mod**. For Codex, sign in with
-ChatGPT. For Claude, Kimi, GLM, or DeepSeek, paste an API key from the provider;
+Choose **Create new mod** or **Import existing mod**. For Claude, choose
+**Sign in to Claude**: your installed Claude Code opens the browser and signs
+you in with your Claude account, and the app never sees your Claude
+credentials. If Claude Code is not installed yet, the app links to Anthropic's
+setup page. For Codex, sign in with ChatGPT. For Kimi, GLM, DeepSeek, or
+**Claude API key**, paste an API key from the provider;
 the app fills the normal connection details automatically. Local and custom
 models let you enter the address supplied by that model service. Once connected,
 choose from the provider's live model list and select one of the reasoning
-levels that model supports, from **Light** through **Max**. Codex defaults to
-GPT-5.6 Luna with Extra high reasoning; DeepSeek defaults to its Flash model.
+levels that model supports, from **Light** through **Max**. Claude defaults to
+Claude Haiku 4.5; Codex defaults to GPT-5.6 Luna with Extra high reasoning;
+DeepSeek defaults to its Flash model.
 
 **Manage an existing project** scans any selected mod before changing it. If the
 scan finds app-managed setup, the view also offers repair, update, optional
@@ -80,22 +99,28 @@ unrelated data dumps, so even very large mods stay within the setup scan.
 Select the instructions, skills, helpers, tools, and offline wiki you want.
 Required items stay selected so the project remains usable.
 
-Before the component list, choose **Coding Environments**. Select exactly one
-primary client (Codex is the default), then add any combination of Claude Code,
-Cursor, Qoder, and OpenCode. The primary is removed from the additional choices
-automatically. Each selected client receives its complete native package while
-the shared `AGENTS.md`, skills, canonical `.codex/agents/*.toml`, sync tools,
-documentation, and selected workflows remain common. This client choice is
-independent of the setup assistant and of Core/Core plus 3D workflow profiles.
-For an existing project, the app detects installed clients and removes only
-unchanged managed files when one is deselected; modified files are preserved.
+Before the component list, choose **Coding environments**. Select exactly one
+primary client (Claude Code is the default), then add any combination of the
+other clients the source package declares, such as Codex, Cursor, Qoder, and
+OpenCode. The primary is removed from the additional choices automatically.
+The canonical `CLAUDE.md`, `.claude/skills/`, `.claude/agents/`, runtime
+synchronizers, documentation, and selected workflows are always installed;
+each additional client receives its generated package, for example
+`AGENTS.md`, the `.agents/skills/` copy, and `.codex/agents/*.toml` for Codex.
+This client choice is independent of the setup assistant and of the workflow
+profiles. For an existing project, the app detects installed clients and
+removes only unchanged managed files when one is deselected; modified files are
+preserved.
 
 ![Choose one primary coding environment and any additional clients](docs/screenshots/15-coding-environments.png)
 
-The component list comes from the exact published Agentic HOI4 Modding
-manifest. When that repository publishes changed skills, new skills, new
-subagents, or compatible new components, **Latest** mode can use them without a
-new HOI4 Mod Setup release. Update adds newly published default-profile
+The component list, the coding environments, and the optional workflows all
+come from the exact published Agentic HOI4 Modding manifest. When that
+repository publishes changed skills, new skills, new subagents, new clients, or
+compatible new components, **Latest** mode can use them without a new HOI4 Mod
+Setup release. The app also fills in the Hearts of Iron IV and Workshop folders
+it finds through your Steam libraries, so the instructions point at your real
+game files. Update adds newly published default-profile
 components while preserving earlier optional choices and local-file conflict
 review.
 
@@ -115,11 +140,24 @@ the app runs the verified source bootstrap to prepare `uv`, the bounded Blender
 adapter, Meshy, and the reviewed MCP routes. Missing credentials or tools leave
 only this optional workflow incomplete; they do not make core setup unusable.
 
-The HOI4 Agent Tools MCP integration includes the working Technology Tree
-Viewer routes `hoi4.tech_inspect`, `hoi4.tech_render`, and
-`hoi4.tech_compare` when advertised by the resolved source revision. Its
-verified package and app-owned health check work with every AI provider;
-provider-specific client registration remains separate.
+The HOI4 Agent Tools MCP integration installs the exact package version the
+source manifest records, checks the routes that version advertises, and
+registers the server for each selected client (the project `.mcp.json` for
+Claude Code). Its verified package and app-owned health check work with every
+AI provider.
+
+The optional **HOI4 Live Tools** workflow installs the separate HOI4 Live Tools
+MCP server, which drives a running game on Windows for live feature tests, and
+adds the `hoi4-live-playtest` skill and its setup guide. Setup runs the
+package's reviewed bootstrap: it checks for Python 3.9 or newer, downloads the
+release the package pins and verifies its size and SHA-256, installs it for
+your user under `%LOCALAPPDATA%\hoi4-live-tools` with a private Python
+environment, starts it once to confirm it lists its tools, and registers it in
+the user configuration of the coding clients it finds (Claude Code, Codex,
+Cursor, OpenCode). The result appears on the readiness page as ready or
+incomplete with the reason; the project files stay either way. The installed
+program and the client entries are external tool state: Remove leaves them, and
+`python install.py uninstall` from the HOI4 Live Tools release removes them.
 
 The optional Super Events workflow adds the reusable popup, templates,
 examples, images, and supporting guidance needed to add more Super Events.
@@ -131,7 +169,7 @@ ComfyUI, RunPod, or Disabled for generic projects. Its expanded panel shows the
 minimum requirement: **16 GB VRAM and 25 GB storage**. Only the selected
 provider's instructions are installed. Sourced portraits use the pinned source
 or processing workflow; non-sourced fictional or impossible portraits use
-native ImageGen and never enter ComfyUI. See
+the configured image generator and never enter ComfyUI. See
 [`docs/32_comfyui_portrait_pipeline.md`](docs/32_comfyui_portrait_pipeline.md)
 for the current workflow and setup details.
 
@@ -164,16 +202,22 @@ recovery choices that still apply.
 ![Completed setup and readiness checks](docs/screenshots/08-ready.png)
 
 The Ready screen checks the project, instructions, selected tools, offline
-wiki, Git state, and optional workflows. **Open in Codex** becomes available
-when the required checks pass and the Codex project integration is installed,
-even when another AI performed setup analysis.
+wiki, Git state, and optional workflows. When the required checks pass, the
+main button opens the project in your primary client: **Open in Claude Code**
+starts Claude Code in a new terminal window in the project folder, and **Open
+in Codex** opens the Codex app when Codex is primary.
 
-If flattened ChatGPT files were selected, the Ready screen links directly to
-[ChatGPT Chat](https://chatgpt.com). When the optional portrait workflow is
-enabled, it also shows its persisted Cloud, Local, or RunPod readiness and
-canonical source guidance, or the explicit Disabled state. Chaos Redux uses
-RunPod API-first; computer control is used only when explicitly requested.
-Non-sourced fictional or impossible portraits use native ImageGen. Disabled
+ChatGPT source files are an optional setup check and stay out of the Ready
+summary. Installed projects include `.tools/package_chatgpt_project_sources.py`
+and its Windows `.bat` launcher. Run `python .tools/package_chatgpt_project_sources.py`
+to build a curated folder and `all-project-sources.zip` in Downloads; use
+`--dry-run`, `--include`, `--exclude`, or `--config` to review and adjust the
+selection. Choose a new `--output` folder for each export. The tool never uploads
+files. See the [source-packaging contract](docs/33_chatgpt_source_packaging.md).
+When the optional portrait workflow is enabled, it also shows its persisted Cloud, Local, or RunPod readiness and
+canonical source guidance, or the explicit Disabled state. RunPod runs
+API-first; computer control is used only when explicitly requested.
+Non-sourced fictional or impossible portraits use the configured image generator. Disabled
 generic projects keep source-based portrait handling without ComfyUI-specific
 project files. See
 [`docs/32_comfyui_portrait_pipeline.md`](docs/32_comfyui_portrait_pipeline.md).
@@ -187,6 +231,11 @@ or damaged files, change the portrait provider, add the 3D or Super Events
 workflow later, remove installed components, or recover an interrupted setup.
 Changes are shown for review before they are applied.
 
+**Remove components** deletes only the setup files the app installed and has
+not seen you change, then removes the folders that this leaves empty. Setup
+files you edited are shown for review first, and your own mod content is never
+touched.
+
 ![Package ChatGPT project sources](docs/screenshots/13-chat-sources.png)
 
 The source-package page shows the external download folder and the exact files
@@ -197,6 +246,10 @@ HOI4 Mod Setup checks for app updates when it opens. If a newer signed version
 is found, the app shows the update immediately, downloads and verifies it,
 replaces the current installation, and restarts into the new version. If the
 update fails, the running version remains usable and a retry action appears.
+
+## Troubleshooting
+
+See [Troubleshooting](docs/TROUBLESHOOTING.md) for sign-in, setup source, MCP, and interrupted installation fixes.
 
 ## Privacy
 

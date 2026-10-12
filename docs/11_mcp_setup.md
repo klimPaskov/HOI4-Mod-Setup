@@ -10,7 +10,7 @@ The inspected `.codex/config.toml` contains `hoi4_agent_tools` with command `hoi
 
 These findings drive the example manifest. They do not authorize macOS equivalents.
 
-The current source pins `hoi4-agent-tools@3.0.7` by npm SHA-512 integrity,
+The current source pins `hoi4-agent-tools@4.0.0` by npm SHA-512 integrity,
 canonical package-tree SHA-256 and file count, runtime-entry SHA-256 and size,
 and required tool names. The bootstrap and app independently verify the full
 installed package tree, so changing an imported sibling module fails before
@@ -19,20 +19,19 @@ and Node executes that copy, preventing a change between verification and
 spawn. The `.cmd` wrapper is used only to locate the current-user npm
 prefix and is never executed. Node must be a regular link-free executable with
 a valid OpenJS Foundation signature; its actual SHA-256 is captured and
-rechecked immediately at spawn. No package, command, version, or macOS route is
-invented.
+rechecked immediately at spawn. The 4.0.0 source snapshot declares the current
+28 required MCP routes and a bundled dependency tree; exact package file counts
+come from the canonical source manifest. The application reads
+the exact route list from the resolved manifest; no package, command, version,
+tool, or macOS route is invented.
 
-The verified 3.0.7 package contains 4,848 files and an 18,406,400-byte native
-library. Package verification therefore allows at most 32 MiB per file while
-retaining the 256 MiB total-tree and 10,000-file bounds. npm versions that emit
-a hidden global `.package-lock.json` must retain the declared integrity there;
-when npm does not emit that optional file, exact manifest integrity plus the
-complete package-tree identity remain mandatory.
-
-Version 3.0.7 also releases detached parser, graph, and renderer memory after
-the idle cache window, preventing parallel coding-agent sessions from
-exhausting the server process while leaving the command, runtime entry, and
-23-tool readiness baseline unchanged.
+Package verification allows at most 32 MiB per file while retaining the
+512 MiB total-tree and 10,000-file bounds. npm versions that emit a hidden
+global `.package-lock.json` must retain the declared integrity there; when npm
+does not emit that optional file, exact manifest integrity plus the complete
+package-tree identity remain mandatory. Package version, tree evidence, and
+required routes change with the canonical source manifest and are not copied
+forward from an earlier release.
 
 ## MCP component fields
 
@@ -67,10 +66,10 @@ Security-sensitive root values such as `approval_policy` and `sandbox_mode` rece
    its SHA-256, and recheck that identity immediately at spawn.
 5. Send the MCP JSON-RPC initialize request with protocol version, empty client
    capabilities, and client info, followed by `notifications/initialized`.
-6. Require the exact negotiated protocol version and an advertised `tools`
-   capability.
+6. Require the exact negotiated protocol version, the reviewed package version
+   advertised by the server, and a `tools` capability.
 7. Call `tools/list` and require every source-advertised route, including all
-   three Technology Tree routes.
+   current Technology Tree inspectors and renderer.
 8. Stop cleanly.
 
 Do not run paid or mutating provider actions as generic health checks unless the repository declares a safe operation.
@@ -82,13 +81,14 @@ route remains unavailable and no same-named command is executed.
 
 The current HOI4 Agent Tools documentation and manifest describe focus, event,
 weighted-logic, scripted-GUI, map, technology, and doctrine routes. The
-Technology Tree Viewer is exposed through `hoi4.tech_inspect`,
-`hoi4.tech_render`, and `hoi4.tech_compare`. Show only the capabilities declared
-by the resolved manifest and refine them with the live MCP tool list. Those
-three Technology Tree routes are the application's permanent readiness
-baseline for the supported HOI4 Agent Tools integration. Manifest-only file and
+Technology Tree Viewer is exposed through `hoi4.tech_inspect` and
+`hoi4.tech_render`; comparisons use `hoi4.tech_inspect` with `mode: "compare"`.
+Show only the capabilities declared by the resolved manifest and refine them
+with the live MCP tool list. The current Technology Tree routes are checked through the exact package's
+manifest declaration. The removed `hoi4.tech_compare` route cannot satisfy
+`hoi4.tech_inspect` or `hoi4.tech_render`. Manifest-only file and
 documentation additions are dynamic; changing this executable route baseline
-requires a reviewed app release.
+requires compatibility review.
 
 ## Credentials
 
@@ -109,6 +109,34 @@ Display only name, required state, secret state, source, and available or missin
 
 Compare version policy, package evidence, command, configuration, environment requirements, and live tool list. Any package-source, command, or credential change requires review.
 
+The published runtime must also be reproducible from immutable artifacts.
+Pinning the top-level npm version does not pin transitive version ranges.
+A canonical full-tree hash captured from one successful installation is not
+proof that a later clean install will produce the same bytes. Before public
+release, install the exact declared artifact into a disposable prefix and
+verify the complete tree against the manifest. Publish a bundled runtime or
+an integrity-complete pinned dependency closure when transitive resolution
+can drift; do not replace the expected hash with whichever tree a user's
+machine happens to contain, or bypass a failed check.
+
+## Local unpublished package verification
+
+`scripts/test_live_mcp.mjs` accepts `HOI4_MCP_LOCAL_TARBALL` only as an
+explicit absolute path. It checks the local tarball's exact SHA-512 against
+`package_integrity`, stages those verified bytes in its disposable prefix,
+and skips only the registry integrity lookup. Package version, hidden npm lock
+integrity when present, complete package-tree hash/count, runtime-entry
+hash/size, protocol/version negotiation, and required tools remain mandatory.
+The default path uses npm `dist.integrity` and fails closed while the pinned
+version is unpublished. The application and bootstrap keep their registry
+installation contract.
+
+TODO before publication is considered verified: replace local-pack integrity
+with the published npm `dist.integrity`, recapture the complete tree and entry
+from a clean published-package install, regenerate the canonical source
+manifest, copy its committed Git blob into the bundle, and rerun the default
+registry smoke test. Local smoke evidence does not prove npm publication.
+
 ## Removal
 
 Remove only managed configuration contributions. Do not automatically uninstall a global package that may be shared by other projects. Report its external state instead.
@@ -116,3 +144,18 @@ Remove only managed configuration contributions. Do not automatically uninstall 
 ## Security review
 
 Highlight global package installation, network code download, writes outside the project, broad Codex sandbox settings, and servers that receive secrets.
+
+## HOI4 Live Tools (optional workflow)
+
+HOI4 Live Tools is a separate Python MCP server that drives a running Hearts of Iron IV. The package publishes it as the optional `workflow.live_tools` component (the `hoi4-live-playtest` skill and its setup guide) that depends on the managed script component `mcp.hoi4_live.bootstrap` (`.tools/mcp/bootstrap_hoi4_live_tools.py`). It is not an npm package and is not registered in the project: its program lives under `%LOCALAPPDATA%\hoi4-live-tools` and its client entries in each client's user configuration.
+
+The component declares one reviewed command action (`live.bootstrap`) that the app validates against the same fixed shape as the 3D and MCP bootstraps: the target is the managed script, the only argument is `--quiet`, the privilege is the current user, and the network access, expected writes, and rollback boundary are declared. It also pins the release it installs (`release_version`, `release_url` on `https://github.com`, `release_sha256`, `release_size`); the script verifies the archive against its own copy of the pin, and a package contract test keeps the two equal. A package whose component declares no command stays a skill-only workflow.
+
+Flow, after the project files are written and verified:
+
+1. The app re-reads the managed script from the project and checks it against the plan's hash and size.
+2. It finds `python` on `PATH`, requires the Python Software Foundation publisher signature, and runs the script from a private verified copy with `-I --quiet`, no credentials, and a 30 minute limit.
+3. The script downloads the pinned archive over HTTPS (redirects only to GitHub hosts), checks size and SHA-256, extracts it safely to a temporary folder, and runs the release's `install.py`: private environment, dependency install, a start of the installed server that must list its tools, and an atomic, backed-up registration in the user configuration of the clients found (Claude Code, Codex, Cursor, OpenCode). A `hoi4-live` entry of another program is a conflict and is left untouched.
+4. Exit code 0 sets the workflow state to ready; any other result, a missing Python, or a failed publisher check sets it to incomplete with the script's message (bounded and redacted). The core setup stays usable either way.
+
+Removal removes only the managed project files. The installed program and the client entries are external tool state, reported and not removed (`python install.py uninstall` from the release removes them). The server's own contract, exit codes, and layout are in `docs/integration.md` of the HOI4 Live Tools repository.
