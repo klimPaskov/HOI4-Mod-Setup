@@ -23,17 +23,18 @@ async function updateCargoToml() {
   await writeFile(path, updated, "utf8");
 }
 
-async function updateCargoLock() {
-  const path = resolve(root, "Cargo.lock");
+async function updateCargoLock(relativePath) {
+  const path = resolve(root, relativePath);
   const source = await readFile(path, "utf8");
   const pattern = /(\[\[package\]\]\r?\nname = "hoi4-mod-setup"\r?\nversion = ")[^"]+("\r?\n)/;
   const updated = source.replace(pattern, `$1${version}$2`);
-  if (updated === source) throw new Error("Cargo.lock application package version was not found");
+  if (updated === source) throw new Error(`${relativePath} application package version was not found`);
   await writeFile(path, updated, "utf8");
 }
 
 await updateJson("package.json");
 await updateJson("src-tauri/tauri.conf.json");
 await updateCargoToml();
-await updateCargoLock();
+await updateCargoLock("Cargo.lock");
+await updateCargoLock("fuzz/Cargo.lock");
 console.log(`Set HOI4 Mod Setup version to ${version}.`);

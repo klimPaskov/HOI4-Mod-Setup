@@ -115,6 +115,9 @@ version into a skill.
 Use semantic version tags. Prepare each release through a pull request. Build
 from the exact annotated tag commit. Publish only through the gated tag
 workflow.
+Use `pnpm version:set` to synchronize package, Tauri, Cargo metadata and both
+the workspace and fuzz Cargo lockfiles. Fuzz compilation must not leave an
+uncommitted application-version change in its lockfile.
 
 Stable release evidence includes:
 
