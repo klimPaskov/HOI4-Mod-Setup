@@ -52,7 +52,7 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - Tagged builds derive and validate one semantic version across the package manifest, Tauri configuration, metadata, and exact tag.
 - Pull requests from forks do not receive release secrets.
 - Check names remain stable once rulesets depend on them.
-- Platform build jobs run on real Windows and macOS runners.
+- Platform build jobs run on real Windows, macOS, and Linux runners.
 - Current GitHub-hosted macOS packaging labels are `macos-15` for arm64 and `macos-15-intel` for x64; do not restore retired `macos-13` or `macos-14` labels.
 - Native desktop jobs run the repository-owned UI gates, Tauri package verification, GUI-subsystem verification for the Windows native executable, and bounded launch smoke after the package is built.
 - Windows architecture verification requires the native Tauri executable to match the target machine type; the packaged NSIS bootstrap may be 32-bit, but it must still be a valid PE image.
@@ -60,10 +60,10 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - Pull-request package verification accepts GitHub merge refs; semantic tag and tag-target checks are enforced only when the release workflow enables `HOI4_MOD_SETUP_REQUIRE_RELEASE_IDENTITY=1`.
 - Fuzz targets compile in CI from the pinned Rust toolchain.
 - Generated artifacts are uploaded only after tests pass.
-- Linux CI runners install the Tauri/WebKit/GTK build dependencies before all-feature Rust checks; native Windows and macOS release jobs remain the packaging evidence path.
+- Linux CI runners install the Tauri/WebKit/GTK build dependencies before all-feature Rust checks; Ubuntu 22.04 x64 native jobs build and test both AppImage and Debian packages.
 - Release runners install the pinned Python validation dependencies before invoking repository-integrity checks, and publication asset arguments are built from an explicit file list rather than an unexpanded recursive glob.
-- Tauri native bundles are copied from the workspace-root `target/release/bundle` or the alternate `src-tauri/target/release/bundle` layout; when `HOI4_MOD_SETUP_BUNDLE` is set, only that requested `nsis` or `dmg` subdirectory is copied so stale cross-target packages cannot enter a release. `src-tauri/icons/app-icon-source.png` is the reviewed source for generated Windows and macOS icon assets.
-- Keep only Windows and macOS icon outputs in source control. Android/iOS icon
+- Tauri native bundles are copied from the workspace-root `target/release/bundle` or the alternate `src-tauri/target/release/bundle` layout; when `HOI4_MOD_SETUP_BUNDLE` is set, only the validated requested `nsis`, `dmg`, `appimage`, or `deb` subdirectories are copied; Linux uses `appimage,deb` so stale cross-target packages cannot enter a release. `src-tauri/icons/app-icon-source.png` is the reviewed source for generated Windows and macOS icon assets.
+- Keep only desktop icon outputs in source control. Android/iOS icon
   trees and the unreferenced duplicate Tauri `windows-schema.json` are ignored
   because mobile platforms are not supported release targets.
 - Release build jobs are tag-only and attach the protected `release` environment to the signing and publication jobs. Windows and macOS signing inputs are kept in separate platform steps; Apple secrets are injected only into the official-signing step, while the community path receives no Apple credentials. Cleanup removes temporary private material and disposable macOS keychains.
@@ -78,7 +78,7 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
   repair/removal, and exact apply/rollback restoration before uploading its
   platform artifact.
 - The manually dispatched `development-preview.yml` uses `scripts/prepare_preview_assets.mjs` to recheck exact source, platform, architecture, package hashes, and notices before publishing one user-facing semantic-version prerelease; the workflow refuses to reuse a published tag, receives no stable signing credentials, and keeps the GitHub prerelease label.
-- Preview and stable publication scripts use deterministic installer names (`HOI4-Mod-Setup-windows-x64-setup.exe`, `HOI4-Mod-Setup-macos-arm64.dmg`, and `HOI4-Mod-Setup-macos-x64.dmg`). Preview release notes lead with three direct installer bullets. Hashes, metadata, provenance, notices, and SBOM remain in CI evidence and are verified before publication. Stable releases add `latest.json` and the two signed macOS app archives beside the three installers.
+- Preview and stable publication scripts use deterministic installer names (`HOI4-Mod-Setup-windows-x64-setup.exe`, `HOI4-Mod-Setup-macos-arm64.dmg`, and `HOI4-Mod-Setup-macos-x64.dmg`, `HOI4-Mod-Setup-linux-x64.AppImage`, and `HOI4-Mod-Setup-linux-x64.deb`). Preview release notes lead with five direct installer bullets. Hashes, metadata, provenance, notices, and SBOM remain in CI evidence and are verified before publication. Stable releases add `latest.json` and the two signed macOS app archives beside the five installers.
 - Platform-native lockfiles can contain legitimate optional packages for only one runner (for example, a Windows or macOS bundler). Preview and stable curation therefore require identical source, package, and platform evidence but merge the verified platform SBOM and third-party notice inventories into one deterministic union; they must not reject a release merely because those inventories differ by platform.
 - `scripts/prepare_release_assets.mjs` writes the stable union back to the
   internal `release-artifacts/` evidence root, and
@@ -87,13 +87,13 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
   separately from the public publication assets; curation must not put the
   internal inventories into the public asset set.
 - `scripts/generate_sbom.mjs` derives a CycloneDX dependency inventory from the locked pnpm and Cargo metadata and places `SBOM.cdx.json` in native release output. `scripts/generate_third_party_notices.mjs` separately derives the human-readable license inventory. Neither is a substitute for reviewing bundled assets or complete dependency license text.
-- Every signing route changes package bytes after the unsigned build manifest. The platform signing job verifies the resulting signature, records package-bound evidence, and regenerates the complete internal artifact manifest before curation.
+- Windows and macOS signing changes package bytes after the unsigned build manifest. Linux updater signing authenticates both final package files. Every signing job records package-bound evidence and regenerates the complete internal manifest; curation cryptographically verifies final updater bytes against the embedded public key.
 - The reusable ChaosX community PFX and encoded password live only in encrypted
   GitHub Secrets. The workflow decodes the PFX into the runner temporary directory,
   loads its public identity ephemerally, signs without network access, and removes
   the temporary PFX in an `always()` cleanup step.
-- Stable publication first creates a draft from the exact six public assets:
-  three installers, `latest.json`, and two macOS update archives. It verifies
+- Stable publication first creates a draft from the exact eight public assets:
+  five installers, `latest.json`, and two macOS update archives. It verifies
   the remote draft state and exact downloaded bytes, and only then changes it
   to a normal public release.
 - A publication job that intentionally omits source checkout must pass
@@ -121,8 +121,8 @@ uncommitted application-version change in its lockfile.
 
 Stable release evidence includes:
 
-- user-facing Windows `.exe` installer and macOS `.dmg` installer for each
-  supported architecture, with extension and platform checks
+- user-facing Windows `.exe`, macOS `.dmg` for each supported architecture,
+  and Linux x64 `.AppImage` and `.deb`, with extension and platform checks
 - a ChaosX Authenticode signature on community Windows builds and an ad-hoc
   codesign signature on community macOS builds; official credentials upgrade
   these to Azure Artifact Signing and Apple Developer ID/notarization
@@ -141,7 +141,7 @@ Stable release evidence includes:
 Never move a published tag. Withdraw a bad release and publish a new version.
 
 The current release workflow builds Tauri packages on explicit Windows x64,
-macOS arm64, and macOS x64 runners, verifies exact PE or Mach-O architecture
+macOS arm64, macOS x64, and Linux x64 runners, verifies exact PE, Mach-O, or ELF64 architecture
 and package extension, then signs and rehashes each package before curation.
 When `HOI4_MOD_SETUP_RELEASE_SIGNING_CONFIGURED=false`, Windows uses the protected
 `WINDOWS_COMMUNITY_PFX_BASE64` and `WINDOWS_COMMUNITY_PFX_PASSWORD_BASE64`
@@ -169,14 +169,53 @@ ref. The release source gate fetches that one exact remote tag ref before checki
 its object type and peeling its commit; do not weaken this to trust the checkout ref.
 
 The Ubuntu release-validation job installs the same Tauri system libraries as the
-Linux CI compile job before running all-feature Clippy and tests. These packages
-support validation only and do not declare Linux as a distributed app platform.
+Linux CI compile job before running all-feature Clippy and tests. Ubuntu 22.04 native Linux jobs separately provide AppImage/deb packaging and
+installer evidence; do not substitute a portable-core compile for native gates.
 
 Community Windows signing decodes the protected reusable ChaosX PFX only into the
 runner temporary directory, signs without a timestamp or network request, verifies
 the embedded signer thumbprint and non-hash-error status, and removes the temporary
 PFX afterward. Official Azure signing retains the configured RFC 3161 timestamp
 route. The signing job has a hard twenty-minute limit.
+
+## Linux release contract
+
+Build Linux x64 packages on `ubuntu-22.04` with
+`HOI4_MOD_SETUP_BUNDLE=appimage,deb`; Ubuntu 24.04 is a development-verification
+host, not evidence of compatibility with the older release baseline. Run
+`scripts/install_linux_dependencies.sh` before building. It owns GTK/WebKitGTK,
+libsecret, `secret-tool`, D-Bus, FUSE, and Xvfb prerequisites. Debian packaging
+adds `libsecret-tools` to the automatically generated runtime dependency set.
+
+`release:verify` must validate the native and extracted application ELF64
+architecture, AppImage type-2 marker and contained AppRun, and Debian product,
+version, and amd64 identity. Native Linux CI, preview, and release run
+`desktop:e2e` and `installer:e2e` through `xvfb-run -a dbus-run-session --` with
+isolated XDG profiles. Only a disposable runner sets
+`HOI4_MOD_SETUP_DEDICATED_LINUX=1`; that enables real bounded `dpkg` install/purge,
+refuses existing product state, and proves removal. Without the flag the local
+installer harness extracts, launches, and removes temporary copies only.
+
+The protected, checkout-free, OIDC-free `sign-linux` job receives the updater
+private key in exactly one bounded step and signs both final AppImage and Debian
+files. Linux reports `signing=updater_signed` and
+`method=tauri-updater-signature`; do not invent Authenticode, notarization, or
+an OS signature for Linux. Curation's Rust verifier checks both final files
+against the committed Tauri public key before publishing.
+
+Publish `linux-x86_64-appimage`, `linux-x86_64-deb`, and an AppImage
+`linux-x86_64` fallback in `latest.json`. The locked updater chooses the
+installer-specific target first. Debian must never select an AppImage update.
+The public stable set is exactly five installers, `latest.json`, and two macOS
+app archives; signatures and other evidence remain internal.
+
+Keep `Desktop E2E (ubuntu-22.04)` in the checked-in main ruleset. After all
+required GitHub Actions checks succeed on current main, review then apply
+`scripts/apply_main_ruleset.py --sha <main-commit> [--apply]`. It preserves
+existing protection, requires the latest completed successful CI evidence,
+and rejects source or policy drift. Never remove existing checks to merge.
+The workflow checker and `scripts/test_linux_release_gates.py` cover these
+Linux authority and evidence requirements.
 
 ## License and updater gates
 
@@ -189,7 +228,7 @@ and restart when a newer version is found; failures preserve the running
 version and expose retry. Sign final platform bytes with
 the protected Tauri updater key after Authenticode or macOS signing, embed
 signatures in `latest.json`, and publish the two macOS app archives alongside
-the three user-facing installers. A check or install failure must preserve the
+the five user-facing installers. A check or install failure must preserve the
 running version and remain non-blocking.
 Before curation, stream-verify every final update artifact against the exact
 public key embedded in `tauri.conf.json`; existence of a `.sig` file alone is

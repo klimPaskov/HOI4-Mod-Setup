@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { resolveSystemPowerShellPath } from "./windows_installer_registry.mjs";
+import { parseNativeBundles, verifyElfBytes, verifyLinuxPackage } from "./linux_packages.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const packageMetadata = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
@@ -107,25 +108,27 @@ if (process.env.HOI4_MOD_SETUP_REQUIRE_TAURI === "1") {
   if (!existsSync(packageRoot)) throw new Error("Tauri package directory is missing");
   const packages = readdirSync(packageRoot, { recursive: true });
   const platform = String(metadata.platform).toLowerCase();
-  const packagePattern = requestedBundle === "nsis"
-    ? /\.exe$/i
-    : requestedBundle === "dmg"
-      ? /\.dmg$/i
-      : platform.includes("windows")
-        ? /\.(msi|exe)$/i
-        : platform.includes("mac") || platform.includes("darwin")
-          ? /\.(dmg|app)$/i
-          : /\.(msi|dmg|app|exe)$/i;
-  const packageFiles = packages.filter((path) => /\.(msi|exe|dmg|app)$/i.test(path));
+  const bundles = parseNativeBundles(requestedBundle ?? (metadata.bundle === "all" ? undefined : metadata.bundle));
+  const suffixes = { nsis: ".exe", dmg: ".dmg", appimage: ".appimage", deb: ".deb" };
+  const packagePattern = platform.includes("windows") ? /\.(msi|exe)$/i
+    : platform.includes("mac") || platform.includes("darwin") ? /\.(dmg|app)$/i
+      : platform === "linux" ? /\.(appimage|deb)$/i : /$^/;
+  const packageFiles = packages.filter((path) => /\.(msi|exe|dmg|app|appimage|deb)$/i.test(path));
   if (!packageFiles.some((path) => packagePattern.test(path))) {
     throw new Error(`no ${platform} package was found in the Tauri bundle output`);
   }
-  if (requestedBundle && packageFiles.some((path) => !packagePattern.test(path))) {
+  if (packageFiles.some((path) => !packagePattern.test(path)
+    || (bundles.length && !bundles.some((bundle) => path.toLowerCase().endsWith(suffixes[bundle]))))) {
     throw new Error(`release bundle contains a package outside the requested ${requestedBundle} target`);
+  }
+  for (const bundle of bundles) {
+    if (packageFiles.filter((path) => path.toLowerCase().endsWith(suffixes[bundle])).length !== 1) {
+      throw new Error(`release bundle must contain exactly one ${bundle} package`);
+    }
   }
   verifyPlatformArchitecture(packageRoot, packageFiles, platform, String(metadata.architecture).toUpperCase());
   if (process.env.HOI4_MOD_SETUP_REQUIRE_SIGNING === "1") {
-    if (metadata.signing !== "configured") {
+    if (metadata.signing !== (platform === "linux" ? "updater_signed" : "configured")) {
       throw new Error("platform package is unsigned; configure signing before publication");
     }
     verifyPlatformSignatures(packageRoot, packageFiles, platform);
@@ -135,7 +138,7 @@ if (process.env.HOI4_MOD_SETUP_REQUIRE_TAURI === "1") {
       platform: metadata.platform,
       architecture: metadata.architecture,
       package_sha256: Object.fromEntries(packageFiles.map((path) => [path, createHash("sha256").update(readFileSync(resolve(packageRoot, path))).digest("hex")])),
-      method: platform.includes("windows") ? "authenticode" : "codesign-and-stapler",
+      method: platform === "linux" ? "tauri-updater-signature" : platform.includes("windows") ? "authenticode" : "codesign-and-stapler",
     };
     const evidencePath = resolve(root, "dist", "release", "SIGNING_VERIFICATION.json");
     writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + "\n", "utf8");
@@ -215,10 +218,30 @@ function verifyPlatformArchitecture(packageRoot, packageFiles, platform, archite
     }
     return;
   }
+  if (platform === "linux") {
+    if (architecture !== "X64") throw new Error("Linux release currently supports x64 only");
+    const nativeExecutable = [resolve(root, "target", "release", "hoi4-mod-setup"), resolve(root, "src-tauri", "target", "release", "hoi4-mod-setup")].find(existsSync);
+    if (!nativeExecutable) throw new Error("Linux release has no native executable to inspect");
+    verifyElfBytes(readFileSync(nativeExecutable), architecture);
+    for (const relative of packageFiles) verifyLinuxPackage(resolve(packageRoot, relative), packageMetadata.version, architecture);
+    return;
+  }
   throw new Error(`architecture verification is unsupported on runner platform ${platform}`);
 }
 
 function verifyPlatformSignatures(packageRoot, packageFiles, platform) {
+  if (platform === "linux") {
+    for (const relative of packageFiles) {
+      const artifact = resolve(packageRoot, relative);
+      if (!existsSync(`${artifact}.sig`)) throw new Error(`Linux updater signature is missing for ${relative}`);
+      const result = spawnSync("cargo", ["run", "--locked", "--quiet", "--manifest-path", resolve(root, "tools", "updater-signature-verify", "Cargo.toml"), "--", artifact, `${artifact}.sig`, resolve(root, "src-tauri", "tauri.conf.json")], {
+        cwd: root, encoding: "utf8", timeout: 120_000,
+      });
+      if (result.error) throw result.error;
+      if (result.status !== 0) throw new Error(`Linux updater signature verification failed for ${relative}`);
+    }
+    return;
+  }
   if (platform.includes("windows")) {
     const expectedSubject = process.env.HOI4_MOD_SETUP_WINDOWS_SIGNER;
     if (!expectedSubject) throw new Error("Windows signing identity is not configured");

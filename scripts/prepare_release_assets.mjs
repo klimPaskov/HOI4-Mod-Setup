@@ -7,6 +7,7 @@ const root = resolve(import.meta.dirname, "..");
 const inputRoot = resolve(root, process.argv[2] ?? "release-artifacts");
 const outputRoot = resolve(root, process.argv[3] ?? "publication-assets");
 const expected = new Map([
+  ["hoi4-mod-setup-linux-x64", { platform: "linux", architecture: "X64", extensions: [".appimage", ".deb"] }],
   ["hoi4-mod-setup-windows-x64", { platform: "windows", architecture: "X64", extension: ".exe", updaterPlatform: "windows-x86_64" }],
   ["hoi4-mod-setup-macos-arm64", { platform: "macos", architecture: "ARM64", extension: ".dmg", updaterPlatform: "darwin-aarch64" }],
   ["hoi4-mod-setup-macos-x64", { platform: "macos", architecture: "X64", extension: ".dmg", updaterPlatform: "darwin-x86_64" }],
@@ -114,11 +115,12 @@ function mergeThirdPartyNotices(inventories) {
   ].join("\n");
 }
 
-function publicPackageName(descriptor) {
+function publicPackageName(descriptor, extension = descriptor.extension) {
   const target = `${descriptor.platform}-${descriptor.architecture.toLowerCase()}`;
   return descriptor.platform === "windows"
     ? `HOI4-Mod-Setup-${target}-setup.exe`
-    : `HOI4-Mod-Setup-${target}.dmg`;
+    : descriptor.platform === "linux" ? `HOI4-Mod-Setup-${target}${extension === ".appimage" ? ".AppImage" : extension}`
+      : `HOI4-Mod-Setup-${target}.dmg`;
 }
 
 const releaseRevision = process.env.GITHUB_SHA?.trim().toLowerCase();
@@ -153,7 +155,7 @@ for (const artifactDirectory of expectedNames) {
   if (metadata.product !== "HOI4 Mod Setup" || metadata.platform.toLowerCase() !== descriptor.platform || metadata.architecture.toUpperCase() !== descriptor.architecture) {
     throw new Error(`${artifactDirectory} metadata does not match its expected platform and architecture`);
   }
-  if (!["configured", "community"].includes(metadata.signing)) {
+  if (!(descriptor.platform === "linux" ? metadata.signing === "updater_signed" : ["configured", "community"].includes(metadata.signing))) {
     throw new Error(`${artifactDirectory} is not signed for publication`);
   }
   if (releaseRevision && metadata.sourceRevision?.toLowerCase() !== releaseRevision) {
@@ -178,43 +180,51 @@ for (const artifactDirectory of expectedNames) {
   if (manifestPaths.size !== sourceFilePaths.length || sourceFilePaths.some((path) => !manifestPaths.has(path))) {
     throw new Error(`${artifactDirectory} artifact manifest does not cover the complete artifact directory`);
   }
-  const packages = files.filter(({ relative: path }) => path.startsWith("packages/") && path.toLowerCase().endsWith(descriptor.extension));
-  if (packages.length !== 1) throw new Error(`${artifactDirectory} must contain exactly one ${descriptor.extension} package`);
-  const evidenceFiles = files.filter(({ relative: path }) => path === "SIGNING_VERIFICATION.json");
-  if (evidenceFiles.length !== 1) throw new Error(`${artifactDirectory} is missing signing verification evidence`);
-  const evidence = JSON.parse(await readFile(evidenceFiles[0].absolute, "utf8"));
-  const packageRelative = packages[0].relative.replace(/^packages\//, "");
-  const packageDigest = digest(await readFile(packages[0].absolute));
-  if (evidence.source_revision?.toLowerCase() !== metadata.sourceRevision?.toLowerCase() || evidence.platform !== metadata.platform || evidence.architecture !== metadata.architecture || evidence.package_sha256?.[packageRelative] !== packageDigest) {
-    throw new Error(`${artifactDirectory} signing evidence does not bind the verified package to its metadata`);
+  const extensions = descriptor.extensions ?? [descriptor.extension];
+  const nativePackages = files.filter(({ relative: path }) => path.startsWith("packages/") && /\.(exe|dmg|appimage|deb)$/i.test(path));
+  if (nativePackages.some(({ relative: path }) => !extensions.some((extension) => path.toLowerCase().endsWith(extension)))) throw new Error(`${artifactDirectory} contains an unexpected native package`);
+  for (const extension of extensions) {
+    const packages = files.filter(({ relative: path }) => path.startsWith("packages/") && path.toLowerCase().endsWith(extension));
+    if (packages.length !== 1) throw new Error(`${artifactDirectory} must contain exactly one ${extension} package`);
+    const evidenceFiles = files.filter(({ relative: path }) => path === "SIGNING_VERIFICATION.json");
+    if (evidenceFiles.length !== 1) throw new Error(`${artifactDirectory} is missing signing verification evidence`);
+    const evidence = JSON.parse(await readFile(evidenceFiles[0].absolute, "utf8"));
+    const packageRelative = packages[0].relative.replace(/^packages\//, "");
+    const packageDigest = digest(await readFile(packages[0].absolute));
+    if (evidence.source_revision?.toLowerCase() !== metadata.sourceRevision?.toLowerCase() || evidence.platform !== metadata.platform || evidence.architecture !== metadata.architecture || evidence.package_sha256?.[packageRelative] !== packageDigest) {
+      throw new Error(`${artifactDirectory} signing evidence does not bind the verified package to its metadata`);
+    }
+    const packageName = publicPackageName(descriptor, extension);
+    await cp(packages[0].absolute, resolve(outputRoot, packageName));
+    if (descriptor.platform === "linux" && evidence.method !== "tauri-updater-signature") throw new Error(`${artifactDirectory} has no Linux updater-signing evidence`);
+    const updaterBundle = descriptor.platform !== "macos"
+      ? packages[0]
+      : files.find(({ relative: path }) => path.startsWith("packages/") && path.endsWith(".app.tar.gz"));
+    if (!updaterBundle) throw new Error(`${artifactDirectory} is missing its updater bundle`);
+    const updaterSignature = files.find(({ relative: path }) => path === `${updaterBundle.relative}.sig`);
+    if (!updaterSignature) throw new Error(`${artifactDirectory} is missing its updater signature`);
+    const signature = (await readFile(updaterSignature.absolute, "utf8")).trim();
+    if (!signature || signature.length > 16_384) throw new Error(`${artifactDirectory} updater signature is invalid`);
+    const updaterName = descriptor.platform !== "macos"
+      ? packageName
+      : `HOI4-Mod-Setup-${descriptor.platform}-${descriptor.architecture.toLowerCase()}.app.tar.gz`;
+    if (descriptor.platform === "macos") await cp(updaterBundle.absolute, resolve(outputRoot, updaterName));
+    const updaterPlatform = descriptor.platform === "linux" ? `linux-x86_64-${extension === ".appimage" ? "appimage" : "deb"}` : descriptor.updaterPlatform;
+    updaterPlatforms[updaterPlatform] = {
+      signature,
+      url: downloadBase ? `${downloadBase}/${encodeURIComponent(updaterName)}` : updaterName,
+    };
+    if (descriptor.platform === "linux" && extension === ".appimage") updaterPlatforms["linux-x86_64"] = { ...updaterPlatforms[updaterPlatform] };
+    platformSummaries.push({
+      artifact_directory: artifactDirectory,
+      platform: descriptor.platform,
+      signing: metadata.signing,
+      architecture: descriptor.architecture,
+      source_revision: metadata.sourceRevision,
+      package: packageName,
+      package_sha256: digest(await readFile(resolve(outputRoot, packageName))),
+    });
   }
-  const packageName = publicPackageName(descriptor);
-  await cp(packages[0].absolute, resolve(outputRoot, packageName));
-  const updaterBundle = descriptor.platform === "windows"
-    ? packages[0]
-    : files.find(({ relative: path }) => path.startsWith("packages/") && path.endsWith(".app.tar.gz"));
-  if (!updaterBundle) throw new Error(`${artifactDirectory} is missing its updater bundle`);
-  const updaterSignature = files.find(({ relative: path }) => path === `${updaterBundle.relative}.sig`);
-  if (!updaterSignature) throw new Error(`${artifactDirectory} is missing its updater signature`);
-  const signature = (await readFile(updaterSignature.absolute, "utf8")).trim();
-  if (!signature || signature.length > 16_384) throw new Error(`${artifactDirectory} updater signature is invalid`);
-  const updaterName = descriptor.platform === "windows"
-    ? packageName
-    : `HOI4-Mod-Setup-${descriptor.platform}-${descriptor.architecture.toLowerCase()}.app.tar.gz`;
-  if (descriptor.platform !== "windows") await cp(updaterBundle.absolute, resolve(outputRoot, updaterName));
-  updaterPlatforms[descriptor.updaterPlatform] = {
-    signature,
-    url: downloadBase ? `${downloadBase}/${encodeURIComponent(updaterName)}` : updaterName,
-  };
-  platformSummaries.push({
-    artifact_directory: artifactDirectory,
-    platform: descriptor.platform,
-    signing: metadata.signing,
-    architecture: descriptor.architecture,
-    source_revision: metadata.sourceRevision,
-    package: packageName,
-    package_sha256: digest(await readFile(resolve(outputRoot, packageName))),
-  });
 }
 
 // Keep the union with internal build evidence, outside the public asset set.
@@ -229,7 +239,8 @@ await writeFile(resolve(outputRoot, "latest.json"), JSON.stringify({
 const downloadBullets = platformSummaries.map((summary) => {
   const label = summary.platform === "windows"
     ? "Windows"
-    : summary.architecture === "ARM64" ? "Mac (Apple silicon)" : "Mac (Intel)";
+    : summary.platform === "linux" ? (summary.package.endsWith(".deb") ? "Linux x64 (Debian/Ubuntu)" : "Linux x64 (AppImage)")
+      : summary.architecture === "ARM64" ? "Mac (Apple silicon)" : "Mac (Intel)";
   const packageLink = downloadBase ? `[${summary.package}](${downloadBase}/${encodeURIComponent(summary.package)})` : `\`${summary.package}\``;
   return `- ${label}: ${packageLink}`;
 });
@@ -240,7 +251,7 @@ await writeFile(resolve(outputRoot, "RELEASE_NOTES.md"), [
   "",
   ...downloadBullets,
   "",
-  "Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app to Applications.",
+  "Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app to Applications. On Linux x64, make the `.AppImage` executable and run it, or install the `.deb` with your Debian/Ubuntu package manager.",
   "",
   "Choose a main image provider and optional alternatives; ChatGPT through GPTImage is the default. Coding clients remain independent of the setup assistant. Change image and live-testing providers later in Update and repair.",
   "",
@@ -255,4 +266,4 @@ await writeFile(resolve(outputRoot, "RELEASE_NOTES.md"), [
   "The source is public under the Apache License 2.0: <https://github.com/klimPaskov/HOI4-Mod-Setup>.",
 ].join("\n") + "\n", "utf8");
 
-console.log(`Prepared ${platformSummaries.length} user-facing installers for ${platformSummaries.length} platforms.`);
+console.log(`Prepared ${platformSummaries.length} user-facing installers for ${expected.size} platform targets.`);

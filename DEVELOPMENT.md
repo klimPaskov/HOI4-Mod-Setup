@@ -37,7 +37,7 @@ Read `AGENTS.md` before coding. Then read the repo-local skill that owns the cur
 - React and TypeScript render the desktop wizard and editable review state.
 - Tauri commands provide a typed boundary between the UI and Rust.
 - Rust core modules own source resolution, scanning, merging, transactions, credentials, Git, MCP health, and readiness.
-- Platform adapters own Windows and macOS differences.
+- Platform adapters own Windows, macOS, and Linux differences.
 - Schemas define persisted project, plan, lock, journal, scan, conflict, and readiness data.
 - Tests use fake adapters so safety behavior can run without modifying real projects or using paid services.
 
@@ -133,6 +133,32 @@ be inspected, if either key already exists, or if a matching legacy
 machine-wide installation is present. Run it from a normal user session; do
 not clear a real installation to make the test pass.
 
+On Linux x64, use Ubuntu 22.04 for release compatibility, or Ubuntu 24.04 for
+native development. The dependency script installs GTK, WebKitGTK 4.1,
+libsecret, D-Bus, `secret-tool`, and the virtual display runtime:
+
+```bash
+bash scripts/install_linux_dependencies.sh
+pnpm install --frozen-lockfile
+RUNNER_OS=Linux RUNNER_ARCH=X64 HOI4_MOD_SETUP_TAURI=1 HOI4_MOD_SETUP_BUNDLE=appimage,deb pnpm release:build
+HOI4_MOD_SETUP_REQUIRE_TAURI=1 HOI4_MOD_SETUP_BUNDLE=appimage,deb pnpm release:verify
+WEBKIT_DISABLE_DMABUF_RENDERER=1 xvfb-run -a dbus-run-session -- pnpm desktop:e2e
+WEBKIT_DISABLE_DMABUF_RENDERER=1 xvfb-run -a dbus-run-session -- pnpm installer:e2e
+```
+
+The local installer command extracts, launches, and removes both packages in a
+fresh temporary profile. Only a disposable dedicated runner may set
+`HOI4_MOD_SETUP_DEDICATED_LINUX=1` to perform actual system `dpkg` installation
+and purge; it refuses an existing application or package registration. Never
+set it on a shared workstation. The native harness supervises process groups,
+bounds launch/termination, and isolates XDG application data. GTK/WebKit runtime
+and a working Secret Service remain OS prerequisites for AppImage users;
+`/usr/bin/secret-tool` is required for hosted API-provider credential storage.
+Linux package source/version/architecture/hash checks are independent of real
+launcher/game loading or real-account sign-in. Locally rebuilt packages are
+inspection artifacts; stable release evidence must bind a clean annotated-tag
+checkout and pass final updater-signature verification.
+
 The Tauri CLI uses the workspace-root `target/release` directory for native
 bundles; the release and launch-smoke scripts also accept the alternate
 `src-tauri/target/release` layout used by standalone Tauri projects.
@@ -180,7 +206,7 @@ Use the seven-phase navigation and minimal screen references. Do not turn develo
 
 ## Platform work
 
-Windows and macOS adapters must be tested on their actual platforms. Do not mark a route supported based only on compilation or similarity to another operating system.
+Windows, macOS, and Linux adapters must be tested on their actual platforms. Do not mark a route supported based only on compilation or similarity to another operating system.
 
 Signing, notarization, credential stores, filesystem links, application paths,
 and opening the selected coding environment need clean-machine evidence.

@@ -7,9 +7,9 @@ that range before invoking Cargo.
 
 External-launcher fixtures use canonical temporary parents and user-facing
 Windows paths. A macOS `/var` alias must not bypass production link rejection.
-Linux is a compile and portable-core test host: exercise Windows/macOS profile
-policies explicitly and do not assume a Linux application-data or diagnostics
-route. Bundled source JSON keeps exact upstream Git bytes through `-text`
+Linux x64 is a native application and release test target. Exercise its XDG
+application-data, path containment, process, Secret Service, and launcher policies
+explicitly alongside Windows/macOS policies. Bundled source JSON keeps exact upstream Git bytes through `-text`
 attributes; compare its committed SHA-256 with the source audit on every host.
 
 ## AI provider integration matrix
@@ -25,7 +25,7 @@ present. Never place real credentials in CI.
 ## Unit tests
 
 - path normalization and containment
-- Windows and macOS native Documents resolution, including redirected
+- Windows, macOS, and Linux native Documents resolution, including redirected
   Documents, missing locations, and explicit path overrides
 - project ID validation
 - descriptors
@@ -108,6 +108,7 @@ path, and Codex targets.
 - cache corruption
 - Windows Credential Manager mock
 - macOS Keychain mock
+- Linux Secret Service mock and missing/locked/unavailable service failures
 - Git fixtures with ambient configuration isolation, hostile local config
   rejection before spawn, and direct bounded submodule discovery
 - MCP test server
@@ -135,7 +136,7 @@ reviewed leaf is created only at apply, that a pre-apply race stops safely, and
 that rollback removes the leaf only when empty while preserving unknown content
 and its parent.
 
-Transaction filesystem regressions must run natively on Windows and macOS.
+Transaction filesystem regressions must run natively on Windows, macOS, and Linux.
 Cover link and reparse swaps at every ancestor, root/transaction/backup/staging
 replacement, journal and checkpoint updates, apply and rollback, external
 launcher parents, executable metadata, and recursive staging discard. Use
@@ -300,16 +301,43 @@ open and assert that a desktop event-loop probe remains schedulable and that
 cancellation is observable. Every command must use async/thread-pool dispatch;
 an eventual correct result does not excuse event-loop blocking.
 
+## Linux native package acceptance
+
+CI, development preview, and stable release build Linux x64 on Ubuntu 22.04
+with `HOI4_MOD_SETUP_BUNDLE=appimage,deb`. Package checks validate native and
+packaged ELF64 architecture, the AppImage type-2 marker, a root-contained
+AppRun/application payload, and Debian package name, version, and architecture.
+Both public Linux packages receive separate updater signatures; installer-specific
+metadata prevents a Debian install from selecting AppImage bytes.
+
+`pnpm test:release-assets` exercises both Linux public links, the complete updater
+set, dependency-evidence unions, and rejection of missing platforms/packages,
+missing Debian signatures, foreign packages, changed signed bytes, and invented
+Linux OS-signing evidence. `python -m unittest scripts/test_linux_release_gates.py`
+proves that missing native gates and skipped/failed/cancelled or foreign-app CI
+checks cannot satisfy protection. `pnpm test:workflows` requires the dedicated
+Linux job and final embedded-key verifier in the release pipeline.
+
+The native runner uses Xvfb and D-Bus with a temporary XDG profile, bounded
+process-group termination, and no real provider or game call. AppImage extraction,
+launch, and removal work without a FUSE mount. Local Debian smokes also extract,
+launch, and remove without altering the host package database. Dedicated CI
+sets `HOI4_MOD_SETUP_DEDICATED_LINUX=1` to install and purge the verified Debian
+package with `dpkg`, refuse pre-existing product registrations, fail closed on
+unreadable package state, and assert clean removal. Native package tests do not
+replace real game/launcher, Secret Service round-trip, real-account login, or
+signed replacement/restart/retry acceptance.
+
 ## Compatibility
 
-Test supported Windows and macOS versions, x64 and Apple Silicon where applicable, case-sensitive and case-insensitive volumes, local and cloud-synced folders.
+Test supported Windows, macOS, and Linux versions, x64 and Apple Silicon where applicable, case-sensitive and case-insensitive volumes, local and cloud-synced folders.
 
 ## Release gates
 
 - schema examples validate
 - no critical security issue
 - transaction fault suite passes
-- core new and existing flows pass on both platforms
+- core new and existing flows pass on every supported platform
 - 3D states are honest
 - Super Events selection, integrity, maintenance, and non-blocking readiness are
   honest
@@ -335,8 +363,10 @@ Validate the public repository layer:
 - release builds use the exact tag commit
 - public release is blocked when `LICENSE` is missing
 - committed-secret pattern checks pass
-- updater metadata contains all three supported targets, exact release URLs,
-  and non-empty signatures for the final platform packages
+- updater metadata contains Windows x64, both macOS architectures,
+  `linux-x86_64-appimage`, `linux-x86_64-deb`, and the AppImage
+  `linux-x86_64` fallback, exact release URLs, and signatures cryptographically
+  verified against the committed key for the final packages
 - startup update tests show an available version and begin one automatic signed
   installation, while failure leaves the app usable and exposes retry
 - a stage-8 validation interruption shows the exact stage/checkpoint and
@@ -351,7 +381,7 @@ For broad changes, compare touched product surfaces with the skill ownership tab
 
 ## Launcher-ready scaffold tests
 
-Create clean temporary projects on both platforms and verify the internal descriptor, external launcher descriptor, thumbnail decode, picture reference, folder profile, backup, rollback, repair, and modified-thumbnail preservation. Prove that rendering uses confirmed provider proposals and deterministic validators.
+Create clean temporary projects on every supported platform and verify the internal descriptor, external launcher descriptor, thumbnail decode, picture reference, folder profile, backup, rollback, repair, and modified-thumbnail preservation. Prove that rendering uses confirmed provider proposals and deterministic validators.
 On Windows, the full transaction test must render the launcher path without the
 internal `\\?\` verbatim prefix, validate it against the canonical root used for
 filesystem operations, still reject a different complete path, and resume a

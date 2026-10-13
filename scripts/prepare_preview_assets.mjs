@@ -7,6 +7,7 @@ const root = resolve(import.meta.dirname, "..");
 const inputRoot = resolve(root, process.argv[2] ?? "preview-artifacts");
 const outputRoot = resolve(root, process.argv[3] ?? "publication-assets");
 const expected = new Map([
+  ["hoi4-mod-setup-preview-linux-x64", { platform: "linux", architecture: "X64", extensions: [".appimage", ".deb"] }],
   ["hoi4-mod-setup-preview-windows-x64", { platform: "windows", architecture: "X64", extension: ".exe" }],
   ["hoi4-mod-setup-preview-macos-arm64", { platform: "macos", architecture: "ARM64", extension: ".dmg" }],
   ["hoi4-mod-setup-preview-macos-x64", { platform: "macos", architecture: "X64", extension: ".dmg" }],
@@ -99,11 +100,12 @@ function mergeThirdPartyNotices(inventories) {
   ].join("\n");
 }
 
-function publicPackageName(descriptor) {
+function publicPackageName(descriptor, extension = descriptor.extension) {
   const target = `${descriptor.platform}-${descriptor.architecture.toLowerCase()}`;
   return descriptor.platform === "windows"
     ? `HOI4-Mod-Setup-${target}-setup.exe`
-    : `HOI4-Mod-Setup-${target}.dmg`;
+    : descriptor.platform === "linux" ? `HOI4-Mod-Setup-${target}${extension === ".appimage" ? ".AppImage" : extension}`
+      : `HOI4-Mod-Setup-${target}.dmg`;
 }
 
 function assertSafeRelativePath(path, label) {
@@ -178,19 +180,24 @@ for (const artifactDirectory of expectedEntries) {
   if (manifestPaths.size !== sourceFilePaths.length || sourceFilePaths.some((path) => !manifestPaths.has(path))) {
     throw new Error(`${artifactDirectory} artifact manifest does not cover the complete artifact directory`);
   }
-  const packages = files.filter(({ relative: path }) => path.startsWith("packages/") && path.toLowerCase().endsWith(descriptor.extension));
-  if (packages.length !== 1) throw new Error(`${artifactDirectory} must contain exactly one ${descriptor.extension} package`);
-  const packageName = publicPackageName(descriptor);
-  await cp(packages[0].absolute, resolve(outputRoot, packageName));
-  summaries.push({
-    artifact_directory: artifactDirectory,
-    platform: descriptor.platform,
-    architecture: descriptor.architecture,
-    source_revision: metadata.sourceRevision,
-    signing: metadata.signing,
-    package: packageName,
-    package_sha256: digest(await readFile(resolve(outputRoot, packageName))),
-  });
+  const extensions = descriptor.extensions ?? [descriptor.extension];
+  const nativePackages = files.filter(({ relative: path }) => path.startsWith("packages/") && /\.(exe|dmg|appimage|deb)$/i.test(path));
+  if (nativePackages.some(({ relative: path }) => !extensions.some((extension) => path.toLowerCase().endsWith(extension)))) throw new Error(`${artifactDirectory} contains an unexpected native package`);
+  for (const extension of extensions) {
+    const packages = files.filter(({ relative: path }) => path.startsWith("packages/") && path.toLowerCase().endsWith(extension));
+    if (packages.length !== 1) throw new Error(`${artifactDirectory} must contain exactly one ${extension} package`);
+    const packageName = publicPackageName(descriptor, extension);
+    await cp(packages[0].absolute, resolve(outputRoot, packageName));
+    summaries.push({
+      artifact_directory: artifactDirectory,
+      platform: descriptor.platform,
+      architecture: descriptor.architecture,
+      source_revision: metadata.sourceRevision,
+      signing: metadata.signing,
+      package: packageName,
+      package_sha256: digest(await readFile(resolve(outputRoot, packageName))),
+    });
+  }
 }
 
 await writeFile(resolve(inputRoot, "SBOM.cdx.json"), JSON.stringify(mergeSbomInventories(sbomInventories), null, 2) + "\n", "utf8");
@@ -202,7 +209,8 @@ const downloadBase = previewTag
 const downloadBullets = summaries.map((summary) => {
   const label = summary.platform === "windows"
     ? "Windows"
-    : summary.architecture === "ARM64" ? "Mac (Apple silicon)" : "Mac (Intel)";
+    : summary.platform === "linux" ? (summary.package.endsWith(".deb") ? "Linux x64 (Debian/Ubuntu)" : "Linux x64 (AppImage)")
+      : summary.architecture === "ARM64" ? "Mac (Apple silicon)" : "Mac (Intel)";
   const packageLink = downloadBase ? `[${summary.package}](${downloadBase}/${encodeURIComponent(summary.package)})` : `\`${summary.package}\``;
   return `- ${label}: ${packageLink}`;
 });
@@ -213,11 +221,11 @@ await writeFile(resolve(outputRoot, "PREVIEW_RELEASE_NOTES.md"), [
   "",
   ...downloadBullets,
   "",
-  "Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app to Applications.",
+  "Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app to Applications. On Linux x64, make the `.AppImage` executable and run it, or install the `.deb` with your Debian/Ubuntu package manager.",
   "",
-  "Your computer may occasionally flag a new community build as harmful. This can be a false positive; the app is open source and this is its official GitHub release page.",
+  "Development previews are unsigned inspection builds; stable releases use the verified signing and updater publication gates.",
   "",
   "The source is public under the Apache License 2.0: <https://github.com/klimPaskov/HOI4-Mod-Setup>.",
 ].join("\n") + "\n", "utf8");
 
-console.log(`Prepared ${summaries.length} user-facing installers for ${summaries.length} platforms.`);
+console.log(`Prepared ${summaries.length} user-facing installers for ${expected.size} platform targets.`);
