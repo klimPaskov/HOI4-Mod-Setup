@@ -1,6 +1,6 @@
 use crate::credentials::ScopedSecretEnvironment;
 use crate::models::Platform;
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use crate::security::is_link_metadata;
 use crate::security::{redact_secrets, validate_env_name};
 use crate::AppError;
@@ -674,6 +674,23 @@ fn add_safe_environment(command: &mut Command) {
             command.env(name, value);
         }
     }
+    #[cfg(target_os = "linux")]
+    command.env("PATH", "/usr/bin:/bin");
+    #[cfg(target_os = "linux")]
+    for name in [
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "XDG_RUNTIME_DIR",
+        "XDG_DATA_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_CACHE_HOME",
+        "XAUTHORITY",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
 }
 
 fn add_isolated_git_environment(command: &mut Command) {
@@ -721,20 +738,44 @@ pub fn find_path_executable(names: &[&str]) -> Result<PathBuf, AppError> {
     }
     let path = std::env::var_os("PATH")
         .ok_or_else(|| AppError::Process("approved tool PATH is unavailable".into()))?;
-    for directory in std::env::split_paths(&path) {
+    let mut directories = Vec::new();
+    if cfg!(target_os = "linux")
+        && names
+            .iter()
+            .any(|name| matches!(*name, "python3" | "python" | "node"))
+    {
+        directories.push(PathBuf::from("/usr/bin"));
+    }
+    directories.extend(std::env::split_paths(&path));
+    for directory in directories {
+        if !directory.is_absolute() {
+            continue;
+        }
         for name in names {
             let candidate = directory.join(name);
             let metadata = fs::symlink_metadata(&candidate).ok();
-            if !metadata.is_some_and(|metadata| metadata.is_file()) {
+            if !metadata.is_some_and(|metadata| {
+                metadata.is_file()
+                    || (cfg!(target_os = "linux") && metadata.file_type().is_symlink())
+            }) {
                 continue;
             }
-            if crate::security::path_has_link_component(&candidate) {
+            if !cfg!(target_os = "linux") && crate::security::path_has_link_component(&candidate) {
                 continue;
             }
             let canonical = fs::canonicalize(&candidate)
                 .map_err(|error| AppError::Process(format!("resolve tool executable: {error}")))?;
             if crate::security::path_has_link_component(&canonical) {
                 continue;
+            }
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if !fs::metadata(&canonical)?.is_file()
+                    || fs::metadata(&canonical)?.permissions().mode() & 0o111 == 0
+                {
+                    continue;
+                }
             }
             return Ok(canonical);
         }
@@ -773,6 +814,13 @@ pub fn verified_executable_sha256(
     executable: &Path,
     expected_publisher: &str,
 ) -> Result<String, AppError> {
+    #[cfg(target_os = "linux")]
+    if !matches!(expected_publisher, "Anthropic" | "OpenAI") {
+        // Revalidate root ownership and the protected receipt on every use;
+        // cached content alone cannot preserve a changed permission boundary.
+        validate_executable_publisher_uncached(executable, expected_publisher)?;
+        return crate::security::sha256_file(executable);
+    }
     if !executable.is_absolute() || crate::security::path_has_link_component(executable) {
         validate_executable_publisher_uncached(executable, expected_publisher)?;
         return crate::security::sha256_file(executable);
@@ -940,7 +988,17 @@ fn validate_executable_publisher_uncached(
         Ok(())
     }
 
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        match expected_publisher {
+            "Anthropic" | "OpenAI" => {
+                crate::linux_trust::verify_account_executable(executable, expected_publisher)
+            }
+            _ => crate::linux_trust::verify_distro_executable(executable, expected_publisher),
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         let _ = (executable, expected_publisher);
         Err(AppError::UnsupportedPlatform(
@@ -1059,7 +1117,13 @@ pub fn system_browser_executable() -> Option<PathBuf> {
     {
         reviewed_system_executable(PathBuf::from("/usr/bin/open"))
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        let path = reviewed_system_executable(PathBuf::from("/usr/bin/xdg-open"))?;
+        crate::linux_trust::verify_distro_executable(&path, "Linux system").ok()?;
+        Some(path)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         None
     }
@@ -1083,7 +1147,7 @@ fn windows_directory() -> Option<PathBuf> {
     Some(PathBuf::from(std::ffi::OsString::from_wide(&buffer)))
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 fn reviewed_system_executable(path: PathBuf) -> Option<PathBuf> {
     let metadata = fs::symlink_metadata(&path).ok()?;
     if is_link_metadata(&metadata) || !metadata.is_file() {
@@ -1127,6 +1191,43 @@ fn quote_argument(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_children_have_system_path_and_only_reviewed_desktop_plumbing() {
+        let mut command = Command::new("/usr/bin/true");
+        command.env_clear();
+        add_safe_environment(&mut command);
+        let environment = command
+            .get_envs()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            environment[std::ffi::OsStr::new("PATH")],
+            Some(std::ffi::OsStr::new("/usr/bin:/bin"))
+        );
+        for name in [
+            "MESHY_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "NODE_OPTIONS",
+            "LD_PRELOAD",
+        ] {
+            assert!(!environment.contains_key(std::ffi::OsStr::new(name)));
+        }
+        for name in [
+            "DISPLAY",
+            "WAYLAND_DISPLAY",
+            "DBUS_SESSION_BUS_ADDRESS",
+            "XDG_RUNTIME_DIR",
+        ] {
+            if let Some(value) = std::env::var_os(name) {
+                assert_eq!(
+                    environment[std::ffi::OsStr::new(name)],
+                    Some(value.as_os_str())
+                );
+            }
+        }
+    }
     use crate::credentials::{save_meshy_key, MemoryCredentialStore, ScopedSecretEnvironment};
 
     #[test]

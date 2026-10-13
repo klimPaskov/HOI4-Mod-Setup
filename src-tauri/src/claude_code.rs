@@ -3,7 +3,7 @@
 //! Anthropic does not permit third-party applications to offer Claude.ai
 //! login or to handle Claude account tokens. This adapter therefore never
 //! starts an OAuth flow of its own: it locates the user's unmodified,
-//! Anthropic-signed `claude` executable, asks it for a non-secret sign-in
+//! publisher-verified `claude` executable, asks it for a non-secret sign-in
 //! summary, starts Claude Code's own `claude auth login` flow, and runs one
 //! bounded, tool-free, settings-free print-mode turn for setup analysis.
 //! Claude Code owns credential storage, refresh, and sign-out. The adapter
@@ -185,8 +185,8 @@ fn home_directory() -> Option<PathBuf> {
         .filter(|path| path.is_absolute())
 }
 
-/// Resolve a launcher to the real signed binary. The native installer places
-/// a symbolic link in `~/.local/bin` on macOS and Homebrew links its cask, so
+/// Resolve a launcher to the real publisher-verified binary. The native installer places
+/// a symbolic link in `~/.local/bin` on Linux/macOS and Homebrew links its cask, so
 /// a link is followed exactly once through canonicalization; the resolved
 /// target itself must be a regular file with no link component.
 fn resolve_candidate(candidate: &Path) -> Option<PathBuf> {

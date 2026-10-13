@@ -153,7 +153,7 @@ Live account metadata returned by `account/read` is transient UI state.
 
 Non-Codex rules:
 
-- keys are saved only to Windows Credential Manager or macOS Keychain;
+- keys are saved only to Windows Credential Manager, macOS Keychain, or Linux Secret Service;
 - the in-memory reference map is keyed by provider and the key value never
   crosses into React state, project state, plans, locks, logs, or screenshots;
 - the endpoint and model are user-selected non-secret configuration;
@@ -237,3 +237,49 @@ The destination is never the project root, an existing archive is never
 overwritten, no credentials are read, and a failed export removes only its
 temporary output. It does not require an installation lock; eligibility comes
 from the bounded source scan, while credentials remain outside the project.
+
+## Native Linux trust and credentials
+
+Linux hosted-provider credentials use the desktop Secret Service through the
+synchronous keyring adapter with Rust cryptography. The opaque provider name is
+`linux_secret_service`; the service is `com.klimpaskov.hoi4-mod-setup`, with
+`target=default` and `username=<opaque credential reference>` attributes.
+A missing or locked desktop service reports unavailable. There is no plaintext,
+project-file, or environment-file fallback. The source image adapter reads the
+same exact attributes through the fixed `/usr/bin/secret-tool` route.
+
+Reviewed native system tools currently support Debian/Ubuntu package routes.
+Canonical Python, Node, browser, and terminal executables must be root-owned,
+not writable by group or others, and match a protected root-owned dpkg checksum
+receipt. Normal system launcher symlinks are resolved once to the regular,
+link-free executable. MD5 is only the protected distro file-change receipt;
+process execution remains bound to a freshly checked SHA-256. Other package
+databases and arbitrary user-installed Python/Node binaries are unavailable
+until a separate trust route is implemented.
+
+Linux Claude Code bytes are matched to the official publisher HTTPS manifest's
+platform SHA-256 and size. Codex native bytes are matched to the digest in the
+publisher's exact GitHub release identity document. This establishes publisher
+HTTPS origin and content identity; it does not claim independent Sigstore
+attestation verification. Version candidates come from bounded paths/package
+metadata, never by executing an unverified client. The exact verified digest is
+carried into every direct account-bearing spawn; account storage remains owned
+by the client, and the app never reads tokens.
+
+Supervised Linux children and the browser dispatcher receive the fixed system
+PATH `/usr/bin:/bin`, excluding user PATH shims. Only reviewed non-secret
+DISPLAY, Wayland, D-Bus, XDG runtime/config/data/cache, and home routing values
+are retained. Native terminal handoff opens the project folder and tells the
+user to run Claude Code or Codex; it does not claim the terminal independently
+verified or started the client.
+
+Native HOI4 Agent Tools use the source-declared XDG current-user npm prefix and
+platform-specific complete-tree evidence. The launcher symlink is a locator,
+never an executable trust source. Every package link must match the exact
+manifest-declared relative path and literal target, resolve to a contained
+regular file through no-follow reads, and participate in the complete tree
+hash as `symlink\0` plus the target bytes. Only those exact internal links are
+recreated in a private runtime copy, which is rehashed before Node starts.
+Native coding-client registrations use verified absolute Node plus the
+absolute package entry, preserve source environment settings, and pass normal
+conflict review. MCP health performs only initialize and tools/list.

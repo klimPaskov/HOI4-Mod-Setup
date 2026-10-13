@@ -13,6 +13,8 @@ pub mod descriptors;
 pub mod flatten;
 pub mod git;
 pub mod local_source;
+#[cfg(any(target_os = "linux", test))]
+mod linux_trust;
 pub mod mcp;
 pub mod merge;
 pub mod meshy;

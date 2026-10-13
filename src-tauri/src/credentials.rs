@@ -9,7 +9,7 @@ pub const AI_PROVIDER_ENVIRONMENT_NAME: &str = "AI_PROVIDER_API_KEY";
 pub const IMAGE_GENERATION_ENVIRONMENT_NAME: &str = "IMAGE_GENERATION_API_KEY";
 const MAX_SECRET_INPUT_BYTES: usize = 64 * 1024;
 const MESHY_STABLE_REFERENCE: &str = "credential://meshy_api_key/default";
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 const KEYRING_SERVICE: &str = "com.klimpaskov.hoi4-mod-setup";
 
 pub trait CredentialStore {
@@ -95,7 +95,7 @@ impl CredentialStore for MemoryCredentialStore {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OsCredentialStore;
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 impl CredentialStore for OsCredentialStore {
     fn save(&self, name: &str, value: &str) -> Result<CredentialReference, AppError> {
         validate_secret_input(name, value)?;
@@ -162,7 +162,7 @@ impl CredentialStore for OsCredentialStore {
     }
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 impl CredentialStore for OsCredentialStore {
     fn save(&self, _name: &str, _value: &str) -> Result<CredentialReference, AppError> {
         Err(AppError::UnsupportedPlatform(
@@ -198,6 +198,7 @@ pub fn provider_name(platform: Platform) -> &'static str {
     match platform {
         Platform::Windows => "windows_credential_manager",
         Platform::Macos => "macos_keychain",
+        Platform::Linux => "linux_secret_service",
         Platform::Unsupported => "unsupported",
     }
 }
@@ -579,6 +580,35 @@ pub fn mesh_key_status<S: CredentialStore>(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires an isolated desktop Secret Service session"]
+    fn linux_secret_service_round_trip_keeps_only_an_opaque_reference() {
+        let scope = format!("linux_test_{}", Uuid::new_v4());
+        let store = OsCredentialStore;
+        let value = "synthetic-linux-vault-test-value";
+        let reference = store
+            .save_scoped(IMAGE_GENERATION_ENVIRONMENT_NAME, &scope, value)
+            .unwrap();
+        let result = store.read(&reference);
+        let source_adapter = std::env::var_os("HOI4_TEST_IMAGE_VAULT_ADAPTER").map(|path| {
+            // The synthetic value remains inside this isolated opt-in test;
+            // the source adapter never prints it or starts a provider request.
+            std::process::Command::new("/usr/bin/python3").args(["-I", "-c", "import runpy,sys; m=runpy.run_path(sys.argv[1]); sys.exit(0 if m['read_credential'](sys.argv[2]) == 'synthetic-linux-vault-test-value' else 1)"])
+                .arg(path).arg(&reference.reference).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()
+        });
+        store.delete(&reference).unwrap();
+        assert_eq!(result.unwrap(), value);
+        assert_eq!(reference.provider, "linux_secret_service");
+        assert!(!serde_json::to_string(&reference).unwrap().contains(value));
+        assert!(store.read(&reference).is_err());
+        if let Some(status) = source_adapter {
+            assert!(
+                status.unwrap().success(),
+                "the source Python adapter could not read the same opaque vault reference"
+            );
+        }
+    }
     use super::*;
 
     #[test]
