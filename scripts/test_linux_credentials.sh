@@ -13,10 +13,18 @@ if [[ "${1:-}" == "--session" ]]; then
     /usr/bin/gnome-keyring-daemon --foreground --unlock --components=secrets \
       --control-directory "$keyring_control" >/dev/null &
   keyring_pid=$!
-  trap 'kill "$keyring_pid" 2>/dev/null || true' EXIT
-  sleep 0.2
-  GNOME_KEYRING_CONTROL="$keyring_control" /usr/bin/gnome-keyring-daemon \
-    --start --components=secrets --control-directory "$keyring_control" >/dev/null
+  stop_keyring() {
+    kill "$keyring_pid" 2>/dev/null || true
+    for ((attempt = 0; attempt < 100; attempt++)); do
+      kill -0 "$keyring_pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -KILL "$keyring_pid" 2>/dev/null || true
+    # Reap the known child before the outer session removes its private files.
+    wait "$keyring_pid" 2>/dev/null || true
+  }
+  trap stop_keyring EXIT
+  /usr/bin/python3 "$repo_root/scripts/check_linux_secret_service.py" --expected-pid "$keyring_pid"
   cd -- "$repo_root"
   native_test=credentials::tests::linux_secret_service_round_trip_keeps_only_an_opaque_reference
   # Fail closed when the ignored native test is renamed or no longer compiled.
@@ -30,7 +38,7 @@ if [[ "${1:-}" == "--session" ]]; then
 fi
 
 [[ "$(uname -s)" == "Linux" ]]
-for command in /usr/bin/dbus-run-session /usr/bin/gnome-keyring-daemon /usr/bin/secret-tool; do
+for command in /usr/bin/dbus-run-session /usr/bin/gnome-keyring-daemon /usr/bin/secret-tool /usr/bin/gdbus /usr/bin/python3; do
   [[ -x "$command" ]] || { printf 'Missing Linux vault test prerequisite: %s\n' "$command" >&2; exit 1; }
 done
 vault_profile=$(mktemp -d /tmp/hoi4-vault-smoke.XXXXXXXX)

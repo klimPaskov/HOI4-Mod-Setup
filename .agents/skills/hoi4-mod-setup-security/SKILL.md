@@ -418,3 +418,13 @@ installation behavior. Keep the isolated-child regression
 `windows_mcp_wrapper_resolution_ignores_shadowed_path`: a stale global locator
 must not win, and a missing reviewed-prefix locator must not fall back to it.
 The app still executes only verified Node/private-entry health, never a wrapper.
+
+The native vault runner must confirm live D-Bus ownership by its exact fresh
+foreground daemon, an unlocked default collection, and one bounded synthetic
+libsecret write/read/delete before running the exact Rust credential test once.
+Use `scripts/check_linux_secret_service.py`; fixed sleeps and a successful
+`--start` message do not establish persistence readiness. Readiness polling is
+bounded to 30 seconds and never retries a failed readiness write or Rust test.
+Cleanup must terminate and reap the known daemon before removing the generated
+private profile. Run `python -m unittest discover -s scripts -p test_linux_secret_service.py` for ownership, locked/absent collection, exact
+interface, deadline, single-write failure, and cleanup regressions.

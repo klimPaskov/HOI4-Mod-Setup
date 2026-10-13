@@ -153,3 +153,28 @@ regression, all five absolute client-registration formats, the existing image
 provider adaptation regression, all-features/test compilation, and strict
 all-targets/all-features Clippy. The parent must rerun the real combined scratch
 gate to establish end-to-end post-install success with the fixed binding.
+
+## Follow-up: deterministic isolated vault readiness and cleanup
+
+One combined Ubuntu gate failed on the first Rust vault write with the backend's
+approximately two-second D-Bus timeout; shutdown then removed the synthetic
+keyring files before the daemon finished. A daemon initialization message was
+insufficient evidence that a fresh encrypted collection could persist an item.
+
+The runner now verifies the exact fresh daemon's D-Bus owner PID, the unlocked
+default collection, and a single bounded synthetic libsecret store/read/delete.
+This initializes fresh-vault persistence before the independent Rust test;
+neither a readiness write nor the Rust test is retried. Startup observation is
+bounded to 30 seconds. Wrong-daemon ownership, readiness/write/read/cleanup
+failure, and missing compiled test all fail the gate. Shutdown sends TERM,
+boundedly escalates if required, and waits for the known daemon before the outer
+session removes its private files. No real desktop daemon or vault is contacted.
+
+Six deterministic helper regressions passed on Windows Python and Ubuntu
+Python. Three separate fresh Ubuntu 24.04 D-Bus/keyring sessions then passed the
+exact Rust credential round trip and source Python opaque-reference read, with
+no shutdown/missing-file warnings. These were independent clean sessions, not
+retries of a failed credential test. The helper uses the actual
+`org.freedesktop.Secret.Service` and `org.freedesktop.Secret.Collection`
+interfaces. No Rust runtime credential behavior was changed by this test-runner
+fix, and no real credential or account was used.
