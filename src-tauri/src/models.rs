@@ -70,8 +70,10 @@ impl ManifestPlatform {
     pub fn supports(self, platform: Platform) -> bool {
         matches!(
             (self, platform),
-            (Self::All, Platform::Windows | Platform::Macos | Platform::Linux)
-                | (Self::Windows, Platform::Windows)
+            (
+                Self::All,
+                Platform::Windows | Platform::Macos | Platform::Linux
+            ) | (Self::Windows, Platform::Windows)
                 | (Self::Macos, Platform::Macos)
                 | (Self::Linux, Platform::Linux)
         )
