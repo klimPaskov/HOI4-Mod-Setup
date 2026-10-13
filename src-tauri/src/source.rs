@@ -2105,7 +2105,11 @@ mod tests {
         );
         assert!(manifest.profiles.iter().any(|profile| profile.default));
         assert_eq!(manifest.wiki.destination, "paradox_wiki/");
-        assert_eq!(manifest.components.len(), 59);
+        assert_eq!(manifest.components.len(), 60);
+        assert!(manifest
+            .components
+            .iter()
+            .any(|component| component.id == "docs.linux"));
         for environment in crate::coding_environment::SUPPORTED {
             assert!(manifest
                 .components

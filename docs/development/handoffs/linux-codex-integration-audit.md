@@ -1,7 +1,7 @@
 # Linux Codex integration audit
 
-Date: 2026-10-13  
-Branch: `feat/linux-support`  
+Date: 2026-10-13
+Branch: `feat/linux-support`
 Scope: read-only audit of `codex.rs`, `claude_code.rs`, `process.rs`, `linux_trust.rs`, `credentials.rs`, the affected command boundary, typed renderer bridge, and relevant fake-transport/unit tests. No real account login, paid model call, or project mutation was performed.
 
 ## Result

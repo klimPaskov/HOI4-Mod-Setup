@@ -696,9 +696,9 @@ mod selection_tests {
             manifest.components.push(common);
         }
         manifest.live_testing = Some(json!({"default_provider":"clausewitz_mcp","providers":[
-            {"id":"clausewitz_mcp","supported_game_version":"1.19.2","supported_platforms":["windows","macos"],"guidance":["Use native Linux HOI4 1.19.2."],"route":{"kind":"external_stdio","server_id":"clausewitz_linux","component_id":"workflow.live_testing","source_repository":"smerss/Clausewitz-MCP","source_revision":"97c85437081904d5ad07bae1623ec58d1c0a5b9e"}},
+            {"id":"clausewitz_mcp","supported_game_version":"1.19.2","supported_platforms":["windows","macos","linux"],"guidance":["Use native Linux HOI4 1.19.2."],"route":{"kind":"external_stdio","server_id":"clausewitz_linux","component_id":"workflow.live_testing","source_repository":"smerss/Clausewitz-MCP","source_revision":"97c85437081904d5ad07bae1623ec58d1c0a5b9e"}},
             {"id":"hoi4_live_tools","supported_platforms":["windows"],"route":{"kind":"local_install","server_id":"hoi4-live","component_id":"workflow.live_tools","source_repository":"klimPaskov/HOI4-Live-Tools","source_revision":"v1.1.0"}},
-            {"id":"none","supported_platforms":["windows","macos"],"route":{"kind":"manual","server_id":null,"component_id":null,"source_repository":null,"source_revision":null}}
+            {"id":"none","supported_platforms":["windows","macos","linux"],"route":{"kind":"manual","server_id":null,"component_id":null,"source_repository":null,"source_revision":null}}
         ]}));
         manifest
     }
