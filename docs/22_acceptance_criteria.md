@@ -380,7 +380,7 @@
 
 - UPD-01: The packaged app checks one fixed HTTPS GitHub Release metadata endpoint asynchronously after launch.
 - UPD-02: Update metadata and final platform packages require the committed updater public key; signature verification cannot be bypassed.
-- UPD-03: Windows x64, macOS arm64, and macOS x64 metadata resolve to exact release-tag assets.
+- UPD-03: Windows x64, macOS arm64, macOS x64, and Linux x64 AppImage/deb metadata resolve to exact release-tag assets.
 - UPD-04: Download or verification failure preserves the running version and never blocks mod setup.
 - UPD-05: When a newer signed version is found on startup, installation begins automatically and restarts into the verified version; a failed install preserves the running version and exposes retry.
 

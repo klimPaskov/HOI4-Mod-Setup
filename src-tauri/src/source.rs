@@ -892,8 +892,10 @@ fn validate_manifest_schema(value: &Value) -> Result<(), AppError> {
         .and_then(|version| version.parse::<u64>().ok());
     let schema = if major == Some(5) {
         SCHEMA_V5.get_or_init(|| {
-            serde_json::from_str(include_str!("../../docs/schemas/remote-manifest.v5.schema.json"))
-                .expect("checked-in v5 remote manifest schema must be valid JSON")
+            serde_json::from_str(include_str!(
+                "../../docs/schemas/remote-manifest.v5.schema.json"
+            ))
+            .expect("checked-in v5 remote manifest schema must be valid JSON")
         })
     } else if major == Some(4) {
         SCHEMA_V4.get_or_init(|| {

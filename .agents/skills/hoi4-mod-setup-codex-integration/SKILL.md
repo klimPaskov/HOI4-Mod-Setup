@@ -142,7 +142,7 @@ the user's Claude plan and surface a usage-limit result only after it occurs.
 - never read or copy Codex token storage
 - never serialize account identity, tokens, plan details, rate limits, or usage into a mod project or installation lock
 - do not use experimental externally managed ChatGPT tokens
-- store non-Codex provider keys only in Windows Credential Manager or macOS Keychain under a provider-keyed opaque reference; bind the non-secret reference scope to the selected provider and reject unscoped or cross-provider reuse
+- store non-Codex provider keys only in Windows Credential Manager, macOS Keychain or Linux Secret Service under a provider-keyed opaque reference; bind the non-secret reference scope to the selected provider and reject unscoped or cross-provider reuse
 - inject a non-Codex key only as the adapter's approved environment/header input for the bounded request; never put it in project state, plan, lock, or logs
 - treat local-model access as an explicit loopback route and do not claim hosted authentication for it
 

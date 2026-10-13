@@ -3553,6 +3553,7 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
   const coreReady = report?.coreReady === true;
   const primaryEnvironment = normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments, codingEnvironmentOptions(state.manifestPreview)).primary;
   const primaryLabel = codingEnvironmentLabel(primaryEnvironment, state.manifestPreview);
+  const nativeTerminal = currentUiPlatform() === "linux" && ["claude_code", "codex"].includes(primaryEnvironment);
   const opensCodex = primaryEnvironment === "codex";
   const open = opensCodex ? report?.openInCodex === true : report?.coreReady === true;
   const readinessPending = report === null;
@@ -3605,12 +3606,12 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
           <p>{readinessPending ? "Core checks are still being evaluated." : coreReady ? "Optional workflow status does not block agentic development." : "Resolve blocking checks before continuing."}</p>
         </div>
         <div className="ready-action">
-          <button type="button" className="button primary" disabled={!open || openPending} aria-busy={openPending || undefined} aria-describedby="open-in-codex-help" onClick={() => void handleOpen()}>{openPending ? `Opening ${primaryLabel}…` : openMessage === `${primaryLabel} opened successfully.` ? `${primaryLabel} opened ✓` : `Open in ${primaryLabel} ↗`}</button>
+          <button type="button" className="button primary" disabled={!open || openPending} aria-busy={openPending || undefined} aria-describedby="open-in-codex-help" onClick={() => void handleOpen()}>{nativeTerminal ? openPending ? "Opening terminal…" : "Open project terminal ↗" : openPending ? `Opening ${primaryLabel}…` : openMessage === `${primaryLabel} opened successfully.` ? `${primaryLabel} opened ✓` : `Open in ${primaryLabel} ↗`}</button>
           {openMessage && <p className="ready-action-message" role="status">{openMessage}</p>}
           {!readinessPending && coreReady && !open && opensCodex && <p className="ready-action-message">Install the Codex configuration component to enable this action.</p>}
         </div>
         <span id="open-in-codex-help" className="visually-hidden">
-          {readinessPending ? "Readiness checks are still running." : open ? `Opens the project in ${primaryLabel}, or shows how to open it manually.` : coreReady && opensCodex ? "Install the Codex configuration component before opening in Codex." : `Resolve blocking checks before opening in ${primaryLabel}.`}
+          {readinessPending ? "Readiness checks are still running." : open ? nativeTerminal ? `Opens a project terminal where you can run ${primaryLabel}.` : `Opens the project in ${primaryLabel}, or shows how to open it manually.` : coreReady && opensCodex ? "Install the Codex configuration component before opening in Codex." : `Resolve blocking checks before opening in ${primaryLabel}.`}
         </span>
       </section>
       <div className="two-column">

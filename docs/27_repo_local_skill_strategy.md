@@ -15,7 +15,7 @@ A desktop installer that touches user projects has many workflows that are easy 
 - three-way conflict classification
 - journaled apply and rollback
 - credential injection
-- Windows and macOS differences
+- Windows, macOS and Linux differences
 - UI density and accessibility
 - release signing and artifact verification
 

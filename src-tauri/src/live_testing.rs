@@ -180,11 +180,24 @@ pub fn route(
             let home = std::env::var_os("HOME")
                 .map(std::path::PathBuf::from)
                 .filter(|path| path.is_absolute())
-                .ok_or_else(|| AppError::PathSecurity("native Clausewitz requires an absolute HOME directory".into()))?;
+                .ok_or_else(|| {
+                    AppError::PathSecurity(
+                        "native Clausewitz requires an absolute HOME directory".into(),
+                    )
+                })?;
             let server = home.join("tools/Clausewitz-MCP");
-            let command = server.join(".venv/bin/python").to_string_lossy().into_owned();
-            let args = vec![server.join("clausewitz.py").to_string_lossy().into_owned(), "serve".into()];
-            return Ok(Some(("clausewitz_linux", json!({"command":command,"args":args,"cwd":"."}))));
+            let command = server
+                .join(".venv/bin/python")
+                .to_string_lossy()
+                .into_owned();
+            let args = vec![
+                server.join("clausewitz.py").to_string_lossy().into_owned(),
+                "serve".into(),
+            ];
+            return Ok(Some((
+                "clausewitz_linux",
+                json!({"command":command,"args":args,"cwd":"."}),
+            )));
         }
         Platform::Unsupported => {
             return Err(AppError::InvalidInput(
@@ -507,13 +520,47 @@ mod tests {
     fn native_linux_route_uses_direct_venv_without_remote_environment() {
         let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
         let (_, native) = route(&confirmed(), Platform::Linux).unwrap().unwrap();
-        assert_eq!(native["command"], home.join("tools/Clausewitz-MCP/.venv/bin/python").to_string_lossy().as_ref());
-        assert_eq!(native["args"], json!([home.join("tools/Clausewitz-MCP/clausewitz.py").to_string_lossy(), "serve"]));
-        assert!(route(&LiveTestingSelection::default(), Platform::Linux).unwrap().is_none());
-        assert!(route(&LiveTestingSelection { provider: "hoi4_live_tools".into(), ..Default::default() }, Platform::Linux).is_err());
-        for destination in [".mcp.json", ".cursor/mcp.json", ".qoder/mcp.json", "opencode.json", ".codex/config.toml"] {
-            let input = if destination.ends_with(".toml") { b"[mcp_servers.unrelated]\ncommand='safe'\n".to_vec() } else { serde_json::to_vec(&json!({if destination == "opencode.json" { "mcp" } else { "mcpServers" }: {"unrelated":{"command":"safe"}}})).unwrap() };
-            let output = String::from_utf8(adapt_config(&input, destination, &confirmed(), Platform::Linux).unwrap()).unwrap();
+        assert_eq!(
+            native["command"],
+            home.join("tools/Clausewitz-MCP/.venv/bin/python")
+                .to_string_lossy()
+                .as_ref()
+        );
+        assert_eq!(
+            native["args"],
+            json!([
+                home.join("tools/Clausewitz-MCP/clausewitz.py")
+                    .to_string_lossy(),
+                "serve"
+            ])
+        );
+        assert!(route(&LiveTestingSelection::default(), Platform::Linux)
+            .unwrap()
+            .is_none());
+        assert!(route(
+            &LiveTestingSelection {
+                provider: "hoi4_live_tools".into(),
+                ..Default::default()
+            },
+            Platform::Linux
+        )
+        .is_err());
+        for destination in [
+            ".mcp.json",
+            ".cursor/mcp.json",
+            ".qoder/mcp.json",
+            "opencode.json",
+            ".codex/config.toml",
+        ] {
+            let input = if destination.ends_with(".toml") {
+                b"[mcp_servers.unrelated]\ncommand='safe'\n".to_vec()
+            } else {
+                serde_json::to_vec(&json!({if destination == "opencode.json" { "mcp" } else { "mcpServers" }: {"unrelated":{"command":"safe"}}})).unwrap()
+            };
+            let output = String::from_utf8(
+                adapt_config(&input, destination, &confirmed(), Platform::Linux).unwrap(),
+            )
+            .unwrap();
             assert!(output.contains("clausewitz_linux"));
             assert!(output.contains("unrelated"));
             assert!(!output.contains("wsl.exe") && !output.contains("BatchMode"));

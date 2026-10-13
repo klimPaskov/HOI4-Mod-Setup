@@ -151,6 +151,7 @@ test("Linux Clausewitz is native and needs no remote environment fields", async 
   await expect(page.getByRole("radio", { name: /^Clausewitz MCP/ })).toBeChecked();
   await expect(page.getByRole("radio", { name: /HOI4 Live Tools/ })).toBeDisabled();
   await expect(page.getByText(/Clausewitz MCP runs directly on Linux/)).toBeVisible();
+  await page.screenshot({ path: "artifacts/linux-live-testing.png" });
   await expect(page.getByRole("textbox", { name: /SSH host|WSL distribution/ })).toHaveCount(0);
   await page.getByRole("checkbox", { name: /I confirm a compatible Linux game/ }).check();
   await expect(page.getByRole("button", { name: "Next", exact: true })).toBeEnabled();

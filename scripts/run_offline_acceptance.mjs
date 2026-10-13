@@ -29,7 +29,7 @@ const toolchain = {
   CARGO_HOME: process.env.CARGO_HOME ?? join(homedir(), ".cargo"),
   RUSTUP_HOME: process.env.RUSTUP_HOME ?? join(homedir(), ".rustup"),
 };
-const profile = Object.fromEntries(["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"].map((name) => [name, join(taskRoot, name)]));
+const profile = Object.fromEntries(["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"].map((name) => [name, join(taskRoot, name)]));
 const testEnvironment = { ...safeEnvironment, ...profile, ...toolchain, HOI4_TEST_RUST_THREADS: "1" };
 function runFilter(filter, fixture) {
   console.log(`Offline acceptance: ${filter}`);
