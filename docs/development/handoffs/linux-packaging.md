@@ -35,3 +35,28 @@ After all required checks succeed on current main, review
 `python scripts/apply_main_ruleset.py --sha <main-commit>` and apply with
 `--apply`. This handoff does not claim the live protection change or release
 publication has occurred. No packages, keys, or certificates are committed.
+
+## CI prerequisite and isolated vault follow-up
+
+CI run `38332321030` exposed a missing native prerequisite in the core-only fuzz
+job: `libdbus-sys` needs `pkg-config` and `libdbus-1-dev` for the Linux Secret
+Service adapter even when Tauri desktop features are disabled. The fuzz job now
+installs those minimal packages before compilation. The workflow regression
+rejects either missing package or moving installation after compilation.
+
+Linux CI, preview, and stable native jobs now run the existing isolated
+credential harness with `HOI4_TEST_IMAGE_VAULT_ADAPTER` explicitly unset. The
+harness verifies that the exact ignored credential round-trip test exists
+before running it; an empty Cargo test selection cannot pass. It creates a
+temporary HOME/XDG profile and D-Bus/Secret Service session and uses only a
+synthetic credential. The optional source-Python crosscheck remains local and
+explicitly selected.
+
+Follow-up checks: four Python workflow/protection tests passed, including
+missing vault gates and external-adapter inheritance rejection; workflow
+security and all ten repository integrity groups passed; WSL `bash -n` and Git
+whitespace checks passed. No concurrent Cargo process was started against the
+parent's WSL native build. The parent reported successful Ubuntu 24.04 AppImage
+and Debian development builds; the runner-identity metadata correction and
+exact native vault test remain parent verification. No production verifier was
+weakened, and this follow-up does not claim a successful rerun or publication.

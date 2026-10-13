@@ -373,6 +373,16 @@ asset/dependency-evidence separation. CI also runs
 `python -m unittest scripts/test_linux_release_gates.py` to reject missing
 native gates and unsuccessful or foreign-app main-protection evidence.
 
+Linux core-only fuzz jobs install `pkg-config` and `libdbus-1-dev` before
+compilation because the native Secret Service adapter is part of the core.
+Native Linux CI, preview, and release run the isolated credential smoke through
+`env -u HOI4_TEST_IMAGE_VAULT_ADAPTER bash scripts/test_linux_credentials.sh`.
+Require the exact ignored test to exist and execute; a zero-test success is not
+evidence. The harness uses temporary HOME/XDG, D-Bus, and Secret Service state,
+and a synthetic value. Workflow regressions reject absent native prerequisites,
+wrong install ordering, missing vault gates, and external source-adapter
+inheritance. Local source-Python crosschecks remain explicitly opt-in.
+
 Native Linux smokes run under Xvfb and D-Bus with temporary XDG application data
 and supervised process-group cleanup. Local smokes extract both packages;
 only disposable CI sets `HOI4_MOD_SETUP_DEDICATED_LINUX=1` for actual `dpkg`

@@ -328,6 +328,17 @@ unreadable package state, and assert clean removal. Native package tests do not
 replace real game/launcher, Secret Service round-trip, real-account login, or
 signed replacement/restart/retry acceptance.
 
+Linux native CI, preview, and stable release also run
+`scripts/test_linux_credentials.sh` with the optional source-Python adapter
+unset. The runner selects and verifies the exact ignored native Rust test,
+creates a temporary HOME/XDG and D-Bus/Secret Service session, exercises
+save/read/delete with a synthetic value, and proves the serialized reference
+does not contain it. No real desktop vault, account, or external source checkout
+is required. Linux core-only fuzz compilation installs `pkg-config` and
+`libdbus-1-dev` before its Cargo check; workflow mutation tests reject missing
+prerequisites, incorrect ordering, missing vault gates, and external adapter
+inheritance in CI.
+
 ## Compatibility
 
 Test supported Windows, macOS, and Linux versions, x64 and Apple Silicon where applicable, case-sensitive and case-insensitive volumes, local and cloud-synced folders.

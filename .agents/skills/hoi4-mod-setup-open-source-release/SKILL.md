@@ -59,6 +59,10 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - On macOS, Tauri's DMG bundling removes the temporary `.app` bundle after packaging; `scripts/run_desktop_e2e.mjs` therefore accepts the still-present `target/release/hoi4-mod-setup` binary as a packaging smoke fallback.
 - Pull-request package verification accepts GitHub merge refs; semantic tag and tag-target checks are enforced only when the release workflow enables `HOI4_MOD_SETUP_REQUIRE_RELEASE_IDENTITY=1`.
 - Fuzz targets compile in CI from the pinned Rust toolchain.
+  Linux core-only fuzz compilation installs `pkg-config` and `libdbus-1-dev`
+  before its Cargo check: Secret Service remains a native core dependency even
+  without the optional desktop feature. Keep the dependency/order regression
+  in `scripts/test_linux_release_gates.py`.
 - Generated artifacts are uploaded only after tests pass.
 - Linux CI runners install the Tauri/WebKit/GTK build dependencies before all-feature Rust checks; Ubuntu 22.04 x64 native jobs build and test both AppImage and Debian packages.
 - Release runners install the pinned Python validation dependencies before invoking repository-integrity checks, and publication asset arguments are built from an explicit file list rather than an unexpanded recursive glob.
@@ -195,6 +199,13 @@ isolated XDG profiles. Only a disposable runner sets
 `HOI4_MOD_SETUP_DEDICATED_LINUX=1`; that enables real bounded `dpkg` install/purge,
 refuses existing product state, and proves removal. Without the flag the local
 installer harness extracts, launches, and removes temporary copies only.
+
+Each native Linux CI, preview, and release job also runs
+`env -u HOI4_TEST_IMAGE_VAULT_ADAPTER bash scripts/test_linux_credentials.sh`.
+The harness creates a temporary HOME/XDG, a new D-Bus session and Secret Service,
+and verifies the exact ignored native credential save/read/delete test exists
+before running it. Never use a real desktop vault or inherit an external source
+adapter in CI; a local source-Python crosscheck remains explicitly opt-in.
 
 The protected, checkout-free, OIDC-free `sign-linux` job receives the updater
 private key in exactly one bounded step and signs both final AppImage and Debian

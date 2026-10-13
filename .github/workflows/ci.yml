@@ -161,6 +161,11 @@ jobs:
         run: |
           rustup toolchain install 1.88.0 --profile minimal
           rustup default 1.88.0
+      - name: Install Linux fuzz dependencies
+        if: steps.detect.outputs.present == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y pkg-config libdbus-1-dev
       - name: Compile fuzz targets
         if: steps.detect.outputs.present == 'true'
         run: cargo check --manifest-path fuzz/Cargo.toml --bins
@@ -242,6 +247,10 @@ jobs:
         if: steps.detect.outputs.present == 'true' && runner.os != 'Linux'
         shell: bash
         run: pnpm desktop:e2e
+      - name: Verify isolated Linux Secret Service
+        if: runner.os == 'Linux'
+        shell: bash
+        run: env -u HOI4_TEST_IMAGE_VAULT_ADAPTER bash scripts/test_linux_credentials.sh
       - name: Launch Linux application and exercise both packages
         if: runner.os == 'Linux'
         shell: bash

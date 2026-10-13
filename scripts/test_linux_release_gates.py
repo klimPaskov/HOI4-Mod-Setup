@@ -4,10 +4,27 @@ import unittest
 from pathlib import Path
 
 from scripts.apply_main_ruleset import prepare_ruleset_payload, require_successful_checks
-from scripts.check_workflow_security import assert_linux_native_gate, load_workflow
+from scripts.check_workflow_security import assert_linux_fuzz_dependencies, assert_linux_native_gate, load_workflow
 
 
 class LinuxReleaseGates(unittest.TestCase):
+    def test_fuzz_requires_dbus_development_packages_before_compile(self):
+        workflow = load_workflow("ci.yml")
+        assert_linux_fuzz_dependencies(workflow)
+        for missing_package in ("pkg-config", "libdbus-1-dev"):
+            changed = copy.deepcopy(workflow)
+            dependency = next(step for step in changed["jobs"]["fuzz"]["steps"] if step.get("name") == "Install Linux fuzz dependencies")
+            dependency["run"] = dependency["run"].replace(missing_package, "")
+            with self.assertRaises(SystemExit):
+                assert_linux_fuzz_dependencies(changed)
+        after_compile = copy.deepcopy(workflow)
+        steps = after_compile["jobs"]["fuzz"]["steps"]
+        dependency = next(step for step in steps if step.get("name") == "Install Linux fuzz dependencies")
+        steps.remove(dependency)
+        steps.append(dependency)
+        with self.assertRaises(SystemExit):
+            assert_linux_fuzz_dependencies(after_compile)
+
     def test_ruleset_application_changes_only_checks_and_preserves_server_protection(self):
         desired = json.loads((Path(__file__).resolve().parents[1] / ".github/rulesets/main-protected.json").read_text())
         current = copy.deepcopy(desired)
@@ -43,6 +60,15 @@ class LinuxReleaseGates(unittest.TestCase):
             del smoke["env"]["HOI4_MOD_SETUP_DEDICATED_LINUX"]
             with self.assertRaises(SystemExit):
                 assert_linux_native_gate(name, no_dpkg, job)
+            no_vault = copy.deepcopy(workflow)
+            no_vault["jobs"][job]["steps"] = [step for step in no_vault["jobs"][job]["steps"] if step.get("name") != "Verify isolated Linux Secret Service"]
+            with self.assertRaises(SystemExit):
+                assert_linux_native_gate(name, no_vault, job)
+            external_vault_adapter = copy.deepcopy(workflow)
+            vault = next(step for step in external_vault_adapter["jobs"][job]["steps"] if step.get("name") == "Verify isolated Linux Secret Service")
+            vault["run"] = "bash scripts/test_linux_credentials.sh"
+            with self.assertRaises(SystemExit):
+                assert_linux_native_gate(name, external_vault_adapter, job)
 
     def test_main_ruleset_requires_successful_github_actions_linux_evidence(self):
         desired = json.loads((Path(__file__).resolve().parents[1] / ".github/rulesets/main-protected.json").read_text())

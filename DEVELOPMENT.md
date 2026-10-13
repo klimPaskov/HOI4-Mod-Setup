@@ -159,6 +159,15 @@ launcher/game loading or real-account sign-in. Locally rebuilt packages are
 inspection artifacts; stable release evidence must bind a clean annotated-tag
 checkout and pass final updater-signature verification.
 
+`scripts/test_linux_credentials.sh` runs the exact ignored native vault test
+inside a new HOME/XDG profile and D-Bus session, with a temporary unlocked
+keyring and a synthetic value. It verifies save/read/delete and opaque-reference
+serialization without touching the desktop vault. CI explicitly removes
+`HOI4_TEST_IMAGE_VAULT_ADAPTER`; local developers may set it only to crosscheck
+an explicitly selected source Python vault adapter. Core-only Linux fuzz builds
+still need `pkg-config` and `libdbus-1-dev` because Secret Service is a native
+dependency of the core, independent of the optional Tauri desktop feature.
+
 The Tauri CLI uses the workspace-root `target/release` directory for native
 bundles; the release and launch-smoke scripts also accept the alternate
 `src-tauri/target/release` layout used by standalone Tauri projects.

@@ -151,6 +151,10 @@ jobs:
         if: runner.os != 'Linux'
         shell: bash
         run: pnpm desktop:e2e
+      - name: Verify isolated Linux Secret Service
+        if: runner.os == 'Linux'
+        shell: bash
+        run: env -u HOI4_TEST_IMAGE_VAULT_ADAPTER bash scripts/test_linux_credentials.sh
       - name: Launch Linux application and exercise both packages
         if: runner.os == 'Linux'
         shell: bash

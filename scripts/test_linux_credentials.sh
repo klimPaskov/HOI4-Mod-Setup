@@ -18,8 +18,14 @@ if [[ "${1:-}" == "--session" ]]; then
   GNOME_KEYRING_CONTROL="$keyring_control" /usr/bin/gnome-keyring-daemon \
     --start --components=secrets --control-directory "$keyring_control" >/dev/null
   cd -- "$repo_root"
-  PATH="$CARGO_HOME/bin:/usr/bin:/bin" cargo test --workspace --all-features \
-    linux_secret_service_round_trip_keeps_only_an_opaque_reference -- --ignored --test-threads=1
+  native_test=credentials::tests::linux_secret_service_round_trip_keeps_only_an_opaque_reference
+  # Fail closed when the ignored native test is renamed or no longer compiled.
+  # A zero-test Cargo success does not establish a vault round trip.
+  PATH="$CARGO_HOME/bin:/usr/bin:/bin" cargo test --locked -p hoi4-mod-setup \
+    --lib --all-features "$native_test" -- --ignored --exact --list |
+    /usr/bin/grep -Fx -- "$native_test: test" >/dev/null
+  PATH="$CARGO_HOME/bin:/usr/bin:/bin" cargo test --locked -p hoi4-mod-setup \
+    --lib --all-features "$native_test" -- --ignored --exact --test-threads=1
   exit
 fi
 

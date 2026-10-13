@@ -81,12 +81,30 @@ def assert_linux_native_gate(workflow_name: str, workflow: dict, job_name: str) 
     for command in ("xvfb-run -a dbus-run-session -- pnpm desktop:e2e", "xvfb-run -a dbus-run-session -- pnpm installer:e2e"):
         if command not in str(smoke.get("run", "")):
             raise SystemExit(f"{workflow_name} is missing Linux native smoke command: {command}")
+    vault = next((step for step in steps if step.get("name") == "Verify isolated Linux Secret Service"), {})
+    if vault.get("if") != "runner.os == 'Linux'" or vault.get("run") != "env -u HOI4_TEST_IMAGE_VAULT_ADAPTER bash scripts/test_linux_credentials.sh":
+        raise SystemExit(f"{workflow_name} must verify the isolated native Linux vault without an external source adapter")
+
+
+def assert_linux_fuzz_dependencies(workflow: dict) -> None:
+    steps = workflow["jobs"]["fuzz"].get("steps", [])
+    dependency_index = next((index for index, step in enumerate(steps) if step.get("name") == "Install Linux fuzz dependencies"), -1)
+    compile_index = next((index for index, step in enumerate(steps) if step.get("name") == "Compile fuzz targets"), -1)
+    if not 0 <= dependency_index < compile_index:
+        raise SystemExit("Linux fuzz compilation must install native D-Bus development dependencies first")
+    dependency = steps[dependency_index]
+    if dependency.get("if") != "steps.detect.outputs.present == 'true'":
+        raise SystemExit("Linux fuzz dependencies must follow the source detection gate")
+    for package in ("pkg-config", "libdbus-1-dev"):
+        if package not in str(dependency.get("run", "")):
+            raise SystemExit(f"Linux fuzz compilation is missing prerequisite {package}")
 
 
 def main() -> None:
     preview = load_workflow("development-preview.yml")
     release = load_workflow("release.yml")
     ci = load_workflow("ci.yml")
+    assert_linux_fuzz_dependencies(ci)
     assert_linux_native_gate("ci.yml", ci, "desktop-e2e")
     assert_linux_native_gate("development-preview.yml", preview, "build")
     assert_linux_native_gate("release.yml", release, "build-unsigned")
