@@ -11766,6 +11766,39 @@ mod tests {
                 );
             }
         }
+        for operation_index in 0..2 {
+            for after in [false, true] {
+                let project = tempdir().unwrap();
+                let app = tempdir().unwrap();
+                let (plan, prepared, original) = workshop_import_fixture(project.path());
+                assert_eq!(plan.operations.len(), 2);
+                let options = TransactionOptions {
+                    app_data_root: Some(app.path().into()),
+                    fail_before_operation: (!after).then_some(operation_index),
+                    fail_after_operation: after.then_some(operation_index),
+                    ..Default::default()
+                };
+                let error =
+                    run_test_transaction(project.path(), &plan, &prepared, &options).unwrap_err();
+                assert!(error.to_string().contains("fault injected"));
+                assert!(!project
+                    .path()
+                    .join(".hoi4-mod-setup/install.lock.json")
+                    .exists());
+                let journal_path = transaction_root(app.path(), plan.plan_id)
+                    .transaction
+                    .join("journal.json");
+                let mut journal = read_journal(&journal_path).unwrap();
+                assert!(journal.recovery.rollback_allowed);
+                assert!(!journal.recovery.resume_allowed);
+                rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+                assert!(!project.path().join("AGENTS.md").exists());
+                assert_eq!(
+                    fs::read(project.path().join("descriptor.mod")).unwrap(),
+                    original
+                );
+            }
+        }
     }
 
     #[test]
