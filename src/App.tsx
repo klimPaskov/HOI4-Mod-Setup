@@ -275,7 +275,7 @@ export const initialState: WizardState = {
   projectPathStatus: "resolving",
   description: DEFAULT_DESCRIPTION,
   sourceMode: "pinned_release",
-  pinnedRef: "package-2026-10-13",
+  pinnedRef: "package-2026-10-13.1",
   aiProvider: "claude_account",
   aiModel: CLAUDE_HAIKU_MODEL,
   aiReasoningEffort: "high",

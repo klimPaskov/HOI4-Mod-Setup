@@ -5,7 +5,7 @@
 This planning package uses two evidence sets:
 
 1. The project files supplied with the request, including all Markdown skills, all supplied subagent TOML files, the project instruction file, the mechanics guide, and the current event, cluster, and scenario catalog CSV snapshots.
-2. The current audit records the published `klimPaskov/Agentic-HOI4-Modding` revision in `source-audit/live_repository_inventory.json`. Its resolved commit, generated-source revision, and manifest SHA-256 identify exact immutable Git bytes. The package includes canonical Claude sources and native client projections, portraits, the offline wiki, bounded 3D tooling, the published HOI4 Agent Tools 4.0.0 contract, and the verified optional Windows Live Tools release. Runtime resolution still binds the manifest and selected files to one commit.
+2. The current audit records the published `klimPaskov/Agentic-HOI4-Modding` revision in `source-audit/live_repository_inventory.json`. Its resolved commit, generated-source revision, and manifest SHA-256 identify exact immutable Git bytes. The package includes canonical Claude sources and native client projections, portraits, the offline wiki, bounded 3D tooling, the published HOI4 Agent Tools 4.0.3 contract with explicit Windows/Linux integrity, and the verified optional Windows Live Tools release. Runtime resolution still binds the manifest and selected files to one commit.
 
 Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. The checked-in app manifest matches the published Agentic manifest Git blob byte-for-byte. The inventory's `manifest_generated_for_revision` identifies the immutable source snapshot used to generate that evidence.
 
@@ -47,7 +47,7 @@ The body of every offline wiki article was not fully read. The installer design 
 
 The root `LICENSE` declares Apache-2.0 for original package code and guidance. Third-party material retains separate terms; the package license does not establish missing wiki or inherited visual-asset rights. Wiki provenance remains `repository_only` and its formal license status remains `not_found`.
 
-The published manifest at `d05670e3838148e669913a5eaec681b1f6c1901d` was generated from `48707149408da09dcc57639564da4c5577faa9a0`. Its exact Git-blob SHA-256 is `663d9fc622cb2af3e66d25ed930027cc107fb0cd049550eb7e662824ef3f7dac`; it contains 1,645 file-evidence records. The MCP pin comes from npm registry integrity and a clean isolated published-package installation. Runtime resolution verifies every selected blob against the same immutable source revision before staging.
+The schema-5 manifest at `cbefeb75cb469ec8b851baa542de53c47dcd754e` was generated from `7c3667037abd32422e5b9073add36098f208be17`. Its exact Git-blob SHA-256 is `2d2b2908959fa7ddd0148cbf8575a841d597776b0f735438288f3c2e76b0025c`; it contains 1665 file-evidence records. The MCP pin comes from npm registry integrity and a clean isolated published-package installation. Runtime resolution verifies every selected blob against the same immutable source revision before staging.
 
 ### Corrected publication declarations
 
@@ -132,13 +132,13 @@ Selected-only workflow subagents reviewed:
 
 Repository directory pages and cached listings can lag or differ. The application must resolve a commit first and expand that exact tree. A branch directory listing alone cannot define an installation.
 
-### Current MCP configuration is Windows-specific
+### MCP configuration has explicit Windows and Linux routes
 
-The inspected `.codex/config.toml` uses `hoi4-agent-tools.cmd`. The application must not claim a verified macOS route until the repository declares and validates one.
+The source declares Windows `hoi4-agent-tools.cmd` and native Linux `hoi4-agent-tools` targets with separate complete package-tree evidence. Linux uses a current-user XDG npm prefix and two exact contained links; the app registers verified native Node plus the absolute server entry for each selected client. macOS keeps its unsupported core-server state.
 
 ### Current 3D setup is Windows-oriented
 
-The bootstrap, production `blender_hoi4` adapter, and wrappers use `.cmd`, PowerShell guidance, `winget`, `blender.exe`, Windows Program Files, and LocalAppData. The app must not invent Homebrew packages, shell scripts, Blender paths, or macOS commands. On macOS, this optional workflow is `unsupported_platform` until the repository adds a route.
+The bootstrap, production `blender_hoi4` adapter, and wrappers use `.cmd`, PowerShell guidance, `winget`, `blender.exe`, Windows Program Files, and LocalAppData. The app must not invent Homebrew packages, shell scripts, Blender paths, or macOS commands. On macOS and Linux, this optional workflow is `unsupported_platform` until the repository adds a route.
 
 ### 3D version policy documentation has drift
 

@@ -115,7 +115,7 @@ function semanticAnalysisFixture() {
 describe("HOI4 Mod Setup wizard", () => {
   it("starts new projects with the Atlantis Rising example", () => {
     expect(initialState.sourceMode).toBe("pinned_release");
-    expect(initialState.pinnedRef).toBe("package-2026-10-13");
+    expect(initialState.pinnedRef).toBe("package-2026-10-13.1");
     expect(initialState.identity.displayName).toBe("Atlantis Rising");
     expect(initialState.description).toBe("An Atlantis total conversion with a new Atlantic island, naval expansion, custom units, national focuses, and original mechanics.");
     expect(initialState.aiProvider).toBe("claude_account");
@@ -2535,7 +2535,6 @@ describe("live testing selection", () => {
     vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (X11; Linux x86_64)");
     window.history.replaceState({}, "", "/?screenshot=live-testing");
     const state = documentationFixture(initialState)!;
-    state.manifestPreview!.live_testing!.providers.find((item) => item.id === "clausewitz_mcp")!.supported_platforms.push("linux");
     render(<LiveTestingSetup state={state} update={vi.fn()} />);
     expect(screen.getByText(/Clausewitz MCP runs directly on Linux/)).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: /WSL distribution|SSH host/ })).not.toBeInTheDocument();
