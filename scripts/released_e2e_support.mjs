@@ -60,6 +60,14 @@ export function sanitizeReport(value, knownSecrets = []) {
   return JSON.parse(json);
 }
 
+export async function stopOwnedSession(stopProcess, closeBrowser, clearPolicy) {
+  const errors = [];
+  for (const operation of [stopProcess, closeBrowser, clearPolicy]) {
+    try { await operation(); } catch (error) { errors.push(error); }
+  }
+  if (errors.length) throw new AggregateError(errors, "Owned session cleanup failed.");
+}
+
 export async function downloadPublic(url, destination, maximumBytes, expectedHash) {
   const allowed = new Set(["github.com", "release-assets.githubusercontent.com", "codeload.github.com"]);
   let current = url;

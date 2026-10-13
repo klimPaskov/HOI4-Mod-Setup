@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { cleanAppEnvironment, inside, inventoryDigest, requireHostedWindows, sanitizeReport, setupPythonPath, startPlannerFixture } from "./released_e2e_support.mjs";
+import { cleanAppEnvironment, inside, inventoryDigest, requireHostedWindows, sanitizeReport, setupPythonPath, startPlannerFixture, stopOwnedSession } from "./released_e2e_support.mjs";
 
 test("remote-only guard refuses a local or self-hosted session", () => {
   const previous = process.env.RUNNER_ENVIRONMENT;
@@ -50,6 +50,15 @@ test("report metadata removes known and credential-shaped values", () => {
   const report = { error: "private-value Bearer abc.def sk-secret123", pageErrors: ["ghp_123456 AIza12345 github_pat_12345"] };
   const text = JSON.stringify(sanitizeReport(report, ["private-value"]));
   for (const secret of ["private-value", "abc.def", "sk-secret123", "ghp_123456", "AIza12345", "github_pat_12345"]) assert.ok(!text.includes(secret));
+});
+
+test("owned policy cleanup runs even when process or browser shutdown fails", async () => {
+  for (const failing of [0, 1, 2]) {
+    const called = [];
+    const operations = [0, 1, 2].map((index) => async () => { called.push(index); if (index === failing) throw new Error("injected cleanup failure"); });
+    await assert.rejects(stopOwnedSession(...operations), /Owned session cleanup failed/);
+    assert.deepEqual(called, [0, 1, 2]);
+  }
 });
 
 test("inventory identity is stable regardless of enumeration order", () => {

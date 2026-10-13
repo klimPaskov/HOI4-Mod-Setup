@@ -18,6 +18,8 @@ boundaries separately in CI.
   hosts, as explained by [Microsoft](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5645).
   Refuse pre-existing policy values and remove only exact test-owned values at
   shutdown. No wildcard policy, user-machine change or application backdoor.
+  Empty policy container keys may remain on the disposable runner; no configured
+  value remains. Policy cleanup runs even if process/browser shutdown fails.
 - Use real renderer-to-Rust IPC, source downloads, scanner, schema validation,
   confirmation, conflict review, transactions, MCP installers and readiness.
   Do not mock Tauri commands, seed approval state or write project state from

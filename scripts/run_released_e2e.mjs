@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { chromium, expect } from "@playwright/test";
 import { assertWindowsInstallerRegistryIsClean, cleanupWindowsInstallerRegistry, resolveNativeSystemExecutable, resolveSystemPowerShellPath } from "./windows_installer_registry.mjs";
-import { assertOriginals, cleanAppEnvironment, cleanProcessEnvironment, downloadPublic, fileHash, githubJson, inside, inventoryDigest, requireHostedWindows, sanitizeReport, setupPythonPath, snapshot, startPlannerFixture } from "./released_e2e_support.mjs";
+import { assertOriginals, cleanAppEnvironment, cleanProcessEnvironment, downloadPublic, fileHash, githubJson, inside, inventoryDigest, requireHostedWindows, sanitizeReport, setupPythonPath, snapshot, startPlannerFixture, stopOwnedSession } from "./released_e2e_support.mjs";
 import { configureHostedWebView } from "./released_e2e_windows.mjs";
 
 requireHostedWindows();
@@ -56,6 +56,7 @@ async function waitUntil(check, milliseconds, label) {
 }
 async function record(name) {
   result.stages.push({ name, at: new Date().toISOString(), heading: await heading().innerText() });
+  await heading().scrollIntoViewIfNeeded();
   const file = `${String(result.stages.length).padStart(2, "0")}-${name.replace(/[^a-z0-9-]/gi, "-")}.png`;
   await page.screenshot({ path: join(output, file) });
   result.screenshots.push(file);
@@ -88,13 +89,14 @@ async function launch(viewName) {
   await at("Start a mod project");
 }
 async function stop() {
-  if (app?.pid && app.exitCode === null && app.signalCode === null) {
-    await exec(resolveNativeSystemExecutable("taskkill.exe"), ["/PID", String(app.pid), "/T", "/F"], { windowsHide: true, timeout: 20_000 });
-    await waitUntil(() => app.exitCode !== null || app.signalCode !== null, 20_000, "owned app exit");
-  }
-  await browser?.close().catch(() => {});
-  await clearWebViewPolicy?.(); clearWebViewPolicy = undefined;
-  browser = undefined; page = undefined; app = undefined;
+  await stopOwnedSession(async () => {
+    if (app?.pid && app.exitCode === null && app.signalCode === null) {
+      await exec(resolveNativeSystemExecutable("taskkill.exe"), ["/PID", String(app.pid), "/T", "/F"], { windowsHide: true, timeout: 20_000 });
+      await waitUntil(() => app.exitCode !== null || app.signalCode !== null, 20_000, "owned app exit");
+    }
+  }, async () => { await browser?.close(); browser = undefined; page = undefined; },
+  async () => { await clearWebViewPolicy?.(); clearWebViewPolicy = undefined; });
+  app = undefined;
 }
 async function journals() {
   if (!existsSync(journalRoot)) return [];
@@ -222,8 +224,7 @@ try {
   await page.getByRole("combobox", { name: "AI provider", exact: true }).selectOption("local");
   await page.getByLabel("Model", { exact: true }).fill("e2e-planner");
   await page.getByLabel("Local model address", { exact: true }).fill(planner.endpoint);
-  const connect = page.getByRole("button", { name: "Connect Local model", exact: true });
-  if (await connect.count()) await connect.click();
+  await page.getByRole("button", { name: /^(Connect|Check) Local model$/ }).click();
   await next("Continue");
   if (scenario === "new") {
     await at("Describe the mod");
@@ -332,7 +333,7 @@ try {
         await waitUntil(() => !existsSync(executable), 60_000, "NSIS application removal");
       }
       await cleanupWindowsInstallerRegistry({ workRoot, installRoot, tempRoot: process.env.RUNNER_TEMP });
-    } catch (error) { failure ??= error; result.cleanupError = "Owned installer cleanup failed."; }
+    } catch (error) { failure ??= error; result.cleanupError = `Owned installer cleanup failed: ${String(error.message).slice(0, 1500)}`; }
   }
   result.success &&= !failure;
   Object.assign(result, sanitizeReport(result, [metadataToken]));
