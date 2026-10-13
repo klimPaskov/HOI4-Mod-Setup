@@ -181,7 +181,7 @@ Never bless the current machine's changed hash or relax installed-tree checks.
 - Manifest paths must use canonical slash-separated spelling (with an optional directory trailing slash); collision keys use Unicode NFC plus case folding so composed and decomposed macOS names cannot map to two managed destinations.
 - The runtime rejects manifests whose wiki provenance/license status is outside the schema enums, whose latest policy does not require default-branch resolution plus recorded commit evidence, or whose signing policy requires verification that the build does not implement. Pinned commit/release modes are checked against the manifest's explicit allow flags.
 - Release tags are resolved through typed GitHub objects, including annotated-tag dereferencing, and pinned revisions are verified as commit objects before manifest or file access.
-- The MCP component is optional, Windows-only, and provider-neutral; it depends on its verified bootstrap rather than `codex.config`. The setup-assistant choice does not change component selection or generated Codex TOML. Installed `codex.config` and MCP declarations independently control their later-development integrations. macOS retains an explicit unsupported state and never receives a substitute command. Its package-backed route requires exact npm integrity, canonical full-package-tree SHA-256/file count, runtime-entry identity, and required tools. The wrapper locates the current-user npm prefix but is never executed. Require an OpenJS Foundation-signed Node executable, capture its local SHA-256, and recheck it at spawn. Any missing evidence blocks execution. The offline wiki is always rooted at `paradox_wiki/`; the plan and lock copy the exact manifest `wiki.required_pages` list plus snapshot/media/provenance/license metadata for the resolved revision, and readiness blocks legacy locks that lack that evidence instead of using a newer bundle.
+- The MCP component is optional, verified on Windows and Linux, and provider-neutral; it depends on its verified bootstrap rather than `codex.config`. The setup-assistant choice does not change component selection or generated Codex TOML. Installed `codex.config` and MCP declarations independently control their later-development integrations. macOS retains an explicit unsupported state and never receives a substitute command. Its package-backed route requires exact npm integrity, canonical full-package-tree SHA-256/file count, runtime-entry identity, and required tools. The wrapper locates the current-user npm prefix but is never executed. On Windows require an OpenJS Foundation-signed Node executable; Linux requires a root-owned, non-writable, dpkg-verified native tool. Capture its local SHA-256 and recheck it at spawn. Linux uses explicit platform_targets and platform_pins, the XDG current-user npm prefix, and only the two source-pinned contained npm symlinks; all other links fail closed. Any missing evidence blocks execution. The offline wiki is always rooted at `paradox_wiki/`; the plan and lock copy the exact manifest `wiki.required_pages` list plus snapshot/media/provenance/license metadata for the resolved revision, and readiness blocks legacy locks that lack that evidence instead of using a newer bundle.
 - The MCP health probe requires exact protocol negotiation, an advertised
   server version matching the reviewed package version, a `tools` capability,
   and a `tools/list` result containing every declared
@@ -313,7 +313,7 @@ Never bless the current machine's changed hash or relax installed-tree checks.
 - cache corruption
 - wiki page coverage
 - unsupported platform state
-- source-backed fixtures preserve Windows-only MCP and 3D platform declarations
+- source-backed fixtures preserve Windows/Linux MCP declarations and Windows-only 3D declarations
 - external-action declaration and approval binding
 - manifest provenance/update/signing policy rejection
 
@@ -331,4 +331,4 @@ external-action tests pass.
 
 The live-testing catalog binds the reviewed source revision, exact native Linux game version, platforms and route. Register only selected coding clients; Clausewitz stays a to-do until Linux readiness is explicitly confirmed. Keep LiveTools bootstrap registration disabled because the app owns project registrations.
 
-New-project UI defaults to the tested `package-2026-10-13` release. The explicit Latest option still resolves the default branch to an exact commit, and existing projects retain their reviewed source choice.
+New-project UI defaults to the tested `package-2026-10-13.1` release. The explicit Latest option still resolves the default branch to an exact commit, and existing projects retain their reviewed source choice.

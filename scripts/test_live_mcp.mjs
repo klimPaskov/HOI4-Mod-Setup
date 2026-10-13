@@ -1,8 +1,9 @@
 import { stageVerifiedLocalTarball } from "./mcp_local_tarball.mjs";
+import { isContained, packageFiles } from "./mcp_package_integrity.mjs";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createInterface } from "node:readline";
 
@@ -12,14 +13,13 @@ const manifestPath = resolve(root, "docs", "source-manifest", "hoi4-mod-setup.ma
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 const component = manifest.components.find((candidate) => candidate.id === "mcp.hoi4_agent_tools");
 const health = component?.validation?.find((rule) => rule.id === "mcp.hoi4.health")?.parameters;
+const platform = process.platform === "win32" ? "windows" : process.platform;
+const pin = health?.platform_pins?.[platform] ?? (platform === "windows" ? health : undefined);
 const maxOutputBytes = 2 * 1024 * 1024;
-const maxPackageFileBytes = 32 * 1024 * 1024;
-const maxPackageTreeBytes = 512 * 1024 * 1024;
-const maxPackageFiles = 10_000;
 
 function requireEvidence() {
-  if (process.platform !== "win32") {
-    throw new Error("The current HOI4 Agent Tools MCP route is supported only on Windows.");
+  if (!["windows", "linux"].includes(platform)) {
+    throw new Error("The reviewed HOI4 Agent Tools MCP route supports Windows and native Linux.");
   }
   if (!health || health.package_name !== "hoi4-agent-tools" || !/^\d+\.\d+\.\d+$/.test(health.package_version ?? "")) {
     throw new Error("The bundled manifest does not declare an exact reviewed MCP package version.");
@@ -28,11 +28,14 @@ function requireEvidence() {
     throw new Error("The bundled MCP tool list does not match the current source contract.");
   }
   if (!/^sha512-[A-Za-z0-9+/]{86}==$/.test(health.package_integrity ?? "")
-      || !/^[a-f0-9]{64}$/.test(health.package_tree_sha256 ?? "")
-      || !/^[a-f0-9]{64}$/.test(health.runtime_entry_sha256 ?? "")
-      || !Number.isSafeInteger(health.package_file_count)
-      || !Number.isSafeInteger(health.runtime_entry_size)) {
+      || !/^[a-f0-9]{64}$/.test(pin?.package_tree_sha256 ?? "")
+      || !/^[a-f0-9]{64}$/.test(pin?.runtime_entry_sha256 ?? "")
+      || !Number.isSafeInteger(pin?.package_file_count)
+      || !Number.isSafeInteger(pin?.runtime_entry_size)) {
     throw new Error("The bundled MCP integrity evidence is incomplete.");
+  }
+  if (platform === "linux" && health.platform_targets?.linux !== "hoi4-agent-tools") {
+    throw new Error("The manifest does not declare a verified native Linux target.");
   }
 }
 
@@ -94,44 +97,8 @@ function runNode(args, options, stage, timeoutMs = 120_000) {
   });
 }
 
-async function packageFiles(packageRoot) {
-  const files = [];
-  let totalBytes = 0;
-  const pending = [packageRoot];
-  while (pending.length) {
-    const directory = pending.pop();
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const absolute = join(directory, entry.name);
-      const metadata = await lstat(absolute);
-      if (metadata.isSymbolicLink()) throw new Error("The MCP package contains a link.");
-      if (metadata.isDirectory()) {
-        pending.push(absolute);
-      } else if (metadata.isFile()) {
-        if (metadata.size > maxPackageFileBytes) throw new Error("An MCP package file exceeds its size bound.");
-        totalBytes += metadata.size;
-        if (totalBytes > maxPackageTreeBytes) throw new Error("The MCP package exceeds its total size bound.");
-        const bytes = await readFile(absolute);
-        files.push({ path: relative(packageRoot, absolute).replaceAll("\\", "/"), bytes });
-        if (files.length > maxPackageFiles) throw new Error("The MCP package exceeds its file-count bound.");
-      } else {
-        throw new Error("The MCP package contains a special file.");
-      }
-    }
-  }
-  files.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
-  const digest = createHash("sha256");
-  for (const file of files) {
-    digest.update(file.path, "utf8");
-    digest.update(Buffer.from([0]));
-    digest.update(String(file.bytes.length), "ascii");
-    digest.update(Buffer.from([0]));
-    digest.update(file.bytes);
-  }
-  return { files, sha256: digest.digest("hex") };
-}
-
 async function verifyInstalledPackage(prefix) {
-  const modules = resolve(prefix, "node_modules");
+  const modules = resolve(prefix, ...(platform === "linux" ? ["lib", "node_modules"] : ["node_modules"]));
   const packageRoot = resolve(modules, health.package_name);
   const packageInfo = JSON.parse(await readFile(resolve(packageRoot, "package.json"), "utf8"));
   if (packageInfo.name !== health.package_name || packageInfo.version !== health.package_version) {
@@ -145,15 +112,23 @@ async function verifyInstalledPackage(prefix) {
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
-  const tree = await packageFiles(packageRoot);
-  if (tree.sha256 !== health.package_tree_sha256 || tree.files.length !== health.package_file_count) {
+  const tree = await packageFiles(packageRoot, pin.package_symlinks ?? {});
+  if (tree.sha256 !== pin.package_tree_sha256 || tree.files.length !== pin.package_file_count) {
     throw new Error("Installed MCP package tree does not match the manifest evidence.");
   }
   const entry = resolve(packageRoot, health.runtime_entry);
   const entryBytes = await readFile(entry);
-  if (entryBytes.length !== health.runtime_entry_size
-      || createHash("sha256").update(entryBytes).digest("hex") !== health.runtime_entry_sha256) {
+  if (entryBytes.length !== pin.runtime_entry_size
+      || createHash("sha256").update(entryBytes).digest("hex") !== pin.runtime_entry_sha256) {
     throw new Error("Installed MCP runtime entry does not match the manifest evidence.");
+  }
+  if (platform === "linux") {
+    const locator = resolve(prefix, "bin", "hoi4-agent-tools");
+    if (!(await lstat(locator)).isSymbolicLink()
+        || await readlink(locator) !== `../lib/node_modules/${health.package_name}/${health.runtime_entry}`
+        || await realpath(locator) !== await realpath(entry)) {
+      throw new Error("The native MCP locator does not match the reviewed entry.");
+    }
   }
   return entry;
 }
@@ -262,7 +237,10 @@ function probeTools(entry, childEnvironment, projectRoot) {
 
 requireEvidence();
 const nodeDirectory = dirname(process.execPath);
-const npmCli = resolve(nodeDirectory, "node_modules", "npm", "bin", "npm-cli.js");
+const npmCli = platform === "linux" ? await realpath("/usr/bin/npm") : resolve(nodeDirectory, "node_modules", "npm", "bin", "npm-cli.js");
+if (!(await lstat(npmCli)).isFile() || (platform === "linux" && !npmCli.endsWith("/npm-cli.js"))) {
+  throw new Error("The native npm JavaScript entry is unavailable.");
+}
 const tempRoot = await mkdtemp(join(tmpdir(), "hoi4-mod-setup-mcp-live-"));
 const tempBase = resolve(tmpdir());
 const tempPrefix = resolve(tempRoot, "appdata", "npm");
@@ -289,11 +267,14 @@ await Promise.all([
   copyFile(resolve(root, "src-tauri", "icons", "icon.png"), resolve(testProject, "thumbnail.png")),
 ]);
 const resolvedRoot = await realpath(tempRoot);
-if (!resolvedRoot.toLowerCase().startsWith(tempBase.toLowerCase() + "\\")) {
+if (!isContained(await realpath(tempBase), resolvedRoot)) {
   throw new Error("Refusing to use a temporary MCP directory outside the system temp root.");
 }
 const environment = {
-  PATH: nodeDirectory,
+  PATH: platform === "linux" ? "/usr/bin:/bin" : nodeDirectory,
+  XDG_DATA_HOME: resolve(tempRoot, "xdg-data"),
+  XDG_CONFIG_HOME: resolve(tempRoot, "xdg-config"),
+  XDG_CACHE_HOME: resolve(tempRoot, "xdg-cache"),
   APPDATA: resolve(tempRoot, "appdata"),
   LOCALAPPDATA: resolve(tempRoot, "localappdata"),
   HOME: isolatedHome,

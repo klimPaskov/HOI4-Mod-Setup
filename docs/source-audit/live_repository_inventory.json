@@ -1,13 +1,13 @@
 {
   "repository": "klimPaskov/Agentic-HOI4-Modding",
-  "resolved_commit": "374443246bfb67823d2ea1214af8714d1dd80bbd",
+  "resolved_commit": "cbefeb75cb469ec8b851baa542de53c47dcd754e",
   "default_branch": "main",
   "inspection_date": "2026-10-13",
   "manifest_path": "hoi4-mod-setup.manifest.json",
-  "manifest_sha256": "d20d76ab5e27f9638cf76399c65fe0d0978f427ef7d17135a7339cef3d786172",
-  "manifest_generated_for_revision": "bbd0f6201472ef8449a2667005df9f76aa721571",
+  "manifest_sha256": "2d2b2908959fa7ddd0148cbf8575a841d597776b0f735438288f3c2e76b0025c",
+  "manifest_generated_for_revision": "7c3667037abd32422e5b9073add36098f208be17",
   "manifest_worktree_state": "published_committed_snapshot",
-  "workspace_manifest_sha256": "d20d76ab5e27f9638cf76399c65fe0d0978f427ef7d17135a7339cef3d786172",
+  "workspace_manifest_sha256": "2d2b2908959fa7ddd0148cbf8575a841d597776b0f735438288f3c2e76b0025c",
   "verified_root_entries": [
     ".claude/skills/",
     ".codex/",
@@ -26,7 +26,8 @@
     "README.md",
     "docs/systems/hoi4_agent_tools_mcp_integration.md",
     ".tools/package_chatgpt_project_sources.py",
-    ".tools/package_chatgpt_project_sources.bat"
+    ".tools/package_chatgpt_project_sources.bat",
+    "docs/linux.md"
   ],
   "verified_skills": [
     "hoi4-3d-model-pipeline",
@@ -244,7 +245,7 @@
     "The repository provides canonical Claude instructions, skills, and Markdown agents; generated coding-client projections; portrait workflows; MCP integration; bounded 3D tooling; and an offline wiki.",
     "The portrait component graph separates the complete production contract and explicit router from Cloud, Local, and RunPod skills; disabled projects do not receive those components.",
     "The portrait contract uses the project's selected image-generation route for generated portraits.",
-    "The provider-neutral MCP component uses hoi4-agent-tools.cmd through a Windows-only verified bootstrap; published canonical manifest evidence binds its complete bundled dependency tree and required routes. Codex adds structural TOML registration separately.",
+    "The provider-neutral MCP component uses explicit Windows and Linux targets through a verified bootstrap; published canonical manifest evidence binds its complete bundled dependency tree and required routes. Codex adds structural TOML registration separately.",
     "The published MCP capability list names the working hoi4.tech_inspect and hoi4.tech_render Technology Tree Viewer routes; comparisons use tech_inspect mode compare.",
     "The current 3D bootstrap, production blender_hoi4 adapter, and wrappers use Windows paths, .cmd wrappers, PowerShell guidance, winget, and blender.exe discovery.",
     "The published 3D component declares uv and binds the reviewed automatic bootstrap arguments, network access, expected writes, privilege, and rollback boundary.",
@@ -255,7 +256,8 @@
     "The canonical core profile includes docs.runtimes, and the optional Claude Code instructions source uses agents_adaptation_v1 with a single-authority choice.",
     "The manifest image and live-testing catalogs bind selected route guidance and MCP registrations. Clausewitz is pinned to its reviewed Linux HOI4 1.19.2 source; Live Tools remains experimental and Windows verified.",
     "The refreshed package verifies specialist tiers and efforts, provides the current nested reference-tool workflow, vendors GPTImage reference discovery at dfb4948b6877b5b7febf73e1342fcfacd862a1ed, and pins Meshy 0.6.2 and Blender dbbf836ad4b1025f14a2b3b504c43903f39e0b04.",
-    "The GPTImage bootstrap uses separate empty user and global npm configuration files. A fresh actual npm install from exact source blobs returned ready without credentials."
+    "The GPTImage bootstrap uses separate empty user and global npm configuration files. A fresh actual npm install from exact source blobs returned ready without credentials.",
+    "Manifest major 5 binds the native Linux npm prefix, exact Linux tree/entry and only two contained package links; all five selected client registrations use native Node with an absolute verified entry. Clausewitz is native on Linux without a WSL or SSH environment."
   ],
   "verification_limits": [
     "Every current manifest-declared skill and subagent path was re-inventoried with immutable Git-blob evidence. Changed contract surfaces, including the published MCP 4.0.3 package, Claude Code instruction template, docs.runtimes profile addition, portrait router, and bounded 3D adapter, were inspected; unchanged workflow prose relies on the prior full-read audit plus current path, size, and SHA-256 verification.",

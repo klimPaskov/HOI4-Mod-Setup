@@ -2809,6 +2809,7 @@ fn reviewed_gptimage_cleanup_action() -> ExternalAction {
         verified_interpreter_size: None,
         verified_runtime_sha256: None,
         verified_runtime_size: None,
+        verified_package_symlinks: Default::default(),
         verified_package_name: None,
         verified_package_version: None,
         verified_package_integrity: None,
@@ -2982,7 +2983,7 @@ fn run_reviewed_gptimage_bootstrap(
             ))
         }
     };
-    if Platform::current() == Platform::Windows
+    if matches!(Platform::current(), Platform::Windows | Platform::Linux)
         && crate::process::validate_executable_publisher(&python, "Python Software Foundation")
             .is_err()
     {
@@ -3024,7 +3025,7 @@ fn run_reviewed_gptimage_bootstrap(
             ))
         }
     };
-    if Platform::current() == Platform::Windows
+    if matches!(Platform::current(), Platform::Windows | Platform::Linux)
         && crate::process::validate_executable_publisher(&node, "OpenJS Foundation").is_err()
     {
         return Ok(gptimage_bootstrap_outcome(
@@ -3215,7 +3216,7 @@ fn run_reviewed_mcp_bootstrap(
     root: &Path,
     plan: &InstallationPlan,
 ) -> Result<PostInstallActionOutcome, AppError> {
-    if Platform::current() != Platform::Windows {
+    if !matches!(Platform::current(), Platform::Windows | Platform::Linux) {
         return Ok(PostInstallActionOutcome {
             component_id: crate::mcp::COMPONENT_ID.into(),
             state: "unsupported_platform".into(),
@@ -3235,7 +3236,7 @@ fn run_reviewed_mcp_bootstrap(
     let action = actions[0];
     let expected_arguments = [".tools/mcp/bootstrap_hoi4_agent_tools.py", "--quiet"];
     if action.command_source != "repository_script"
-        || action.platform != Platform::Windows
+        || action.platform != Platform::current()
         || action.arguments
             != expected_arguments
                 .into_iter()
@@ -3281,7 +3282,7 @@ fn run_reviewed_mcp_bootstrap(
             "the reviewed MCP bootstrap changed before execution".into(),
         ));
     }
-    let python = match crate::process::find_path_executable(&["python.exe", "python"]) {
+    let python = match crate::process::find_path_executable(&["python3", "python.exe", "python"]) {
         Ok(python) => python,
         Err(_) => {
             return Ok(PostInstallActionOutcome {
@@ -3309,7 +3310,7 @@ fn run_reviewed_mcp_bootstrap(
             "--quiet".into(),
         ],
         cwd: Some(root.to_path_buf()),
-        platform: Platform::Windows,
+        platform: Platform::current(),
         environment_names: vec![],
         timeout_seconds: 30 * 60,
         max_output_bytes: 2 * 1024 * 1024,
@@ -3763,34 +3764,122 @@ fn installed_mcp_target(
     lock: &InstallationLock,
 ) -> Result<crate::mcp::VerifiedMcpTarget, AppError> {
     let manifest = resolve_installed_manifest(lock)?;
-    let target = crate::mcp::manifest_target(&manifest)?;
-    let codex_config_selected = lock.components.iter().any(|component| {
-        component.id == "codex.config"
-            && !matches!(
-                component.state.as_str(),
-                "not_selected" | "removed" | "unsupported_platform"
+    let target = crate::mcp::manifest_target_for_platform(&manifest, Platform::current())?;
+    let expected = mcp_client_launch(&target, Platform::current())?;
+    let mut environments = vec![lock.primary_coding_environment.as_str()];
+    environments.extend(
+        lock.additional_coding_environments
+            .iter()
+            .map(String::as_str),
+    );
+    environments.sort();
+    environments.dedup();
+    for environment in environments {
+        let destination = image_client_config_path(environment).ok_or_else(|| {
+            AppError::Process(
+                "a selected coding client has no verified MCP registration route".into(),
             )
-    });
-    if !codex_config_selected {
-        return Ok(target);
-    }
-    let config_path = safe_join(project_root, ".codex/config.toml")?;
-    let config = std::fs::read_to_string(config_path)
-        .map_err(|error| AppError::Process(format!("read installed MCP configuration: {error}")))?;
-    let parsed = config.parse::<toml::Value>().map_err(|error| {
-        AppError::Serialization(format!("parse installed MCP configuration: {error}"))
-    })?;
-    let configured = parsed
-        .get("mcp_servers")
-        .and_then(|value| value.get("hoi4_agent_tools"))
-        .and_then(|value| value.get("command"))
-        .and_then(toml::Value::as_str);
-    if configured != Some(target.target.as_str()) {
-        return Err(AppError::Process(
-            "installed MCP configuration does not match the locked manifest command".into(),
-        ));
+        })?;
+        let bytes = crate::flatten::read_bounded_regular_file_no_follow_under_root(
+            project_root,
+            destination,
+            1024 * 1024,
+        )?;
+        if crate::mcp::client_registration(&bytes, destination)? != Some(expected.clone()) {
+            return Err(AppError::Process("a selected coding client's MCP registration differs from the locked manifest launch".into()));
+        }
     }
     Ok(target)
+}
+
+fn mcp_client_launch(
+    target: &crate::mcp::VerifiedMcpTarget,
+    platform: Platform,
+) -> Result<(String, Vec<String>), AppError> {
+    if platform == Platform::Linux {
+        let node = std::fs::canonicalize("/usr/bin/node").map_err(|_| {
+            AppError::Process("the trusted native Node runtime is unavailable".into())
+        })?;
+        crate::process::validate_executable_publisher(&node, "OpenJS Foundation")?;
+        let entry = crate::paths::linux_npm_prefix()?
+            .join("lib/node_modules")
+            .join(&target.package_name)
+            .join(&target.runtime_entry);
+        Ok((
+            node.display().to_string(),
+            vec![entry.display().to_string()],
+        ))
+    } else if platform == Platform::Windows && Platform::current() == Platform::Windows {
+        Ok((
+            crate::paths::user_facing_path(
+                &crate::paths::windows_npm_prefix()?.join(&target.target),
+            ),
+            vec![],
+        ))
+    } else {
+        Ok((target.target.clone(), vec![]))
+    }
+}
+
+fn retarget_native_mcp_config(
+    bytes: &[u8],
+    destination: &str,
+    launch: Option<&(String, Vec<String>)>,
+) -> Result<Vec<u8>, AppError> {
+    if destination == ".codex/config.toml" {
+        let mut config: toml::Value = std::str::from_utf8(bytes)
+            .map_err(|_| AppError::Source("client MCP configuration is not UTF-8".into()))?
+            .parse()
+            .map_err(|e: toml::de::Error| AppError::Source(e.to_string()))?;
+        if let Some(servers) = config
+            .get_mut("mcp_servers")
+            .and_then(toml::Value::as_table_mut)
+        {
+            if let Some((command, args)) = launch {
+                if let Some(route) = servers
+                    .get_mut("hoi4_agent_tools")
+                    .and_then(toml::Value::as_table_mut)
+                {
+                    route.insert("command".into(), toml::Value::String(command.clone()));
+                    route.insert(
+                        "args".into(),
+                        toml::Value::Array(args.iter().cloned().map(toml::Value::String).collect()),
+                    );
+                }
+            } else {
+                servers.remove("hoi4_agent_tools");
+            }
+        }
+        return toml::to_string_pretty(&config)
+            .map(String::into_bytes)
+            .map_err(|e| AppError::Source(e.to_string()));
+    }
+    let mut config: Value = serde_json::from_slice(bytes)?;
+    let key = if destination == "opencode.json" {
+        "mcp"
+    } else {
+        "mcpServers"
+    };
+    if let Some(servers) = config.get_mut(key).and_then(Value::as_object_mut) {
+        if let Some((command, args)) = launch {
+            if let Some(route) = servers
+                .get_mut("hoi4_agent_tools")
+                .and_then(Value::as_object_mut)
+            {
+                if key == "mcp" {
+                    let mut command_line = vec![command.clone()];
+                    command_line.extend(args.clone());
+                    route.insert("command".into(), serde_json::json!(command_line));
+                } else {
+                    route.insert("command".into(), serde_json::json!(command));
+                    route.insert("args".into(), serde_json::json!(args));
+                }
+            }
+        } else {
+            servers.remove("hoi4_agent_tools");
+        }
+    }
+    serde_json::to_vec_pretty(&config).map_err(AppError::from)
 }
 
 #[tauri::command(async)]
@@ -3802,7 +3891,7 @@ async fn run_mcp_health_check(project_root: String) -> Result<WorkflowHealthResu
 }
 
 fn run_mcp_health_check_blocking(project_root: String) -> Result<WorkflowHealthResult, String> {
-    if Platform::current() != Platform::Windows {
+    if !matches!(Platform::current(), Platform::Windows | Platform::Linux) {
         return Ok(WorkflowHealthResult {
             status: "unsupported_platform".into(),
             exit_code: None,
@@ -3866,7 +3955,7 @@ fn refresh_installed_mcp_readiness(
     detected: &mut ReadinessInput,
 ) -> Result<(), AppError> {
     if !matches!(detected.mcp_status.as_str(), "pass" | "health_not_run")
-        || Platform::current() != Platform::Windows
+        || !matches!(Platform::current(), Platform::Windows | Platform::Linux)
         || !detected
             .selected_components
             .iter()
@@ -4666,9 +4755,22 @@ fn manifest_external_actions(
                             component.platforms.first().map(|declared| match declared {
                                 ManifestPlatform::Windows => Platform::Windows,
                                 ManifestPlatform::Macos => Platform::Macos,
+                                ManifestPlatform::Linux => Platform::Linux,
                                 ManifestPlatform::All => Platform::current(),
                             })
                         })?;
+                    let mut rule = rule.clone();
+                    if let Some(pins) = rule
+                        .parameters
+                        .get("platform_pins")
+                        .and_then(|value| value.get(platform.manifest_name()))
+                        .and_then(Value::as_object)
+                        .cloned()
+                    {
+                        for (key, value) in pins {
+                            rule.parameters.insert(key, value);
+                        }
+                    }
                     // A Python validation target names the interpreter; its
                     // repository script remains the reviewed first argument.
                     // Execution still requires the app-owned script allowlist
@@ -4678,6 +4780,12 @@ fn manifest_external_actions(
                         .get("script_path")
                         .and_then(Value::as_str)
                         .filter(|_| component.source.kind != SourceKind::Generated)
+                        .or_else(|| {
+                            rule.parameters
+                                .get("platform_targets")
+                                .and_then(|value| value.get(platform.manifest_name()))
+                                .and_then(Value::as_str)
+                        })
                         .or(rule.target.as_deref())?;
                     Some(ExternalAction {
                         id: format!("external.{}.{}", component.id, rule.id),
@@ -4775,6 +4883,12 @@ fn manifest_external_actions(
                             .parameters
                             .get("runtime_size")
                             .and_then(Value::as_u64),
+                        verified_package_symlinks: rule
+                            .parameters
+                            .get("package_symlinks")
+                            .cloned()
+                            .and_then(|value| serde_json::from_value(value).ok())
+                            .unwrap_or_default(),
                         verified_package_name: rule
                             .parameters
                             .get("package_name")
@@ -6462,6 +6576,21 @@ fn adapt_image_generation_client_config_for_platform(
     } else {
         live_selection
     };
+    let image_bytes =
+        if matches!(platform, Platform::Windows | Platform::Linux) && environment.is_some() {
+            let target = crate::mcp::manifest_target_for_platform(manifest, platform).ok();
+            if platform == Platform::Windows && target.is_none() {
+                image_bytes
+            } else {
+                let launch = target
+                    .as_ref()
+                    .map(|target| mcp_client_launch(target, platform))
+                    .transpose()?;
+                retarget_native_mcp_config(&image_bytes, destination, launch.as_ref())?
+            }
+        } else {
+            image_bytes
+        };
     let adapted =
         crate::live_testing::adapt_config(&image_bytes, destination, live_selection, platform)?;
     // Historical packages without provider adaptation must remain reproducible
@@ -8250,13 +8379,14 @@ fn lock_mcp_selected(lock: &InstallationLock) -> bool {
                 component.state.as_str(),
                 "unsupported_platform" | "not_selected" | "removed"
             )
-            && Platform::current() == Platform::Windows
+            && matches!(Platform::current(), Platform::Windows | Platform::Linux)
     })
 }
 
 fn component_ids_include_mcp(component_ids: &[String]) -> bool {
     component_ids.iter().any(|component_id| {
-        component_id == "mcp.hoi4_agent_tools" && Platform::current() == Platform::Windows
+        component_id == "mcp.hoi4_agent_tools"
+            && matches!(Platform::current(), Platform::Windows | Platform::Linux)
     })
 }
 
@@ -10777,9 +10907,25 @@ fn open_in_codex(project_root: String) -> Result<OpenInCodexResult, String> {
     let Some(executable) = find_codex_executable() else {
         return Ok(manual_open_in_codex_result(&root));
     };
+    if Platform::current() == Platform::Linux {
+        return Ok(match launch_in_terminal(&root, &executable) {
+            Ok(()) => OpenInCodexResult {
+                opened: false,
+                message: "Project terminal opened. Run codex to start Codex in this project."
+                    .into(),
+            },
+            Err(_) => OpenInCodexResult {
+                opened: false,
+                message: format!("Open a terminal in {} and run codex.", root.display()),
+            },
+        });
+    }
     let spec = crate::process::ProcessSpec {
         executable: executable.clone(),
-        executable_sha256: Some(sha256_file(&executable).map_err(command_error)?),
+        executable_sha256: Some(
+            crate::process::verified_executable_sha256(&executable, "OpenAI")
+                .map_err(command_error)?,
+        ),
         args: codex_app_args(&root),
         cwd: Some(root),
         platform: Platform::current(),
@@ -10825,9 +10971,13 @@ fn open_in_coding_environment(
         if let Ok(executable) = crate::claude_code::verified_executable_path() {
             if launch_in_terminal(&root, &executable).is_ok() {
                 return Ok(OpenInCodexResult {
-                    opened: true,
-                    message: "Claude Code started in a new terminal window in the project folder."
-                        .into(),
+                    opened: Platform::current() != Platform::Linux,
+                    message: if Platform::current() == Platform::Linux {
+                        "Project terminal opened. Run claude to start Claude Code in this project."
+                    } else {
+                        "Claude Code started in a new terminal window in the project folder."
+                    }
+                    .into(),
                 });
             }
         }
@@ -10895,7 +11045,45 @@ fn launch_in_terminal(root: &Path, executable: &Path) -> Result<(), AppError> {
             .map(|_| ())
             .map_err(|error| AppError::Process(format!("Terminal could not start: {error}")))
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        let _ = executable;
+        for (name, arguments) in [
+            (
+                "gnome-terminal",
+                vec!["--working-directory".into(), root.display().to_string()],
+            ),
+            (
+                "konsole",
+                vec!["--workdir".into(), root.display().to_string()],
+            ),
+            ("xterm", vec![]),
+        ] {
+            let Ok(terminal) = std::fs::canonicalize(Path::new("/usr/bin").join(name)) else {
+                continue;
+            };
+            let Ok(hash) = crate::process::verified_executable_sha256(&terminal, "Linux system")
+            else {
+                continue;
+            };
+            return crate::process::ProcessSpec {
+                executable: terminal.clone(),
+                executable_sha256: Some(hash),
+                args: arguments,
+                cwd: Some(root.to_path_buf()),
+                platform: Platform::Linux,
+                environment_names: vec![],
+                timeout_seconds: 10,
+                max_output_bytes: 4096,
+            }
+            .spawn_detached(&[terminal]);
+        }
+        Err(AppError::Process(
+            "a verified desktop terminal is unavailable; open a terminal in the project folder"
+                .into(),
+        ))
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         let _ = (root, executable);
         Err(AppError::UnsupportedPlatform(
@@ -11563,7 +11751,7 @@ mod tests {
         .unwrap_err();
         assert!(error
             .to_string()
-            .contains("supports Windows and macOS only"));
+            .contains("supports Windows, macOS and Linux only"));
     }
 
     #[test]
@@ -11684,7 +11872,11 @@ mod tests {
             .get("hoi4_image_old_provider")
             .is_none());
         assert!(adapted["mcpServers"].get("hoi4_image_custom").is_some());
-        assert!(adapted["mcpServers"].get("hoi4_agent_tools").is_some());
+        assert_eq!(
+            adapted["mcpServers"].get("hoi4_agent_tools").is_some(),
+            Platform::current() != Platform::Linux,
+            "this fixture declares no native Linux HOI4 Agent Tools route"
+        );
         assert_eq!(adapted["mcpServers"]["hoi4_image_openai_api"]["cwd"], ".");
 
         let codex = b"[mcp_servers.hoi4_image_old_provider]\ncommand = \"old\"\n";
@@ -12871,6 +13063,117 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
     }
 
     #[test]
+    fn native_mcp_retargeting_preserves_custom_routes_and_source_environment_for_every_client() {
+        let launch = ("/usr/bin/node".to_string(), vec!["/home/example/.local/share/hoi4-mod-setup/npm/lib/node_modules/hoi4-agent-tools/dist/bin/stdio.js".to_string()]);
+        for path in [
+            ".mcp.json",
+            ".cursor/mcp.json",
+            ".qoder/mcp.json",
+            "opencode.json",
+        ] {
+            let key = if path == "opencode.json" {
+                "mcp"
+            } else {
+                "mcpServers"
+            };
+            let bytes = serde_json::to_vec(&serde_json::json!({(key):{"hoi4_agent_tools":{"command":"hoi4-agent-tools.cmd","args":["old"],"env":{"HOI4_AGENT_STDIO_IDLE_EXIT_MINUTES":"30"}},"custom":{"command":"keep-me"}}})).unwrap();
+            let value: Value = serde_json::from_slice(
+                &retarget_native_mcp_config(&bytes, path, Some(&launch)).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(value[key]["custom"]["command"], "keep-me");
+            assert_eq!(
+                value[key]["hoi4_agent_tools"]["env"]["HOI4_AGENT_STDIO_IDLE_EXIT_MINUTES"],
+                "30"
+            );
+            if key == "mcp" {
+                assert_eq!(
+                    value[key]["hoi4_agent_tools"]["command"],
+                    serde_json::json!([launch.0, launch.1[0]])
+                );
+            } else {
+                assert_eq!(value[key]["hoi4_agent_tools"]["command"], launch.0);
+                assert_eq!(
+                    value[key]["hoi4_agent_tools"]["args"],
+                    serde_json::json!(launch.1)
+                );
+            }
+        }
+        let source = b"[mcp_servers.hoi4_agent_tools]\ncommand = 'hoi4-agent-tools.cmd'\nenv = { HOI4_AGENT_STDIO_IDLE_EXIT_MINUTES = '30' }\n[mcp_servers.custom]\ncommand = 'keep-me'\n";
+        let value: toml::Value = String::from_utf8(
+            retarget_native_mcp_config(source, ".codex/config.toml", Some(&launch)).unwrap(),
+        )
+        .unwrap()
+        .parse()
+        .unwrap();
+        assert_eq!(
+            value["mcp_servers"]["hoi4_agent_tools"]["command"].as_str(),
+            Some(launch.0.as_str())
+        );
+        assert_eq!(
+            value["mcp_servers"]["custom"]["command"].as_str(),
+            Some("keep-me")
+        );
+        let removed: toml::Value = String::from_utf8(
+            retarget_native_mcp_config(source, ".codex/config.toml", None).unwrap(),
+        )
+        .unwrap()
+        .parse()
+        .unwrap();
+        assert!(removed["mcp_servers"].get("hoi4_agent_tools").is_none());
+        assert_eq!(
+            removed["mcp_servers"]["custom"]["command"].as_str(),
+            Some("keep-me")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_client_registrations_bind_the_reviewed_user_prefix_before_bootstrap() {
+        let manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+        ))
+        .unwrap();
+        let target =
+            crate::mcp::manifest_target_for_platform(&manifest, Platform::Windows).unwrap();
+        // Planning must not depend on the bootstrap's wrapper or Node already
+        // existing. It captures the exact source-owned current-user route.
+        let launch = mcp_client_launch(&target, Platform::Windows).unwrap();
+        assert!(Path::new(&launch.0).is_absolute());
+        assert_eq!(
+            launch.0,
+            crate::paths::user_facing_path(
+                &crate::paths::windows_npm_prefix()
+                    .unwrap()
+                    .join(&target.target)
+            )
+        );
+        assert!(launch.1.is_empty());
+        for destination in [
+            ".mcp.json",
+            ".cursor/mcp.json",
+            ".qoder/mcp.json",
+            "opencode.json",
+            ".codex/config.toml",
+        ] {
+            let source = if destination == ".codex/config.toml" {
+                b"[mcp_servers.hoi4_agent_tools]\ncommand='hoi4-agent-tools.cmd'\nargs=[]\n"
+                    .to_vec()
+            } else if destination == "opencode.json" {
+                serde_json::to_vec(&serde_json::json!({"mcp":{"hoi4_agent_tools":{"type":"local","command":["hoi4-agent-tools.cmd"]}}})).unwrap()
+            } else {
+                serde_json::to_vec(&serde_json::json!({"mcpServers":{"hoi4_agent_tools":{"command":"hoi4-agent-tools.cmd","args":[]}}})).unwrap()
+            };
+            let adapted = retarget_native_mcp_config(&source, destination, Some(&launch)).unwrap();
+            assert_eq!(
+                crate::mcp::client_registration(&adapted, destination).unwrap(),
+                Some(launch.clone()),
+                "{destination}"
+            );
+        }
+    }
+
+    #[test]
     fn selected_3d_workflow_materializes_the_reviewed_mcp_routes() {
         let config = b"[mcp_servers.hoi4_agent_tools]\ncommand = \"hoi4-agent-tools.cmd\"\n";
         let adapted = String::from_utf8(
@@ -13493,7 +13796,11 @@ developer_instructions = "Work on the named files."
             "select at least one manifest component".into(),
         ));
         assert!(selected.starts_with("Select at least one manifest component"));
-        if cfg!(any(target_os = "windows", target_os = "macos")) {
+        if cfg!(any(
+            target_os = "windows",
+            target_os = "macos",
+            target_os = "linux"
+        )) {
             assert!(selected.contains("Technical details:"));
             assert!(selected.contains("diagnostics.log"));
         } else {
@@ -13502,9 +13809,15 @@ developer_instructions = "Work on the named files."
         assert!(!selected.contains("provider-private-sentinel"));
 
         let source = include_str!("commands.rs");
-        assert!(source.contains(
-            "with_codex_session(AppServerProtocol::model_list)\n                .map_err(provider_analysis_user_error)"
-        ));
+        let handler = source
+            .split("async fn ai_model_list(")
+            .nth(1)
+            .unwrap()
+            .split("#[tauri::command")
+            .next()
+            .unwrap();
+        let handler = handler.split_whitespace().collect::<String>();
+        assert!(handler.contains("with_codex_session(AppServerProtocol::model_list).map_err(provider_analysis_user_error)"));
         assert!(
             source.contains("validate_confirmed_record(&record).map_err(planning_command_error)?")
         );

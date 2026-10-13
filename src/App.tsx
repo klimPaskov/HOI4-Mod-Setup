@@ -275,7 +275,7 @@ export const initialState: WizardState = {
   projectPathStatus: "resolving",
   description: DEFAULT_DESCRIPTION,
   sourceMode: "pinned_release",
-  pinnedRef: "package-2026-10-13",
+  pinnedRef: "package-2026-10-13.1",
   aiProvider: "claude_account",
   aiModel: CLAUDE_HAIKU_MODEL,
   aiReasoningEffort: "high",
@@ -2732,15 +2732,15 @@ function formatManifestSize(component: ManifestComponentPreview): string {
   return `${component.expected_files.length === 1 ? "1 file" : `${component.expected_files.length} files`} · ${size}`;
 }
 
-function currentUiPlatform(): "windows" | "macos" {
+function currentUiPlatform(): "windows" | "macos" | "linux" {
   return typeof navigator !== "undefined" && /macintosh|mac os x/i.test(navigator.userAgent)
     ? "macos"
-    : "windows";
+    : typeof navigator !== "undefined" && /linux/i.test(navigator.userAgent) ? "linux" : "windows";
 }
 
 export function manifestComponentSupportsPlatform(
   component: ManifestComponentPreview,
-  platform: "windows" | "macos" = currentUiPlatform(),
+  platform: "windows" | "macos" | "linux" = currentUiPlatform(),
 ): boolean {
   const platforms = component.platforms ?? ["all"];
   return platforms.includes("all") || platforms.includes(platform);
@@ -2753,7 +2753,7 @@ function manifestComponentDescription(component: ManifestComponentPreview): stri
 function manifestRow(component: ManifestComponentPreview, selected: boolean, provider: AiProviderId = "codex", components: ManifestComponentPreview[] = [component]): ComponentRow {
   void provider;
   void components;
-  const platform = component.platforms.length === 1 && (component.platforms[0] === "windows" || component.platforms[0] === "macos") ? component.platforms[0] : "all";
+  const platform = component.platforms.length === 1 && (component.platforms[0] === "windows" || component.platforms[0] === "macos" || component.platforms[0] === "linux") ? component.platforms[0] : "all";
   const platformBlocked = !manifestComponentSupportsPlatform(component);
   return {
     id: component.id,
@@ -2873,6 +2873,7 @@ function providerAvailableForSelection(id: string, state: WizardState): boolean 
 export function liveTestingSelectionValid(state: WizardState): boolean {
   const selection = state.liveTesting;
   if (!selection || selection.provider !== "clausewitz_mcp") return true;
+  if (currentUiPlatform() === "linux") return true;
   if (selection.wsl_distribution && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(selection.wsl_distribution)) return false;
   return currentUiPlatform() !== "macos" || !selection.linux_ready || /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(selection.ssh_host);
 }
@@ -2888,8 +2889,8 @@ export function LiveTestingSetup({ state, update }: { state: WizardState; update
       maintenanceOptionalSelections: next.provider === "none" ? (state.maintenanceOptionalSelections ?? []).filter((id) => id !== "workflow.live_testing" && id !== "workflow.live_tools") : state.maintenanceOptionalSelections,
     });
   };
-  return <div className="stack narrow"><section className="panel form-panel workflow-provider-panel"><PanelTitle title="Live testing provider" />{catalog ? <div className="radio-row" role="radiogroup" aria-label="Live testing provider">{catalog.providers.map((item) => <label className="radio-option" key={item.id}><input type="radio" name="live-testing-provider" disabled={!item.supported_platforms.some((platform) => platform === "all" || platform === currentUiPlatform())} checked={selection.provider === item.id} onChange={() => save({ provider: item.id, linux_ready: false })} /><span><strong>{item.display_name}</strong><small>{item.description}</small></span></label>)}</div> : <p className="muted">Live testing providers are unavailable in this source version.</p>}
-    {selection.provider === "clausewitz_mcp" && <div className="workflow-provider-fields"><p className="muted">Clausewitz MCP by <ExternalLink href="https://github.com/smerss/Clausewitz-MCP">smerss</ExternalLink> currently supports native Linux HOI4 1.19.2 only. Prepare the Linux game and server separately.</p><p className="muted">{currentUiPlatform() === "macos" ? "Use a Linux machine or virtual machine through SSH." : "Use a Linux game and server in WSL."} <ExternalLink href="https://github.com/klimPaskov/hoi4-mod-setup/blob/main/docs/LIVE_TESTING_LINUX.md">Linux setup guide</ExternalLink></p><label className="radio-option"><input type="checkbox" checked={selection.linux_ready} onChange={(event) => save({ linux_ready: event.target.checked })} /><span>I confirm a compatible Linux game and Clausewitz MCP server are ready</span></label>{currentUiPlatform() === "macos" ? <Field label="SSH host alias" value={selection.ssh_host} onChange={(ssh_host) => save({ ssh_host })} placeholder="Linux host alias from your SSH configuration" /> : <Field label="WSL distribution (optional)" value={selection.wsl_distribution} onChange={(wsl_distribution) => save({ wsl_distribution })} placeholder="Ubuntu" />}<p className="muted">{selection.linux_ready ? "Setup will register the selected route after reviewing the plan." : "Configure later: setup records a to-do and does not register the server."}</p>{!liveTestingSelectionValid(state) && <p role="alert">Use a safe distribution name or SSH host alias; a ready SSH route requires its alias.</p>}</div>}
+  return <div className="stack narrow"><section className="panel form-panel workflow-provider-panel"><PanelTitle title="Live testing provider" />{catalog ? <div className="radio-row" role="radiogroup" aria-label="Live testing provider">{catalog.providers.map((item) => <label className="radio-option" key={item.id}><input type="radio" name="live-testing-provider" disabled={item.id !== "none" && !item.supported_platforms.some((platform) => platform === "all" || platform === currentUiPlatform())} checked={selection.provider === item.id} onChange={() => save({ provider: item.id, linux_ready: false })} /><span><strong>{item.display_name}</strong><small>{item.description}</small></span></label>)}</div> : <p className="muted">Live testing providers are unavailable in this source version.</p>}
+    {selection.provider === "clausewitz_mcp" && <div className="workflow-provider-fields"><p className="muted">Clausewitz MCP by <ExternalLink href="https://github.com/smerss/Clausewitz-MCP">smerss</ExternalLink> currently supports native Linux HOI4 1.19.2 only. Prepare the Linux game and server separately.</p><p className="muted">{currentUiPlatform() === "linux" ? "Clausewitz MCP runs directly on Linux. No WSL, virtual machine, or SSH environment is needed." : currentUiPlatform() === "macos" ? "Use a Linux machine or virtual machine through SSH." : "Use a Linux game and server in WSL."} <ExternalLink href="https://github.com/klimPaskov/hoi4-mod-setup/blob/main/docs/LIVE_TESTING_LINUX.md">Linux setup guide</ExternalLink></p><label className="radio-option"><input type="checkbox" checked={selection.linux_ready} onChange={(event) => save({ linux_ready: event.target.checked })} /><span>I confirm a compatible Linux game and Clausewitz MCP server are ready</span></label>{currentUiPlatform() === "linux" ? null : currentUiPlatform() === "macos" ? <Field label="SSH host alias" value={selection.ssh_host} onChange={(ssh_host) => save({ ssh_host })} placeholder="Linux host alias from your SSH configuration" /> : <Field label="WSL distribution (optional)" value={selection.wsl_distribution} onChange={(wsl_distribution) => save({ wsl_distribution })} placeholder="Ubuntu" />}<p className="muted">{selection.linux_ready ? "Setup will register the selected route after reviewing the plan." : "Configure later: setup records a to-do and does not register the server."}</p>{!liveTestingSelectionValid(state) && <p role="alert">Use a safe distribution name or SSH host alias; a ready SSH route requires its alias.</p>}</div>}
     {selection.provider === "hoi4_live_tools" && <p className="muted">Experimental, slower, and not fully tested. The current public package verifies Windows only; the macOS scaffold is incomplete.</p>}
     {provider && <details><summary>Requirements and guidance</summary><div className="manifest-details">{[...provider.requirements, ...provider.guidance].map((text, index) => <span key={index}>{text}</span>)}{provider.supported_game_version && <span>Supported game version: {provider.supported_game_version}</span>}{provider.attribution && <span>By {provider.attribution.author}; license: {provider.attribution.license}</span>}</div></details>}
   </section></div>;
@@ -3552,6 +3553,7 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
   const coreReady = report?.coreReady === true;
   const primaryEnvironment = normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments, codingEnvironmentOptions(state.manifestPreview)).primary;
   const primaryLabel = codingEnvironmentLabel(primaryEnvironment, state.manifestPreview);
+  const nativeTerminal = currentUiPlatform() === "linux" && ["claude_code", "codex"].includes(primaryEnvironment);
   const opensCodex = primaryEnvironment === "codex";
   const open = opensCodex ? report?.openInCodex === true : report?.coreReady === true;
   const readinessPending = report === null;
@@ -3604,12 +3606,12 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
           <p>{readinessPending ? "Core checks are still being evaluated." : coreReady ? "Optional workflow status does not block agentic development." : "Resolve blocking checks before continuing."}</p>
         </div>
         <div className="ready-action">
-          <button type="button" className="button primary" disabled={!open || openPending} aria-busy={openPending || undefined} aria-describedby="open-in-codex-help" onClick={() => void handleOpen()}>{openPending ? `Opening ${primaryLabel}…` : openMessage === `${primaryLabel} opened successfully.` ? `${primaryLabel} opened ✓` : `Open in ${primaryLabel} ↗`}</button>
+          <button type="button" className="button primary" disabled={!open || openPending} aria-busy={openPending || undefined} aria-describedby="open-in-codex-help" onClick={() => void handleOpen()}>{nativeTerminal ? openPending ? "Opening terminal…" : "Open project terminal ↗" : openPending ? `Opening ${primaryLabel}…` : openMessage === `${primaryLabel} opened successfully.` ? `${primaryLabel} opened ✓` : `Open in ${primaryLabel} ↗`}</button>
           {openMessage && <p className="ready-action-message" role="status">{openMessage}</p>}
           {!readinessPending && coreReady && !open && opensCodex && <p className="ready-action-message">Install the Codex configuration component to enable this action.</p>}
         </div>
         <span id="open-in-codex-help" className="visually-hidden">
-          {readinessPending ? "Readiness checks are still running." : open ? `Opens the project in ${primaryLabel}, or shows how to open it manually.` : coreReady && opensCodex ? "Install the Codex configuration component before opening in Codex." : `Resolve blocking checks before opening in ${primaryLabel}.`}
+          {readinessPending ? "Readiness checks are still running." : open ? nativeTerminal ? `Opens a project terminal where you can run ${primaryLabel}.` : `Opens the project in ${primaryLabel}, or shows how to open it manually.` : coreReady && opensCodex ? "Install the Codex configuration component before opening in Codex." : `Resolve blocking checks before opening in ${primaryLabel}.`}
         </span>
       </section>
       <div className="two-column">

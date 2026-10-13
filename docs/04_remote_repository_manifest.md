@@ -195,7 +195,7 @@ Reject absolute project destinations, parent traversal, reserved Windows names, 
 
 ## Platform support
 
-A component supports `windows`, `macos`, or `all`. `all` requires verified command variants for both platforms. Current evidence supports platform-neutral text components, but the current `hoi4-agent-tools.cmd` and 3D wrappers are Windows-specific.
+Manifest major 5 adds `linux` to `windows`, `macos`, and `all`. `all` covers all supported platforms; command routes still require explicit platform evidence. HOI4 Agent Tools declares platform-specific launcher names and immutable package-tree pins for Windows and Linux. macOS keeps its unsupported runtime state; 3D remains Windows-only. Older manifest majors 2, 3, and 4 remain readable. Linux core routes must use the declared native launcher and current-user XDG npm prefix, never an inferred `.cmd` translation.
 
 ## Tools and environment
 

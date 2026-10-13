@@ -1,19 +1,21 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { execFile, spawn } from "node:child_process";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
   assertWindowsInstallerRegistryIsClean,
   cleanupWindowsInstallerRegistry,
-  resolveNativeSystemExecutable,
 } from "./windows_installer_registry.mjs";
+
+import { launchAndStop } from "./native_smoke.mjs";
+import { withLinuxDebInstallation } from "./linux_installer_registry.mjs";
+import { verifyLinuxPackage } from "./linux_packages.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const packagesRoot = resolve(root, "dist", "release", "packages");
 const execFileAsync = promisify(execFile);
-const startupObservationMs = 2_000;
 const uninstallObservationMs = 30_000;
 
 function walk(directory) {
@@ -43,43 +45,13 @@ async function waitUntilMissing(path, timeoutMs) {
   return !existsSync(path);
 }
 
-async function waitForExit(child, timeoutMs) {
-  if (child.exitCode !== null) return;
-  await new Promise((resolvePromise, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error("installed application did not exit within the bounded timeout")),
-      timeoutMs,
-    );
-    child.once("exit", () => {
-      clearTimeout(timeout);
-      resolvePromise();
-    });
-  });
-}
-
-async function launchAndStop(executable) {
+let smokeProfile;
+async function launchInstalled(executable) {
   if (!statSync(executable).isFile()) throw new Error(`installed executable is missing: ${executable}`);
-  const child = spawn(executable, [], {
-    cwd: root,
-    env: { ...process.env, HOI4_MOD_SETUP_E2E: "1" },
-    stdio: "ignore",
-    windowsHide: true,
-  });
-  await new Promise((resolvePromise, reject) => {
-    child.once("error", reject);
-    setTimeout(resolvePromise, startupObservationMs);
-  });
-  if (child.exitCode !== null) throw new Error(`installed application exited during startup with code ${child.exitCode}`);
-  if (process.platform === "win32") {
-    await execFileAsync(
-      resolveNativeSystemExecutable("taskkill.exe"),
-      ["/PID", String(child.pid), "/T", "/F"],
-      { windowsHide: true, timeout: 10_000 },
-    );
-  } else {
-    child.kill("SIGTERM");
-  }
-  await waitForExit(child, 10_000);
+  await launchAndStop(executable, { cwd: smokeProfile, env: { ...process.env,
+    XDG_CONFIG_HOME: join(smokeProfile, "config"), XDG_DATA_HOME: join(smokeProfile, "data"), XDG_CACHE_HOME: join(smokeProfile, "cache"),
+    APPDATA: join(smokeProfile, "config"), LOCALAPPDATA: join(smokeProfile, "data"),
+  } });
 }
 
 async function testWindowsInstaller(workRoot, installRoot) {
@@ -87,7 +59,7 @@ async function testWindowsInstaller(workRoot, installRoot) {
   await execFileAsync(installer, ["/S", `/D=${installRoot}`], { windowsHide: true, timeout: 120_000 });
   const executable = walk(installRoot).find((path) => path.toLowerCase().endsWith("hoi4-mod-setup.exe"));
   if (!executable) throw new Error("NSIS installation did not produce the application executable");
-  await launchAndStop(executable);
+  await launchInstalled(executable);
   const uninstaller = walk(installRoot).find((path) => /uninstall.*\.exe$/i.test(path));
   if (!uninstaller) throw new Error("NSIS installation did not produce an uninstaller");
   await execFileAsync(uninstaller, ["/S"], { windowsHide: true, timeout: 120_000 });
@@ -112,7 +84,7 @@ async function testMacInstaller(workRoot) {
     const executable = walk(resolve(installedApp, "Contents", "MacOS"))
       .find((path) => /hoi4[- ]mod[- ]setup$/i.test(path));
     if (!executable) throw new Error("installed macOS application executable was not found");
-    await launchAndStop(executable);
+    await launchInstalled(executable);
     await rm(installedApp, { recursive: true, force: true });
     if (existsSync(installedApp)) throw new Error("macOS application removal did not complete");
   } finally {
@@ -120,12 +92,42 @@ async function testMacInstaller(workRoot) {
   }
 }
 
-if (!["win32", "darwin"].includes(process.platform)) {
+async function testLinuxInstaller(workRoot) {
+  const image = requireOne(".appimage");
+  const deb = requireOne(".deb");
+  const metadata = JSON.parse(await readFile(resolve(root, "dist", "release", "BUILD_METADATA.json"), "utf8"));
+  verifyLinuxPackage(image, metadata.version, "X64");
+  verifyLinuxPackage(deb, metadata.version, "X64");
+  const imageRoot = join(workRoot, "appimage");
+  await mkdir(imageRoot);
+  const installedImage = join(imageRoot, "HOI4-Mod-Setup.AppImage");
+  await copyFile(image, installedImage);
+  await chmod(installedImage, 0o700);
+  await execFileAsync(installedImage, ["--appimage-extract"], { cwd: imageRoot, timeout: 120_000, maxBuffer: 16 * 1024 * 1024 });
+  await launchInstalled(join(imageRoot, "squashfs-root", "AppRun"));
+  await rm(imageRoot, { recursive: true });
+  if (existsSync(imageRoot)) throw new Error("AppImage removal did not complete");
+
+  if (process.env.HOI4_MOD_SETUP_DEDICATED_LINUX !== "1") {
+    const debRoot = join(workRoot, "deb");
+    await execFileAsync("/usr/bin/dpkg-deb", ["--extract", deb, debRoot], { timeout: 120_000 });
+    await launchInstalled(join(debRoot, "usr", "bin", "hoi4-mod-setup"));
+    await rm(debRoot, { recursive: true });
+    if (existsSync(debRoot)) throw new Error("extracted Debian application removal did not complete");
+    console.log("Linux extraction smoke passed; actual dpkg lifecycle requires HOI4_MOD_SETUP_DEDICATED_LINUX=1 on a disposable runner.");
+    return;
+  }
+  await withLinuxDebInstallation(deb, launchInstalled);
+}
+
+if (!["win32", "darwin", "linux"].includes(process.platform)) {
   throw new Error(`installer smoke testing is unsupported on ${process.platform}`);
 }
 
 const workRoot = await mkdtemp(join(tmpdir(), "hoi4-mod-setup-installer-e2e-"));
 const installRoot = resolve(workRoot, "installed");
+smokeProfile = join(workRoot, "profile");
+await mkdir(smokeProfile);
 let ownsWindowsRegistry = false;
 let testError = null;
 try {
@@ -134,7 +136,8 @@ try {
     ownsWindowsRegistry = true;
     await testWindowsInstaller(workRoot, installRoot);
   }
-  else await testMacInstaller(workRoot);
+  else if (process.platform === "darwin") await testMacInstaller(workRoot);
+  else await testLinuxInstaller(workRoot);
   console.log(`Installer install, launch, and removal smoke passed for ${process.platform}`);
 } catch (error) {
   testError = error;

@@ -51,6 +51,8 @@
     <p class="lead">Start a new mod or set up one you already have. Install project instructions, modding skills, specialist subagents, tools, and an offline wiki, then open your coding client.</p>
     <div class="actions">
       <a class="button primary" href="https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-windows-x64-setup.exe">Download for Windows</a>
+      <a class="button" href="https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.AppImage">Linux AppImage</a>
+      <a class="button" href="https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.deb">Linux Debian package</a>
       <a class="button" href="https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest">macOS and all releases</a>
       <a class="button" href="https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/docs/QUICKSTART.md">Quick start</a>
       <a class="button" href="https://www.youtube.com/playlist?list=PLh6JmuEabQioc4V8IYGEsMtqiw-xemeX3">Video tutorials</a>
@@ -63,7 +65,7 @@
       <h2>What you get</h2>
       <div class="grid">
         <div class="card"><h3>Project instructions</h3><p>Modding guidance adapted to your mod and coding client. Choose any supported client and add the others you use.</p></div>
-        <div class="card"><h3>Image generation</h3><p>Choose a main image provider, add optional providers, and change them later. API keys stay in the Windows or macOS credential store.</p></div>
+        <div class="card"><h3>Image generation</h3><p>Choose a main image provider, add optional providers, and change them later. API keys stay in the Windows, macOS or Linux credential store.</p></div>
         <div class="card"><h3>HOI4 workflow skills</h3><p>Events, decisions, focus trees, scripted GUIs, assets, frame animation, save inspection, and more, in <code>.claude/skills</code>.</p></div>
         <div class="card"><h3>Specialist subagents</h3><p>Planners, auditors, and asset workers for the different parts of your mod.</p></div>
         <div class="card"><h3>HOI4 Agent Tools MCP</h3><p>Build focus trees, events, decisions and worlds. Preview windows and maps, fix scripts and balance AI choices with your agent.</p></div>
@@ -107,10 +109,14 @@
     </section>
 
     <section>
+      <h2>Install on Linux</h2>
+      <p>Choose the AppImage or Debian package for an x86-64 desktop. Mark the AppImage executable and open it, or install the Debian package using your package manager. Ubuntu 22.04 and 24.04 are the test platforms. See the <a href="https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/docs/LINUX.md">Linux install guide</a> for runtime dependencies, Steam paths, credential storage and updates.</p>
+    </section>
+    <section>
       <h2>Requirements</h2>
       <table>
         <tr><th>Needed</th><th>Why</th></tr>
-        <tr><td>Windows 10 or 11 (macOS for the core setup)</td><td>HOI4 Agent Tools and 3D use Windows routes. Clausewitz MCP requires native Linux HOI4 1.19.2: WSL on Windows or Linux through SSH on macOS. Experimental HOI4 Live Tools verifies Windows only; its macOS scaffold is incomplete.</td></tr>
+        <tr><td>Windows 10 or 11, macOS, or x86-64 Linux</td><td>HOI4 Agent Tools runs on Windows and Linux; the verified 3D route remains Windows-only. Clausewitz MCP requires native Linux HOI4 1.19.2: directly on Linux, WSL on Windows or Linux through SSH on macOS. Experimental HOI4 Live Tools verifies Windows only; its macOS scaffold is incomplete.</td></tr>
         <tr><td>Git, if you choose Git setup</td><td>Keeps your mod's change history and connects it to a remote repository.</td></tr>
         <tr><td>Node.js LTS</td><td>Runs the HOI4 Agent Tools MCP server.</td></tr>
         <tr><td>A connected setup assistant</td><td>Choose from supported account sign-in, API key, local model, and custom provider options. Choose your coding client separately.</td></tr>

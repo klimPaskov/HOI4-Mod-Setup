@@ -35,6 +35,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - platform: linux-x64
+            os: ubuntu-22.04
+            bundle: appimage,deb
           - platform: windows-x64
             os: windows-latest
             bundle: nsis
@@ -57,6 +60,10 @@ jobs:
         run: |
           rustup toolchain install 1.88.0 --profile minimal
           rustup default 1.88.0
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash scripts/install_linux_dependencies.sh
       - name: Install dependencies
         shell: bash
         run: |
@@ -83,8 +90,22 @@ jobs:
           HOI4_MOD_SETUP_REQUIRE_TAURI: "1"
         run: pnpm release:verify
       - name: Launch native preview smoke test
+        if: runner.os != 'Linux'
         shell: bash
         run: pnpm desktop:e2e
+      - name: Verify isolated Linux Secret Service
+        if: runner.os == 'Linux'
+        shell: bash
+        run: env -u HOI4_TEST_IMAGE_VAULT_ADAPTER bash scripts/test_linux_credentials.sh
+      - name: Launch Linux application and exercise both packages
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          HOI4_MOD_SETUP_DEDICATED_LINUX: "1"
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+        run: |
+          xvfb-run -a dbus-run-session -- pnpm desktop:e2e
+          xvfb-run -a dbus-run-session -- pnpm installer:e2e
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hoi4-mod-setup-preview-${{ matrix.platform }}
@@ -110,11 +131,13 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
           PREVIEW_TAG: ${{ github.event.inputs.release_tag || '0.1.1' }}
         run: node scripts/prepare_preview_assets.mjs preview-artifacts publication-assets
-      - name: Require exactly three public installers
+      - name: Require exactly five public installers
         shell: bash
         run: |
           set -euo pipefail
           expected=(
+            "HOI4-Mod-Setup-linux-x64.AppImage"
+            "HOI4-Mod-Setup-linux-x64.deb"
             "HOI4-Mod-Setup-macos-arm64.dmg"
             "HOI4-Mod-Setup-macos-x64.dmg"
             "HOI4-Mod-Setup-windows-x64-setup.exe"
@@ -161,6 +184,8 @@ jobs:
             exit 1
           fi
           assets=(
+            publication-assets/HOI4-Mod-Setup-linux-x64.AppImage
+            publication-assets/HOI4-Mod-Setup-linux-x64.deb
             publication-assets/HOI4-Mod-Setup-macos-arm64.dmg
             publication-assets/HOI4-Mod-Setup-macos-x64.dmg
             publication-assets/HOI4-Mod-Setup-windows-x64-setup.exe
@@ -168,7 +193,7 @@ jobs:
           for asset in "${assets[@]}" publication-assets/PREVIEW_RELEASE_NOTES.md; do
             [[ -f "$asset" && ! -L "$asset" ]]
           done
-          [[ "$(find publication-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" == "4" ]]
+          [[ "$(find publication-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" == "6" ]]
           gh release create "$preview_tag" \
             "${assets[@]}" \
             --repo "$GITHUB_REPOSITORY" \

@@ -398,7 +398,7 @@ export interface ComponentRow {
   size: string;
   selected: boolean;
   required?: boolean;
-  platform?: "all" | "windows" | "macos";
+  platform?: "all" | "windows" | "macos" | "linux";
   state?: "supported" | "unsupported_platform" | "blocked";
 }
 
@@ -554,7 +554,7 @@ export interface InstallationPlanOperation {
   destination: string;
   source_sha256?: string | null;
   source_size?: number | null;
-  platform?: "windows" | "macos" | "all" | null;
+  platform?: "windows" | "macos" | "linux" | "all" | null;
   result_sha256?: string | null;
   base_sha256?: string | null;
   local_sha256?: string | null;
@@ -576,7 +576,7 @@ export interface InstallationPlanConflict {
 export interface InstallationExternalAction {
   id: string;
   component_id: string;
-  platform: "windows" | "macos";
+  platform: "windows" | "macos" | "linux";
   command_source: string;
   executable?: string | null;
   arguments?: string[];
@@ -596,6 +596,7 @@ export interface InstallationExternalAction {
   verified_package_version?: string | null;
   verified_package_integrity?: string | null;
   verified_package_tree_sha256?: string | null;
+  verified_package_symlinks?: Record<string, string>;
   verified_package_file_count?: number | null;
   verified_runtime_entry?: string | null;
   required_tool_names?: string[];
@@ -678,7 +679,7 @@ export interface InstallationPlan {
 
 export interface CredentialReference {
   name: string;
-  provider: "windows_credential_manager" | "macos_keychain";
+  provider: "windows_credential_manager" | "macos_keychain" | "linux_secret_service";
   reference: string;
   provider_id?: AiProviderId | string;
 }

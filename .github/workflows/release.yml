@@ -58,6 +58,8 @@ jobs:
             libpango1.0-dev \
             librsvg2-dev \
             libssl-dev \
+            libsecret-1-dev \
+            libdbus-1-dev \
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             patchelf
@@ -80,6 +82,8 @@ jobs:
           cargo install cargo-audit --version 0.22.2 --locked
           cargo audit
           python scripts/validate_repository.py
+          python scripts/check_workflow_security.py
+          python -m unittest scripts/test_linux_release_gates.py scripts/test_linux_secret_service.py
           python scripts/check_committed_secrets.py
           cargo fmt --all -- --check
           cargo clippy --manifest-path src-tauri/Cargo.toml --all-features --all-targets -- -D warnings
@@ -93,6 +97,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - platform: linux-x64
+            os: ubuntu-22.04
+            bundle: appimage,deb
           - platform: windows-x64
             os: windows-latest
             bundle: nsis
@@ -117,6 +124,10 @@ jobs:
         run: |
           rustup toolchain install 1.88.0 --profile minimal
           rustup default 1.88.0
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash scripts/install_linux_dependencies.sh
       - name: Install dependencies
         shell: bash
         run: |
@@ -137,9 +148,24 @@ jobs:
           HOI4_MOD_SETUP_REQUIRE_RELEASE_IDENTITY: "1"
         run: pnpm release:verify
       - name: Launch native application smoke test
+        if: runner.os != 'Linux'
         shell: bash
         run: pnpm desktop:e2e
+      - name: Verify isolated Linux Secret Service
+        if: runner.os == 'Linux'
+        shell: bash
+        run: env -u HOI4_TEST_IMAGE_VAULT_ADAPTER bash scripts/test_linux_credentials.sh
+      - name: Launch Linux application and exercise both packages
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          HOI4_MOD_SETUP_DEDICATED_LINUX: "1"
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+        run: |
+          xvfb-run -a dbus-run-session -- pnpm desktop:e2e
+          xvfb-run -a dbus-run-session -- pnpm installer:e2e
       - name: Install, launch, and remove native package
+        if: runner.os != 'Linux'
         shell: bash
         run: pnpm installer:e2e
       - name: Verify native project lifecycle
@@ -465,11 +491,79 @@ jobs:
           path: release-artifact/**
           if-no-files-found: error
 
+  sign-linux:
+    name: Sign Linux updates
+    needs: build-unsigned
+    if: ${{ vars.HOI4_MOD_SETUP_RELEASE_PUBLISH == 'true' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Install updater signer
+        run: npm install --global --ignore-scripts @tauri-apps/cli@2.11.5
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: hoi4-mod-setup-unsigned-linux-x64
+          path: release-artifact
+      - name: Sign final Linux packages
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$TAURI_SIGNING_PRIVATE_KEY" ]]
+          mapfile -d '' images < <(find release-artifact/packages -type f -name '*.AppImage' -print0)
+          mapfile -d '' debs < <(find release-artifact/packages -type f -name '*.deb' -print0)
+          [[ "${#images[@]}" == "1" && "${#debs[@]}" == "1" ]]
+          for artifact in "${images[0]}" "${debs[0]}"; do
+            [[ -f "$artifact" && ! -L "$artifact" ]]
+            tauri signer sign "$artifact"
+            [[ -s "${artifact}.sig" ]]
+          done
+      - name: Record Linux updater signing evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          root = Path("release-artifact").resolve()
+          metadata_path = root / "BUILD_METADATA.json"
+          metadata = json.loads(metadata_path.read_text())
+          if metadata["platform"].lower() != "linux" or metadata["architecture"].upper() != "X64":
+              raise SystemExit("Linux signing metadata identity mismatch")
+          packages = sorted(path for path in (root / "packages").rglob("*") if path.is_file() and path.suffix.lower() in (".appimage", ".deb"))
+          if len(packages) != 2 or {p.suffix.lower() for p in packages} != {".appimage", ".deb"}:
+              raise SystemExit("Linux signing requires exactly the AppImage and Debian package")
+          metadata["signing"] = "updater_signed"
+          metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")
+          evidence = {
+              "schema_version": "1.0.0", "source_revision": metadata["sourceRevision"],
+              "platform": metadata["platform"], "architecture": metadata["architecture"],
+              "method": "tauri-updater-signature",
+              "package_sha256": {p.relative_to(root / "packages").as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in packages},
+          }
+          (root / "SIGNING_VERIFICATION.json").write_text(json.dumps(evidence, indent=2) + "\n")
+          entries = [{"path": p.relative_to(root).as_posix(), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted(root.rglob("*")) if p.is_file() and p.name != "ARTIFACTS.sha256"]
+          (root / "ARTIFACTS.sha256").write_text(json.dumps(entries, indent=2) + "\n")
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hoi4-mod-setup-linux-x64
+          path: release-artifact/**
+          if-no-files-found: error
+
   curate:
     name: Verify signed installers
     needs:
       - sign-windows
       - sign-macos
+      - sign-linux
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -494,6 +588,10 @@ jobs:
         with:
           name: hoi4-mod-setup-macos-x64
           path: release-artifacts/hoi4-mod-setup-macos-x64
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: hoi4-mod-setup-linux-x64
+          path: release-artifacts/hoi4-mod-setup-linux-x64
       - name: Verify updater signatures against the embedded key
         shell: bash
         run: |
@@ -501,7 +599,9 @@ jobs:
           windows="$(find release-artifacts/hoi4-mod-setup-windows-x64/packages -type f -name '*.exe')"
           mac_arm="$(find release-artifacts/hoi4-mod-setup-macos-arm64/packages -type f -name '*.app.tar.gz')"
           mac_x64="$(find release-artifacts/hoi4-mod-setup-macos-x64/packages -type f -name '*.app.tar.gz')"
-          for artifact in "$windows" "$mac_arm" "$mac_x64"; do
+          linux_image="$(find release-artifacts/hoi4-mod-setup-linux-x64/packages -type f -name '*.AppImage')"
+          linux_deb="$(find release-artifacts/hoi4-mod-setup-linux-x64/packages -type f -name '*.deb')"
+          for artifact in "$windows" "$mac_arm" "$mac_x64" "$linux_image" "$linux_deb"; do
             [[ -f "$artifact" && -f "${artifact}.sig" ]]
             cargo run --locked --quiet --manifest-path tools/updater-signature-verify/Cargo.toml -- "$artifact" "${artifact}.sig" src-tauri/tauri.conf.json
           done
@@ -515,6 +615,8 @@ jobs:
         run: |
           set -euo pipefail
           expected=(
+            "HOI4-Mod-Setup-linux-x64.AppImage"
+            "HOI4-Mod-Setup-linux-x64.deb"
             "HOI4-Mod-Setup-macos-arm64.app.tar.gz"
             "HOI4-Mod-Setup-macos-arm64.dmg"
             "HOI4-Mod-Setup-macos-x64.app.tar.gz"
@@ -558,6 +660,8 @@ jobs:
         run: |
           set -euo pipefail
           assets=(
+            publication-assets/HOI4-Mod-Setup-linux-x64.AppImage
+            publication-assets/HOI4-Mod-Setup-linux-x64.deb
             publication-assets/HOI4-Mod-Setup-macos-arm64.dmg
             publication-assets/HOI4-Mod-Setup-macos-arm64.app.tar.gz
             publication-assets/HOI4-Mod-Setup-macos-x64.dmg
@@ -568,7 +672,7 @@ jobs:
           for asset in "${assets[@]}" publication-assets/RELEASE_NOTES.md; do
             [[ -f "$asset" && ! -L "$asset" ]]
           done
-          [[ "$(find publication-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" == "7" ]]
+          [[ "$(find publication-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" == "9" ]]
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "A release already exists for ${GITHUB_REF_NAME}; published tags are never reused" >&2
             exit 1
@@ -582,6 +686,8 @@ jobs:
             --notes-file publication-assets/RELEASE_NOTES.md
           [[ "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease --jq '(.isDraft and (.isPrerelease | not))')" == "true" ]]
           expected_names="$(printf '%s\n' \
+            HOI4-Mod-Setup-linux-x64.AppImage \
+            HOI4-Mod-Setup-linux-x64.deb \
             HOI4-Mod-Setup-macos-arm64.app.tar.gz \
             HOI4-Mod-Setup-macos-arm64.dmg \
             HOI4-Mod-Setup-macos-x64.app.tar.gz \

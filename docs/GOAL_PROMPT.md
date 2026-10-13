@@ -1,7 +1,7 @@
 # HOI4 Mod Setup goal prompt
 
-Build **HOI4 Mod Setup**, a Windows and macOS desktop wizard that creates
-launcher-ready Hearts of Iron IV mods and prepares agentic projects.
+Build **HOI4 Mod Setup**, a Windows, macOS and Linux desktop wizard that creates
+launcher-ready HOI4 mods and prepares agentic projects.
 
 Claude is the default setup assistant. Choose Claude, Codex, Kimi, GLM,
 DeepSeek, local, or custom. Claude uses the user's installed Claude Code;
@@ -62,7 +62,7 @@ setup assistant, after core checks. Use the seven-phase UI, progressive
 disclosure, keyboard access, WCAG 2.2 AA, reduced motion, and 200% scaling.
 
 Test migrations, unit/property, fuzz, fault, security, accessibility,
-performance, and Windows/macOS E2E. Tauri waits use async dispatch; test
+performance, and Windows/macOS/Linux E2E. Tauri waits use async dispatch; test
 responsiveness. Maintain AGENTS, living skills, and `fork_context=false`
 subagents. Auto-install newer signed versions; failure preserves the app. Do
 not claim completion while routes, recovery, security, platform, docs, or

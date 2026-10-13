@@ -65,9 +65,49 @@ def assert_release_commands_name_repository(workflow_name: str, workflow: dict) 
                     )
 
 
+def assert_linux_native_gate(workflow_name: str, workflow: dict, job_name: str) -> None:
+    job = workflow["jobs"][job_name]
+    targets = job.get("strategy", {}).get("matrix", {}).get("include", [])
+    linux = [target for target in targets if target.get("platform") == "linux-x64"]
+    if linux != [{"platform": "linux-x64", "os": "ubuntu-22.04", "bundle": "appimage,deb"}]:
+        raise SystemExit(f"{workflow_name} must build both Linux x64 packages on Ubuntu 22.04")
+    steps = job.get("steps", [])
+    dependency = next((step for step in steps if step.get("name") == "Install Linux native dependencies"), {})
+    if dependency.get("run") != "bash scripts/install_linux_dependencies.sh" or dependency.get("if") != "runner.os == 'Linux'":
+        raise SystemExit(f"{workflow_name} is missing the Linux native dependency gate")
+    smoke = next((step for step in steps if step.get("name") == "Launch Linux application and exercise both packages"), {})
+    if smoke.get("if") != "runner.os == 'Linux'" or smoke.get("env", {}).get("HOI4_MOD_SETUP_DEDICATED_LINUX") != "1":
+        raise SystemExit(f"{workflow_name} must run the dedicated Linux installer lifecycle")
+    for command in ("xvfb-run -a dbus-run-session -- pnpm desktop:e2e", "xvfb-run -a dbus-run-session -- pnpm installer:e2e"):
+        if command not in str(smoke.get("run", "")):
+            raise SystemExit(f"{workflow_name} is missing Linux native smoke command: {command}")
+    vault = next((step for step in steps if step.get("name") == "Verify isolated Linux Secret Service"), {})
+    if vault.get("if") != "runner.os == 'Linux'" or vault.get("run") != "env -u HOI4_TEST_IMAGE_VAULT_ADAPTER bash scripts/test_linux_credentials.sh":
+        raise SystemExit(f"{workflow_name} must verify the isolated native Linux vault without an external source adapter")
+
+
+def assert_linux_fuzz_dependencies(workflow: dict) -> None:
+    steps = workflow["jobs"]["fuzz"].get("steps", [])
+    dependency_index = next((index for index, step in enumerate(steps) if step.get("name") == "Install Linux fuzz dependencies"), -1)
+    compile_index = next((index for index, step in enumerate(steps) if step.get("name") == "Compile fuzz targets"), -1)
+    if not 0 <= dependency_index < compile_index:
+        raise SystemExit("Linux fuzz compilation must install native D-Bus development dependencies first")
+    dependency = steps[dependency_index]
+    if dependency.get("if") != "steps.detect.outputs.present == 'true'":
+        raise SystemExit("Linux fuzz dependencies must follow the source detection gate")
+    for package in ("pkg-config", "libdbus-1-dev"):
+        if package not in str(dependency.get("run", "")):
+            raise SystemExit(f"Linux fuzz compilation is missing prerequisite {package}")
+
+
 def main() -> None:
     preview = load_workflow("development-preview.yml")
     release = load_workflow("release.yml")
+    ci = load_workflow("ci.yml")
+    assert_linux_fuzz_dependencies(ci)
+    assert_linux_native_gate("ci.yml", ci, "desktop-e2e")
+    assert_linux_native_gate("development-preview.yml", preview, "build")
+    assert_linux_native_gate("release.yml", release, "build-unsigned")
 
     assert_write_jobs_execute_no_repository_code("development-preview.yml", preview)
     assert_write_jobs_execute_no_repository_code("release.yml", release)
@@ -90,6 +130,13 @@ def main() -> None:
         raise SystemExit("Windows signing must consume unsigned build artifacts")
     if release_jobs["sign-macos"].get("needs") != "build-unsigned":
         raise SystemExit("macOS signing must consume unsigned build artifacts")
+    if release_jobs["sign-linux"].get("needs") != "build-unsigned":
+        raise SystemExit("Linux signing must consume unsigned build artifacts")
+    linux_signing = release_jobs["sign-linux"]
+    if linux_signing.get("environment") != "release" or permission(linux_signing, "contents") != "read" or linux_signing.get("timeout-minutes") != 20:
+        raise SystemExit("Linux updater signing must be protected, read-only, and bounded")
+    if "sign-linux" not in release_jobs["curate"].get("needs", []):
+        raise SystemExit("curation must consume the signed Linux packages")
     if release_jobs["publish-release"].get("needs") != "curate":
         raise SystemExit("stable publication must consume the curated artifact")
     publish_script = "\n".join(
@@ -114,7 +161,7 @@ def main() -> None:
     }
     if oidc_jobs != {"sign-windows"}:
         raise SystemExit(f"OIDC must be scoped only to Windows signing; found {sorted(oidc_jobs)}")
-    for job_name in ("sign-windows", "sign-macos"):
+    for job_name in ("sign-windows", "sign-macos", "sign-linux"):
         if any(
             str(step.get("uses", "")).startswith("actions/checkout@")
             for step in release_jobs[job_name].get("steps", [])
@@ -126,6 +173,17 @@ def main() -> None:
         ]
         if len(updater_steps) != 1:
             raise SystemExit(f"{job_name} must expose the updater key to exactly one bounded step")
+    linux_sign_script = "\n".join(str(step.get("run", "")) for step in linux_signing.get("steps", []))
+    for token in ("*.AppImage", "*.deb", 'tauri signer sign "$artifact"', '"tauri-updater-signature"'):
+        if token not in linux_sign_script:
+            raise SystemExit(f"Linux signing is missing final-package evidence: {token}")
+    verifier = next((step for step in release_jobs["curate"].get("steps", []) if step.get("name") == "Verify updater signatures against the embedded key"), {})
+    for token in ("$linux_image", "$linux_deb", "tools/updater-signature-verify/Cargo.toml", "src-tauri/tauri.conf.json"):
+        if token not in str(verifier.get("run", "")):
+            raise SystemExit(f"Linux updater bytes must pass embedded-key verification: {token}")
+    for filename in ("HOI4-Mod-Setup-linux-x64.AppImage", "HOI4-Mod-Setup-linux-x64.deb"):
+        if filename not in publish_script:
+            raise SystemExit(f"stable publication must upload and reverify Linux asset {filename}")
 
     mac_steps = {
         step.get("name"): step for step in release_jobs["sign-macos"].get("steps", [])

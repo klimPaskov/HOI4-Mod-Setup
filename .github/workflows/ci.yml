@@ -26,9 +26,11 @@ jobs:
       - name: Validate planning package and repository templates
         run: python scripts/validate_repository.py
       - name: Test immutable manifest evidence generation
-        run: python -m unittest scripts/test_generate_manifest_evidence.py
+        run: python -m unittest scripts/test_generate_manifest_evidence.py scripts/test_validate_repository.py scripts/test_linux_release_gates.py scripts/test_linux_secret_service.py
       - name: Check release workflow authority boundaries
-        run: python scripts/check_workflow_security.py
+        run: |
+          python scripts/check_workflow_security.py
+          python -m unittest scripts/test_linux_release_gates.py
 
   frontend:
     runs-on: ubuntu-latest
@@ -124,6 +126,8 @@ jobs:
             libpango1.0-dev \
             librsvg2-dev \
             libssl-dev \
+            libsecret-1-dev \
+            libdbus-1-dev \
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             patchelf
@@ -157,6 +161,11 @@ jobs:
         run: |
           rustup toolchain install 1.88.0 --profile minimal
           rustup default 1.88.0
+      - name: Install Linux fuzz dependencies
+        if: steps.detect.outputs.present == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y pkg-config libdbus-1-dev
       - name: Compile fuzz targets
         if: steps.detect.outputs.present == 'true'
         run: cargo check --manifest-path fuzz/Cargo.toml --bins
@@ -167,6 +176,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - platform: linux-x64
+            os: ubuntu-22.04
+            bundle: appimage,deb
           - platform: windows-x64
             os: windows-latest
             bundle: nsis
@@ -198,6 +210,10 @@ jobs:
         run: |
           rustup toolchain install 1.88.0 --profile minimal
           rustup default 1.88.0
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash scripts/install_linux_dependencies.sh
       - name: Install frontend dependencies
         if: steps.detect.outputs.present == 'true'
         shell: bash
@@ -228,9 +244,22 @@ jobs:
           HOI4_MOD_SETUP_REQUIRE_TAURI: "1"
         run: pnpm release:verify
       - name: Launch native application smoke test
-        if: steps.detect.outputs.present == 'true'
+        if: steps.detect.outputs.present == 'true' && runner.os != 'Linux'
         shell: bash
         run: pnpm desktop:e2e
+      - name: Verify isolated Linux Secret Service
+        if: runner.os == 'Linux'
+        shell: bash
+        run: env -u HOI4_TEST_IMAGE_VAULT_ADAPTER bash scripts/test_linux_credentials.sh
+      - name: Launch Linux application and exercise both packages
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          HOI4_MOD_SETUP_DEDICATED_LINUX: "1"
+          WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+        run: |
+          xvfb-run -a dbus-run-session -- pnpm desktop:e2e
+          xvfb-run -a dbus-run-session -- pnpm installer:e2e
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: steps.detect.outputs.present == 'true'
         with:

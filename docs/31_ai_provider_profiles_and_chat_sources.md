@@ -86,9 +86,11 @@ subscription. The `claude_account` profile is built on that permitted route:
 
 - The app locates the user's own `claude` executable from PATH, the documented
   native-installer launcher directory (`~/.local/bin`), or, on macOS, the
-  Homebrew prefixes. The resolved binary must carry Anthropic's signature:
-  Authenticode subject `Anthropic, PBC` on Windows, or Developer ID
-  `Anthropic PBC (Q6L2SF6YDW)` on macOS. The app never downloads, bundles,
+  Homebrew prefixes. Windows requires Anthropic Authenticode subject
+  `Anthropic, PBC`; macOS requires Developer ID `Anthropic PBC (Q6L2SF6YDW)`.
+  Linux requires the exact binary SHA-256 and size from Anthropic's official
+  version manifest before executing it, then binds that digest again at spawn.
+  The app never downloads, bundles,
   modifies, or replaces Claude Code; when it is missing the app links to the
   official setup page (`https://code.claude.com/docs/en/setup`).
 - Before use, the app checks that `claude --help` advertises every isolation

@@ -33,7 +33,7 @@ Treat every boundary as hostile until validated.
 
 ## Credentials
 
-Store secrets in Windows Credential Manager or macOS Keychain. Store only an opaque reference in application state.
+Store secrets in Windows Credential Manager, macOS Keychain, or Linux Secret Service. Store only an opaque reference in application state.
 
 Never serialize a secret to project files, lock files, plans, manifests, logs, crash reports, screenshots, command previews, test fixtures, or Git.
 
@@ -371,3 +371,60 @@ path/hash pair; renderer-authored excerpts, even with self-consistent hashes,
 are rejected. Flattened reads remain link-aware and leaf-no-follow; do not call
 them race-proof until handle-relative ancestor traversal and adversarial swap
 tests exist on both supported platforms.
+
+## Native Linux verification
+
+Own native executable verification in `src-tauri/src/linux_trust.rs` and the
+shared process boundary. Preserve publisher-returned SHA-256 from verification
+through spawn; never replace it with a newly observed unverified digest.
+Debian/Ubuntu system tools require root-owned non-writable canonical executables
+and protected dpkg receipts. Resolve documented launcher symlinks once, then
+retain the ordinary link-free executable and project containment boundaries.
+Official account clients use fixed publisher HTTPS digest documents; do not
+claim Sigstore cryptographic verification or execute a client to learn its
+version before identity passes. Unknown package databases fail closed.
+
+Linux subprocess PATH is fixed to `/usr/bin:/bin`; preserve only reviewed
+non-secret desktop/session routing variables. Browser-dispatcher helpers must
+not use ambient user PATH shims. Native terminal handoff is manual start from
+the project folder, not a secondary unverified client execution.
+
+Select MCP command/tree evidence from manifest `platform_targets` and
+`platform_pins`. Native npm dependency links require exact `package_symlinks`
+evidence: hash `symlink\0` and literal target bytes, reject undeclared/missing
+links and escaping or linked targets, recreate only exact internal links in the
+private copy, then rehash before execution. Do not execute npm locator shims.
+Linux coding-client config uses absolute trusted Node and absolute runtime entry.
+
+Run path, Linux trust, declared-link, native client-retargeting, and process-env
+regressions. The ignored `native_distro_tools_match_protected_package_receipts`
+checks real distro identities. Run the ignored
+`linux_secret_service_round_trip_keeps_only_an_opaque_reference` only inside an
+isolated HOME/XDG and D-Bus/Secret Service session; optional
+`HOI4_TEST_IMAGE_VAULT_ADAPTER` points to the source Python runtime and checks the
+same opaque-reference read without printing the synthetic secret. Ordinary CI
+must not access a real desktop vault or account.
+
+Use `bash scripts/test_linux_credentials.sh` for the isolated native vault
+smoke. It starts a dedicated D-Bus session and keyring control directory,
+retains toolchain homes, and cleans up only its generated temporary profile.
+Supply `HOI4_TEST_IMAGE_VAULT_ADAPTER` only when explicitly testing the checked
+source runtime's compatible read of the same synthetic opaque reference.
+
+Windows HOI4 Agent Tools resolution is bound to `paths::windows_npm_prefix()`
+(`APPDATA/npm`), never inherited PATH. Use the same prefix for loaded-file
+checks and absolute client wrapper registration, preserving pre-bootstrap Node
+installation behavior. Keep the isolated-child regression
+`windows_mcp_wrapper_resolution_ignores_shadowed_path`: a stale global locator
+must not win, and a missing reviewed-prefix locator must not fall back to it.
+The app still executes only verified Node/private-entry health, never a wrapper.
+
+The native vault runner must confirm live D-Bus ownership by its exact fresh
+foreground daemon, an unlocked default collection, and one bounded synthetic
+libsecret write/read/delete before running the exact Rust credential test once.
+Use `scripts/check_linux_secret_service.py`; fixed sleeps and a successful
+`--start` message do not establish persistence readiness. Readiness polling is
+bounded to 30 seconds and never retries a failed readiness write or Rust test.
+Cleanup must terminate and reap the known daemon before removing the generated
+private profile. Run `python -m unittest discover -s scripts -p test_linux_secret_service.py` for ownership, locked/absent collection, exact
+interface, deadline, single-write failure, and cleanup regressions.

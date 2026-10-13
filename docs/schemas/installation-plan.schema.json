@@ -305,7 +305,8 @@
           "provider": {
             "enum": [
               "windows_credential_manager",
-              "macos_keychain"
+              "macos_keychain",
+              "linux_secret_service"
             ]
           },
           "reference": {
@@ -877,6 +878,7 @@
           "enum": [
             "windows",
             "macos",
+            "linux",
             "all"
           ]
         },
@@ -1008,6 +1010,7 @@
           "enum": [
             "windows",
             "macos",
+            "linux",
             "all",
             null
           ]
@@ -1160,7 +1163,8 @@
         "platform": {
           "enum": [
             "windows",
-            "macos"
+            "macos",
+            "linux"
           ]
         },
         "command_source": {
@@ -1320,6 +1324,20 @@
           "items": {
             "type": "string",
             "maxLength": 256
+          }
+        },
+        "verified_package_symlinks": {
+          "type": "object",
+          "maxProperties": 64,
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
           }
         }
       }

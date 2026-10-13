@@ -24,7 +24,10 @@ It also installs [HOI4 Agent Tools](https://github.com/klimPaskov/hoi4-agent-too
 
 - Windows: [Download the `.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-windows-x64-setup.exe)
 - Mac with Apple silicon: [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-arm64.dmg)
+- Linux x86-64: [Download the AppImage](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.AppImage) or [Debian package](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.deb)
 - Mac with Intel: [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-x64.dmg)
+
+On Linux, follow the [Linux install guide](docs/LINUX.md).
 
 On Windows, run the downloaded setup file. On Mac, open the disk image and
 move HOI4 Mod Setup to Applications. Community Windows builds are signed by
@@ -32,7 +35,7 @@ ChaosX; community Mac builds use ad-hoc signing. See the
 [release notes](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
 for your download's signing details.
 
-Follow the [first-run guide](docs/QUICKSTART.md) for Windows and macOS,
+Follow the [first-run guide](docs/QUICKSTART.md) for Windows, macOS and Linux,
 or visit the [project guide](https://klimpaskov.github.io/HOI4-Mod-Setup/).
 Updated video guides will be shared on [Chaos Redux on YouTube](https://www.youtube.com/@ChaosRedux).
 
@@ -199,7 +202,7 @@ and interrupted installation fixes.
 ## Privacy
 
 HOI4 Mod Setup has no telemetry. Provider keys stay in Windows Credential
-Manager or macOS Keychain. Claude Code and Codex handle their own account
+Manager, macOS Keychain or Linux Secret Service. Claude Code and Codex handle their own account
 sign-in. Secret values are not written into the mod.
 
 ## License

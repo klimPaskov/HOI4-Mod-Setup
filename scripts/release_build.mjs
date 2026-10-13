@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
+import { parseNativeBundles } from "./linux_packages.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const packageMetadata = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
@@ -31,9 +32,7 @@ if (tagVersion && tagVersion !== configuredVersion) {
 const tauriBuild = process.env.HOI4_MOD_SETUP_TAURI === "1";
 const releaseBuild = process.env.HOI4_MOD_SETUP_RELEASE === "1";
 const requestedBundle = process.env.HOI4_MOD_SETUP_BUNDLE;
-if (requestedBundle && !["nsis", "dmg"].includes(requestedBundle)) {
-  throw new Error(`unsupported native bundle target: ${requestedBundle}`);
-}
+const requestedBundles = parseNativeBundles(requestedBundle);
 const buildArgs = tauriBuild
   ? ["tauri", "build", ...(requestedBundle ? ["--bundles", requestedBundle] : [])]
   : ["build"];
@@ -98,11 +97,13 @@ if (tauriBuild && requestedBundle) {
   // Tauri can leave packages from an earlier local build in the target tree.
   // Clear only the requested generated bundle before rebuilding so stale
   // installers cannot be copied into the current release evidence.
-  for (const bundlePath of [
-    resolve(root, "target", "release", "bundle", requestedBundle),
-    resolve(root, "src-tauri", "target", "release", "bundle", requestedBundle),
-  ]) {
-    await rm(bundlePath, { recursive: true, force: true });
+  for (const bundle of requestedBundles) {
+    for (const bundlePath of [
+      resolve(root, "target", "release", "bundle", bundle),
+      resolve(root, "src-tauri", "target", "release", "bundle", bundle),
+    ]) {
+      await rm(bundlePath, { recursive: true, force: true });
+    }
   }
 }
 const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });
@@ -126,16 +127,12 @@ if (tauriBuild) {
     resolve(root, "src-tauri", "target", "release", "bundle"),
   ].find((candidate) => existsSync(candidate));
   if (!bundleRoot) throw new Error("Tauri build did not produce a bundle directory");
-  const selectedBundle = requestedBundle ? resolve(bundleRoot, requestedBundle) : bundleRoot;
-  if (!existsSync(selectedBundle)) {
-    throw new Error(`Tauri build did not produce the requested ${requestedBundle} bundle`);
-  }
   await mkdir(packageRoot, { recursive: true });
-  await cp(
-    selectedBundle,
-    requestedBundle ? resolve(packageRoot, requestedBundle) : packageRoot,
-    { recursive: true, force: true },
-  );
+  for (const bundle of requestedBundles.length ? requestedBundles : [null]) {
+    const selectedBundle = bundle ? resolve(bundleRoot, bundle) : bundleRoot;
+    if (!existsSync(selectedBundle)) throw new Error(`Tauri build did not produce the requested ${bundle} bundle`);
+    await cp(selectedBundle, bundle ? resolve(packageRoot, bundle) : packageRoot, { recursive: true, force: true });
+  }
 }
 const noticeResult = spawnSync(process.execPath, [resolve(root, "scripts", "generate_third_party_notices.mjs"), resolve(root, "dist", "release", "THIRD_PARTY_NOTICES.md")], {
   cwd: root,

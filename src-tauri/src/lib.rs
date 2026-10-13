@@ -12,6 +12,8 @@ pub mod credentials;
 pub mod descriptors;
 pub mod flatten;
 pub mod git;
+#[cfg(any(target_os = "linux", test))]
+mod linux_trust;
 pub mod local_source;
 pub mod mcp;
 pub mod merge;

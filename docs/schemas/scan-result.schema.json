@@ -42,7 +42,7 @@
     "platform": {
       "enum": [
         "windows",
-        "macos"
+        "macos", "linux"
       ]
     },
     "started_at": {

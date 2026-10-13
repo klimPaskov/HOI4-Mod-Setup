@@ -884,12 +884,20 @@ pub fn parse_manifest(bytes: &[u8], revision: Option<&str>) -> Result<RemoteMani
 fn validate_manifest_schema(value: &Value) -> Result<(), AppError> {
     static SCHEMA: OnceLock<Value> = OnceLock::new();
     static SCHEMA_V4: OnceLock<Value> = OnceLock::new();
+    static SCHEMA_V5: OnceLock<Value> = OnceLock::new();
     let major = value
         .get("schema_version")
         .and_then(Value::as_str)
         .and_then(|version| version.split('.').next())
         .and_then(|version| version.parse::<u64>().ok());
-    let schema = if major == Some(4) {
+    let schema = if major == Some(5) {
+        SCHEMA_V5.get_or_init(|| {
+            serde_json::from_str(include_str!(
+                "../../docs/schemas/remote-manifest.v5.schema.json"
+            ))
+            .expect("checked-in v5 remote manifest schema must be valid JSON")
+        })
+    } else if major == Some(4) {
         SCHEMA_V4.get_or_init(|| {
             serde_json::from_str(include_str!(
                 "../../docs/schemas/remote-manifest.v4.schema.json"
@@ -2097,7 +2105,11 @@ mod tests {
         );
         assert!(manifest.profiles.iter().any(|profile| profile.default));
         assert_eq!(manifest.wiki.destination, "paradox_wiki/");
-        assert_eq!(manifest.components.len(), 59);
+        assert_eq!(manifest.components.len(), 60);
+        assert!(manifest
+            .components
+            .iter()
+            .any(|component| component.id == "docs.linux"));
         for environment in crate::coding_environment::SUPPORTED {
             assert!(manifest
                 .components

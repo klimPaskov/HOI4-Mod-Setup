@@ -1,4 +1,4 @@
-# Windows and macOS architecture
+# Desktop platform architecture
 
 ## Recommended stack
 
@@ -223,3 +223,40 @@ For Codex, Windows and macOS resolve the official `codex` executable through an 
 ## App Server process contract
 
 Both platforms launch `codex app-server` as a supervised child process with stdio JSONL. The bridge performs initialize before account or thread calls, correlates request IDs, bounds message size, handles streamed notifications, redacts logs, and terminates the child cleanly. Browser login opens the returned URL with the platform shell. Device-code login uses the returned verification URL and code. No token file is read by the application.
+
+## Native Linux adapter
+
+The application supports native Debian/Ubuntu desktop execution. Application
+settings, data/backups, and caches use XDG_CONFIG_HOME, XDG_DATA_HOME, and
+XDG_CACHE_HOME, with their standard home defaults. Relative XDG values are
+ignored; traversal and linked destination components are rejected. Downloads
+comes from the bounded XDG user-dirs configuration with only literal `$HOME`
+expansion, never shell evaluation.
+
+HOI4's Linux user files belong under the native XDG data directory rather than
+Documents. Discovery considers native `Paradox Interactive/Hearts of Iron IV/mod`
+and both Steam Flatpak XDG `data` and persisted `.local/share` locations under
+`~/.var/app/com.valvesoftware.Steam`. One existing trusted directory supplies
+the default; multiple candidates require a manual choice. Discovery never
+creates a missing directory. Game/Workshop discovery is limited to native Steam,
+documented Steam launcher links, those two Flatpak locations, and direct
+libraryfolders.vdf declarations. It does not scan the computer.
+
+The HOI4 Agent Tools native npm prefix is
+`$XDG_DATA_HOME/hoi4-mod-setup/npm`, defaulting to
+`~/.local/share/hoi4-mod-setup/npm`. The package is under `lib/node_modules` and
+the source locator under `bin`. Health selects `platform_targets` and
+`platform_pins` from the immutable manifest; Windows and Linux tree identities
+remain separate. Coding clients receive native Node/entry argument arrays.
+
+Linux credentials require the desktop Secret Service and never fall back to
+files. Python/Node/system-launcher trust currently requires Debian/Ubuntu
+root-owned package receipts; official Claude/Codex native binaries use publisher
+HTTPS digest identities. See the security model for these boundaries.
+
+Claude Code and Codex handoff opens a verified desktop terminal in the project
+folder with an explicit manual-start instruction. Other coding clients retain
+manual folder instructions. Terminal absence leaves readiness usable.
+Windows-only 3D and HOI4 Live Tools routes remain unavailable on Linux.
+Clausewitz runs directly on the native Linux host; the application never changes
+ptrace permissions, installs another operating system, or requests root access.

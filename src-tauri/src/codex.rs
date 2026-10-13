@@ -2071,11 +2071,13 @@ pub struct ProcessJsonlTransport {
 
 impl ProcessJsonlTransport {
     pub fn start(executable: PathBuf) -> Result<Self, AppError> {
-        crate::process::validate_executable_publisher(&executable, "OpenAI")?;
-        Self::start_command(
+        let digest = crate::process::verified_executable_sha256(&executable, "OpenAI")?;
+        Self::start_command_with_path_and_identity(
             executable,
             vec!["app-server".into(), "--stdio".into()],
             None,
+            None,
+            &digest,
         )
     }
 
@@ -2179,6 +2181,7 @@ impl ProcessJsonlTransport {
             }
             command.env("PATH", safe_path);
         }
+        configure_jsonl_platform_environment(&mut command);
         crate::process::configure_child_no_console_window(&mut command);
         crate::process::configure_child_process_group(&mut command);
         let mut child = command.spawn().map_err(|error| {
@@ -2202,6 +2205,25 @@ impl ProcessJsonlTransport {
             stdout_open,
         })
     }
+}
+
+fn configure_jsonl_platform_environment(command: &mut Command) {
+    #[cfg(target_os = "linux")]
+    {
+        command.env("PATH", "/usr/bin:/bin");
+        for name in [
+            "DBUS_SESSION_BUS_ADDRESS",
+            "XDG_RUNTIME_DIR",
+            "DISPLAY",
+            "WAYLAND_DISPLAY",
+        ] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = command;
 }
 
 fn spawn_line_reader(
@@ -2328,8 +2350,7 @@ pub fn codex_executable_version(executable: &Path) -> Result<String, AppError> {
             "the reviewed Codex executable path is invalid".into(),
         ));
     }
-    crate::process::validate_executable_publisher(executable, "OpenAI")?;
-    let executable_sha256 = sha256_file(executable)?;
+    let executable_sha256 = crate::process::verified_executable_sha256(executable, "OpenAI")?;
     let spec = ProcessSpec {
         executable: executable.to_path_buf(),
         executable_sha256: Some(executable_sha256.clone()),
@@ -2390,28 +2411,29 @@ pub fn find_codex_executable() -> Option<PathBuf> {
     ));
     let found = candidates.into_iter().find_map(|candidate| {
         let metadata = std::fs::symlink_metadata(&candidate).ok()?;
-        if is_link_metadata(&metadata) || !metadata.is_file() {
+        if (!cfg!(target_os = "linux") && is_link_metadata(&metadata))
+            || !(metadata.is_file()
+                || (cfg!(target_os = "linux") && metadata.file_type().is_symlink()))
+        {
             return None;
         }
         let canonical = resolve_codex_executable_path(&candidate)?;
         if crate::security::path_has_link_component(&canonical) {
             return None;
         }
-        crate::process::validate_executable_publisher(&canonical, "OpenAI")
+        crate::process::verified_executable_sha256(&canonical, "OpenAI")
             .ok()
-            .map(|_| canonical)
+            .map(|digest| (canonical, digest))
     });
-    if let Some(path) = found.as_ref() {
-        if let Ok(sha256) = crate::security::sha256_file(path) {
-            if let Ok(mut cached) = cache.lock() {
-                *cached = Some(CachedCodexExecutable {
-                    path: path.clone(),
-                    sha256,
-                });
-            }
+    if let Some((path, sha256)) = found.as_ref() {
+        if let Ok(mut cached) = cache.lock() {
+            *cached = Some(CachedCodexExecutable {
+                path: path.clone(),
+                sha256: sha256.clone(),
+            });
         }
     }
-    found
+    found.map(|(path, _)| path)
 }
 
 #[cfg(target_os = "windows")]
@@ -2485,7 +2507,53 @@ fn codex_executable_candidates(
             PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"),
         ]);
     }
+    #[cfg(target_os = "linux")]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute());
+        let prefixes = path
+            .into_iter()
+            .flat_map(std::env::split_paths)
+            .filter(|p| p.is_absolute())
+            .filter_map(|bin| bin.parent().map(Path::to_path_buf))
+            .collect::<Vec<_>>();
+        candidates.extend(linux_codex_candidates(
+            &prefixes,
+            home.as_deref(),
+            std::env::consts::ARCH,
+        ));
+    }
     candidates.dedup();
+    candidates
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_codex_candidates(prefixes: &[PathBuf], home: Option<&Path>, arch: &str) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(home) = home {
+        candidates.extend([home.join(".codex/bin/codex"), home.join(".local/bin/codex")]);
+    }
+    let package_arch = match arch {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        _ => return candidates,
+    };
+    // npm's command is JavaScript. Locate bounded native package candidates
+    // without executing the wrapper or treating package metadata as proof.
+    for prefix in prefixes {
+        for abi in ["musl", "gnu"] {
+            for package in [
+                "@openai/codex".to_string(),
+                format!("@openai/codex/node_modules/@openai/codex-linux-{package_arch}"),
+                format!("@openai/codex-linux-{package_arch}"),
+            ] {
+                candidates.push(prefix.join(format!(
+                    "lib/node_modules/{package}/vendor/{arch}-unknown-linux-{abi}/codex/codex"
+                )));
+            }
+        }
+    }
     candidates
 }
 
@@ -2812,6 +2880,45 @@ mod live_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_codex_candidates_cover_standalone_nested_and_hoisted_npm_without_wrappers() {
+        let root = tempfile::tempdir().unwrap();
+        for (arch, package_arch) in [("x86_64", "x64"), ("aarch64", "arm64")] {
+            let candidates =
+                linux_codex_candidates(&[root.path().join("npm")], Some(root.path()), arch);
+            assert!(candidates.contains(&root.path().join(".codex/bin/codex")));
+            for suffix in [format!("@openai/codex/vendor/{arch}-unknown-linux-musl/codex/codex"), format!("@openai/codex/node_modules/@openai/codex-linux-{package_arch}/vendor/{arch}-unknown-linux-musl/codex/codex"), format!("@openai/codex-linux-{package_arch}/vendor/{arch}-unknown-linux-musl/codex/codex")] {
+                assert!(candidates.contains(&root.path().join("npm/lib/node_modules").join(suffix)));
+            }
+            assert!(candidates.iter().all(|p| !p.ends_with("codex.js")));
+        }
+        assert!(linux_codex_candidates(&[root.path().to_path_buf()], None, "unknown").is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn jsonl_processes_ignore_ambient_path_and_preserve_desktop_session_names() {
+        let mut command = Command::new("/usr/bin/true");
+        command.env("PATH", "/untrusted/user/shims");
+        configure_jsonl_platform_environment(&mut command);
+        let environment = command
+            .get_envs()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            environment[std::ffi::OsStr::new("PATH")],
+            Some(std::ffi::OsStr::new("/usr/bin:/bin"))
+        );
+        for name in ["DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"] {
+            if let Some(value) = std::env::var_os(name) {
+                assert_eq!(
+                    environment[std::ffi::OsStr::new(name)],
+                    Some(value.as_os_str())
+                );
+            }
+        }
+    }
+
     use std::collections::VecDeque;
     use std::io::Cursor;
 

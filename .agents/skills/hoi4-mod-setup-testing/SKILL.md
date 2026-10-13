@@ -36,7 +36,7 @@ Use the smallest useful layer and keep high-risk behavior covered at more than o
   recovery, and pre-apply resume using the production runner
 - security tests
 - UI component and accessibility tests
-- Windows and macOS end-to-end tests
+- Windows, macOS, and Linux end-to-end tests
 - performance tests
 - release artifact verification
 
@@ -67,9 +67,9 @@ Provide deterministic fakes for:
 Tests must not require a real Meshy key, ChatGPT login, or paid provider call.
 External-launcher fixtures use canonical owned temporary parents, formatted
 through `user_facing_path`, so macOS's `/var` alias does not weaken or trip the
-production no-symlink checks. Linux validates compilation and portable core
-contracts; test Windows/macOS default-profile policies explicitly and do not
-expect a Linux application-data or diagnostics route.
+production no-symlink checks. Linux validates native application and package behavior; test its XDG,
+Secret Service, path, process, and default-profile policies explicitly alongside
+Windows/macOS policies.
 Tests that mutate process-global command state must take the shared test-state
 guard so the default parallel Rust test runner cannot cross-contaminate evidence,
 session, cancellation, credential-health, or analysis assertions.
@@ -310,7 +310,7 @@ A release is blocked by:
 - failing schema examples
 - unresolved critical security finding
 - failing transaction fault suite
-- core new or existing flow failure on either supported platform
+- core new or existing flow failure on any supported platform
 - credential leakage
 - fake optional success
 - inaccessible core UI
@@ -321,7 +321,7 @@ A release is blocked by:
 - checkout-free publication jobs that run `gh release` without an explicit
   `--repo "$GITHUB_REPOSITORY"` on every read and write
 - failing ChatGPT authentication, provider adapter, or common analysis contract tests
-- launcher scaffold failure on either supported platform
+- launcher scaffold failure on any supported platform
 
 On Windows, activate the MSVC environment with `vcvars64.bat` before
 all-feature Rust gates when using PowerShell. Compile fuzz targets with
@@ -335,8 +335,10 @@ fixture. The curation test verifies that the platform dependency inventories
 are unioned into internal `release-artifacts/` evidence, while preview
 curation writes the corresponding union under `preview-artifacts/`; workflows
 upload that evidence separately from public publication assets.
-The platform signing jobs verify changed package bytes and regenerate their
-complete internal artifact manifest before curation. Use
+Windows/macOS signing verifies changed package bytes; Linux updater signing
+authenticates both final package files. Every signing job regenerates its
+complete internal artifact manifest, and curation cryptographically verifies
+final updater bytes against the embedded public key. Use
 `pnpm release:prepare` only for final publication-asset curation.
 The native smoke harness resolves `taskkill.exe` through the native Windows
 system-directory alias, never `PATH`, and uses an argument array plus a bounded
@@ -344,8 +346,9 @@ exit wait so the Tauri process tree cannot survive the test timeout. macOS DMG
 tools use their fixed `/usr/bin` paths. Keep cleanup bounded and verify that no
 test process remains after a failed run.
 The installer harness operates only inside a fresh runner-temporary directory:
-it silently installs and uninstalls the NSIS package on Windows, and mounts,
-copies, launches, removes, and detaches the DMG application on macOS.
+it silently installs and uninstalls the NSIS package on Windows, mounts,
+copies, launches, removes, and detaches the DMG application on macOS, and
+extracts, launches, and removes AppImage and Debian payloads on Linux.
 On Windows it must refuse a pre-existing current-user product registration,
 fail closed when registry inspection cannot be completed, refuse a matching
 legacy per-machine installation, remove only registry values whose install
@@ -360,8 +363,42 @@ production output. Build readiness is awaited before browser tests start, so
 Vite cold module compilation is not charged to the first wizard assertion.
 
 
+## Linux package and protection tests
+
+Linux x64 packages use the Ubuntu 22.04 native matrix and `appimage,deb` bundle
+selection. Use `pnpm test:release-assets` for ELF/AppImage/Debian identity and
+failure checks, startup/termination behavior, complete Linux updater targets,
+missing package/signature rejection, changed signed bytes, and exact public
+asset/dependency-evidence separation. CI also runs
+`python -m unittest scripts/test_linux_release_gates.py` to reject missing
+native gates and unsuccessful or foreign-app main-protection evidence.
+
+Linux core-only fuzz jobs install `pkg-config` and `libdbus-1-dev` before
+compilation because the native Secret Service adapter is part of the core.
+Native Linux CI, preview, and release run the isolated credential smoke through
+`env -u HOI4_TEST_IMAGE_VAULT_ADAPTER bash scripts/test_linux_credentials.sh`.
+Require the exact ignored test to exist and execute; a zero-test success is not
+evidence. The harness uses temporary HOME/XDG, D-Bus, and Secret Service state,
+and a synthetic value. Workflow regressions reject absent native prerequisites,
+wrong install ordering, missing vault gates, and external source-adapter
+inheritance. Local source-Python crosschecks remain explicitly opt-in.
+
+Native Linux smokes run under Xvfb and D-Bus with temporary XDG application data
+and supervised process-group cleanup. Local smokes extract both packages;
+only disposable CI sets `HOI4_MOD_SETUP_DEDICATED_LINUX=1` for actual `dpkg`
+installation/purge, existing-registration refusal, database fail-closed
+preflight, and final absence proof. Never enable this flag on a shared host.
+
+Stable Linux signing uses the protected Tauri updater key for both AppImage
+and Debian files, with no invented OS-signing route. Require cryptographic
+verification against the committed public key. Metadata contains
+`linux-x86_64-appimage`, `linux-x86_64-deb`, and the AppImage
+`linux-x86_64` fallback; test that Debian gets its own package and signature.
+Native packaging does not prove real launcher/game loading, completed account
+login, a desktop Secret Service round trip, or replacement/restart/retry.
+
 ## Update this skill when
 
 Update this skill when test commands, fixture layout, fake interfaces, property invariants, fault injection, platform matrix, performance thresholds, accessibility checks, or release gates change.
 
-Provider tests cover Windows and macOS planning, selected-client registration, deferred Linux setup, provider replacement and removal, preserved custom routes, rollback, and incomplete optional runtime outcomes. Browser coverage uses synthetic app states and blank credential fields; it does not establish real provider or game behavior.
+Provider tests cover Windows, macOS, and Linux planning, selected-client registration, explicit local and remote Clausewitz capability, provider replacement and removal, preserved custom routes, rollback, and incomplete optional runtime outcomes. Browser coverage uses synthetic app states and blank credential fields; it does not establish real provider or game behavior.

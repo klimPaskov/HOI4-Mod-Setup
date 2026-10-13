@@ -14,7 +14,7 @@ Pre-releases use identifiers such as `v0.3.0-beta.1`.
 
 ## Release preparation
 
-1. Confirm all required checks pass on Windows and macOS.
+1. Confirm all required checks pass on Windows, macOS, and Linux x64.
 2. Confirm schema migrations and rollback behavior.
 3. Confirm the remote workflow manifest is compatible with the application release.
 4. Confirm user-facing README, release notes, support status, and known limitations.
@@ -65,7 +65,7 @@ captures through the same headless browser gate. Review the captures before
 commit; the Pages workflow consumes them directly.
 
 These checks do not substitute for signed native-package tests on Windows x64,
-macOS arm64, and macOS x64, real launcher/game loading, completed browser or
+macOS arm64, macOS x64, and Linux x64, real launcher/game loading, completed browser or
 device-code sign-in, OS-vault round trips, or updater replacement/restart/retry.
 Record those results on the exact release candidate in an available dedicated
 desktop or clean CI runner. Do not run focus-changing native launch/installer
@@ -87,7 +87,7 @@ git push origin vX.Y.Z
 
 The tag workflow should build from that exact commit. Release jobs must not modify source and then publish uncommitted output.
 
-For the prepared 0.4.0 candidate, the maintainer's publication sequence is:
+For the current prepared candidate, the maintainer's publication sequence is:
 
 1. Push the local review branch and open a PR into `main`; finish source and
    native platform gates and merge through the protected branch.
@@ -98,15 +98,16 @@ For the prepared 0.4.0 candidate, the maintainer's publication sequence is:
    platform signing settings, community/official signing credentials, and
    Tauri private updater key match the configuration below.
 4. From a clean checkout, run `git switch main`, `git pull --ff-only`,
-   `git tag -a v0.4.0 -m "HOI4 Mod Setup v0.4.0"`, and
-   `git push origin v0.4.0`. The workflow requires that tag to target current
+   `git tag -a vX.Y.Z -m "HOI4 Mod Setup vX.Y.Z"`, and
+   `git push origin vX.Y.Z`, using the verified configured version. The workflow requires that tag to target current
    `main` and rejects an already published version.
 5. Approve the protected release environment when requested and let the tag
-   workflow verify, sign, curate, create its draft, compare all six uploaded
+   workflow verify, sign, curate, create its draft, compare all eight uploaded
    public assets, and publish. Do not manually upload or undraft unverified
    assets. Retain the internal signing/provenance/dependency artifacts.
-6. Confirm `latest.json` contains all three updater targets and the release
-   presents all three installer links. Confirm GitHub Pages uses GitHub Actions;
+6. Confirm `latest.json` contains Windows/macOS updater targets plus both
+   installer-specific Linux routes and the AppImage fallback, and the release
+   presents all five installer links. Confirm GitHub Pages uses GitHub Actions;
    merging the page changes into `main` runs `Publish project page`, or dispatch
    that workflow manually if Pages needs its first deployment.
 7. Keep the README video placeholder until the editors provide an approved
@@ -117,17 +118,18 @@ For the prepared 0.4.0 candidate, the maintainer's publication sequence is:
 
 - Windows Authenticode-signed installer
 - macOS code-signed disk image for each supported architecture
+- Linux x64 AppImage and Debian/Ubuntu package, both signed with the Tauri updater key
 - release notes with direct platform download links
 - signed updater metadata plus a macOS update bundle for each architecture
 
 Checksums, build metadata, signing evidence, the SBOM, and generated
 third-party notice inventory remain internal workflow artifacts. The
-user-facing GitHub Release keeps the three installers easy to identify and also
+user-facing GitHub Release keeps the five installers easy to identify and also
 publishes `latest.json` plus the two macOS update bundles used by installed
 apps. GitHub supplies the tag source archives automatically.
 
 Every stable release signs the final Authenticode-signed Windows installer and
-the final code-signed macOS app archives with the dedicated Tauri updater key.
+the final code-signed macOS app archives plus both Linux packages with the dedicated Tauri updater key.
 The release environment stores `TAURI_SIGNING_PRIVATE_KEY` and
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; only the matching public key is committed.
 The app checks the fixed `releases/latest/download/latest.json` endpoint and
@@ -138,10 +140,48 @@ The curation job verifies each final updater artifact against that committed
 public key before it creates `latest.json`; a wrong or rotated private key
 therefore blocks publication instead of shipping an unusable update.
 
+## Linux packaging and updates
+
+Linux releases are built on Ubuntu 22.04 x64, the oldest supported build baseline
+with WebKitGTK 4.1. Ubuntu 24.04 is also available for native development
+verification; a build made there does not prove Ubuntu 22.04 compatibility.
+The release includes one `.AppImage` and one `.deb`, with ELF64 architecture,
+AppImage type-2 format, extracted application, and Debian product/version/amd64
+checks. The Debian package declares `libsecret-tools`; hosted API-provider
+credentials require a working desktop Secret Service and `/usr/bin/secret-tool`.
+
+Linux has no invented Authenticode or Apple signing route. The protected
+`sign-linux` job receives the Tauri updater key only in its bounded final-package
+signing step, checks out no source, and uses no OIDC. It signs both packages,
+records `signing=updater_signed` with package-bound evidence, and regenerates
+the internal manifest. Curation then cryptographically verifies both signatures
+against the committed public key before publishing.
+
+`latest.json` contains `linux-x86_64-appimage` and `linux-x86_64-deb`, plus an
+AppImage `linux-x86_64` fallback. The locked updater selects its installer-specific
+target first; a Debian installation must receive Debian bytes. Debian updates
+use the updater's privileged package-manager route, so denied authorization
+must preserve the running installation and expose retry.
+
+CI, preview, and release runners execute native Linux launches under Xvfb and
+D-Bus. Their explicit `HOI4_MOD_SETUP_DEDICATED_LINUX=1` flag enables real
+`dpkg --install`/`--purge`, with a fail-closed database preflight, refusal of an
+existing product registration or binary, bounded process cleanup, and proof
+that the test package is absent afterward. Without that flag, local installer
+smokes only extract, launch, and remove both packages in a temporary directory.
+AppImage extraction avoids requiring a FUSE mount during native smokes.
+
+After the new Linux CI context and every existing required check succeed on
+current `main`, review `python scripts/apply_main_ruleset.py --sha <main-commit>`
+then apply the same verified policy with `--apply`. The tool binds current main,
+requires completed successful GitHub Actions evidence (including
+`Desktop E2E (ubuntu-22.04)`), preserves existing protection, and refuses policy
+drift. Do not weaken protection to obtain a release.
+
 ## Development previews
 
 The manually dispatched `Development preview` workflow builds Windows x64,
-macOS arm64, and macOS x64 packages, runs the repository-owned UI and native
+macOS arm64, macOS x64, and Linux x64 packages, runs the repository-owned UI and native
 smoke gates, verifies each package manifest and architecture, and publishes a
 user-facing semantic-version GitHub prerelease such as `0.1.1`. The workflow
 refuses to reuse a published version. `scripts/prepare_preview_assets.mjs`
@@ -151,11 +191,12 @@ not the stable release route. The stable `Release` workflow uses community
 signing when protected Windows and Apple credentials are unavailable and
 upgrades to official signing/notarization when they are configured. The
 published assets use the deterministic names `HOI4-Mod-Setup-windows-x64-setup.exe`,
-`HOI4-Mod-Setup-macos-arm64.dmg`, and `HOI4-Mod-Setup-macos-x64.dmg`. Generated
+`HOI4-Mod-Setup-macos-arm64.dmg`, `HOI4-Mod-Setup-macos-x64.dmg`,
+`HOI4-Mod-Setup-linux-x64.AppImage`, and `HOI4-Mod-Setup-linux-x64.deb`. Generated
 release notes lead with direct installer bullets. Hashes, provenance, the SBOM,
 third-party notices, metadata, and per-platform manifests remain in CI evidence
 and are verified before publication. Stable releases add the updater metadata
-and macOS app archives beside the three clearly named installers.
+and macOS app archives beside the five clearly named installers.
 
 ## Publication gate
 
@@ -163,7 +204,7 @@ The tagged workflow publishes only after the source gate, platform builds,
 signature checks, native launch smoke tests, artifact curation, and release
 environment gate pass. Never publish directly from an unverified local build.
 The stable workflow accepts only unsuffixed `vMAJOR.MINOR.PATCH` tags. Before a
-draft is made public, it downloads the exact six uploaded public assets and
+draft is made public, it downloads the exact eight uploaded public assets and
 compares every byte to the curated publication bundle; a missing, extra, or
 changed remote asset blocks publication.
 Each native release runner also exercises the launcher-ready first-install
@@ -179,7 +220,7 @@ Do not move or reuse a published tag. If an artifact is wrong, withdraw the rele
 
 Use protected GitHub environments for stable release credentials. The release workflow must receive only the minimum platform-specific secrets and permissions required for its job. Fork pull requests never receive these secrets.
 
-The repository-owned `pnpm release:build`, `pnpm release:verify`, `pnpm desktop:e2e`, and `pnpm installer:e2e` scripts are the stable native build and test surface. `release:build` clears generated `dist/release` output before copying the current frontend and only the requested native bundle (`nsis` or `dmg`), and `release:verify` checks the artifact manifest, package extension, architecture, and the Windows native executable's GUI subsystem. The installer test installs, launches, and uninstalls the NSIS package on Windows; on macOS it mounts the DMG, copies and launches the app, then removes it and detaches the image. The current-user Windows route fails closed when its fixed registry keys cannot be inspected, refuses existing HKCU product registrations and matching legacy machine-wide installations, and removes only registry state whose install path exactly matches the current temporary E2E root. The broader legacy machine-wide registry scan has a separate 60-second bound because crowded Windows runners can legitimately need longer than the 10-second bound used for fixed-key operations. The platform signing jobs then verify Authenticode or codesign directly, record the result, and regenerate the internal artifact manifest before curation. Native release metadata must match checked-out `HEAD`, `GITHUB_SHA`, and the tag target; a local build without that exact revision binding is intentionally not release evidence. When this behavior changes, update this file and `hoi4-mod-setup-open-source-release` in the same pull request.
+The repository-owned `pnpm release:build`, `pnpm release:verify`, `pnpm desktop:e2e`, and `pnpm installer:e2e` scripts are the stable native build and test surface. `release:build` clears generated `dist/release` output before copying the current frontend and only the requested native bundle (`nsis`, `dmg`, or the comma-separated `appimage,deb`), and `release:verify` checks the artifact manifest, package extension, architecture, and the Windows native executable's GUI subsystem. The installer test installs, launches, and uninstalls the NSIS package on Windows; on macOS it mounts the DMG, copies and launches the app, then removes it and detaches the image. The current-user Windows route fails closed when its fixed registry keys cannot be inspected, refuses existing HKCU product registrations and matching legacy machine-wide installations, and removes only registry state whose install path exactly matches the current temporary E2E root. The broader legacy machine-wide registry scan has a separate 60-second bound because crowded Windows runners can legitimately need longer than the 10-second bound used for fixed-key operations. The platform signing jobs then verify Authenticode or codesign directly, record the result, and regenerate the internal artifact manifest before curation. Native release metadata must match checked-out `HEAD`, `GITHUB_SHA`, and the tag target; a local build without that exact revision binding is intentionally not release evidence. When this behavior changes, update this file and `hoi4-mod-setup-open-source-release` in the same pull request.
 
 ### Signing configuration
 
@@ -224,7 +265,7 @@ Both community and official signing change the package after the unsigned build
 manifest is written. Each signing job recalculates the complete internal
 artifact manifest only after verifying the signed package.
 
-Stable and preview curation preserve the deterministic union of the three
+Stable and preview curation preserve the deterministic union of the four
 platform SBOMs and notice inventories under the downloaded `release-artifacts/`
 or `preview-artifacts/` root. Each workflow uploads that combined evidence as a
 separate internal artifact; it never enters the public installer/update set.
@@ -239,4 +280,4 @@ Before a public build, verify compatible App Server startup, browser login, devi
 
 ## Launcher and authentication artifact gate
 
-Before publishing, test clean ChatGPT browser and device-code login, signed-out recovery, usage-limit handling, App Server interruption, output-schema rejection, and account-data redaction. Build fresh launcher-ready mods on Windows and macOS and verify both descriptors, the external path, thumbnail decoding, modification preservation, repair, and rollback.
+Before publishing, test clean ChatGPT browser and device-code login, signed-out recovery, usage-limit handling, App Server interruption, output-schema rejection, and account-data redaction. Build fresh launcher-ready mods on Windows, macOS, and Linux and verify both descriptors, the external path, thumbnail decoding, modification preservation, repair, and rollback.

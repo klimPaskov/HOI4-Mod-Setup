@@ -66,6 +66,10 @@
           {
             "context": "Desktop E2E (macos-15-intel)",
             "integration_id": 15368
+          },
+          {
+            "context": "Desktop E2E (ubuntu-22.04)",
+            "integration_id": 15368
           }
         ],
         "strict_required_status_checks_policy": true,

@@ -115,7 +115,7 @@ function semanticAnalysisFixture() {
 describe("HOI4 Mod Setup wizard", () => {
   it("starts new projects with the Atlantis Rising example", () => {
     expect(initialState.sourceMode).toBe("pinned_release");
-    expect(initialState.pinnedRef).toBe("package-2026-10-13");
+    expect(initialState.pinnedRef).toBe("package-2026-10-13.1");
     expect(initialState.identity.displayName).toBe("Atlantis Rising");
     expect(initialState.description).toBe("An Atlantis total conversion with a new Atlantic island, naval expansion, custom units, national focuses, and original mechanics.");
     expect(initialState.aiProvider).toBe("claude_account");
@@ -1383,6 +1383,7 @@ describe("HOI4 Mod Setup wizard", () => {
   });
 
   it("explains when core readiness passes without an installed Codex integration", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Windows NT 10.0");
     render(<Ready state={{
       ...readyState(),
       readiness: { openInCodex: false, coreReady: true, blockingCheckIds: ["codex.config"], checks: [] },
@@ -1407,6 +1408,7 @@ describe("HOI4 Mod Setup wizard", () => {
   });
 
   it("keeps optional ChatGPT source status out of Ready and its details", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Windows NT 10.0");
     const state = readyState();
     render(<Ready state={{ ...state, flattenForChat: true, readiness: { ...state.readiness!, checks: [...state.readiness!.checks, { id: "codex.chat_flatten", label: "ChatGPT Chat sources", status: "incomplete", blocking: false, message: "Optional source folder needs review" }] } }} update={vi.fn()} onMaintenance={vi.fn()} />);
     fireEvent.click(screen.getByText("Readiness details"));
@@ -2251,6 +2253,7 @@ describe("HOI4 Mod Setup wizard", () => {
   });
 
   it("keeps integration technical details collapsed by default", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Windows NT 10.0");
     render(<Mcp state={{
       selectedComponents: ["mcp.hoi4_agent_tools"],
       manifestPreview: {
@@ -2415,7 +2418,17 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.queryByText(secretValue)).not.toBeInTheDocument();
   });
 
+  it("opens a native Linux project terminal without claiming the client started", async () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("X11; Linux x86_64");
+    vi.mocked(openInCodingEnvironment).mockResolvedValue({ opened: false, message: "Project terminal opened. Run codex to start the client." });
+    render(<Ready state={readyState()} update={vi.fn()} onMaintenance={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Open project terminal/i }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Run codex to start the client."));
+    expect(screen.queryByText("Codex opened successfully.")).not.toBeInTheDocument();
+  });
+
   it("announces a manual project-opening path when Codex has no verified opener", async () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Windows NT 10.0");
     vi.mocked(openInCodingEnvironment).mockResolvedValue({
       opened: false,
       message: "No verified Codex opener was found. Open this folder manually: C:\\mods\\cold-war-curtain",
@@ -2429,6 +2442,7 @@ describe("HOI4 Mod Setup wizard", () => {
   });
 
   it("shows immediate and completed feedback while opening Codex", async () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Windows NT 10.0");
     let finishOpen: ((result: { opened: boolean; message: string }) => void) | undefined;
     vi.mocked(openInCodingEnvironment).mockReturnValue(new Promise((resolve) => { finishOpen = resolve; }));
     render(<Ready state={readyState()} update={vi.fn()} onMaintenance={vi.fn()} />);
@@ -2442,6 +2456,7 @@ describe("HOI4 Mod Setup wizard", () => {
   });
 
   it("opens the project in Claude Code when it is the primary environment", async () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Windows NT 10.0");
     vi.mocked(openInCodingEnvironment).mockResolvedValue({ opened: true, message: "Claude Code started." });
     render(<Ready state={{ ...readyState(), primaryCodingEnvironment: "claude_code", readiness: { openInCodex: false, coreReady: true, blockingCheckIds: [], checks: [] } } as unknown as WizardState} update={vi.fn()} onMaintenance={vi.fn()} />);
 
@@ -2516,6 +2531,17 @@ describe("HOI4 Mod Setup wizard", () => {
 
 
 describe("live testing selection", () => {
+  it("uses native Linux without WSL or SSH fields and blocks Live Tools", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (X11; Linux x86_64)");
+    window.history.replaceState({}, "", "/?screenshot=live-testing");
+    const state = documentationFixture(initialState)!;
+    render(<LiveTestingSetup state={state} update={vi.fn()} />);
+    expect(screen.getByText(/Clausewitz MCP runs directly on Linux/)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /WSL distribution|SSH host/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^Clausewitz MCP/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /^HOI4 Live/ })).toBeDisabled();
+    expect(liveTestingSelectionValid({ ...state, liveTesting: { ...state.liveTesting, linux_ready: true } })).toBe(true);
+  });
   it("defaults to deferred Clausewitz and clears the workflow when disabled", () => {
     window.history.replaceState({}, "", "/?screenshot=live-testing");
     const state = documentationFixture(initialState)!;
@@ -2536,6 +2562,7 @@ describe("live testing selection", () => {
     expect(liveTestingSelectionValid({ ...ready, liveTesting: { ...ready.liveTesting, ssh_host: "user@host" } })).toBe(false);
   });
   it("rejects unsafe WSL distribution names", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Windows NT 10.0");
     expect(liveTestingSelectionValid({ ...initialState, liveTesting: { ...initialState.liveTesting, wsl_distribution: "Ubuntu; command" } })).toBe(false);
     expect(liveTestingSelectionValid(initialState)).toBe(true);
   });

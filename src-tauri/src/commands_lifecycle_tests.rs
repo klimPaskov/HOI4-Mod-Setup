@@ -31,14 +31,21 @@ mod offline_lifecycle {
         assert_eq!(action.privilege, "current_user");
         assert!(action.requires_approval);
         assert!(!action.contains_secret);
-        if matches!(Platform::current(), Platform::Windows | Platform::Macos) {
+        if matches!(
+            Platform::current(),
+            Platform::Windows | Platform::Macos | Platform::Linux
+        ) {
             let mut reordered = manifest;
             reordered
                 .components
                 .iter_mut()
                 .find(|component| component.id == "imagegen.gptimage")
                 .unwrap()
-                .platforms = vec![ManifestPlatform::Macos, ManifestPlatform::Windows];
+                .platforms = vec![
+                ManifestPlatform::Macos,
+                ManifestPlatform::Windows,
+                ManifestPlatform::Linux,
+            ];
             let reordered_actions =
                 manifest_external_actions(&reordered, &["imagegen.gptimage".into()]);
             assert_eq!(reordered_actions[0].platform, Platform::current());
@@ -92,7 +99,15 @@ mod offline_lifecycle {
             let root = tempdir().unwrap();
             ISOLATE_MESHY_VAULT_FOR_TEST.with(|isolated| isolated.set(true));
             let mut previous = Vec::new();
-            for name in ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"] {
+            for name in [
+                "HOME",
+                "USERPROFILE",
+                "APPDATA",
+                "LOCALAPPDATA",
+                "XDG_CONFIG_HOME",
+                "XDG_DATA_HOME",
+                "XDG_CACHE_HOME",
+            ] {
                 previous.push((name, std::env::var_os(name)));
                 let path = root.path().join(name);
                 std::fs::create_dir(&path).unwrap();
@@ -146,7 +161,12 @@ mod offline_lifecycle {
             "meshSelected": true, "meshKeyStatus": "missing", "superEventsSelected": true,
             "primaryCodingEnvironment": "claude_code",
             "additionalCodingEnvironments": ["codex", "cursor", "qoder", "opencode"],
-            "selectedComponents": ["workflow.3d", "workflow.super_events", "workflow.live_tools"],
+            "selectedComponents": if Platform::current() == Platform::Windows {
+                json!(["workflow.3d", "workflow.super_events", "workflow.live_tools"])
+            } else {
+                json!(["workflow.3d", "workflow.super_events", "workflow.live_testing"])
+            },
+            "liveTesting": {"provider": if Platform::current() == Platform::Windows { "hoi4_live_tools" } else { "clausewitz_mcp" }, "linux_ready": false},
             "portraitPipeline": test_portrait_config("cloud", true),
             "folderProfile": ["events", "common", "localisation/english", "gfx", "interface", "docs"],
             "conventions": {"agents_profile": "default", "localisation_convention": "english", "documentation_convention": "markdown"},
@@ -684,6 +704,24 @@ mod offline_lifecycle {
             let _ = child.wait();
             reader.join().unwrap();
             handshake.unwrap();
+            // The journal already proves the real Agent Tools handshake.
+            // Check native client binding and readiness without starting it twice.
+            let installed_target = installed_mcp_target(&root, &lock).unwrap();
+            assert_eq!(installed_target.package_version, target.package_version);
+            let mut detected = crate::readiness::project_input(&root, "atlantis_rising").unwrap();
+            assert_eq!(detected.mcp_status, "health_not_run");
+            assert!(detected.mcp_blocking);
+            detected.mcp_status = "pass".into();
+            let report = crate::readiness::evaluate(&detected);
+            assert!(
+                report.core_ready,
+                "scratch readiness blocked: {:?}",
+                report
+                    .checks
+                    .iter()
+                    .filter(|check| check.blocking && check.status != "pass")
+                    .collect::<Vec<_>>()
+            );
             eprintln!("scratch install: primary={primary}; skills={}; both clients registered; Agent Tools {} and GPTImage initialize/tools-list passed", skills.len(), target.package_version);
         }
     }
@@ -791,7 +829,11 @@ mod offline_lifecycle {
             "workflow.3d",
             "workflow.super_events",
             "workflow.portraits.cloud",
-            "workflow.live_tools",
+            if Platform::current() == Platform::Windows {
+                "workflow.live_tools"
+            } else {
+                "workflow.live_testing"
+            },
         ] {
             assert!(
                 plan.selected_components
@@ -804,11 +846,29 @@ mod offline_lifecycle {
         let (journal, lock) = apply(&root, &mut plan, &prepared, app.path());
         assert_eq!(journal.state, "completed");
         assert_eq!(lock.primary_coding_environment, "claude_code");
-        assert_eq!(lock.optional_workflows["workflow.3d"].state, "incomplete");
         assert_eq!(
-            lock.optional_workflows["workflow.live_tools"].state,
-            "ready"
+            lock.optional_workflows["workflow.3d"].state,
+            if Platform::current() == Platform::Windows {
+                "incomplete"
+            } else {
+                "unsupported_platform"
+            }
         );
+        if Platform::current() == Platform::Windows {
+            assert_eq!(
+                lock.optional_workflows["workflow.live_tools"].state,
+                "ready"
+            );
+        } else {
+            assert_eq!(
+                lock.live_testing.as_ref().unwrap().provider,
+                "clausewitz_mcp"
+            );
+            assert!(!lock.live_testing.as_ref().unwrap().linux_ready);
+            assert!(!std::fs::read_to_string(root.join(".mcp.json"))
+                .unwrap()
+                .contains("clausewitz_linux"));
+        }
         for path in [
             "CLAUDE.md",
             "AGENTS.md",

@@ -22,7 +22,7 @@ Every implementation must preserve these promises:
 - keep optional workflows non-blocking for core AI readiness
 - show honest unsupported and incomplete states
 - keep the desktop interface restrained and task-focused
-- support Windows and macOS without inventing unsupported platform routes
+- support Windows, macOS and Linux without inventing unsupported platform routes
 
 The source planning package, accepted architecture decisions, schemas, and tests are part of the product contract. A change that weakens one of these promises requires an explicit design decision and matching documentation.
 
@@ -368,7 +368,7 @@ The expected test layers are:
 - parser and schema fuzzing
 - integration tests with fake GitHub, filesystem, credential, process, and Git adapters
 - transaction fault injection
-- Windows and macOS end-to-end tests
+- Windows, macOS and Linux end-to-end tests
 - security tests
 - UI accessibility and visual regression tests
 - performance tests on small, medium, and very large projects
@@ -429,7 +429,7 @@ Use:
 - `hoi4setup_transaction_recovery_auditor` for journal, apply, recovery, rollback, and fault-injection audits
 - `hoi4setup_security_auditor` for credentials, process execution, filesystem containment, redaction, and supply-chain audits
 - `hoi4setup_ui_accessibility_auditor` for bounded UI and accessibility audits or narrow fixes
-- `hoi4setup_platform_release_auditor` for Windows, macOS, signing, notarization, packaging, and release evidence
+- `hoi4setup_platform_release_auditor` for Windows, macOS, Linux, signing, notarization, packaging, and release evidence
 - `hoi4setup_documentation_curator` for documentation-only consistency work
 - `hoi4setup_skill_maintainer` for repo-local skill creation and updates
 
