@@ -7,8 +7,7 @@
 [![Guide](https://img.shields.io/badge/Guide-GitHub%20Pages-555555?logo=readthedocs&logoColor=white)](https://klimpaskov.github.io/HOI4-Mod-Setup/)
 [![Issues](https://img.shields.io/badge/Bugs%20%26%20Ideas-Issues-24292f?logo=github&logoColor=white)](https://github.com/klimPaskov/HOI4-Mod-Setup/issues)
 
-<!-- TODO-VIDEO-LINK: replace with the HOI4 Mod Setup video URL -->
-[![Watch the HOI4 Mod Setup video](docs/images/setup-app-demo-thumbnail.png)](https://www.youtube.com/@ChaosRedux)
+[![Watch the HOI4 Mod Setup video: One App, All HOI4 Tools](docs/images/setup-app-demo-thumbnail.png)](https://www.youtube.com/watch?v=qdFbLO92dQI)
 
 Prepare a new or existing Hearts of Iron IV mod for AI-assisted development.
 HOI4 Mod Setup creates the mod files, installs project instructions, skills,
@@ -37,7 +36,7 @@ for your download's signing details.
 
 Follow the [first-run guide](docs/QUICKSTART.md) for Windows, macOS and Linux,
 or visit the [project guide](https://klimpaskov.github.io/HOI4-Mod-Setup/).
-Updated video guides will be shared on [Chaos Redux on YouTube](https://www.youtube.com/@ChaosRedux).
+Watch [One App, All HOI4 Tools on YouTube](https://www.youtube.com/watch?v=qdFbLO92dQI) for a video walkthrough.
 
 ## Using the app
 
