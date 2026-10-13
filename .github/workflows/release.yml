@@ -83,7 +83,7 @@ jobs:
           cargo audit
           python scripts/validate_repository.py
           python scripts/check_workflow_security.py
-          python -m unittest scripts/test_linux_release_gates.py
+          python -m unittest scripts/test_linux_release_gates.py scripts/test_linux_secret_service.py
           python scripts/check_committed_secrets.py
           cargo fmt --all -- --check
           cargo clippy --manifest-path src-tauri/Cargo.toml --all-features --all-targets -- -D warnings

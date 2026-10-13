@@ -2,7 +2,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-import check_linux_secret_service as probe
+from scripts import check_linux_secret_service as probe
 
 
 class SecretServiceReadinessTests(unittest.TestCase):

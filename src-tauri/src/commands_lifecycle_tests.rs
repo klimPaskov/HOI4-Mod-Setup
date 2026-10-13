@@ -161,7 +161,12 @@ mod offline_lifecycle {
             "meshSelected": true, "meshKeyStatus": "missing", "superEventsSelected": true,
             "primaryCodingEnvironment": "claude_code",
             "additionalCodingEnvironments": ["codex", "cursor", "qoder", "opencode"],
-            "selectedComponents": ["workflow.3d", "workflow.super_events", "workflow.live_tools"],
+            "selectedComponents": if Platform::current() == Platform::Windows {
+                json!(["workflow.3d", "workflow.super_events", "workflow.live_tools"])
+            } else {
+                json!(["workflow.3d", "workflow.super_events", "workflow.live_testing"])
+            },
+            "liveTesting": {"provider": if Platform::current() == Platform::Windows { "hoi4_live_tools" } else { "clausewitz_mcp" }, "linux_ready": false},
             "portraitPipeline": test_portrait_config("cloud", true),
             "folderProfile": ["events", "common", "localisation/english", "gfx", "interface", "docs"],
             "conventions": {"agents_profile": "default", "localisation_convention": "english", "documentation_convention": "markdown"},
@@ -824,7 +829,11 @@ mod offline_lifecycle {
             "workflow.3d",
             "workflow.super_events",
             "workflow.portraits.cloud",
-            "workflow.live_tools",
+            if Platform::current() == Platform::Windows {
+                "workflow.live_tools"
+            } else {
+                "workflow.live_testing"
+            },
         ] {
             assert!(
                 plan.selected_components
@@ -837,11 +846,29 @@ mod offline_lifecycle {
         let (journal, lock) = apply(&root, &mut plan, &prepared, app.path());
         assert_eq!(journal.state, "completed");
         assert_eq!(lock.primary_coding_environment, "claude_code");
-        assert_eq!(lock.optional_workflows["workflow.3d"].state, "incomplete");
         assert_eq!(
-            lock.optional_workflows["workflow.live_tools"].state,
-            "ready"
+            lock.optional_workflows["workflow.3d"].state,
+            if Platform::current() == Platform::Windows {
+                "incomplete"
+            } else {
+                "unsupported_platform"
+            }
         );
+        if Platform::current() == Platform::Windows {
+            assert_eq!(
+                lock.optional_workflows["workflow.live_tools"].state,
+                "ready"
+            );
+        } else {
+            assert_eq!(
+                lock.live_testing.as_ref().unwrap().provider,
+                "clausewitz_mcp"
+            );
+            assert!(!lock.live_testing.as_ref().unwrap().linux_ready);
+            assert!(!std::fs::read_to_string(root.join(".mcp.json"))
+                .unwrap()
+                .contains("clausewitz_linux"));
+        }
         for path in [
             "CLAUDE.md",
             "AGENTS.md",

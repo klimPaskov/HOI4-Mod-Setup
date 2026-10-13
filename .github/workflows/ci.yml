@@ -26,7 +26,7 @@ jobs:
       - name: Validate planning package and repository templates
         run: python scripts/validate_repository.py
       - name: Test immutable manifest evidence generation
-        run: python -m unittest scripts/test_generate_manifest_evidence.py
+        run: python -m unittest scripts/test_generate_manifest_evidence.py scripts/test_validate_repository.py scripts/test_linux_release_gates.py scripts/test_linux_secret_service.py
       - name: Check release workflow authority boundaries
         run: |
           python scripts/check_workflow_security.py
