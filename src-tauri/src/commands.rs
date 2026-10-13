@@ -3809,6 +3809,13 @@ fn mcp_client_launch(
             node.display().to_string(),
             vec![entry.display().to_string()],
         ))
+    } else if platform == Platform::Windows && Platform::current() == Platform::Windows {
+        Ok((
+            crate::paths::user_facing_path(
+                &crate::paths::windows_npm_prefix()?.join(&target.target),
+            ),
+            vec![],
+        ))
     } else {
         Ok((target.target.clone(), vec![]))
     }
@@ -6569,16 +6576,21 @@ fn adapt_image_generation_client_config_for_platform(
     } else {
         live_selection
     };
-    let image_bytes = if platform == Platform::Linux && environment.is_some() {
-        let target = crate::mcp::manifest_target_for_platform(manifest, platform).ok();
-        let launch = target
-            .as_ref()
-            .map(|target| mcp_client_launch(target, platform))
-            .transpose()?;
-        retarget_native_mcp_config(&image_bytes, destination, launch.as_ref())?
-    } else {
-        image_bytes
-    };
+    let image_bytes =
+        if matches!(platform, Platform::Windows | Platform::Linux) && environment.is_some() {
+            let target = crate::mcp::manifest_target_for_platform(manifest, platform).ok();
+            if platform == Platform::Windows && target.is_none() {
+                image_bytes
+            } else {
+                let launch = target
+                    .as_ref()
+                    .map(|target| mcp_client_launch(target, platform))
+                    .transpose()?;
+                retarget_native_mcp_config(&image_bytes, destination, launch.as_ref())?
+            }
+        } else {
+            image_bytes
+        };
     let adapted =
         crate::live_testing::adapt_config(&image_bytes, destination, live_selection, platform)?;
     // Historical packages without provider adaptation must remain reproducible
@@ -13113,6 +13125,52 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
             removed["mcp_servers"]["custom"]["command"].as_str(),
             Some("keep-me")
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_client_registrations_bind_the_reviewed_user_prefix_before_bootstrap() {
+        let manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+        ))
+        .unwrap();
+        let target =
+            crate::mcp::manifest_target_for_platform(&manifest, Platform::Windows).unwrap();
+        // Planning must not depend on the bootstrap's wrapper or Node already
+        // existing. It captures the exact source-owned current-user route.
+        let launch = mcp_client_launch(&target, Platform::Windows).unwrap();
+        assert!(Path::new(&launch.0).is_absolute());
+        assert_eq!(
+            launch.0,
+            crate::paths::user_facing_path(
+                &crate::paths::windows_npm_prefix()
+                    .unwrap()
+                    .join(&target.target)
+            )
+        );
+        assert!(launch.1.is_empty());
+        for destination in [
+            ".mcp.json",
+            ".cursor/mcp.json",
+            ".qoder/mcp.json",
+            "opencode.json",
+            ".codex/config.toml",
+        ] {
+            let source = if destination == ".codex/config.toml" {
+                b"[mcp_servers.hoi4_agent_tools]\ncommand='hoi4-agent-tools.cmd'\nargs=[]\n"
+                    .to_vec()
+            } else if destination == "opencode.json" {
+                serde_json::to_vec(&serde_json::json!({"mcp":{"hoi4_agent_tools":{"type":"local","command":["hoi4-agent-tools.cmd"]}}})).unwrap()
+            } else {
+                serde_json::to_vec(&serde_json::json!({"mcpServers":{"hoi4_agent_tools":{"command":"hoi4-agent-tools.cmd","args":[]}}})).unwrap()
+            };
+            let adapted = retarget_native_mcp_config(&source, destination, Some(&launch)).unwrap();
+            assert_eq!(
+                crate::mcp::client_registration(&adapted, destination).unwrap(),
+                Some(launch.clone()),
+                "{destination}"
+            );
+        }
     }
 
     #[test]

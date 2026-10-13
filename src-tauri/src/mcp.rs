@@ -1047,17 +1047,10 @@ fn validate_bare_command_name(value: &str) -> Result<(), AppError> {
 }
 
 fn resolved_wrapper(target: &str) -> Result<PathBuf, AppError> {
-    if let Ok(path) = find_path_executable(&[target]) {
-        return Ok(path);
-    }
+    validate_bare_command_name(target)?;
     #[cfg(target_os = "windows")]
     {
-        let appdata = std::env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .ok_or_else(|| {
-                AppError::Process("the current-user npm directory is unavailable".into())
-            })?;
-        let candidate = appdata.join("npm").join(target);
+        let candidate = crate::paths::windows_npm_prefix()?.join(target);
         let metadata = std::fs::symlink_metadata(&candidate)?;
         if !is_link_metadata(&metadata)
             && metadata.is_file()
@@ -1114,11 +1107,7 @@ pub fn loaded_native_files_blocking_replacement(
 ) -> Result<Vec<String>, AppError> {
     #[cfg(target_os = "windows")]
     {
-        let Some(appdata) = std::env::var_os("APPDATA") else {
-            return Ok(Vec::new());
-        };
-        let root = PathBuf::from(appdata)
-            .join("npm")
+        let root = crate::paths::windows_npm_prefix()?
             .join("node_modules")
             .join(&target.package_name);
         loaded_native_files_in(&root, target)
@@ -1238,6 +1227,68 @@ mod tests {
     use super::*;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_mcp_wrapper_resolution_ignores_shadowed_path() {
+        if std::env::var_os("HOI4_TEST_MCP_SHADOW_CHILD").is_some() {
+            let expected =
+                PathBuf::from(std::env::var_os("HOI4_TEST_MCP_PROFILE_EXPECTED").unwrap());
+            let resolved = resolved_wrapper("hoi4-agent-tools.cmd").unwrap();
+            assert_eq!(resolved, expected.canonicalize().unwrap());
+            assert_eq!(
+                std::fs::read(&expected).unwrap(),
+                b"reviewed prefix locator",
+                "refuse to remove anything except this regression's synthetic locator"
+            );
+            // A missing reviewed-prefix wrapper must not fall back to the
+            // stale same-named command that remains on the child's PATH.
+            std::fs::remove_file(&expected).unwrap();
+            assert!(resolved_wrapper("hoi4-agent-tools.cmd").is_err());
+            return;
+        }
+        let fixture = tempfile::tempdir().unwrap();
+        let profile = fixture.path().join("profile");
+        let installed = profile.join("npm");
+        let stale = fixture.path().join("stale-global");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::create_dir_all(&stale).unwrap();
+        let expected = installed.join("hoi4-agent-tools.cmd");
+        std::fs::write(&expected, b"reviewed prefix locator").unwrap();
+        std::fs::write(stale.join("hoi4-agent-tools.cmd"), b"stale PATH locator").unwrap();
+        let executable = std::env::current_exe().unwrap();
+        let spec = crate::process::ProcessSpec {
+            executable: executable.clone(),
+            executable_sha256: Some(sha256_file(&executable).unwrap()),
+            args: vec![
+                "--exact".into(),
+                "mcp::tests::windows_mcp_wrapper_resolution_ignores_shadowed_path".into(),
+            ],
+            cwd: None,
+            platform: Platform::Windows,
+            environment_names: vec![],
+            timeout_seconds: 15,
+            max_output_bytes: 8192,
+        };
+        let environment = vec![
+            ("APPDATA".into(), profile.into_os_string()),
+            ("PATH".into(), stale.into_os_string()),
+            ("HOI4_TEST_MCP_SHADOW_CHILD".into(), "1".into()),
+            (
+                "HOI4_TEST_MCP_PROFILE_EXPECTED".into(),
+                expected.into_os_string(),
+            ),
+        ];
+        let result = spec
+            .run_reviewed_tool(&[executable], &environment, None, None, false)
+            .unwrap();
+        assert_eq!(result.status_code, Some(0), "{}", result.stderr);
+        assert!(!result.timed_out);
+        assert!(
+            result.stdout.contains("1 passed"),
+            "the isolated regression did not execute"
+        );
+    }
 
     #[test]
     fn client_registration_preserves_exact_argument_arrays_and_rejects_malformed_or_disabled_routes(

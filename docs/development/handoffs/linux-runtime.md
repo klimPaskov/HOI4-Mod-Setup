@@ -128,3 +128,28 @@ Skill ownership check: repeated path, credential, executable, process,
 MCP-link, native-client, and validation workflows changed. The security skill
 and platform/security docs were updated; the parent maintains adjacent global
 product/testing/release consistency and the Codex audit handoff.
+
+## Follow-up: shadowed Windows npm prefix
+
+The combined real Windows scratch gate found a genuine resolution defect:
+the reviewed bootstrap installed current-user package 4.0.3, while health chose
+an inherited PATH locator for older global 3.9.0. The fix binds Windows wrapper
+lookup, loaded-native checks, and coding-client registration to the exact
+`APPDATA/npm` prefix. Client configs use its absolute source-declared wrapper;
+the app's private-copy probe continues to use verified Node and the pinned
+JavaScript entry. A missing reviewed-prefix wrapper never falls back to PATH.
+
+This preserves authorized post-plan Node installation and missing-tool states.
+Historical Windows fixtures without immutable MCP identity remain unchanged,
+and foreign-platform memory fixtures retain their source-declared command.
+The parent owns structural readiness compatibility for legacy bare commands;
+full installed health requires the exact current-user launch for all clients.
+No real-user npm prefix, mod, or account was changed by the regression. The
+isolated subprocess test supplies fresh synthetic current/stale prefixes so
+process-wide test environment and real desktop state remain untouched.
+
+Follow-up validation passed on Windows: the isolated shadowed-prefix/no-fallback
+regression, all five absolute client-registration formats, the existing image
+provider adaptation regression, all-features/test compilation, and strict
+all-targets/all-features Clippy. The parent must rerun the real combined scratch
+gate to establish end-to-end post-install success with the fixed binding.

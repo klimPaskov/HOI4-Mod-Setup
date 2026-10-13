@@ -410,3 +410,11 @@ smoke. It starts a dedicated D-Bus session and keyring control directory,
 retains toolchain homes, and cleans up only its generated temporary profile.
 Supply `HOI4_TEST_IMAGE_VAULT_ADAPTER` only when explicitly testing the checked
 source runtime's compatible read of the same synthetic opaque reference.
+
+Windows HOI4 Agent Tools resolution is bound to `paths::windows_npm_prefix()`
+(`APPDATA/npm`), never inherited PATH. Use the same prefix for loaded-file
+checks and absolute client wrapper registration, preserving pre-bootstrap Node
+installation behavior. Keep the isolated-child regression
+`windows_mcp_wrapper_resolution_ignores_shadowed_path`: a stale global locator
+must not win, and a missing reviewed-prefix locator must not fall back to it.
+The app still executes only verified Node/private-entry health, never a wrapper.

@@ -102,6 +102,22 @@ pub(crate) fn linux_npm_prefix() -> Result<PathBuf, AppError> {
     Ok(linux_xdg_directory("XDG_DATA_HOME", ".local/share")?.join("hoi4-mod-setup/npm"))
 }
 
+/// The Windows source bootstrap installs into this exact current-user prefix,
+/// independently of existing npm commands on PATH. Resolution does not create it.
+pub(crate) fn windows_npm_prefix() -> Result<PathBuf, AppError> {
+    let prefix = required_platform_root("APPDATA")?.join("npm");
+    if prefix
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
+        || crate::security::path_has_link_component(&prefix)
+    {
+        return Err(AppError::PathSecurity(
+            "the current-user npm prefix contains traversal or a link".into(),
+        ));
+    }
+    Ok(prefix)
+}
+
 pub fn transaction_root(app_root: &Path, transaction_id: Uuid) -> TransactionRoots {
     let transaction = app_root
         .join("transactions")
@@ -147,7 +163,7 @@ pub fn hoi4_user_mod_directory() -> Result<PathBuf, AppError> {
     {
         let home = required_platform_root("HOME")?;
         let data = linux_xdg_directory("XDG_DATA_HOME", ".local/share")?;
-        return existing_unambiguous_mod_directory(&linux_mod_candidates(&home, &data));
+        existing_unambiguous_mod_directory(&linux_mod_candidates(&home, &data))
     }
     #[cfg(not(target_os = "linux"))]
     {

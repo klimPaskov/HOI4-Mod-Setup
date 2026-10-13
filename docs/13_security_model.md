@@ -283,3 +283,17 @@ recreated in a private runtime copy, which is rehashed before Node starts.
 Native coding-client registrations use verified absolute Node plus the
 absolute package entry, preserve source environment settings, and pass normal
 conflict review. MCP health performs only initialize and tools/list.
+
+## Windows MCP prefix binding
+
+The reviewed Windows bootstrap installs HOI4 Agent Tools into the exact
+current-user `APPDATA/npm` prefix. Health and loaded-native-file checks use that
+prefix directly, validate its link boundary, and never choose a wrapper from
+PATH. An older same-named global command cannot authorize or redirect a probe;
+a missing reviewed-prefix locator fails without falling back elsewhere.
+Windows coding-client registrations carry the absolute reviewed-prefix wrapper
+and an empty argument array. This preserves the source's Windows wrapper
+contract and permits its authorized Node installation to happen after planning.
+The app never executes the wrapper: private package-tree health still runs only
+the independently verified Node executable and source-bound JavaScript entry.
+Client registration changes use the ordinary review and conflict checks.
