@@ -1443,7 +1443,16 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
             .ok()
             .flatten()
             .is_some_and(|(command, args)| match Platform::current() {
-                Platform::Windows => command == "hoi4-agent-tools.cmd",
+                Platform::Windows => {
+                    command == "hoi4-agent-tools.cmd"
+                        || crate::paths::windows_npm_prefix().is_ok_and(|prefix| {
+                            command
+                                == crate::paths::user_facing_path(
+                                    &prefix.join("hoi4-agent-tools.cmd"),
+                                )
+                                && args.is_empty()
+                        })
+                }
                 Platform::Linux => {
                     Path::new(&command).is_absolute()
                         && args.len() == 1
