@@ -2131,7 +2131,7 @@ fn start_console(provider: &str, id: Uuid, logout: bool) -> Result<AiAccountStat
             "account console executable contains a link".into(),
         ));
     }
-    let args = [
+    let _args = [
         CONSOLE_MARKER.to_owned(),
         provider.to_owned(),
         id.to_string(),
@@ -2158,7 +2158,7 @@ fn start_console(provider: &str, id: Uuid, logout: bool) -> Result<AiAccountStat
     #[cfg(any(windows, target_os = "linux"))]
     {
         command
-            .args(args)
+            .args(_args)
             .env_clear()
             .current_dir(provider_root(provider)?)
             .stdin(Stdio::null())
