@@ -31,14 +31,21 @@ mod offline_lifecycle {
         assert_eq!(action.privilege, "current_user");
         assert!(action.requires_approval);
         assert!(!action.contains_secret);
-        if matches!(Platform::current(), Platform::Windows | Platform::Macos | Platform::Linux) {
+        if matches!(
+            Platform::current(),
+            Platform::Windows | Platform::Macos | Platform::Linux
+        ) {
             let mut reordered = manifest;
             reordered
                 .components
                 .iter_mut()
                 .find(|component| component.id == "imagegen.gptimage")
                 .unwrap()
-                .platforms = vec![ManifestPlatform::Macos, ManifestPlatform::Windows, ManifestPlatform::Linux];
+                .platforms = vec![
+                ManifestPlatform::Macos,
+                ManifestPlatform::Windows,
+                ManifestPlatform::Linux,
+            ];
             let reordered_actions =
                 manifest_external_actions(&reordered, &["imagegen.gptimage".into()]);
             assert_eq!(reordered_actions[0].platform, Platform::current());
@@ -92,7 +99,15 @@ mod offline_lifecycle {
             let root = tempdir().unwrap();
             ISOLATE_MESHY_VAULT_FOR_TEST.with(|isolated| isolated.set(true));
             let mut previous = Vec::new();
-            for name in ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"] {
+            for name in [
+                "HOME",
+                "USERPROFILE",
+                "APPDATA",
+                "LOCALAPPDATA",
+                "XDG_CONFIG_HOME",
+                "XDG_DATA_HOME",
+                "XDG_CACHE_HOME",
+            ] {
                 previous.push((name, std::env::var_os(name)));
                 let path = root.path().join(name);
                 std::fs::create_dir(&path).unwrap();
@@ -684,6 +699,24 @@ mod offline_lifecycle {
             let _ = child.wait();
             reader.join().unwrap();
             handshake.unwrap();
+            // The journal already proves the real Agent Tools handshake.
+            // Check native client binding and readiness without starting it twice.
+            let installed_target = installed_mcp_target(&root, &lock).unwrap();
+            assert_eq!(installed_target.package_version, target.package_version);
+            let mut detected = crate::readiness::project_input(&root, "atlantis_rising").unwrap();
+            assert_eq!(detected.mcp_status, "health_not_run");
+            assert!(detected.mcp_blocking);
+            detected.mcp_status = "pass".into();
+            let report = crate::readiness::evaluate(&detected);
+            assert!(
+                report.core_ready,
+                "scratch readiness blocked: {:?}",
+                report
+                    .checks
+                    .iter()
+                    .filter(|check| check.blocking && check.status != "pass")
+                    .collect::<Vec<_>>()
+            );
             eprintln!("scratch install: primary={primary}; skills={}; both clients registered; Agent Tools {} and GPTImage initialize/tools-list passed", skills.len(), target.package_version);
         }
     }

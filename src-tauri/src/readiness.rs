@@ -1418,7 +1418,7 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
     let codex_valid = codex_text
         .as_deref()
         .is_some_and(|text| text.parse::<toml::Value>().is_ok());
-    let on_windows = Platform::current() == Platform::Windows;
+    let runtime_supported = matches!(Platform::current(), Platform::Windows | Platform::Linux);
     let mcp_unsupported = lock.as_ref().is_some_and(|lock| {
         lock.components.iter().any(|component| {
             component.id == "mcp.hoi4_agent_tools" && component.state == "unsupported_platform"
@@ -1435,9 +1435,22 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
                 && component.validation.as_deref() == Some("planned_unavailable")
         })
     });
+    // Detection checks structure only. The production health boundary binds
+    // every selected client's command and arguments to the locked manifest
+    // and trusted runtime before setting the final status to pass.
     let mcp_declared = codex_text.as_deref().is_some_and(|text| {
-        text.contains("[mcp_servers.hoi4_agent_tools]")
-            && text.contains("command = \"hoi4-agent-tools.cmd\"")
+        crate::mcp::client_registration(text.as_bytes(), ".codex/config.toml")
+            .ok()
+            .flatten()
+            .is_some_and(|(command, args)| match Platform::current() {
+                Platform::Windows => command == "hoi4-agent-tools.cmd",
+                Platform::Linux => {
+                    Path::new(&command).is_absolute()
+                        && args.len() == 1
+                        && Path::new(&args[0]).is_absolute()
+                }
+                _ => false,
+            })
     });
     let codex_config_selected = lock.as_ref().is_some_and(|lock| {
         lock.components.iter().any(|component| {
@@ -1452,13 +1465,18 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         "not_selected".into()
     } else if !mcp_registration_ready {
         "block".into()
-    } else if on_windows && mcp_planned_unavailable {
-        if find_path_executable(&["hoi4-agent-tools.cmd"]).is_ok() {
+    } else if runtime_supported && mcp_planned_unavailable {
+        let locator = if Platform::current() == Platform::Linux {
+            "hoi4-agent-tools"
+        } else {
+            "hoi4-agent-tools.cmd"
+        };
+        if find_path_executable(&[locator]).is_ok() {
             "configured".into()
         } else {
             "planned_unavailable".into()
         }
-    } else if on_windows {
+    } else if runtime_supported {
         "health_not_run".into()
     } else {
         "unsupported_platform".into()
@@ -1581,7 +1599,7 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
     } else {
         "block"
     };
-    let mcp_blocking = on_windows && mcp_selected && mcp_status != "planned_unavailable";
+    let mcp_blocking = runtime_supported && mcp_selected && mcp_status != "planned_unavailable";
     let coding_selection = lock.as_ref().map(|lock| CodingEnvironmentSelection {
         primary: lock.primary_coding_environment.clone(),
         additional: lock.additional_coding_environments.clone(),
