@@ -11860,7 +11860,11 @@ mod tests {
             .get("hoi4_image_old_provider")
             .is_none());
         assert!(adapted["mcpServers"].get("hoi4_image_custom").is_some());
-        assert!(adapted["mcpServers"].get("hoi4_agent_tools").is_some());
+        assert_eq!(
+            adapted["mcpServers"].get("hoi4_agent_tools").is_some(),
+            Platform::current() != Platform::Linux,
+            "this fixture declares no native Linux HOI4 Agent Tools route"
+        );
         assert_eq!(adapted["mcpServers"]["hoi4_image_openai_api"]["cwd"], ".");
 
         let codex = b"[mcp_servers.hoi4_image_old_provider]\ncommand = \"old\"\n";
