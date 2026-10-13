@@ -205,6 +205,21 @@ replacing existing bytes, and a redacted assignment at the end of a message.
   signature checks of large clients take tens of seconds. It always re-hashes
   first, never remembers a failure, and records only when the bytes are
   unchanged after the check; spawn-time hash validation is unchanged.
+- Experimental `gemini_account` and `grok_account` processes use only the
+  package pins in `src-tauri/resources/account-cli-pins.json` after explicit
+  sign-in. Verify npm SRI, archive member, entry SHA-256, safe extraction, and
+  the runtime again immediately before spawn; never run npm scripts, a package
+  manager, redirects, or PATH shims. Gemini additionally requires a
+  publisher-verified OpenJS Node runtime; Grok uses its pinned provider binary.
+  Give each CLI a link-free app-private home and empty workspace, disable
+  tools/MCP/hooks/plugins/write features through the reviewed provider policy,
+  and keep the target project out of cwd and environment. The provider owns
+  OAuth, token storage, refresh, and logout; app code never reads, copies,
+  logs, or persists those tokens. Provider-owned session files may remain only
+  in the isolated provider data root for approved setup inputs and never enter
+  project files, plans, locks, logs, support bundles, or source packages.
+  The interactive terminal route is verified only on Windows and Linux;
+  macOS remains unavailable until a runtime and terminal route are verified.
 - Non-secret passthrough variables for a reviewed tool go through
   `ProcessSpec::run_reviewed_tool`, which rejects names containing key, token,
   secret, password, or credential markers and every `ANTHROPIC_*` name.
@@ -284,10 +299,21 @@ replacing existing bytes, and a redacted assignment at the end of a message.
   embedded public key so a stale or mismatched private key blocks publication.
 
 - Resolve exact revisions.
+- If GitHub REST returns only a rate-limit 403/429, use the fixed repository's
+  read-only `info/refs?service=git-upload-pack` advertisement for names and
+  commit IDs only. Verify pinned commit/release identity separately; never
+  download Git objects, clone, checkout, or fall back for an unrelated 403.
 - Verify SHA-256.
 - Keep manifest and files on one revision.
+- Keep source-resolution memory entries request-bound and no older than 15
+  minutes; a cache hit is not new source trust.
+- Use manifest `expected_files` as the public selected inventory; do not infer
+  files from a recursive tree or accept undeclared blobs.
 - Reject unsupported manifest majors.
-- Record redirects and final source identity.
+- Disable HTTP redirects for source requests. Bind every API/raw URL to the
+  fixed source owner and repository; require raw content URLs to carry the
+  exact 40-character resolved commit before the path. Reject redirect
+  responses and use the explicitly requested route/revision as source identity.
 - Require explicit evidence for external dependencies and platform commands.
 - Separate application update trust from workflow component update trust.
 
@@ -302,7 +328,8 @@ Use read-only default permissions. Grant write permission only to a release job 
 - archive bomb and path escape
 - command and environment injection
 - secret in stdout, stderr, panic, and crash state
-- malicious manifest and redirect
+- malicious manifest, redirect rejection, and API/raw owner-repository/commit
+  allowlist enforcement
 - compromised cache
 - verified-cache path replacement between inspection and return
 - unsigned or wrong-publisher executable substitution
@@ -324,6 +351,9 @@ Use read-only default permissions. Grant write permission only to a release job 
   unquoted secret assignments
 - provider-keyed AI credential isolation, endpoint validation, bounded response
   handling, and no-secret flatten output
+- provider-account package SRI/member/entry verification, private-home and
+  empty-workspace isolation, trusted runtime identity, provider-owned session
+  boundaries, no-token persistence, and honest unsupported macOS handling
 
 ## Read-only scanner exclusions
 
@@ -364,6 +394,17 @@ organization, or plan fields from `claude auth status`. Anthropic's Claude Code
 terms forbid third-party Claude.ai login and credential intermediation.
 
 Codex App Server owns ChatGPT OAuth, token persistence, and refresh. The app uses managed browser login and device code only. It never reads Codex auth storage, implements an API-key fallback, accepts externally managed tokens, or persists full account identity, plan, usage, or rate-limit data. Treat approved analysis input as a disclosure surface and test redaction, root boundaries, and support bundles.
+
+Experimental Gemini/Grok account routes follow the same no-intermediation
+boundary: the official CLI owns OAuth/login, token storage, refresh, and
+logout, while the app exposes only bounded capability/status results. Explicit
+sign-in prepares the pinned runtime; no pasted credential or app-owned API-key
+fallback is accepted. Provider-owned session persistence is permitted only in
+the isolated provider home for approved setup inputs and is never copied into
+the project or app-managed records. A failed, cancelled, timed-out, or
+usage-limited account check preserves local recovery and blocks semantic
+planning. The current terminal helper is Windows/Linux only; macOS remains
+unavailable pending verified runtime and terminal evidence.
 
 Existing-project provider evidence must be bound to the current core-owned
 read-only scan. The approval store accepts only the exact core-derived

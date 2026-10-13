@@ -2,6 +2,9 @@
 
 #[cfg(feature = "desktop")]
 fn main() {
+    if let Some(code) = hoi4_mod_setup::account_cli::run_cli_if_requested() {
+        std::process::exit(code);
+    }
     if let Some(code) = hoi4_mod_setup::meshy::run_cli_if_requested() {
         std::process::exit(code);
     }
@@ -10,6 +13,9 @@ fn main() {
 
 #[cfg(not(feature = "desktop"))]
 fn main() {
+    if let Some(code) = hoi4_mod_setup::account_cli::run_cli_if_requested() {
+        std::process::exit(code);
+    }
     if let Some(code) = hoi4_mod_setup::meshy::run_cli_if_requested() {
         std::process::exit(code);
     }

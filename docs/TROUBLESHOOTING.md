@@ -34,6 +34,46 @@ Find the message you see below, then follow its fix.
 
 **Fix:** Sign in to Claude Code with your Claude account, or select **Claude API key** as the setup assistant and connect with your Anthropic key.
 
+## Claude model is unavailable
+
+> Claude Code rejected the selected model
+
+**Cause:** Claude Code does not support the selected exact model ID in the
+installed version or account.
+
+**Fix:** Update Claude Code when prompted, choose one of the built-in model
+choices, or enter another exact Claude model ID under **Advanced**. The app's
+Haiku 5.5 default and built-in catalog are local choices; Claude Code does not
+provide a live catalog. A model choice does not select the coding client used
+after setup.
+
+## Gemini or Grok API key was not accepted
+
+> The provider credential is not available
+
+**Cause:** The selected API-key profile needs a key in the operating-system
+credential store, and the key is never written to the project.
+
+**Fix:** Open the provider's official API-key page, connect the key again, and
+choose **Check**. Gemini uses the reviewed OpenAI-compatible endpoint and
+Grok uses the reviewed Responses endpoint; use **Other provider** only for a
+deliberately different HTTPS host.
+
+## Experimental Gemini or Grok account sign-in is unavailable
+
+> Complete sign-in in the provider terminal, close it, then choose Check again.
+
+**Cause:** The experimental account route delegates sign-in, token storage,
+refresh, and logout to the official provider CLI in an app-private home. It
+does not accept pasted credentials. The package is downloaded only after the
+explicit sign-in action and is checked against its pinned integrity values.
+
+**Fix:** Finish the provider's own terminal sign-in, close that terminal, and
+choose **Check again**. If the app says the route is unavailable on this
+computer, use the hosted API-key profile instead; macOS is not supported by the
+current experimental terminal worker. Real account completion is a manual
+live-test gate and is not implied by the presence of the account option.
+
 ## Codex cannot be found
 
 > Codex is not installed or could not be found. Install or update Codex, then choose Check again.
@@ -95,6 +135,19 @@ The app keeps the unverified files out of your mod.
 
 **Fix:** Check your internet connection and retry **Prepare changes**.
 
+## The setup source returned GitHub HTTP 403
+
+> The setup source could not be downloaded or prepared. Check your connection and try again; nothing was changed.
+
+**Cause:** Unauthenticated GitHub REST requests can exhaust the public rate
+quota. A rate-limit-only response may use the app's fixed-repository, read-only
+Git ref lookup to resolve the exact revision, but unrelated 403 responses are
+rejected for safety.
+
+**Fix:** Retry **Prepare changes** later. Do not clone the source repository or
+paste a GitHub token into the app. No project files are changed until the
+selected manifest files pass their size and SHA-256 checks.
+
 ## The assistant's response could not be used
 
 > The response did not match the required proposal format. Try the analysis again.
@@ -144,6 +197,31 @@ Afterward, use **Refresh checks** on **Project ready**, or **Check integration**
 
 **Fix:** Leave the unavailable MCP component unselected on macOS and continue with the supported components.
 Core setup remains usable; this MCP route cannot be enabled on macOS through a setting in the app.
+
+## The selected image provider did not add its setup component
+
+> The image provider choice and component list do not match
+
+**Cause:** Image providers are backed by manifest-declared route components.
+Changing a primary or additional provider invalidates the current plan and
+refreshes the route-component selection; the final dependency closure is still
+validated by Rust.
+
+**Fix:** Return to **Choose an image provider**, select the intended route, and
+reload the component list if the source manifest failed to load. Review the
+updated dependency and file list before preparing changes. No stale
+`imagegen.*` route is intentionally retained after a provider change.
+
+## HOI4 Live Tools is unavailable
+
+> Not available on this computer
+
+**Cause:** HOI4 Live Tools is an experimental, slower workflow. The current
+public package verifies Windows only; its macOS scaffold is incomplete.
+
+**Fix:** Leave the route disabled on an unsupported computer, or choose the
+Clausewitz MCP route after preparing its separate Linux game/server
+environment. Core setup remains usable and no unsupported command is invented.
 
 ## The project does not open from the Ready screen
 

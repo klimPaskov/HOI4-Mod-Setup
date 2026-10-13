@@ -22,14 +22,27 @@ manifest filenames as update history.
    `docs/schemas/remote-manifest.schema.json` using Draft 2020-12 before typed
    deserialization. Then validate runtime trust-policy invariants, file
    evidence, and the declared generator revision.
-6. Expand only selected component trees at the same commit.
+6. Expand only the selected component closure. Public installation uses each
+   selected component's manifest-declared `expected_files` inventory; it does
+   not need a recursive repository tree to infer files.
 7. Fetch selected files.
-8. Verify SHA-256.
+8. Verify each declared size and SHA-256.
 9. Record commit, manifest hash, manifest origin, platform, sizes, file hashes,
    the manifest's exact `wiki.required_pages` list, and the manifest-declared
    wiki snapshot/media/provenance/license metadata.
 
-Latest mode becomes reproducible after installation because the lock records the exact commit.
+Latest mode becomes reproducible after installation because the lock records the
+exact commit. A bounded in-memory resolution cache may reuse a complete
+resolution for at most 15 minutes (or the manifest's lower declared TTL), but a
+cache entry remains bound to the request, resolved revision, manifest bytes,
+and branch. It is an optimization, not a source of identity.
+
+When the unauthenticated GitHub REST quota returns a rate-limit-only 403/429,
+the fixed public repository may resolve identity from the read-only Git HTTP
+`info/refs?service=git-upload-pack` advertisement. This fallback receives ref
+names and commit IDs only; it never clones, downloads Git objects, or searches
+the computer. Pinned commits and releases still require commit/release-page
+identity confirmation. An unrelated 403 fails closed.
 
 The schema is closed at every declared object boundary. Unknown top-level or
 nested policy fields fail before deserialization instead of being silently
@@ -50,7 +63,13 @@ shown as `unknown` until repaired.
 
 ## No clone
 
-Use GitHub metadata, commit, tree, contents, raw, and release endpoints. Never run `git clone` for Agentic-HOI4-Modding. A repository-declared external dependency script may use Git for its own dependency only after dry-run disclosure and approval.
+Use GitHub metadata, commit, raw, and release endpoints for public
+installation. A recursive tree endpoint may remain available to developer-only
+local-source fixtures and compatibility tests, but it is not the public file
+inventory or an authorization to fetch a whole repository. Never run `git
+clone` for Agentic-HOI4-Modding. A repository-declared external dependency
+script may use Git for its own dependency only after dry-run disclosure and
+approval.
 
 ## Component contract
 
@@ -168,7 +187,11 @@ One repository file maps to one destination or template transformer.
 
 ### Tree
 
-A selected subtree expands at the resolved commit. Every resolved file receives a plan row and SHA-256. The installer still downloads only selected trees.
+A selected tree component is still a manifest concept, but its published
+`expected_files` list is the installation inventory. Every listed file receives
+a plan row and SHA-256; the installer downloads only those declared blobs. A
+recursive tree listing is not required for public resolution and cannot add
+undeclared files to a plan.
 
 Disjoint tree components may share a standard managed destination directory such as `.agents/skills/` or `.codex/agents/`. Every selected concrete destination remains unique and is canonicalized before download; any selected overlap is rejected.
 

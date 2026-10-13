@@ -37,7 +37,7 @@ use crate::security::{
     sha256_file, validate_external_destination,
 };
 use crate::source::{
-    expand_components, resolve_source, select_component_files, verify_download, HttpSourceClient,
+    expand_components, resolve_source, select_manifest_files, verify_download, HttpSourceClient,
     SourceRequest,
 };
 use crate::transaction::{
@@ -533,7 +533,8 @@ fn require_ai_session(state: &Value) -> Result<(), AppError> {
             credential_reference: ai_credential_reference(&provider),
         },
     );
-    if status.error.is_some() || !status.available || !status.authenticated {
+    if status.error.is_some() || !status.available || !status.authenticated || status.usage_limited
+    {
         return Err(AppError::Credential(format!(
             "connect the selected {provider} provider before planning"
         )));
@@ -594,6 +595,9 @@ fn command_error(error: AppError) -> String {
 
 fn provider_analysis_user_error(error: AppError) -> String {
     match error {
+        AppError::UnsafeProviderOutput(_) => {
+            "The setup assistant returned private-looking account data. The response was discarded. Your draft and scan are unchanged; try the review again.".into()
+        }
         AppError::InvalidInput(_) => {
             "The selected provider settings or returned proposal were invalid. Review the setup assistant settings and try again."
                 .into()
@@ -614,9 +618,18 @@ fn provider_analysis_user_error(error: AppError) -> String {
             "The analysis could not be prepared safely. Your draft and scan remain unchanged; try again."
                 .into()
         }
+        AppError::Credential(message) if message.contains("changed after analysis") => {
+            "The setup account changed while the review was finishing. Run the review again.".into()
+        }
+        AppError::Credential(message) if message.contains("usage") && message.contains("limited") => {
+            "The selected provider's usage is currently limited. Your draft and scan are unchanged; try again when usage is available.".into()
+        }
         AppError::Credential(_) => {
             "The selected provider credential needs attention. Reconnect the setup assistant and try again."
                 .into()
+        }
+        AppError::Process(message) if message.contains("usage is limited") => {
+            "The selected provider's usage is currently limited. Your draft and scan are unchanged; try again when usage is available.".into()
         }
         AppError::Process(_) => {
             "The selected provider is temporarily unavailable. Check its connection and try again."
@@ -709,6 +722,7 @@ fn planning_user_message(error: AppError) -> String {
                 .into()
         }
         provider_error @ (AppError::Credential(_)
+        | AppError::UnsafeProviderOutput(_)
         | AppError::Protocol(_)
         | AppError::Serialization(_)) => provider_analysis_user_error(provider_error),
         AppError::Source(message) => {
@@ -817,6 +831,10 @@ fn claude_user_error(error: AppError) -> String {
 
 fn codex_user_error(error: AppError) -> String {
     match error {
+        error @ AppError::UnsafeProviderOutput(_) => provider_analysis_user_error(error),
+        AppError::Process(message) if message.contains("model is not supported") || message.contains("model is not available") => {
+            "The selected model is not available for this Codex account. Update Codex and choose an available model, then try the review again.".into()
+        }
         AppError::Process(message)
             if message.contains("official Codex executable was not found") =>
         {
@@ -892,6 +910,7 @@ pub fn run() {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 cancel_all_codex_logins();
                 cancel_all_claude_logins();
+                crate::account_cli::shutdown();
                 if let Ok(mut session) = codex_session().lock() {
                     *session = None;
                 }
@@ -913,6 +932,10 @@ pub fn run() {
             claude_login_wait,
             claude_login_cancel,
             claude_logout,
+            provider_account_login,
+            provider_account_cancel,
+            provider_account_login_wait,
+            provider_account_pending,
             codex_account_read,
             codex_login_start,
             codex_login_wait,
@@ -1175,6 +1198,8 @@ fn remove_image_generation_credential(provider: String, field: String) -> Result
 #[tauri::command(async)]
 fn claude_login_start() -> Result<String, String> {
     cancel_all_claude_logins();
+    crate::claude_code::invalidate_session();
+    clear_codex_local_state()?;
     let login_id = Uuid::new_v4().to_string();
     claude_login_cancellations()
         .lock()
@@ -1246,6 +1271,45 @@ async fn claude_logout() -> Result<(), String> {
         }
         clear_codex_local_state()?;
         result
+    })
+    .await
+}
+
+#[tauri::command(async)]
+async fn provider_account_login(provider: String, logout: bool) -> Result<String, String> {
+    run_blocking_command("provider-account-login", move || {
+        let attempt = crate::account_cli::reserve_login(&provider, logout)
+            .map_err(provider_analysis_user_error)?;
+        clear_codex_local_state()?;
+        Ok(attempt)
+    })
+    .await
+}
+
+#[tauri::command(async)]
+async fn provider_account_cancel(provider: String, attempt_id: String) -> Result<(), String> {
+    run_blocking_command("provider-account-cancel", move || {
+        crate::account_cli::cancel_login(&provider, &attempt_id)
+            .map_err(provider_analysis_user_error)
+    })
+    .await
+}
+
+#[tauri::command(async)]
+async fn provider_account_login_wait(
+    provider: String,
+    attempt_id: String,
+) -> Result<AiAccountStatus, String> {
+    run_blocking_command("provider-account-login-wait", move || {
+        crate::account_cli::wait_login(&provider, &attempt_id).map_err(provider_analysis_user_error)
+    })
+    .await
+}
+
+#[tauri::command(async)]
+async fn provider_account_pending(provider: String) -> Result<Option<String>, String> {
+    run_blocking_command("provider-account-pending", move || {
+        crate::account_cli::pending_login_id(&provider).map_err(provider_analysis_user_error)
     })
     .await
 }
@@ -1659,6 +1723,7 @@ fn ai_analyze_blocking(mut request: AiAnalysisRequest) -> Result<CodexAnalysisRe
     if request.provider == "codex" {
         return Err("Codex analysis must use the official Codex App Server command".into());
     }
+    let account_generation = provider_session_generation(&request.provider);
     if let Some(project_root) = request.analysis.project_root.as_deref() {
         request.analysis.project_root = Some(
             validate_project_root(Path::new(project_root))
@@ -1693,9 +1758,20 @@ fn ai_analyze_blocking(mut request: AiAnalysisRequest) -> Result<CodexAnalysisRe
         }
     })?;
     bind_analysis_record_to_source(&mut result.record, &source);
+    retain_provider_analysis(&result, &request, account_generation)?;
+    Ok(result)
+}
+
+fn retain_provider_analysis(
+    result: &CodexAnalysisResult,
+    request: &AiAnalysisRequest,
+    account_generation: Option<u64>,
+) -> Result<(), String> {
     let mut analyses = codex_analyses()
         .lock()
         .map_err(|_| "AI analysis store is unavailable".to_string())?;
+    require_provider_session_generation(&request.provider, account_generation)
+        .map_err(provider_analysis_user_error)?;
     if analyses.len() >= 32 {
         if let Some(oldest) = analyses.keys().next().copied() {
             analyses.remove(&oldest);
@@ -1713,7 +1789,29 @@ fn ai_analyze_blocking(mut request: AiAnalysisRequest) -> Result<CodexAnalysisRe
             confirmed_values_sha256: None,
         },
     );
-    Ok(result)
+    Ok(())
+}
+
+fn provider_session_generation(provider: &str) -> Option<u64> {
+    if provider == crate::claude_code::PROVIDER_ID {
+        Some(crate::claude_code::session_generation())
+    } else if crate::account_cli::is_account_provider(provider) {
+        Some(crate::account_cli::session_generation())
+    } else {
+        None
+    }
+}
+
+fn require_provider_session_generation(
+    provider: &str,
+    generation: Option<u64>,
+) -> Result<(), AppError> {
+    if provider_session_generation(provider) != generation {
+        return Err(AppError::Credential(
+            "the setup account changed after analysis; run the review again".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -7438,8 +7536,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         })
         .cloned()
         .collect::<Vec<_>>();
-    let tree = client.fetch_tree(&resolution.identity.resolved_revision)?;
-    let selections = select_component_files(&resolution.manifest, &download_selected, &tree)?;
+    let selections = select_manifest_files(&resolution.manifest, &download_selected)?;
     let by_id = resolution
         .manifest
         .components
@@ -7713,8 +7810,8 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         let provider_profile = ai::profile(&ai_provider).ok_or_else(|| {
             AppError::InvalidInput(format!("unsupported AI provider: {ai_provider}"))
         })?;
-        let provider_is_codex = ai_provider == "codex";
-        let provider_is_claude_account = ai_provider == crate::claude_code::PROVIDER_ID;
+        let (provider_integration, provider_auth_mode) =
+            ai::integration_and_auth_mode(&ai_provider);
         let state_content = serde_json::to_string_pretty(&serde_json::json!({
             "schema_version": "1.0.0",
             "project_id": identity.project_id.clone(),
@@ -7731,14 +7828,12 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                 "provider": ai_provider.clone(),
                 "model": ai_model_from_state(state),
                 "reasoning_effort": ai_reasoning_effort_from_state(state),
-                "optimization_profile": ai::profile(&ai_provider)
-                    .map(|profile| profile.optimization_profile)
-                    .unwrap_or_else(|| "provider conventions".into())
+                "optimization_profile": provider_profile.optimization_profile
             },
             "codex": {
-                "integration": if provider_is_codex { "codex_app_server" } else if provider_is_claude_account { crate::claude_code::ENGINE } else { "provider_api" },
-                "auth_mode": if provider_is_codex { "chatgpt" } else if provider_is_claude_account { crate::claude_code::AUTH_MODE } else if provider_profile.requires_credential { "api_key" } else { "local_endpoint" },
-                "auth_status": if provider_is_codex || provider_is_claude_account { "signed_in" } else { "configured" },
+                "integration": provider_integration,
+                "auth_mode": provider_auth_mode,
+                "auth_status": if matches!(provider_auth_mode, "chatgpt" | "claude_account" | "provider_account") { "signed_in" } else { "configured" },
                 "analysis_required": true,
                 "analysis_status": "confirmed",
                 "account_values_persisted": false
@@ -9080,11 +9175,8 @@ fn build_maintenance_plan_blocking(
                     .is_some_and(|item| item.state == "supported")
             })
             .collect::<Vec<_>>();
-        let tree = client
-            .fetch_tree(&resolution.identity.resolved_revision)
-            .map_err(command_error)?;
-        let selections = select_component_files(&resolution.manifest, &supported, &tree)
-            .map_err(command_error)?;
+        let selections =
+            select_manifest_files(&resolution.manifest, &supported).map_err(command_error)?;
         // Re-adapt the incoming Codex configuration against the desired
         // maintenance closure.  The predecessor lock may not contain Codex
         // yet (for example when a project switches from Claude to Codex), so
@@ -9446,10 +9538,7 @@ fn build_maintenance_plan_blocking(
                         })
                     })
                     .collect::<Vec<_>>();
-                let tree = client
-                    .fetch_tree(&resolution.identity.resolved_revision)
-                    .map_err(command_error)?;
-                let selections = select_component_files(&resolution.manifest, &supported, &tree)
+                let selections = select_manifest_files(&resolution.manifest, &supported)
                     .map_err(command_error)?;
                 append_additional_component_operations(
                     &mut operations,
@@ -9521,10 +9610,7 @@ fn build_maintenance_plan_blocking(
                 if !refresh_ids.is_empty() {
                     let expanded = expand_components(&resolution.manifest, &refresh_ids)
                         .map_err(command_error)?;
-                    let tree = client
-                        .fetch_tree(&resolution.identity.resolved_revision)
-                        .map_err(command_error)?;
-                    let selections = select_component_files(&resolution.manifest, &expanded, &tree)
+                    let selections = select_manifest_files(&resolution.manifest, &expanded)
                         .map_err(command_error)?
                         .into_iter()
                         .filter(|selection| {
@@ -9650,10 +9736,7 @@ fn build_maintenance_plan_blocking(
                             .is_some_and(|item| item.state == "supported")
                     })
                     .collect::<Vec<_>>();
-                let tree = client
-                    .fetch_tree(&resolution.identity.resolved_revision)
-                    .map_err(command_error)?;
-                let selections = select_component_files(&resolution.manifest, &supported, &tree)
+                let selections = select_manifest_files(&resolution.manifest, &supported)
                     .map_err(command_error)?;
                 append_additional_component_operations(
                     &mut operations,
@@ -9786,11 +9869,8 @@ fn build_maintenance_plan_blocking(
             })
             .cloned()
             .collect::<Vec<_>>();
-        let tree = client
-            .fetch_tree(&resolution.identity.resolved_revision)
-            .map_err(command_error)?;
-        let selections = select_component_files(&resolution.manifest, &supported, &tree)
-            .map_err(command_error)?;
+        let selections =
+            select_manifest_files(&resolution.manifest, &supported).map_err(command_error)?;
         append_additional_component_operations(
             &mut operations,
             &selections,
@@ -13705,6 +13785,78 @@ developer_instructions = "Work on the named files."
             )),
             "Codex is temporarily unavailable. Close and reopen Codex, then try again."
         );
+    }
+
+    #[test]
+    fn private_provider_output_is_discarded_without_blame_on_the_users_credentials() {
+        for mapper in [
+            provider_analysis_user_error,
+            codex_user_error,
+            claude_user_error,
+        ] {
+            let message = mapper(AppError::UnsafeProviderOutput(
+                "private-output-sentinel".into(),
+            ));
+            assert!(message.contains("discarded"));
+            assert!(!message.contains("private-output-sentinel"));
+            assert!(!message.contains("Reconnect"));
+        }
+        for error in [
+            AppError::Process("provider usage is limited; retry when available".into()),
+            AppError::Credential("Gemini usage is currently limited".into()),
+        ] {
+            let message = provider_analysis_user_error(error);
+            assert!(message.contains("usage is currently limited"));
+            assert!(!message.contains("Reconnect"));
+        }
+    }
+
+    #[test]
+    fn logout_between_adapter_completion_and_storage_cannot_restore_a_pending_analysis() {
+        let _guard = test_state_guard();
+        clear_codex_local_state().unwrap();
+        let analysis: CodexAnalysis = serde_json::from_str(include_str!(
+            "../../docs/examples/codex-analysis.example.json"
+        ))
+        .unwrap();
+        let lock: Value = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let mut record: CodexAnalysisRecord =
+            serde_json::from_value(lock["codex_analysis"].clone()).unwrap();
+        record.analysis_id = analysis.analysis_id;
+        let completed = CodexAnalysisResult { analysis, record };
+        let request = AiAnalysisRequest {
+            provider: "claude_account".into(),
+            model: crate::claude_code::DEFAULT_MODEL.into(),
+            reasoning_effort: "medium".into(),
+            endpoint: String::new(),
+            analysis: CodexAnalysisRequest {
+                mode: "new_project_identity".into(),
+                brief: "A mod".into(),
+                evidence: Vec::new(),
+                constraints: serde_json::json!({}),
+                analysis_purpose: None,
+                project_root: None,
+                scan_id: None,
+            },
+        };
+        let before_logout = provider_session_generation(&request.provider);
+        // The adapter has already completed; sign-out occurs before the store takes its lock.
+        crate::claude_code::invalidate_session();
+        clear_codex_local_state().unwrap();
+        assert!(retain_provider_analysis(&completed, &request, before_logout).is_err());
+        assert!(codex_analyses().lock().unwrap().is_empty());
+        retain_provider_analysis(
+            &completed,
+            &request,
+            provider_session_generation(&request.provider),
+        )
+        .unwrap();
+        crate::claude_code::invalidate_session();
+        clear_codex_local_state().unwrap();
+        assert!(codex_analyses().lock().unwrap().is_empty());
     }
 
     #[test]

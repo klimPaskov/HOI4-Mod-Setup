@@ -4,6 +4,8 @@ import { applyInstallationResult, approveInstallation, approveScanEvidence, buil
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
 import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPreview, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
+import claudeModels from "./claude-models.json";
+import { AccountProviderAccess } from "./AccountProviderAccess";
 
 const PHASES: Array<{ id: PhaseId; label: string }> = [
   { id: "project", label: "Project" },
@@ -156,7 +158,13 @@ export const REQUIRED_SEMANTIC_PROPOSAL_KEYS: SemanticProposalKey[] = [
   "documentation_convention",
 ];
 
-const CLAUDE_HAIKU_MODEL = "claude-haiku-4-5-20251001";
+const CLAUDE_MODEL_OPTIONS: AiModelOption[] = claudeModels.map((model) => ({
+  id: model.id,
+  display_name: model.display_name,
+  default_reasoning_effort: model.default_reasoning_effort as AiModelOption["default_reasoning_effort"],
+  supported_reasoning_efforts: model.supported_reasoning_efforts as AiModelOption["supported_reasoning_efforts"],
+}));
+const CLAUDE_HAIKU_MODEL = CLAUDE_MODEL_OPTIONS[0]?.id ?? "claude-haiku-5-5";
 
 const EXISTING_PROJECT_REVIEW_BRIEF = "Review this existing HOI4 mod using only the approved scan evidence. Keep detected facts unchanged, infer conventions only from that evidence, and do not invent the mod's theme or content.";
 
@@ -175,9 +183,13 @@ function modelVisibleFindings(findings: ScanFinding[]): ScanFinding[] {
 }
 
 const FALLBACK_AI_PROFILES: AiProviderProfile[] = [
-  { id: "claude_account", display_name: "Claude", protocol: "claude_code_cli", requires_credential: false, optimization_profile: "Claude account setup analysis", default_model: CLAUDE_HAIKU_MODEL, default_reasoning_effort: "high", account_url: "https://code.claude.com/docs/en/setup" },
+  { id: "claude_account", display_name: "Claude", protocol: "claude_code_cli", requires_credential: false, optimization_profile: "Claude account setup analysis", default_model: CLAUDE_HAIKU_MODEL, default_reasoning_effort: "medium", account_url: "https://code.claude.com/docs/en/setup" },
   { id: "codex", display_name: "Codex", protocol: "codex_app_server", requires_credential: false, optimization_profile: "Codex setup analysis", default_model: "gpt-5.6-luna", default_reasoning_effort: "xhigh" },
-  { id: "claude", display_name: "Claude API key", protocol: "anthropic_messages", requires_credential: true, optimization_profile: "Claude setup analysis", default_model: CLAUDE_HAIKU_MODEL, default_endpoint: "https://api.anthropic.com/v1/messages", account_url: "https://platform.claude.com/settings/keys" },
+  { id: "gemini_account", display_name: "Gemini (account, experimental)", protocol: "provider_cli", requires_credential: false, optimization_profile: "Gemini account setup analysis", default_model: "gemini-3.8-flash", default_reasoning_effort: "high" },
+  { id: "grok_account", display_name: "Grok (account, experimental)", protocol: "provider_cli", requires_credential: false, optimization_profile: "Grok account setup analysis", default_model: "grok-build", default_reasoning_effort: "high" },
+  { id: "gemini", display_name: "Gemini API key", protocol: "openai_compatible", requires_credential: true, optimization_profile: "Gemini setup analysis", default_model: "gemini-3.8-flash", default_reasoning_effort: "high", default_endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", account_url: "https://aistudio.google.com/api-keys" },
+  { id: "grok", display_name: "Grok API key", protocol: "openai_responses", requires_credential: true, optimization_profile: "Grok setup analysis", default_model: "grok-4.7", default_reasoning_effort: "high", default_endpoint: "https://api.x.ai/v1/responses", account_url: "https://console.x.ai" },
+  { id: "claude", display_name: "Claude API key", protocol: "anthropic_messages", requires_credential: true, optimization_profile: "Claude setup analysis", default_model: CLAUDE_HAIKU_MODEL, default_reasoning_effort: "medium", default_endpoint: "https://api.anthropic.com/v1/messages", account_url: "https://platform.claude.com/settings/keys" },
   { id: "kimi", display_name: "Kimi", protocol: "openai_compatible", requires_credential: true, optimization_profile: "Kimi setup analysis", default_model: "kimi-k2.6", default_endpoint: "https://api.moonshot.ai/v1/chat/completions", account_url: "https://platform.kimi.ai/console/api-keys" },
   { id: "glm", display_name: "GLM", protocol: "openai_compatible", requires_credential: true, optimization_profile: "GLM setup analysis", default_model: "glm-5.2", default_endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions", account_url: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys" },
   { id: "deepseek", display_name: "DeepSeek", protocol: "openai_compatible", requires_credential: true, optimization_profile: "DeepSeek setup analysis", default_model: "deepseek-flash", default_reasoning_effort: "high", default_endpoint: "https://api.deepseek.com/chat/completions", account_url: "https://platform.deepseek.com/api_keys" },
@@ -190,13 +202,18 @@ function aiProviderLabel(provider: AiProviderId | undefined, profiles: AiProvide
   return profiles.find((profile) => profile.id === selectedProvider)?.display_name ?? selectedProvider;
 }
 
+function isAccountCli(provider: AiProviderId): boolean {
+  return provider === "gemini_account" || provider === "grok_account";
+}
+
 function verifiedModelOptions(profile: AiProviderProfile | undefined): AiModelOption[] {
+  if (profile?.id === "claude_account" || profile?.id === "claude") return CLAUDE_MODEL_OPTIONS;
   const model = profile?.default_model?.trim();
   if (!profile || !model) return [];
   const configuredEffort = profile.default_reasoning_effort ?? "high";
   return [{
     id: model,
-    display_name: model === CLAUDE_HAIKU_MODEL ? "Claude Haiku 4.5" : model,
+    display_name: CLAUDE_MODEL_OPTIONS.find((candidate) => candidate.id === model)?.display_name ?? model,
     default_reasoning_effort: configuredEffort,
     supported_reasoning_efforts: [configuredEffort],
   }];
@@ -275,10 +292,10 @@ export const initialState: WizardState = {
   projectPathStatus: "resolving",
   description: DEFAULT_DESCRIPTION,
   sourceMode: "pinned_release",
-  pinnedRef: "package-2026-10-13.1",
+  pinnedRef: "package-2026-10-13.2",
   aiProvider: "claude_account",
   aiModel: CLAUDE_HAIKU_MODEL,
-  aiReasoningEffort: "high",
+  aiReasoningEffort: "medium",
   aiModelCatalogStatus: "idle",
   aiEndpoint: "",
   aiAccount: null,
@@ -488,7 +505,7 @@ function nextScreen(state: WizardState): ScreenId {
     case "environments": return "image-generation";
     case "image-generation": return "components";
     case "components": return "workflows";
-    case "workflows": return state.selectedComponents.includes("workflow.live_testing") ? "live-testing" : state.meshSelected && meshWorkflowAvailable(state) ? "mesh" : "mcp";
+    case "workflows": return state.selectedComponents.some((id) => id === "workflow.live_testing" || id === "workflow.live_tools") ? "live-testing" : state.meshSelected && meshWorkflowAvailable(state) ? "mesh" : "mcp";
     case "live-testing": return state.meshSelected && meshWorkflowAvailable(state) ? "mesh" : "mcp";
     case "mesh": return "mcp";
     case "mcp": return "git";
@@ -514,8 +531,8 @@ function previousScreen(state: WizardState): ScreenId {
     case "environments": return state.mode === "existing" ? "findings" : "identity";
     case "workflows": return "components";
     case "live-testing": return "workflows";
-    case "mesh": return state.selectedComponents.includes("workflow.live_testing") || state.liveTestingVisited ? "live-testing" : "workflows";
-    case "mcp": return state.meshSelected ? "mesh" : state.selectedComponents.includes("workflow.live_testing") || state.liveTestingVisited ? "live-testing" : "workflows";
+    case "mesh": return state.selectedComponents.some((id) => id === "workflow.live_testing" || id === "workflow.live_tools") || state.liveTestingVisited ? "live-testing" : "workflows";
+    case "mcp": return state.meshSelected ? "mesh" : state.selectedComponents.some((id) => id === "workflow.live_testing" || id === "workflow.live_tools") || state.liveTestingVisited ? "live-testing" : "workflows";
     case "git": return "mcp";
     case "dry-run": return "git";
     case "install": return "dry-run";
@@ -558,6 +575,7 @@ export default function App() {
   const appUpdateInstallStarted = useRef(false);
   const [chatSourcesPending, setChatSourcesPending] = useState(false);
   const codexAccountReadPending = useRef(false);
+  const providerAccountReads = useRef(new Set<string>());
 
   useEffect(() => {
     if (!semanticAnalysisPending) return;
@@ -638,9 +656,12 @@ export default function App() {
       void readAiProviderProfiles().then((profiles) => setState((current) => ({ ...current, aiProfiles: profiles.length ? profiles : FALLBACK_AI_PROFILES })));
     }
     if (state.aiAccount !== null) return;
+    const requestKey = JSON.stringify([state.aiProvider, state.aiModel, state.aiReasoningEffort, state.aiEndpoint]);
+    if (providerAccountReads.current.has(requestKey)) return;
+    providerAccountReads.current.add(requestKey);
     void readAiAccount(state.aiProvider, state.aiModel, state.aiReasoningEffort, state.aiEndpoint).then((account) => {
-      if (account) setState((current) => current.aiProvider === account.provider ? { ...current, aiAccount: account } : current);
-    });
+      if (account) setState((current) => JSON.stringify([current.aiProvider, current.aiModel, current.aiReasoningEffort, current.aiEndpoint]) === requestKey ? { ...current, aiAccount: account } : current);
+    }).finally(() => { providerAccountReads.current.delete(requestKey); });
   }, [state.screen, state.codexAccount, state.aiProvider, state.aiModel, state.aiReasoningEffort, state.aiEndpoint, state.aiAccount, state.aiProfiles]);
 
   useEffect(() => {
@@ -1562,8 +1583,21 @@ export default function App() {
         update({ screen: nextScreen(state) });
         return;
       }
-      const handled = await runSemanticAnalysis("existing_project_semantics");
-      if (handled) return;
+      // Keep the review action visibly busy while the provider request is in
+      // flight. This also blocks duplicate submissions through canAdvance.
+      if (semanticAnalysisPending) return;
+      setSemanticProgressStage("analyzing");
+      setSemanticProgressStartedAt(Date.now());
+      setSemanticAnalysisPending(true);
+      update({ transactionError: undefined });
+      try {
+        const handled = await runSemanticAnalysis("existing_project_semantics");
+        if (handled) return;
+      } catch {
+        update({ transactionError: `${aiProviderLabel(state.aiProvider, state.aiProfiles)} review stopped unexpectedly. Your scan is still saved; try again.` });
+      } finally {
+        setSemanticAnalysisPending(false);
+      }
       if (isTauriRuntime()) return;
     }
     if ((state.screen === "identity" && state.mode === "new")
@@ -1799,7 +1833,7 @@ function ScreenFrame({ screen, copy, state, canAdvance, pending, chatSourcesPend
   const installDone = screen === "install" && state.installProgress >= 100;
   const unresolvedConflicts = state.plan?.conflicts.some((conflict) => !conflict.selected) === true;
   const recoveryLabel = state.recoveryChoice === "rollback" ? "Undo changes" : state.recoveryChoice === "discard" ? "Discard prepared files" : "Continue setup";
-  const primaryLabel = pending && screen === "description" ? "Preparing details…" : pending && screen === "recovery" ? state.recoveryChoice === "rollback" ? "Undoing changes…" : state.recoveryChoice === "discard" ? "Discarding files…" : "Continuing setup…" : screen === "welcome" ? "Continue" : screen === "findings" && !state.codexAnalysis ? `Review with ${aiProviderLabel(state.aiProvider, state.aiProfiles)}` : screen === "dry-run" ? "Start installation" : screen === "install" ? (installDone ? "Continue" : "") : screen === "ready" ? state.finished ? "" : "Finish" : screen === "recovery" ? recoveryLabel : screen === "conflict" ? "Apply" : screen === "update" ? (state.plan ? "Apply reviewed plan" : "") : "Next";
+  const primaryLabel = pending && screen === "description" ? "Preparing details…" : pending && screen === "findings" && !state.codexAnalysis ? `Reviewing with ${aiProviderLabel(state.aiProvider, state.aiProfiles)}…` : pending && screen === "recovery" ? state.recoveryChoice === "rollback" ? "Undoing changes…" : state.recoveryChoice === "discard" ? "Discarding files…" : "Continuing setup…" : screen === "welcome" ? "Continue" : screen === "findings" && !state.codexAnalysis ? `Review with ${aiProviderLabel(state.aiProvider, state.aiProfiles)}` : screen === "dry-run" ? "Start installation" : screen === "install" ? (installDone ? "Continue" : "") : screen === "ready" ? state.finished ? "" : "Finish" : screen === "recovery" ? recoveryLabel : screen === "conflict" ? "Apply" : screen === "update" ? (state.plan ? "Apply reviewed plan" : "") : "Next";
   const displayedPrimaryLabel = screen === "chat-sources" ? (chatSourcesPending ? "Packaging..." : "Package sources") : primaryLabel;
   const showBack = !["welcome", "install"].includes(screen) && !(screen === "ready" && state.finished);
   return <>
@@ -1879,7 +1913,9 @@ function PlanPreparationProgress({ startedAt, now }: { startedAt?: number; now: 
 
 function footerNote(screen: ScreenId, state: WizardState): string {
   if (state.transactionError) return state.transactionError;
-  if (screen === "welcome") return providerReady(state) ? "Choose a project to begin." : `${providerConnectAction(state)} to continue.`;
+  if (screen === "welcome") return state.aiModelCatalogStatus === "live-missing"
+    ? "Choose an available model to continue."
+    : providerReady(state) ? "Choose a project to begin." : `${providerConnectAction(state)} to continue.`;
   if (screen === "scan") return state.transactionError ?? "Reading project setup files.";
   if (screen === "workflows") return "Optional workflows can be changed from Update and Repair.";
   if (screen === "mesh") return "The key is never written into the project or lock file.";
@@ -1965,7 +2001,9 @@ function providerConnectAction(state: WizardState): string {
 }
 
 function providerReady(state: WizardState): boolean {
-  if (state.aiModelCatalogStatus === "live-missing") return false;
+  // Claude Code has no live model catalog. A manually entered Claude model is
+  // valid even when a stale catalog state came from an earlier provider.
+  if (state.aiProvider !== "claude_account" && !isAccountCli(state.aiProvider) && state.aiModelCatalogStatus === "live-missing") return false;
   if (state.aiProvider === "codex") {
     return Boolean(
       state.codexAccount?.available
@@ -1979,6 +2017,7 @@ function providerReady(state: WizardState): boolean {
     state.aiAccount?.available
     && state.aiAccount.authenticated
     && (!state.aiAccount.provider || state.aiAccount.provider === state.aiProvider)
+    && (!isAccountCli(state.aiProvider) || state.aiAccount.auth_mode === "provider_account")
     && !state.aiAccount.usage_limited
     && !state.aiAccount.error,
   );
@@ -2105,6 +2144,10 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
   const activeClaudeLoginId = useRef<string | undefined>(undefined);
   const [claudeLoginPending, setClaudeLoginPending] = useState(false);
   const selectedProvider = state.aiProvider ?? "claude_account";
+  const currentModel = useRef(state.aiModel);
+  const modelChoiceExplicit = useRef(state.aiModelChoiceExplicit === true);
+  currentModel.current = state.aiModel;
+  modelChoiceExplicit.current = state.aiModelChoiceExplicit === true;
   // Late Claude results must not land on another provider's screen.
   const currentProvider = useRef(selectedProvider);
   currentProvider.current = selectedProvider;
@@ -2114,12 +2157,12 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
   const aiModels = mergeModelOptions(verifiedModelOptions(profile), liveAiModels);
   const selectedLabel = aiProviderLabel(selectedProvider, profiles);
   // Key-related copy names the account that issues the key.
-  const keyOwnerLabel = selectedProvider === "claude" ? "Anthropic" : selectedLabel;
+  const keyOwnerLabel = selectedProvider === "claude" ? "Anthropic" : selectedLabel.replace(/ API key$/, "");
   const providerNeedsManualDetails = selectedProvider === "local" || selectedProvider === "custom";
   useEffect(() => {
     // Claude Code has no model-catalog command; its verified built-in choices
     // are shown without being labelled as a live result.
-    const canLoad = selectedProvider !== "claude_account" && (selectedProvider === "codex" || state.aiAccount?.authenticated || (selectedProvider === "local" && Boolean(state.aiEndpoint.trim())));
+    const canLoad = selectedProvider !== "claude_account" && !isAccountCli(selectedProvider) && (selectedProvider === "codex" || state.aiAccount?.authenticated || (selectedProvider === "local" && Boolean(state.aiEndpoint.trim())));
     if (!desktopRuntime || !canLoad) {
       setLiveAiModels([]);
       setModelListStatus("idle");
@@ -2130,12 +2173,16 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
     setModelListStatus("loading");
     update({ aiModelCatalogStatus: "loading" });
     void readAiModels(selectedProvider, state.aiEndpoint).then((models) => {
-      if (!active) return;
+      if (!active || currentProvider.current !== selectedProvider) return;
       setLiveAiModels(models);
-      const selected = models.find((model) => model.id === state.aiModel);
-      const nextStatus: AiModelCatalogStatus = models.length === 0 ? "fallback-empty" : selected ? "live" : "live-missing";
+      const explicit = modelChoiceExplicit.current;
+      const selected = models.find((model) => model.id === currentModel.current);
+      const preferred = !selected && selectedProvider === "codex" && !explicit && currentModel.current === profile?.default_model
+        ? models.find((model) => model.is_default) ?? models[0] : undefined;
+      const nextStatus: AiModelCatalogStatus = models.length === 0 ? "fallback-empty" : selected || preferred ? "live" : "live-missing";
       setModelListStatus(nextStatus);
       update({ aiModelCatalogStatus: nextStatus });
+      if (preferred) update({ aiModel: preferred.id, aiReasoningEffort: preferred.default_reasoning_effort });
       if (selected && !selected.supported_reasoning_efforts.includes(state.aiReasoningEffort)) {
         update({ aiReasoningEffort: selected.default_reasoning_effort });
       }
@@ -2154,7 +2201,7 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
   const reasoningEfforts = selectedModel?.supported_reasoning_efforts
     ?? (modelListStatus === "live-missing"
       ? [state.aiReasoningEffort]
-      : selectedProvider === "codex" || selectedProvider === "deepseek" || selectedProvider === "claude"
+      : selectedProvider === "codex" || selectedProvider === "deepseek"
       ? (["low", "medium", "high", "xhigh", "max"] as const)
       : (["high"] as const));
   // A model without an adjustable effort level has nothing to choose, so the
@@ -2162,13 +2209,18 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
   const showReasoningEffort = selectedProvider === "codex" || reasoningEfforts.length > 1;
   const effortLabel = (effort: string) => ({ low: "Light", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" }[effort] ?? effort);
   const selectModel = (modelId: string) => {
+    modelChoiceExplicit.current = true;
+    currentModel.current = modelId;
     const model = liveAiModels.find((candidate) => candidate.id === modelId) ?? aiModels.find((candidate) => candidate.id === modelId);
-    const nextCatalogStatus: AiModelCatalogStatus = liveAiModels.length > 0
+    const nextCatalogStatus: AiModelCatalogStatus = selectedProvider === "claude_account" || isAccountCli(selectedProvider)
+      ? "idle"
+      : liveAiModels.length > 0
       ? liveAiModels.some((candidate) => candidate.id === modelId) ? "live" : "live-missing"
       : modelListStatus;
     update({
       aiModel: modelId,
-      aiReasoningEffort: model?.default_reasoning_effort ?? state.aiReasoningEffort,
+      aiModelChoiceExplicit: true,
+      aiReasoningEffort: model?.default_reasoning_effort ?? "high",
       aiModelCatalogStatus: nextCatalogStatus,
       aiAccount: null,
       codexAnalysis: undefined,
@@ -2188,6 +2240,7 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
     update({
       aiProvider: provider,
       aiModel: selectedProfile?.default_model ?? "",
+      aiModelChoiceExplicit: false,
       aiReasoningEffort: selectedProfile?.default_reasoning_effort ?? (provider === "codex" ? "xhigh" : "high"),
       aiModelCatalogStatus: "idle",
       aiEndpoint: selectedProfile?.default_endpoint ?? "",
@@ -2382,7 +2435,7 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
     <button type="button" className={`choice-card ${state.mode === "existing" ? "selected" : ""}`} aria-pressed={state.mode === "existing"} onClick={() => chooseMode("existing")}>
       <ChoiceIcon kind="search" /><span className="choice-radio" aria-hidden="true" /><h2>Import existing mod</h2><p>Scan the project without changing it.</p>
     </button>
-  </div><section><div className="section-label">Setup assistant</div><div className="panel recent-list provider-panel"><label className="field"><span className="field-label">AI provider</span><select className="text-input" value={state.aiProvider} onChange={(event) => selectProvider(event.target.value as AiProviderId)}>{profiles.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>)}</select></label>{state.aiProvider === "claude_account" && <div className="provider-access" role="group" aria-label="Claude access">
+  </div><section><div className="section-label">Setup assistant</div><div className="panel recent-list provider-panel"><label className="field"><span className="field-label">AI provider</span><select className="text-input" value={state.aiProvider} onChange={(event) => selectProvider(event.target.value as AiProviderId)}>{profiles.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.display_name}</option>)}</select></label>{isAccountCli(state.aiProvider) && <AccountProviderAccess key={state.aiProvider} state={state} update={update} desktop={desktopRuntime} onUseApi={() => selectProvider(state.aiProvider === "gemini_account" ? "gemini" : "grok")} />}{state.aiProvider === "claude_account" && <div className="provider-access" role="group" aria-label="Claude access">
     {!desktopRuntime && <p className="muted">Open the installed desktop app to sign in to Claude.</p>}
     {desktopRuntime && !claudeAccount && <p className="muted" role="status">Checking Claude Code…</p>}
     {desktopRuntime && claudeAccount?.authenticated && <><p><strong>Signed in to Claude</strong></p><p className="muted">Setup analysis uses your Claude plan through Claude Code.</p>{claudeAccount.usage_limited && <p className="callout review" role="status">Claude usage is currently limited. Planning is paused until usage is available again; recovery remains available.</p>}<div className="button-row"><button type="button" className="text-button" onClick={() => void refreshClaude()}>Check again</button><button type="button" className="text-button" onClick={() => void signOutClaude()}>Sign out</button></div></>}
@@ -2394,7 +2447,7 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
     {desktopRuntime && !account && <p className="muted" role="status">Checking Codex…</p>}
     {desktopRuntime && account && account.available && account.authenticated && account.auth_mode === "chatgpt" && <><p><strong>Signed in with ChatGPT</strong>{account.email ? ` · ${account.email}` : ""}</p>{account.usage_limited && <p className="callout review" role="status">Codex usage is currently limited. Planning is paused until usage is available again; recovery remains available.</p>}<button type="button" className="text-button" onClick={() => void refresh()}>Refresh account status</button><button type="button" className="text-button" onClick={() => void signOut()}>Sign out</button></>}
     {desktopRuntime && account && (!account.available || !account.authenticated || account.auth_mode !== "chatgpt") && <><p className="muted">Create, Import, Update, and Repair use your ChatGPT Codex access. No API key is requested.</p>{account.error && <p className="callout review" role="status">{account.error}</p>}<div className="button-row"><button type="button" className="button secondary" onClick={() => void signIn("browser")} disabled={state.codexLoginPending}>{state.codexLoginPending ? "Opening sign-in…" : "Sign in with ChatGPT"}</button><button type="button" className="text-button" onClick={() => void signIn("device")} disabled={state.codexLoginPending}>Use device code</button>{state.codexLoginPending && <button type="button" className="text-button" onClick={() => void cancel()}>Cancel sign-in</button>}</div>{state.codexLogin?.auth_url && <p><button type="button" className="text-button" onClick={() => void openLoginUrl(state.codexLogin?.auth_url ?? "")}>Open the ChatGPT sign-in page</button></p>}{state.codexLogin?.verification_url && <p className="muted"><button type="button" className="text-button" onClick={() => void openLoginUrl(state.codexLogin?.verification_url ?? "")}>Open the device-code page</button> and enter <strong>{state.codexLogin.user_code}</strong>.</p>}<button type="button" className="text-button" onClick={() => void refresh()}>Check again</button></>}
-  </div>}<p className="muted provider-help">Used only to analyze and prepare the mod. It does not choose the AI you use for later development.</p><div className="provider-manual-details"><label className="field"><span className="field-label">Model</span>{providerNeedsManualDetails ? <><input aria-label="Model" className="text-input mono" list="provider-model-options" value={state.aiModel} onChange={(event) => selectModel(event.target.value)} placeholder={modelListStatus === "loading" ? "Loading models…" : "Model name"} /><datalist id="provider-model-options">{aiModels.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}</datalist></> : <select className="text-input" value={state.aiModel} onChange={(event) => selectModel(event.target.value)}>{aiModels.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}</select>}</label>{showReasoningEffort && <label className="field"><span className="field-label">Reasoning effort</span><select className="text-input" value={state.aiReasoningEffort} onChange={(event) => update({ aiReasoningEffort: event.target.value as WizardState["aiReasoningEffort"], aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })}>{reasoningEfforts.map((effort) => <option key={effort} value={effort}>{effortLabel(effort)}</option>)}</select></label>}</div>{modelListStatus === "fallback-empty" && <p className="muted provider-help" role="status">{providerNeedsManualDetails ? "No live model suggestions were returned. Enter the model name used by this provider." : "No live models were returned. The built-in model remains available."}</p>}{modelListStatus === "fallback-error" && <p className="muted provider-help" role="status">{providerNeedsManualDetails ? "Live model suggestions could not be refreshed. Enter the model name used by this provider." : "Using the built-in model while live choices refresh."}</p>}{modelListStatus === "live-missing" && <p className="callout review" role="alert">The selected model is not in the live catalog. Choose a listed model before continuing.</p>}{state.aiProvider !== "codex" && state.aiProvider !== "claude_account" && <>
+  </div>}<p className="muted provider-help">Used only to analyze and prepare the mod. It does not choose the AI you use for later development.</p><div className="provider-manual-details"><label className="field"><span className="field-label">Model</span>{providerNeedsManualDetails ? <><input aria-label="Model" className="text-input mono" list="provider-model-options" value={state.aiModel} onChange={(event) => selectModel(event.target.value)} placeholder={modelListStatus === "loading" ? "Loading models…" : "Model name"} /><datalist id="provider-model-options">{aiModels.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}</datalist></> : <select className="text-input" value={state.aiModel} onChange={(event) => selectModel(event.target.value)}>{aiModels.map((model) => <option key={model.id} value={model.id}>{model.display_name}</option>)}</select>}</label>{showReasoningEffort && <label className="field"><span className="field-label">Reasoning effort</span><select className="text-input" value={state.aiReasoningEffort} onChange={(event) => update({ aiReasoningEffort: event.target.value as WizardState["aiReasoningEffort"], aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })}>{reasoningEfforts.map((effort) => <option key={effort} value={effort}>{effortLabel(effort)}</option>)}</select></label>}</div>{(selectedProvider === "claude_account" || isAccountCli(selectedProvider)) && <details><summary>Advanced</summary><div className="provider-advanced"><label className="field"><span className="field-label">{selectedProvider === "claude_account" ? "Claude model ID" : "Model ID"}</span><input aria-label={selectedProvider === "claude_account" ? "Claude model ID" : "Model ID"} className="text-input mono" list="provider-model-options" value={state.aiModel} onChange={(event) => selectModel(event.target.value)} placeholder={selectedProvider === "claude_account" ? "claude-…" : "Model ID"} maxLength={128} /><span className="muted">Enter another model ID supported by your provider.</span></label></div></details>}{selectedProvider === "claude_account" && <p className="muted provider-help" role="status">Built-in Claude model choices are available; Claude Code does not provide a live model catalog.</p>}{modelListStatus === "fallback-empty" && <p className="muted provider-help" role="status">{providerNeedsManualDetails ? "No live model suggestions were returned. Enter the model name used by this provider." : "No live models were returned. The built-in model remains available."}</p>}{modelListStatus === "fallback-error" && <p className="muted provider-help" role="status">{providerNeedsManualDetails ? "Live model suggestions could not be refreshed. Enter the model name used by this provider." : "Using the built-in model while live choices refresh."}</p>}{modelListStatus === "live-missing" && selectedProvider !== "claude_account" && !isAccountCli(selectedProvider) && <p className="callout review" role="alert">The selected model is not in the live catalog. Choose a listed model before continuing.</p>}{state.aiProvider !== "codex" && state.aiProvider !== "claude_account" && !isAccountCli(state.aiProvider) && <>
     {profile?.account_url && <div className="provider-connect-intro"><span>Use an API key from your {keyOwnerLabel} account.</span>{desktopRuntime ? <button type="button" className="text-button" onClick={() => void openProviderAccount()}>Get {keyOwnerLabel} API key</button> : <a href={profile.account_url} target="_blank" rel="noreferrer">Get {keyOwnerLabel} API key</a>}</div>}
     {profile?.requires_credential && <label className="field"><span className="field-label">{keyOwnerLabel} API key</span><input className="text-input" type="password" value={aiKeyDraft} onChange={(event) => setAiKeyDraft(event.target.value)} autoComplete="off" /></label>}
     {providerNeedsManualDetails ? <div className="provider-manual-details"><Field label={state.aiProvider === "local" ? "Local model address" : "Provider address"} value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder={state.aiProvider === "local" ? "http://127.0.0.1:…" : "https://…"} mono /></div> : <details><summary>Advanced</summary><div className="provider-advanced"><Field label="Provider address" value={state.aiEndpoint} onChange={(value) => update({ aiEndpoint: value, aiAccount: null, codexAnalysis: undefined, codexAnalysisRecord: undefined })} placeholder="Filled automatically" mono /></div></details>}
@@ -2870,6 +2923,16 @@ function providerAvailableForSelection(id: string, state: WizardState): boolean 
   return selected.some((environment) => provider.supported_coding_environments.includes(environment));
 }
 
+/** Keep visible image-provider choices and their manifest component rows in sync. */
+export function imageGenerationComponentIds(selection: ImageGenerationSelection, manifest?: SourceManifestPreview | null): string[] {
+  const providers = manifest?.image_generation?.providers ?? [];
+  const selected = new Set([selection.primary_provider, ...selection.additional_providers]);
+  return Array.from(new Set(providers
+    .filter((provider) => selected.has(provider.id))
+    .map((provider) => provider.route.component_id)
+    .filter((componentId): componentId is string => Boolean(componentId))));
+}
+
 export function liveTestingSelectionValid(state: WizardState): boolean {
   const selection = state.liveTesting;
   if (!selection || selection.provider !== "clausewitz_mcp") return true;
@@ -2884,9 +2947,21 @@ export function LiveTestingSetup({ state, update }: { state: WizardState; update
   const provider = catalog?.providers.find((item) => item.id === selection.provider);
   const save = (patch: Partial<LiveTestingSelection>) => {
     const next = { ...selection, ...patch };
+    const selectedComponents = next.provider === "none"
+      ? state.selectedComponents.filter((id) => id !== "workflow.live_testing" && id !== "workflow.live_tools")
+      : Array.from(new Set([
+        ...state.selectedComponents.filter((id) => id !== "workflow.live_testing" && id !== "workflow.live_tools"),
+        "workflow.live_testing",
+        ...(next.provider === "hoi4_live_tools" ? ["workflow.live_tools"] : []),
+      ]));
+    const maintenanceOptionalSelections = next.provider === "none"
+      ? (state.maintenanceOptionalSelections ?? []).filter((id) => id !== "workflow.live_testing" && id !== "workflow.live_tools")
+      : next.provider === "hoi4_live_tools"
+        ? Array.from(new Set([...(state.maintenanceOptionalSelections ?? []), "workflow.live_tools"]))
+        : (state.maintenanceOptionalSelections ?? []).filter((id) => id !== "workflow.live_tools");
     update({ liveTesting: next, liveTestingVisited: state.liveTestingVisited || state.screen === "live-testing", plan: undefined, transactionError: undefined,
-      selectedComponents: next.provider === "none" ? state.selectedComponents.filter((id) => id !== "workflow.live_testing" && id !== "workflow.live_tools") : Array.from(new Set([...state.selectedComponents.filter((id) => id !== "workflow.live_tools"), "workflow.live_testing"])),
-      maintenanceOptionalSelections: next.provider === "none" ? (state.maintenanceOptionalSelections ?? []).filter((id) => id !== "workflow.live_testing" && id !== "workflow.live_tools") : state.maintenanceOptionalSelections,
+      selectedComponents,
+      maintenanceOptionalSelections,
     });
   };
   return <div className="stack narrow"><section className="panel form-panel workflow-provider-panel"><PanelTitle title="Live testing provider" />{catalog ? <div className="radio-row" role="radiogroup" aria-label="Live testing provider">{catalog.providers.map((item) => <label className="radio-option" key={item.id}><input type="radio" name="live-testing-provider" disabled={item.id !== "none" && !item.supported_platforms.some((platform) => platform === "all" || platform === currentUiPlatform())} checked={selection.provider === item.id} onChange={() => save({ provider: item.id, linux_ready: false })} /><span><strong>{item.display_name}</strong><small>{item.description}</small></span></label>)}</div> : <p className="muted">Live testing providers are unavailable in this source version.</p>}
@@ -2933,7 +3008,11 @@ export function ImageGenerationSetup({ state, update }: { state: WizardState; up
     const environments = [state.primaryCodingEnvironment, ...state.additionalCodingEnvironments].filter(Boolean);
     return environments.length === 0 || environments.some((environment) => provider.supported_coding_environments.includes(environment));
   };
-  const saveSelection = (next: ImageGenerationSelection) => update({ imageGeneration: next, plan: undefined, transactionError: undefined });
+  const syncImageComponents = (next: ImageGenerationSelection): string[] => {
+    const retained = state.selectedComponents.filter((id) => !id.startsWith("imagegen."));
+    return Array.from(new Set([...retained, ...imageGenerationComponentIds(next, state.manifestPreview)]));
+  };
+  const saveSelection = (next: ImageGenerationSelection) => update({ imageGeneration: next, selectedComponents: syncImageComponents(next), plan: undefined, transactionError: undefined });
   const choosePrimary = (id: string) => saveSelection({ ...selection, primary_provider: id, additional_providers: id === "none" ? [] : selection.additional_providers.filter((candidate) => candidate !== id) });
   const toggleExtra = (id: string, checked: boolean) => {
     const extras = checked ? [...new Set([...selection.additional_providers, id])] : selection.additional_providers.filter((candidate) => candidate !== id);
@@ -2971,6 +3050,12 @@ export function ImageGenerationSetup({ state, update }: { state: WizardState; up
     ...selection,
     route_settings: { ...selection.route_settings, [providerId]: { ...selection.route_settings[providerId], [key]: value } },
   });
+
+  useEffect(() => {
+    if (!catalog) return;
+    const expected = syncImageComponents(selection);
+    if (expected.join("\u0000") !== state.selectedComponents.join("\u0000")) update({ selectedComponents: expected });
+  }, [catalog, selection.primary_provider, selection.additional_providers.join("\u0000"), state.selectedComponents.join("\u0000")]);
 
   useEffect(() => {
     if (!catalog || !isTauriRuntime()) return;
@@ -3143,15 +3228,29 @@ export function Workflows({ state, update }: { state: WizardState; update: (patc
     component.optional
     && component.id.startsWith("workflow.")
     && !dependencyOnlyWorkflowIds.has(component.id)
-    && component.id !== "workflow.live_tools"
     && component.id !== "workflow.3d"
     && component.id !== "workflow.super_events"
     && !component.id.startsWith("workflow.portraits")
   );
   const setWorkflow = (id: string, checked: boolean, patch: Partial<WizardState>) => {
+    const isLiveTools = id === "workflow.live_tools";
+    const liveTesting = isLiveTools
+      ? {
+        ...state.liveTesting,
+        provider: checked ? "hoi4_live_tools" : state.liveTesting.provider === "hoi4_live_tools" ? "none" : state.liveTesting.provider,
+        linux_ready: checked ? false : state.liveTesting.linux_ready,
+      }
+      : state.liveTesting;
     const selectedComponents = checked
-      ? Array.from(new Set([...state.selectedComponents, id]))
-      : state.selectedComponents.filter((componentId) => componentId !== id);
+      ? Array.from(new Set([
+        ...state.selectedComponents,
+        id,
+        ...(isLiveTools ? ["workflow.live_testing"] : []),
+      ]))
+      : state.selectedComponents.filter((componentId) => {
+        if (componentId === id) return false;
+        return !(isLiveTools && state.liveTesting.provider === "hoi4_live_tools" && componentId === "workflow.live_testing");
+      });
     const genericMaintenanceChoice = state.existingInstallationDetected
       && id !== "workflow.3d"
       && id !== "workflow.super_events"
@@ -3161,7 +3260,7 @@ export function Workflows({ state, update }: { state: WizardState; update: (patc
         ? Array.from(new Set([...(state.maintenanceOptionalSelections ?? []), id]))
         : (state.maintenanceOptionalSelections ?? []).filter((componentId) => componentId !== id)
       : state.maintenanceOptionalSelections;
-    update({ ...patch, selectedComponents, maintenanceOptionalSelections, ...(id === "workflow.live_testing" ? { liveTesting: { ...state.liveTesting, provider: checked ? state.liveTesting.provider === "none" ? "clausewitz_mcp" : state.liveTesting.provider : "none", linux_ready: checked && state.liveTesting.provider !== "none" ? state.liveTesting.linux_ready : false } } : {}) });
+    update({ ...patch, selectedComponents, maintenanceOptionalSelections, ...(id === "workflow.live_tools" ? { liveTesting } : {}), ...(id === "workflow.live_testing" ? { liveTesting: { ...state.liveTesting, provider: checked ? state.liveTesting.provider === "none" ? "clausewitz_mcp" : state.liveTesting.provider : "none", linux_ready: checked && state.liveTesting.provider !== "none" ? state.liveTesting.linux_ready : false } } : {}) });
   };
   const portrait = state.portraitPipeline ?? DEFAULT_PORTRAIT_PIPELINE;
   const portraitComponents = manifestComponents.filter((component) => ["workflow.portraits.cloud", "workflow.portraits.local", "workflow.portraits.runpod"].includes(component.id));

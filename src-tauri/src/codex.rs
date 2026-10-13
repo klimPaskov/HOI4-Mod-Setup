@@ -719,6 +719,10 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
                     .unwrap_or_else(|| efforts.first().map(String::as_str).unwrap_or("high"));
                 result.push(crate::models::AiModelOption {
                     id: id.to_owned(),
+                    is_default: item
+                        .get("isDefault")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
                     display_name: item
                         .get("displayName")
                         .and_then(Value::as_str)
@@ -1290,9 +1294,7 @@ pub(crate) const ANALYSIS_ATTEMPTS: u32 = 2;
 /// usage failure return `None` and are never retried.
 pub(crate) fn correctable_output_error(error: &AppError) -> Option<&str> {
     match error {
-        AppError::Serialization(reason)
-        | AppError::InvalidInput(reason)
-        | AppError::PathSecurity(reason) => Some(reason.as_str()),
+        AppError::Serialization(reason) => Some(reason.as_str()),
         _ => None,
     }
 }
@@ -1318,7 +1320,7 @@ pub(crate) fn analysis_prompt_for_provider(
 ) -> Result<String, AppError> {
     let input = serde_json::to_string(&model_visible_analysis_input(request))?;
     Ok(format!(
-        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Set analysis_id to any RFC 4122 UUID; the app assigns its own identifier. Return every required proposal key exactly once. When input.constraints.requested_mod_name is present, the display_name proposal must be exactly that name, and project_id, script_prefix, and primary_namespace must be derived from it. descriptor_tags and folder_profile proposal values must be JSON arrays of strings; every other proposal value must be a string. project_id, script_prefix, and primary_namespace values must use only lowercase ASCII letters, digits, and underscores, starting with a lowercase letter or underscore; never use dots, hyphens, spaces, or uppercase letters. folder_profile values are at most 32 distinct relative mod folders such as events or common/national_focus, never absolute, never containing .., and never under .agents, .codex, .git, .hoi4-mod-setup, chatgpt_project_sources, or paradox_wiki. Descriptor tags may use only these official categories: Alternative History, Balance, Events, Fixes, Gameplay, Graphics, Historical, Ideologies, Map, Military, National Focuses, Sound, Technologies, Translation, Utilities. Propose concise, user-facing reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs (input.evidence[].reference); never invent paths or references. component_recommendations may name only component_id values listed in input.constraints.component_registry.component_ids; return an empty list when none apply. When input.evidence is not empty, every proposal must cite at least one of those IDs; when it is empty, every evidence_refs array must be empty. Keep project_summary, proposal values, reasons, and warnings focused on the mod; never attribute them to the setup assistant, provider, model, or analysis process, and never mention schemas, constraints, evidence fields, operating systems, platforms, or Workshop ID rules. Return warnings only when the user must make a decision or correct something. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
+        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Set analysis_id to a short non-secret label; the app assigns its own identifier. Keep project_summary at most 1200 characters, each reason and warning at most 500 characters, and confidence between 0 and 1. Keep scalar proposals at most 256 characters except project_description. Return every required proposal key exactly once. When input.constraints.requested_mod_name is present, the display_name proposal must be exactly that name, and project_id, script_prefix, and primary_namespace must be derived from it. descriptor_tags and folder_profile proposal values must be JSON arrays of strings; every other proposal value must be a string. project_id, script_prefix, and primary_namespace values must use only lowercase ASCII letters, digits, and underscores, starting with a lowercase letter or underscore; never use dots, hyphens, spaces, or uppercase letters. folder_profile values are at most 32 distinct relative mod folders such as events or common/national_focus, never absolute, never containing .., and never under .agents, .codex, .git, .hoi4-mod-setup, chatgpt_project_sources, or paradox_wiki. Descriptor tags may use only these official categories: Alternative History, Balance, Events, Fixes, Gameplay, Graphics, Historical, Ideologies, Map, Military, National Focuses, Sound, Technologies, Translation, Utilities. Propose concise, user-facing reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs (input.evidence[].reference); never invent paths or references. component_recommendations may name only component_id values listed in input.constraints.component_registry.component_ids; return an empty list when none apply. Cite a supplied evidence ID only when it supports that proposal. Use an empty evidence_refs array for suggestions derived from the brief or when no supplied evidence supports the suggestion. Keep project_summary, proposal values, reasons, and warnings focused on the mod; never attribute them to the setup assistant, provider, model, or analysis process, and never describe the output schema, input.constraints, evidence_refs, or internal analysis steps. Mention a platform or Workshop issue only when the mod itself requires the user to act. Return warnings only when the user must make a decision or correct something. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
     ))
 }
 
@@ -1369,11 +1371,29 @@ fn analysis_prompt(request: &CodexAnalysisRequest, input_sha256: &str) -> Result
 }
 
 pub(crate) fn validate_analysis_output(
-    value: Value,
+    mut value: Value,
     request: &CodexAnalysisRequest,
     input_sha256: &str,
     evidence: &[ApprovedEvidence],
 ) -> Result<CodexAnalysis, AppError> {
+    // Validate every returned value before discarding model-owned metadata or
+    // interpreting schema errors. Never echo a provider value in diagnostics.
+    reject_sensitive_output_value(&value)?;
+    static SCHEMA: OnceLock<Value> = OnceLock::new();
+    let schema = SCHEMA.get_or_init(|| {
+        serde_json::from_str(include_str!(
+            "../../docs/schemas/codex-analysis.schema.json"
+        ))
+        .expect("the checked-in analysis schema must be valid JSON")
+    });
+    let validator = jsonschema::draft202012::new(schema)
+        .map_err(|_| AppError::Protocol("the analysis schema could not be loaded".into()))?;
+    validator.validate(&value).map_err(|error| {
+        AppError::Serialization(format!(
+            "analysis output failed the type or limit rule at {}",
+            error.schema_path()
+        ))
+    })?;
     let object = value
         .as_object()
         .ok_or_else(|| AppError::Serialization("Codex analysis output is not an object".into()))?;
@@ -1394,7 +1414,9 @@ pub(crate) fn validate_analysis_output(
             "Codex analysis contains an unsupported field".into(),
         ));
     }
-    let mut analysis: CodexAnalysis = serde_json::from_value(value)?;
+    // The model does not allocate identifiers in the core confirmation store.
+    value["analysis_id"] = json!(Uuid::new_v4());
+    let analysis: CodexAnalysis = serde_json::from_value(value)?;
     if analysis.schema_version != CODEX_SCHEMA_VERSION
         || analysis.input_sha256 != input_sha256
         || analysis.proposals.is_empty()
@@ -1440,15 +1462,17 @@ pub(crate) fn validate_analysis_output(
                 "Codex proposal {proposal_name} failed schema validation: it cites an unapproved evidence reference"
             )));
         }
-        if !approved_references.is_empty() && proposal.evidence_refs.is_empty() {
-            return Err(AppError::Serialization(format!(
-                "Codex proposal {proposal_name} failed schema validation: it cites no approved evidence"
-            )));
-        }
         validate_output_text(&proposal.reason, "Codex proposal reason")?;
         validate_user_facing_analysis_text(&proposal.reason, "Codex proposal reason")?;
         reject_sensitive_output_value(&proposal.value)?;
-        validate_proposal_value(&proposal.key, &proposal.value)?;
+        validate_proposal_value(&proposal.key, &proposal.value).map_err(|error| match error {
+            AppError::InvalidInput(_) | AppError::PathSecurity(_) => {
+                AppError::Serialization(format!(
+                    "proposal {proposal_name} does not meet the identifier, text, or path rules"
+                ))
+            }
+            other => other,
+        })?;
     }
     let required_keys = REQUIRED_ANALYSIS_PROPOSAL_KEYS
         .iter()
@@ -1459,16 +1483,20 @@ pub(crate) fn validate_analysis_output(
             "Codex analysis omitted one or more required semantic proposals".into(),
         ));
     }
-    // Recommendations are advisory and never change the selected components,
-    // so one that names a component outside the bound registry, or explains
-    // itself at excessive length, is dropped instead of failing the analysis.
-    // Models sometimes invent plausible component names.
     let allowed_component_ids = analysis_component_registry_ids(request)?;
-    analysis.component_recommendations.retain(|recommendation| {
-        valid_component_recommendation_id(&recommendation.component_id)
-            && allowed_component_ids.contains(&recommendation.component_id)
-            && recommendation.reason.chars().count() <= 500
-    });
+    if analysis
+        .component_recommendations
+        .iter()
+        .any(|recommendation| {
+            !valid_component_recommendation_id(&recommendation.component_id)
+                || !allowed_component_ids.contains(&recommendation.component_id)
+        })
+    {
+        return Err(AppError::Serialization(
+            "component recommendations must use only IDs from the supplied component registry"
+                .into(),
+        ));
+    }
     if analysis
         .warnings
         .iter()
@@ -1489,12 +1517,7 @@ pub(crate) fn validate_analysis_output(
         validate_output_text(&recommendation.reason, "Codex recommendation reason")?;
         validate_user_facing_analysis_text(&recommendation.reason, "Codex recommendation reason")?;
     }
-    let mut analysis = keep_requested_mod_name(analysis, request);
-    // The analysis ID keys the core's session-bound confirmation store, so the
-    // core assigns it. Models often repeat the same example UUID across runs,
-    // and a reused ID would let one analysis replace another's confirmation.
-    analysis.analysis_id = Uuid::new_v4();
-    Ok(analysis)
+    Ok(keep_requested_mod_name(analysis, request))
 }
 
 /// A mod name the user typed for a new project is theirs: the display-name
@@ -1608,17 +1631,12 @@ fn validate_user_facing_analysis_text(value: &str, label: &str) -> Result<(), Ap
     let normalized = value.to_ascii_lowercase();
     const INTERNAL_TERMS: &[&str] = &[
         "approved input",
-        "constraint",
+        "input.constraints",
         "evidence_refs",
         "evidence refs",
         "input_sha256",
         "input sha-256",
         "output schema",
-        "workshop id",
-        "windows",
-        "macos",
-        "operating system",
-        "platform",
     ];
     if INTERNAL_TERMS.iter().any(|term| normalized.contains(term)) {
         return Err(AppError::Serialization(format!(
@@ -1631,7 +1649,7 @@ fn validate_user_facing_analysis_text(value: &str, label: &str) -> Result<(), Ap
 
 fn validate_provider_neutral_text(value: &str, label: &str) -> Result<(), AppError> {
     let attribution = regex::Regex::new(
-        r"(?i)(?:\b(?:generated|suggested|analy[sz]ed|prepared|written)\s+by\s+(?:codex|chatgpt|openai|claude|anthropic|kimi|moonshot|glm|zhipu|deepseek)\b|\busing\s+(?:the\s+)?(?:codex|chatgpt|openai|claude|anthropic|kimi|moonshot|glm|zhipu|deepseek)\b|\bsetup\s+(?:assistant|provider)\b|\banalysis\s+model\b)",
+        r"(?i)(?:\b(?:generated|suggested|analy[sz]ed|prepared|written)\s+by\s+(?:codex|chatgpt|openai|claude|anthropic|kimi|moonshot|glm|zhipu|deepseek|gemini|google|grok|xai)\b|\busing\s+(?:the\s+)?(?:codex|chatgpt|openai|claude|anthropic|kimi|moonshot|glm|zhipu|deepseek|gemini|google|grok|xai)\b|\bsetup\s+(?:assistant|provider)\b|\banalysis\s+model\b)",
     )
     .is_ok_and(|pattern| pattern.is_match(value));
     if attribution {
@@ -1645,7 +1663,7 @@ fn validate_provider_neutral_text(value: &str, label: &str) -> Result<(), AppErr
 fn validate_output_text(value: &str, label: &str) -> Result<(), AppError> {
     let normalized = value.to_ascii_lowercase();
     let account_shaped = regex::Regex::new(
-        r"(?i)(?:\baccount[\s_-]*id\b|\bacct_[a-z0-9_-]+\b|\bplan(?:[\s_-]*type)?\s*[:=]|\brate[\s_-]*limits?\b|\busage(?:[\s_-]*(?:limited|remaining|used))?\s*[:=]|\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b)",
+        r"(?i)(?:\baccount[\s_-]*id\b|\bacct_[a-z0-9_-]+\b|\b(?:account[\s_-]*plan|plan[\s_-]*type)\s*[:=]|\brate[\s_-]*limits?\s*[:=]|\busage[\s_-]*(?:limited|remaining|used)\s*[:=]|\busage\s*[:=]\s*\d+(?:\.\d+)?\s*%|\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b)",
     )
     .is_ok_and(|pattern| pattern.is_match(value));
     if redact_secrets(value, &[]) != value
@@ -1653,7 +1671,7 @@ fn validate_output_text(value: &str, label: &str) -> Result<(), AppError> {
         || normalized.contains("\"email\"")
         || normalized.contains("'email'")
     {
-        return Err(AppError::Serialization(format!(
+        return Err(AppError::UnsafeProviderOutput(format!(
             "{label} contains account or credential-shaped content"
         )));
     }
@@ -1679,7 +1697,7 @@ fn reject_sensitive_output_value(value: &Value) -> Result<(), AppError> {
                             | "refresh_token"
                             | "token"
                     ) {
-                        return Err(AppError::Serialization(
+                        return Err(AppError::UnsafeProviderOutput(
                             "Codex proposal contains account or credential-shaped content".into(),
                         ));
                     }
@@ -1699,7 +1717,7 @@ fn reject_sensitive_output_value(value: &Value) -> Result<(), AppError> {
 
     let serialized = serde_json::to_string(value)?;
     if redact_secrets(&serialized, &[]) != serialized {
-        return Err(AppError::Serialization(
+        return Err(AppError::UnsafeProviderOutput(
             "Codex proposal contains account or credential-shaped content".into(),
         ));
     }
@@ -2633,7 +2651,7 @@ pub fn validate_confirmed_record(record: &CodexAnalysisRecord) -> Result<(), App
         || (record.engine == "provider_api"
             && matches!(
                 provider,
-                "claude" | "kimi" | "glm" | "deepseek" | "local" | "custom"
+                "claude" | "gemini" | "grok" | "kimi" | "glm" | "deepseek" | "local" | "custom"
             )
             && matches!(record.auth_mode.as_str(), "api_key" | "local_endpoint")
             && record
@@ -2643,6 +2661,13 @@ pub fn validate_confirmed_record(record: &CodexAnalysisRecord) -> Result<(), App
         || (record.engine == crate::claude_code::ENGINE
             && provider == crate::claude_code::PROVIDER_ID
             && record.auth_mode == crate::claude_code::AUTH_MODE
+            && record
+                .model
+                .as_deref()
+                .is_some_and(|model| crate::claude_code::validate_model(model).is_ok()))
+        || (record.engine == "provider_cli"
+            && matches!(provider, "gemini_account" | "grok_account")
+            && record.auth_mode == "provider_account"
             && record
                 .model
                 .as_deref()
@@ -2759,9 +2784,15 @@ pub fn confirm_analysis_record(
         || (record.engine == crate::claude_code::ENGINE
             && (record.auth_mode != crate::claude_code::AUTH_MODE
                 || record.provider.as_deref() != Some(crate::claude_code::PROVIDER_ID)))
+        || (record.engine == "provider_cli"
+            && (record.auth_mode != "provider_account"
+                || !matches!(
+                    record.provider.as_deref(),
+                    Some("gemini_account" | "grok_account")
+                )))
         || !matches!(
             record.engine.as_str(),
-            "codex_app_server" | "provider_api" | crate::claude_code::ENGINE
+            "codex_app_server" | "provider_api" | "provider_cli" | crate::claude_code::ENGINE
         )
         || record.account_identity_persisted
         || record.output_sha256 != sha256_bytes(&serde_json::to_vec(analysis)?)
@@ -3240,6 +3271,7 @@ mod tests {
                         "id": "luna",
                         "model": "gpt-5.6-luna",
                         "displayName": "GPT-5.6 Luna",
+                        "isDefault": true,
                         "hidden": false,
                         "defaultReasoningEffort": "xhigh",
                         "supportedReasoningEfforts": [
@@ -3265,6 +3297,7 @@ mod tests {
         let models = protocol.model_list().unwrap();
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, "gpt-5.6-luna");
+        assert!(models[0].is_default);
         assert_eq!(models[0].default_reasoning_effort, "xhigh");
         assert_eq!(
             models[0].supported_reasoning_efforts,
@@ -3688,7 +3721,7 @@ mod tests {
             .unwrap_err()
             .to_string();
 
-        assert!(error.contains("required semantic proposals"));
+        assert!(error.contains("type or limit rule"));
     }
 
     #[test]
@@ -3729,19 +3762,15 @@ mod tests {
             json!("2d.future_component");
         assert!(validate_analysis_output(digit_component, &request, &input, &[]).is_ok());
 
-        // Advisory recommendations outside the registry are dropped, not
-        // fatal: models sometimes invent plausible component names.
         let mut absent_component = valid_analysis_value(&input);
         absent_component["component_recommendations"][0]["component_id"] =
             json!("workflow.not_in_manifest");
-        let accepted = validate_analysis_output(absent_component, &request, &input, &[]).unwrap();
-        assert!(accepted.component_recommendations.is_empty());
+        assert!(validate_analysis_output(absent_component, &request, &input, &[]).is_err());
 
         let mut invalid_component = valid_analysis_value(&input);
         invalid_component["component_recommendations"][0]["component_id"] =
             json!("Workflow/Future");
-        let accepted = validate_analysis_output(invalid_component, &request, &input, &[]).unwrap();
-        assert!(accepted.component_recommendations.is_empty());
+        assert!(validate_analysis_output(invalid_component, &request, &input, &[]).is_err());
 
         let mut sensitive_component = valid_analysis_value(&input);
         sensitive_component["component_recommendations"][0]["component_id"] =
@@ -3801,12 +3830,86 @@ mod tests {
     }
 
     #[test]
+    fn model_labels_and_honest_uncited_suggestions_do_not_fail_review() {
+        let input = "a".repeat(64);
+        let request = analysis_request_with_component_registry(&["core.skills"]);
+        let mut output = valid_analysis_value(&input);
+        output["analysis_id"] = json!("review-1");
+        output["project_summary"] = json!("Plan: build political platforms with industrial constraints. Resource usage: political decisions; game rate limits apply.");
+        output["warnings"] = json!(["Check the Windows path before sharing this mod."]);
+        let evidence = vec![ApprovedEvidence {
+            reference: "descriptor-name".into(),
+            path: "descriptor.mod".into(),
+            excerpt: "name=Demo".into(),
+            excerpt_sha256: sha256_bytes(b"name=Demo"),
+            confidence: None,
+        }];
+        let accepted =
+            validate_analysis_output(output.clone(), &request, &input, &evidence).unwrap();
+        assert!(accepted
+            .proposals
+            .iter()
+            .all(|proposal| proposal.evidence_refs.is_empty()));
+        output["proposals"][0]["evidence_refs"] = json!(["invented-reference"]);
+        assert!(validate_analysis_output(output, &request, &input, &evidence).is_err());
+    }
+
+    #[test]
+    fn the_runtime_schema_checks_limits_and_required_fields() {
+        let input = "a".repeat(64);
+        let request = analysis_request_with_component_registry(&["core.skills"]);
+        for (path, invalid) in [
+            ("/proposals/0/confidence", json!(1.1)),
+            ("/proposals/0/reason", json!("a".repeat(501))),
+            ("/project_summary", json!("a".repeat(1201))),
+            (
+                "/component_recommendations/0/reason",
+                json!("a".repeat(501)),
+            ),
+        ] {
+            let mut output = valid_analysis_value(&input);
+            *output.pointer_mut(path).unwrap() = invalid;
+            let error = validate_analysis_output(output, &request, &input, &[]).unwrap_err();
+            assert!(correctable_output_error(&error).is_some(), "{path}");
+        }
+        let mut output = valid_analysis_value(&input);
+        output.as_object_mut().unwrap().remove("warnings");
+        assert!(validate_analysis_output(output, &request, &input, &[]).is_err());
+    }
+
+    #[test]
+    fn sensitive_output_and_invalid_core_state_are_never_corrective_turns() {
+        let input = "a".repeat(64);
+        let request = analysis_request_with_component_registry(&["core.skills"]);
+        for path in [
+            "/analysis_id",
+            "/proposals/0/reason",
+            "/component_recommendations/0/reason",
+        ] {
+            let mut output = valid_analysis_value(&input);
+            *output.pointer_mut(path).unwrap() = json!("owner@example.com");
+            let error = validate_analysis_output(output, &request, &input, &[]).unwrap_err();
+            assert!(matches!(error, AppError::UnsafeProviderOutput(_)));
+            assert!(correctable_output_error(&error).is_none());
+        }
+        assert!(
+            correctable_output_error(&AppError::InvalidInput("invalid registry".into())).is_none()
+        );
+        assert!(
+            correctable_output_error(&AppError::PathSecurity("invalid input path".into()))
+                .is_none()
+        );
+    }
+
+    #[test]
     fn analysis_output_rejects_setup_provider_attribution_in_rendered_values() {
         let input = "a".repeat(64);
         let request = analysis_request_with_component_registry(&["core.skills"]);
         for value in [
             "Prepared by DeepSeek for later development.",
             "A HOI4 project using Claude.",
+            "Generated by Gemini for later development.",
+            "A HOI4 project using Grok.",
             "Chosen by the setup assistant.",
         ] {
             let mut attributed = valid_analysis_value(&input);

@@ -1,0 +1,156 @@
+[
+  {
+    "id": "claude-haiku-5-5",
+    "display_name": "Claude Haiku 5.5",
+    "default_reasoning_effort": "medium",
+    "supported_reasoning_efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-sonnet-5-5",
+    "display_name": "Claude Sonnet 5.5",
+    "default_reasoning_effort": "medium",
+    "supported_reasoning_efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-opus-5-5",
+    "display_name": "Claude Opus 5.5",
+    "default_reasoning_effort": "medium",
+    "supported_reasoning_efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-fable-5-1",
+    "display_name": "Claude Fable 5.1",
+    "default_reasoning_effort": "high",
+    "supported_reasoning_efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-opus-5",
+    "display_name": "Claude Opus 5",
+    "default_reasoning_effort": "high",
+    "supported_reasoning_efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-sonnet-5",
+    "display_name": "Claude Sonnet 5",
+    "default_reasoning_effort": "high",
+    "supported_reasoning_efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-fable-5",
+    "display_name": "Claude Fable 5",
+    "default_reasoning_effort": "high",
+    "supported_reasoning_efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-opus-4-8",
+    "display_name": "Claude Opus 4.8",
+    "default_reasoning_effort": "high",
+    "supported_reasoning_efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-opus-4-7",
+    "display_name": "Claude Opus 4.7",
+    "default_reasoning_effort": "xhigh",
+    "supported_reasoning_efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-sonnet-4-6",
+    "display_name": "Claude Sonnet 4.6",
+    "default_reasoning_effort": "high",
+    "supported_reasoning_efforts": [
+      "low",
+      "medium",
+      "high",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-opus-4-6",
+    "display_name": "Claude Opus 4.6",
+    "default_reasoning_effort": "high",
+    "supported_reasoning_efforts": [
+      "low",
+      "medium",
+      "high",
+      "max"
+    ]
+  },
+  {
+    "id": "claude-opus-4-5-20251101",
+    "display_name": "Claude Opus 4.5",
+    "default_reasoning_effort": "high",
+    "supported_reasoning_efforts": [
+      "high"
+    ]
+  },
+  {
+    "id": "claude-haiku-4-5-20251001",
+    "display_name": "Claude Haiku 4.5",
+    "default_reasoning_effort": "high",
+    "supported_reasoning_efforts": [
+      "high"
+    ]
+  },
+  {
+    "id": "claude-sonnet-4-5-20250929",
+    "display_name": "Claude Sonnet 4.5",
+    "default_reasoning_effort": "high",
+    "supported_reasoning_efforts": [
+      "high"
+    ]
+  }
+]

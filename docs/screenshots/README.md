@@ -3,7 +3,7 @@
 These full-window captures are used beside the matching steps in the
 user-facing [README](../../README.md). They show the current Project, Review,
 Components, Integrations, Git, Install, Ready, maintenance, and ChatGPT source
-package screens. Earlier captures use a 1280 by 960 viewport; the coding-client, image-generation and live-testing captures use 1920 by 1080.
+package screens. The automated captures use a 1280 by 960 viewport.
 
 No credential, account identity, private mod, or secret value appears in a
 public capture. The optional portrait workflow is provider-selectable for generic
@@ -22,14 +22,14 @@ Integrations capture also records the selected 3D
 row's automatic verified Meshy/Blender preparation copy and the stable
 3D/Super Events/portrait ordering.
 
-Run `pnpm docs:screenshots` to regenerate all 15 captures in an isolated,
+Run `pnpm docs:screenshots` to regenerate all 17 captures in an isolated,
 headless Playwright browser, with runtime-error and layout checks. It never
 opens or focuses the shared desktop. GitHub Pages copies these same images.
 
 For manual inspection with `pnpm dev` running, open `http://localhost:1420/?screenshot=<name>` where
 `<name>` is one of `welcome`, `provider`, `existing`, `description`, `identity`,
 `components`, `workflows`, `mcp`, `git`, `dry-run`, `ready`, `maintenance`,
-`chat-sources`, `recovery`, or `environments`.
+`chat-sources`, `recovery`, `environments`, `image-generation`, or `live-testing`.
 Capture the complete 1280 by 960 application viewport from the top of the page.
 
 Before saving, wait for the expected screen heading and controls to be visible;

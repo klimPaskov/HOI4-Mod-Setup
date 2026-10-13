@@ -41,6 +41,27 @@ test("existing-project management remains available while signed out", async ({ 
   await expect(page.getByRole("button", { name: "Browse project folder", exact: true })).toBeEnabled();
 });
 
+test("Claude offers the verified catalog with Haiku 5.5 as the default", async ({ page }) => {
+  await page.goto("/?screenshot=welcome");
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toHaveValue("claude-haiku-5-5");
+  await expect(page.getByRole("combobox", { name: "Model", exact: true }).locator("option")).toHaveCount(14);
+  await page.getByRole("combobox", { name: "Model", exact: true }).selectOption("claude-sonnet-5-5");
+  await expect(page.getByRole("combobox", { name: "Reasoning effort" })).toHaveValue("medium");
+});
+
+for (const [id, label] of [["gemini_account", "Gemini"], ["grok_account", "Grok"]]) {
+  test(`${label} account choice exposes sign-in without an API-key field`, async ({ page }) => {
+    await page.goto("/?screenshot=welcome");
+    await page.getByLabel("AI provider").selectOption(id);
+    await expect(page.getByRole("group", { name: `${label} account access` })).toBeVisible();
+    await expect(page.getByRole("button", { name: `Sign in to ${label}`, exact: true })).toBeVisible();
+    await expect(page.locator('input[type="password"]')).toHaveCount(0);
+    await page.setViewportSize({ width: 640, height: 960 });
+    await expect(page.getByRole("button", { name: `Sign in to ${label}`, exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+}
+
 test("each coding environment can be primary without becoming an additional choice", async ({ page }) => {
   await page.goto("/?screenshot=environments");
   const radios = page.getByRole("radio");

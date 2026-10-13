@@ -39,11 +39,18 @@ with one primary action, one status line, a device-code fallback link, and a
 visible cancellation action while the App Server is waiting. Known hosted
 profiles auto-fill their verified model and address, show one fixed official
 API-key link, one secret field, and one Connect action, and place model/address
-overrides under Advanced. Local and custom profiles expose only the details
-they genuinely require. Usage-limited state preserves the draft and offers
-retry or refresh without pretending planning succeeded. Never show raw
-protocol logs, model billing details, or technical terms such as endpoint in
-the normal hosted-provider path.
+overrides under Advanced. Claude shows the built-in 14-model catalog with
+Haiku 5.5 at medium effort by default; label it built-in rather than live and
+keep a bounded exact Claude model-ID field under Advanced. Unknown exact IDs
+remain editable without a false catalog error and do not assume an effort.
+Experimental Gemini/Grok account routes are visibly labelled experimental,
+never ask for pasted credentials, and expose only explicit terminal Sign in,
+Check again, Cancel, Sign out, and a switch to the corresponding API-key
+route. Local and custom profiles expose only the details they genuinely
+require. Usage-limited state preserves the draft and offers retry or refresh
+without pretending planning succeeded. Never show raw protocol logs, model
+billing details, or technical terms such as endpoint in the normal
+hosted-provider path.
 
 The Components phase includes a dedicated Coding Environments step. Render one
 accessible radio group for the required primary (Claude Code selected initially) and a
@@ -97,6 +104,10 @@ Conflict review is the exception. It may show a three-way comparison and more co
   label with `aria-busy`, blocks duplicate submission, and exposes any provider
   or schema failure in the persistent announced footer without losing the
   entered name or brief.
+- The existing-project findings action enters `Reviewing with <provider>…`
+  immediately with `aria-busy="true"`, blocks duplicate clicks, and restores
+  the review action after success or failure. The read-only scan and draft stay
+  intact when semantic review fails.
 - After Description is submitted, show one visible progress bar with
   user-facing stages tied to actual request boundaries: preparing the
   description, generating project details, and checking the generated details.
@@ -145,6 +156,17 @@ Conflict review is the exception. It may show a three-way comparison and more co
   optional workflows using their source title and description. The 3D row
   states that the verified Meshy/Blender workflow is installed and prepared
   automatically; technical action evidence stays in dry run.
+- When the manifest declares **HOI4 Live Tools**, render it as an additional
+  optional row with its experimental, Windows-only status. Selecting it also
+  selects the manifest-declared `workflow.live_testing` dependency and the
+  `hoi4_live_tools` provider; disabling or switching providers removes only
+  the route no longer selected. Existing installed state must continue through
+  the Live testing screen.
+- Selecting an image provider automatically synchronizes its manifest route
+  component IDs into selected components, removes stale `imagegen.*` route IDs
+  when switching providers or choosing manual mode, and leaves Rust dependency
+  expansion authoritative. Do not invent per-model app schema fields for
+  manifest-owned image catalogs.
 - When scan evidence identifies a valid managed installation, show a concise
   existing-setup callout with a keyboard-accessible **Repair or add workflows**
   action. The maintenance screen must show the **3D models workflow** title again only
@@ -272,4 +294,11 @@ identity documents, private projects, or secret values.
 
 Update this skill when phase grouping, screen structure, disclosure rules, component conventions, accessibility target, interaction states, screenshot process, or visual regression workflow changes.
 
-Live testing uses the shared `workflow.live_testing` opt-in and a separate provider step immediately after Optional workflows. Clausewitz MCP requires explicit Linux readiness confirmation, supports deferred configuration, and credits smerss. Only safe WSL distribution names and SSH host aliases are collected. Maintenance restores the non-secret selection and Ready distinguishes registration from verified gameplay.
+Live testing uses the shared `workflow.live_testing` opt-in and a separate
+provider step immediately after Optional workflows. Clausewitz MCP requires
+explicit Linux readiness confirmation, supports deferred configuration, and
+credits smerss. Only safe WSL distribution names and SSH host aliases are
+collected. When the manifest provides HOI4 Live Tools, show its provider state
+and Windows-only unsupported status honestly; selecting it restores the
+dependency/provider pairing. Maintenance restores the non-secret selection and
+Ready distinguishes registration from verified gameplay.

@@ -34,6 +34,8 @@ Use the smallest useful layer and keep high-risk behavior covered at more than o
 - reviewed post-install action tests for exact 3D arguments/evidence, optional
   missing-key/tool outcomes, successful readiness/lock persistence, failure
   recovery, and pre-apply resume using the production runner
+- provider-account adapter tests for pinned package preparation, isolation,
+  capability checks, cancellation, logout, and honest unsupported platforms
 - security tests
 - UI component and accessibility tests
 - Windows, macOS, and Linux end-to-end tests
@@ -53,18 +55,23 @@ Provide deterministic fakes for:
 
 - filesystem
 - GitHub and HTTP source
+- Git ref-advertisement source fallback and bounded source-resolution cache
 - clock
 - random and operation IDs
 - credential store
 - external process runner
 - Codex App Server protocol and streamed notifications
 - provider adapters, endpoint validation, bounded responses, and model profiles
+- pinned Gemini/Grok account runtimes, trusted runtime identity, isolated homes,
+  and provider CLI process boundaries
 - Git
 - MCP health server
 - platform paths
 - disk and permission failures
 
-Tests must not require a real Meshy key, ChatGPT login, or paid provider call.
+Tests must not require a real Meshy key, ChatGPT login, provider-account
+credential, or paid provider call. A separately authorized account smoke is
+manual evidence only and never an ordinary CI prerequisite.
 External-launcher fixtures use canonical owned temporary parents, formatted
 through `user_facing_path`, so macOS's `/var` alias does not weaken or trip the
 production no-symlink checks. Linux validates native application and package behavior; test its XDG,
@@ -120,8 +127,24 @@ session, cancellation, credential-health, or analysis assertions.
   development components, Open in Codex, and flatten export remain independent
 - live model catalogs are bounded, credential-safe, and drive only supported
   reasoning options; unavailable catalogs retain an editable verified fallback
+- the shared Claude catalog has 14 built-in entries with Haiku 5.5/medium as
+  default and legacy Haiku 4.5 as one-effort; bounded exact unknown Claude IDs
+  remain usable without assuming or forwarding an effort
+- native Anthropic/Gemini/Grok schema payloads contain no tools or credential
+  values; runtime Draft 2020-12 validation precedes typed deserialization,
+  core assigns analysis UUIDs, empty evidence refs are valid for inference,
+  unknown refs/registry IDs reject, and only serialization failures receive one
+  corrective turn
+- experimental account routes never read or persist provider tokens, use
+  private empty workspaces with disabled tools/MCP/hooks/plugins, retain only
+  approved-input provider sessions outside the project, and report macOS
+  unsupported until its runtime/terminal path is verified
 - MCP, 3D, `codex.config`, ChatGPT flattening, and Open in Codex remain available
   independently of a non-Codex setup assistant
+- image-provider selection synchronizes only manifest-declared `imagegen.*`
+  route components, removes stale route IDs on switch/manual selection, and
+  leaves Rust dependency expansion authoritative; Live Tools selection keeps its
+  `workflow.live_testing` dependency and provider pairing
 - direct Open in Codex rejects a missing installed Codex configuration, uses
   fresh local readiness, and remains available after setup-provider sign-out
 - the actual `.hoi4-mod-setup/state.json` path is schema-validated and carries
@@ -187,6 +210,31 @@ session, cancellation, credential-health, or analysis assertions.
   check cannot start a second install, and a failed install preserves setup and
   exposes a retry
 
+## Integration tests
+
+Use fake source clients for the rate-limit-only GitHub REST 403/429 fallback:
+accept only the fixed repository's bounded `info/refs?service=git-upload-pack`
+advertisement, bind `HEAD`/default branch and peeled release tags, and reject
+unrelated 403s, other repositories/services, redirects, object downloads, and
+checkout behavior. Cover the request-keyed resolution cache, 15-minute maximum
+TTL, lower manifest TTL, exact revision/branch/manifest evidence, and
+same-revision manifest/blob selection.
+
+Exercise public selection from each selected component's `expected_files`
+inventory without a recursive tree prerequisite. Reject missing, duplicate,
+outside-component, size, SHA-256, undeclared-tree, and unresolved Git LFS
+pointer evidence before staging. Treat image-generation provider/model
+catalogs as manifest data: newly declared entries must load without app enum or
+per-model schema changes, while selected route component closure remains Rust-
+validated.
+
+The provider matrix must cover native Anthropic/Gemini/Grok schema payloads,
+runtime Draft 2020-12 validation, core-assigned analysis UUIDs, empty evidence
+references for inference, unknown evidence/registry IDs, and one corrective
+serialization turn only. Cover immediate findings-review pending state,
+automatic image route-component synchronization, stale route removal, and the
+manifest-declared Live Tools dependency/provider pairing in component tests.
+
 For unpublished package validation, set `HOI4_MOD_SETUP_SOURCE_REPOSITORY` to
 an absolute committed Agentic HOI4 Modding checkout, then run `pnpm test:offline`.
 The script preserves installed Cargo/Rustup toolchain homes while isolating
@@ -248,7 +296,11 @@ layout and visible focus-within styling so the accessibility gate cannot omit
 it. Include density assertions, keyboard traversal, scaling, reduced motion,
 long values, errors, conflict comparison, staged scanner progress, correlated
 event filtering, indeterminate progress semantics, and cancellation evidence
-messaging. Assert the **3D models workflow** title and the immediately following
+messaging. Assert Claude's built-in catalog label/default and exact model-ID
+field, the experimental account controls without credential fields, immediate
+`Reviewing with <provider>…` pending feedback, automatic image-provider route
+selection/stale-route removal, and the restored HOI4 Live Tools row/provider
+state. Assert the **3D models workflow** title and the immediately following
 **Super Events workflow** order. Recovery coverage must render a
 validation-stage checkpoint with its sanitized Details disclosure and only the
 core-permitted Continue/Discard actions before apply; feed prefixed,

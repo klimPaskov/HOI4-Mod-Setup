@@ -131,18 +131,8 @@ pub fn migrate_state(value: Value) -> Result<Value, AppError> {
         AppError::Serialization("project state codex integration must be an object".into())
     })?;
     reject_persisted_codex_identity(codex)?;
-    let expected_integration = if provider == "codex" {
-        "codex_app_server"
-    } else {
-        "provider_api"
-    };
-    let expected_auth_mode = if provider == "codex" {
-        "chatgpt"
-    } else if provider == "local" {
-        "local_endpoint"
-    } else {
-        "api_key"
-    };
+    let (expected_integration, expected_auth_mode) =
+        crate::ai::integration_and_auth_mode(&provider);
     if provider != "codex" {
         // Older state used the `codex` object as the generic integration
         // container. Rewrite only its non-secret routing fields when the

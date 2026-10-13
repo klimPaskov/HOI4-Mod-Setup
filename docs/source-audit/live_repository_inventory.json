@@ -1,13 +1,13 @@
 {
   "repository": "klimPaskov/Agentic-HOI4-Modding",
-  "resolved_commit": "cbefeb75cb469ec8b851baa542de53c47dcd754e",
+  "resolved_commit": "4c06817803a6c64ae54d43063d019617fd991c24",
   "default_branch": "main",
   "inspection_date": "2026-10-13",
   "manifest_path": "hoi4-mod-setup.manifest.json",
-  "manifest_sha256": "2d2b2908959fa7ddd0148cbf8575a841d597776b0f735438288f3c2e76b0025c",
-  "manifest_generated_for_revision": "7c3667037abd32422e5b9073add36098f208be17",
+  "manifest_sha256": "56ed567dae0509b56b4333c368504ab912609586424115a872aec7b7ab0f8caa",
+  "manifest_generated_for_revision": "1fdf5e91b76a39e21a7ecc7e0ba8341b2c392bbb",
   "manifest_worktree_state": "published_committed_snapshot",
-  "workspace_manifest_sha256": "2d2b2908959fa7ddd0148cbf8575a841d597776b0f735438288f3c2e76b0025c",
+  "workspace_manifest_sha256": "56ed567dae0509b56b4333c368504ab912609586424115a872aec7b7ab0f8caa",
   "verified_root_entries": [
     ".claude/skills/",
     ".codex/",
@@ -268,8 +268,8 @@
     "ChatGPT source packaging is verified through manifest-selected installation into a tiny project, CLI bundle generation, archive-byte comparison, configurable dry-run, output refusal, and linked-file rejection. The exact source revision is public; the Windows packaging launcher does not establish macOS launcher execution.",
     "The provider table, selected route adapters, live/bootstrap contracts, and template markers were inspected. API-provider calls and real Linux gameplay were not exercised; selection and registration tests establish configuration behavior only."
   ],
-  "manifest_component_count": 59,
-  "manifest_file_evidence_count": 1664,
+  "manifest_component_count": 60,
+  "manifest_file_evidence_count": 1665,
   "mcp_package_version": "4.0.3",
   "mcp_package_file_count": 5387,
   "mcp_required_tool_count": 28,

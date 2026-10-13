@@ -1433,6 +1433,8 @@ pub struct AiModelOption {
     pub display_name: String,
     pub default_reasoning_effort: String,
     pub supported_reasoning_efforts: Vec<String>,
+    #[serde(default)]
+    pub is_default: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
