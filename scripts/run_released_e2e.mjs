@@ -124,14 +124,16 @@ async function commonSetup() {
   await page.getByRole("checkbox", { name: /^Codex / }).check();
   await record("coding-environments"); await next();
   await at("Image generation");
-  if (scenario !== "new") {
+  if (scenario === "new") {
+    await expect(page.getByRole("radio", { name: /^ChatGPT subscription \(GPTImage\)/ })).toBeChecked({ timeout: 180_000 });
+  } else {
     await page.getByRole("radio", { name: /^fal\.ai / }).check();
-    await page.getByLabel("Model", { exact: true }).selectOption({ label: "Ideogram V3 Transparent" });
+    await page.getByRole("combobox", { name: "Model", exact: true }).selectOption({ label: "Ideogram V3 Transparent" });
   }
   await record("image-provider"); await next();
   await at("Choose what to install");
-  await expect(page.getByRole("button", { name: /Image provider MCP adapter/ })).toHaveAttribute("aria-pressed", "true");
-  if (scenario === "new") await expect(page.getByRole("button", { name: /GPTImage MCP source/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: /Image provider MCP adapter/ })).toHaveAttribute("aria-pressed", scenario === "new" ? "false" : "true");
+  await expect(page.getByRole("button", { name: /GPTImage MCP source/ })).toHaveAttribute("aria-pressed", scenario === "new" ? "true" : "false");
   await record("selected-components"); await next();
   await at("Optional workflows");
   await expect(page.getByRole("switch", { name: /^HOI4 Live Tools/ })).toBeVisible();
