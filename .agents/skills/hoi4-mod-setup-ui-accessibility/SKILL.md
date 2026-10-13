@@ -220,6 +220,8 @@ Conflict review is the exception. It may show a three-way comparison and more co
   Existing-project selection displays only a launcher descriptor discovered
   from the selected root's immediate parent.
 
+On native Linux, the live-testing screen keeps Clausewitz selected, explains that no WSL/VM/SSH environment is needed, hides remote fields, and requires only normal compatible-game/server readiness confirmation. Windows-only providers remain disabled with an honest status.
+
 ## Accessibility
 
 Meet WCAG 2.2 AA.

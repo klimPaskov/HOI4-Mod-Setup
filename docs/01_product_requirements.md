@@ -2,7 +2,7 @@
 
 ## Product statement
 
-**HOI4 Mod Setup** is a Windows and macOS desktop application that prepares a Hearts of Iron IV mod project for provider-neutral agentic development. The user selects a setup assistant for bounded semantic analysis; Claude, signed in through the user's own Claude Code with Claude Haiku 4.5, is the default. That choice does not select or restrict the AI client used later for development. The app creates a new launcher-ready mod from a guided brief or imports an existing project through an evidence-backed read-only scan. It installs a selected workflow package from `klimPaskov/Agentic-HOI4-Modding` without cloning the complete source repository. Structural analysis is deterministic. Required semantic analysis uses the selected setup-provider adapter and produces reviewable proposals after deterministic evidence is collected.
+**HOI4 Mod Setup** is a Windows, macOS and Linux desktop application that prepares a Hearts of Iron IV mod project for provider-neutral agentic development. The user selects a setup assistant for bounded semantic analysis; Claude, signed in through the user's own Claude Code with Claude Haiku 4.5, is the default. That choice does not select or restrict the AI client used later for development. The app creates a new launcher-ready mod from a guided brief or imports an existing project through an evidence-backed read-only scan. It installs a selected workflow package from `klimPaskov/Agentic-HOI4-Modding` without cloning the complete source repository. Structural analysis is deterministic. Required semantic analysis uses the selected setup-provider adapter and produces reviewable proposals after deterministic evidence is collected.
 
 ## Primary outcome
 
@@ -290,7 +290,7 @@ Show the title:
 When yes:
 
 - explain Meshy.ai and possible provider cost
-- store the key in Windows Credential Manager or macOS Keychain
+- store the key in Windows Credential Manager, macOS Keychain or Linux Secret Service
 - record only an opaque credential reference
 - inject the key as `MESHY_API_KEY` into approved processes
 - validate presence and non-empty state without printing it

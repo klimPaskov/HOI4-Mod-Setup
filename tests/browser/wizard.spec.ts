@@ -121,9 +121,9 @@ test("live testing follows workflows and disabling it advances to integrations",
   await expect(page.locator("#screen-title")).not.toHaveText("Live testing");
 });
 
-for (const platform of ["windows", "macos"] as const) {
+for (const platform of ["windows", "macos", "linux"] as const) {
 test(`maintenance sends the changed live testing provider on ${platform}`, async ({ page }) => {
-  await page.addInitScript((selectedPlatform) => Object.defineProperty(navigator, "userAgent", { get: () => selectedPlatform === "macos" ? "Macintosh Mac OS X" : "Windows NT 10.0" }), platform);
+  await page.addInitScript((selectedPlatform) => Object.defineProperty(navigator, "userAgent", { get: () => selectedPlatform === "macos" ? "Macintosh Mac OS X" : selectedPlatform === "linux" ? "X11; Linux x86_64" : "Windows NT 10.0" }), platform);
   await page.addInitScript(() => {
     const calls: Array<{ command: string; args: Record<string, unknown> }> = [];
     (window as unknown as Record<string, unknown>).__HOI4_TEST_COMMANDS__ = calls;
@@ -132,7 +132,7 @@ test(`maintenance sends the changed live testing provider on ${platform}`, async
   await page.goto("/?screenshot=maintenance");
   const isMac = await page.evaluate(() => /macintosh|mac os x/i.test(navigator.userAgent));
   const liveProviders = page.getByRole("radiogroup", { name: "Live testing provider" });
-  if (isMac) {
+  if (isMac || platform === "linux") {
     await liveProviders.getByRole("radio", { name: /^None/ }).click();
     await expect(liveProviders).toHaveCount(0);
   } else {
@@ -141,10 +141,20 @@ test(`maintenance sends the changed live testing provider on ${platform}`, async
   await page.getByRole("button", { name: "Repair installation" }).click();
   await expect(page.getByRole("alert")).toContainText("captured live testing request");
   const call = await page.evaluate(() => (window as unknown as { __HOI4_TEST_COMMANDS__: Array<{ command: string; args: Record<string, unknown> }> }).__HOI4_TEST_COMMANDS__.find((entry) => entry.command === "build_maintenance_plan"));
-  expect(call?.args.liveTesting).toEqual({ provider: isMac ? "none" : "hoi4_live_tools", linux_ready: false, wsl_distribution: "", ssh_host: "" });
+  expect(call?.args.liveTesting).toEqual({ provider: isMac || platform === "linux" ? "none" : "hoi4_live_tools", linux_ready: false, wsl_distribution: "", ssh_host: "" });
 });
 }
 
+test("Linux Clausewitz is native and needs no remote environment fields", async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, "userAgent", { get: () => "Mozilla/5.0 (X11; Linux x86_64)" }));
+  await page.goto("/?screenshot=live-testing");
+  await expect(page.getByRole("radio", { name: /^Clausewitz MCP/ })).toBeChecked();
+  await expect(page.getByRole("radio", { name: /HOI4 Live Tools/ })).toBeDisabled();
+  await expect(page.getByText(/Clausewitz MCP runs directly on Linux/)).toBeVisible();
+  await expect(page.getByRole("textbox", { name: /SSH host|WSL distribution/ })).toHaveCount(0);
+  await page.getByRole("checkbox", { name: /I confirm a compatible Linux game/ }).check();
+  await expect(page.getByRole("button", { name: "Next", exact: true })).toBeEnabled();
+});
 
 test("review captures can show coding environments with no client preselected", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });

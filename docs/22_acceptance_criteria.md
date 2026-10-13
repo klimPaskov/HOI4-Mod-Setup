@@ -398,8 +398,20 @@
 - OSS-10: GitHub workflow YAML parses and uses read-only default permissions.
 - OSS-11: Main is protected through a pull-request ruleset with required checks.
 - OSS-12: Release automation builds from an exact annotated tag and publishes a normal release only after all platform, signature, and curation gates pass.
-- OSS-13: The public stable release keeps the Windows x64 installer and macOS arm64 and x64 disk images clearly named, and also contains signed updater metadata plus the two macOS update archives; checksums and platform verification remain in internal workflow evidence.
+- OSS-13: The public stable release keeps the Windows x64 installer, macOS arm64 and x64 disk images, Linux x64 AppImage and Debian package clearly named, and also contains signed updater metadata plus the two macOS update archives; checksums and platform verification remain in internal workflow evidence.
 - OSS-14: Pull requests require documentation and living-skill review.
 - OSS-15: Planning validation checks schemas, examples, YAML, TOML, skills, subagents, README boundary, and goal prompt length.
 - OSS-16: The canonical goal prompt is included at `docs/GOAL_PROMPT.md` and remains no more than 4000 characters.
 - OSS-17: Windows installer lifecycle tests refuse existing current-user and matching legacy machine-wide installations, fail closed when registry inspection is unavailable, and leave neither a temporary product registration nor its temporary install root behind.
+
+## Native Linux
+
+- LNX-01: Native and Flatpak Steam library discovery respects XDG user directories; ambiguous mod locations require a manual choice.
+- LNX-02: Settings, cache, current-user npm packages and Downloads use Linux paths; Windows PATH imports cannot authorize native execution.
+- LNX-03: API keys use an unlocked Secret Service and never fall back to plaintext.
+- LNX-04: Selected coding clients receive native project registrations and complete skills/agent projections.
+- LNX-05: The exact HOI4 Agent Tools npm release and platform-specific tree, entry and contained-link evidence are verified before its real handshake.
+- LNX-06: Clausewitz is the live-testing default and runs directly on Linux; only compatible-game/server readiness remains required.
+- LNX-07: Linux AppImage and deb are built, launched and installed in dedicated CI; their updater artifacts receive protected release signatures.
+- LNX-08: A fresh scratch install passes for Claude Code and Codex with every registered server starting and every selected skill present.
+- LNX-09: Windows and macOS, old manifest majors, user-modified file preservation, rollback and maintenance remain covered.

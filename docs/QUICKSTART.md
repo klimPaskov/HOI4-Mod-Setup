@@ -1,10 +1,10 @@
-# Quick start on Windows and macOS
+# Quick start on Windows, macOS and Linux
 
 Follow these steps to prepare a new or existing mod for AI-assisted development.
 
-**Before you start:** download HOI4 Mod Setup for Windows or macOS. Install any coding client you want to use; the app shows which supported clients are available. You can finish setup assistant sign-in when prompted. The app explains any extra setup needed for an optional workflow.
+**Before you start:** download HOI4 Mod Setup for Windows, macOS or Linux. Install any coding client you want to use; the app shows which supported clients are available. You can finish setup assistant sign-in when prompted. The app explains any extra setup needed for an optional workflow.
 
-1. **Install HOI4 Mod Setup.** From [GitHub Releases](https://github.com/klimPaskov/HOI4-Mod-Setup/releases), download the Windows installer or the macOS disk image for your Mac. Run the Windows installer, or open the disk image and move the app to Applications. Then open the app.
+1. **Install HOI4 Mod Setup.** From [GitHub Releases](https://github.com/klimPaskov/HOI4-Mod-Setup/releases), download the Windows installer or the macOS disk image for your Mac. Run the Windows installer, or open the disk image and move the app to Applications. For Linux, choose the AppImage or Debian package and follow the [Linux install guide](LINUX.md). Then open the app.
 
 2. **Choose your starting point.** On **Start a mod project**, choose **Create new mod** or **Import existing mod**. [Screenshot](screenshots/01-welcome.jpg)
 
@@ -16,13 +16,13 @@ Follow these steps to prepare a new or existing mod for AI-assisted development.
 
 6. **Choose your coding clients.** On **Coding environments**, choose any supported client as your primary one, then select any other clients you use. Setup prepares matching instructions, tools, and settings for the clients you select. [Screenshot](screenshots/15-coding-environments.png)
 
-7. **Choose an image provider.** Pick a main provider and add optional providers if you want them. ChatGPT through GPTImage is ready as the default route; other choices include API services, local image tools, Codex image generation when Codex is selected, and making art yourself. The app keeps API keys in the Windows credential store or macOS Keychain. Change providers later in **Update and repair**. [Screenshot](screenshots/16-image-generation.png)
+7. **Choose an image provider.** Pick a main provider and add optional providers if you want them. ChatGPT through GPTImage is ready as the default route; other choices include API services, local image tools, Codex image generation when Codex is selected, and making art yourself. The app keeps API keys in the Windows credential store, macOS Keychain or Linux Secret Service. Change providers later in **Update and repair**. [Screenshot](screenshots/16-image-generation.png)
 
 8. **Choose components.** On **Choose what to install**, review the project instructions, skills, subagents, tools, and offline Paradox wiki. Required items stay selected. [Screenshot](screenshots/04-components.png)
 
 9. **Choose optional workflows.** On **Optional workflows**, enable any available **3D models workflow** (Meshy and Blender), **Super Events workflow**, **ComfyUI portrait production** (Comfy Cloud, Local ComfyUI, or RunPod), or **Live testing**. If the 3D workflow asks for a Meshy key, choose **Store in vault** or **Configure later**; the key stays on your computer. Incomplete optional workflows do not block core setup. [Screenshot](screenshots/05-integrations.png)
 
-9a. **If you selected Live testing**, choose Clausewitz MCP, experimental HOI4 Live Tools, or None in its separate step. Clausewitz MCP by smerss requires native Linux HOI4 1.19.2 and manual Linux game/server setup: WSL on Windows, Linux and SSH on macOS. Follow the [Linux guide](LIVE_TESTING_LINUX.md). Leave readiness unchecked to configure later without registration. A configured route does not establish that live gameplay was verified. HOI4 Live Tools is slower and not fully tested; its public package verifies Windows only and its macOS scaffold is incomplete.
+9a. **If you selected Live testing**, choose Clausewitz MCP, experimental HOI4 Live Tools, or None in its separate step. Clausewitz MCP by smerss requires native Linux HOI4 1.19.2 and manual Linux game/server setup: WSL on Windows, Linux and SSH on macOS. On Linux it runs directly, with no extra WSL, VM or SSH environment. Follow the [Linux guide](LIVE_TESTING_LINUX.md). Leave readiness unchecked to configure later without registration. A configured route does not establish that live gameplay was verified. HOI4 Live Tools is slower and not fully tested; its public package verifies Windows only and its macOS scaffold is incomplete.
 
 10. **Review integrations and credentials.** Check the selected integrations and credential status, then choose **Next**. Secret values stay outside the mod folder. [Screenshot](screenshots/06-mcp-credentials.png)
 

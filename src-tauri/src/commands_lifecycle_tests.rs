@@ -31,14 +31,14 @@ mod offline_lifecycle {
         assert_eq!(action.privilege, "current_user");
         assert!(action.requires_approval);
         assert!(!action.contains_secret);
-        if matches!(Platform::current(), Platform::Windows | Platform::Macos) {
+        if matches!(Platform::current(), Platform::Windows | Platform::Macos | Platform::Linux) {
             let mut reordered = manifest;
             reordered
                 .components
                 .iter_mut()
                 .find(|component| component.id == "imagegen.gptimage")
                 .unwrap()
-                .platforms = vec![ManifestPlatform::Macos, ManifestPlatform::Windows];
+                .platforms = vec![ManifestPlatform::Macos, ManifestPlatform::Windows, ManifestPlatform::Linux];
             let reordered_actions =
                 manifest_external_actions(&reordered, &["imagegen.gptimage".into()]);
             assert_eq!(reordered_actions[0].platform, Platform::current());
@@ -92,7 +92,7 @@ mod offline_lifecycle {
             let root = tempdir().unwrap();
             ISOLATE_MESHY_VAULT_FOR_TEST.with(|isolated| isolated.set(true));
             let mut previous = Vec::new();
-            for name in ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"] {
+            for name in ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"] {
                 previous.push((name, std::env::var_os(name)));
                 let path = root.path().join(name);
                 std::fs::create_dir(&path).unwrap();

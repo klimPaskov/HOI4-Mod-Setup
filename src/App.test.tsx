@@ -2516,6 +2516,18 @@ describe("HOI4 Mod Setup wizard", () => {
 
 
 describe("live testing selection", () => {
+  it("uses native Linux without WSL or SSH fields and blocks Live Tools", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (X11; Linux x86_64)");
+    window.history.replaceState({}, "", "/?screenshot=live-testing");
+    const state = documentationFixture(initialState)!;
+    state.manifestPreview!.live_testing!.providers.find((item) => item.id === "clausewitz_mcp")!.supported_platforms.push("linux");
+    render(<LiveTestingSetup state={state} update={vi.fn()} />);
+    expect(screen.getByText(/Clausewitz MCP runs directly on Linux/)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /WSL distribution|SSH host/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^Clausewitz MCP/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /^HOI4 Live/ })).toBeDisabled();
+    expect(liveTestingSelectionValid({ ...state, liveTesting: { ...state.liveTesting, linux_ready: true } })).toBe(true);
+  });
   it("defaults to deferred Clausewitz and clears the workflow when disabled", () => {
     window.history.replaceState({}, "", "/?screenshot=live-testing");
     const state = documentationFixture(initialState)!;

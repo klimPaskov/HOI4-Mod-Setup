@@ -1,9 +1,9 @@
 {
   "name": "hoi4-mod-setup",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "license": "Apache-2.0",
-  "description": "Windows and macOS desktop wizard for preparing HOI4 mods for agentic development.",
+  "description": "Windows, macOS and Linux desktop wizard for preparing HOI4 mods for agentic development.",
   "type": "module",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
@@ -15,7 +15,7 @@
     "test:rust": "node scripts/run_rust_tests.mjs",
     "test:offline": "node scripts/run_offline_acceptance.mjs",
     "test:manifest": "python -m unittest scripts/test_generate_manifest_evidence.py scripts/test_validate_repository.py",
-    "test:release-assets": "node --test scripts/prepare_release_assets.node-test.mjs scripts/windows_installer_registry.node-test.mjs",
+    "test:release-assets": "node --test scripts/prepare_release_assets.node-test.mjs scripts/windows_installer_registry.node-test.mjs scripts/linux_packages.node-test.mjs",
     "test:workflows": "python scripts/check_workflow_security.py",
     "test:a11y": "node scripts/check_accessibility.mjs",
     "test:e2e": "node scripts/run_e2e_smoke.mjs",

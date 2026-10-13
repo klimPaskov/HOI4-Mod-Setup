@@ -45,6 +45,7 @@ Read:
 - Script prefixes and primary namespaces are retained as project conventions in installation metadata and adapted guidance; neither is emitted as a key in the internal or launcher descriptor.
 - Selected starter folders are real reviewed directory entries, not `.gitkeep`
   files; rollback removes only transaction-created folders that remain empty.
+- On Linux, resolve the XDG Paradox user directory and bounded native/Flatpak Steam roots; ambiguous discoveries require a manual choice. Secrets use the desktop Secret Service with no plaintext fallback. Native Clausewitz needs a compatible game/server, without WSL or SSH fields.
 - On Windows and macOS, a new project defaults to the platform-resolved `Documents/Paradox Interactive/Hearts of Iron IV/mod` directory. A missing or untrusted standard directory is visible and requires one explicit manual destination choice.
 - The launcher descriptor is `<project_id>.mod` in the confirmed HOI4 `mod` directory; existing-project launcher registration is discovered from bounded sibling evidence and remains unresolved when registrations are ambiguous.
 - Existing projects are scanned before mutation.
@@ -148,7 +149,7 @@ A broad product change needs:
 - persisted state or migration impact
 - transaction and rollback impact
 - security impact
-- Windows and macOS behavior
+- Windows, macOS and Linux behavior
 - UI evidence when visible
 - tests and fault scenarios
 - documentation and skill updates

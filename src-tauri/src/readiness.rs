@@ -859,7 +859,7 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
             checks.push(ReadinessCheck {
                     id: "workflow.live_testing".into(), category: "workflow".into(), label: "Live testing".into(),
                     status: if configured { "pass" } else { "warn" }.into(), blocking: false,
-                    message: Some(if configured { "Provider configured. Gameplay has not been verified." } else if selection.provider == "hoi4_live_tools" { "HOI4 Live Tools runtime installation is incomplete. Gameplay has not been verified." } else { "Todo: confirm the Linux environment before registering Clausewitz MCP." }.into()),
+                    message: Some(if configured { "Provider configured. Gameplay has not been verified." } else if selection.provider == "hoi4_live_tools" { "HOI4 Live Tools runtime installation is incomplete. Gameplay has not been verified." } else { "Todo: confirm the compatible Linux game and server before registering Clausewitz MCP." }.into()),
                     evidence: vec![ReadinessEvidence {kind: "provider_state".into(), value: json!({"provider":selection.provider,"linux_ready":selection.linux_ready,"gameplay_verified":false}), path: Some(".hoi4-mod-setup/install.lock.json".into())}],
                 });
         }

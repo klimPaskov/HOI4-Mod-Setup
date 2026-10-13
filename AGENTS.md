@@ -22,7 +22,7 @@ Every implementation must preserve these promises:
 - keep optional workflows non-blocking for core AI readiness
 - show honest unsupported and incomplete states
 - keep the desktop interface restrained and task-focused
-- support Windows and macOS without inventing unsupported platform routes
+- support Windows, macOS and Linux without inventing unsupported platform routes
 
 The source planning package, accepted architecture decisions, schemas, and tests are part of the product contract. A change that weakens one of these promises requires an explicit design decision and matching documentation.
 

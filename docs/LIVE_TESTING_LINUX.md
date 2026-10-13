@@ -4,6 +4,10 @@
 
 Linux game installation and server preparation are extra manual steps. You may leave **I confirm a compatible Linux game and Clausewitz MCP server are ready** unchecked in setup. The app records a to-do and does not register this server until you confirm readiness in a reviewed setup or repair plan.
 
+## Linux: use the native game and server
+
+Use the native x86-64 Linux HOI4 1.19.2 build. No WSL, virtual machine, SSH host, or extra remote environment is needed on Linux. Prepare the pinned server below at `~/tools/Clausewitz-MCP` and verify its connection to the compatible game as your ordinary user. In **Live testing**, leave Clausewitz MCP selected and confirm the game and server are ready. Setup registers the virtual-environment Python directly with an absolute server path.
+
 ## Windows: prepare WSL
 
 1. Follow Microsoft's [WSL instructions](https://learn.microsoft.com/windows/wsl/install). In an administrator PowerShell where those instructions require it, run `wsl --install -d Ubuntu`. Restart when prompted. Run `wsl --update`, then `wsl --list --verbose` to check the installed distribution and WSL 2 version. Complete the distribution's first-run user setup yourself.
@@ -53,4 +57,4 @@ With the compatible game running, test the server from Linux:
 
 This is an MCP stdio server, so it may wait for client input. Starting without an immediate error is not proof that live game reads work. Verify the client connection and a bounded read against the compatible game before treating gameplay testing as available.
 
-After readiness is confirmed, the app registers a reviewed WSL or SSH route. Restart the selected coding client after applying the plan. **Configured** describes the registered route; it does not claim live gameplay was verified. The alternative HOI4 Live Tools provider is experimental, slower, and not fully tested. Its current public package verifies Windows only, and its macOS scaffold remains incomplete.
+After readiness is confirmed, the app registers a reviewed native Linux, WSL or SSH route. Restart the selected coding client after applying the plan. **Configured** describes the registered route; it does not claim live gameplay was verified. The alternative HOI4 Live Tools provider is experimental, slower, and not fully tested. Its current public package verifies Windows only, and its macOS scaffold remains incomplete.

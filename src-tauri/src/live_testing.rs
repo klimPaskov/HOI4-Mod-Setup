@@ -176,9 +176,19 @@ pub fn route(
                 REMOTE.into(),
             ],
         ),
+        Platform::Linux => {
+            let home = std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .filter(|path| path.is_absolute())
+                .ok_or_else(|| AppError::PathSecurity("native Clausewitz requires an absolute HOME directory".into()))?;
+            let server = home.join("tools/Clausewitz-MCP");
+            let command = server.join(".venv/bin/python").to_string_lossy().into_owned();
+            let args = vec![server.join("clausewitz.py").to_string_lossy().into_owned(), "serve".into()];
+            return Ok(Some(("clausewitz_linux", json!({"command":command,"args":args,"cwd":"."}))));
+        }
         Platform::Unsupported => {
             return Err(AppError::InvalidInput(
-                "live testing supports Windows and macOS only".into(),
+                "live testing supports Windows, macOS and Linux only".into(),
             ))
         }
     };
@@ -326,7 +336,7 @@ pub fn guidance(
         })
         .unwrap_or_default();
     if selection.provider == "clausewitz_mcp" && !selection.linux_ready {
-        content.push_str("\nLinux environment is unconfirmed. Do not call Clausewitz MCP until the user confirms readiness.");
+        content.push_str("\nCompatible Linux game and server readiness is unconfirmed. Do not call Clausewitz MCP until the user confirms readiness.");
     }
     if selection.provider == "none" {
         content = "Live testing is manual; no live MCP provider is registered.".into();
@@ -347,6 +357,11 @@ pub fn validate_catalog(manifest: &RemoteManifest) -> Result<(), AppError> {
         .as_array()
         .ok_or_else(|| invalid("providers"))?;
     let mut seen = std::collections::HashSet::new();
+    let platforms = if manifest.schema_version.starts_with("5.") {
+        json!(["windows", "macos", "linux"])
+    } else {
+        json!(["windows", "macos"])
+    };
     for row in rows {
         let id = row["id"].as_str().ok_or_else(|| invalid("provider ID"))?;
         if !seen.insert(id) {
@@ -376,7 +391,7 @@ pub fn validate_catalog(manifest: &RemoteManifest) -> Result<(), AppError> {
         if id == "none"
             && (route["source_repository"] != Value::Null
                 || route["source_revision"] != Value::Null
-                || row["supported_platforms"] != json!(["windows", "macos"]))
+                || row["supported_platforms"] != platforms)
         {
             return Err(invalid(
                 "manual provider cannot declare an executable source",
@@ -391,7 +406,7 @@ pub fn validate_catalog(manifest: &RemoteManifest) -> Result<(), AppError> {
             && (route["source_revision"] != "97c85437081904d5ad07bae1623ec58d1c0a5b9e"
                 || row["supported_game_version"] != "1.19.2"
                 || route["source_repository"] != "smerss/Clausewitz-MCP"
-                || row["supported_platforms"] != json!(["windows", "macos"]))
+                || row["supported_platforms"] != platforms)
         {
             return Err(invalid(
                 "Clausewitz requires the reviewed revision and exact native Linux game build",
@@ -485,6 +500,24 @@ mod tests {
         assert!(route(&LiveTestingSelection::default(), Platform::Macos)
             .unwrap()
             .is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_linux_route_uses_direct_venv_without_remote_environment() {
+        let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
+        let (_, native) = route(&confirmed(), Platform::Linux).unwrap().unwrap();
+        assert_eq!(native["command"], home.join("tools/Clausewitz-MCP/.venv/bin/python").to_string_lossy().as_ref());
+        assert_eq!(native["args"], json!([home.join("tools/Clausewitz-MCP/clausewitz.py").to_string_lossy(), "serve"]));
+        assert!(route(&LiveTestingSelection::default(), Platform::Linux).unwrap().is_none());
+        assert!(route(&LiveTestingSelection { provider: "hoi4_live_tools".into(), ..Default::default() }, Platform::Linux).is_err());
+        for destination in [".mcp.json", ".cursor/mcp.json", ".qoder/mcp.json", "opencode.json", ".codex/config.toml"] {
+            let input = if destination.ends_with(".toml") { b"[mcp_servers.unrelated]\ncommand='safe'\n".to_vec() } else { serde_json::to_vec(&json!({if destination == "opencode.json" { "mcp" } else { "mcpServers" }: {"unrelated":{"command":"safe"}}})).unwrap() };
+            let output = String::from_utf8(adapt_config(&input, destination, &confirmed(), Platform::Linux).unwrap()).unwrap();
+            assert!(output.contains("clausewitz_linux"));
+            assert!(output.contains("unrelated"));
+            assert!(!output.contains("wsl.exe") && !output.contains("BatchMode"));
+        }
     }
 
     #[test]

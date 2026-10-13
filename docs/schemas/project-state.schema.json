@@ -29,7 +29,7 @@
     "platform": {
       "enum": [
         "windows",
-        "macos"
+        "macos", "linux"
       ]
     },
     "wizard": {
@@ -85,7 +85,7 @@
           "provider": {
             "enum": [
               "windows_credential_manager",
-              "macos_keychain"
+              "macos_keychain", "linux_secret_service"
             ]
           },
           "reference": {
