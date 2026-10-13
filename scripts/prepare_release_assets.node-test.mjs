@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -89,6 +89,7 @@ test(`curates ${signing} installers, release notes, and complete updater metadat
       "HOI4-Mod-Setup-windows-x64-setup.exe", "RELEASE_NOTES.md", "latest.json",
     ]);
     const releaseNotes = await readFile(join(output, "RELEASE_NOTES.md"), "utf8");
+    assert.ok(releaseNotes.includes("## Changes\n"));
     assert.equal(releaseNotes.split("\n").filter((line) => /^- (Windows|Mac|Linux)/.test(line)).length, 5);
     for (const feature of ["GPTImage is the default", "Coding clients remain independent", "Update and repair", "Clausewitz MCP by smerss", "native Linux HOI4 1.19.2", "manual Linux game/server setup", "supports Windows only", "README", "Quickstart"]) assert.ok(releaseNotes.includes(feature), feature);
     assert.equal(releaseNotes.includes("community certificate named ChaosX"), signing === "community");
@@ -117,6 +118,34 @@ test(`curates ${signing} installers, release notes, and complete updater metadat
   }
 });
 
+}
+
+for (const [label, changelog, expectedError] of [
+  ["missing", "# Changelog\n\n## 0.3.0\n\n- Another version.\n", /missing release 0\.2\.0/],
+  ["empty", "# Changelog\n\n## 0.2.0 - 2026-10-13\n\n## 0.1.0\n\n- Older changes.\n", /no changes for release 0\.2\.0/],
+]) {
+  test(`release curation rejects a ${label} version changelog section`, async () => {
+    const temporary = await mkdtemp(join(tmpdir(), "hoi4-mod-setup-changelog-test-"));
+    try {
+      const input = join(temporary, "input");
+      const output = join(temporary, "output");
+      const scripts = join(temporary, "scripts");
+      await mkdir(input);
+      await mkdir(scripts);
+      await copyFile(join(root, "scripts/prepare_release_assets.mjs"), join(scripts, "prepare_release_assets.mjs"));
+      await writeFile(join(temporary, "CHANGELOG.md"), changelog);
+      for (const [platform, architecture, extension] of [["linux", "X64", "AppImage"], ["windows", "X64", "exe"], ["macos", "ARM64", "dmg"], ["macos", "X64", "dmg"]]) {
+        await writeArtifact(input, `hoi4-mod-setup-${platform}-${architecture.toLowerCase()}`, platform, architecture, `setup.${extension}`);
+      }
+      const result = spawnSync(process.execPath, [join(scripts, "prepare_release_assets.mjs"), input, output], {
+        cwd: temporary, encoding: "utf8", windowsHide: true,
+        env: { ...process.env, GITHUB_SHA: revision, GITHUB_REF_NAME: "v0.2.0" },
+      });
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr || result.stdout, expectedError);
+      assert.ok(!(await readdir(output)).includes("RELEASE_NOTES.md"));
+    } finally { await rm(temporary, { recursive: true, force: true }); }
+  });
 }
 
 test("preview curation retains platform dependency unions outside public installers", async () => {

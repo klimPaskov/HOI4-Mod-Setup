@@ -119,6 +119,8 @@ version into a skill.
 Stable release-note curation includes the configured version's `CHANGELOG.md`
 section after the installer links, keeping feature and experimental-route
 limitations attached to the published release.
+Missing or empty version sections fail curation; test both rejection paths so a
+release cannot silently drop its changes or experimental-route limitations.
 
 Use semantic version tags. Prepare each release through a pull request. Build
 from the exact annotated tag commit. Publish only through the gated tag
