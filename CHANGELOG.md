@@ -4,6 +4,15 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+## 0.5.0 - 2026-10-13
+
+- Add native Linux x86-64 AppImage and Debian packages beside Windows and macOS builds, with signed updater routes and dedicated desktop/package lifecycle CI.
+- Resolve native and Flatpak Steam libraries, XDG Paradox mod paths, settings, cache and Downloads.
+- Store Linux API keys in Secret Service and verify native system tools and official coding-client identities before execution.
+- Install the pinned Agent Tools package with separate Linux integrity evidence, then register native routes for all five coding clients.
+- Keep Clausewitz as the live-testing default and run its pinned server directly on Linux without WSL or SSH fields.
+- Consume the tested schema-5 Agentic package while preserving older manifest compatibility, transaction safety and Windows/macOS routes.
+
 ## 0.4.1 - 2026-10-13
 
 - Refresh the tested Agentic HOI4 Modding package, HOI4 Agent Tools, GPTImage and Meshy pins, with exact source and package integrity checks.

@@ -7,8 +7,8 @@ use uuid::Uuid;
 /// Manifest majors this build reads. Major 2 is the Codex-canonical layout
 /// (`.agents/skills`, `.codex/agents`); major 3 is the Claude-first layout
 /// (`.claude/skills`, `.claude/agents`) with declared coding environments.
-pub const SUPPORTED_MANIFEST_MAJORS: [u64; 3] = [2, 3, 4];
-pub const CURRENT_MANIFEST_MAJOR: u64 = 4;
+pub const SUPPORTED_MANIFEST_MAJORS: [u64; 4] = [2, 3, 4, 5];
+pub const CURRENT_MANIFEST_MAJOR: u64 = 5;
 
 pub const TRANSACTION_STAGES: [&str; 12] = [
     "preflight",
@@ -30,6 +30,7 @@ pub const TRANSACTION_STAGES: [&str; 12] = [
 pub enum Platform {
     Windows,
     Macos,
+    Linux,
     Unsupported,
 }
 
@@ -39,6 +40,8 @@ impl Platform {
             Self::Windows
         } else if cfg!(target_os = "macos") {
             Self::Macos
+        } else if cfg!(target_os = "linux") {
+            Self::Linux
         } else {
             Self::Unsupported
         }
@@ -48,6 +51,7 @@ impl Platform {
         match self {
             Self::Windows => "windows",
             Self::Macos => "macos",
+            Self::Linux => "linux",
             Self::Unsupported => "unsupported",
         }
     }
@@ -58,6 +62,7 @@ impl Platform {
 pub enum ManifestPlatform {
     Windows,
     Macos,
+    Linux,
     All,
 }
 
@@ -65,9 +70,10 @@ impl ManifestPlatform {
     pub fn supports(self, platform: Platform) -> bool {
         matches!(
             (self, platform),
-            (Self::All, Platform::Windows | Platform::Macos)
+            (Self::All, Platform::Windows | Platform::Macos | Platform::Linux)
                 | (Self::Windows, Platform::Windows)
                 | (Self::Macos, Platform::Macos)
+                | (Self::Linux, Platform::Linux)
         )
     }
 }
