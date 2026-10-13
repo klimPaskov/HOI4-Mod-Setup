@@ -13,8 +13,11 @@ boundaries separately in CI.
   Do not rebuild or instrument the binary and call it the published release.
 - Exercise the production WebView2 UI using Playwright's documented
   [CDP connection](https://playwright.dev/docs/webview2). Debugging is enabled
-  only through the child process environment on the disposable runner, never
-  through a machine registry policy or an application backdoor.
+  through child environment variables and an executable-specific HKLM policy on
+  the disposable runner. WebView2 150+ ignores environment overrides in elevated
+  hosts, as explained by [Microsoft](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5645).
+  Refuse pre-existing policy values and remove only exact test-owned values at
+  shutdown. No wildcard policy, user-machine change or application backdoor.
 - Use real renderer-to-Rust IPC, source downloads, scanner, schema validation,
   confirmation, conflict review, transactions, MCP installers and readiness.
   Do not mock Tauri commands, seed approval state or write project state from
@@ -32,11 +35,17 @@ boundaries separately in CI.
   inventory before extraction, reject links/traversal/collisions/special files,
   bound entry count, compressed/expanded size, compression ratio, depth and path
   lengths, remove incomplete extraction, and compare every file with the pinned
-  Git tree's blob evidence. Independently pin descriptor and README SHA-256 values. These are
+  Git tree's blob evidence. For the source's text `eol=crlf` extensions, an LF
+  normalization may authenticate the original Git blob while keeping the archive
+  bytes intact; binary files require exact bytes. Independently pin the LF
+  descriptor and README SHA-256 values. These are
   mod inputs, not the Agentic workflow source; the application continues to
   selectively fetch the latter from its public manifest.
 - Upload only explicitly named screenshots and a bounded result report. Never
   upload the mod, profiles, credentials, source caches or transaction backups.
+  Redact the known metadata token and credential-shaped values from every report
+  field before writing it. Run only for same-repository pull requests or manual
+  dispatch; fork PRs do not receive this workflow's metadata token.
 
 ## Scenarios
 

@@ -229,6 +229,13 @@ hashes, persisted readiness, repair and rollback. Read
 guard refuses local/self-hosted execution. Keep all new harness checks under
 `pnpm test:released-harness` and run them in CI when the desktop must remain free.
 
+Elevated hosted Windows runners require an executable-specific WebView2 HKLM
+override; refuse existing values and remove only exact owned values on shutdown.
+Use setup-python's absolute interpreter with `-I -S`, an owned working directory
+and a minimal environment for archive validation. Authenticate CRLF archive text
+against its LF Git blob without changing the extracted bytes. Recompute approved
+analysis-input hashes and sanitize every result field before artifact upload.
+
 Use fake source clients for the rate-limit-only GitHub REST 403/429 fallback:
 accept only the fixed repository's bounded `info/refs?service=git-upload-pack`
 advertisement, bind `HEAD`/default branch and peeled release tags, and reject

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { lstat, mkdir, readdir, readFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath } from "node:fs/promises";
 import { createServer } from "node:http";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -26,16 +26,38 @@ export async function fileHash(path) {
   return hash.digest("hex");
 }
 
-export function cleanAppEnvironment(profile, cdpPort, browserProfile) {
+export function cleanProcessEnvironment(profile) {
   const keep = new Set(["PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432", "PROGRAMDATA", "ALLUSERSPROFILE", "PROCESSOR_ARCHITECTURE", "PROCESSOR_ARCHITEW6432", "NUMBER_OF_PROCESSORS"]);
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => keep.has(name.toUpperCase())));
   return {
     ...env, HOME: join(profile, "home"), USERPROFILE: join(profile, "home"),
     APPDATA: join(profile, "config"), LOCALAPPDATA: join(profile, "data"),
     TEMP: join(profile, "temp"), TMP: join(profile, "temp"),
+  };
+}
+
+export function cleanAppEnvironment(profile, cdpPort, browserProfile) {
+  return {
+    ...cleanProcessEnvironment(profile),
     WEBVIEW2_USER_DATA_FOLDER: browserProfile,
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort}`,
   };
+}
+
+export async function setupPythonPath(location, cacheRoot) {
+  if (!isAbsolute(location ?? "") || !isAbsolute(cacheRoot ?? "")) throw new Error("Missing setup-python runtime identity.");
+  const path = await realpath(join(location, "python.exe"));
+  inside(cacheRoot, path);
+  if (!/[\\/]Python[\\/]3\.13\.\d+[\\/]x64[\\/]python\.exe$/i.test(path)) throw new Error("Unexpected setup-python runtime path.");
+  return path;
+}
+
+export function sanitizeReport(value, knownSecrets = []) {
+  let json = JSON.stringify(value);
+  for (const secret of knownSecrets.filter((item) => typeof item === "string" && item.length > 3)) json = json.replaceAll(secret, "[REDACTED]");
+  json = json.replace(/(?:sk-|gh[pousr]_|github_pat_|AIza)[A-Za-z0-9_-]+/g, "[REDACTED]")
+    .replace(/Bearer\s+[A-Za-z0-9_.+\/-]+/gi, "Bearer [REDACTED]");
+  return JSON.parse(json);
 }
 
 export async function downloadPublic(url, destination, maximumBytes, expectedHash) {
@@ -141,7 +163,9 @@ export async function startPlannerFixture({ malformedFirst = false } = {}) {
       const prompt = body.messages.find((message) => message.role === "user")?.content;
       const match = prompt?.match(/\ninput_sha256=([a-f0-9]{64})\ninput=([\s\S]*)/);
       assert.ok(match, "Missing approved input binding.");
-      const input = JSON.parse(match[2].split("\n\nThe previous response was rejected")[0]);
+      const inputJson = match[2].split("\n\nThe previous response was rejected")[0];
+      assert.equal(createHash("sha256").update(inputJson).digest("hex"), match[1], "Approved input digest mismatch.");
+      const input = JSON.parse(inputJson);
       const existing = input.mode === "existing_project_semantics";
       const name = input.constraints?.requested_mod_name || (existing ? "Kaiserreich" : "Remote Acceptance Mod");
       const id = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");

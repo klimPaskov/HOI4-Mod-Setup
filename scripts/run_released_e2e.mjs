@@ -3,11 +3,13 @@ import { spawn, execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { chromium, expect } from "@playwright/test";
 import { assertWindowsInstallerRegistryIsClean, cleanupWindowsInstallerRegistry, resolveNativeSystemExecutable, resolveSystemPowerShellPath } from "./windows_installer_registry.mjs";
-import { assertOriginals, cleanAppEnvironment, downloadPublic, fileHash, githubJson, inside, inventoryDigest, requireHostedWindows, snapshot, startPlannerFixture } from "./released_e2e_support.mjs";
+import { assertOriginals, cleanAppEnvironment, cleanProcessEnvironment, downloadPublic, fileHash, githubJson, inside, inventoryDigest, requireHostedWindows, sanitizeReport, setupPythonPath, snapshot, startPlannerFixture } from "./released_e2e_support.mjs";
+import { configureHostedWebView } from "./released_e2e_windows.mjs";
 
 requireHostedWindows();
 const metadataToken = process.env.GITHUB_TOKEN;
@@ -27,7 +29,7 @@ const output = resolve(repository, "test-results", `released-${scenario}`);
 for (const path of [output, mods, ...["home", "config", "data", "temp"].map((part) => join(profile, part))]) await mkdir(path, { recursive: true });
 const journalRoot = join(profile, "data", "HOI4 Mod Setup", "transactions");
 const project = join(mods, scenario === "new" ? "remote_acceptance_mod" : "kaiserreich");
-const result = { scenario, applicationVersion: pins.app.version, applicationCommit: pins.app.commit, runner: process.env.RUNNER_OS,
+const result = { scenario, applicationVersion: pins.app.version, releaseSourceCommitFromPin: pins.app.commit, runner: process.env.RUNNER_OS,
   ai: "deterministic loopback HTTP fixture; real provider authentication and semantic quality are not tested",
   nativeIpc: "unmodified published binary; no IPC mocks or application test hooks", stages: [], screenshots: [], success: false };
 let app;
@@ -39,6 +41,7 @@ let ownsRegistry = false;
 let original = new Map();
 let gitignoreText;
 let failure;
+let clearWebViewPolicy;
 
 const pause = (ms) => new Promise((done) => setTimeout(done, ms));
 const heading = () => page.locator("#screen-title");
@@ -71,6 +74,7 @@ async function launch(viewName) {
   const port = await freePort();
   const env = cleanAppEnvironment(profile, port, join(profile, viewName));
   assert.ok(!Object.keys(env).some((key) => /TOKEN|SECRET|PASSWORD|CREDENTIAL|^GH_|^GITHUB_|^ANTHROPIC_|^OPENAI_|^CODEX_HOME$/.test(key)));
+  clearWebViewPolicy = await configureHostedWebView(env);
   app = spawn(executable, [], { cwd: workRoot, env, stdio: "ignore", windowsHide: true });
   await new Promise((done, reject) => { app.once("spawn", done); app.once("error", reject); });
   await waitUntil(async () => {
@@ -89,6 +93,7 @@ async function stop() {
     await waitUntil(() => app.exitCode !== null || app.signalCode !== null, 20_000, "owned app exit");
   }
   await browser?.close().catch(() => {});
+  await clearWebViewPolicy?.(); clearWebViewPolicy = undefined;
   browser = undefined; page = undefined; app = undefined;
 }
 async function journals() {
@@ -197,8 +202,13 @@ try {
     const treePath = join(workRoot, "tree.json"); await writeFile(treePath, JSON.stringify(tree));
     const archive = join(workRoot, "kaiserreich.zip");
     const downloaded = await downloadPublic(`https://codeload.github.com/${pins.kaiserreich.repository}/zip/${pin.commit}`, archive, 1536 * 1024 * 1024);
-    const extracted = await exec("python", [join(repository, "scripts/extract_mod_fixture.py"), archive, project, treePath], { windowsHide: true, timeout: 15 * 60_000, maxBuffer: 64 * 1024 });
-    assert.equal(await fileHash(join(project, "descriptor.mod")), pin.descriptor_sha256);
+    const python = await setupPythonPath(process.env.pythonLocation, process.env.RUNNER_TOOL_CACHE);
+    const extracted = await exec(python, ["-I", "-S", join(repository, "scripts/extract_mod_fixture.py"), archive, project, treePath], {
+      cwd: workRoot, env: { ...cleanProcessEnvironment(profile), GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "github-hosted" },
+      windowsHide: true, timeout: 15 * 60_000, maxBuffer: 64 * 1024,
+    });
+    const descriptor = (await readFile(join(project, "descriptor.mod"), "utf8")).replaceAll("\r\n", "\n");
+    assert.equal(createHash("sha256").update(descriptor).digest("hex"), pin.descriptor_sha256);
     assert.equal(await fileHash(join(project, "README.md")), pin.readme_sha256);
     result.mod = { version, commit: pin.commit, archive: downloaded, inventory: JSON.parse(extracted.stdout) };
     original = await snapshot(project);
@@ -317,11 +327,15 @@ try {
   if (ownsRegistry) {
     try {
       const uninstaller = (await readdir(installRoot)).find((name) => /^uninstall.*\.exe$/i.test(name));
-      if (uninstaller) await exec(join(installRoot, uninstaller), ["/S"], { windowsHide: true, timeout: 120_000 });
+      if (uninstaller) {
+        await exec(join(installRoot, uninstaller), ["/S"], { windowsHide: true, timeout: 120_000 });
+        await waitUntil(() => !existsSync(executable), 60_000, "NSIS application removal");
+      }
       await cleanupWindowsInstallerRegistry({ workRoot, installRoot, tempRoot: process.env.RUNNER_TEMP });
     } catch (error) { failure ??= error; result.cleanupError = "Owned installer cleanup failed."; }
   }
   result.success &&= !failure;
+  Object.assign(result, sanitizeReport(result, [metadataToken]));
   await writeFile(join(output, "result.json"), JSON.stringify(result, null, 2) + "\n");
   inside(process.env.RUNNER_TEMP, workRoot);
   await rm(workRoot, { recursive: true, force: true });

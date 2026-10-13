@@ -20,6 +20,7 @@ MAX_RATIO = 1000
 MAX_PATH_BYTES = 1024
 MAX_SEGMENT_BYTES = 255
 MAX_DEPTH = 40
+TEXT_EOL_SUFFIXES = {".txt", ".info", ".lua", ".yml", ".gui", ".gfx", ".asset", ".csv", ".mod"}
 
 
 def extract(archive_path: Path, destination: Path, tree_path: Path) -> dict:
@@ -42,6 +43,7 @@ def extract(archive_path: Path, destination: Path, tree_path: Path) -> dict:
         seen = set()
         prefixes = set()
         total = 0
+        crlf_files = 0
         for entry in archive.infolist():
             raw = entry.orig_filename
             path = PurePosixPath(raw)
@@ -87,14 +89,25 @@ def extract(archive_path: Path, destination: Path, tree_path: Path) -> dict:
                             raise RuntimeError("Archive member exceeded declared size")
                         sha.update(chunk)
                         output.write(chunk)
-                if count != entry.file_size or sha.hexdigest() != expected[relative]["sha"]:
-                    raise RuntimeError(f"Archive file differs from pinned Git blob: {relative}")
+                if count != entry.file_size:
+                    raise RuntimeError("Archive file length changed")
+                if sha.hexdigest() != expected[relative]["sha"]:
+                    # git archive honors the pinned repository's text eol=crlf attributes.
+                    # Authenticate the LF blob but retain the official archive's original bytes.
+                    if target.suffix.lower() not in TEXT_EOL_SUFFIXES or count > 16 * 1024 * 1024:
+                        raise RuntimeError(f"Archive file differs from pinned Git blob: {relative}")
+                    data = target.read_bytes()
+                    normalized = data.replace(b"\r\n", b"\n")
+                    digest = hashlib.sha1(f"blob {len(normalized)}\0".encode("ascii") + normalized).hexdigest()
+                    if b"\0" in data or digest != expected[relative]["sha"]:
+                        raise RuntimeError(f"Archive file differs from pinned Git blob: {relative}")
+                    crlf_files += 1
         except BaseException:
             if destination.resolve(strict=True) != owned_destination:
                 raise RuntimeError("Fixture destination changed during extraction")
             shutil.rmtree(owned_destination)
             raise
-    return {"files": len(expected), "bytes": total, "git_tree_sha": tree["sha"]}
+    return {"files": len(expected), "bytes": total, "git_tree_sha": tree["sha"], "verified_crlf_files": crlf_files}
 
 
 if __name__ == "__main__":

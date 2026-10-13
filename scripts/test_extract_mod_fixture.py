@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import stat
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -65,6 +69,28 @@ class FixtureExtractionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "differs from pinned Git blob"):
                 extract(archive, root / "out", tree)
             self.assertFalse((root / "out").exists())
+
+    @patch.dict("os.environ", {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"})
+    def test_declared_text_crlf_is_verified_without_changing_archive_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive, tree, _ = self.fixture(root, [("mod/descriptor.mod", b'name="Example"\r\n')])
+            result = extract(archive, root / "out", tree)
+            self.assertEqual(result["verified_crlf_files"], 1)
+            self.assertEqual((root / "out/descriptor.mod").read_bytes(), b'name="Example"\r\n')
+
+    @patch.dict("os.environ", {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"})
+    def test_absolute_isolated_python_ignores_path_and_module_shadows(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive, tree, _ = self.fixture(root, [("mod/descriptor.mod", b'name="Example"\n')])
+            script = root / "extract_mod_fixture.py"
+            shutil.copyfile(Path(__file__).with_name("extract_mod_fixture.py"), script)
+            (root / "zipfile.py").write_text("raise RuntimeError('shadow module ran')", encoding="utf-8")
+            (root / "python.cmd").write_text("exit /b 99", encoding="ascii")
+            env = {**os.environ, "PATH": str(root), "PYTHONPATH": str(root)}
+            result = subprocess.run([sys.executable, "-I", "-S", str(script), str(archive), str(root / "out"), str(tree)], cwd=root, env=env, capture_output=True, text=True, timeout=30, check=True)
+            self.assertEqual(json.loads(result.stdout)["files"], 1)
 
     @patch.dict("os.environ", {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"})
     def test_size_count_and_ratio_limits_precede_extraction(self):

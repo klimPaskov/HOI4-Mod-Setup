@@ -7,6 +7,7 @@ on:
       - ".github/workflows/released-app-e2e.yml"
       - "scripts/run_released_e2e.mjs"
       - "scripts/released_e2e_support.mjs"
+      - "scripts/released_e2e_windows.mjs"
       - "scripts/extract_mod_fixture.py"
       - "tests/remote/**"
 
@@ -19,6 +20,7 @@ concurrency:
 
 jobs:
   published-wizard:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     name: Published v0.6.0 (${{ matrix.scenario }})
     runs-on: windows-latest
     timeout-minutes: 90
