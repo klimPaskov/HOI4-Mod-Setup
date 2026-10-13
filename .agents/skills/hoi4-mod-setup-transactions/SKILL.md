@@ -96,6 +96,16 @@ operations are not accepted; mode belongs to the reviewed file operation.
 
 ## Apply rules
 
+For existing imports, require launcher registration only from an explicit
+external launcher operation; never infer permission or obligation from an
+internal descriptor, thumbnail, or legacy scaffold umbrella. Create-leaf
+transactions explicitly require launcher and thumbnail readiness. A kept
+existing descriptor can retain optional/custom picture metadata, but must still
+parse with a name and supported version. Use the predecessor's preserved-local
+evidence during maintenance, and derive post-lock launcher/thumbnail obligations
+from locked files as well as component metadata. Do not reinterpret a failed
+post-apply readiness journal as resumable or successful: rollback precedes retry.
+
 Conflict previews are distinct from merge eligibility. `.mod` descriptors may
 show redacted UTF-8 text while retaining conservative merge choices; invalid
 UTF-8, binary bytes, links, and directories must not become mergeable through

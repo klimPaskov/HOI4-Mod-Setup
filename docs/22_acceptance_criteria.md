@@ -69,7 +69,7 @@
 
 - AI-01: Claude account (default), Codex, Claude API key, Kimi, GLM, DeepSeek, local, and custom provider profiles are selectable at the start.
 - AI-01B: The default Claude account route uses the user's own Anthropic-signed
-  Claude Code with Claude Haiku 4.5. **Sign in to Claude** runs Claude Code's
+  Claude Code with Claude Haiku 5.5 by default and a verified model catalog. **Sign in to Claude** runs Claude Code's
   own `auth login` flow with closed standard input; the app never receives a
   sign-in URL, code, or token. Sign-in shows one busy state, can be cancelled,
   and times out. A missing Claude Code links to the official setup page; an
@@ -108,6 +108,14 @@
 
 - EXT-01: The user selects one root.
 - EXT-02: Scan performs no project writes.
+- EXT-02A: An existing import without an approved external launcher descriptor
+  can become core-ready; launcher discovery remains explicitly unverified.
+  An internal descriptor or legacy scaffold component does not authorize an
+  external launcher path. An explicitly selected route still blocks when invalid.
+- EXT-02B: A confirmed keep of a valid existing descriptor preserves an omitted
+  or custom picture reference. New/generated descriptors retain the generated
+  thumbnail contract. The preserved-local lock evidence keeps this distinction
+  consistent on later readiness and maintenance checks.
 - EXT-03: Descriptors, launcher registration, thumbnail, Git, instructions,
   approved docs, skills, subagents, Codex, MCP, managed setup state, and
   conflicts are covered without inventorying unrelated gameplay or media.

@@ -14,6 +14,7 @@ HOI4 Mod Setup follows semantic versioning.
 - Expand the source package to ten fal, three Replicate and four Together image-model choices with per-model request contracts.
 - Prepare source files through verified manifest evidence, cache exact resolutions and recover from GitHub REST quota exhaustion without cloning the source repository or following redirects.
 - Show descriptor conflict text, distinguish binary previews from missing files, and keep fresh-import conflict review in the setup flow.
+- Import existing Workshop-style mods without inventing a launcher requirement or replacing their valid descriptor image settings; retain strict launcher and thumbnail checks for new projects.
 
 ## 0.5.0 - 2026-10-13
 

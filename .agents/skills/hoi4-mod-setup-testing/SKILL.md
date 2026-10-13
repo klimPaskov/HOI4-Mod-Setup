@@ -27,6 +27,10 @@ Use the smallest useful layer and keep high-risk behavior covered at more than o
   PNGs, structured TOML merges, and flattened ChatGPT-source mappings
 - integration tests for adapters and cross-module behavior
 - transaction fault injection
+- existing-import readiness fixtures with a kept Workshop-style descriptor,
+  repeated replace paths, omitted/custom picture, and no external launcher;
+  verify success-lock reevaluation, strict new-project checks, predecessor
+  preserved-local consistency, all-stage faults and rollback-only failure
 - dynamic manifest tests for changed skill/subagent trees, generic compatible
   IDs, newly published default-profile additions during Update, preservation of
   earlier optional choices, generic optional workflow UI, and the single
