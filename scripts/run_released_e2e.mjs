@@ -180,7 +180,7 @@ try {
   const installer = join(workRoot, "installer.exe");
   result.installer = await downloadPublic(pins.app.url, installer, 32 * 1024 * 1024, pins.app.sha256);
   assert.equal(result.installer.size, pins.app.size);
-  await exec(resolveSystemPowerShellPath(), ["-NoProfile", "-NonInteractive", "-Command", "$s=Get-AuthenticodeSignature -LiteralPath $env:HOI4_E2E_INSTALLER; if (-not $s.SignerCertificate -or $s.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false) -ne 'ChaosX' -or $s.Status -eq 'HashMismatch') { throw 'Published installer signature mismatch' }"], { env: { ...process.env, HOI4_E2E_INSTALLER: installer }, windowsHide: true, timeout: 30_000 });
+  await exec(resolveSystemPowerShellPath(), ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; Import-Module ($PSHOME + '\\Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1'); $s=Get-AuthenticodeSignature -LiteralPath $env:HOI4_E2E_INSTALLER; if (-not $s.SignerCertificate -or $s.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false) -ne 'ChaosX' -or $s.Status -eq 'HashMismatch') { throw 'Published installer signature mismatch' }"], { env: { ...process.env, HOI4_E2E_INSTALLER: installer }, windowsHide: true, timeout: 30_000 });
   await assertWindowsInstallerRegistryIsClean(); ownsRegistry = true;
   await exec(installer, ["/S", `/D=${installRoot}`], { windowsHide: true, timeout: 120_000 });
   executable = join(installRoot, "hoi4-mod-setup.exe");

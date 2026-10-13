@@ -35,7 +35,7 @@ class FixtureExtractionTests(unittest.TestCase):
 
     @patch.dict("os.environ", {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"})
     def test_invalid_archive_inventory_is_rejected_before_extraction(self):
-        for name in ["mod/../descriptor.mod", "mod/./descriptor.mod", "mod//descriptor.mod", "C:/descriptor.mod", "mod/NUL.txt", "mod/a:stream", "mod/descriptor.mod.", "mod/.git/config", "mod\\descriptor.mod"]:
+        for name in ["mod/../descriptor.mod", "mod/./descriptor.mod", "mod//descriptor.mod", "C:/descriptor.mod", "mod/NUL.txt", "mod/a:stream", "mod/descriptor.mod.", "mod/.git/config", "mod\\descriptor.mod", "mod/" + "a" * 256, "mod/" + ("a" * 100 + "/") * 11 + "file", "mod/" + "a/" * 40 + "file"]:
             with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 archive, tree, _ = self.fixture(root, [(name, b'x')])
@@ -64,6 +64,26 @@ class FixtureExtractionTests(unittest.TestCase):
             archive, tree, _ = self.fixture(root, [("mod/descriptor.mod", b"changed")])
             with self.assertRaisesRegex(RuntimeError, "differs from pinned Git blob"):
                 extract(archive, root / "out", tree)
+            self.assertFalse((root / "out").exists())
+
+    @patch.dict("os.environ", {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"})
+    def test_size_count_and_ratio_limits_precede_extraction(self):
+        for limit, value in [("MAX_ENTRIES", 0), ("MAX_FILE_BYTES", 1), ("MAX_TOTAL_BYTES", 1), ("MAX_ARCHIVE_BYTES", 1), ("MAX_RATIO", 0)]:
+            with self.subTest(limit=limit), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                archive, tree, _ = self.fixture(root, [("mod/descriptor.mod", b'name="Example"\n')])
+                with patch("scripts.extract_mod_fixture." + limit, value), self.assertRaises(RuntimeError):
+                    extract(archive, root / "out", tree)
+                self.assertFalse((root / "out").exists())
+
+    @patch.dict("os.environ", {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"})
+    def test_directory_entries_cannot_bypass_inventory_count(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive, tree, _ = self.fixture(root, [("mod/", b""), ("mod/descriptor.mod", b'name="Example"\n')])
+            with patch("scripts.extract_mod_fixture.MAX_ENTRIES", 1), self.assertRaisesRegex(RuntimeError, "entry count"):
+                extract(archive, root / "out", tree)
+            self.assertFalse((root / "out").exists())
 
     @patch.dict("os.environ", {"RUNNER_ENVIRONMENT": "self-hosted"})
     def test_never_extracts_on_local_or_self_hosted_runner(self):

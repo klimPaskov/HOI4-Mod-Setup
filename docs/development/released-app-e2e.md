@@ -30,8 +30,9 @@ boundaries separately in CI.
 - Download Kaiserreich from the official `Kaiserreich/Kaiserreich-HOI4`
   repository at immutable pinned release commits. Validate the complete archive
   inventory before extraction, reject links/traversal/collisions/special files,
-  bound expanded size, and compare every file with the pinned Git tree's blob
-  evidence. Independently pin descriptor and README SHA-256 values. These are
+  bound entry count, compressed/expanded size, compression ratio, depth and path
+  lengths, remove incomplete extraction, and compare every file with the pinned
+  Git tree's blob evidence. Independently pin descriptor and README SHA-256 values. These are
   mod inputs, not the Agentic workflow source; the application continues to
   selectively fetch the latter from its public manifest.
 - Upload only explicitly named screenshots and a bounded result report. Never
@@ -69,3 +70,7 @@ repository-owned Windows installer helpers. Keep artifact uploads allowlisted,
 permissions read-only, action references pinned, and source/mod identities in
 the report. A failed scenario must preserve an honest failure result rather than
 silently skipping a screen or replacing the production IPC result.
+
+When invoking native Windows PowerShell from a PowerShell 7 runner, import the
+signature module from that child's `$PSHOME`; inherited module search paths can
+otherwise select an incompatible PowerShell 7 assembly.
