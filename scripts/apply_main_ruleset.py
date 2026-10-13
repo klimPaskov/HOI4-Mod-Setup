@@ -5,6 +5,7 @@ Without --apply this prints a reviewable ruleset and performs read-only checks.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import re
 import subprocess
@@ -39,6 +40,29 @@ def require_successful_checks(desired: dict, runs: list[dict]) -> None:
         raise SystemExit(f"Ruleset application is blocked by missing successful CI evidence: {', '.join(sorted(missing))}")
 
 
+def prepare_ruleset_payload(current: dict, desired: dict) -> dict:
+    old_rules = {rule["type"]: rule for rule in current["rules"]}
+    new_rules = {rule["type"]: rule for rule in desired["rules"]}
+    for rule_type, desired_rule in new_rules.items():
+        if rule_type not in old_rules:
+            raise SystemExit("Ruleset application may only change existing required CI checks")
+        old_parameters = old_rules[rule_type].get("parameters", {})
+        for key, value in desired_rule.get("parameters", {}).items():
+            if rule_type == "required_status_checks" and key == "required_status_checks":
+                old_checks = {(check["context"], check.get("integration_id")) for check in old_parameters[key]}
+                new_checks = {(check["context"], check.get("integration_id")) for check in value}
+                if not old_checks.issubset(new_checks):
+                    raise SystemExit("Checked-in ruleset would remove or replace an existing required check")
+            elif old_parameters.get(key) != value:
+                raise SystemExit("Declared ruleset protection differs from live policy; review the drift")
+    payload = {key: copy.deepcopy(current[key]) for key in ("name", "target", "enforcement", "conditions", "bypass_actors", "rules") if key in current}
+    # Preserve every server-added rule/parameter, including stronger review
+    # settings. The sole mutation is the reviewed required-check list.
+    status_rule = next(rule for rule in payload["rules"] if rule["type"] == "required_status_checks")
+    status_rule["parameters"]["required_status_checks"] = copy.deepcopy(new_rules["required_status_checks"]["parameters"]["required_status_checks"])
+    return payload
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default="klimPaskov/HOI4-Mod-Setup")
@@ -64,17 +88,9 @@ def main() -> None:
     if len(candidates) != 1:
         raise SystemExit("Expected exactly one existing main protection ruleset; refusing to replace unrelated policy")
     current = gh_json(f"repos/{args.repo}/rulesets/{candidates[0]['id']}")
-    if not required_contexts(current).issubset(required_contexts(desired)):
-        raise SystemExit("Checked-in ruleset would remove an existing required check")
     if current.get("conditions") != desired.get("conditions") or current.get("enforcement") != desired.get("enforcement"):
         raise SystemExit("Ruleset target or enforcement drift requires review")
-    # Preserve server policy while adding reviewed required checks only.
-    old_rules = {rule["type"]: rule for rule in current["rules"]}
-    new_rules = {rule["type"]: rule for rule in desired["rules"]}
-    if {key: value for key, value in old_rules.items() if key != "required_status_checks"} != {key: value for key, value in new_rules.items() if key != "required_status_checks"}:
-        raise SystemExit("Ruleset application may only change required CI checks")
-    payload = {key: current[key] for key in ("name", "target", "enforcement", "conditions", "bypass_actors") if key in current}
-    payload["rules"] = desired["rules"]
+    payload = prepare_ruleset_payload(current, desired)
     print(json.dumps(payload, indent=2))
     if args.apply:
         # Rebind immediately before the write to avoid using stale main evidence.

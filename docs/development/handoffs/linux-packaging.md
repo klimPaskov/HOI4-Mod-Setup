@@ -18,7 +18,7 @@
 
 - `pnpm test:release-assets`: 32 passing tests, including Linux architecture/format and Debian lifecycle failure regressions, complete updater routes, dependency-inventory unions, missing/foreign/changed release artifacts, and existing Windows registry protections.
 - `python scripts/check_workflow_security.py`: passed, including mandatory Linux native jobs and protected final updater verification.
-- `python -m unittest scripts/test_linux_release_gates.py`: two passing tests covering absent native gates and failed/skipped/cancelled/foreign or stale successful CI evidence.
+- `python -m unittest scripts/test_linux_release_gates.py`: three passing tests covering absent native gates, failed/skipped/cancelled/foreign or stale successful CI evidence, and preservation of server-added review protection.
 - `python scripts/validate_repository.py`: ten repository integrity groups passed.
 - Node syntax and Git whitespace checks passed.
 
