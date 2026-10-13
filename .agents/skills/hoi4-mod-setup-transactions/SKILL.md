@@ -96,6 +96,12 @@ operations are not accepted; mode belongs to the reviewed file operation.
 
 ## Apply rules
 
+Conflict previews are distinct from merge eligibility. `.mod` descriptors may
+show redacted UTF-8 text while retaining conservative merge choices; invalid
+UTF-8, binary bytes, links, and directories must not become mergeable through
+that preview exception. The UI uses hash presence to distinguish existing
+non-text content from absent content.
+
 Transaction file operations use the native `RootedDir` facade in
 `src-tauri/src/safe_fs.rs`. It opens path components without following links,
 retains ancestor handles, and provides atomic writes, copy, append, delete,

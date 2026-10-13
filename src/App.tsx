@@ -1787,7 +1787,7 @@ export default function App() {
         </div>}
       </header>
       <div className="workspace">
-        <PhaseRail screen={state.screen} />
+        <PhaseRail screen={state.screen} maintenanceMode={state.maintenanceMode} />
         <main className="main-viewport" aria-labelledby="screen-title" aria-describedby="screen-supporting" onKeyDown={closeDisclosureOnEscape}>
           <div className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{copy.title}</div>
           <ScreenFrame screen={state.screen} copy={copy} state={state} canAdvance={!semanticAnalysisPending && !planPreparationPending && !installationPending && !recoveryPending && !chatSourcesPending && canAdvanceFromScreen(state, { scanComplete, scanError, scanPartial, findings })} pending={semanticAnalysisPending || recoveryPending || chatSourcesPending} chatSourcesPending={chatSourcesPending} semanticProgressStage={semanticProgressStage} semanticProgressStartedAt={semanticProgressStartedAt} semanticProgressNow={semanticProgressNow} preparingPlan={planPreparationPending} planPreparationStartedAt={planPreparationStartedAt} planPreparationNow={planPreparationNow} headingRef={headingRef} onBack={goBack} onNext={goNext} onMaintenance={openMaintenance} onPrepareConflicts={prepareSetupPlan}>
@@ -1799,8 +1799,8 @@ export default function App() {
   );
 }
 
-function PhaseRail({ screen }: { screen: ScreenId }) {
-  const maintenance = screen === "update" || screen === "conflict" || screen === "recovery" || screen === "chat-sources";
+function PhaseRail({ screen, maintenanceMode }: { screen: ScreenId; maintenanceMode?: WizardState["maintenanceMode"] }) {
+  const maintenance = screen === "update" || screen === "recovery" || screen === "chat-sources" || (screen === "conflict" && maintenanceMode !== undefined);
   const currentMaintenance = maintenance ? screen === "update" || screen === "chat-sources" ? 1 : screen === "conflict" ? 2 : 3 : -1;
   const current = phaseIndex(screen);
   const phases = maintenance ? MAINTENANCE_PHASES : PHASES;
@@ -1833,7 +1833,7 @@ function ScreenFrame({ screen, copy, state, canAdvance, pending, chatSourcesPend
   const installDone = screen === "install" && state.installProgress >= 100;
   const unresolvedConflicts = state.plan?.conflicts.some((conflict) => !conflict.selected) === true;
   const recoveryLabel = state.recoveryChoice === "rollback" ? "Undo changes" : state.recoveryChoice === "discard" ? "Discard prepared files" : "Continue setup";
-  const primaryLabel = pending && screen === "description" ? "Preparing details…" : pending && screen === "findings" && !state.codexAnalysis ? `Reviewing with ${aiProviderLabel(state.aiProvider, state.aiProfiles)}…` : pending && screen === "recovery" ? state.recoveryChoice === "rollback" ? "Undoing changes…" : state.recoveryChoice === "discard" ? "Discarding files…" : "Continuing setup…" : screen === "welcome" ? "Continue" : screen === "findings" && !state.codexAnalysis ? `Review with ${aiProviderLabel(state.aiProvider, state.aiProfiles)}` : screen === "dry-run" ? "Start installation" : screen === "install" ? (installDone ? "Continue" : "") : screen === "ready" ? state.finished ? "" : "Finish" : screen === "recovery" ? recoveryLabel : screen === "conflict" ? "Apply" : screen === "update" ? (state.plan ? "Apply reviewed plan" : "") : "Next";
+  const primaryLabel = pending && screen === "description" ? "Preparing details…" : pending && screen === "findings" && !state.codexAnalysis ? `Reviewing with ${aiProviderLabel(state.aiProvider, state.aiProfiles)}…` : pending && screen === "recovery" ? state.recoveryChoice === "rollback" ? "Undoing changes…" : state.recoveryChoice === "discard" ? "Discarding files…" : "Continuing setup…" : screen === "welcome" ? "Continue" : screen === "findings" && !state.codexAnalysis ? `Review with ${aiProviderLabel(state.aiProvider, state.aiProfiles)}` : screen === "dry-run" ? "Start installation" : screen === "install" ? (installDone ? "Continue" : "") : screen === "ready" ? state.finished ? "" : "Finish" : screen === "recovery" ? recoveryLabel : screen === "conflict" ? state.maintenanceMode ? "Apply" : "Review changes" : screen === "update" ? (state.plan ? "Apply reviewed plan" : "") : "Next";
   const displayedPrimaryLabel = screen === "chat-sources" ? (chatSourcesPending ? "Packaging..." : "Package sources") : primaryLabel;
   const showBack = !["welcome", "install"].includes(screen) && !(screen === "ready" && state.finished);
   return <>
@@ -3912,10 +3912,13 @@ export function ChatSources({ state, update, onPickFolder }: { state: WizardStat
   </div>;
 }
 
-function Conflict({ state, update, onChoice }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onChoice: (choice: ConflictChoice) => void | Promise<void> }) {
+export function Conflict({ state, update, onChoice }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onChoice: (choice: ConflictChoice) => void | Promise<void> }) {
   const [choosing, setChoosing] = useState(false);
-  const conflict = state.plan?.conflicts.find((candidate) => !candidate.selected) ?? state.plan?.conflicts[0];
-  const choices = (conflict?.options ?? ["keep", "replace", "merge", "rename", "skip"]).filter((choice): choice is ConflictChoice => ["keep", "replace", "merge", "rename", "skip"].includes(choice));
+  const conflicts = state.plan?.conflicts ?? [];
+  const unresolvedConflict = conflicts.find((candidate) => !candidate.selected);
+  const conflict = unresolvedConflict ?? conflicts[0];
+  const allConflictsResolved = conflicts.length > 0 && !unresolvedConflict;
+  const choices = (conflict?.options ?? []).filter((choice): choice is ConflictChoice => ["keep", "replace", "merge", "rename", "skip"].includes(choice));
   const operation = conflict && state.plan?.operations.find((candidate) => candidate.destination === conflict.path);
   const [preview, setPreview] = useState<ConflictPreview>();
   const [previewMessage, setPreviewMessage] = useState<string>();
@@ -3946,11 +3949,21 @@ function Conflict({ state, update, onChoice }: { state: WizardState; update: (pa
     });
     return () => { active = false; };
   }, [planId, conflictPath]);
-  const content = (value: string | null | undefined, fallback: string) => value ?? fallback;
-  const baseText = content(preview?.base, preview ? "No original content is available." : "Loading preview…");
-  const localText = content(preview?.local, preview ? "No current content is present." : "Loading preview…");
-  const incomingText = content(preview?.incoming, preview ? "No new text preview is available." : "Loading preview…");
-  return <div className="stack"><div className="diff-grid"><DiffPane title="Original" badge={preview?.base ? "Previously installed" : "Reference"} text={`${conflict?.path ?? "No conflict selected"}\n\n${baseText}`} tone="neutral" /><DiffPane title="Current" badge={operation?.local_state === "modified" ? "Your changes" : preview?.local != null || operation?.local_sha256 ? "Current file" : "Not present"} text={`${conflict?.path ?? "No conflict selected"}\n\n${localText}`} tone="minus" /><DiffPane title="New" badge={preview?.kind ? "Available update" : "Incoming file"} text={`${conflict?.path ?? "No conflict selected"}\n\n${incomingText}`} tone="plus" /></div>{previewMessage && <p className="muted" role="status">{previewMessage}</p>}{choosing && <p className="muted" role="status">Saving your choice and checking the result…</p>}<section className="panel conflict-actions"><p className="muted">{conflict ? `Choose what to do with ${conflict.path}. Any merged result is checked before it is saved.` : "All conflicts are resolved."}</p><div className="button-row">{choices.map((choice) => <button type="button" key={choice} className={`button ${state.conflictChoice === choice ? "primary" : "secondary"}`} aria-pressed={state.conflictChoice === choice} disabled={choosing} onClick={() => { update({ conflictChoice: choice }); setChoosing(true); void Promise.resolve(onChoice(choice)).finally(() => setChoosing(false)); }}>{choice === "keep" ? "Keep current" : choice === "replace" ? "Use new" : choice === "merge" ? "Merge" : choice === "rename" ? "Keep both" : "Skip"}</button>)}</div></section></div>;
+  const content = (value: string | null | undefined, hash: string | null | undefined, fallback: string) => {
+    if (value !== null && value !== undefined) return value;
+    if (hash) return `Binary/non-text content preview unavailable.\nSHA-256: ${hash}`;
+    return fallback;
+  };
+  const baseText = content(preview?.base, preview?.base_sha256, preview ? "No original content is available." : "Loading preview…");
+  const localText = content(preview?.local, preview?.local_sha256 ?? operation?.local_sha256, preview ? "No current content is present." : "Loading preview…");
+  const incomingText = content(preview?.incoming, preview?.incoming_sha256, preview ? "No new text preview is available." : "Loading preview…");
+  const actionMessage = allConflictsResolved
+    ? "All conflicts are resolved. You can review or change an earlier choice below."
+    : conflict
+      ? `Choose what to do with ${conflict.path}. Any merged result is checked before it is saved.`
+      : "All conflicts are resolved.";
+  const selectedChoice = conflict?.selected ?? state.conflictChoice;
+  return <div className="stack"><div className="diff-grid"><DiffPane title="Original" badge={preview?.base ? "Previously installed" : "Reference"} text={`${conflict?.path ?? "No conflict selected"}\n\n${baseText}`} tone="neutral" /><DiffPane title="Current" badge={operation?.local_state === "modified" ? "Your changes" : preview?.local != null || operation?.local_sha256 ? "Current file" : "Not present"} text={`${conflict?.path ?? "No conflict selected"}\n\n${localText}`} tone="minus" /><DiffPane title="New" badge={preview?.kind ? "Available update" : "Incoming file"} text={`${conflict?.path ?? "No conflict selected"}\n\n${incomingText}`} tone="plus" /></div>{previewMessage && <p className="muted" role="status">{previewMessage}</p>}{choosing && <p className="muted" role="status">Saving your choice and checking the result…</p>}<section className="panel conflict-actions"><p className="muted" role={allConflictsResolved ? "status" : undefined}>{actionMessage}</p><div className="button-row">{choices.map((choice) => <button type="button" key={choice} className={`button ${selectedChoice === choice ? "primary" : "secondary"}`} aria-pressed={selectedChoice === choice} disabled={choosing} onClick={() => { update({ conflictChoice: choice }); setChoosing(true); void Promise.resolve(onChoice(choice)).finally(() => setChoosing(false)); }}>{choice === "keep" ? "Keep current" : choice === "replace" ? "Use new" : choice === "merge" ? "Merge" : choice === "rename" ? "Keep both" : "Skip"}</button>)}</div></section></div>;
 }
 
 export function recoveryProgress(journal: TransactionJournal | null | undefined) {

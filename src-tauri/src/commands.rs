@@ -4183,6 +4183,19 @@ fn preview_text(kind: FileKind, bytes: Option<&[u8]>) -> (Option<String>, bool, 
     )
 }
 
+fn conflict_preview_kind(path: &str, kind: FileKind) -> FileKind {
+    // Descriptor text can be reviewed without enabling automatic text merging.
+    if matches!(kind, FileKind::Binary)
+        && Path::new(path)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("mod"))
+    {
+        FileKind::Text
+    } else {
+        kind
+    }
+}
+
 #[tauri::command(async)]
 fn preview_installation_conflict(plan_id: String, path: String) -> Result<ConflictPreview, String> {
     let id = Uuid::parse_str(&plan_id).map_err(|_| "invalid installation plan ID".to_string())?;
@@ -4210,6 +4223,7 @@ fn preview_installation_conflict(plan_id: String, path: String) -> Result<Confli
     let kind = context
         .map(|context| context.kind)
         .unwrap_or_else(|| path_file_kind(&operation.destination));
+    let kind = conflict_preview_kind(&operation.destination, kind);
     let base = context.map(|context| context.base.clone());
     let mut local = context.map(|context| context.local.clone());
     let incoming = context.map(|context| context.incoming.clone()).or_else(|| {
@@ -11198,6 +11212,33 @@ mod tests {
     use tempfile::tempdir;
 
     static COMMAND_TEST_STATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    #[test]
+    fn descriptor_conflicts_preview_text_without_changing_merge_classification() {
+        for path in ["descriptor.mod", "launcher/MyMod.MOD"] {
+            let merge_kind = path_file_kind(path);
+            assert!(matches!(merge_kind, FileKind::Binary));
+            let preview_kind = conflict_preview_kind(path, merge_kind);
+            assert!(matches!(preview_kind, FileKind::Text));
+            let descriptor = b"name=\"Example Mod\"\nreplace_path=\"common/ideas\"\n";
+            assert_eq!(
+                preview_text(preview_kind, Some(descriptor)).0.as_deref(),
+                Some(std::str::from_utf8(descriptor).unwrap())
+            );
+            assert_eq!(preview_text(preview_kind, Some(&[0xff])).0, None);
+            assert_eq!(preview_text(preview_kind, None).0, None);
+        }
+        for kind in [FileKind::Symlink, FileKind::Directory] {
+            assert!(!matches!(
+                conflict_preview_kind("descriptor.mod", kind),
+                FileKind::Text
+            ));
+        }
+        assert!(matches!(
+            conflict_preview_kind("thumbnail.png", FileKind::Binary),
+            FileKind::Binary
+        ));
+    }
 
     pub(super) fn test_state_guard() -> MutexGuard<'static, ()> {
         COMMAND_TEST_STATE_LOCK

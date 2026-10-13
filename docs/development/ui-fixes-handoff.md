@@ -16,6 +16,10 @@ manifest files, and provider adapters were not changed by this handoff.
 
 No CSS changes were needed. No browser test source changes were needed.
 
+This resumed pass additionally changes the conflict comparison fallback in
+`src/App.tsx` and adds one focused `Conflict` component regression in
+`src/App.test.tsx`.
+
 ## Before and after
 
 ### Existing-project review
@@ -59,6 +63,29 @@ Claude choices are explicitly labeled as built-in rather than live. Advanced
 contains a bounded Claude model-ID input; manually entered IDs clear stale
 catalog state and do not block the authenticated Claude route.
 
+### Conflict comparison fallback
+
+Before: binary or non-text conflict sides with a verified hash rendered the
+same “No original/current/new content” copy as genuinely missing content. A
+real descriptor could therefore look absent in the comparison panes.
+
+After: hash-backed binary/non-text sides say that their content preview is
+unavailable and show the SHA-256. A side with no content and no hash keeps its
+missing-content message. Text previews continue to render unchanged.
+
+### Conflict navigation and completion status
+
+Before: every conflict screen used the MANAGE rail and `Apply` footer label,
+even for a fresh import where the next action only returns to Review changes.
+An all-resolved conflict list also lacked a concise completion status.
+
+After: fresh-import conflicts remain on the setup rail and use `Review
+changes`; maintenance conflicts retain MANAGE and `Apply`. Once every choice
+is selected, the comparison keeps earlier choices available while announcing
+that all conflicts are resolved. Choice highlighting follows the active
+conflict's persisted selection, not the last transient choice from another
+file.
+
 ## Evidence
 
 Fresh sanitized captures from the local development server:
@@ -78,11 +105,14 @@ existing heading-focus/live-region coverage.
 ## Tests run
 
 - `pnpm typecheck`
-- `pnpm test` (161 passed)
+- `pnpm test` (174 passed)
 - `pnpm lint`
 - `pnpm test:a11y`
 - `pnpm build`
 - `pnpm exec playwright test tests/browser/wizard.spec.ts --grep "image-generation setup|live testing follows workflows|Windows Clausewitz|Linux Clausewitz|review captures" --reporter=line` (5 passed)
+- `pnpm exec vitest run src/App.test.tsx -t "binary previews|conflict"` (2 passed)
+- `pnpm exec vitest run src/App.test.tsx` (144 passed)
+- `pnpm exec vitest run src/App.test.tsx -t "all-resolved conflict|imported conflicts|binary previews|conflict"` (4 passed)
 
 ## Skipped or parent-owned checks
 
@@ -106,3 +136,8 @@ existing heading-focus/live-region coverage.
 - The public documentation fixture still omits the Live Tools optional row;
   updating that fixture or its screenshot is intentionally left to the parent
   if public screenshot evidence is required.
+- The `.mod` descriptor text classification is a Rust-side fix owned by the
+  parent; this UI patch covers the remaining binary/non-text fallback state.
+- Importing an existing project still uses the maintenance `MANAGE` rail once
+  conflict resolution opens; changing that navigation model would be a wider
+  wizard refactor and was intentionally left out of this bounded fix.

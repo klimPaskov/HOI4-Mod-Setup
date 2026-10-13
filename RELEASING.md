@@ -60,7 +60,7 @@ fresh all-component installation/import/repair/removal/rollback and the exact
 public 0.3.5 source layout upgrade, then scans a synthetic 50,000-file mod.
 The application profiles, projects, and caches are temporary. Provider replies
 and external installers are fakes; no real account, paid service, MCP tool call,
-or shared desktop is used. `pnpm docs:screenshots` refreshes the 15 public
+or shared desktop is used. `pnpm docs:screenshots` refreshes the 17 public
 captures through the same headless browser gate. Review the captures before
 commit; the Pages workflow consumes them directly.
 

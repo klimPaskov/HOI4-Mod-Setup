@@ -108,6 +108,17 @@ Conflict review is the exception. It may show a three-way comparison and more co
   immediately with `aria-busy="true"`, blocks duplicate clicks, and restores
   the review action after success or failure. The read-only scan and draft stay
   intact when semantic review fails.
+- Fresh-import conflict review remains in the seven-phase setup rail at
+  Install and its primary action is `Review changes`, because resolving a
+  conflict returns to the dry-run review. Maintenance conflicts use the MANAGE
+  rail and `Apply` only when a maintenance mode is present.
+- In conflict panes, hash-backed binary or non-text content says that preview
+  is unavailable and shows its SHA-256; only a side with no content and no
+  hash uses the missing-content message. When every conflict is resolved,
+  announce that state but keep earlier choice controls available for review.
+- Conflict choice styling follows the active conflict's persisted `selected`
+  value; the transient global choice is only a pending fallback for an
+  unresolved active conflict.
 - After Description is submitted, show one visible progress bar with
   user-facing stages tied to actual request boundaries: preparing the
   description, generating project details, and checking the generated details.

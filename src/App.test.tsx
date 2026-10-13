@@ -1,14 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { analysisBrief, ChatSources, CodingEnvironments, Components, DryRun, Findings, Git, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
+import App, { analysisBrief, ChatSources, CodingEnvironments, Components, Conflict, DryRun, Findings, Git, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import type { AiAccountStatus, AiProviderId, ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), approveScanEvidence: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), scanProject: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), approveScanEvidence: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewInstallationConflict: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), scanProject: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
 });
 
 afterEach(() => {
@@ -38,6 +38,7 @@ beforeEach(() => {
   vi.mocked(previewDescriptorsResult).mockResolvedValue({ value: null });
   vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: null });
   vi.mocked(runCodexAnalysisResult).mockResolvedValue({ value: null });
+  vi.mocked(previewInstallationConflict).mockResolvedValue(null);
   vi.mocked(approveScanEvidence).mockResolvedValue(true);
   vi.mocked(scanProject).mockResolvedValue(null);
   vi.mocked(startCodexLogin).mockResolvedValue(null);
@@ -1606,6 +1607,77 @@ describe("HOI4 Mod Setup wizard", () => {
 
     await act(async () => finishAnalysis?.({ value: null, error: "temporary provider failure" }));
     expect(await screen.findByRole("button", { name: "Review with Codex" })).toBeEnabled();
+  });
+
+  it("distinguishes unavailable binary previews from missing conflict content", async () => {
+    vi.mocked(previewInstallationConflict).mockResolvedValue({
+      path: "descriptor.mod",
+      kind: "binary",
+      base: null,
+      local: null,
+      incoming: null,
+      base_sha256: null,
+      local_sha256: "local-hash",
+      incoming_sha256: "incoming-hash",
+      truncated: false,
+      redacted: false,
+    });
+    const state = {
+      ...initialState,
+      plan: {
+        plan_id: "conflict-plan",
+        conflicts: [{ id: "descriptor", path: "descriptor.mod", options: ["keep", "replace"], selected: null }],
+        operations: [{ id: "descriptor", destination: "descriptor.mod", action: "replace", local_state: "modified", local_sha256: "local-hash" }],
+      },
+    } as unknown as WizardState;
+
+    render(<Conflict state={state} update={vi.fn()} onChoice={vi.fn()} />);
+
+    expect(await screen.findByText(/Binary\/non-text content preview unavailable/)).toBeInTheDocument();
+    expect(screen.getByText(/SHA-256: local-hash/)).toBeInTheDocument();
+    expect(screen.getByText(/SHA-256: incoming-hash/)).toBeInTheDocument();
+    expect(screen.getByText(/No original content is available/)).toBeInTheDocument();
+    expect(screen.queryByText(/No current content is present/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No new text preview is available/)).not.toBeInTheDocument();
+  });
+
+  it("keeps imported conflicts in the setup rail and labels the non-maintenance action", () => {
+    const plan = {
+      plan_id: "conflict-plan",
+      conflicts: [{ id: "descriptor", path: "descriptor.mod", options: ["keep", "replace"], selected: "keep" }],
+      operations: [],
+    };
+    window.__HOI4_DOCUMENTATION_STATE__ = { ...initialState, screen: "conflict", plan: plan as never };
+    render(<App />);
+
+    expect(screen.getByRole("navigation", { name: "Setup phases" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Maintenance phases" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review changes" })).toBeEnabled();
+
+    cleanup();
+    window.__HOI4_DOCUMENTATION_STATE__ = { ...initialState, screen: "conflict", maintenanceMode: "repair", plan: plan as never };
+    render(<App />);
+
+    expect(screen.getByRole("navigation", { name: "Maintenance phases" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply" })).toBeEnabled();
+  });
+
+  it("shows a concise all-resolved conflict status while retaining prior choices", () => {
+    const state = {
+      ...initialState,
+      conflictChoice: "replace",
+      plan: {
+        plan_id: "resolved-conflict-plan",
+        conflicts: [{ id: "descriptor", path: "descriptor.mod", options: ["keep", "replace"], selected: "keep" }],
+        operations: [],
+      },
+    } as unknown as WizardState;
+
+    render(<Conflict state={state} update={vi.fn()} onChoice={vi.fn()} />);
+
+    expect(screen.getByText(/All conflicts are resolved\. You can review or change an earlier choice below\./)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Keep current" })).toHaveClass("primary");
+    expect(screen.getByRole("button", { name: "Use new" })).toHaveClass("secondary");
   });
 
   it("shows correlated scan stage, path, counters, and cancellation", () => {

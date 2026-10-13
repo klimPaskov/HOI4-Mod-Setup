@@ -62,6 +62,8 @@ Grok follows the official `grok login` and `grok logout` flow. The current
 worker uses an account-only policy, a single read-only analysis turn, and a
 private Grok home. The official references are the [CLI reference](https://docs.x.ai/build/cli/reference)
 and [enterprise authentication](https://docs.x.ai/build/enterprise).
+The app currently exposes the browser-login route only; it does not expose a
+Grok device-code fallback. Codex's separate device-code route is unchanged.
 
 The account-CLI uses the official Grok Build fallback `grok-build`, while the
 hosted API profile is `grok-4.7`. These values must not be conflated. The
