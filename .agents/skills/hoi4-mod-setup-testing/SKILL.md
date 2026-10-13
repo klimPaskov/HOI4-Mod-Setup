@@ -216,6 +216,19 @@ session, cancellation, credential-health, or analysis assertions.
 
 ## Integration tests
 
+For a published Windows installer, use the remote-only `Released app E2E`
+workflow and `pnpm test:released-e2e <scenario>`. The immutable artifact and mod
+pins live in `tests/remote/released-app-pins.json`; read them instead of copying
+a temporary release version into a skill. `scripts/run_released_e2e.mjs` drives
+the unmodified WebView2 UI through Playwright CDP with real Rust IPC and real
+transactions. Only the supported loopback planning endpoint is a deterministic
+fixture; do not equate it with hosted authentication or model-quality evidence.
+The new, Kaiserreich and interrupted-import scenarios verify original-file
+hashes, persisted readiness, repair and rollback. Read
+`docs/development/released-app-e2e.md` for the complete boundary. The runtime
+guard refuses local/self-hosted execution. Keep all new harness checks under
+`pnpm test:released-harness` and run them in CI when the desktop must remain free.
+
 Use fake source clients for the rate-limit-only GitHub REST 403/429 fallback:
 accept only the fixed repository's bounded `info/refs?service=git-upload-pack`
 advertisement, bind `HEAD`/default branch and peeled release tags, and reject

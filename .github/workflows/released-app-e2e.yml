@@ -1,0 +1,57 @@
+name: Released app E2E
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/released-app-e2e.yml"
+      - "scripts/run_released_e2e.mjs"
+      - "scripts/released_e2e_support.mjs"
+      - "scripts/extract_mod_fixture.py"
+      - "tests/remote/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: released-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  published-wizard:
+    name: Published v0.6.0 (${{ matrix.scenario }})
+    runs-on: windows-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [new, kaiserreich, recovery]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Install test dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Exercise the immutable published installer through its real UI
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          E2E_SCENARIO: ${{ matrix.scenario }}
+        run: pnpm test:released-e2e $env:E2E_SCENARIO
+      - name: Retain only screenshots and sanitized result metadata
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: released-v0.6.0-${{ matrix.scenario }}
+          path: |
+            test-results/released-${{ matrix.scenario }}/*.png
+            test-results/released-${{ matrix.scenario }}/result.json
+          if-no-files-found: warn
+          retention-days: 14

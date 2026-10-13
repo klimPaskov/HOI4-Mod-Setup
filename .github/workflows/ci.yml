@@ -67,6 +67,9 @@ jobs:
       - name: Test release updater assets
         if: steps.detect.outputs.present == 'true'
         run: pnpm test:release-assets
+      - name: Test remote acceptance harness boundaries
+        if: steps.detect.outputs.present == 'true'
+        run: pnpm test:released-harness
       - name: Build frontend
         if: steps.detect.outputs.present == 'true'
         run: pnpm build

@@ -1,0 +1,24 @@
+{
+  "app": {
+    "version": "0.6.0",
+    "commit": "2514183f42e675f98143b3079fb702731cb17f6c",
+    "url": "https://github.com/klimPaskov/HOI4-Mod-Setup/releases/download/v0.6.0/HOI4-Mod-Setup-windows-x64-setup.exe",
+    "sha256": "35224c19dde75b2de555919d669e15a246997973e76e91c18f090ddb3a3028af",
+    "size": 6970344
+  },
+  "kaiserreich": {
+    "repository": "Kaiserreich/Kaiserreich-HOI4",
+    "versions": {
+      "1.6.4": {
+        "commit": "41f71dda33c363c57dd5cbc4ac80eeb95320e0d4",
+        "descriptor_sha256": "12e6008d4f049815baf4978903cd48e94f1c2a8de6fbe49f91aea677e76e5fc1",
+        "readme_sha256": "bccc08831aa076590ea8692dbf4ee4aa29de76e3626e5ccf4f83b1e779eeec1a"
+      },
+      "1.7": {
+        "commit": "0e90e109cf03559bcdb108d9351cc39c95c4ecfe",
+        "descriptor_sha256": "0a554bc36541143363e4a6ba95b39c74d74e27535e243b365be08859e880c6d1",
+        "readme_sha256": "4233181193c54f7620e8b907d405bbd40271df6d603af163e3d01ffc24f0ecea"
+      }
+    }
+  }
+}
