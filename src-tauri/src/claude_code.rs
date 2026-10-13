@@ -26,8 +26,8 @@ use std::sync::{Mutex, OnceLock};
 pub const PROVIDER_ID: &str = "claude_account";
 pub const ENGINE: &str = "claude_code_cli";
 pub const AUTH_MODE: &str = "claude_account";
-/// Official Claude Haiku 4.5 model ID from Anthropic's model documentation.
-pub const DEFAULT_MODEL: &str = "claude-haiku-4-5-20251001";
+/// Official model ID; catalog and effort evidence is recorded in the provider guide.
+pub const DEFAULT_MODEL: &str = "claude-haiku-5-5";
 /// Official Claude Code setup page used for the install guidance link.
 pub const SETUP_URL: &str = "https://code.claude.com/docs/en/setup";
 /// Reviewed signing identity of the official Claude Code binary.
@@ -103,18 +103,21 @@ pub struct ClaudeSignInSummary {
 /// The checked-in model choices. Claude Code has no model-catalog command,
 /// so these are labelled as built-in choices rather than a live result.
 pub fn builtin_models() -> Vec<AiModelOption> {
-    vec![AiModelOption {
-        id: DEFAULT_MODEL.into(),
-        display_name: "Claude Haiku 4.5".into(),
-        default_reasoning_effort: "high".into(),
-        supported_reasoning_efforts: vec!["high".into()],
-    }]
+    serde_json::from_str(include_str!("../../src/claude-models.json"))
+        .expect("the checked-in Claude model catalog must be valid")
 }
 
-/// Haiku 4.5 does not accept the effort parameter, so the adapter forwards an
-/// effort level only for a model that is documented to support it.
+/// Unknown models remain selectable, without assuming effort capabilities.
 fn model_supports_effort(model: &str) -> bool {
-    !model.contains("haiku")
+    supported_efforts(model).len() > 1
+}
+
+pub fn supported_efforts(model: &str) -> Vec<String> {
+    builtin_models()
+        .into_iter()
+        .find(|option| option.id == model)
+        .map(|option| option.supported_reasoning_efforts)
+        .unwrap_or_else(|| vec!["high".into()])
 }
 
 pub fn validate_model(model: &str) -> Result<(), AppError> {
@@ -881,8 +884,8 @@ mod tests {
         assert!(parsed.get("properties").is_some());
         // Claude Code rejects the draft 2020-12 declaration outright.
         assert!(parsed.get("$schema").is_none());
-        // Haiku 4.5 does not support effort, so it must not be forwarded.
-        assert!(!args.iter().any(|arg| arg == "--effort"));
+        let effort = args.iter().position(|arg| arg == "--effort").unwrap();
+        assert_eq!(args[effort + 1], "high");
         assert!(!args
             .iter()
             .any(|arg| arg.contains("C:\\") || arg.starts_with('/')));
@@ -893,6 +896,10 @@ mod tests {
         let args = analysis_arguments("claude-sonnet-5-5", "max").unwrap();
         let effort = args.iter().position(|arg| arg == "--effort").unwrap();
         assert_eq!(args[effort + 1], "max");
+        for model in ["claude-haiku-4-5-20251001", "claude-future-model"] {
+            let args = analysis_arguments(model, "high").unwrap();
+            assert!(!args.iter().any(|arg| arg == "--effort"));
+        }
         assert!(analysis_arguments(DEFAULT_MODEL, "ultra").is_err());
     }
 
@@ -1446,7 +1453,7 @@ mod tests {
             },
         );
         assert!(
-            matches!(key_shaped, Err(AppError::Serialization(_))),
+            matches!(key_shaped, Err(AppError::UnsafeProviderOutput(_))),
             "{key_shaped:?}"
         );
         let harmless = analyze_with_runner(
@@ -1487,10 +1494,20 @@ mod tests {
     }
 
     #[test]
-    fn builtin_model_is_haiku_4_5_and_not_labelled_live() {
+    fn builtin_catalog_defaults_to_haiku_5_5_and_retains_older_models() {
         let models = builtin_models();
-        assert_eq!(models.len(), 1);
+        assert!(models.len() > 10);
         assert_eq!(models[0].id, DEFAULT_MODEL);
-        assert_eq!(models[0].supported_reasoning_efforts, vec!["high"]);
+        assert_eq!(models[0].default_reasoning_effort, "medium");
+        assert_eq!(
+            models[0].supported_reasoning_efforts,
+            vec!["low", "medium", "high", "xhigh", "max"]
+        );
+        for model in models {
+            validate_model(&model.id).unwrap();
+            assert!(model
+                .supported_reasoning_efforts
+                .contains(&model.default_reasoning_effort));
+        }
     }
 }

@@ -56,13 +56,13 @@ struct ProcessRunProfile<'a> {
 }
 
 #[cfg(target_os = "windows")]
-struct ChildProcessContainment {
+pub(crate) struct ChildProcessContainment {
     job: windows_sys::Win32::Foundation::HANDLE,
 }
 
 #[cfg(target_os = "windows")]
 impl ChildProcessContainment {
-    fn attach(child: &Child) -> Result<Self, AppError> {
+    pub(crate) fn attach(child: &Child) -> Result<Self, AppError> {
         use std::mem::{size_of, zeroed};
         use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::System::JobObjects::{
@@ -114,11 +114,11 @@ impl Drop for ChildProcessContainment {
 }
 
 #[cfg(not(target_os = "windows"))]
-struct ChildProcessContainment;
+pub(crate) struct ChildProcessContainment;
 
 #[cfg(not(target_os = "windows"))]
 impl ChildProcessContainment {
-    fn attach(_child: &Child) -> Result<Self, AppError> {
+    pub(crate) fn attach(_child: &Child) -> Result<Self, AppError> {
         Ok(Self)
     }
 }
@@ -341,7 +341,7 @@ impl ProcessSpec {
         )
     }
 
-    /// Run a reviewed, publisher-verified tool with an optional prompt on
+    /// Run a reviewed, identity-verified tool with an optional prompt on
     /// standard input, cooperative cancellation, and a small set of
     /// non-secret passthrough variables. Passthrough names are validated
     /// against credential-shaped names so an override key can never be

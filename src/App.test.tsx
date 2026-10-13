@@ -1,14 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { analysisBrief, ChatSources, CodingEnvironments, Components, DryRun, Findings, Git, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
-import { applyInstallationResult, approveInstallation, buildInstallationPlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickProjectFolder, previewDescriptorsResult, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
+import App, { analysisBrief, ChatSources, CodingEnvironments, Components, Conflict, DryRun, Findings, Git, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import type { AiAccountStatus, AiProviderId, ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), approveScanEvidence: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewInstallationConflict: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), scanProject: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
 });
 
 afterEach(() => {
@@ -38,6 +38,9 @@ beforeEach(() => {
   vi.mocked(previewDescriptorsResult).mockResolvedValue({ value: null });
   vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: null });
   vi.mocked(runCodexAnalysisResult).mockResolvedValue({ value: null });
+  vi.mocked(previewInstallationConflict).mockResolvedValue(null);
+  vi.mocked(approveScanEvidence).mockResolvedValue(true);
+  vi.mocked(scanProject).mockResolvedValue(null);
   vi.mocked(startCodexLogin).mockResolvedValue(null);
   vi.mocked(suggestProjectPaths).mockResolvedValue(null);
   vi.mocked(waitForCodexLoginResult).mockResolvedValue({ value: null });
@@ -115,12 +118,12 @@ function semanticAnalysisFixture() {
 describe("HOI4 Mod Setup wizard", () => {
   it("starts new projects with the Atlantis Rising example", () => {
     expect(initialState.sourceMode).toBe("pinned_release");
-    expect(initialState.pinnedRef).toBe("package-2026-10-13.1");
+    expect(initialState.pinnedRef).toBe("package-2026-10-13.2");
     expect(initialState.identity.displayName).toBe("Atlantis Rising");
     expect(initialState.description).toBe("An Atlantis total conversion with a new Atlantic island, naval expansion, custom units, national focuses, and original mechanics.");
     expect(initialState.aiProvider).toBe("claude_account");
-    expect(initialState.aiModel).toBe("claude-haiku-4-5-20251001");
-    expect(initialState.aiReasoningEffort).toBe("high");
+    expect(initialState.aiModel).toBe("claude-haiku-5-5");
+    expect(initialState.aiReasoningEffort).toBe("medium");
     expect(initialState.identity.projectId).toBe("atlantis_rising");
     expect(initialState.primaryCodingEnvironment).toBe("claude_code");
     expect(initialState.additionalCodingEnvironments).toEqual([]);
@@ -199,6 +202,22 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("radio", { name: /OpenAI Images API/ }));
     expect(screen.getByRole("radio", { name: /OpenAI Images API/ })).toBeChecked();
     expect(screen.getByRole("radio", { name: /ChatGPT subscription \(GPTImage\)/ })).not.toBeChecked();
+  });
+
+  it("selects the manifest image components when the provider route changes", () => {
+    window.history.replaceState({}, "", "/?screenshot=image-generation");
+    const fixture = documentationFixture(readyState());
+    function ControlledImageStep() {
+      const [state, setState] = useState({ ...fixture, selectedComponents: [] as string[] });
+      return <><ImageGenerationSetup state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} /><output aria-label="selected image components">{state.selectedComponents.join(",")}</output></>;
+    }
+
+    render(<ControlledImageStep />);
+    expect(imageGenerationComponentIds(fixture.imageGeneration, fixture.manifestPreview)).toContain("imagegen.gptimage");
+    expect(screen.getByLabelText("selected image components")).toHaveTextContent("imagegen.gptimage");
+    fireEvent.click(screen.getByRole("radio", { name: /OpenAI Images API/ }));
+    expect(screen.getByLabelText("selected image components")).toHaveTextContent("imagegen.runtime");
+    expect(screen.getByLabelText("selected image components")).not.toHaveTextContent("imagegen.gptimage");
   });
 
   it("sends image API keys to the OS vault bridge and clears the password draft", async () => {
@@ -503,26 +522,49 @@ describe("HOI4 Mod Setup wizard", () => {
   });
 
   describe("Claude account setup assistant", () => {
-    const signedInClaude: AiAccountStatus = { available: true, authenticated: true, provider: "claude_account", model: "claude-haiku-4-5-20251001", auth_mode: "claude_account", usage_limited: false };
+    const signedInClaude: AiAccountStatus = { available: true, authenticated: true, provider: "claude_account", model: "claude-haiku-5-5", auth_mode: "claude_account", usage_limited: false };
 
-    it("defaults to Claude with Haiku 4.5 and asks the user to sign in through Claude Code", async () => {
+    it("defaults to Claude with Haiku 5.5 and asks the user to sign in through Claude Code", async () => {
       enableTauriRuntime();
       render(<App />);
 
       expect(screen.getByLabelText("AI provider")).toHaveValue("claude_account");
-      expect(screen.getByLabelText("Model")).toHaveValue("claude-haiku-4-5-20251001");
-      expect(screen.queryByLabelText("Reasoning effort")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Model")).toHaveValue("claude-haiku-5-5");
+      expect(screen.getByLabelText("Claude model ID")).toHaveValue("claude-haiku-5-5");
+      expect(screen.getByLabelText("Reasoning effort")).toHaveValue("medium");
       expect(await screen.findByRole("button", { name: "Sign in to Claude" })).toBeEnabled();
       expect(screen.getByText(/never sees your Claude credentials/i)).toBeInTheDocument();
       expect(screen.queryByLabelText(/API key/i)).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
-      expect(readAiAccount).toHaveBeenCalledWith("claude_account", "claude-haiku-4-5-20251001", "high", "");
+      expect(readAiAccount).toHaveBeenCalledWith("claude_account", "claude-haiku-5-5", "medium", "");
       expect(readCodexAccount).not.toHaveBeenCalled();
+    });
+
+    it("allows a Claude Code model ID under Advanced without a live-catalog block", () => {
+      function ControlledWelcome() {
+        const [state, setState] = useState<WizardState>({
+          ...initialState,
+          aiModel: "claude-haiku-5-5",
+          aiReasoningEffort: "medium",
+          aiModelCatalogStatus: "live-missing",
+          aiAccount: { ...signedInClaude },
+        });
+        return <Welcome state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
+      }
+
+      render(<ControlledWelcome />);
+      fireEvent.click(screen.getByText("Advanced", { selector: "summary" }));
+      const model = screen.getByLabelText("Claude model ID");
+      fireEvent.change(model, { target: { value: "claude-experimental-6" } });
+
+      expect(model).toHaveValue("claude-experimental-6");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByRole("combobox", { name: "Reasoning effort" })).not.toBeInTheDocument();
     });
 
     it("offers the official installer page when Claude Code is missing", async () => {
       enableTauriRuntime();
-      vi.mocked(readAiAccount).mockResolvedValue({ available: false, authenticated: false, provider: "claude_account", model: "claude-haiku-4-5-20251001", auth_mode: "claude_account", usage_limited: false, error: "Claude Code is not installed. Install it, then choose Check again." });
+      vi.mocked(readAiAccount).mockResolvedValue({ available: false, authenticated: false, provider: "claude_account", model: "claude-haiku-5-5", auth_mode: "claude_account", usage_limited: false, error: "Claude Code is not installed. Install it, then choose Check again." });
       render(<App />);
 
       expect(await screen.findByText("Claude Code is not installed. Install it, then choose Check again.")).toBeInTheDocument();
@@ -541,7 +583,7 @@ describe("HOI4 Mod Setup wizard", () => {
 
       expect(await screen.findByText("Signed in to Claude")).toBeInTheDocument();
       expect(startClaudeLogin).toHaveBeenCalledTimes(1);
-      expect(waitForClaudeLoginResult).toHaveBeenCalledWith("claude-login", "claude-haiku-4-5-20251001");
+      expect(waitForClaudeLoginResult).toHaveBeenCalledWith("claude-login", "claude-haiku-5-5");
       await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
     });
 
@@ -604,7 +646,7 @@ describe("HOI4 Mod Setup wizard", () => {
 
     it("lets the user switch to an Anthropic API key without losing the Haiku default", () => {
       function ControlledWelcome() {
-        const [state, setState] = useState<WizardState>({ ...initialState, aiAccount: { available: true, authenticated: false, provider: "claude_account", model: "claude-haiku-4-5-20251001", auth_mode: "claude_account", usage_limited: false, error: "Sign in to Claude to continue." } });
+        const [state, setState] = useState<WizardState>({ ...initialState, aiAccount: { available: true, authenticated: false, provider: "claude_account", model: "claude-haiku-5-5", auth_mode: "claude_account", usage_limited: false, error: "Sign in to Claude to continue." } });
         return <Welcome state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
       }
       render(<ControlledWelcome />);
@@ -612,7 +654,7 @@ describe("HOI4 Mod Setup wizard", () => {
       fireEvent.click(screen.getByRole("button", { name: "Use an Anthropic API key instead" }));
 
       expect(screen.getByLabelText("AI provider")).toHaveValue("claude");
-      expect(screen.getByLabelText("Model")).toHaveValue("claude-haiku-4-5-20251001");
+      expect(screen.getByLabelText("Model")).toHaveValue("claude-haiku-5-5");
       expect(screen.getByLabelText("Anthropic API key")).toHaveAttribute("type", "password");
     });
   });
@@ -628,9 +670,8 @@ describe("HOI4 Mod Setup wizard", () => {
 
     expect(screen.getByLabelText("Model")).toBeInTheDocument();
     expect(screen.getByLabelText("Provider address")).toBeInTheDocument();
-    expect(screen.getByLabelText("Model")).toHaveValue("claude-haiku-4-5-20251001");
-    // Haiku 4.5 has no adjustable effort level, so no effort control is shown.
-    expect(screen.queryByLabelText("Reasoning effort")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Model")).toHaveValue("claude-haiku-5-5");
+    expect(screen.getByLabelText("Reasoning effort")).toHaveValue("medium");
     expect(screen.getByLabelText("Provider address")).toHaveValue("https://api.anthropic.com/v1/messages");
     expect(screen.getByLabelText("Anthropic API key")).toHaveAttribute("type", "password");
     expect(screen.getByText("Advanced")).toBeInTheDocument();
@@ -656,6 +697,27 @@ describe("HOI4 Mod Setup wizard", () => {
 
     expect(screen.getByLabelText("Reasoning effort")).toHaveValue("max");
     expect(within(screen.getByLabelText("Reasoning effort")).getAllByRole("option").map((option) => option.textContent)).toEqual(["Light", "Max"]);
+  });
+
+  it.each([false, true])("uses Codex's advertised default only for an untouched model choice (explicit=%s)", async (explicit) => {
+    enableTauriRuntime();
+    vi.mocked(readAiModels).mockResolvedValue([
+      { id: "another-model", display_name: "Another model", default_reasoning_effort: "high", supported_reasoning_efforts: ["high"] },
+      { id: "server-default", display_name: "Account default", default_reasoning_effort: "medium", supported_reasoning_efforts: ["low", "medium", "high"], is_default: true },
+    ]);
+    function ControlledWelcome() {
+      const [state, setState] = useState({ ...welcomeState({ available: true, authenticated: true, auth_mode: "chatgpt", usage_limited: false }), aiModelChoiceExplicit: explicit });
+      return <Welcome state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
+    }
+    render(<ControlledWelcome />);
+    if (explicit) {
+      await screen.findByRole("alert");
+      expect(screen.getByLabelText("Model")).toHaveValue("gpt-5.6-luna");
+    } else {
+      await waitFor(() => expect(screen.getByLabelText("Model")).toHaveValue("server-default"));
+      expect(screen.getByLabelText("Reasoning effort")).toHaveValue("medium");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    }
   });
 
   it.each([
@@ -1147,6 +1209,33 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByLabelText("selected workflows")).toHaveTextContent("workflow.future_tools");
   });
 
+  it("restores the optional HOI4 Live Tools workflow and its live-testing route", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Windows NT 10.0");
+    const liveTesting = {
+      id: "workflow.live_testing", display_name: "Live testing", category: "workflow", optional: true, platforms: ["all"],
+      source: { kind: "tree", path: ".claude/skills/hoi4-live-playtest" }, destination: { path: ".claude/skills/hoi4-live-playtest/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [], capabilities: [], validation: [],
+      update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true },
+    };
+    const liveTools = {
+      id: "workflow.live_tools", display_name: "HOI4 Live Tools", description: "Install the experimental Windows HOI4 Live Tools runtime.", category: "workflow", optional: true, platforms: ["windows"],
+      source: { kind: "tree", path: ".claude/skills" }, destination: { path: ".claude/skills/", ownership: "managed" }, dependencies: ["workflow.live_testing"], required_tools: [], environment: [], expected_files: [], capabilities: [], validation: [],
+      update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true },
+    };
+    const state = { ...readyState(), liveTesting: { provider: "none", linux_ready: false, wsl_distribution: "", ssh_host: "" }, manifestPreview: { components: [liveTesting, liveTools], profiles: [] }, selectedComponents: [], meshSelected: false, superEventsSelected: false } as unknown as WizardState;
+    function ControlledWorkflows() {
+      const [current, setCurrent] = useState(state);
+      return <><Workflows state={current} update={(patch) => setCurrent((value) => ({ ...value, ...patch }))} /><output aria-label="selected workflows">{current.selectedComponents.join(",")}</output><output aria-label="live testing provider">{current.liveTesting.provider}</output></>;
+    }
+
+    render(<ControlledWorkflows />);
+    const liveToolsSwitch = screen.getByRole("switch", { name: /HOI4 Live Tools/ });
+    expect(liveToolsSwitch).toBeEnabled();
+    fireEvent.click(liveToolsSwitch);
+    expect(screen.getByLabelText("selected workflows")).toHaveTextContent("workflow.live_tools");
+    expect(screen.getByLabelText("selected workflows")).toHaveTextContent("workflow.live_testing");
+    expect(screen.getByLabelText("live testing provider")).toHaveTextContent("hoi4_live_tools");
+  });
+
   it("shows one parent switch for a manifest workflow dependency closure", () => {
     const dependency = {
       id: "workflow.future_tools.runtime", display_name: "Future runtime internals", category: "workflow", optional: true, platforms: ["all"],
@@ -1488,6 +1577,107 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.queryByRole("progressbar", { name: "Mod detail preparation progress" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
     expect(screen.getByLabelText("Mod description")).toHaveValue("An alternate-history event mod.");
+  });
+
+  it("shows an immediate pending state while reviewing an existing project", async () => {
+    enableTauriRuntime();
+    let finishAnalysis: ((value: { value: CodexAnalysisResult | null; error?: string }) => void) | undefined;
+    vi.mocked(scanProject).mockResolvedValue({
+      findings: [{ id: "descriptor.name", label: "Mod name", value: "Existing mod", evidence: "name=Existing mod", evidencePath: "descriptor.mod", evidenceExcerpt: "name=Existing mod", confidence: 1, status: "accepted" }],
+      scanId: "scan-1", projectRoot: "C:\\mods\\existing", partial: false, cancelled: false, limitsHit: [], filesScanned: 1, directoriesScanned: 1, bytesRead: 24, completedAt: "2026-10-13T00:00:00Z",
+    } as never);
+    vi.mocked(runCodexAnalysisResult).mockReturnValue(new Promise<{ value: CodexAnalysisResult | null; error?: string }>((resolve) => {
+      finishAnalysis = resolve;
+    }));
+
+    await renderAuthenticatedApp();
+    fireEvent.click(screen.getByRole("button", { name: /import existing mod/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\existing" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByRole("heading", { name: "Scanning project" });
+    await screen.findByText("Scan evidence saved for review");
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByRole("heading", { name: "Confirm scan findings" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Review with Codex" }));
+    const pending = await screen.findByRole("button", { name: "Reviewing with Codex…" });
+    expect(pending).toBeDisabled();
+    expect(pending).toHaveAttribute("aria-busy", "true");
+
+    await act(async () => finishAnalysis?.({ value: null, error: "temporary provider failure" }));
+    expect(await screen.findByRole("button", { name: "Review with Codex" })).toBeEnabled();
+  });
+
+  it("distinguishes unavailable binary previews from missing conflict content", async () => {
+    vi.mocked(previewInstallationConflict).mockResolvedValue({
+      path: "descriptor.mod",
+      kind: "binary",
+      base: null,
+      local: null,
+      incoming: null,
+      base_sha256: null,
+      local_sha256: "local-hash",
+      incoming_sha256: "incoming-hash",
+      truncated: false,
+      redacted: false,
+    });
+    const state = {
+      ...initialState,
+      plan: {
+        plan_id: "conflict-plan",
+        conflicts: [{ id: "descriptor", path: "descriptor.mod", options: ["keep", "replace"], selected: null }],
+        operations: [{ id: "descriptor", destination: "descriptor.mod", action: "replace", local_state: "modified", local_sha256: "local-hash" }],
+      },
+    } as unknown as WizardState;
+
+    render(<Conflict state={state} update={vi.fn()} onChoice={vi.fn()} />);
+
+    expect(await screen.findByText(/Binary\/non-text content preview unavailable/)).toBeInTheDocument();
+    expect(screen.getByText(/SHA-256: local-hash/)).toBeInTheDocument();
+    expect(screen.getByText(/SHA-256: incoming-hash/)).toBeInTheDocument();
+    expect(screen.getByText(/No original content is available/)).toBeInTheDocument();
+    expect(screen.queryByText(/No current content is present/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No new text preview is available/)).not.toBeInTheDocument();
+  });
+
+  it("keeps imported conflicts in the setup rail and labels the non-maintenance action", () => {
+    const plan = {
+      plan_id: "conflict-plan",
+      conflicts: [{ id: "descriptor", path: "descriptor.mod", options: ["keep", "replace"], selected: "keep" }],
+      operations: [],
+    };
+    window.__HOI4_DOCUMENTATION_STATE__ = { ...initialState, screen: "conflict", plan: plan as never };
+    render(<App />);
+
+    expect(screen.getByRole("navigation", { name: "Setup phases" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Maintenance phases" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review changes" })).toBeEnabled();
+
+    cleanup();
+    window.__HOI4_DOCUMENTATION_STATE__ = { ...initialState, screen: "conflict", maintenanceMode: "repair", plan: plan as never };
+    render(<App />);
+
+    expect(screen.getByRole("navigation", { name: "Maintenance phases" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply" })).toBeEnabled();
+  });
+
+  it("shows a concise all-resolved conflict status while retaining prior choices", () => {
+    const state = {
+      ...initialState,
+      conflictChoice: "replace",
+      plan: {
+        plan_id: "resolved-conflict-plan",
+        conflicts: [{ id: "descriptor", path: "descriptor.mod", options: ["keep", "replace"], selected: "keep" }],
+        operations: [],
+      },
+    } as unknown as WizardState;
+
+    render(<Conflict state={state} update={vi.fn()} onChoice={vi.fn()} />);
+
+    expect(screen.getByText(/All conflicts are resolved\. You can review or change an earlier choice below\./)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Keep current" })).toHaveClass("primary");
+    expect(screen.getByRole("button", { name: "Use new" })).toHaveClass("secondary");
   });
 
   it("shows correlated scan stage, path, counters, and cancellation", () => {
@@ -1861,7 +2051,7 @@ describe("HOI4 Mod Setup wizard", () => {
     enableTauriRuntime();
     vi.mocked(readAiModels).mockResolvedValue([{ id: "listed-model", display_name: "Listed model", default_reasoning_effort: "high", supported_reasoning_efforts: ["high"] }]);
     function ControlledWelcome() {
-      const [state, setState] = useState(welcomeState({ available: true, authenticated: true, auth_mode: "chatgpt", usage_limited: false }));
+      const [state, setState] = useState({ ...welcomeState({ available: true, authenticated: true, auth_mode: "chatgpt", usage_limited: false }), aiModelChoiceExplicit: true });
       return <Welcome state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
     }
 

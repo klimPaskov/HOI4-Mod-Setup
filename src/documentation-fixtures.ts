@@ -207,7 +207,7 @@ const plan: InstallationPlan = {
   project_id: "atlantis_rising",
   source,
   ai_provider: "claude_account",
-  ai_model: "claude-haiku-4-5-20251001",
+  ai_model: "claude-haiku-5-5",
   flatten_chat_sources: true,
   selected_components: ["core.claude.instructions", "core.agents", "core.skills", "core.subagents", "runtime.agent_sync", "runtime.claude", "runtime.claude.mcp", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot", "workflow.super_events", "workflow.live_testing", "workflow.portraits.router", ...portraitComponentIds],
   wiki_required_pages: ["Hearts of Iron 4 Wiki", "Modding"],
@@ -290,7 +290,7 @@ export function documentationFixture(base: WizardState): WizardState {
     projectPathStatus: "ready",
     projectPathMessage: "The project folder and launcher file were found automatically.",
     codexAccount: { available: true, authenticated: true, auth_mode: "chatgpt", usage_limited: false },
-    aiAccount: { available: true, authenticated: true, provider: "claude_account", model: "claude-haiku-4-5-20251001", auth_mode: "claude_account", usage_limited: false },
+    aiAccount: { available: true, authenticated: true, provider: "claude_account", model: "claude-haiku-5-5", auth_mode: "claude_account", usage_limited: false },
     manifestPreview: manifest,
     components: manifestComponents.map((item) => ({
       id: item.id,
@@ -322,9 +322,9 @@ export function documentationFixture(base: WizardState): WizardState {
       ...common,
       screen: "welcome",
       aiProvider: "claude",
-      aiModel: "claude-haiku-4-5-20251001",
+      aiModel: "claude-haiku-5-5",
       aiEndpoint: "https://api.anthropic.com/v1/messages",
-      aiAccount: { available: true, authenticated: true, provider: "claude", model: "claude-haiku-4-5-20251001", auth_mode: "api_key", usage_limited: false },
+      aiAccount: { available: true, authenticated: true, provider: "claude", model: "claude-haiku-5-5", auth_mode: "api_key", usage_limited: false },
     };
   }
   if (scenario === "description") return { ...common, screen: "description", mode: "new", codexAnalysis: undefined, codexAnalysisRecord: undefined };

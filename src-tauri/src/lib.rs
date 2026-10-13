@@ -3,6 +3,7 @@
 //! The React surface is intentionally a client of these types and commands.
 //! It never receives filesystem or credential authority directly.
 
+pub mod account_cli;
 pub mod ai;
 pub mod chat_sources;
 pub mod claude_code;
@@ -48,6 +49,8 @@ pub enum AppError {
     Transaction(String),
     #[error("credential error: {0}")]
     Credential(String),
+    #[error("private provider output was discarded: {0}")]
+    UnsafeProviderOutput(String),
     #[error("process error: {0}")]
     Process(String),
     #[error("protocol error: {0}")]

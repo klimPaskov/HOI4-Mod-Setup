@@ -20,7 +20,8 @@
       "const": "1.0.0"
     },
     "analysis_id": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 128
     },
     "mode": {
       "type": "string",
@@ -33,7 +34,9 @@
       "type": "string"
     },
     "project_summary": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1200
     },
     "proposals": {
       "type": "array",
@@ -68,7 +71,8 @@
             ]
           },
           "reason": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 500
           }
         }
       }
@@ -76,7 +80,8 @@
     "warnings": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "maxLength": 500
       }
     }
   },
@@ -111,10 +116,13 @@
               "type": "string"
             },
             "confidence": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "reason": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 500
             },
             "evidence_refs": {
               "type": "array",
@@ -149,10 +157,13 @@
               }
             },
             "confidence": {
-              "type": "number"
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
             },
             "reason": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 500
             },
             "evidence_refs": {
               "type": "array",

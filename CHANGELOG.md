@@ -4,6 +4,18 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+## 0.6.0 - 2026-10-13
+
+- Offer the verified Claude model catalog, use Haiku 5.5 at medium effort by default, and allow another supported Claude model ID under Advanced.
+- Add Gemini and Grok API providers and experimental account sign-in through pinned official clients on Windows and Linux. Real authenticated Gemini/Grok flows remain unverified; macOS account handoff is unavailable.
+- Use Codex's advertised default when a fresh setup's built-in model is absent from the live catalog, while preserving explicit choices.
+- Make provider review reliable with authoritative schema validation, core-assigned analysis IDs, accurate evidence rules, bounded corrective retries and clear privacy/usage failures.
+- Show review progress immediately, automatically include a chosen image provider's packages, and restore HOI4 Live Tools in optional workflows.
+- Expand the source package to ten fal, three Replicate and four Together image-model choices with per-model request contracts.
+- Prepare source files through verified manifest evidence, cache exact resolutions and recover from GitHub REST quota exhaustion without cloning the source repository or following redirects.
+- Show descriptor conflict text, distinguish binary previews from missing files, and keep fresh-import conflict review in the setup flow.
+- Import existing Workshop-style mods without inventing a launcher requirement or replacing their valid descriptor image settings; retain strict launcher and thumbnail checks for new projects.
+
 ## 0.5.0 - 2026-10-13
 
 - Add native Linux x86-64 AppImage and Debian packages beside Windows and macOS builds, with signed updater routes and dedicated desktop/package lifecycle CI.

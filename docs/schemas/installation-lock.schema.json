@@ -31,7 +31,9 @@
           "ai_provider": {
             "enum": [
               "codex",
-              "claude_account"
+              "claude_account",
+              "gemini_account",
+              "grok_account"
             ]
           }
         }
@@ -58,7 +60,9 @@
               "glm",
               "deepseek",
               "local",
-              "custom"
+              "custom",
+              "gemini",
+              "grok"
             ]
           }
         }
@@ -106,7 +110,11 @@
         "glm",
         "deepseek",
         "local",
-        "custom"
+        "custom",
+        "gemini_account",
+        "grok_account",
+        "gemini",
+        "grok"
       ]
     },
     "ai_model": {
@@ -406,7 +414,8 @@
           "enum": [
             "codex_app_server",
             "claude_code_cli",
-            "provider_api"
+            "provider_api",
+            "provider_cli"
           ]
         },
         "analysis_id": {
@@ -441,7 +450,8 @@
             "chatgpt",
             "claude_account",
             "api_key",
-            "local_endpoint"
+            "local_endpoint",
+            "provider_account"
           ]
         },
         "provider": {
@@ -453,7 +463,11 @@
             "glm",
             "deepseek",
             "local",
-            "custom"
+            "custom",
+            "gemini_account",
+            "grok_account",
+            "gemini",
+            "grok"
           ]
         },
         "model": {

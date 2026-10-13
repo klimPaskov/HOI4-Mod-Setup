@@ -51,8 +51,13 @@ Before project selection, show a compact setup-assistant gate with the product n
 provider and model selection, one short configuration state, and one sentence
 stating that this choice does not select the later development client. Codex shows a
 **Sign in with ChatGPT** action and device-code fallback through the official
-App Server. Known hosted profiles show an official API-key page, one key field,
-and a Connect action; verified model and address defaults stay under Advanced.
+App Server. Known hosted profiles, including Gemini's API-key route and Grok's
+Responses route, show an official API-key page, one key field, and a Connect
+action; verified model and address defaults stay under Advanced. Claude shows
+the built-in 14-model catalog, Haiku 5.5/medium as the default, and a bounded
+exact model-ID field under Advanced. Experimental provider-account CLI routes
+must be visibly labelled experimental and must not ask for pasted credentials;
+their terminal sign-in and platform limits use progressive disclosure.
 Local profiles show a loopback address and no hosted account claim.
 Keep a local recovery link when an interrupted transaction exists.
 
@@ -124,6 +129,12 @@ Do not display permanent keyboard shortcut hints in the footer. Keyboard support
    status. The portrait row shows a provider choice and the minimum resource
    recommendation (16 GB VRAM and 25 GB storage) only when enabled, and
    provider-specific setup evidence uses progressive disclosure.
+   When present, **HOI4 Live Tools** appears as an additional manifest row. Its
+   selection also selects the live-testing route and provider; show its
+   experimental, Windows-only state without inventing a macOS action.
+   Selecting an image provider automatically checks its manifest route
+   component and switching routes removes stale image route rows; the final
+   plan remains the Rust dependency authority.
 9. **3D and Meshy key**: credential field, secure-storage choice, test action, compact status, requirements open by default. Keep credential actions visibly separated from the field; Configure later advances without deleting an existing stored key.
 10. **MCP and credentials**: compact server rows and credential names. Expand capabilities and environment details on demand.
 11. **Git setup**: three choices, branch and commit fields for the selected choice, remote and advanced options collapsed.
@@ -263,6 +274,12 @@ prices, raw protocol events, or token locations. Semantic review uses one
 compact table for Detected, Suggested by the selected setup assistant, and
 Confirmed values. Reasons and input evidence open on demand. Generated project
 guidance and readiness never present that assistant as the later coding client.
+
+Claude's built-in model choices are labelled built-in rather than live. An
+exact Claude model ID entered under Advanced remains editable after a catalog
+failure and does not create a false account error. Provider-account CLI routes
+show a bounded terminal sign-in state and a clear experimental/platform status;
+they never expose a token, authorization code, or account identifier.
 
 The portrait link has a clear external destination in its accessible name and
 is opened by the typed browser action. It is never labeled as setup, installed,

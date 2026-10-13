@@ -116,12 +116,22 @@ version into a skill.
 
 ## Release rules
 
+Stable release-note curation includes the configured version's `CHANGELOG.md`
+section after the installer links, keeping feature and experimental-route
+limitations attached to the published release.
+Missing or empty version sections fail curation; test both rejection paths so a
+release cannot silently drop its changes or experimental-route limitations.
+
 Use semantic version tags. Prepare each release through a pull request. Build
 from the exact annotated tag commit. Publish only through the gated tag
 workflow.
 Use `pnpm version:set` to synchronize package, Tauri, Cargo metadata and both
 the workspace and fuzz Cargo lockfiles. Fuzz compilation must not leave an
 uncommitted application-version change in its lockfile.
+The version-sync script is idempotent: rerun `pnpm version:set -- <version>`
+after a transient file-lock or interrupted partial sync to repair only the
+remaining files. After a rerun, inspect every synchronized version source and
+the diff; do not copy a temporary version into this skill.
 
 Stable release evidence includes:
 

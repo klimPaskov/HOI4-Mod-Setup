@@ -1835,7 +1835,12 @@ pub fn run_transaction(
             options.fail_before_stage,
         )?;
         project_directory.verify_bound_to_path()?;
-        let readiness = build_transaction_readiness(&project_root, &effective_plan, &journal)?;
+        let readiness = build_transaction_readiness(
+            &project_root,
+            &effective_plan,
+            &journal,
+            previous_lock.as_ref(),
+        )?;
         project_directory.verify_bound_to_path()?;
         let readiness_path = store.file_path(READINESS_FILE);
         store.write_json(READINESS_FILE, &readiness)?;
@@ -5159,6 +5164,7 @@ fn build_transaction_readiness(
     project_root: &Path,
     plan: &InstallationPlan,
     journal: &TransactionJournal,
+    previous_lock: Option<&InstallationLock>,
 ) -> Result<crate::models::ReadinessReport, AppError> {
     let removing = plan.maintenance_mode.as_deref() == Some("remove")
         && !plan.operations.is_empty()
@@ -5259,6 +5265,10 @@ fn build_transaction_readiness(
         .iter()
         .any(|operation| looks_like_coding_environment_destination(&operation.destination));
     let mut readiness_components = plan.selected_components.clone();
+    if plan.transaction.project_root_mode == ProjectRootMode::CreateLeaf {
+        readiness_components.push("project.launcher_descriptor".into());
+        readiness_components.push("project.thumbnail".into());
+    }
     if plan
         .operations
         .iter()
@@ -5278,17 +5288,27 @@ fn build_transaction_readiness(
     {
         readiness_components.push("project.thumbnail".into());
     }
+    let previously_preserved_descriptor = previous_lock
+        .and_then(|lock| {
+            lock.files
+                .iter()
+                .find(|file| !file.external && file.path == "descriptor.mod")
+        })
+        .is_none_or(|file| file.preserved_local);
+    let preserved_descriptor = previously_preserved_descriptor
+        && plan.transaction.project_root_mode == ProjectRootMode::Existing
+        && plan.operations.iter().any(|operation| {
+            !operation.external
+                && operation.destination == "descriptor.mod"
+                && operation.action == OperationAction::Skip
+                && operation.local_state != LocalState::Absent
+                && operation.local_sha256.is_some()
+        });
     let descriptor_valid = is_file("descriptor.mod")
         && read_file_path(&safe_join(project_root, "descriptor.mod")?)
             .ok()
-            .and_then(|bytes| crate::descriptors::parse_descriptor(&bytes).ok())
-            .is_some_and(|descriptor| {
-                descriptor.fields.contains_key("name")
-                    && descriptor.fields.contains_key("supported_version")
-                    && descriptor
-                        .fields
-                        .get("picture")
-                        .is_some_and(|value| value == "thumbnail.png")
+            .is_some_and(|bytes| {
+                crate::readiness::project_descriptor_is_valid(&bytes, preserved_descriptor)
             });
     let agents_valid = crate::readiness::valid_agents_file(project_root);
     let skills_valid =
@@ -10715,7 +10735,7 @@ mod tests {
         plan.operations[0].local_state = LocalState::Unmodified;
         plan.operations[0].local_sha256 = Some(sha256_bytes(b"safe"));
         let journal = new_journal(&plan, &plan.project_id, project.path());
-        let report = build_transaction_readiness(project.path(), &plan, &journal).unwrap();
+        let report = build_transaction_readiness(project.path(), &plan, &journal, None).unwrap();
         assert!(!report.open_in_codex.enabled);
         assert!(report.checks.iter().all(|check| !check.blocking));
         assert_eq!(report.checks[0].id, "installation.removed");
@@ -11533,6 +11553,252 @@ mod tests {
             agents.resolution.is_some(),
             "a local edit still needs review"
         );
+    }
+
+    fn workshop_import_fixture(
+        project_root: &Path,
+    ) -> (InstallationPlan, Vec<PreparedFile>, Vec<u8>) {
+        let mut plan = ready_plan(project_root);
+        // Legacy umbrella metadata must not invent an approved external path.
+        plan.selected_components
+            .push("project.launcher_scaffold".into());
+        let original = b"name=\"Workshop Example\"\nsupported_version=\"1.19.*\"\nreplace_path=\"common/ideas\"\nreplace_path=\"common/decisions\"\n".to_vec();
+        let incoming =
+            b"name=\"Workshop Example\"\nsupported_version=\"1.19.*\"\npicture=\"thumbnail.png\"\n"
+                .to_vec();
+        fs::write(project_root.join("descriptor.mod"), &original).unwrap();
+        let mut descriptor = plan.operations[0].clone();
+        descriptor.id = "kept-descriptor".into();
+        descriptor.component_id = "project.descriptor".into();
+        descriptor.ownership = Some(Ownership::Generated);
+        descriptor.action = OperationAction::Skip;
+        descriptor.source_path = Some("generated:descriptor.mod".into());
+        descriptor.destination = "descriptor.mod".into();
+        descriptor.source_sha256 = Some(sha256_bytes(&incoming));
+        descriptor.source_size = Some(incoming.len() as u64);
+        descriptor.local_sha256 = Some(sha256_bytes(&original));
+        descriptor.local_state = LocalState::Modified;
+        descriptor.resolution = Some("keep".into());
+        descriptor.rollback = RollbackAction::None;
+        plan.operations.push(descriptor);
+        plan.conflicts.push(PlanConflict {
+            id: "descriptor-choice".into(),
+            path: "descriptor.mod".into(),
+            options: vec!["keep".into(), "replace".into()],
+            selected: Some("keep".into()),
+            apply_to_identical: false,
+        });
+        let prepared = vec![
+            PreparedFile {
+                operation_id: "op-1".into(),
+                destination: "AGENTS.md".into(),
+                bytes: b"safe".to_vec(),
+                expected_sha256: sha256_bytes(b"safe"),
+            },
+            PreparedFile {
+                operation_id: "kept-descriptor".into(),
+                destination: "descriptor.mod".into(),
+                expected_sha256: sha256_bytes(&incoming),
+                bytes: incoming,
+            },
+        ];
+        (plan, prepared, original)
+    }
+
+    #[test]
+    fn workshop_import_without_launcher_keeps_descriptor_and_survives_recheck_and_rollback() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared, original) = workshop_import_fixture(project.path());
+        let (mut journal, lock) = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(journal.state, "completed");
+        assert_eq!(
+            fs::read(project.path().join("descriptor.mod")).unwrap(),
+            original
+        );
+        assert!(!lock.files.iter().any(|file| file.external));
+        assert!(
+            lock.files
+                .iter()
+                .find(|file| file.path == "descriptor.mod")
+                .unwrap()
+                .preserved_local
+        );
+        let input = crate::readiness::project_input(project.path(), &plan.project_id).unwrap();
+        assert!(input.descriptors_valid);
+        assert!(!input.launcher_valid);
+        let report = crate::readiness::evaluate(&input);
+        let launcher = report
+            .checks
+            .iter()
+            .find(|check| check.id == "launcher.registration")
+            .unwrap();
+        assert_eq!(launcher.status, "not_selected");
+        assert!(!launcher.blocking);
+
+        let preserved =
+            build_transaction_readiness(project.path(), &plan, &journal, Some(&lock)).unwrap();
+        assert!(preserved.core_ready);
+        let mut generated_predecessor = lock.clone();
+        generated_predecessor
+            .files
+            .iter_mut()
+            .find(|file| file.path == "descriptor.mod")
+            .unwrap()
+            .preserved_local = false;
+        let strict = build_transaction_readiness(
+            project.path(),
+            &plan,
+            &journal,
+            Some(&generated_predecessor),
+        )
+        .unwrap();
+        assert!(strict
+            .checks
+            .iter()
+            .any(|check| check.id == "descriptor.project" && check.status == "block"));
+
+        let journal_path = transaction_root(app.path(), plan.plan_id)
+            .transaction
+            .join("journal.json");
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert!(!project.path().join("AGENTS.md").exists());
+        assert!(!project
+            .path()
+            .join(".hoi4-mod-setup/install.lock.json")
+            .exists());
+        assert_eq!(
+            fs::read(project.path().join("descriptor.mod")).unwrap(),
+            original
+        );
+    }
+
+    #[test]
+    fn new_project_readiness_still_requires_launcher_thumbnail_and_generated_picture() {
+        let project = tempdir().unwrap();
+        let (mut plan, _, _) = workshop_import_fixture(project.path());
+        plan.transaction.project_root_mode = ProjectRootMode::CreateLeaf;
+        let journal = new_journal(&plan, &plan.project_id, project.path());
+        let report = build_transaction_readiness(project.path(), &plan, &journal, None).unwrap();
+        for id in [
+            "descriptor.project",
+            "launcher.registration",
+            "thumbnail.integrity",
+        ] {
+            assert!(
+                report
+                    .checks
+                    .iter()
+                    .any(|check| check.id == id && check.blocking && check.status == "block"),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_kept_workshop_descriptor_blocks_success_and_remains_rollback_only() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (mut plan, prepared, _) = workshop_import_fixture(project.path());
+        let original = b"name=\"Missing required version\"\n";
+        fs::write(project.path().join("descriptor.mod"), original).unwrap();
+        plan.operations[1].local_sha256 = Some(sha256_bytes(original));
+        let error = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("descriptor.project"));
+        assert!(!project
+            .path()
+            .join(".hoi4-mod-setup/install.lock.json")
+            .exists());
+        let journal_path = transaction_root(app.path(), plan.plan_id)
+            .transaction
+            .join("journal.json");
+        let mut journal = read_journal(&journal_path).unwrap();
+        assert!(journal.recovery.project_apply_started);
+        assert!(!journal.recovery.resume_allowed);
+        assert!(journal.recovery.rollback_allowed);
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert!(!project.path().join("AGENTS.md").exists());
+        assert_eq!(
+            fs::read(project.path().join("descriptor.mod")).unwrap(),
+            original
+        );
+    }
+
+    #[test]
+    fn workshop_import_stage_faults_never_write_success_or_change_kept_descriptor() {
+        for stage in 0..TRANSACTION_STAGES.len() {
+            for after in [false, true] {
+                let project = tempdir().unwrap();
+                let app = tempdir().unwrap();
+                let (plan, prepared, original) = workshop_import_fixture(project.path());
+                let options = TransactionOptions {
+                    app_data_root: Some(app.path().into()),
+                    fail_before_stage: (!after).then_some(stage),
+                    fail_after_stage: after.then_some(stage),
+                    ..Default::default()
+                };
+                assert!(run_test_transaction(project.path(), &plan, &prepared, &options).is_err());
+                assert!(!project
+                    .path()
+                    .join(".hoi4-mod-setup/install.lock.json")
+                    .exists());
+                assert_eq!(
+                    fs::read(project.path().join("descriptor.mod")).unwrap(),
+                    original
+                );
+            }
+        }
+        for operation_index in 0..2 {
+            for after in [false, true] {
+                let project = tempdir().unwrap();
+                let app = tempdir().unwrap();
+                let (plan, prepared, original) = workshop_import_fixture(project.path());
+                assert_eq!(plan.operations.len(), 2);
+                let options = TransactionOptions {
+                    app_data_root: Some(app.path().into()),
+                    fail_before_operation: (!after).then_some(operation_index),
+                    fail_after_operation: after.then_some(operation_index),
+                    ..Default::default()
+                };
+                let error =
+                    run_test_transaction(project.path(), &plan, &prepared, &options).unwrap_err();
+                assert!(error.to_string().contains("fault injected"));
+                assert!(!project
+                    .path()
+                    .join(".hoi4-mod-setup/install.lock.json")
+                    .exists());
+                let journal_path = transaction_root(app.path(), plan.plan_id)
+                    .transaction
+                    .join("journal.json");
+                let mut journal = read_journal(&journal_path).unwrap();
+                assert!(journal.recovery.rollback_allowed);
+                assert!(!journal.recovery.resume_allowed);
+                rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+                assert!(!project.path().join("AGENTS.md").exists());
+                assert_eq!(
+                    fs::read(project.path().join("descriptor.mod")).unwrap(),
+                    original
+                );
+            }
+        }
     }
 
     #[test]

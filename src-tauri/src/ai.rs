@@ -46,7 +46,7 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             false,
             "Claude account setup analysis",
             Some(crate::claude_code::DEFAULT_MODEL),
-            Some("high"),
+            Some("medium"),
             None,
             Some(crate::claude_code::SETUP_URL),
         ),
@@ -62,13 +62,35 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             None,
         ),
         (
+            "gemini_account",
+            "Gemini (account, experimental)",
+            "provider_cli",
+            false,
+            "Gemini account setup analysis",
+            Some(crate::account_cli::default_model("gemini_account")),
+            Some("high"),
+            None,
+            Some("https://geminicli.com/docs/get-started/authentication/"),
+        ),
+        (
+            "grok_account",
+            "Grok (account, experimental)",
+            "provider_cli",
+            false,
+            "Grok account setup analysis",
+            Some(crate::account_cli::default_model("grok_account")),
+            Some("high"),
+            None,
+            Some("https://docs.x.ai/build/cli/reference"),
+        ),
+        (
             "claude",
             "Claude API key",
             "anthropic_messages",
             true,
             "Claude setup analysis",
             Some(crate::claude_code::DEFAULT_MODEL),
-            Some("high"),
+            Some("medium"),
             Some("https://api.anthropic.com/v1/messages"),
             Some("https://platform.claude.com/settings/keys"),
         ),
@@ -104,6 +126,28 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             Some("high"),
             Some("https://api.deepseek.com/chat/completions"),
             Some("https://platform.deepseek.com/api_keys"),
+        ),
+        (
+            "gemini",
+            "Gemini API key",
+            "openai_compatible",
+            true,
+            "Gemini setup analysis",
+            Some("gemini-3.8-flash"),
+            Some("high"),
+            Some("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"),
+            Some("https://aistudio.google.com/api-keys"),
+        ),
+        (
+            "grok",
+            "Grok API key",
+            "openai_responses",
+            true,
+            "Grok setup analysis",
+            Some("grok-4.7"),
+            Some("high"),
+            Some("https://api.x.ai/v1/responses"),
+            Some("https://console.x.ai"),
         ),
         (
             "local",
@@ -166,6 +210,7 @@ pub fn integration_and_auth_mode(provider: &str) -> (&'static str, &'static str)
             (crate::claude_code::ENGINE, crate::claude_code::AUTH_MODE)
         }
         "local" => ("provider_api", "local_endpoint"),
+        "gemini_account" | "grok_account" => ("provider_cli", "provider_account"),
         _ => ("provider_api", "api_key"),
     }
 }
@@ -196,10 +241,15 @@ pub fn validate_config(config: &AiProviderConfig) -> Result<AiProviderProfile, A
         ));
     }
     validate_reasoning_effort(&config.reasoning_effort)?;
-    if config.provider == crate::claude_code::PROVIDER_ID {
+    if config.provider == crate::claude_code::PROVIDER_ID
+        || crate::account_cli::is_account_provider(&config.provider)
+    {
         crate::claude_code::validate_model(&config.model)?;
     }
-    if config.provider == "codex" || config.provider == crate::claude_code::PROVIDER_ID {
+    if config.provider == "codex"
+        || config.provider == crate::claude_code::PROVIDER_ID
+        || crate::account_cli::is_account_provider(&config.provider)
+    {
         validate_endpoint_for_provider(&config.provider, Some(config.endpoint.as_str()))?;
         return Ok(profile);
     }
@@ -244,10 +294,12 @@ pub fn validate_endpoint_for_provider(
         }
         return Ok(());
     }
-    if provider == crate::claude_code::PROVIDER_ID {
+    if provider == crate::claude_code::PROVIDER_ID
+        || crate::account_cli::is_account_provider(provider)
+    {
         if !value.is_empty() {
             return Err(AppError::InvalidInput(
-                "the Claude account route uses Claude Code and does not accept a provider endpoint"
+                "account routes use the official provider CLI and do not accept a provider endpoint"
                     .into(),
             ));
         }
@@ -328,6 +380,9 @@ pub fn account_status<S: CredentialStore>(
     if config.provider == crate::claude_code::PROVIDER_ID {
         return crate::claude_code::account_status(&config.model);
     }
+    if crate::account_cli::is_account_provider(&config.provider) {
+        return crate::account_cli::account_status(&config.provider, &config.model);
+    }
     let authenticated = if profile.requires_credential {
         config
             .credential_reference
@@ -364,6 +419,9 @@ pub fn list_models<S: CredentialStore>(
     }
     if config.provider == crate::claude_code::PROVIDER_ID {
         return Ok(crate::claude_code::builtin_models());
+    }
+    if crate::account_cli::is_account_provider(&config.provider) {
+        return Ok(crate::account_cli::builtin_models(&config.provider));
     }
     let mut url = reqwest::Url::parse(&config.endpoint)
         .map_err(|_| AppError::InvalidInput("AI provider endpoint must be a valid URL".into()))?;
@@ -456,6 +514,7 @@ pub fn list_models<S: CredentialStore>(
                 });
             Some(AiModelOption {
                 id: id.to_owned(),
+                is_default: false,
                 display_name: entry
                     .get("display_name")
                     .or_else(|| entry.get("displayName"))
@@ -479,17 +538,13 @@ pub fn list_models<S: CredentialStore>(
 }
 
 fn supported_efforts(provider: &str, model: &str) -> Vec<String> {
+    if provider == "claude" || provider == crate::claude_code::PROVIDER_ID {
+        return crate::claude_code::supported_efforts(model);
+    }
     let levels = if provider == "deepseek" {
         &["low", "high", "max"][..]
-    } else if provider == "claude" && model.contains("sonnet-5") {
-        &["low", "medium", "high", "xhigh", "max"][..]
-    } else if provider == "claude"
-        && (model.contains("4-6")
-            || model.contains("4.6")
-            || model.contains("4-7")
-            || model.contains("4-8"))
-    {
-        &["low", "medium", "high", "max"][..]
+    } else if matches!(provider, "gemini" | "grok") {
+        &["low", "medium", "high"][..]
     } else {
         &["high"][..]
     };
@@ -529,6 +584,32 @@ pub fn analyze<S: CredentialStore>(
     if config.provider == crate::claude_code::PROVIDER_ID {
         return crate::claude_code::analyze(request, &profile.optimization_profile);
     }
+    if crate::account_cli::is_account_provider(&config.provider) {
+        return crate::account_cli::analyze(request);
+    }
+    analyze_using(store, config, request, |prompt, secret| {
+        request_provider(
+            &config.provider,
+            &profile.protocol,
+            &config.endpoint,
+            &config.model,
+            &config.reasoning_effort,
+            prompt,
+            secret,
+        )
+    })
+}
+
+fn analyze_using<S: CredentialStore, F>(
+    store: &S,
+    config: &AiProviderConfig,
+    request: &AiAnalysisRequest,
+    mut generate: F,
+) -> Result<CodexAnalysisResult, AppError>
+where
+    F: FnMut(&str, Option<&str>) -> Result<Value, AppError>,
+{
+    let profile = validate_config(config)?;
     let input_sha256 = analysis_input_sha256(&request.analysis)?;
     let prompt = analysis_prompt_for_provider(
         &request.analysis,
@@ -557,16 +638,7 @@ pub fn analyze<S: CredentialStore>(
     let mut attempt = 0;
     let analysis = loop {
         attempt += 1;
-        let validated = request_provider(
-            &config.provider,
-            &profile.protocol,
-            &config.endpoint,
-            &config.model,
-            &config.reasoning_effort,
-            &turn_prompt,
-            secret.as_deref(),
-        )
-        .and_then(|response| {
+        let validated = generate(&turn_prompt, secret.as_deref()).and_then(|response| {
             validate_analysis_output(
                 response,
                 &request.analysis,
@@ -620,7 +692,7 @@ pub fn analyze<S: CredentialStore>(
     })
 }
 
-fn request_provider(
+fn provider_request_payload(
     provider: &str,
     protocol: &str,
     endpoint: &str,
@@ -628,22 +700,18 @@ fn request_provider(
     reasoning_effort: &str,
     prompt: &str,
     secret: Option<&str>,
-) -> Result<Value, AppError> {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(120))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|error| {
-            AppError::Process(format!("AI provider client could not start: {error}"))
-        })?;
+) -> Result<(HeaderMap, Value), AppError> {
     let mut headers = HeaderMap::new();
     headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     let system_prompt = format!(
         "Return only one JSON object matching this exact schema. Do not disclose account data, hidden reasoning, credentials, or filesystem content.\n\noutput_schema={ANALYSIS_SCHEMA}"
     );
-    let supports_effort = provider == "deepseek"
+    let supports_effort = matches!(provider, "deepseek" | "gemini" | "grok")
         || (provider == "claude" && supported_efforts(provider, model).len() > 1);
+    let mut schema: Value = serde_json::from_str(ANALYSIS_SCHEMA)?;
+    schema.as_object_mut().unwrap().remove("$schema");
+    schema.as_object_mut().unwrap().remove("$id");
     let body = if protocol == "anthropic_messages" {
         if let Some(secret) = secret {
             headers.insert(
@@ -661,10 +729,11 @@ fn request_provider(
             "model": model,
             "max_tokens": 8192,
             "system": system_prompt,
-            "messages": [{"role": "user", "content": prompt}]
+            "messages": [{"role": "user", "content": prompt}],
+            "output_config": {"format": {"type": "json_schema", "schema": schema}}
         });
         if supports_effort {
-            body["output_config"] = json!({"effort": reasoning_effort});
+            body["output_config"]["effort"] = json!(reasoning_effort);
         }
         body
     } else {
@@ -677,21 +746,68 @@ fn request_provider(
                 })?,
             );
         }
-        let mut body = json!({
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ]
-        });
+        let mut body = if protocol == "openai_responses" {
+            json!({
+                "model": model,
+                "instructions": system_prompt,
+                "input": [{"role": "user", "content": prompt}],
+                "store": false,
+                "text": {"format": {"type": "json_schema", "name": "project_analysis", "strict": true, "schema": schema}}
+            })
+        } else {
+            json!({
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ]
+            })
+        };
+        if provider == "gemini" {
+            body["response_format"] = json!({"type": "json_schema", "json_schema": {
+                "name": "project_analysis", "strict": true, "schema": schema
+            }});
+        }
         if supports_effort {
-            body["reasoning_effort"] = json!(reasoning_effort);
+            if protocol == "openai_responses" {
+                body["reasoning"] = json!({"effort": reasoning_effort});
+            } else {
+                body["reasoning_effort"] = json!(reasoning_effort);
+            }
         }
         if protocol == "openai_compatible" && endpoint.contains("api.deepseek.com") {
             body["thinking"] = json!({"type": "enabled"});
         }
         body
     };
+    Ok((headers, body))
+}
+
+fn request_provider(
+    provider: &str,
+    protocol: &str,
+    endpoint: &str,
+    model: &str,
+    reasoning_effort: &str,
+    prompt: &str,
+    secret: Option<&str>,
+) -> Result<Value, AppError> {
+    let (headers, body) = provider_request_payload(
+        provider,
+        protocol,
+        endpoint,
+        model,
+        reasoning_effort,
+        prompt,
+        secret,
+    )?;
+    let client = Client::builder()
+        .timeout(Duration::from_secs(120))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| {
+            AppError::Process(format!("AI provider client could not start: {error}"))
+        })?;
     let response = client
         .post(endpoint)
         .headers(headers)
@@ -720,6 +836,16 @@ fn request_provider(
         ));
     }
     if !status.is_success() {
+        if status.as_u16() == 429 {
+            return Err(AppError::Process(
+                "provider usage is limited; retry when available".into(),
+            ));
+        }
+        if matches!(status.as_u16(), 401 | 403) {
+            return Err(AppError::Credential(
+                "provider authentication was not accepted".into(),
+            ));
+        }
         return Err(AppError::Process(format!(
             "AI provider returned HTTP {}",
             status.as_u16()
@@ -735,14 +861,73 @@ fn extract_structured_output(envelope: &Value) -> Result<Value, AppError> {
     if envelope.get("schema_version").is_some() {
         return Ok(envelope.clone());
     }
+    if envelope.get("stop_reason").and_then(Value::as_str) == Some("max_tokens")
+        || envelope
+            .pointer("/choices/0/finish_reason")
+            .and_then(Value::as_str)
+            == Some("length")
+        || envelope.get("status").and_then(Value::as_str) == Some("incomplete")
+    {
+        return Err(AppError::Protocol("provider output was truncated".into()));
+    }
+    if envelope
+        .pointer("/choices/0/message/refusal")
+        .is_some_and(|value| !value.is_null())
+        || envelope
+            .pointer("/choices/0/finish_reason")
+            .and_then(Value::as_str)
+            == Some("content_filter")
+        || envelope.get("stop_reason").and_then(Value::as_str) == Some("refusal")
+        || envelope
+            .get("output")
+            .and_then(Value::as_array)
+            .is_some_and(|output| {
+                output
+                    .iter()
+                    .filter_map(|item| item.get("content").and_then(Value::as_array))
+                    .flatten()
+                    .any(|block| block.get("type").and_then(Value::as_str) == Some("refusal"))
+            })
+    {
+        return Err(AppError::Protocol(
+            "provider declined the analysis request".into(),
+        ));
+    }
     if let Some(content) = envelope
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)
     {
         return parse_json_text(content);
     }
-    if let Some(content) = envelope.pointer("/content/0/text").and_then(Value::as_str) {
-        return parse_json_text(content);
+    if let Some(blocks) = envelope.get("content").and_then(Value::as_array) {
+        let text = blocks
+            .iter()
+            .filter(|block| {
+                block
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .is_none_or(|kind| kind == "text")
+            })
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("");
+        if !text.is_empty() {
+            return parse_json_text(&text);
+        }
+    }
+    if let Some(output) = envelope.get("output").and_then(Value::as_array) {
+        let text = output
+            .iter()
+            .filter(|item| item.get("type").and_then(Value::as_str) == Some("message"))
+            .filter_map(|item| item.get("content").and_then(Value::as_array))
+            .flatten()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some("output_text"))
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("");
+        if !text.is_empty() {
+            return parse_json_text(&text);
+        }
     }
     Err(AppError::Serialization(
         "AI provider returned no structured analysis object".into(),
@@ -778,7 +963,7 @@ mod tests {
         let claude_account = profiles.first().unwrap();
         assert_eq!(
             claude_account.default_model.as_deref(),
-            Some("claude-haiku-4-5-20251001")
+            Some("claude-haiku-5-5")
         );
         assert!(!claude_account.requires_credential);
         assert!(claude_account.default_endpoint.is_none());
@@ -788,7 +973,7 @@ mod tests {
         for (id, model, endpoint, account_url) in [
             (
                 "claude",
-                "claude-haiku-4-5-20251001",
+                "claude-haiku-5-5",
                 "https://api.anthropic.com/v1/messages",
                 "https://platform.claude.com/settings/keys",
             ),
@@ -938,9 +1123,12 @@ mod tests {
         assert!(validate_config(&injected).is_err());
         let models = list_models(&MemoryCredentialStore::default(), &config).unwrap();
         assert_eq!(models[0].id, crate::claude_code::DEFAULT_MODEL);
-        // Haiku 4.5 does not support effort on either Claude route.
         assert_eq!(
             supported_efforts("claude", crate::claude_code::DEFAULT_MODEL),
+            vec!["low", "medium", "high", "xhigh", "max"]
+        );
+        assert_eq!(
+            supported_efforts("claude", "claude-haiku-4-5-20251001"),
             vec!["high"]
         );
     }
@@ -1007,5 +1195,146 @@ mod tests {
             extract_structured_output(&json!({"content": [{"text": encoded}]})).unwrap(),
             json!({"schema_version": "1.0.0"})
         );
+    }
+
+    #[test]
+    fn reviewed_api_routes_send_native_output_schemas_without_tools() {
+        for id in ["claude", "gemini", "grok"] {
+            let profile = profile(id).unwrap();
+            let (_, body) = provider_request_payload(
+                id,
+                &profile.protocol,
+                profile.default_endpoint.as_deref().unwrap(),
+                profile.default_model.as_deref().unwrap(),
+                "high",
+                "approved brief",
+                Some("fixture-only-value"),
+            )
+            .unwrap();
+            let schema = match id {
+                "claude" => &body["output_config"]["format"]["schema"],
+                "gemini" => &body["response_format"]["json_schema"]["schema"],
+                _ => &body["text"]["format"]["schema"],
+            };
+            assert_eq!(schema["properties"]["proposals"]["minItems"], 10);
+            assert!(body.get("tools").is_none());
+            assert!(!body.to_string().contains("fixture-only-value"));
+            if id == "grok" {
+                assert_eq!(body["store"], false);
+            }
+        }
+        for id in ["gemini", "grok"] {
+            let profile = profile(id).unwrap();
+            assert!(
+                validate_endpoint_for_provider(id, profile.default_endpoint.as_deref()).is_ok()
+            );
+            assert!(validate_endpoint_for_provider(id, Some("https://other.example/v1")).is_err());
+            let config = AiProviderConfig {
+                provider: id.into(),
+                model: profile.default_model.unwrap(),
+                reasoning_effort: "high".into(),
+                endpoint: profile.default_endpoint.unwrap(),
+                credential_reference: None,
+            };
+            assert!(!account_status(&MemoryCredentialStore::default(), &config).authenticated);
+        }
+    }
+
+    #[test]
+    fn response_blocks_skip_thinking_and_reject_truncation_before_json() {
+        let content = r#"{"schema_version":"1.0.0"}"#;
+        let anthropic = json!({"content":[{"type":"thinking","thinking":"not output"},{"type":"text","text":content}]});
+        assert_eq!(
+            extract_structured_output(&anthropic).unwrap()["schema_version"],
+            "1.0.0"
+        );
+        let responses = json!({"output":[{"type":"reasoning"},{"type":"message","content":[{"type":"output_text","text":content}]}]});
+        assert_eq!(
+            extract_structured_output(&responses).unwrap()["schema_version"],
+            "1.0.0"
+        );
+        for envelope in [
+            json!({"choices":[{"finish_reason":"length","message":{"content":content}}]}),
+            json!({"stop_reason":"max_tokens","content":[{"text":content}]}),
+            json!({"status":"incomplete","output":responses["output"]}),
+            json!({"choices":[{"message":{"content":content,"refusal":"refused"}}]}),
+        ] {
+            let error = extract_structured_output(&envelope).unwrap_err();
+            assert!(crate::codex::correctable_output_error(&error).is_none());
+        }
+    }
+
+    #[test]
+    fn provider_turn_retries_once_and_never_retries_private_or_transport_output() {
+        let config = AiProviderConfig {
+            provider: "local".into(),
+            model: "fixture".into(),
+            reasoning_effort: "high".into(),
+            endpoint: "http://127.0.0.1:11434/v1/chat/completions".into(),
+            credential_reference: None,
+        };
+        let request = AiAnalysisRequest {
+            provider: config.provider.clone(),
+            model: config.model.clone(),
+            reasoning_effort: config.reasoning_effort.clone(),
+            endpoint: config.endpoint.clone(),
+            analysis: crate::codex::CodexAnalysisRequest {
+                mode: "new_project_identity".into(),
+                brief: "A historical mod".into(),
+                evidence: Vec::new(),
+                constraints: json!({}),
+                analysis_purpose: None,
+                project_root: None,
+                scan_id: None,
+            },
+        };
+        let input = analysis_input_sha256(&request.analysis).unwrap();
+        let mut valid: Value = serde_json::from_str(include_str!(
+            "../../docs/examples/codex-analysis.example.json"
+        ))
+        .unwrap();
+        valid["input_sha256"] = json!(input);
+        valid["analysis_id"] = json!("review");
+        valid["component_recommendations"] = json!([]);
+        for proposal in valid["proposals"].as_array_mut().unwrap() {
+            proposal["evidence_refs"] = json!([]);
+        }
+        let store = MemoryCredentialStore::default();
+        let mut calls = 0;
+        let result = analyze_using(&store, &config, &request, |prompt, secret| {
+            assert!(secret.is_none());
+            calls += 1;
+            if calls == 1 {
+                Ok(json!({}))
+            } else {
+                assert!(prompt.contains("previous response was rejected"));
+                Ok(valid.clone())
+            }
+        })
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert!(!result.record.account_identity_persisted);
+        for private in [false, true] {
+            calls = 0;
+            let result = analyze_using(&store, &config, &request, |_, _| {
+                calls += 1;
+                if private {
+                    let mut output = valid.clone();
+                    output["project_summary"] = json!("account_id: private");
+                    Ok(output)
+                } else {
+                    Err(AppError::Process("request interrupted".into()))
+                }
+            });
+            assert!(result.is_err());
+            assert_eq!(calls, 1);
+        }
+        calls = 0;
+        assert!(analyze_using(&store, &config, &request, |_, _| {
+            calls += 1;
+            Ok(json!({}))
+        })
+        .is_err());
+        assert_eq!(calls, 2);
     }
 }

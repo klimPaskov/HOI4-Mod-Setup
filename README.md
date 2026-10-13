@@ -50,8 +50,17 @@ prepare the mod's details; choose your coding environment separately later.
 
 The setup assistant that plans the mod is separate from the coding client you
 choose later. Select any supported assistant provider and use its account
-sign-in, API key, or local connection. Choose a model and reasoning level when
-the provider offers them.
+sign-in, API key, or local connection. Gemini and Grok API-key profiles use the
+app's reviewed provider routes; experimental provider-account routes, when
+shown, keep sign-in inside the provider's own CLI. Choose a model and
+reasoning level when the provider offers them. Claude defaults to Haiku 5.5 at
+medium effort, keeps legacy Haiku 4.5, and lets advanced users enter an exact
+Claude model ID.
+
+The experimental Gemini and Grok account options open the official provider
+client in a separate sign-in window and never ask you to paste a token. They
+are currently verified only on Windows and Linux; use the corresponding
+API-key profile when the account route is unavailable on your computer.
 
 To work on a mod you already have, choose **Manage an existing project** and
 select its folder. The app finds its launcher file and installed setup.
@@ -93,6 +102,10 @@ The app stores API keys in the operating-system credential store.
 Choose instructions, skills, tools, and the offline wiki. The app adapts the
 guidance to your mod and fills the game and Workshop folders it finds through
 Steam. Required components stay selected.
+
+Choosing an image provider automatically selects its required setup component;
+changing providers removes stale image-route components before the next review.
+The final dependency and file plan is always checked by the app core.
 
 ![Choose instructions, skills, tools, wiki, and ChatGPT files](docs/screenshots/04-components.png)
 

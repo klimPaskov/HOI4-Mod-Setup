@@ -244,6 +244,12 @@ const downloadBullets = platformSummaries.map((summary) => {
   const packageLink = downloadBase ? `[${summary.package}](${downloadBase}/${encodeURIComponent(summary.package)})` : `\`${summary.package}\``;
   return `- ${label}: ${packageLink}`;
 });
+const changelogLines = (await readFile(resolve(root, "CHANGELOG.md"), "utf8")).split(/\r?\n/);
+const changesStart = changelogLines.findIndex((line) => line === `## ${releaseVersion}` || line.startsWith(`## ${releaseVersion} - `));
+if (changesStart < 0) throw new Error(`CHANGELOG.md is missing release ${releaseVersion}`);
+const changesEnd = changelogLines.findIndex((line, index) => index > changesStart && line.startsWith("## "));
+const releaseChanges = changelogLines.slice(changesStart + 1, changesEnd < 0 ? undefined : changesEnd);
+if (!releaseChanges.some((line) => line.trim())) throw new Error(`CHANGELOG.md has no changes for release ${releaseVersion}`);
 await writeFile(resolve(outputRoot, "RELEASE_NOTES.md"), [
   `# HOI4 Mod Setup ${releaseVersion}`,
   "",
@@ -253,6 +259,7 @@ await writeFile(resolve(outputRoot, "RELEASE_NOTES.md"), [
   "",
   "Windows uses the `.exe` installer. On macOS, open the `.dmg` and move the app to Applications. On Linux x64, make the `.AppImage` executable and run it, or install the `.deb` with your Debian/Ubuntu package manager.",
   "",
+  "## Changes", ...releaseChanges, "",
   "Choose a main image provider and optional alternatives; ChatGPT through GPTImage is the default. Coding clients remain independent of the setup assistant. Change image and live-testing providers later in Update and repair.",
   "",
   "Optional live testing offers Clausewitz MCP by smerss, which requires native Linux HOI4 1.19.2 and manual Linux game/server setup. Follow the [Linux setup guide](https://github.com/klimPaskov/HOI4-Mod-Setup/blob/main/docs/LIVE_TESTING_LINUX.md); registration alone does not verify gameplay. Experimental HOI4 Live Tools is slower and not fully tested; its current upstream package supports Windows only, and the macOS scaffold is incomplete.",

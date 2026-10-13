@@ -36,11 +36,25 @@ Latest mode:
 8. Verify size and SHA-256.
 9. Record source identity in plan and lock.
 
+If unauthenticated GitHub REST returns a rate-limit-only 403/429, resolve
+identity through the fixed repository's read-only Git
+`info/refs?service=git-upload-pack` advertisement. Parse only bounded ref names
+and commit IDs; pinned commits and releases additionally require commit and
+release-page identity checks. This fallback never downloads Git objects, runs a
+checkout, or searches for a local repository. Any unrelated 403 fails closed.
+
+Resolution results may be reused only through the bounded in-memory cache: the
+request key, resolved revision, branch, manifest bytes, and manifest evidence
+stay together, with a maximum lifetime of 15 minutes (or a lower manifest TTL).
+This is an optimization and never source identity.
+
 Pinned commit uses the supplied commit for every step. Pinned release resolves and records both release identity and exact commit when available.
 
 ## Hard rules
 
 - Never clone the complete source repository through the application.
+- Never use the Git ref-advertisement fallback for object downloads or a
+  checkout; it is names-and-commit-IDs-only metadata.
 - Never search the computer for a checkout.
 - Never mix revisions.
 - Never use a branch name as lock identity.
@@ -57,6 +71,10 @@ Pinned commit uses the supplied commit for every step. Pinned release resolves a
 - Ignore `.gitkeep` marker files even if a future selected source tree declares
   them; they never enter download, destination, staging, lock, or flattened
   output evidence.
+- Treat each selected component's manifest-declared `expected_files` inventory
+  as the public installation file set. Do not require or infer a recursive
+  repository tree; every selected entry still needs declared path, size, and
+  lowercase SHA-256 evidence.
 
 - Reject an unresolved Git LFS pointer in `verify_download` even when its
   hash matches: manifest evidence hashes committed Git blobs, so a pointer
@@ -70,7 +88,8 @@ Pinned commit uses the supplied commit for every step. Pinned release resolves a
 2. Add a migration or compatibility rule if the manifest model changes.
 3. Validate component dependency cycles and reverse dependencies.
 4. Test platform resolution separately from component selection.
-5. Test hostile paths, redirects, truncation, cache corruption, and hash mismatch.
+5. Test hostile paths, redirect responses (which must be rejected), truncation,
+   cache corruption, and hash mismatch.
 6. Test default branch change between requests.
 7. Test latest and pinned reproducibility.
 8. Update source audit and docs.
@@ -159,12 +178,31 @@ Never bless the current machine's changed hash or relax installed-tree checks.
   commit and reads with `git show <commit>:<path>`; it does not re-resolve every
   raw file through `rev-parse`. Source verification uses an isolated cache and
   bounded prefetch, and fails when the checkout is not supplied.
+- `HttpSourceClient::resolve_commit` uses GitHub REST first and falls back only
+  for a rate-limit-only 403/429 to the fixed repository's bounded
+  `info/refs?service=git-upload-pack` advertisement. The parser binds `HEAD`,
+  the advertised default branch, and peeled release tags, while commit-page
+  checks confirm pinned commit/release identity. It never invokes clone,
+  fetch, object download, or checkout, and rejects another repository,
+  service, redirect, or unrelated 403.
+- Every HTTP request uses a no-redirect client. The URL allowlist binds API and
+  raw routes to the fixed `SOURCE_OWNER`/`SOURCE_NAME`; raw content requires an
+  exact 40-character commit segment before the path. Do not follow a redirect
+  or treat its destination as source identity; request route and resolved
+  revision must remain explicit for every manifest/blob fetch.
 - Runtime parsing compiles and applies
   `docs/schemas/remote-manifest.schema.json` as Draft 2020-12 before
   deserializing `RemoteManifest`. Unknown fields, including nested policy
   fields, fail closed; handwritten validation remains the second layer for
   cross-field and trust-policy invariants.
-- A non-generated component is not downloadable unless every selected file has lowercase SHA-256 and size evidence. The published live-source manifest records the tracked snapshot used to generate its evidence; the runtime binds the manifest and all selected blobs to the one resolved commit and rechecks those hashes.
+- A non-generated component is not downloadable unless every selected file has
+  lowercase SHA-256 and size evidence. Public selection uses
+  `select_manifest_files` and each component's `expected_files`, not a
+  recursive repository tree; outside, duplicate, missing, or undeclared
+  evidence fails before any blob is fetched. The published live-source
+  manifest records the tracked snapshot used to generate its evidence; the
+  runtime binds the manifest and all selected blobs to the one resolved commit
+  and rechecks those hashes.
 - `select_component_files` walks only the supported selected-component closure,
   applies each component's include/exclude rules, and rejects missing evidence
   or destination collisions before any selected blob is fetched. This is
@@ -174,6 +212,10 @@ Never bless the current machine's changed hash or relax installed-tree checks.
 - Marker-based text adaptation first checks for its marker pair in the raw bytes; source blobs without those markers, including binary assets, pass through unchanged and are never decoded as UTF-8.
 - An immutable install requires `generated_for_revision` in the manifest; the runtime schema and validator reject a manifest that cannot prove which commit produced its evidence.
 - Verified blobs are cached under the application data cache by `<revision>/<sha256>` and are accepted only after size (when declared) and SHA-256 revalidation. A corrupt cache entry is discarded and fetched again.
+- Complete source resolutions have a separate bounded memory cache keyed by the
+  serialized source request. It expires entries no later than 15 minutes,
+  retains exact revision/branch/manifest evidence, and never mixes revisions;
+  the hash-addressed blob cache remains independently verified.
 - Cache reads bind the path to one no-follow file handle, read a bounded byte
   buffer once, and verify that exact buffer before returning it. Never hash one
   path lookup and then reopen the path to return different bytes.
@@ -215,6 +257,12 @@ Never bless the current machine's changed hash or relax installed-tree checks.
   platform-supported defaults; it preserves prior optional deselection. New
   files under declared skill/subagent trees flow through automatically, while
   a new component still requires an explicit source-owned declaration.
+- Treat image-generation provider and model catalogs the same way: the
+  manifest owns provider IDs, model lists, route component IDs, capabilities,
+  and credential fields. Newly published catalog entries are consumed from the
+  exact manifest revision without adding per-model application enums or schema
+  migrations; Rust dependency expansion and route validation remain the final
+  authority.
 - Coding-client packages are also manifest data. Components tagged with
   `coding_environment` form the complete closure for exactly one primary and
   any additional environment selected by the user. Keep environment packages
@@ -300,6 +348,16 @@ Never bless the current machine's changed hash or relax installed-tree checks.
   rejection of unknown validation keys
 - dependency cycle
 - selected file set only
+- rate-limit-only 403/429 fallback to the fixed repository's read-only ref
+  advertisement, including default-branch and peeled-release binding; reject
+  unrelated 403s, other repositories, other Git services, redirects, object
+  downloads, and checkout behavior
+- resolution-cache expiry at 15 minutes, lower manifest TTL, request-key
+  isolation, exact revision/branch/manifest evidence, and no cross-revision
+  cache hit
+- `expected_files` inventory selection without a recursive tree prerequisite,
+  including missing, duplicate, outside-component, size, SHA-256, and
+  undeclared-tree rejection
 - selected-component isolation, including the complete hidden
   `workflow.super_events` dependency closure when selected and none of its
   skill, runtime, binary, or guide files when unselected
@@ -308,7 +366,7 @@ Never bless the current machine's changed hash or relax installed-tree checks.
 - source-audit digests match the exact bundled manifest bytes
 - cache path replacement after a verified handle is opened
 - partial download and resume
-- redirect and host policy
+- redirect rejection and API/raw host-owner-repository policy
 - archive traversal and extraction limits
 - cache corruption
 - wiki page coverage
@@ -316,6 +374,9 @@ Never bless the current machine's changed hash or relax installed-tree checks.
 - source-backed fixtures preserve Windows/Linux MCP declarations and Windows-only 3D declarations
 - external-action declaration and approval binding
 - manifest provenance/update/signing policy rejection
+- manifest-owned image provider/model catalog expansion without adding app
+  schema enums or per-model persisted state; selected route component closure
+  remains dependency-validated
 
 ## Update this skill when
 
@@ -329,6 +390,12 @@ the manifest's wiki provenance/media metadata;
 unsupported routes remain explicit; and the relevant hostile-source and
 external-action tests pass.
 
-The live-testing catalog binds the reviewed source revision, exact native Linux game version, platforms and route. Register only selected coding clients; Clausewitz stays a to-do until Linux readiness is explicitly confirmed. Keep LiveTools bootstrap registration disabled because the app owns project registrations.
+The live-testing catalog binds the reviewed source revision, exact native Linux
+game version, platforms and route. Register only selected coding clients;
+Clausewitz stays a to-do until Linux readiness is explicitly confirmed. Keep
+LiveTools bootstrap registration disabled because the app owns project
+registrations.
 
-New-project UI defaults to the tested `package-2026-10-13.1` release. The explicit Latest option still resolves the default branch to an exact commit, and existing projects retain their reviewed source choice.
+New-project UI follows the resolved manifest's default profile. An explicit
+Latest choice still resolves the default branch to one exact commit, while
+existing projects retain their reviewed source choice.

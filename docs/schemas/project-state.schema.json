@@ -114,7 +114,8 @@
           "enum": [
             "codex_app_server",
             "claude_code_cli",
-            "provider_api"
+            "provider_api",
+            "provider_cli"
           ]
         },
         "auth_mode": {
@@ -122,7 +123,8 @@
             "chatgpt",
             "claude_account",
             "api_key",
-            "local_endpoint"
+            "local_endpoint",
+            "provider_account"
           ]
         },
         "auth_status": {
@@ -177,7 +179,11 @@
             "glm",
             "deepseek",
             "local",
-            "custom"
+            "custom",
+            "gemini_account",
+            "grok_account",
+            "gemini",
+            "grok"
           ]
         },
         "model": {

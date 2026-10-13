@@ -65,6 +65,11 @@ Use schema-aware object merge. Arrays require a manifest-declared identity key. 
 
 Offer keep, replace, rename incoming, or skip. No automatic text merge.
 
+HOI4 `.mod` descriptors receive a redacted UTF-8 text preview even when their
+merge policy remains conservative. This display exception does not add a merge
+choice or change overwrite rules. Binary or undecodable content with a recorded
+hash is shown as unavailable for text preview, not as a missing file.
+
 ## Directory and link conflicts
 
 A file-directory collision blocks until resolved. Show symlink or junction targets. Never replace through a link that leaves the allowed root.

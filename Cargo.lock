@@ -1652,10 +1652,12 @@ dependencies = [
 
 [[package]]
 name = "hoi4-mod-setup"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
+ "brotli",
  "chrono",
+ "flate2",
  "hex",
  "jsonschema",
  "keyring",
@@ -1669,6 +1671,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

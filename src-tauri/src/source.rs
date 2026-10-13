@@ -13,8 +13,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -96,15 +96,9 @@ impl HttpSourceClient {
             .user_agent("HOI4-Mod-Setup/0.1")
             .connect_timeout(Duration::from_secs(15))
             .timeout(Duration::from_secs(120))
-            .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                if attempt.previous().len() >= 3 {
-                    attempt.stop()
-                } else if approved_source_url(attempt.url()) {
-                    attempt.follow()
-                } else {
-                    attempt.stop()
-                }
-            }))
+            // Every request has an exact repository/route/revision. A redirect
+            // must not silently substitute another path, even on the same host.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|error| AppError::Source(format!("HTTP client: {error}")))?;
         Ok(Self {
@@ -146,7 +140,15 @@ impl HttpSourceClient {
             .map_err(|error| AppError::Source(format!("request failed: {error}")))?;
         let status = response.status();
         if !status.is_success() {
-            return Err(AppError::Source(format!("source returned HTTP {status}")));
+            let rate_limited = is_rate_limit_response(status.as_u16(), response.headers());
+            let category = if rate_limited {
+                "GitHub rate limit"
+            } else {
+                "source request"
+            };
+            return Err(AppError::Source(format!(
+                "{category} returned HTTP {status}"
+            )));
         }
         if response
             .content_length()
@@ -206,6 +208,93 @@ impl HttpSourceClient {
     }
 
     pub fn resolve_commit(
+        &self,
+        request: &SourceRequest,
+    ) -> Result<(String, Option<String>, Option<String>), AppError> {
+        match self.resolve_commit_rest(request) {
+            Err(AppError::Source(message))
+                if message.starts_with("GitHub rate limit") && self.local_repository.is_none() =>
+            {
+                self.resolve_advertised_commit(request)
+            }
+            result => result,
+        }
+    }
+
+    // Git's read-only ref advertisement has a separate public transport quota.
+    // It downloads names and object IDs only, never objects or a checkout.
+    fn resolve_advertised_commit(
+        &self,
+        request: &SourceRequest,
+    ) -> Result<(String, Option<String>, Option<String>), AppError> {
+        if request.mode == SourceMode::PinnedCommit {
+            let revision = request
+                .requested_ref
+                .as_deref()
+                .ok_or_else(|| AppError::Source("pinned commit requires a requested_ref".into()))?;
+            validate_commit(revision)?;
+            // GitHub's commit page rejects non-commit object IDs, including trees.
+            self.get_bytes_limited(
+                &format!("{SOURCE_REPOSITORY}/commit/{revision}"),
+                8 * 1024 * 1024,
+            )?;
+            return Ok((revision.to_ascii_lowercase(), None, None));
+        }
+        let bytes = self.get_bytes_limited(
+            &format!("{SOURCE_REPOSITORY}.git/info/refs?service=git-upload-pack"),
+            8 * 1024 * 1024,
+        )?;
+        let advertisement = parse_ref_advertisement(&bytes)?;
+        match request.mode {
+            SourceMode::Latest => {
+                let branch_ref = advertisement.default_branch.ok_or_else(|| {
+                    AppError::Source("Git source did not advertise its default branch".into())
+                })?;
+                let revision = advertisement.refs.get(&branch_ref).ok_or_else(|| {
+                    AppError::Source("Git source omitted the default branch revision".into())
+                })?;
+                Ok((
+                    revision.clone(),
+                    Some(branch_ref["refs/heads/".len()..].to_owned()),
+                    None,
+                ))
+            }
+            SourceMode::PinnedRelease => {
+                let tag = request
+                    .release
+                    .as_deref()
+                    .or(request.requested_ref.as_deref())
+                    .filter(|tag| {
+                        !tag.is_empty() && tag.len() <= 256 && !tag.chars().any(char::is_control)
+                    })
+                    .ok_or_else(|| {
+                        AppError::Source("pinned release requires a release tag".into())
+                    })?;
+                // An advertised tag alone does not establish that a release exists.
+                self.get_bytes_limited(
+                    &format!(
+                        "{SOURCE_REPOSITORY}/releases/tag/{}",
+                        Self::encode_path_segment(tag)
+                    ),
+                    8 * 1024 * 1024,
+                )?;
+                let tag_ref = format!("refs/tags/{tag}");
+                let revision = advertisement
+                    .refs
+                    .get(&format!("{tag_ref}^{{}}"))
+                    .or_else(|| advertisement.refs.get(&tag_ref))
+                    .ok_or_else(|| AppError::Source("Git source omitted the release tag".into()))?;
+                self.get_bytes_limited(
+                    &format!("{SOURCE_REPOSITORY}/commit/{revision}"),
+                    8 * 1024 * 1024,
+                )?;
+                Ok((revision.clone(), None, Some(tag.to_owned())))
+            }
+            SourceMode::PinnedCommit => unreachable!(),
+        }
+    }
+
+    fn resolve_commit_rest(
         &self,
         request: &SourceRequest,
     ) -> Result<(String, Option<String>, Option<String>), AppError> {
@@ -677,15 +766,135 @@ impl HttpSourceClient {
     }
 }
 
+#[derive(Debug)]
+struct RefAdvertisement {
+    default_branch: Option<String>,
+    refs: HashMap<String, String>,
+}
+
+fn parse_ref_advertisement(bytes: &[u8]) -> Result<RefAdvertisement, AppError> {
+    let invalid = || AppError::Source("Git source returned an invalid ref advertisement".into());
+    if bytes.len() > 8 * 1024 * 1024 {
+        return Err(invalid());
+    }
+    let mut offset = 0;
+    let mut packets = Vec::new();
+    let mut terminated = false;
+    while offset < bytes.len() {
+        let header = bytes.get(offset..offset + 4).ok_or_else(invalid)?;
+        let length = usize::from_str_radix(std::str::from_utf8(header).map_err(|_| invalid())?, 16)
+            .map_err(|_| invalid())?;
+        offset += 4;
+        if length == 0 {
+            terminated = offset == bytes.len();
+            continue;
+        }
+        if length < 4 || packets.len() >= 100_000 {
+            return Err(invalid());
+        }
+        let payload = bytes.get(offset..offset + length - 4).ok_or_else(invalid)?;
+        packets.push(
+            std::str::from_utf8(payload)
+                .map_err(|_| invalid())?
+                .trim_end_matches('\n'),
+        );
+        offset += length - 4;
+    }
+    if !terminated || packets.first() != Some(&"# service=git-upload-pack") {
+        return Err(invalid());
+    }
+    let mut result = RefAdvertisement {
+        default_branch: None,
+        refs: HashMap::new(),
+    };
+    for (index, packet) in packets.iter().skip(1).enumerate() {
+        let (record, capabilities) = packet.split_once('\0').unwrap_or((packet, ""));
+        if !capabilities.is_empty() {
+            if index != 0 {
+                return Err(invalid());
+            }
+            for capability in capabilities.split_ascii_whitespace() {
+                if let Some(branch) = capability.strip_prefix("symref=HEAD:") {
+                    if !branch.starts_with("refs/heads/") || branch.len() <= 11 {
+                        return Err(invalid());
+                    }
+                    result.default_branch = Some(branch.to_owned());
+                }
+            }
+        }
+        let (revision, name) = record.split_once(' ').ok_or_else(invalid)?;
+        validate_commit(revision)?;
+        if name.is_empty()
+            || name.len() > 1024
+            || name.chars().any(char::is_whitespace)
+            || name.chars().any(char::is_control)
+            || result
+                .refs
+                .insert(name.to_owned(), revision.to_ascii_lowercase())
+                .is_some()
+        {
+            return Err(invalid());
+        }
+    }
+    if let Some(branch) = &result.default_branch {
+        if result.refs.get("HEAD") != result.refs.get(branch) || !result.refs.contains_key(branch) {
+            return Err(invalid());
+        }
+    }
+    Ok(result)
+}
+
+fn is_rate_limit_response(status: u16, headers: &reqwest::header::HeaderMap) -> bool {
+    status == 429
+        || (status == 403
+            && (headers
+                .get("x-ratelimit-remaining")
+                .is_some_and(|value| value == "0")
+                || headers.contains_key("retry-after")))
+}
+
 fn approved_source_url(url: &reqwest::Url) -> bool {
     url.scheme() == "https"
         && url.username().is_empty()
         && url.password().is_none()
         && url.port().is_none()
-        && matches!(
-            url.host_str(),
-            Some("api.github.com") | Some("raw.githubusercontent.com")
-        )
+        && url.fragment().is_none()
+        && match url.host_str() {
+            Some("api.github.com") => {
+                let prefix = format!("/repos/{SOURCE_OWNER}/{SOURCE_NAME}");
+                url.path() == prefix || url.path().starts_with(&format!("{prefix}/"))
+            }
+            Some("raw.githubusercontent.com") => {
+                let prefix = format!("/{SOURCE_OWNER}/{SOURCE_NAME}/");
+                url.query().is_none()
+                    && url
+                        .path()
+                        .strip_prefix(&prefix)
+                        .and_then(|path| path.split_once('/'))
+                        .is_some_and(|(revision, path)| {
+                            validate_commit(revision).is_ok() && !path.is_empty()
+                        })
+            }
+            Some("github.com") => approved_git_metadata_path(url),
+            _ => false,
+        }
+}
+
+fn approved_git_metadata_path(url: &reqwest::Url) -> bool {
+    let prefix = format!("/{SOURCE_OWNER}/{SOURCE_NAME}");
+    if url.path() == format!("{prefix}.git/info/refs") {
+        return url.query() == Some("service=git-upload-pack");
+    }
+    url.query().is_none()
+        && url.fragment().is_none()
+        && (url
+            .path()
+            .strip_prefix(&format!("{prefix}/commit/"))
+            .is_some_and(|revision| validate_commit(revision).is_ok())
+            || url
+                .path()
+                .strip_prefix(&format!("{prefix}/releases/tag/"))
+                .is_some_and(|tag| !tag.is_empty() && !tag.contains('/')))
 }
 
 fn content_range_starts_at(value: &str, offset: usize) -> bool {
@@ -809,7 +1018,60 @@ fn encode_source_path(path: &str) -> String {
         .join("/")
 }
 
+#[derive(Default)]
+struct ResolutionCache {
+    entries: HashMap<String, (Instant, SourceResolution)>,
+}
+
+impl ResolutionCache {
+    fn get(&mut self, key: &str, now: Instant) -> Option<SourceResolution> {
+        self.entries.retain(|_, (expires, _)| *expires > now);
+        self.entries
+            .get(key)
+            .map(|(_, resolution)| resolution.clone())
+    }
+
+    fn insert(&mut self, key: String, resolution: SourceResolution, now: Instant) {
+        let ttl = resolution
+            .manifest
+            .update_policy
+            .manifest_cache_ttl_seconds
+            .unwrap_or(900)
+            .min(900);
+        if self.entries.len() >= 8 {
+            self.entries.clear();
+        }
+        self.entries
+            .insert(key, (now + Duration::from_secs(ttl), resolution));
+    }
+}
+
 pub fn resolve_source(
+    client: &HttpSourceClient,
+    request: &SourceRequest,
+) -> Result<SourceResolution, AppError> {
+    static CACHE: OnceLock<Mutex<ResolutionCache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    let cache_key = serde_json::to_string(request)?;
+    if client.local_repository.is_none() {
+        let mut cached = cache
+            .lock()
+            .map_err(|_| AppError::Source("source cache is unavailable".into()))?;
+        if let Some(resolution) = cached.get(&cache_key, Instant::now()) {
+            return Ok(resolution);
+        }
+    }
+    let resolution = resolve_source_uncached(client, request)?;
+    if client.local_repository.is_none() {
+        let mut cached = cache
+            .lock()
+            .map_err(|_| AppError::Source("source cache is unavailable".into()))?;
+        cached.insert(cache_key, resolution.clone(), Instant::now());
+    }
+    Ok(resolution)
+}
+
+fn resolve_source_uncached(
     client: &HttpSourceClient,
     request: &SourceRequest,
 ) -> Result<SourceResolution, AppError> {
@@ -1731,6 +1993,45 @@ pub fn resolve_platform_support(
             }
         })
         .collect()
+}
+
+/// The manifest owns the file inventory. No full repository tree is needed
+/// during installation; each selected blob still has to pass size and SHA-256.
+pub fn select_manifest_files(
+    manifest: &RemoteManifest,
+    component_ids: &[String],
+) -> Result<Vec<SelectedSourceFile>, AppError> {
+    let ids = component_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let mut declared = std::collections::BTreeMap::new();
+    for component in manifest
+        .components
+        .iter()
+        .filter(|component| ids.contains(component.id.as_str()))
+    {
+        if component.source.kind == SourceKind::Generated {
+            continue;
+        }
+        for file in &component.expected_files {
+            let path = normalize_relative_path(&file.path)
+                .map_err(|error| AppError::Source(error.to_string()))?;
+            declared.insert(
+                path.clone(),
+                TreeEntry {
+                    path,
+                    kind: "blob".into(),
+                    size: file.size,
+                },
+            );
+        }
+    }
+    select_component_files(
+        manifest,
+        component_ids,
+        &declared.into_values().collect::<Vec<_>>(),
+    )
 }
 
 pub fn select_component_files(
@@ -3067,6 +3368,206 @@ mod tests {
         assert!(content_range_starts_at("bytes 12-99/100", 12));
         assert!(!content_range_starts_at("bytes 11-99/100", 12));
         assert!(!content_range_starts_at("12-99/100", 12));
+    }
+
+    fn advertisement_fixture(records: &[String]) -> Vec<u8> {
+        let mut bytes = b"001e# service=git-upload-pack\n0000".to_vec();
+        for record in records {
+            bytes.extend_from_slice(format!("{:04x}{record}\n", record.len() + 5).as_bytes());
+        }
+        bytes.extend_from_slice(b"0000");
+        bytes
+    }
+
+    #[test]
+    fn git_advertisement_binds_default_branch_and_peeled_tags() {
+        let commit = "a".repeat(40);
+        let bytes = advertisement_fixture(&[
+            format!("{commit} HEAD\0symref=HEAD:refs/heads/release/main object-format=sha1"),
+            format!("{commit} refs/heads/release/main"),
+            format!("{} refs/tags/v1.0", "b".repeat(40)),
+            format!("{commit} refs/tags/v1.0^{{}}"),
+        ]);
+        let result = parse_ref_advertisement(&bytes).unwrap();
+        assert_eq!(
+            result.default_branch.as_deref(),
+            Some("refs/heads/release/main")
+        );
+        assert_eq!(result.refs["refs/tags/v1.0^{}"], commit);
+        for invalid in [
+            b"not git".to_vec(),
+            bytes[..bytes.len() - 4].to_vec(),
+            b"ffffshort".to_vec(),
+            advertisement_fixture(&[format!("{commit} HEAD\0symref=HEAD:refs/heads/missing")]),
+            advertisement_fixture(&[format!("{commit} HEAD"), format!("{commit} HEAD")]),
+        ] {
+            assert!(parse_ref_advertisement(&invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn git_metadata_fallback_cannot_visit_another_repository_or_service() {
+        for suffix in [
+            ".git/info/refs?service=git-upload-pack",
+            "/releases/tag/v1.0",
+            &format!("/commit/{}", "a".repeat(40)),
+        ] {
+            assert!(approved_source_url(
+                &reqwest::Url::parse(&format!("{SOURCE_REPOSITORY}{suffix}")).unwrap()
+            ));
+        }
+        for url in [
+            "https://github.com/attacker/repository.git/info/refs?service=git-upload-pack",
+            "https://github.com/klimPaskov/Agentic-HOI4-Modding.git/info/refs?service=git-receive-pack",
+            "https://github.com/klimPaskov/Agentic-HOI4-Modding/commit/main",
+            "https://github.com/klimPaskov/Agentic-HOI4-Modding/releases/tag/v1?redirect=elsewhere",
+            "https://api.github.com/repos/attacker/Agentic-HOI4-Modding",
+            "https://api.github.com/repos/klimPaskov/Agentic-HOI4-Modding-extra",
+            "https://raw.githubusercontent.com/attacker/Agentic-HOI4-Modding/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/hoi4-mod-setup.manifest.json",
+            "https://raw.githubusercontent.com/klimPaskov/Agentic-HOI4-Modding/main/hoi4-mod-setup.manifest.json",
+        ] {
+            assert!(!approved_source_url(&reqwest::Url::parse(url).unwrap()));
+        }
+    }
+
+    #[test]
+    fn source_http_client_never_follows_cross_path_or_cross_revision_redirects() {
+        let cache = tempfile::tempdir().unwrap();
+        let client = HttpSourceClient::with_cache_root(cache.path().to_path_buf()).unwrap();
+        for location in [
+            "https://api.github.com/repos/attacker/repository",
+            "https://raw.githubusercontent.com/klimPaskov/Agentic-HOI4-Modding/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/hoi4-mod-setup.manifest.json",
+            "https://raw.githubusercontent.com/klimPaskov/Agentic-HOI4-Modding/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/another-file",
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut bytes = [0; 8192];
+                let _ = stream.read(&mut bytes).unwrap();
+                write!(stream, "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+            });
+            let response = client.client.get(format!("http://{address}/exact-source")).send().unwrap();
+            assert_eq!(response.status().as_u16(), 302);
+            assert_eq!(response.url().path(), "/exact-source");
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn only_rate_limit_statuses_allow_the_metadata_fallback() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        assert!(!is_rate_limit_response(403, &headers));
+        assert!(!is_rate_limit_response(404, &headers));
+        assert!(is_rate_limit_response(429, &headers));
+        headers.insert("x-ratelimit-remaining", "0".parse().unwrap());
+        assert!(is_rate_limit_response(403, &headers));
+        assert!(!is_rate_limit_response(401, &headers));
+        headers.clear();
+        headers.insert("retry-after", "60".parse().unwrap());
+        assert!(is_rate_limit_response(403, &headers));
+    }
+
+    #[test]
+    fn source_cache_honors_expiry_request_isolation_and_manifest_revision() {
+        let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
+        let mut resolution = SourceResolution {
+            identity: SourceIdentity {
+                repository: format!("{SOURCE_OWNER}/{SOURCE_NAME}"),
+                mode: SourceMode::Latest,
+                resolved_revision: "a".repeat(40),
+                requested_ref: None,
+                release: None,
+                manifest_sha256: sha256_bytes(bytes),
+                manifest_origin: "remote".into(),
+            },
+            manifest: parse_manifest(bytes, None).unwrap(),
+            manifest_bytes: bytes.to_vec(),
+            branch: Some("main".into()),
+        };
+        let now = Instant::now();
+        let mut cache = ResolutionCache::default();
+        resolution.manifest.update_policy.manifest_cache_ttl_seconds = Some(2);
+        cache.insert("latest".into(), resolution.clone(), now);
+        assert_eq!(
+            cache
+                .get("latest", now + Duration::from_secs(1))
+                .unwrap()
+                .identity
+                .resolved_revision,
+            "a".repeat(40)
+        );
+        assert!(cache.get("pinned", now).is_none());
+        assert!(cache.get("latest", now + Duration::from_secs(2)).is_none());
+        resolution.identity.resolved_revision = "b".repeat(40);
+        resolution.manifest.update_policy.manifest_cache_ttl_seconds = Some(86400);
+        cache.insert("latest".into(), resolution.clone(), now);
+        assert_eq!(
+            cache.get("latest", now).unwrap().identity.resolved_revision,
+            "b".repeat(40)
+        );
+        assert!(cache
+            .get("latest", now + Duration::from_secs(900))
+            .is_none());
+        resolution.manifest.update_policy.manifest_cache_ttl_seconds = Some(0);
+        cache.insert("disabled".into(), resolution, now);
+        assert!(cache.get("disabled", now).is_none());
+    }
+
+    #[test]
+    fn manifest_inventory_selects_only_declared_closure_and_rejects_outside_evidence() {
+        let mut manifest = parse_manifest(
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json"),
+            None,
+        )
+        .unwrap();
+        let selected = vec!["core.skills".to_owned()];
+        let files = select_manifest_files(&manifest, &selected).unwrap();
+        assert!(!files.is_empty());
+        assert!(files.iter().all(|file| file.component_id == "core.skills"
+            && file.expected_sha256.is_some()
+            && file.expected_size.is_some()));
+        let component = manifest
+            .components
+            .iter_mut()
+            .find(|component| component.id == "core.skills")
+            .unwrap();
+        component.expected_files[0].path = "outside/component.txt".into();
+        assert!(select_manifest_files(&manifest, &selected).is_err());
+    }
+
+    #[test]
+    #[ignore = "contacts the public source; no credentials or project writes"]
+    fn live_rate_limit_fallback_resolves_and_verifies_manifest() {
+        let cache = tempfile::tempdir().unwrap();
+        let mut client = HttpSourceClient::with_cache_root(cache.path().to_path_buf()).unwrap();
+        client.local_repository = None;
+        for request in [
+            SourceRequest {
+                mode: SourceMode::Latest,
+                requested_ref: None,
+                release: None,
+            },
+            SourceRequest {
+                mode: SourceMode::PinnedRelease,
+                requested_ref: None,
+                release: Some("package-2026-10-13.2".into()),
+            },
+        ] {
+            let (revision, _, _) = client.resolve_advertised_commit(&request).unwrap();
+            let bytes = client.fetch_manifest(&revision).unwrap();
+            let manifest = parse_manifest(&bytes, Some(&revision)).unwrap();
+            let profile = manifest
+                .profiles
+                .iter()
+                .find(|profile| profile.default)
+                .unwrap();
+            let selected = expand_components(&manifest, &profile.components).unwrap();
+            assert!(!select_manifest_files(&manifest, &selected)
+                .unwrap()
+                .is_empty());
+        }
     }
 
     fn minimal_manifest(components: Vec<ComponentDefinition>) -> RemoteManifest {

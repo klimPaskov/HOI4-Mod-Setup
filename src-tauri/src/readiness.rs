@@ -536,16 +536,14 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
         .selected_components
         .iter()
         .any(|component| component == "codex.config" || component == "environment.codex.config");
-    let launcher_required = input.selected_components.iter().any(|component| {
-        matches!(
-            component.as_str(),
-            "project.launcher_scaffold"
-                | "project.descriptor"
-                | "project.launcher_descriptor"
-                | "project.thumbnail"
-        )
-    });
-    let thumbnail_required = launcher_required;
+    let launcher_required = input
+        .selected_components
+        .iter()
+        .any(|component| component == "project.launcher_descriptor");
+    let thumbnail_required = input
+        .selected_components
+        .iter()
+        .any(|component| component == "project.thumbnail");
     add_bool_check(
         &mut checks,
         "source.revision",
@@ -604,31 +602,51 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
     add_bool_check(
         &mut checks,
         "descriptor.project",
-        "Project and launcher descriptors",
+        "Project descriptor",
         "descriptor",
         input.descriptors_valid,
         true,
-        "Both descriptor routes parse and point to the reviewed project.",
+        "The internal descriptor parses and contains the required project metadata.",
         "descriptor.mod",
     );
-    add_bool_check(
+    add_status_check(
         &mut checks,
         "launcher.registration",
         "Launcher registration",
         "launcher",
-        !launcher_required || input.launcher_valid,
-        true,
-        "The external launcher descriptor resolves to the reviewed project root.",
+        if !launcher_required {
+            "not_selected"
+        } else if input.launcher_valid {
+            "pass"
+        } else {
+            "block"
+        },
+        launcher_required,
+        if launcher_required {
+            "The external launcher descriptor resolves to the reviewed project root."
+        } else {
+            "No external launcher descriptor was selected. Launcher discovery has not been verified."
+        },
         "HOI4 user mod directory",
     );
-    add_bool_check(
+    add_status_check(
         &mut checks,
         "thumbnail.integrity",
         "Thumbnail integrity",
         "thumbnail",
-        !thumbnail_required || input.thumbnail_valid,
-        true,
-        "thumbnail.png is a valid decoded PNG and is hash-tracked.",
+        if !thumbnail_required {
+            "not_selected"
+        } else if input.thumbnail_valid {
+            "pass"
+        } else {
+            "block"
+        },
+        thumbnail_required,
+        if thumbnail_required {
+            "thumbnail.png is a valid decoded PNG and is hash-tracked."
+        } else {
+            "No managed thumbnail was selected."
+        },
         "thumbnail.png",
     );
     add_bool_check(
@@ -1334,6 +1352,21 @@ pub fn core_ready(report: &ReadinessReport) -> bool {
     report.core_ready
 }
 
+pub(crate) fn project_descriptor_is_valid(bytes: &[u8], preserved_local: bool) -> bool {
+    parse_descriptor(bytes).ok().is_some_and(|descriptor| {
+        ["name", "supported_version"].iter().all(|key| {
+            descriptor
+                .fields
+                .get(*key)
+                .is_some_and(|value| !value.trim().is_empty())
+        }) && (preserved_local
+            || descriptor
+                .fields
+                .get("picture")
+                .is_some_and(|value| value == "thumbnail.png"))
+    })
+}
+
 pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessInput, AppError> {
     let lock_path = project_root.join(".hoi4-mod-setup/install.lock.json");
     let lock = fs::read(&lock_path).ok().and_then(|bytes| {
@@ -1370,17 +1403,14 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
                     && crate::source::validate_sha256(&file.installed_sha256).is_ok()
             })
     });
+    let preserved_descriptor = lock.as_ref().is_some_and(|lock| {
+        lock.files
+            .iter()
+            .any(|file| !file.external && file.path == "descriptor.mod" && file.preserved_local)
+    });
     let project_descriptor_valid = fs::read(project_root.join("descriptor.mod"))
         .ok()
-        .and_then(|bytes| parse_descriptor(&bytes).ok())
-        .is_some_and(|descriptor| {
-            descriptor.fields.contains_key("name")
-                && descriptor.fields.contains_key("supported_version")
-                && descriptor
-                    .fields
-                    .get("picture")
-                    .is_some_and(|value| value == "thumbnail.png")
-        });
+        .is_some_and(|bytes| project_descriptor_is_valid(&bytes, preserved_descriptor));
     let launcher_descriptors_valid = lock.as_ref().is_some_and(|lock| {
         let launcher_files = lock
             .files
@@ -1635,13 +1665,30 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
     } else {
         "block"
     };
+    let mut readiness_components = lock
+        .as_ref()
+        .map(|lock| {
+            lock.components
+                .iter()
+                .map(|component| component.id.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if let Some(lock) = &lock {
+        for file in &lock.files {
+            if file.external && file.component_id.starts_with("project.launcher") {
+                readiness_components.push("project.launcher_descriptor".into());
+            } else if !file.external && file.path == "thumbnail.png" {
+                readiness_components.push("project.thumbnail".into());
+            }
+        }
+    }
+    readiness_components.sort();
+    readiness_components.dedup();
     Ok(ReadinessInput {
         project_id: project_id.into(),
         project_root: project_root.display().to_string(),
-        selected_components: lock
-            .as_ref()
-            .map(|lock| lock.components.iter().map(|component| component.id.clone()).collect())
-            .unwrap_or_default(),
+        selected_components: readiness_components,
         primary_coding_environment: lock
             .as_ref()
             .map(|lock| lock.primary_coding_environment.clone())
@@ -1742,6 +1789,65 @@ pub fn check_project_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preserved_descriptors_keep_optional_picture_metadata_but_not_invalid_fields() {
+        for picture in ["", "picture=\"preview.dds\"\n"] {
+            let text = format!("name=\"Workshop Example\"\nsupported_version=\"1.19.*\"\n{picture}replace_path=\"common/ideas\"\nreplace_path=\"common/decisions\"\n");
+            assert!(project_descriptor_is_valid(text.as_bytes(), true));
+            assert!(!project_descriptor_is_valid(text.as_bytes(), false));
+        }
+        assert!(project_descriptor_is_valid(
+            b"name=\"New Mod\"\nsupported_version=\"1.19.*\"\npicture=\"thumbnail.png\"\n",
+            false
+        ));
+        for bytes in [
+            b"name=\"Missing version\"\n".as_slice(),
+            b"name=\"\"\nsupported_version=\"1.19.*\"\n",
+            b"name=\"One\"\nname=\"Two\"\nsupported_version=\"1.19.*\"\n",
+            &[0xff],
+        ] {
+            assert!(!project_descriptor_is_valid(bytes, true));
+        }
+    }
+
+    #[test]
+    fn descriptor_or_legacy_scaffold_selection_does_not_invent_a_launcher_route() {
+        let mut input = ReadinessInput {
+            selected_components: vec![
+                "project.descriptor".into(),
+                "project.thumbnail".into(),
+                "project.launcher_scaffold".into(),
+            ],
+            descriptors_valid: true,
+            thumbnail_valid: true,
+            ..Default::default()
+        };
+        let report = evaluate(&input);
+        let launcher = report
+            .checks
+            .iter()
+            .find(|check| check.id == "launcher.registration")
+            .unwrap();
+        assert_eq!(launcher.status, "not_selected");
+        assert!(!launcher.blocking);
+        assert!(launcher
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("has not been verified"));
+        input
+            .selected_components
+            .push("project.launcher_descriptor".into());
+        let report = evaluate(&input);
+        let launcher = report
+            .checks
+            .iter()
+            .find(|check| check.id == "launcher.registration")
+            .unwrap();
+        assert_eq!(launcher.status, "block");
+        assert!(launcher.blocking);
+    }
 
     #[test]
     fn optional_incomplete_workflow_does_not_block_codex() {

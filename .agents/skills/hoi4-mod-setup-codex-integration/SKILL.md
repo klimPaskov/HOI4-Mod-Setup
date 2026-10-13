@@ -5,7 +5,7 @@ description: Use when implementing or changing provider authentication, model pr
 
 # HOI4 Mod Setup Codex Integration
 
-Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The user selects a setup assistant, model, and model-supported reasoning effort at the start; the Claude account route (`claude_account`, Claude Haiku 4.5) is the default profile and Codex remains first-class. This choice is never the later Agentic HOI4 Modding development-client selection.
+Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The user selects a setup assistant, model, and model-supported reasoning effort at the start; the Claude account route (`claude_account`, Claude Haiku 5.5 at medium effort) is the default profile and Codex remains first-class. This choice is never the later Agentic HOI4 Modding development-client selection.
 
 ## Product rule
 
@@ -19,20 +19,32 @@ Use that closed error map for model catalogs and Create/Import/Update/Repair
 capability checks as well; never send raw provider protocol or serialization
 detail to the renderer.
 
-Fetch Codex models through App Server `model/list` and provider models through
-the authenticated official Models API. Bind model plus reasoning effort to the
-analysis record, plan, and lock. The checked-in fallback defaults are
-`claude-haiku-4-5-20251001` for both Claude routes, `gpt-5.6-luna`/`xhigh` for
-Codex, and `deepseek-flash` for DeepSeek. Persist
-these only as setup-analysis provenance; do not write them into generated
-AGENTS/README guidance or use them to select development components.
+Fetch Codex models through App Server `model/list` and hosted-provider models
+through the authenticated official Models API. Bind model plus reasoning effort
+to the analysis record, plan, and lock. The checked-in fallback defaults are
+Claude Haiku 5.5/`medium` for both Claude routes, `gpt-5.6-luna`/`xhigh` for
+Codex, `gemini-3.8-flash` for Gemini, `grok-4.7` for hosted Grok, and
+`deepseek-flash` for DeepSeek. Claude Code's 14-entry catalog is built-in and
+keeps legacy Haiku 4.5; a bounded exact Claude model ID may be entered under
+Advanced. Persist these only as setup-analysis provenance; do not write them
+into generated AGENTS/README guidance or use them to select development
+components. Experimental account routes are separate: Gemini uses
+`gemini-3.8-flash`, while Grok's account CLI uses `grok-build`, not the hosted
+API model.
 
 A model-catalog timeout, error, or empty result must not remove the model
 control. Keep the checked-in verified default selectable for Codex and every
 known hosted profile, then merge a successful live catalog into those options.
+If a fresh, untouched Codex fallback is absent from the live catalog, select
+the App Server's advertised default (or first advertised model) and its effort.
+Retain explicit model choices and show a model-availability warning when one
+disappears; a signed-in account must not be told to sign in for this condition.
 Until live per-model metadata is available, expose only the fallback model's
-verified default reasoning effort. Keep a concise visible distinction between a
-live result, an empty result, and a failed refresh.
+verified default reasoning effort. Claude's built-in catalog is labelled
+`built-in`, not live. An exact Claude model ID that is not in that catalog stays
+usable after identifier validation, but no reasoning effort is assumed or
+forwarded for it. Keep a concise visible distinction between a live result, an
+empty result, and a failed refresh.
 For Local and Custom, keep the model name editable and expose successfully read
 endpoint models as suggestions. Never label a checked-in fallback as a live
 result, and never invent a fallback model for Local or Custom.
@@ -94,26 +106,63 @@ Recovery, rollback, backup inspection, and managed removal remain locally usable
 - Pass Claude Code the analysis schema without `$schema`/`$id`
   (`claude_output_schema`): its validator rejects the 2020-12 declaration and
   the run exits with empty stdout. Empty stdout is a Process error.
-- Retry (via `correctable_output_error`) only a completed run whose
-  structured output was missing or rejected for schema, identifier/value, or
-  path rules;
-  never retry timeouts, truncation, unreadable envelopes, or sign-in/usage
-  errors. For Codex, an incomplete turn is a timeout and a corrective turn
-  requires the completed turn's ID.
+- Retry (via `correctable_output_error`) only one completed response that fails
+  deterministic serialization, type/limit, identifier/value, or path rules.
+  Never retry private/account-shaped output, timeouts, truncation, unreadable
+  envelopes, transport, sign-in, authentication, or usage-limit failures. For
+  Codex, an incomplete turn is a timeout and a corrective turn requires the
+  completed turn's ID.
 - Analysis is `--print --output-format json --json-schema <schema> --model
   <model> --tools "" --strict-mcp-config --safe-mode --no-session-persistence
   --system-prompt <bounded>`, prompt on stdin, cwd a fresh empty temp
   directory. Read `structured_output`; map `is_error` results to sanitized
   sign-in, usage-limited, model, or generic categories without forwarding raw
   result text.
-- Haiku 4.5 does not accept effort: do not forward `--effort` for it, and hide
-  the effort control when a model offers a single effort level.
+- Read `src/claude-models.json` for the 14 built-in choices. Forward Claude's
+  `--effort` only when the selected ID is in that catalog and advertises the
+  effort; hide the selector for one-effort entries and forward no effort for an
+  unknown exact ID.
 - Persist provider `claude_account`, engine/integration `claude_code_cli`, auth
   mode `claude_account`. A legacy record with no provider still means Codex.
 - `claude_logout` clears pending proposals and approved scan evidence.
 
 Claude Code exposes no remaining-usage reading; describe usage as coming from
 the user's Claude plan and surface a usage-limit result only after it occurs.
+
+## Experimental provider-account CLI routes
+
+`gemini_account` and `grok_account` are separate experimental routes, not
+hosted API profiles and not a release claim. Read the accepted boundary in
+`docs/34_provider_account_cli_architecture.md` and the implementation in
+`src-tauri/src/account_cli.rs` before changing them.
+
+- Download only after an explicit **Sign in** action. Read the package URL,
+  npm SRI, archive member, and entry digest from
+  `src-tauri/resources/account-cli-pins.json`; verify every value before
+  execution. Never run npm lifecycle scripts, a package manager, redirects, or
+  a PATH shim.
+- The official provider CLI owns OAuth/login, token storage, refresh, and
+  logout. The app never reads, copies, logs, persists, or displays provider
+  tokens, authorization codes, account identity, email, plan, usage, or rate
+  limits. Provider-owned session persistence is allowed only inside the
+  app-private provider data root for approved setup inputs and never enters the
+  target project, plans, locks, logs, crash output, or source packages.
+- Use a link-free app-private home and an empty workspace with no target path.
+  Disable tools, extensions, MCP, skills, hooks, plugins, telemetry, web
+  search, and write-capable behavior according to the provider policy. Gemini
+  requires a publisher-verified Node runtime; Grok runs its pinned provider
+  binary. Re-hash the runtime immediately before every spawn.
+- Gemini uses the official **Sign in with Google** flow. Grok uses `grok login`
+  and `grok logout`; its account worker uses `grok-build`, distinct from hosted
+  Grok `grok-4.7`. Capability checks are bounded and non-identifying; they do
+  not become an API-key route. Missing preparation, cancellation, timeout,
+  unsupported model/platform, sign-in, or usage failure preserves the draft and
+  blocks new semantic planning.
+- The current interactive terminal route is verified only on Windows and
+  Linux. Report macOS unavailable until a verified runtime and terminal route
+  exists, even when a package pin is present. Account records use
+  `provider_cli`/`provider_account` and remain provider-neutral in generated
+  project guidance.
 
 ## Required contract
 
@@ -145,6 +194,9 @@ the user's Claude plan and surface a usage-limit result only after it occurs.
 - store non-Codex provider keys only in Windows Credential Manager, macOS Keychain or Linux Secret Service under a provider-keyed opaque reference; bind the non-secret reference scope to the selected provider and reject unscoped or cross-provider reuse
 - inject a non-Codex key only as the adapter's approved environment/header input for the bounded request; never put it in project state, plan, lock, or logs
 - treat local-model access as an explicit loopback route and do not claim hosted authentication for it
+- use native structured-output request formats for Anthropic, Gemini, and Grok;
+  API requests contain no tools, provider output is bounded, and redirects are
+  disabled
 
 ## Analysis boundary
 
@@ -168,18 +220,26 @@ Every analysis turn must:
 - contain only user-approved inputs
 - exclude secrets, binaries, Git objects, and credential stores
 - require the current `codex-analysis` output schema for every adapter; Codex
-  sends it as `outputSchema`, while hosted/local adapters receive the exact
-  checked-in schema in their system request
+  sends it as `outputSchema`, Anthropic/Gemini/Grok use their native schema
+  fields, and hosted/local/account adapters receive the exact checked-in schema
+  in their bounded request or CLI policy
 - reject additional or malformed fields
-- validate component recommendations as the checked-in
-  `docs/schemas/codex-analysis.schema.json` objects
-  `{component_id,recommendation,reason}`; `component_id` must be a
-  deterministic registry ID, including `workflow.super_events`, and unknown
-  IDs or fields are rejected
+- validate the complete Draft 2020-12 schema at runtime before typed
+  deserialization. The core replaces the model-supplied `analysis_id` with a
+  UUID after validation; a short non-secret model label is sufficient. Accept
+  empty `evidence_refs` for genuinely inferred brief-only suggestions, but
+  reject unknown references and preserve the current scan/hash/session approval
+  binding. Validate component recommendations as
+  `{component_id,recommendation,reason}` against the supplied deterministic
+  registry, including `workflow.super_events`; unknown IDs or fields are
+  rejected, not silently dropped.
 - reject account-shaped text in summaries, proposal reasons, recommendation
   reasons, warnings, and proposal values
 - require the complete ten-key proposal set before confirmation or planning
 - return concise proposal reasons, not hidden reasoning
+- discard private/account-shaped, truncated, refused, unreadable, transport,
+  authentication, and usage-limit responses without a corrective retry; map
+  each to a bounded actionable category
 
 For existing-project analysis, the core accepts only normalized redacted
 finding/conflict summaries, evidence references, and matching hashes emitted by a completed deterministic read-only scan in the
@@ -244,12 +304,14 @@ uses no provider login, model, or credentials.
 
 ## Current implementation boundary
 
-The Rust implementation is in `src-tauri/src/ai.rs` and `src-tauri/src/codex.rs`. It starts only an absolute
+The Rust implementation is in `src-tauri/src/ai.rs`, `src-tauri/src/codex.rs`,
+`src-tauri/src/claude_code.rs`, and the experimental
+`src-tauri/src/account_cli.rs`. It starts only an absolute
 `codex` executable discovered on the reviewed PATH, clears the child environment,
 passes a small non-secret environment allowlist, and communicates with bounded
 JSONL lines. `src-tauri/src/commands.rs` owns the process singleton and exposes
-typed account, browser/device login, fixed-path system-browser opening, logout,
-analysis, and confirmation commands
+typed account, browser/device login, provider-account login/cancel/logout,
+fixed-path system-browser opening, analysis, and confirmation commands
 through `src/lib/tauri.ts`; React never invokes the low-level Tauri bridge.
 `open_codex_login_url` accepts only the validated URL returned by Codex, while
 `open_external_url` accepts the fixed reviewed source, product repository,
@@ -331,12 +393,17 @@ silently reconfirm path edits. Test both path fields after confirmation.
 
 ## Corrective retry
 
-Every adapter (Codex App Server, provider API, Claude Code) allows
+Every adapter (Codex App Server, provider API, Claude Code, and the experimental
+account CLI) allows
 `ANALYSIS_ATTEMPTS` = 2 turns. When `validate_analysis_output` rejects a
 response with a serialization error, one corrective turn is sent with
 `corrective_analysis_prompt` (the validator's bounded reason plus the input
 hash; Codex reuses the same thread). Validation is never relaxed, other error
 categories are not retried, and the record binds only the accepted response.
+Private/account-shaped, truncated, refused, unreadable, transport,
+authentication, and usage-limit failures are discarded without a corrective
+turn. The runtime schema and deterministic validator remain authoritative even
+when a provider advertises native structured output.
 Validator messages name the failing proposal and rule so live probes can
 diagnose rejections; the renderer still sees only sanitized categories.
 
@@ -377,6 +444,16 @@ Cover:
 - deterministic rejection of invalid Codex identifiers
 - recovery access while signed out
 - provider-profile/model optimization binding and non-Codex credential isolation, including cross-provider reference rejection
+- the shared 14-entry Claude catalog, Haiku 5.5/medium default, legacy
+  one-effort Haiku 4.5, bounded exact custom Claude IDs, and no effort assumption
+  for unknown IDs
+- native Anthropic/Gemini/Grok schema payloads without tools or credential
+  values, runtime Draft 2020-12 validation, core-assigned analysis IDs, empty
+  evidence references for inference, and unknown-reference/recommendation-ID
+  rejection
+- experimental account-CLI package verification, private homes, empty
+  workspaces, isolation policy, provider-owned session boundary, cancellation,
+  logout, unsupported macOS, and no-secret persistence using fake processes
 - provider-neutral optional component recommendations, including the
   `workflow.super_events` registry ID/schema path and selected-vs-unselected
   AGENTS guidance

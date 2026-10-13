@@ -10,16 +10,20 @@ if (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(v
 async function updateJson(relativePath) {
   const path = resolve(root, relativePath);
   const source = await readFile(path, "utf8");
-  const updated = source.replace(/("version"\s*:\s*")[^"]+("\s*[,}])/, `$1${version}$2`);
-  if (updated === source) throw new Error(`${relativePath} version was not found`);
+  const pattern = /("version"\s*:\s*")[^"]+("\s*[,}])/;
+  if (!pattern.test(source)) throw new Error(`${relativePath} version was not found`);
+  const updated = source.replace(pattern, `$1${version}$2`);
+  if (updated === source) return;
   await writeFile(path, updated, "utf8");
 }
 
 async function updateCargoToml() {
   const path = resolve(root, "src-tauri", "Cargo.toml");
   const source = await readFile(path, "utf8");
-  const updated = source.replace(/(^\[package\][\s\S]*?^version\s*=\s*")[^"]+("\s*$)/m, `$1${version}$2`);
-  if (updated === source) throw new Error("src-tauri/Cargo.toml package version was not found");
+  const pattern = /(^\[package\][\s\S]*?^version\s*=\s*")[^"]+("\s*$)/m;
+  if (!pattern.test(source)) throw new Error("src-tauri/Cargo.toml package version was not found");
+  const updated = source.replace(pattern, `$1${version}$2`);
+  if (updated === source) return;
   await writeFile(path, updated, "utf8");
 }
 
@@ -28,7 +32,8 @@ async function updateCargoLock(relativePath) {
   const source = await readFile(path, "utf8");
   const pattern = /(\[\[package\]\]\r?\nname = "hoi4-mod-setup"\r?\nversion = ")[^"]+("\r?\n)/;
   const updated = source.replace(pattern, `$1${version}$2`);
-  if (updated === source) throw new Error(`${relativePath} application package version was not found`);
+  if (!pattern.test(source)) throw new Error(`${relativePath} application package version was not found`);
+  if (updated === source) return;
   await writeFile(path, updated, "utf8");
 }
 

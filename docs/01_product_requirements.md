@@ -2,7 +2,7 @@
 
 ## Product statement
 
-**HOI4 Mod Setup** is a Windows, macOS and Linux desktop application that prepares a Hearts of Iron IV mod project for provider-neutral agentic development. The user selects a setup assistant for bounded semantic analysis; Claude, signed in through the user's own Claude Code with Claude Haiku 4.5, is the default. That choice does not select or restrict the AI client used later for development. The app creates a new launcher-ready mod from a guided brief or imports an existing project through an evidence-backed read-only scan. It installs a selected workflow package from `klimPaskov/Agentic-HOI4-Modding` without cloning the complete source repository. Structural analysis is deterministic. Required semantic analysis uses the selected setup-provider adapter and produces reviewable proposals after deterministic evidence is collected.
+**HOI4 Mod Setup** is a Windows, macOS and Linux desktop application that prepares a Hearts of Iron IV mod project for provider-neutral agentic development. The user selects a setup assistant for bounded semantic analysis; Claude, signed in through the user's own Claude Code with Claude Haiku 5.5 at medium effort, is the default. The checked-in Claude catalog keeps legacy Haiku 4.5 and accepts a bounded exact model ID under Advanced. That choice does not select or restrict the AI client used later for development. The app creates a new launcher-ready mod from a guided brief or imports an existing project through an evidence-backed read-only scan. It installs a selected workflow package from `klimPaskov/Agentic-HOI4-Modding` without cloning the complete source repository. Structural analysis is deterministic. Required semantic analysis uses the selected setup-provider adapter and produces reviewable proposals after deterministic evidence is collected.
 
 ## Primary outcome
 
@@ -59,21 +59,27 @@ Needs pinned installs, optional 3D support, exact provenance, update and repair,
 ## Setup assistant requirement
 
 The first setup screen selects Claude (the default), Codex, Claude API key,
-Kimi, GLM, DeepSeek, a local model, or a bounded custom profile as the setup
-assistant. Claude runs the user's own installed, unmodified Claude Code: Claude
-Code owns browser sign-in and credential storage, and the app reads only a
-non-identifying signed-in summary and runs one isolated, tool-free print-mode
-turn. Codex uses the official local Codex
-App Server and ChatGPT-managed browser or device-code authentication. Hosted
-non-Codex profiles use a user-supplied endpoint and an API key stored in the OS
-credential vault. Local models use an explicit loopback HTTP endpoint. The
+Gemini API key, Grok API key, Kimi, GLM, DeepSeek, a local model, or a bounded
+custom profile as the setup assistant. Claude runs the user's own installed,
+unmodified Claude Code: Claude Code owns browser sign-in and credential
+storage, and the app reads only a non-identifying signed-in summary and runs
+one isolated, tool-free print-mode turn. Codex uses the official local Codex
+App Server and ChatGPT-managed browser or device-code authentication. Gemini
+and Grok API profiles use the reviewed Google OpenAI-compatible and xAI
+Responses endpoints (`gemini-3.8-flash` and `grok-4.7`) with OS-vault keys.
+Experimental `gemini_account` and `grok_account` CLI-owned login adapters are
+tracked separately for live testing and are not yet stable account routes.
+Hosted non-Codex profiles use checked-in endpoints and an API key stored in the
+OS credential vault. Local models use an explicit loopback HTTP endpoint. The
 application does not invent provider URLs, OAuth routes, package names,
 commands, model names, MCP servers, or platform support.
 
 The first screen fetches the selected provider's available model catalog after
 authentication, exposes the selected model's supported reasoning levels from
-Light through Max, and persists both choices. Claude defaults to Claude Haiku
-4.5, which has no adjustable effort level; Codex defaults to Luna at xhigh;
+Light through Max, and persists both choices. Claude Code has no live catalog:
+the shared 14-model catalog labels built-in choices, defaults to Claude Haiku
+5.5 at medium, retains legacy Haiku 4.5, and permits a bounded exact model ID
+under Advanced without an app release. Codex defaults to Luna at xhigh;
 DeepSeek defaults to its Flash model. A failed or empty catalog refresh keeps
 the checked-in verified model selectable for Codex and known hosted providers;
 Local and Custom keep an editable model field and add live endpoint results as
@@ -232,7 +238,14 @@ switch providers.
 - use the chosen model and optimization profile;
 - Preview the exact structured findings and text excerpts before each turn.
 - Exclude binaries, secrets, credential stores, Git objects, unapproved paths, and unrelated content.
-- Require output that validates against `schemas/codex-analysis.schema.json`.
+- Require output that validates at runtime against the authoritative
+  `schemas/codex-analysis.schema.json`; Anthropic, Gemini, and Grok may use
+  native structured-output request formats, but those formats do not replace
+  Rust validation.
+- Let the core assign the analysis UUID after validation. Empty
+  `evidence_refs` are valid for genuinely inferred brief-only suggestions;
+  unknown references remain invalid and exact scan/hash/session approval is
+  retained.
 - Use the selected setup assistant for project identity, description, namespace and
   prefix proposals, tags, folder profile, provider-neutral instruction adaptation,
   component recommendations, convention interpretation, and semantic conflict explanations.
@@ -241,17 +254,34 @@ switch providers.
 - Require deterministic validation and user confirmation before file rendering.
 - Preserve the draft when sign-in, usage, process, or schema validation fails. Start no transaction.
 
+Completed private/account-shaped, truncated, refused, unreadable, transport,
+authentication, and usage-limit outputs are discarded without a corrective
+retry and map to a bounded user-facing message. Only a completed response that
+fails deterministic serialization, identifier/value, or path validation gets
+one corrective turn.
+
 Recovery, rollback, backup inspection, and managed removal remain available
 while signed out or disconnected.
 
 ### Remote source resolution
 
-Use GitHub API and raw endpoints. Never clone Agentic-HOI4-Modding. Resolve the
-single canonical `hoi4-mod-setup.manifest.json` path; its required
-`schema_version` owns compatibility, and parallel filename aliases are not
-published as update history.
+Use GitHub API and raw endpoints for normal resolution. Never clone
+Agentic-HOI4-Modding. Resolve the single canonical
+`hoi4-mod-setup.manifest.json` path; its required `schema_version` owns
+compatibility, and parallel filename aliases are not published as update
+history. If the unauthenticated GitHub REST quota returns a rate-limit-only
+403/429, the fixed public repository may use the read-only Git HTTP ref
+advertisement to resolve identity; this path receives ref names and commit IDs
+only, never Git objects or a checkout. Other 403 responses fail closed.
 
-Latest mode resolves the default branch to an exact commit, fetches the manifest at that commit, and records it. Pinned mode accepts an exact commit or immutable release identity.
+Latest mode resolves the default branch to an exact commit, fetches the
+manifest at that commit, and records it. Pinned mode accepts an exact commit
+or immutable release identity; commit and release pages confirm the resolved
+object. A bounded source-resolution memory cache may reuse a complete
+resolution for at most 15 minutes, while every manifest and selected raw file
+still comes from the same resolved SHA. Public installs select manifest
+`expected_files` for the chosen component closure, not an inferred recursive
+repository tree, and verify each selected file's declared size and SHA-256.
 
 ### Component selection
 
@@ -276,6 +306,16 @@ verification. Compatible newly declared default-profile components are
 selected for new setups and added during Update without reselecting optional
 components that the user previously declined. Compatible optional workflow
 components appear from their manifest metadata and remain explicit choices.
+
+### Image provider dependency closure
+
+The image-generation choice is declarative and provider-neutral. Selecting a
+primary or additional image provider automatically selects its manifest route
+component and removes stale `imagegen.*` rows when the route changes. The UI
+keeps that state synchronized for review, while Rust remains authoritative for
+dependency expansion, platform support, file hashes, and external actions.
+Changing or clearing an image provider invalidates the plan so the closure is
+recomputed before dry-run approval.
 
 ### Offline wiki
 
@@ -330,6 +370,17 @@ The expanded portrait row states the minimum local recommendation as 16 GB of VR
 Cloud registers the official Comfy Cloud MCP route and may remain incomplete while authorization or subscription is deferred. Local discovery is bounded, loopback-only, and reports hardware, workflow, model, and Hugging Face state. RunPod records its URL/workspace and shows canonical setup and browser-control guidance without claiming readiness until the page and workflow are found. All provider credentials remain outside project files and locks.
 
 Portrait sourcing remains separate from production. ComfyUI production applies only to sourced or grounded portraits. Non-sourced fictional or impossible portraits use native ImageGen and never enter the ComfyUI workflow. Durable source PNG/TXT pairs use the runtime basename, person-only prompts begin with `hoi4_portrait,`, and temporary provider failures produce an honest source-based DDS placeholder with a pending replacement state. See `docs/32_comfyui_portrait_pipeline.md` for the complete contract.
+
+### Live testing workflows
+
+The optional workflow catalog may declare **HOI4 Live Tools** in addition to
+the stable live-testing route. Selecting it also selects
+`workflow.live_testing`, sets the provider to `hoi4_live_tools`, and keeps the
+provider route visible through setup and maintenance. The current public
+package is experimental, slower, and verified for Windows only; its macOS
+scaffold is incomplete. Unsupported platforms remain selectable only as an
+honest unavailable state and never receive an invented command. Disabling the
+route removes only its unchanged managed components.
 
 ### MCP setup
 

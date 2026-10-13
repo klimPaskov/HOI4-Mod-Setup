@@ -24,7 +24,7 @@ export type PhaseId = "project" | "review" | "components" | "integrations" | "gi
 
 export type SourceMode = "latest" | "pinned_commit" | "pinned_release";
 
-export type AiProviderId = "claude_account" | "codex" | "claude" | "kimi" | "glm" | "deepseek" | "local" | "custom";
+export type AiProviderId = "claude_account" | "codex" | "gemini_account" | "grok_account" | "claude" | "gemini" | "grok" | "kimi" | "glm" | "deepseek" | "local" | "custom";
 
 /** Built-in environment ids; a source manifest may declare more. */
 export type CodingEnvironmentId = "claude_code" | "codex" | "cursor" | "qoder" | "opencode" | (string & {});
@@ -230,6 +230,7 @@ export interface AiModelOption {
   display_name: string;
   default_reasoning_effort: ReasoningEffort;
   supported_reasoning_efforts: ReasoningEffort[];
+  is_default?: boolean;
 }
 
 export type AiModelCatalogStatus = "idle" | "loading" | "live" | "fallback-empty" | "fallback-error" | "live-missing";
@@ -735,6 +736,7 @@ export interface WizardState {
   aiModel: string;
   aiReasoningEffort: ReasoningEffort;
   aiModelCatalogStatus?: AiModelCatalogStatus;
+  aiModelChoiceExplicit?: boolean;
   aiEndpoint: string;
   aiAccount: AiAccountStatus | null;
   aiProfiles?: AiProviderProfile[];

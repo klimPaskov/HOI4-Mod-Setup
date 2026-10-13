@@ -22,6 +22,19 @@ It does not complete browser authentication and never prints account or login
 details; run the clean browser/device completion gate only with a developer
 present. Never place real credentials in CI.
 
+Claude model tests must validate the shared 14-entry catalog, Haiku 5.5/medium
+as the default, legacy Haiku 4.5 as a one-effort choice, and bounded exact
+model IDs entered under Advanced without requiring an app release. Built-in
+choices must remain available when no live catalog exists.
+
+Gemini and Grok account-adapter tests use fake terminal/process boundaries and
+never request a user's credential. Verify explicit-sign-in package download,
+SRI/archive/member digests, trusted Node verification for Gemini, isolated
+provider homes, empty workspaces, disabled tools/MCP/hooks/plugins, provider-
+owned session persistence boundaries, logout, cancellation, timeout, redacted
+errors, and unsupported macOS handling. A separately authorized manual smoke
+may use a real account; ordinary CI must not.
+
 ## Unit tests
 
 - path normalization and containment
@@ -55,6 +68,13 @@ present. Never place real credentials in CI.
 - provider profile and model binding
 - model-catalog failure and empty-result fallback for every provider profile,
   including editable Local and Custom model controls
+- native structured-output payloads for Anthropic, Gemini, and Grok, including
+  `output_config.format`, `response_format.json_schema`, and Responses
+  `text.format`; the payloads must contain no tools or credential values
+- runtime schema validation after native output, core-assigned analysis UUIDs,
+  empty evidence references for brief-only proposals, unknown-reference
+  rejection, and the distinction between corrective serialization errors and
+  private/truncated/refused/transport output that must not be retried
 - setup-provider isolation from generated guidance, development-client component
   selection, flattened ChatGPT packaging, and opening the selected client
 - coding-environment selection uses the manifest default (currently Claude Code)
@@ -68,6 +88,10 @@ present. Never place real credentials in CI.
   managed-file preservation, deselection removal rules, and persisted selections
   across update, repair, reinstall, rollback, and removal
 - flattened Chat-source mapping and size/collision policy
+- automatic image-provider route-component synchronization, stale image-route
+  removal, and Rust dependency-closure authority
+- manifest-declared HOI4 Live Tools row, its live-testing dependency/provider
+  state, experimental Windows-only status, and honest unsupported-platform UI
 - read-only scan exclusion of virtual environments, dependency trees, editor
   metadata, caches, generated artifacts, app-managed `.tools/`, `.tmp/`, and
   offline-wiki pages while retaining valid HOI4 files
@@ -101,11 +125,18 @@ path, and Codex targets.
   parallel runs remain deterministic.
 
 - fake GitHub latest and pinned server
+- unauthenticated GitHub REST rate-limit-only 403/429 fallback to the fixed
+  repository's read-only Git ref advertisement; reject unrelated 403s,
+  redirects, other repositories, object downloads, and checkout behavior
 - manifest and tree mismatch
 - changed default branch
 - partial download and resume
 - checksum failure
 - cache corruption
+- source-resolution memory-cache expiry, lower manifest TTL, request-key
+  isolation, and same-revision manifest/raw-file evidence
+- public file selection from manifest `expected_files`, including missing,
+  duplicate, outside-component, size, SHA-256, and undeclared-tree cases
 - Windows Credential Manager mock
 - macOS Keychain mock
 - Linux Secret Service mock and missing/locked/unavailable service failures
@@ -228,6 +259,11 @@ open the selected client. Select the flatten checkbox and
 verify skill renames, subagents, adapted AGENTS, README, conflicts,
 flat-conflict preservation across a later source conflict, backup, interruption
 recovery, and rollback.
+
+The same E2E family must cover the visible experimental account-CLI state
+without asking for credentials, native structured-output failure messaging,
+Claude's exact model-ID field, automatic image-provider component selection,
+and restored HOI4 Live Tools selection plus its live-testing provider state.
 
 ## Golden files
 

@@ -4,7 +4,7 @@ This file governs development of the **HOI4 Mod Setup** desktop application. It 
 
 ## 1. Product promise
 
-HOI4 Mod Setup prepares a new or existing Hearts of Iron IV mod for agentic development with a user-selected AI provider. Claude, signed in through the user's own Claude Code with Claude Haiku 4.5, is the default setup assistant.
+HOI4 Mod Setup prepares a new or existing Hearts of Iron IV mod for agentic development with a user-selected AI provider. Claude, signed in through the user's own Claude Code with Claude Haiku 5.5, is the default setup assistant. The checked-in Claude catalog keeps the legacy Haiku 4.5 choice and accepts a bounded exact model ID under Advanced.
 
 Every implementation must preserve these promises:
 
@@ -13,6 +13,9 @@ Every implementation must preserve these promises:
 - keep deterministic facts separate from required semantic proposals until the user confirms them
 - never clone the complete Agentic HOI4 Modding source repository
 - resolve latest mode to an exact commit before downloading files
+- if unauthenticated GitHub REST resolution hits a rate-limit-only 403/429,
+  use only the fixed repository's read-only Git ref advertisement for names and
+  commit IDs; never use it for object downloads or a checkout
 - support immutable pinned commit or release installs
 - download only selected manifest-declared files
 - verify downloaded content before apply
@@ -117,9 +120,14 @@ The application must:
 - use one revision for the manifest and all selected source files
 - support exact commit and release pinning
 - selectively fetch manifest-declared files or bundles
+- use each selected component's manifest-declared `expected_files` inventory
+  for public installation rather than requiring a recursive repository tree
 - verify SHA-256 before staging
 - retain source revision and hash evidence in the installation plan and lock
 - reject path traversal, duplicate destinations, platform mismatches, unsupported manifest majors, and checksum mismatch
+- use the bounded source-resolution memory cache (at most 15 minutes) only as
+  a resolution optimization; cache hits retain the exact revision and manifest
+  evidence and never mix revisions
 - consume compatible newly published skills, subagents, default-profile
   components, and optional workflow declarations from the exact resolved
   manifest without requiring an app release; preserve dependency, provider,
@@ -142,11 +150,21 @@ Use `hoi4-mod-setup-source-manifest` for changes to this surface.
 
 ## 5A. AI provider authentication and Codex App Server
 
-The default setup assistant is the Claude account route (`claude_account`). It runs the user's own installed, unmodified, Anthropic-signed Claude Code: `claude auth login` owns sign-in, `claude auth status --json` supplies a non-identifying summary, and analysis is one isolated print-mode turn with tools, MCP servers, customizations, and session persistence disabled, run in an empty working directory with Claude Haiku 4.5 by default. Anthropic does not permit third-party apps to offer Claude.ai login or to collect, store, or intermediate Claude credentials, so never build an app-owned Claude OAuth flow, read Claude Code's credential store, accept a pasted authorization code, or forward `ANTHROPIC_*` credentials to the child. The full boundary is in `docs/31_ai_provider_profiles_and_chat_sources.md`.
+The default setup assistant is the Claude account route (`claude_account`). It runs the user's own installed, unmodified, Anthropic-signed Claude Code: `claude auth login` owns sign-in, `claude auth status --json` supplies a non-identifying summary, and analysis is one isolated print-mode turn with tools, MCP servers, customizations, and session persistence disabled, run in an empty working directory with Claude Haiku 5.5 by default. The checked-in catalog keeps legacy Haiku 4.5 and the Advanced field accepts a bounded exact Claude model ID without requiring an app release. Anthropic does not permit third-party apps to offer Claude.ai login or to collect, store, or intermediate Claude credentials, so never build an app-owned Claude OAuth flow, read Claude Code's credential store, accept a pasted authorization code, or forward `ANTHROPIC_*` credentials to the child. The full boundary is in `docs/31_ai_provider_profiles_and_chat_sources.md`.
+
+Experimental Gemini and Grok account adapters are separate from the hosted API
+profiles. Their official CLI owns OAuth, token storage, refresh, and logout;
+the app fetches only the explicitly pinned package after the user chooses sign
+in, runs it from an app-private isolated home, and never reads or copies its
+credentials. Current worker support is Windows/Linux only; macOS remains
+unavailable until a verified terminal/runtime route exists. Provider-owned
+session persistence is permitted only for approved analysis inputs in that
+isolated home and never for target-project writes or app-managed records. See
+the focused decision in `docs/34_provider_account_cli_architecture.md`.
 
 Codex remains a first-class provider. ChatGPT sign-in is a core prerequisite for Codex Create, Import, Update, and Repair planning. Use the official local `codex app-server` process over stdio JSONL. Do not implement an application-owned OAuth service or an OpenAI API-key fallback for the Codex route.
 
-The first setup screen also supports the bounded provider registry in `docs/31_ai_provider_profiles_and_chat_sources.md`. Claude API key, Kimi, GLM, and DeepSeek use checked-in model/address defaults verified against official provider documentation plus an OS-vault API key; those non-secret defaults remain editable under Advanced. Custom hosted routes require an explicit HTTPS address and OS-vault API key. Local models require an explicit loopback HTTP address and do not claim a hosted account. The app must not invent provider URLs, login routes, packages, commands, model names, MCP servers, or platform support.
+The first setup screen also supports the bounded provider registry in `docs/31_ai_provider_profiles_and_chat_sources.md`. Claude API key, Gemini API key, Grok API key, Kimi, GLM, and DeepSeek use checked-in model/address defaults verified against official provider documentation plus an OS-vault API key; those non-secret defaults remain editable under Advanced. The reviewed Gemini OpenAI-compatible route defaults to `gemini-3.8-flash`; the reviewed Grok Responses route defaults to `grok-4.7`. Experimental `gemini_account` and `grok_account` CLI-owned login adapters are a separate in-progress surface documented in the account-adapter decision; they must not be described as a stable account route until their integration and live tests pass. Custom hosted routes require an explicit HTTPS address and OS-vault API key. Local models require an explicit loopback HTTP address and do not claim a hosted account. The app must not invent provider URLs, login routes, packages, commands, model names, MCP servers, or platform support.
 
 Required behavior:
 
@@ -162,6 +180,9 @@ Required behavior:
 - never write email, account ID, plan type, usage, or rate limits into a project or installation lock
 - do not use the experimental externally managed token mode
 - do not hardcode a model name for the Codex path; the selected setup model is persisted only as non-secret analysis provenance
+- native structured-output request formats are required for Anthropic, Gemini,
+  and Grok; truncated, refused, unreadable, transport, authentication, and
+  usage-limit responses are discarded without a corrective retry
 
 The provider, model, and reasoning effort selected on the first screen are the
 **setup assistant**. They do not select, install, recommend, or restrict the AI
@@ -170,7 +191,7 @@ content must remain provider-neutral. Development-client integrations such as
 `codex.config`, Open in Codex, flattened ChatGPT sources, and provider-neutral
 MCP tooling are selected or enabled independently of the setup assistant.
 
-Every semantic turn uses approved inputs and the current `codex-analysis` output schema. Codex turns use a dedicated App Server thread and restricted read-only sandbox. Provider adapters never write files or approve transactions. The selected setup profile shapes semantic proposals for names, IDs, namespaces, descriptions, tags, folder profiles, and component recommendations. It may help adapt project-specific guidance, but it must not insert the setup provider, model, reasoning effort, or provider-specific development convention into the generated project. Deterministic Rust validates and renders the final provider-neutral bytes after user confirmation.
+Every semantic turn uses approved inputs and the current `codex-analysis` output schema. The runtime validator is authoritative even when a provider advertises native structured output. The core replaces the model-supplied analysis ID with its own UUID, accepts empty evidence references for genuinely inferred proposals, rejects unknown references, and keeps the scan/hash/session approval binding. Codex turns use a dedicated App Server thread and restricted read-only sandbox. Provider adapters never write files or approve transactions. The selected setup profile shapes semantic proposals for names, IDs, namespaces, descriptions, tags, folder profiles, and component recommendations. It may help adapt project-specific guidance, but it must not insert the setup provider, model, reasoning effort, or provider-specific development convention into the generated project. Deterministic Rust validates and renders the final provider-neutral bytes after user confirmation.
 
 No AI provider can write project files during analysis, approve a transaction, resolve conflicts automatically, or pass readiness checks. Missing authentication/configuration or usage availability blocks new planning. Recovery, rollback, backup inspection, and managed removal remain locally available while signed out or disconnected.
 

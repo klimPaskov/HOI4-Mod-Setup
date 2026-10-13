@@ -1,5 +1,5 @@
 import { findingDisplayValue, findingLabel } from "../findings";
-import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderProfile, AppUpdateStatus, ChatSourcesPackageResult, ChatSourcesPreview, CodexAccountStatus, CodexAnalysisConfirmationValues, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, CodingEnvironmentId, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
+import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPackageResult, ChatSourcesPreview, CodexAccountStatus, CodexAnalysisConfirmationValues, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, CodingEnvironmentId, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
   id: string;
@@ -83,6 +83,10 @@ interface TauriCommandMap {
   claude_login_wait: { args: { loginId: string; model: string }; result: AiAccountStatus };
   claude_login_cancel: { args: { loginId: string }; result: void };
   claude_logout: { args: Record<string, never>; result: void };
+  provider_account_login: { args: { provider: AiProviderId; logout: boolean }; result: string };
+  provider_account_cancel: { args: { provider: AiProviderId; attemptId: string }; result: void };
+  provider_account_login_wait: { args: { provider: AiProviderId; attemptId: string }; result: AiAccountStatus };
+  provider_account_pending: { args: { provider: AiProviderId }; result: string | null };
   open_codex_login_url: { args: { url: string }; result: void };
   open_external_url: { args: { url: string }; result: void };
   codex_logout: { args: Record<string, never>; result: void };
@@ -250,6 +254,30 @@ export async function cancelClaudeLogin(loginId: string): Promise<boolean> {
 
 export async function logoutClaudeResult(): Promise<CommandResult<void>> {
   return invokeCommandResult("claude_logout", {});
+}
+
+export async function startProviderAccountLogin(provider: AiProviderId): Promise<CommandResult<string>> {
+  return invokeCommandResult("provider_account_login", { provider, logout: false });
+}
+
+export async function readAiAccountResult(provider: AiProviderId, model: string, reasoningEffort: string, endpoint: string): Promise<CommandResult<AiAccountStatus>> {
+  return invokeCommandResult("ai_account_read", { provider, model, reasoningEffort, endpoint });
+}
+
+export async function cancelProviderAccountLogin(provider: AiProviderId, attemptId: string): Promise<CommandResult<void>> {
+  return invokeCommandResult("provider_account_cancel", { provider, attemptId });
+}
+
+export async function logoutProviderAccount(provider: AiProviderId): Promise<CommandResult<string>> {
+  return invokeCommandResult("provider_account_login", { provider, logout: true });
+}
+
+export async function waitForProviderAccountLogin(provider: AiProviderId, attemptId: string): Promise<CommandResult<AiAccountStatus>> {
+  return invokeCommandResult("provider_account_login_wait", { provider, attemptId });
+}
+
+export async function readPendingProviderAccount(provider: AiProviderId): Promise<CommandResult<string | null>> {
+  return invokeCommandResult("provider_account_pending", { provider });
 }
 
 export async function startCodexLogin(mode: "browser" | "device"): Promise<CodexLoginStart | null> {
