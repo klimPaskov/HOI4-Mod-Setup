@@ -1209,6 +1209,7 @@ describe("HOI4 Mod Setup wizard", () => {
   });
 
   it("restores the optional HOI4 Live Tools workflow and its live-testing route", () => {
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Windows NT 10.0");
     const liveTesting = {
       id: "workflow.live_testing", display_name: "Live testing", category: "workflow", optional: true, platforms: ["all"],
       source: { kind: "tree", path: ".claude/skills/hoi4-live-playtest" }, destination: { path: ".claude/skills/hoi4-live-playtest/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [], capabilities: [], validation: [],
