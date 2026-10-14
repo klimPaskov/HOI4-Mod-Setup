@@ -8779,7 +8779,6 @@ fn prepare_preserved_generated_skip(
 ) -> bool {
     let preserve = operation.action == OperationAction::Skip
         && operation.local_sha256.is_some()
-        && operation.resolution.as_deref() == Some("preserved_local_review")
         && lock.files.iter().any(|file| {
             file.preserved_local
                 && file.path == operation.destination
@@ -9984,15 +9983,15 @@ fn build_maintenance_plan_blocking(
     let mut download_ledger = Vec::new();
     let mut merge_contexts = HashMap::new();
     for operation in &mut operations {
-        // A kept generated file has no reconstructible incoming baseline.
-        // Preserve its source provenance, but never offer its local bytes as a replacement.
-        if prepare_preserved_generated_skip(&lock, operation) {
-            continue;
-        }
         if operation.action == OperationAction::DeleteManaged
             || operation.source_sha256.is_none()
             || (mode == "remove" && operation.action == OperationAction::Skip)
         {
+            continue;
+        }
+        // A kept generated file has no reconstructible incoming baseline.
+        // Preserve its source provenance, but never offer its local bytes as a replacement.
+        if prepare_preserved_generated_skip(&lock, operation) {
             continue;
         }
         let expected = operation
@@ -11704,6 +11703,16 @@ mod tests {
         file.generated_bytes = None;
         lock.files = vec![file];
 
+        for mut operations in [
+            crate::transaction::reinstall_operations(&lock, root.path()).unwrap(),
+            crate::transaction::update_operations(&lock, &lock.files, root.path()).unwrap(),
+        ] {
+            assert!(prepare_preserved_generated_skip(&lock, &mut operations[0]));
+            assert_eq!(operations[0].resolution.as_deref(), Some("keep"));
+            assert_eq!(operations[0].source_sha256, Some(sha256_bytes(incoming)));
+            assert!(maintenance_conflicts(&operations, &[], &HashMap::new()).is_empty());
+        }
+
         let mut operations = crate::transaction::repair_operations(&lock, root.path()).unwrap();
         assert!(prepare_preserved_generated_skip(&lock, &mut operations[0]));
         let operation = &operations[0];
@@ -11721,12 +11730,44 @@ mod tests {
         .is_err());
 
         std::fs::write(root.path().join("descriptor.mod"), b"user edited again").unwrap();
+        for mut operations in [
+            crate::transaction::reinstall_operations(&lock, root.path()).unwrap(),
+            crate::transaction::update_operations(&lock, &lock.files, root.path()).unwrap(),
+        ] {
+            assert!(prepare_preserved_generated_skip(&lock, &mut operations[0]));
+            let conflicts = maintenance_conflicts(&operations, &[], &HashMap::new());
+            assert_eq!(conflicts.len(), 1);
+            assert_eq!(conflicts[0].options, ["keep", "skip"]);
+            assert_eq!(conflicts[0].selected, None);
+        }
         let mut operations = crate::transaction::repair_operations(&lock, root.path()).unwrap();
         assert!(prepare_preserved_generated_skip(&lock, &mut operations[0]));
         let conflicts = maintenance_conflicts(&operations, &[], &HashMap::new());
         assert_eq!(conflicts.len(), 1);
         assert_eq!(conflicts[0].options, ["keep", "skip"]);
         assert_eq!(conflicts[0].selected, None);
+        let mut text_operation = operations[0].clone();
+        text_operation.destination = "README.md".into();
+        let prepared = vec![PreparedFile {
+            operation_id: text_operation.id.clone(),
+            destination: text_operation.destination.clone(),
+            bytes: b"verified incoming".to_vec(),
+            expected_sha256: sha256_bytes(b"verified incoming"),
+        }];
+        let merge_contexts = HashMap::from([(
+            text_operation.id.clone(),
+            MergeContext {
+                kind: FileKind::Text,
+                base: b"base".to_vec(),
+                local: b"local".to_vec(),
+                incoming: b"verified incoming".to_vec(),
+            },
+        )]);
+        let verified = maintenance_conflicts(&[text_operation], &prepared, &merge_contexts);
+        assert_eq!(
+            verified[0].options,
+            ["keep", "replace", "merge", "rename", "skip"]
+        );
         assert_eq!(
             std::fs::read(root.path().join("descriptor.mod")).unwrap(),
             b"user edited again"
