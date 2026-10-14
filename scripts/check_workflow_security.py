@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import yaml
 
@@ -14,6 +15,29 @@ def load_workflow(name: str) -> dict:
     if not isinstance(workflow, dict) or not isinstance(workflow.get("jobs"), dict):
         raise SystemExit(f"{name} does not contain a jobs object")
     return workflow
+
+
+def assert_candidate_acceptance(ci: dict, historical: dict) -> None:
+    job = ci.get("jobs", {}).get("candidate-acceptance", {})
+    events = ci.get("on", ci.get(True, {}))
+    old_events = historical.get("on", historical.get(True, {}))
+    if ci.get("permissions") != {"contents": "read"} or events.get("push", {}).get("branches") != ["main"]:
+        raise SystemExit("candidate acceptance requires read-only CI and main-only pushes")
+    if set(old_events) != {"workflow_dispatch"}:
+        raise SystemExit("historical released-app acceptance must remain manual-only")
+    if job.get("needs") != "desktop-e2e" or job.get("if") != "github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository":
+        raise SystemExit("candidate acceptance must depend on native gates and exclude fork PRs")
+    if job.get("environment") or any(value == "write" for value in job.get("permissions", {}).values()):
+        raise SystemExit("candidate acceptance must not receive publication authority")
+    steps = job.get("steps", [])
+    checkout = [step for step in steps if str(step.get("uses", "")).startswith("actions/checkout@")]
+    download = [step for step in steps if str(step.get("uses", "")).startswith("actions/download-artifact@")]
+    if len(checkout) != 1 or checkout[0].get("with", {}).get("persist-credentials") is not False:
+        raise SystemExit("candidate checkout must not persist credentials")
+    if len(download) != 1 or re.fullmatch(r"actions/download-artifact@[0-9a-f]{40}", download[0]["uses"]) is None:
+        raise SystemExit("candidate download action must be pinned")
+    if download[0].get("with") != {"name": "hoi4-mod-setup-ci-windows-x64", "path": "dist/release"}:
+        raise SystemExit("candidate download must use the exact current-workflow Windows artifact")
 
 
 def permission(job: dict, name: str) -> str | None:
@@ -104,6 +128,7 @@ def main() -> None:
     preview = load_workflow("development-preview.yml")
     release = load_workflow("release.yml")
     ci = load_workflow("ci.yml")
+    assert_candidate_acceptance(ci, load_workflow("released-app-e2e.yml"))
     assert_linux_fuzz_dependencies(ci)
     assert_linux_native_gate("ci.yml", ci, "desktop-e2e")
     assert_linux_native_gate("development-preview.yml", preview, "build")

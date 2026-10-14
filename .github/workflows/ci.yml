@@ -30,7 +30,7 @@ jobs:
       - name: Check release workflow authority boundaries
         run: |
           python scripts/check_workflow_security.py
-          python -m unittest scripts/test_linux_release_gates.py
+          python -m unittest scripts/test_linux_release_gates.py scripts/test_released_acceptance_workflow.py
 
   frontend:
     runs-on: ubuntu-latest

@@ -99,6 +99,7 @@ test("maintenance repair sends the changed image provider in its reviewed plan r
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
       invoke: async (command: string, args: Record<string, unknown>) => {
         calls.push({ command, args });
+        if (command === "scan_project") return { scan_id: "maintenance-scan", project_root: args.root, findings: [], conflicts: [], partial: false, cancelled: false, limits_hit: [], completed_at: "2026-10-14T00:00:00Z" };
         if (command === "build_maintenance_plan") throw "captured by browser test";
         return null;
       },
@@ -118,6 +119,8 @@ test("maintenance repair sends the changed image provider in its reviewed plan r
       .find((entry) => entry.command === "build_maintenance_plan"),
   );
   expect(call?.args.mode).toBe("repair");
+  const order = await page.evaluate(() => (window as unknown as { __HOI4_TEST_COMMANDS__: Array<{ command: string }> }).__HOI4_TEST_COMMANDS__.map((entry) => entry.command));
+  expect(order.indexOf("scan_project")).toBeLessThan(order.indexOf("build_maintenance_plan"));
   expect(call?.args.imageGeneration).toMatchObject({
     primary_provider: "openai_api",
     additional_providers: [],
@@ -148,7 +151,7 @@ test(`maintenance sends the changed live testing provider on ${platform}`, async
   await page.addInitScript(() => {
     const calls: Array<{ command: string; args: Record<string, unknown> }> = [];
     (window as unknown as Record<string, unknown>).__HOI4_TEST_COMMANDS__ = calls;
-    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke: async (command: string, args: Record<string, unknown>) => { calls.push({ command, args }); if (command === "build_maintenance_plan") throw "captured live testing request"; return null; } };
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = { invoke: async (command: string, args: Record<string, unknown>) => { calls.push({ command, args }); if (command === "scan_project") return { scan_id: "maintenance-scan", project_root: args.root, findings: [], conflicts: [], partial: false, cancelled: false, limits_hit: [], completed_at: "2026-10-14T00:00:00Z" }; if (command === "build_maintenance_plan") throw "captured live testing request"; return null; } };
   });
   await page.goto("/?screenshot=maintenance");
   const isMac = await page.evaluate(() => /macintosh|mac os x/i.test(navigator.userAgent));
