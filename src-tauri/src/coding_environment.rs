@@ -92,17 +92,16 @@ pub fn default_primary(manifest: &RemoteManifest) -> String {
 
 pub fn validate_selection(selection: &CodingEnvironmentSelection) -> Result<(), AppError> {
     if !is_supported(selection.primary.as_str()) {
-        return Err(AppError::InvalidInput(format!(
-            "unsupported coding environment: {}",
-            selection.primary
-        )));
+        return Err(AppError::InvalidInput(
+            "select a supported primary coding environment".into(),
+        ));
     }
     let mut seen = HashSet::new();
     for environment in &selection.additional {
         if !is_supported(environment) {
-            return Err(AppError::InvalidInput(format!(
-                "unsupported additional coding environment: {environment}"
-            )));
+            return Err(AppError::InvalidInput(
+                "select supported additional coding environments".into(),
+            ));
         }
         if environment == &selection.primary {
             return Err(AppError::InvalidInput(

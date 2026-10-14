@@ -14106,6 +14106,48 @@ developer_instructions = "Work on the named files."
     }
 
     #[test]
+    fn async_maintenance_boundary_hides_actual_file_errors_and_invalid_environment_values() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let error = tauri::async_runtime::block_on(run_maintenance_command(move || {
+            crate::flatten::read_bounded_regular_file_no_follow_under_root(
+                &root,
+                "private-file-sentinel.md",
+                1024,
+            )
+        }))
+        .unwrap_err();
+        assert!(!error.contains("private-file-sentinel"));
+        assert!(!error.contains("os error"));
+        assert!(!error.contains("flattened file"));
+
+        for primary_invalid in [true, false] {
+            let error = tauri::async_runtime::block_on(run_maintenance_command(move || {
+                let invalid = "private-value-sentinel".repeat(1000);
+                coding_environment::selection_from_value(&if primary_invalid {
+                    serde_json::json!({"primaryCodingEnvironment": invalid})
+                } else {
+                    serde_json::json!({"additionalCodingEnvironments": [invalid]})
+                })
+            }))
+            .unwrap_err();
+            assert!(error.starts_with("Select"));
+            assert!(!error.contains("private-value-sentinel"));
+            assert!(error.split(" Technical details:").next().unwrap().len() < 100);
+        }
+
+        let source = include_str!("flatten.rs");
+        let start = source
+            .find("pub(crate) fn read_bounded_with_check<F>(")
+            .unwrap();
+        let body = &source[start..];
+        let body = &body[..body.find("\n    }\n").unwrap()];
+        assert!(body.contains("open_regular_file_under_root(self, &normalized)?"));
+        assert!(body.contains("file.read(&mut chunk[..chunk_len])?"));
+        assert!(!body.contains("map_err("));
+    }
+
+    #[test]
     fn codex_analysis_error_categories_remain_actionable_and_sanitized() {
         assert_eq!(
             codex_user_error(AppError::Process(

@@ -28,6 +28,9 @@ transaction errors: sign-in, usage-limit, stale-review, source, and scan states
 must keep their distinct next steps. Test real command failure paths and typed
 I/O, account-gate, and reanalysis failures through that async dispatcher, not
 only mapper helpers.
+Bounded flatten reads must retain typed open/read errors rather than converting
+OS text into renderer-visible `InvalidInput`; unsupported coding-environment
+messages must not echo unvalidated input values.
 Non-update rescans use their completed installed-state snapshot for the same
 plan request without overwriting user choices or creating semantic authority;
 Update retains its already confirmed scan-bound reanalysis.
