@@ -1,5 +1,7 @@
 {
   "repository": "klimPaskov/Agentic-HOI4-Modding",
+  "snapshot_status": "historical",
+  "superseded_by_revision": "9799c33ee0b1e5c9c5e2913b3ff7f93b40ce6175",
   "resolved_commit": "4c06817803a6c64ae54d43063d019617fd991c24",
   "default_branch": "main",
   "inspection_date": "2026-10-13",

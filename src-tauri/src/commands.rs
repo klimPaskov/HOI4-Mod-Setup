@@ -991,7 +991,7 @@ fn app_info() -> Value {
         "product": "HOI4 Mod Setup",
         "source_repository": crate::source::SOURCE_REPOSITORY,
         "manifest": crate::source::MANIFEST_PATH,
-        "supported_platforms": ["windows", "macos"],
+        "supported_platforms": ["windows", "macos", "linux"],
     })
 }
 
@@ -11252,6 +11252,14 @@ mod tests {
     use tempfile::tempdir;
 
     static COMMAND_TEST_STATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    #[test]
+    fn app_info_lists_all_supported_desktop_platforms() {
+        assert_eq!(
+            app_info()["supported_platforms"],
+            serde_json::json!(["windows", "macos", "linux"])
+        );
+    }
 
     #[test]
     fn descriptor_conflicts_preview_text_without_changing_merge_classification() {

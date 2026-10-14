@@ -5,9 +5,19 @@
 This planning package uses two evidence sets:
 
 1. The project files supplied with the request, including all Markdown skills, all supplied subagent TOML files, the project instruction file, the mechanics guide, and the current event, cluster, and scenario catalog CSV snapshots.
-2. The current audit records the published `klimPaskov/Agentic-HOI4-Modding` revision in `source-audit/live_repository_inventory.json`. Its resolved commit, generated-source revision, and manifest SHA-256 identify exact immutable Git bytes. The package includes canonical Claude sources and native client projections, portraits, the offline wiki, bounded 3D tooling, the published HOI4 Agent Tools 4.0.3 contract with explicit Windows/Linux integrity, and the verified optional Windows Live Tools release. Runtime resolution still binds the manifest and selected files to one commit.
+2. The historical audit in `source-audit/live_repository_inventory.json` records immutable source revision `4c06817803a6c64ae54d43063d019617fd991c24`. Its inventory remains valid historical evidence, not the current app pin. The package includes canonical Claude sources and native client projections, portraits, the offline wiki, bounded 3D tooling, the published HOI4 Agent Tools 4.0.3 contract with explicit Windows/Linux integrity, and the verified optional Windows Live Tools release.
 
-Machine-readable inventories are in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. The checked-in app manifest matches the published Agentic manifest Git blob byte-for-byte. The inventory's `manifest_generated_for_revision` identifies the immutable source snapshot used to generate that evidence.
+The current app pin is `package-2026-10-14.1`, manifest publication commit
+`9799c33ee0b1e5c9c5e2913b3ff7f93b40ce6175`, generated from source commit
+`4ce68a2f090de9fc885b63b1398b9f8999b84fbf`. The checked-in app manifest matches
+the published Git blob `f2f39b44dc7e18a523955179bae70f811c410462` byte-for-byte;
+its SHA-256 is `675fb615baf2bbf61e508801463360e8de874c6e920223662f73bbe6384d7a3f`.
+This delta adds a source-verified private npm toolchain and matching guidance,
+without changing MCP package/tree/entry pins. Source CI verified Windows/Linux
+x64 with Node 22 and 24. Runtime resolution still binds the manifest and every
+selected file to one immutable commit.
+
+Historical machine-readable inventories remain in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. Their revision fields identify the snapshots actually inspected; current file evidence is in the canonical `source-manifest/hoi4-mod-setup.manifest.json`.
 
 ## Fully read and processed
 
