@@ -1262,13 +1262,13 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.queryByRole("switch", { name: /Future runtime internals/ })).not.toBeInTheDocument();
   });
 
-  it("scans a newly installed project before preparing its repair", async () => {
+  it.each(["repair", "remove"] as const)("scans a newly installed project before %s planning", async (mode) => {
     enableTauriRuntime();
     window.__HOI4_DOCUMENTATION_STATE__ = { ...initialState, ...readyState(), identity: { ...initialState.identity, ...readyState().identity }, projectPathsOverridden: true, screen: "update", scanContext: undefined };
     let finishScan: ((value: Awaited<ReturnType<typeof scanProject>>) => void) | undefined;
     vi.mocked(scanProject).mockReturnValue(new Promise((resolve) => { finishScan = resolve; }));
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /Repair installation/ }));
+    fireEvent.click(screen.getByRole("button", { name: mode === "repair" ? /Repair installation/ : /Remove components/ }));
     await waitFor(() => expect(scanProject).toHaveBeenCalled());
     expect(buildMaintenancePlanResult).not.toHaveBeenCalled();
     await act(async () => finishScan?.({
@@ -1277,6 +1277,38 @@ describe("HOI4 Mod Setup wizard", () => {
     } as never));
     await waitFor(() => expect(buildMaintenancePlanResult).toHaveBeenCalled());
     expect(vi.mocked(scanProject).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(buildMaintenancePlanResult).mock.invocationCallOrder[0]);
+  });
+
+  it("uses the fresh installed snapshot without overwriting the requested workflow", async () => {
+    enableTauriRuntime();
+    window.__HOI4_DOCUMENTATION_STATE__ = {
+      ...initialState, ...readyState(), identity: { ...initialState.identity, ...readyState().identity },
+      projectPathsOverridden: true, screen: "update", scanContext: undefined,
+      existingInstallationDetected: false, meshSelected: true, installedWorkflow3dState: "ready",
+    };
+    vi.mocked(scanProject).mockResolvedValue({
+      findings: [{ id: "installation.managed", value: JSON.stringify({ present: true, valid: true, component_ids: ["core.agents"], workflow_3d_state: "not_selected" }) }],
+      scanId: "fresh", projectRoot: "C:\\mods\\cold-war-curtain", partial: false, cancelled: false, limitsHit: [], completedAt: "2026-10-14T00:00:00Z",
+    } as never);
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /Repair installation/ }));
+    await waitFor(() => expect(buildMaintenancePlanResult).toHaveBeenCalled());
+    expect(vi.mocked(buildMaintenancePlanResult).mock.calls[0][3]).toContain("workflow.3d");
+  });
+
+  it("keeps confirmed Update reanalysis bound to its original scan", async () => {
+    enableTauriRuntime();
+    const record = { analysis_id: "confirmed-update", confirmed_fields: ["display_name"], scan_id: "confirmed-scan" } as unknown as WizardState["maintenanceCodexAnalysisRecord"];
+    window.__HOI4_DOCUMENTATION_STATE__ = {
+      ...initialState, ...readyState(), identity: { ...initialState.identity, ...readyState().identity },
+      projectPathsOverridden: true, screen: "update", maintenanceEvidenceReady: true,
+      maintenanceCodexAnalysisRecord: record,
+    };
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /Check for updates/ }));
+    await waitFor(() => expect(buildMaintenancePlanResult).toHaveBeenCalled());
+    expect(scanProject).not.toHaveBeenCalled();
+    expect(vi.mocked(buildMaintenancePlanResult).mock.calls[0][2]).toBe(record);
   });
 
   it.each([null, { partial: true, cancelled: false }, { partial: false, cancelled: true }])("does not plan repair after an incomplete scan: %j", async (scan) => {

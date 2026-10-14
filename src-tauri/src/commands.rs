@@ -1659,6 +1659,27 @@ fn validate_analysis_source_binding(
     Ok(())
 }
 
+fn prepare_analysis_command_input<F>(
+    request: &mut CodexAnalysisRequest,
+    bind_registry: F,
+) -> Result<SourceIdentity, String>
+where
+    F: FnOnce(&mut CodexAnalysisRequest) -> Result<SourceIdentity, AppError>,
+{
+    (|| {
+        if let Some(project_root) = request.project_root.as_deref() {
+            request.project_root = Some(
+                validate_project_root(Path::new(project_root))?
+                    .display()
+                    .to_string(),
+            );
+        }
+        validate_codex_evidence_approval(request)?;
+        bind_registry(request)
+    })()
+    .map_err(provider_analysis_user_error)
+}
+
 #[tauri::command(async)]
 async fn codex_analyze(
     request: CodexAnalysisRequest,
@@ -1677,16 +1698,7 @@ fn codex_analyze_blocking(
     reasoning_effort: String,
 ) -> Result<CodexAnalysisResult, String> {
     let mut request = request;
-    if let Some(project_root) = request.project_root.as_deref() {
-        request.project_root = Some(
-            validate_project_root(Path::new(project_root))
-                .map_err(command_error)?
-                .display()
-                .to_string(),
-        );
-    }
-    validate_codex_evidence_approval(&request).map_err(command_error)?;
-    let source = bind_analysis_component_registry(&mut request).map_err(command_error)?;
+    let source = prepare_analysis_command_input(&mut request, bind_analysis_component_registry)?;
     let mut result =
         with_codex_session(|session| session.analyze(&request, &model, &reasoning_effort))
             .map_err(codex_user_error)?;
@@ -1724,21 +1736,13 @@ fn ai_analyze_blocking(mut request: AiAnalysisRequest) -> Result<CodexAnalysisRe
         return Err("Codex analysis must use the official Codex App Server command".into());
     }
     let account_generation = provider_session_generation(&request.provider);
-    if let Some(project_root) = request.analysis.project_root.as_deref() {
-        request.analysis.project_root = Some(
-            validate_project_root(Path::new(project_root))
-                .map_err(command_error)?
-                .display()
-                .to_string(),
-        );
-    }
     let credential_reference = ai_credential_reference(&request.provider);
     if let Some(reference) = credential_reference.as_ref() {
         validate_ai_provider_credential_for(reference, request.provider.trim())
-            .map_err(command_error)?;
+            .map_err(provider_analysis_user_error)?;
     }
-    validate_codex_evidence_approval(&request.analysis).map_err(command_error)?;
-    let source = bind_analysis_component_registry(&mut request.analysis).map_err(command_error)?;
+    let source =
+        prepare_analysis_command_input(&mut request.analysis, bind_analysis_component_registry)?;
     let mut result = ai::analyze(
         &OsCredentialStore,
         &AiProviderConfig {
@@ -8875,7 +8879,7 @@ async fn build_maintenance_plan(
     live_testing: Option<Value>,
 ) -> Result<InstallationPlan, String> {
     run_blocking_command("maintenance-plan", move || {
-        build_maintenance_plan_blocking(
+        maintenance_command_boundary(build_maintenance_plan_blocking(
             mode,
             project_root,
             analysis_override,
@@ -8886,9 +8890,13 @@ async fn build_maintenance_plan(
             analysis_confirmation_values,
             image_generation,
             live_testing,
-        )
+        ))
     })
     .await
+}
+
+fn maintenance_command_boundary<T>(result: Result<T, String>) -> Result<T, String> {
+    result.map_err(|detail| planning_command_error(AppError::Transaction(detail)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -14050,6 +14058,67 @@ developer_instructions = "Work on the named files."
         crate::claude_code::invalidate_session();
         clear_codex_local_state().unwrap();
         assert!(codex_analyses().lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn analysis_preparation_maps_typed_io_failures_at_the_command_boundary() {
+        let mut request = CodexAnalysisRequest {
+            mode: "new_project_identity".into(),
+            brief: "A test mod".into(),
+            evidence: vec![],
+            constraints: serde_json::json!({}),
+            analysis_purpose: None,
+            project_root: None,
+            scan_id: None,
+        };
+        let sentinel = "private-source-sentinel C:\\private\\cache (os error 2)";
+        let error = prepare_analysis_command_input(&mut request, |_| {
+            Err(AppError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                sentinel,
+            )))
+        })
+        .unwrap_err();
+        assert!(!error.contains(sentinel));
+        assert!(!error.contains("os error"));
+        assert!(!error.contains("private"));
+
+        let source = include_str!("commands.rs");
+        for command in ["fn codex_analyze_blocking(", "fn ai_analyze_blocking("] {
+            let body = &source[source.find(command).unwrap()..];
+            let body = &body[..body.find("\n}\n").unwrap()];
+            assert!(body.contains("prepare_analysis_command_input("));
+            assert!(!body.contains("map_err(command_error)"));
+        }
+    }
+
+    #[test]
+    fn maintenance_command_hides_filesystem_details_on_real_lock_read_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("private-source-sentinel");
+        let error = tauri::async_runtime::block_on(build_maintenance_plan(
+            "repair".into(),
+            root.display().to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ))
+        .unwrap_err();
+        assert!(error.contains("could not be prepared safely"));
+        assert!(!error.contains("private-source-sentinel"));
+        assert!(!error.contains("os error"));
+        assert!(!root.exists());
+        let injected = maintenance_command_boundary::<()>(Err(AppError::Io(
+            std::io::Error::other("private-io-sentinel"),
+        )
+        .to_string()))
+        .unwrap_err();
+        assert!(!injected.contains("private-io-sentinel"));
     }
 
     #[test]

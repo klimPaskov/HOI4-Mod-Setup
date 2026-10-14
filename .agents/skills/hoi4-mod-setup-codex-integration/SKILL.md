@@ -19,6 +19,15 @@ Use that closed error map for model catalogs and Create/Import/Update/Repair
 capability checks as well; never send raw provider protocol or serialization
 detail to the renderer.
 
+Analysis input preparation keeps typed failures through root/evidence/source
+binding and applies the closed provider error map before returning through IPC.
+The maintenance command also maps every internal preparation failure at its
+outer boundary, retaining redacted technical diagnostics separately. Test real
+command failure paths and injected typed I/O errors, not only mapper helpers.
+Non-update rescans use their completed installed-state snapshot for the same
+plan request without overwriting user choices or creating semantic authority;
+Update retains its already confirmed scan-bound reanalysis.
+
 Fetch Codex models through App Server `model/list` and hosted-provider models
 through the authenticated official Models API. Bind model plus reasoning effort
 to the analysis record, plan, and lock. The checked-in fallback defaults are
