@@ -8773,6 +8773,82 @@ fn validate_generated_maintenance_content(
     Ok(())
 }
 
+fn prepare_preserved_generated_skip(
+    lock: &InstallationLock,
+    operation: &mut PlanOperation,
+) -> bool {
+    let preserve = operation.action == OperationAction::Skip
+        && operation.local_sha256.is_some()
+        && operation.resolution.as_deref() == Some("preserved_local_review")
+        && lock.files.iter().any(|file| {
+            file.preserved_local
+                && file.path == operation.destination
+                && file.external == operation.external
+                && file.source_path.starts_with("generated:")
+                && operation.source_path.as_deref() == Some(file.source_path.as_str())
+                && operation.source_sha256.as_deref() == Some(file.source_sha256.as_str())
+                && file.generated_content.is_none()
+                && file.generated_bytes.is_none()
+        });
+    if preserve && operation.local_state == LocalState::Unmodified {
+        // The lock's prior Keep decision still applies to identical local bytes.
+        operation.resolution = Some("keep".into());
+    }
+    preserve
+}
+
+fn maintenance_conflicts(
+    operations: &[PlanOperation],
+    prepared: &[PreparedFile],
+    merge_contexts: &HashMap<String, MergeContext>,
+) -> Vec<PlanConflict> {
+    operations
+        .iter()
+        .filter(|operation| {
+            operation.local_state == LocalState::Modified
+                || matches!(
+                    operation.resolution.as_deref(),
+                    Some(
+                        "review_required"
+                            | "merged_base_required"
+                            | "reverse_merge_required"
+                            | "obsolete_review"
+                    )
+                )
+        })
+        .map(|operation| {
+            let no_incoming = !prepared
+                .iter()
+                .any(|file| file.operation_id == operation.id);
+            let preserve_only = no_incoming
+                || matches!(
+                    operation.resolution.as_deref(),
+                    Some("reverse_merge_required" | "obsolete_review")
+                );
+            let mut options = if preserve_only {
+                vec!["keep".into(), "skip".into()]
+            } else {
+                vec![
+                    "keep".into(),
+                    "replace".into(),
+                    "rename".into(),
+                    "skip".into(),
+                ]
+            };
+            if !preserve_only && merge_contexts.contains_key(&operation.id) {
+                options.insert(2, "merge".into());
+            }
+            PlanConflict {
+                id: format!("maintenance-{}", operation.id),
+                path: operation.destination.clone(),
+                options,
+                selected: None,
+                apply_to_identical: false,
+            }
+        })
+        .collect()
+}
+
 fn is_image_generation_client_config_path(path: &str) -> bool {
     matches!(
         path.replace('\\', "/").to_ascii_lowercase().as_str(),
@@ -9908,6 +9984,11 @@ fn build_maintenance_plan_blocking(
     let mut download_ledger = Vec::new();
     let mut merge_contexts = HashMap::new();
     for operation in &mut operations {
+        // A kept generated file has no reconstructible incoming baseline.
+        // Preserve its source provenance, but never offer its local bytes as a replacement.
+        if prepare_preserved_generated_skip(&lock, operation) {
+            continue;
+        }
         if operation.action == OperationAction::DeleteManaged
             || operation.source_sha256.is_none()
             || (mode == "remove" && operation.action == OperationAction::Skip)
@@ -10371,47 +10452,7 @@ fn build_maintenance_plan_blocking(
             });
         }
     }
-    let conflicts = operations
-        .iter()
-        .filter(|operation| {
-            operation.local_state == LocalState::Modified
-                || matches!(
-                    operation.resolution.as_deref(),
-                    Some(
-                        "review_required"
-                            | "merged_base_required"
-                            | "reverse_merge_required"
-                            | "obsolete_review"
-                    )
-                )
-        })
-        .map(|operation| {
-            let removal_review = matches!(
-                operation.resolution.as_deref(),
-                Some("reverse_merge_required" | "obsolete_review")
-            );
-            let mut options = if removal_review {
-                vec!["keep".into(), "skip".into()]
-            } else {
-                vec![
-                    "keep".into(),
-                    "replace".into(),
-                    "rename".into(),
-                    "skip".into(),
-                ]
-            };
-            if !removal_review && merge_contexts.contains_key(&operation.id) {
-                options.insert(2, "merge".into());
-            }
-            PlanConflict {
-                id: format!("maintenance-{}", operation.id),
-                path: operation.destination.clone(),
-                options,
-                selected: None,
-                apply_to_identical: false,
-            }
-        })
-        .collect::<Vec<_>>();
+    let conflicts = maintenance_conflicts(&operations, &prepared, &merge_contexts);
     let mut optional_workflows: BTreeMap<String, String> = lock
         .optional_workflows
         .iter()
@@ -11638,6 +11679,68 @@ mod tests {
             crate::transaction::managed_removal_operations(&baseline, root.path()).unwrap();
         assert_eq!(preservation[0].action, OperationAction::Skip);
         assert_eq!(preservation[0].local_state, LocalState::Modified);
+    }
+
+    #[test]
+    fn preserved_generated_repair_does_not_invent_incoming_descriptor_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let local = b"name=\"Workshop mod\"\nsupported_version=\"1.19.*\"\n";
+        let incoming =
+            b"name=\"Workshop mod\"\nsupported_version=\"1.19.*\"\npicture=\"thumbnail.png\"\n";
+        std::fs::write(root.path().join("descriptor.mod"), local).unwrap();
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let mut file = lock.files[0].clone();
+        file.path = "descriptor.mod".into();
+        file.external = false;
+        file.ownership = Ownership::Generated;
+        file.source_path = "generated:descriptor.mod".into();
+        file.source_sha256 = sha256_bytes(incoming);
+        file.installed_sha256 = sha256_bytes(local);
+        file.preserved_local = true;
+        file.generated_content = None;
+        file.generated_bytes = None;
+        lock.files = vec![file];
+
+        let mut operations = crate::transaction::repair_operations(&lock, root.path()).unwrap();
+        assert!(prepare_preserved_generated_skip(&lock, &mut operations[0]));
+        let operation = &operations[0];
+        assert_eq!(operation.action, OperationAction::Skip);
+        assert_eq!(operation.resolution.as_deref(), Some("keep"));
+        assert_eq!(operation.source_sha256, Some(sha256_bytes(incoming)));
+        assert_eq!(operation.local_sha256, Some(sha256_bytes(local)));
+        assert!(maintenance_conflicts(&operations, &[], &HashMap::new()).is_empty());
+        assert!(validate_generated_maintenance_content(
+            "descriptor.mod",
+            local,
+            local,
+            &sha256_bytes(incoming)
+        )
+        .is_err());
+
+        std::fs::write(root.path().join("descriptor.mod"), b"user edited again").unwrap();
+        let mut operations = crate::transaction::repair_operations(&lock, root.path()).unwrap();
+        assert!(prepare_preserved_generated_skip(&lock, &mut operations[0]));
+        let conflicts = maintenance_conflicts(&operations, &[], &HashMap::new());
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].options, ["keep", "skip"]);
+        assert_eq!(conflicts[0].selected, None);
+        assert_eq!(
+            std::fs::read(root.path().join("descriptor.mod")).unwrap(),
+            b"user edited again"
+        );
+
+        lock.files[0].generated_content = Some(String::from_utf8(incoming.to_vec()).unwrap());
+        assert!(!prepare_preserved_generated_skip(&lock, &mut operations[0]));
+        lock.files[0].generated_content = None;
+        lock.files[0].preserved_local = false;
+        assert!(!prepare_preserved_generated_skip(&lock, &mut operations[0]));
+        lock.files[0].preserved_local = true;
+        std::fs::remove_file(root.path().join("descriptor.mod")).unwrap();
+        let mut missing = crate::transaction::repair_operations(&lock, root.path()).unwrap();
+        assert!(!prepare_preserved_generated_skip(&lock, &mut missing[0]));
     }
 
     #[test]

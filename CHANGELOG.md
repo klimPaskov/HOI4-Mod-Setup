@@ -5,6 +5,7 @@ HOI4 Mod Setup follows semantic versioning.
 ## Unreleased
 
 - Fix source-cache preparation and atomic filesystem operations on non-English Windows by preserving typed I/O errors instead of matching localized error messages.
+- Scan newly installed projects before maintenance planning, and preserve kept Workshop descriptors during repair without treating local bytes as the rejected generated baseline.
 
 ## 0.6.0 - 2026-10-13
 

@@ -1421,6 +1421,21 @@ export default function App() {
       }
       return;
     }
+    if (mode !== "update" && isTauriRuntime()) {
+      const scanned = await scanProject(state.identity.projectRoot, undefined, undefined, state.identity.launcherDescriptorPath);
+      if (!scanned || scanned.partial || scanned.cancelled) {
+        update({ transactionError: "The project could not be fully scanned. Nothing was changed; try the review again." });
+        return;
+      }
+      setFindings(scanned.findings);
+      const managed = managedInstallationDetails(scanned.findings);
+      update({
+        scanContext: { scanId: scanned.scanId, projectRoot: scanned.projectRoot, completedAt: scanned.completedAt, partial: false, limitsHit: scanned.limitsHit },
+        existingInstallationDetected: managed.present && managed.valid,
+        installedComponentIds: managed.componentIds,
+        installedCodingEnvironments: managed.detectedCodingEnvironments,
+      });
+    }
     const addOptionalComponents = state.existingInstallationDetected === true
       && (mode === "repair" || mode === "update")
       ? [

@@ -106,6 +106,13 @@ evidence during maintenance, and derive post-lock launcher/thumbnail obligations
 from locked files as well as component metadata. Do not reinterpret a failed
 post-apply readiness journal as resumable or successful: rollback precedes retry.
 
+Repair, reinstall and removal start with a fresh complete read-only scan, even
+when entered directly from Ready after creating a project. Update retains its
+separate scan-bound reanalysis. A live preserved-local generated file with no
+recorded incoming payload stays Skip without fabricating incoming bytes; retain
+its source provenance. Further edits offer only Keep/Skip when no verified
+replacement exists, and a missing preserved file must still fail safely.
+
 Conflict previews are distinct from merge eligibility. `.mod` descriptors may
 show redacted UTF-8 text while retaining conservative merge choices; invalid
 UTF-8, binary bytes, links, and directories must not become mergeable through
