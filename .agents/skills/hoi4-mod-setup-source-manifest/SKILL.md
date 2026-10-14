@@ -94,6 +94,13 @@ Pinned commit uses the supplied commit for every step. Pinned release resolves a
 7. Test latest and pinned reproducibility.
 8. Update source audit and docs.
 
+The checked-in manifest fixture is bound to
+`docs/source-audit/current_manifest_identity.json`: record its exact published
+commit, generator revision, raw byte hash and size, Git blob, and release.
+Keep historical repository inventories separate; do not rewrite their old
+observations or use them to validate a newer manifest fixture. The source
+repository still owns generation of every component's file evidence.
+
 ## Wiki rules
 
 Install the manifest-declared wiki tree at `<mod_project>/paradox_wiki/`. Validate required page coverage, hashes, path containment, case collisions, media policy, and update behavior. Report missing formal provenance or license data exactly as missing.

@@ -16,6 +16,9 @@ This delta adds a source-verified private npm toolchain and matching guidance,
 without changing MCP package/tree/entry pins. Source CI verified Windows/Linux
 x64 with Node 22 and 24. Runtime resolution still binds the manifest and every
 selected file to one immutable commit.
+The machine-readable binding for this current fixture is
+`source-audit/current_manifest_identity.json`; tests use it instead of the
+historical repository inventory.
 
 Historical machine-readable inventories remain in `source-audit/uploaded_sources_inventory.json` and `source-audit/live_repository_inventory.json`. Their revision fields identify the snapshots actually inspected; current file evidence is in the canonical `source-manifest/hoi4-mod-setup.manifest.json`.
 

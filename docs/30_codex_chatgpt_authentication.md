@@ -126,6 +126,10 @@ Renderer-bound errors preserve sanitized categories: cancellation stays a
 cancelled login, signed-out state asks for ChatGPT sign-in, usage exhaustion
 preserves the draft and gives a retry-later action, private-looking input asks
 the user to remove secrets, and protocol details remain hidden.
+Maintenance preparation carries typed errors to its asynchronous IPC boundary
+and sanitizes them once. Repair and Update therefore retain distinct sign-in,
+usage-limit, and stale-confirmation next steps without exposing filesystem or
+provider details.
 
 ## Semantic responsibilities
 

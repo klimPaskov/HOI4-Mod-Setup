@@ -709,6 +709,9 @@ fn planning_command_error(error: AppError) -> String {
 
 fn planning_user_message(error: AppError) -> String {
     match error {
+        AppError::Credential(message) if message.starts_with("sign in with ChatGPT") => {
+            "Sign in with ChatGPT before continuing.".into()
+        }
         // Confirmation and session-binding checks share the credential
         // category with real sign-in failures, but the user fixes them by
         // reviewing again, not by reconnecting.
@@ -8878,8 +8881,8 @@ async fn build_maintenance_plan(
     image_generation: Option<Value>,
     live_testing: Option<Value>,
 ) -> Result<InstallationPlan, String> {
-    run_blocking_command("maintenance-plan", move || {
-        maintenance_command_boundary(build_maintenance_plan_blocking(
+    run_maintenance_command(move || {
+        build_maintenance_plan_blocking(
             mode,
             project_root,
             analysis_override,
@@ -8890,13 +8893,20 @@ async fn build_maintenance_plan(
             analysis_confirmation_values,
             image_generation,
             live_testing,
-        ))
+        )
     })
     .await
 }
 
-fn maintenance_command_boundary<T>(result: Result<T, String>) -> Result<T, String> {
-    result.map_err(|detail| planning_command_error(AppError::Transaction(detail)))
+async fn run_maintenance_command<T, F>(work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, AppError> + Send + 'static,
+{
+    run_blocking_command("maintenance-plan", move || {
+        work().map_err(planning_command_error)
+    })
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -8911,22 +8921,19 @@ fn build_maintenance_plan_blocking(
     analysis_confirmation_values: Option<Value>,
     image_generation_value: Option<Value>,
     live_testing_value: Option<Value>,
-) -> Result<InstallationPlan, String> {
-    let root = validate_project_root_or_destination(Path::new(&project_root))
-        .map(|(root, _)| root)
-        .map_err(command_error)?;
+) -> Result<InstallationPlan, AppError> {
+    let root =
+        validate_project_root_or_destination(Path::new(&project_root)).map(|(root, _)| root)?;
     let conventions = analysis_confirmation_values
         .as_ref()
         .map(|value| project_conventions_from_value(value.get("conventions")))
-        .transpose()
-        .map_err(command_error)?
+        .transpose()?
         .unwrap_or_else(|| persisted_project_conventions(&root));
     let confirmation_values_sha256 = analysis_confirmation_values
         .as_ref()
         .map(confirmation_values_sha256)
-        .transpose()
-        .map_err(command_error)?;
-    let lock = read_project_lock(&root).map_err(command_error)?;
+        .transpose()?;
+    let lock = read_project_lock(&root)?;
     let image_generation_input = image_generation_value;
     let mut selected_live_testing = Some(
         lock.live_testing
@@ -8965,11 +8972,10 @@ fn build_maintenance_plan_blocking(
                 ),
             );
         }
-        coding_environment::selection_from_value(&Value::Object(value)).map_err(command_error)?
+        coding_environment::selection_from_value(&Value::Object(value))?
     };
     let portrait_pipeline = if let Some(value) = portrait_pipeline_value {
-        portrait_pipeline_from_state(&serde_json::json!({"portraitPipeline": value}))
-            .map_err(command_error)?
+        portrait_pipeline_from_state(&serde_json::json!({"portraitPipeline": value}))?
     } else {
         lock.portrait_pipeline
             .clone()
@@ -9000,23 +9006,27 @@ fn build_maintenance_plan_blocking(
             })
             && seen_optional_components.insert(id.as_str())
     }) {
-        return Err("an optional workflow selection is invalid or duplicated".into());
+        return Err(AppError::InvalidInput(
+            "an optional workflow selection is invalid or duplicated".into(),
+        ));
     }
     if !add_optional_components.is_empty() && !matches!(mode.as_str(), "update" | "repair") {
-        return Err("optional workflows can be added only during update or repair".into());
+        return Err(AppError::InvalidInput(
+            "optional workflows can be added only during update or repair".into(),
+        ));
     }
     if !portrait_pipeline.enabled
         && add_optional_components
             .iter()
             .any(|id| id.starts_with("workflow.portraits"))
     {
-        return Err(
+        return Err(AppError::InvalidInput(
             "portrait components cannot be added while portrait production is disabled".into(),
-        );
+        ));
     }
     if mode != "remove" {
         if lock.ai_provider == "codex" {
-            require_codex_chatgpt_session().map_err(provider_analysis_user_error)?;
+            require_codex_chatgpt_session()?;
         } else {
             let credential_reference = ai_credential_reference(&lock.ai_provider);
             let status = ai::account_status(
@@ -9030,10 +9040,10 @@ fn build_maintenance_plan_blocking(
                 },
             );
             if status.error.is_some() || !status.authenticated {
-                return Err(format!(
+                return Err(AppError::Credential(format!(
                     "{} is not configured for maintenance planning",
                     lock.ai_provider
-                ));
+                )));
             }
         }
     }
@@ -9043,8 +9053,7 @@ fn build_maintenance_plan_blocking(
         &root,
         lock.ai_endpoint.as_deref(),
         confirmation_values_sha256.as_deref(),
-    )
-    .map_err(planning_command_error)?;
+    )?;
     let codex_analysis = if mode == "remove" {
         None
     } else {
@@ -9052,16 +9061,16 @@ fn build_maintenance_plan_blocking(
             .clone()
             .or_else(|| lock.codex_analysis.clone())
             .ok_or_else(|| {
-                "the installed project has no confirmed provider analysis; run Import review before maintenance"
-                    .to_string()
+                AppError::Credential("the installed project has no confirmed provider analysis; run Import review before maintenance"
+                    .into())
         })?;
-        crate::codex::validate_confirmed_record(&record).map_err(planning_command_error)?;
+        crate::codex::validate_confirmed_record(&record)?;
         let record_provider = record.provider.as_deref().unwrap_or("codex");
         let profile = ai::profile(&lock.ai_provider).ok_or_else(|| {
-            format!(
+            AppError::Credential(format!(
                 "installed lock uses an unsupported AI provider: {}",
                 lock.ai_provider
-            )
+            ))
         })?;
         if record_provider != lock.ai_provider
             || (lock.ai_provider != "codex"
@@ -9069,7 +9078,9 @@ fn build_maintenance_plan_blocking(
                     || record.optimization_profile.as_deref()
                         != Some(profile.optimization_profile.as_str())))
         {
-            return Err("provider reanalysis does not match the installed provider profile".into());
+            return Err(AppError::Credential(
+                "provider reanalysis does not match the installed provider profile".into(),
+            ));
         }
         if analysis_override.is_some()
             && !codex_record_confirmed_in_session_with_endpoint(
@@ -9082,17 +9093,16 @@ fn build_maintenance_plan_blocking(
                     })
                     .as_deref(),
                 confirmation_values_sha256.as_deref(),
-            )
-            .map_err(command_error)?
+            )?
         {
-            return Err(
+            return Err(AppError::Credential(
                 "the provider reanalysis is not confirmed in the current core session; review it again"
                     .into(),
-            );
+            ));
         }
         Some(record)
     };
-    let client = HttpSourceClient::new().map_err(command_error)?;
+    let client = HttpSourceClient::new()?;
     let mut maintenance_components = lock
         .components
         .iter()
@@ -9114,15 +9124,14 @@ fn build_maintenance_plan_blocking(
                 requested_ref: lock.source.requested_ref.clone(),
                 release: lock.source.release.clone(),
             },
-        )
-        .map_err(command_error)?;
+        )?;
         if lock.source.mode == SourceMode::PinnedRelease
             && resolution.identity.resolved_revision != lock.source.revision
         {
-            return Err(
+            return Err(AppError::InvalidInput(
                 "the pinned release resolved to a different commit; choose a new release explicitly"
                     .into(),
-            );
+            ));
         }
         let manifest_component_ids = resolution
             .manifest
@@ -9156,10 +9165,8 @@ fn build_maintenance_plan_blocking(
             &resolution.manifest,
             &live_requested,
             Platform::current(),
-        )
-        .map_err(command_error)?;
-        crate::live_testing::components(&mut requested, &live_selection, &resolution.manifest)
-            .map_err(command_error)?;
+        )?;
+        crate::live_testing::components(&mut requested, &live_selection, &resolution.manifest)?;
         selected_live_testing = Some(live_selection);
         let image_state = image_generation_state_for_maintenance(
             image_generation_input.as_ref(),
@@ -9170,8 +9177,7 @@ fn build_maintenance_plan_blocking(
             &image_state,
             &resolution.manifest,
             &coding_environment_selection,
-        )
-        .map_err(command_error)?;
+        )?;
         if let Some(installed_image) = lock.image_generation.as_ref() {
             desired_image.installed_package_tree_sha256 =
                 installed_image.installed_package_tree_sha256.clone();
@@ -9185,8 +9191,7 @@ fn build_maintenance_plan_blocking(
             selected_image_generation
                 .as_ref()
                 .expect("selection was set"),
-        )
-        .map_err(command_error)?;
+        )?;
         image_generation_manifest = Some(resolution.manifest.clone());
         if resolution
             .manifest
@@ -9223,45 +9228,39 @@ fn build_maintenance_plan_blocking(
                 requested.push(component_id.clone());
             }
         }
-        validate_optional_component_ids(&resolution.manifest, &add_optional_components)
-            .map_err(command_error)?;
-        let previous_manifest = resolve_installed_manifest(&lock).map_err(command_error)?;
+        validate_optional_component_ids(&resolution.manifest, &add_optional_components)?;
+        let previous_manifest = resolve_installed_manifest(&lock)?;
         let new_defaults =
-            newly_defaulted_component_ids(&previous_manifest, &resolution.manifest, &lock)
-                .map_err(command_error)?;
+            newly_defaulted_component_ids(&previous_manifest, &resolution.manifest, &lock)?;
         add_supported_profile_components(
             &resolution.manifest,
             &mut requested,
             &new_defaults,
             Platform::current(),
-        )
-        .map_err(command_error)?;
-        let active_component_ids = expand_components(&resolution.manifest, &requested)
-            .map_err(command_error)?
+        )?;
+        let active_component_ids = expand_components(&resolution.manifest, &requested)?
             .into_iter()
             .collect::<std::collections::HashSet<_>>();
         for component_id in coding_environment::component_ids(
             &resolution.manifest,
             &coding_environment_selection,
             &active_component_ids,
-        )
-        .map_err(command_error)?
-        {
+        )? {
             if !requested.iter().any(|id| id == &component_id) {
                 requested.push(component_id);
             }
         }
-        let expanded =
-            expand_components(&resolution.manifest, &requested).map_err(command_error)?;
+        let expanded = expand_components(&resolution.manifest, &requested)?;
         maintenance_components = expanded.clone();
         let support = crate::source::resolve_platform_support(
             &resolution.manifest,
             &expanded,
             Platform::current(),
-        )
-        .map_err(command_error)?;
+        )?;
         if support.iter().any(|item| item.state == "blocked") {
-            return Err("the current source has an unsupported required component".into());
+            return Err(AppError::UnsupportedPlatform(
+                "the current source has an unsupported required component".into(),
+            ));
         }
         let supported = expanded
             .into_iter()
@@ -9272,8 +9271,7 @@ fn build_maintenance_plan_blocking(
                     .is_some_and(|item| item.state == "supported")
             })
             .collect::<Vec<_>>();
-        let selections =
-            select_manifest_files(&resolution.manifest, &supported).map_err(command_error)?;
+        let selections = select_manifest_files(&resolution.manifest, &supported)?;
         // Re-adapt the incoming Codex configuration against the desired
         // maintenance closure.  The predecessor lock may not contain Codex
         // yet (for example when a project switches from Claude to Codex), so
@@ -9384,8 +9382,7 @@ fn build_maintenance_plan_blocking(
                     platform: Some(selection.platform),
                 })
             })
-            .collect::<Result<Vec<_>, AppError>>()
-            .map_err(command_error)?;
+            .collect::<Result<Vec<_>, AppError>>()?;
         let mut incoming = incoming;
         for generated in lock
             .files
@@ -9399,8 +9396,7 @@ fn build_maintenance_plan_blocking(
                 incoming.push(generated.clone());
             }
         }
-        let operations = crate::transaction::update_operations(&lock, &incoming, &root)
-            .map_err(command_error)?;
+        let operations = crate::transaction::update_operations(&lock, &incoming, &root)?;
         wiki_required_pages = resolution.manifest.wiki.required_pages.clone();
         wiki_metadata = Some(crate::source::wiki_install_metadata(&resolution.manifest));
         (
@@ -9410,13 +9406,11 @@ fn build_maintenance_plan_blocking(
         )
     } else {
         if mode != "remove" && lock_mcp_selected(&lock) {
-            maintenance_mcp_manifest =
-                Some(resolve_installed_manifest(&lock).map_err(command_error)?);
+            maintenance_mcp_manifest = Some(resolve_installed_manifest(&lock)?);
         }
         let operations = match mode.as_str() {
             "repair" => {
-                let mut operations =
-                    crate::transaction::repair_operations(&lock, &root).map_err(command_error)?;
+                let mut operations = crate::transaction::repair_operations(&lock, &root)?;
                 if !portrait_pipeline.enabled {
                     let portrait_lock = InstallationLock {
                         files: lock
@@ -9428,8 +9422,7 @@ fn build_maintenance_plan_blocking(
                         ..lock.clone()
                     };
                     let mut portrait_removals =
-                        crate::transaction::managed_removal_operations(&portrait_lock, &root)
-                            .map_err(command_error)?;
+                        crate::transaction::managed_removal_operations(&portrait_lock, &root)?;
                     for (index, operation) in portrait_removals.iter_mut().enumerate() {
                         operation.id = format!("repair-portrait-remove-{index:05}");
                     }
@@ -9442,9 +9435,12 @@ fn build_maintenance_plan_blocking(
             }
             "reinstall" => crate::transaction::reinstall_operations(&lock, &root),
             "remove" => crate::transaction::managed_removal_operations(&lock, &root),
-            other => return Err(format!("unsupported maintenance mode: {other}")),
-        }
-        .map_err(command_error)?;
+            _ => {
+                return Err(AppError::InvalidInput(
+                    "unsupported maintenance mode".into(),
+                ))
+            }
+        }?;
         let source = SourceIdentity {
             repository: lock.source.repository.clone(),
             mode: lock.source.mode,
@@ -9485,13 +9481,12 @@ fn build_maintenance_plan_blocking(
                     requested_ref: Some(lock.source.revision.clone()),
                     release: None,
                 },
-            )
-            .map_err(command_error)?;
+            )?;
             if resolution.identity.manifest_sha256 != lock.source.manifest_sha256 {
-                return Err(
+                return Err(AppError::Source(
                     "the installed source manifest does not match its immutable revision evidence"
                         .into(),
-                );
+                ));
             }
             let manifest_environment_ids =
                 coding_environment::all_environment_component_ids(&resolution.manifest);
@@ -9521,14 +9516,12 @@ fn build_maintenance_plan_blocking(
                 &resolution.manifest,
                 &live_requested,
                 Platform::current(),
-            )
-            .map_err(command_error)?;
+            )?;
             crate::live_testing::components(
                 &mut active_requested,
                 &live_selection,
                 &resolution.manifest,
-            )
-            .map_err(command_error)?;
+            )?;
             selected_live_testing = Some(live_selection);
             let image_state = image_generation_state_for_maintenance(
                 image_generation_input.as_ref(),
@@ -9539,8 +9532,7 @@ fn build_maintenance_plan_blocking(
                 &image_state,
                 &resolution.manifest,
                 &coding_environment_selection,
-            )
-            .map_err(command_error)?;
+            )?;
             if let Some(installed_image) = lock.image_generation.as_ref() {
                 desired_image.installed_package_tree_sha256 =
                     installed_image.installed_package_tree_sha256.clone();
@@ -9548,9 +9540,7 @@ fn build_maintenance_plan_blocking(
                     installed_image.installed_package_lock_sha256.clone();
             }
             let mut desired_image_ids = Vec::new();
-            for provider in image_generation_provider_rows(&resolution.manifest, &desired_image)
-                .map_err(command_error)?
-            {
+            for provider in image_generation_provider_rows(&resolution.manifest, &desired_image)? {
                 if let Some(component_id) = provider
                     .pointer("/route/component_id")
                     .and_then(Value::as_str)
@@ -9569,8 +9559,7 @@ fn build_maintenance_plan_blocking(
                 .cloned()
                 .collect::<Vec<_>>();
             desired_image_ids.extend(
-                expand_components(&resolution.manifest, &live_ids)
-                    .map_err(command_error)?
+                expand_components(&resolution.manifest, &live_ids)?
                     .into_iter()
                     .filter(|id| {
                         matches!(
@@ -9614,18 +9603,16 @@ fn build_maintenance_plan_blocking(
             let image_selection_changed = lock.image_generation.as_ref() != Some(&desired_image)
                 || lock.live_testing != selected_live_testing;
             if !add_image_ids.is_empty() {
-                let expanded = expand_components(&resolution.manifest, &add_image_ids)
-                    .map_err(command_error)?;
+                let expanded = expand_components(&resolution.manifest, &add_image_ids)?;
                 let support = crate::source::resolve_platform_support(
                     &resolution.manifest,
                     &expanded,
                     Platform::current(),
-                )
-                .map_err(command_error)?;
+                )?;
                 if support.iter().any(|item| item.state == "blocked") {
-                    return Err(
+                    return Err(AppError::UnsupportedPlatform(
                         "a selected image provider has no verified route on this computer".into(),
-                    );
+                    ));
                 }
                 let supported = expanded
                     .into_iter()
@@ -9635,8 +9622,7 @@ fn build_maintenance_plan_blocking(
                         })
                     })
                     .collect::<Vec<_>>();
-                let selections = select_manifest_files(&resolution.manifest, &supported)
-                    .map_err(command_error)?;
+                let selections = select_manifest_files(&resolution.manifest, &supported)?;
                 append_additional_component_operations(
                     &mut operations,
                     &selections,
@@ -9644,8 +9630,7 @@ fn build_maintenance_plan_blocking(
                     &root,
                     &maintenance_identity(&lock, &root),
                     false,
-                )
-                .map_err(command_error)?;
+                )?;
             }
             if !remove_image_ids.is_empty() {
                 operations.retain(|operation| !remove_image_ids.contains(&operation.component_id));
@@ -9664,10 +9649,9 @@ fn build_maintenance_plan_blocking(
                         .collect(),
                     ..lock.clone()
                 };
-                operations.extend(
-                    crate::transaction::managed_removal_operations(&obsolete, &root)
-                        .map_err(command_error)?,
-                );
+                operations.extend(crate::transaction::managed_removal_operations(
+                    &obsolete, &root,
+                )?);
             }
             maintenance_components.retain(|id| {
                 !id.starts_with("imagegen.")
@@ -9705,10 +9689,8 @@ fn build_maintenance_plan_blocking(
                     .map(|component| component.id.clone())
                     .collect::<Vec<_>>();
                 if !refresh_ids.is_empty() {
-                    let expanded = expand_components(&resolution.manifest, &refresh_ids)
-                        .map_err(command_error)?;
-                    let selections = select_manifest_files(&resolution.manifest, &expanded)
-                        .map_err(command_error)?
+                    let expanded = expand_components(&resolution.manifest, &refresh_ids)?;
+                    let selections = select_manifest_files(&resolution.manifest, &expanded)?
                         .into_iter()
                         .filter(|selection| {
                             is_image_generation_guidance_path(&selection.destination)
@@ -9723,8 +9705,7 @@ fn build_maintenance_plan_blocking(
                             &root,
                             &maintenance_identity(&lock, &root),
                             true,
-                        )
-                        .map_err(command_error)?;
+                        )?;
                     }
                 }
             }
@@ -9733,16 +9714,14 @@ fn build_maintenance_plan_blocking(
                     active_requested.push(component_id.clone());
                 }
             }
-            let active_component_ids = expand_components(&resolution.manifest, &active_requested)
-                .map_err(command_error)?
+            let active_component_ids = expand_components(&resolution.manifest, &active_requested)?
                 .into_iter()
                 .collect::<std::collections::HashSet<_>>();
             let mut desired_environment_ids = coding_environment::component_ids(
                 &resolution.manifest,
                 &coding_environment_selection,
                 &active_component_ids,
-            )
-            .map_err(command_error)?;
+            )?;
             // The tools server is shared by every selected native client.  It
             // is deliberately retained outside the primary/additional
             // environment closure so switching clients never unregisters the
@@ -9810,19 +9789,17 @@ fn build_maintenance_plan_blocking(
                 .cloned()
                 .collect::<std::collections::HashSet<_>>();
             if !add_ids.is_empty() {
-                let expanded =
-                    expand_components(&resolution.manifest, &add_ids).map_err(command_error)?;
+                let expanded = expand_components(&resolution.manifest, &add_ids)?;
                 let support = crate::source::resolve_platform_support(
                     &resolution.manifest,
                     &expanded,
                     Platform::current(),
-                )
-                .map_err(command_error)?;
+                )?;
                 if support.iter().any(|item| item.state == "blocked") {
-                    return Err(
+                    return Err(AppError::UnsupportedPlatform(
                         "a selected coding environment has no verified route on this computer"
                             .into(),
-                    );
+                    ));
                 }
                 let supported = expanded
                     .into_iter()
@@ -9833,8 +9810,7 @@ fn build_maintenance_plan_blocking(
                             .is_some_and(|item| item.state == "supported")
                     })
                     .collect::<Vec<_>>();
-                let selections = select_manifest_files(&resolution.manifest, &supported)
-                    .map_err(command_error)?;
+                let selections = select_manifest_files(&resolution.manifest, &supported)?;
                 append_additional_component_operations(
                     &mut operations,
                     &selections,
@@ -9842,8 +9818,7 @@ fn build_maintenance_plan_blocking(
                     &root,
                     &maintenance_identity(&lock, &root),
                     false,
-                )
-                .map_err(command_error)?;
+                )?;
             }
             if !remove_ids.is_empty() {
                 operations.retain(|operation| !remove_ids.contains(&operation.component_id));
@@ -9863,8 +9838,7 @@ fn build_maintenance_plan_blocking(
                     ..lock.clone()
                 };
                 let mut removals =
-                    crate::transaction::managed_removal_operations(&obsolete_lock, &root)
-                        .map_err(command_error)?;
+                    crate::transaction::managed_removal_operations(&obsolete_lock, &root)?;
                 for (index, operation) in removals.iter_mut().enumerate() {
                     operation.id = format!("maintenance-environment-remove-{index:05}");
                 }
@@ -9890,16 +9864,14 @@ fn build_maintenance_plan_blocking(
                 requested_ref: Some(lock.source.revision.clone()),
                 release: None,
             },
-        )
-        .map_err(command_error)?;
+        )?;
         if resolution.identity.manifest_sha256 != lock.source.manifest_sha256 {
-            return Err(
+            return Err(AppError::Source(
                 "the installed source manifest does not match its immutable revision evidence"
                     .into(),
-            );
+            ));
         }
-        validate_optional_component_ids(&resolution.manifest, &add_optional_components)
-            .map_err(command_error)?;
+        validate_optional_component_ids(&resolution.manifest, &add_optional_components)?;
         let requested = add_optional_components
             .iter()
             .filter(|id| {
@@ -9911,10 +9883,11 @@ fn build_maintenance_plan_blocking(
             .cloned()
             .collect::<Vec<_>>();
         if requested.is_empty() {
-            return Err("the selected optional workflows are already installed".into());
+            return Err(AppError::InvalidInput(
+                "the selected optional workflows are already installed".into(),
+            ));
         }
-        let expanded =
-            expand_components(&resolution.manifest, &requested).map_err(command_error)?;
+        let expanded = expand_components(&resolution.manifest, &requested)?;
         if portrait_pipeline.enabled {
             let keep_portrait = expanded
                 .iter()
@@ -9935,8 +9908,7 @@ fn build_maintenance_plan_blocking(
             };
             if !obsolete_portrait_lock.files.is_empty() {
                 let mut removals =
-                    crate::transaction::managed_removal_operations(&obsolete_portrait_lock, &root)
-                        .map_err(command_error)?;
+                    crate::transaction::managed_removal_operations(&obsolete_portrait_lock, &root)?;
                 for (index, operation) in removals.iter_mut().enumerate() {
                     operation.id = format!("repair-portrait-provider-remove-{index:05}");
                 }
@@ -9951,10 +9923,11 @@ fn build_maintenance_plan_blocking(
             &resolution.manifest,
             &expanded,
             Platform::current(),
-        )
-        .map_err(command_error)?;
+        )?;
         if support.iter().any(|item| item.state == "blocked") {
-            return Err("an optional workflow has no verified route on this computer".into());
+            return Err(AppError::UnsupportedPlatform(
+                "an optional workflow has no verified route on this computer".into(),
+            ));
         }
         let supported = expanded
             .iter()
@@ -9966,8 +9939,7 @@ fn build_maintenance_plan_blocking(
             })
             .cloned()
             .collect::<Vec<_>>();
-        let selections =
-            select_manifest_files(&resolution.manifest, &supported).map_err(command_error)?;
+        let selections = select_manifest_files(&resolution.manifest, &supported)?;
         append_additional_component_operations(
             &mut operations,
             &selections,
@@ -9975,8 +9947,7 @@ fn build_maintenance_plan_blocking(
             &root,
             &maintenance_identity(&lock, &root),
             requested.iter().any(|id| id == "workflow.super_events"),
-        )
-        .map_err(command_error)?;
+        )?;
         for component_id in expanded {
             if !maintenance_components.iter().any(|id| id == &component_id) {
                 maintenance_components.push(component_id);
@@ -10002,10 +9973,9 @@ fn build_maintenance_plan_blocking(
         if prepare_preserved_generated_skip(&lock, operation) {
             continue;
         }
-        let expected = operation
-            .source_sha256
-            .as_deref()
-            .ok_or_else(|| "maintenance operation has no expected source hash".to_string())?;
+        let expected = operation.source_sha256.as_deref().ok_or_else(|| {
+            AppError::Source("maintenance operation has no expected source hash".into())
+        })?;
         let source_is_generated = operation
             .source_path
             .as_deref()
@@ -10029,39 +9999,36 @@ fn build_maintenance_plan_blocking(
                 })
                 .or_else(|| healthy_generated_bytes(&lock, &root, operation))
                 .ok_or_else(|| {
-                    format!(
+                    AppError::Transaction(format!(
                         "generated maintenance artifact has no recorded content: {}",
                         operation.destination
-                    )
+                    ))
                 })?
         } else {
-            client
-                .fetch_verified_file(
-                    &source_revision,
-                    operation.source_path.as_deref().unwrap_or(""),
-                    expected,
-                    operation.source_size,
-                )
-                .map_err(command_error)?
+            client.fetch_verified_file(
+                &source_revision,
+                operation.source_path.as_deref().unwrap_or(""),
+                expected,
+                operation.source_size,
+            )?
         };
         let source_ledger_entry = if source_is_generated {
             None
         } else {
-            let source_path = operation
-                .source_path
-                .clone()
-                .ok_or_else(|| "remote maintenance operation has no source path".to_string())?;
+            let source_path = operation.source_path.clone().ok_or_else(|| {
+                AppError::Source("remote maintenance operation has no source path".into())
+            })?;
             let ownership = operation.ownership.ok_or_else(|| {
-                "remote maintenance operation has no ownership evidence".to_string()
+                AppError::Source("remote maintenance operation has no ownership evidence".into())
             })?;
             let platform = operation.platform.ok_or_else(|| {
-                "remote maintenance operation has no platform evidence".to_string()
+                AppError::Source("remote maintenance operation has no platform evidence".into())
             })?;
             if operation.source_size != Some(source_bytes.len() as u64) {
-                return Err(format!(
+                return Err(AppError::Source(format!(
                     "remote maintenance source size mismatch: {}",
                     operation.destination
-                ));
+                )));
             }
             Some(crate::models::DownloadedFile {
                 operation_id: operation.id.clone(),
@@ -10110,12 +10077,10 @@ fn build_maintenance_plan_blocking(
                 maintenance_components.iter().any(|id| id == "workflow.3d"),
                 &portrait_pipeline,
                 &maintenance_components,
-            )
-            .map_err(command_error)?
+            )?
         };
         let bytes = if is_image_generation_client_config_path(&operation.destination) {
-            merge_existing_image_client_config(&root, &operation.destination, &bytes)
-                .map_err(command_error)?
+            merge_existing_image_client_config(&root, &operation.destination, &bytes)?
         } else {
             bytes
         };
@@ -10123,8 +10088,7 @@ fn build_maintenance_plan_blocking(
             image_generation_manifest.as_ref(),
             selected_image_generation.as_ref(),
         ) {
-            let guided = adapt_image_generation_guidance(&bytes, manifest, selection)
-                .map_err(command_error)?;
+            let guided = adapt_image_generation_guidance(&bytes, manifest, selection)?;
             adapt_image_generation_client_config(
                 &guided,
                 &operation.destination,
@@ -10133,8 +10097,7 @@ fn build_maintenance_plan_blocking(
                 &coding_environment_selection,
                 &root,
                 selected_live_testing.as_ref().unwrap(),
-            )
-            .map_err(command_error)?
+            )?
         } else {
             bytes
         };
@@ -10145,8 +10108,7 @@ fn build_maintenance_plan_blocking(
                 &source_bytes,
                 &bytes,
                 expected,
-            )
-            .map_err(command_error)?;
+            )?;
         }
         // A remote source was verified against its manifest SHA-256 when it
         // was fetched. Adaptation then legitimately changes many files (the
@@ -10198,14 +10160,12 @@ fn build_maintenance_plan_blocking(
                 if merge_base_available
                     && matches!(kind, FileKind::Text | FileKind::Toml | FileKind::Json)
                 {
-                    let base_source = client
-                        .fetch_verified_file(
-                            &current_file.source_revision,
-                            &current_file.source_path,
-                            &current_file.source_sha256,
-                            None,
-                        )
-                        .map_err(command_error)?;
+                    let base_source = client.fetch_verified_file(
+                        &current_file.source_revision,
+                        &current_file.source_path,
+                        &current_file.source_sha256,
+                        None,
+                    )?;
                     let base = if current_file.component_id == "codex.config" {
                         adapt_codex_config_for_selection(
                             &base_source,
@@ -10215,8 +10175,7 @@ fn build_maintenance_plan_blocking(
                                 .iter()
                                 .any(|id| id == "workflow.super_events"),
                             &portrait_pipeline,
-                        )
-                        .map_err(command_error)?
+                        )?
                     } else if current_file.component_id == "core.agents" {
                         adapt_agents_for_selection(
                             &base_source,
@@ -10227,8 +10186,7 @@ fn build_maintenance_plan_blocking(
                             &conventions,
                             lock_workflow_selected(&lock, "workflow.super_events"),
                             portrait_pipeline.enabled,
-                        )
-                        .map_err(command_error)?
+                        )?
                     } else {
                         base_source
                     };
@@ -10236,14 +10194,8 @@ fn build_maintenance_plan_blocking(
                         validate_external_destination(&current_file.path)
                     } else {
                         safe_join(&root, &current_file.path)
-                    }
-                    .map_err(command_error)?;
-                    let local = std::fs::read(local_path).map_err(|error| {
-                        format!(
-                            "cannot read modified file for merge preview {}: {error}",
-                            operation.destination
-                        )
-                    })?;
+                    }?;
+                    let local = std::fs::read(local_path)?;
                     merge_contexts.insert(
                         operation.id.clone(),
                         MergeContext {
@@ -10275,28 +10227,23 @@ fn build_maintenance_plan_blocking(
                 &coding_environment_selection,
                 &client_config_destinations,
                 selected_live_testing.as_ref().unwrap(),
-            )
-            .map_err(command_error)?;
+            )?;
             append_maintenance_image_client_config_operations(
                 &client_config_artifacts,
                 &mut operations,
                 &mut prepared,
                 &lock,
                 &root,
-            )
-            .map_err(command_error)?;
+            )?;
             generated_artifacts.extend(client_config_artifacts);
-            if let Some(guidance) =
-                image_generation_guidance_artifact(manifest, selection).map_err(command_error)?
-            {
+            if let Some(guidance) = image_generation_guidance_artifact(manifest, selection)? {
                 append_maintenance_image_client_config_operations(
                     std::slice::from_ref(&guidance),
                     &mut operations,
                     &mut prepared,
                     &lock,
                     &root,
-                )
-                .map_err(command_error)?;
+                )?;
                 generated_artifacts.push(guidance);
             } else if let Some(previous) = lock
                 .files
@@ -10311,22 +10258,18 @@ fn build_maintenance_plan_blocking(
                     operation.external || operation.destination != previous.path
                 });
                 prepared.retain(|file| file.destination != previous.path);
-                operations.extend(
-                    crate::transaction::managed_removal_operations(&obsolete, &root)
-                        .map_err(command_error)?,
-                );
+                operations.extend(crate::transaction::managed_removal_operations(
+                    &obsolete, &root,
+                )?);
             }
-            if let Some(artifact) =
-                image_generation_config_artifact(manifest, selection).map_err(command_error)?
-            {
+            if let Some(artifact) = image_generation_config_artifact(manifest, selection)? {
                 append_maintenance_image_client_config_operations(
                     std::slice::from_ref(&artifact),
                     &mut operations,
                     &mut prepared,
                     &lock,
                     &root,
-                )
-                .map_err(command_error)?;
+                )?;
                 generated_artifacts.push(artifact);
             } else if let Some(previous) = lock.files.iter().find(|file| {
                 file.path == ".hoi4-setup/image_generation.json"
@@ -10337,9 +10280,9 @@ fn build_maintenance_plan_blocking(
                     operation.external || operation.destination != previous.path
                 });
                 prepared.retain(|file| file.destination != previous.path);
-                let path = safe_join(&root, &previous.path).map_err(command_error)?;
+                let path = safe_join(&root, &previous.path)?;
                 let local_sha = if path.is_file() {
-                    Some(sha256_file(&path).map_err(command_error)?)
+                    Some(sha256_file(&path)?)
                 } else {
                     None
                 };
@@ -10393,16 +10336,13 @@ fn build_maintenance_plan_blocking(
                 .replace('\\', "/")
                 .starts_with("chatgpt_project_sources/")
         });
-        let flatten_prepared = accepted_flatten_prepared_files(&prepared, &operations, &root)
-            .map_err(command_error)?;
-        let flat = crate::flatten::build_artifacts(&flatten_prepared, &[], &root)
-            .map_err(command_error)?;
+        let flatten_prepared = accepted_flatten_prepared_files(&prepared, &operations, &root)?;
+        let flat = crate::flatten::build_artifacts(&flatten_prepared, &[], &root)?;
         generated_artifacts.extend(flat.clone());
         for (index, artifact) in flat.iter().enumerate() {
-            let destination_path =
-                safe_join(&root, &artifact.destination).map_err(command_error)?;
+            let destination_path = safe_join(&root, &artifact.destination)?;
             let local_sha = if destination_path.is_file() {
-                Some(sha256_file(&destination_path).map_err(command_error)?)
+                Some(sha256_file(&destination_path)?)
             } else {
                 None
             };
@@ -10468,21 +10408,19 @@ fn build_maintenance_plan_blocking(
         .collect();
     let mut credential_references = Vec::new();
     if add_optional_components.iter().any(|id| id == "workflow.3d") {
-        let mesh_reference = current_meshy_credential_reference()
-            .map_err(command_error)?
-            .or_else(|| {
-                lock.optional_workflows
-                    .get("workflow.3d")
-                    .and_then(|workflow| workflow.credential_reference.clone())
-                    .map(|reference| CredentialReference {
-                        name: MESHY_ENVIRONMENT_NAME.into(),
-                        provider: crate::credentials::provider_name(Platform::current()).into(),
-                        reference,
-                        provider_id: None,
-                    })
-            });
+        let mesh_reference = current_meshy_credential_reference()?.or_else(|| {
+            lock.optional_workflows
+                .get("workflow.3d")
+                .and_then(|workflow| workflow.credential_reference.clone())
+                .map(|reference| CredentialReference {
+                    name: MESHY_ENVIRONMENT_NAME.into(),
+                    provider: crate::credentials::provider_name(Platform::current()).into(),
+                    reference,
+                    provider_id: None,
+                })
+        });
         if let Some(reference) = mesh_reference {
-            validate_credential_reference(&reference).map_err(command_error)?;
+            validate_credential_reference(&reference)?;
             credential_references.push(reference);
         }
         let previous_state = lock
@@ -10549,16 +10487,16 @@ fn build_maintenance_plan_blocking(
         let manifest = if let Some(manifest) = maintenance_mcp_manifest.as_ref() {
             manifest.clone()
         } else {
-            resolve_installed_manifest(&lock).map_err(command_error)?
+            resolve_installed_manifest(&lock)?
         };
         let actions = manifest_external_actions(&manifest, &maintenance_components);
         if !actions
             .iter()
             .any(|action| action.component_id == crate::mcp::COMPONENT_ID)
         {
-            return Err(
+            return Err(AppError::Source(
                 "the locked MCP manifest does not declare one reviewed health action".into(),
-            );
+            ));
         }
         actions
     } else if mode != "remove"
@@ -10572,7 +10510,7 @@ fn build_maintenance_plan_blocking(
         let manifest = if let Some(manifest) = maintenance_mcp_manifest.as_ref() {
             manifest.clone()
         } else {
-            resolve_installed_manifest(&lock).map_err(command_error)?
+            resolve_installed_manifest(&lock)?
         };
         manifest_external_actions(&manifest, &[LIVE_TOOLS_COMPONENT_ID.to_string()])
     } else {
@@ -10587,7 +10525,7 @@ fn build_maintenance_plan_blocking(
         let manifest = if let Some(manifest) = image_generation_manifest.as_ref() {
             manifest.clone()
         } else {
-            resolve_installed_manifest(&lock).map_err(command_error)?
+            resolve_installed_manifest(&lock)?
         };
         external_actions.extend(manifest_external_actions(
             &manifest,
@@ -10621,24 +10559,25 @@ fn build_maintenance_plan_blocking(
     );
     let external_actions_reviewed = external_actions.is_empty();
     if let Some(record) = codex_analysis.as_ref() {
-        validate_analysis_source_binding(record, &plan_source).map_err(command_error)?;
+        validate_analysis_source_binding(record, &plan_source)?;
     }
     let project_root_identity = {
         let approved = codex_approved_evidence()
             .lock()
-            .map_err(|_| "approved scan evidence store is unavailable".to_string())?;
+            .map_err(|_| AppError::Scan("approved scan evidence store is unavailable".into()))?;
         if approved
             .project_root
             .as_ref()
             .is_none_or(|approved_root| !same_project_root(approved_root, &root))
         {
-            return Err("maintenance planning requires a fresh scan of this project".into());
+            return Err(AppError::Scan(
+                "maintenance planning requires a fresh scan of this project".into(),
+            ));
         }
         let expected_scan = (mode == "update")
             .then(|| analysis_override.as_ref().and_then(|record| record.scan_id))
             .flatten();
-        validate_approved_project_root_identity(&root, &approved, expected_scan)
-            .map_err(command_error)?
+        validate_approved_project_root_identity(&root, &approved, expected_scan)?
     };
     let mut plan = InstallationPlan {
         schema_version: crate::migrations::CURRENT_PLAN_SCHEMA.into(),
@@ -10677,13 +10616,11 @@ fn build_maintenance_plan_blocking(
                 .iter()
                 .map(|stage| (*stage).into())
                 .collect(),
-            backup_root: application_data_root()
-                .map_err(command_error)?
+            backup_root: application_data_root()?
                 .join("backups")
                 .display()
                 .to_string(),
-            staging_root: application_data_root()
-                .map_err(command_error)?
+            staging_root: application_data_root()?
                 .join("staging")
                 .display()
                 .to_string(),
@@ -10701,9 +10638,9 @@ fn build_maintenance_plan_blocking(
             push_approved: false,
         },
     };
-    crate::transaction::bind_plan_external_parents(&mut plan).map_err(command_error)?;
-    ensure_mcp_package_replaceable(&plan).map_err(planning_command_error)?;
-    store_prepared_plan(plan, prepared, merge_contexts, root).map_err(command_error)
+    crate::transaction::bind_plan_external_parents(&mut plan)?;
+    ensure_mcp_package_replaceable(&plan)?;
+    store_prepared_plan(plan, prepared, merge_contexts, root)
 }
 
 #[tauri::command(async)]
@@ -14113,12 +14050,59 @@ developer_instructions = "Work on the named files."
         assert!(!error.contains("private-source-sentinel"));
         assert!(!error.contains("os error"));
         assert!(!root.exists());
-        let injected = maintenance_command_boundary::<()>(Err(AppError::Io(
-            std::io::Error::other("private-io-sentinel"),
-        )
-        .to_string()))
+        let injected = tauri::async_runtime::block_on(run_maintenance_command::<(), _>(|| {
+            Err(AppError::Io(std::io::Error::other("private-io-sentinel")))
+        }))
         .unwrap_err();
         assert!(!injected.contains("private-io-sentinel"));
+    }
+
+    #[test]
+    fn async_maintenance_boundary_preserves_authentication_usage_and_review_categories() {
+        let signed_out = tauri::async_runtime::block_on(run_maintenance_command(|| {
+            validate_codex_planning_account(&CodexAccountStatus::default())
+        }))
+        .unwrap_err();
+        assert!(signed_out.starts_with("Sign in with ChatGPT"));
+
+        let limited = tauri::async_runtime::block_on(run_maintenance_command(|| {
+            validate_codex_planning_account(&CodexAccountStatus {
+                available: true,
+                authenticated: true,
+                auth_mode: "chatgpt".into(),
+                usage_limited: true,
+                ..Default::default()
+            })
+        }))
+        .unwrap_err();
+        assert!(limited.contains("usage is currently limited"));
+        assert!(!limited.contains("Sign in"));
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
+        let stale_review = tauri::async_runtime::block_on(run_maintenance_command(move || {
+            require_maintenance_reanalysis("update", None, &root, None, None)
+        }))
+        .unwrap_err();
+        assert!(stale_review.starts_with("The confirmed review no longer matches"));
+        assert!(!stale_review.contains("Reconnect"));
+
+        let source = include_str!("commands.rs");
+        let start = source.find("async fn build_maintenance_plan(").unwrap();
+        let command = &source[start..];
+        let command = &command[..command.find("\n}\n").unwrap()];
+        assert!(command.contains("run_maintenance_command(move ||"));
+        let start = source.find("fn build_maintenance_plan_blocking(").unwrap();
+        let body = &source[start..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        assert!(body.contains("Result<InstallationPlan, AppError>"));
+        for mapper in [
+            "command_error",
+            "planning_command_error",
+            "provider_analysis_user_error",
+        ] {
+            assert!(!body.contains(&format!("map_err({mapper})")));
+        }
     }
 
     #[test]

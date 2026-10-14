@@ -1,0 +1,10 @@
+{
+  "repository": "klimPaskov/Agentic-HOI4-Modding",
+  "resolved_commit": "9799c33ee0b1e5c9c5e2913b3ff7f93b40ce6175",
+  "release": "package-2026-10-14.1",
+  "manifest_path": "hoi4-mod-setup.manifest.json",
+  "manifest_generated_for_revision": "4ce68a2f090de9fc885b63b1398b9f8999b84fbf",
+  "manifest_sha256": "675fb615baf2bbf61e508801463360e8de874c6e920223662f73bbe6384d7a3f",
+  "manifest_size": 608178,
+  "manifest_git_blob": "f2f39b44dc7e18a523955179bae70f811c410462"
+}

@@ -21,9 +21,13 @@ detail to the renderer.
 
 Analysis input preparation keeps typed failures through root/evidence/source
 binding and applies the closed provider error map before returning through IPC.
-The maintenance command also maps every internal preparation failure at its
-outer boundary, retaining redacted technical diagnostics separately. Test real
-command failure paths and injected typed I/O errors, not only mapper helpers.
+Maintenance preparation retains `AppError` through the blocking builder and
+maps it exactly once at the asynchronous command boundary, retaining redacted
+technical diagnostics separately. Never wrap already sanitized strings as
+transaction errors: sign-in, usage-limit, stale-review, source, and scan states
+must keep their distinct next steps. Test real command failure paths and typed
+I/O, account-gate, and reanalysis failures through that async dispatcher, not
+only mapper helpers.
 Non-update rescans use their completed installed-state snapshot for the same
 plan request without overwriting user choices or creating semantic authority;
 Update retains its already confirmed scan-bound reanalysis.
