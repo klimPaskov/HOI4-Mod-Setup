@@ -188,6 +188,8 @@ async function applyAndReady(maintenance = false) {
   assert.ok(label, "Installation requires a recognized reviewed-plan screen.");
   await next(label);
   const journal = await completedTransaction(previousIds);
+  assert.equal(journal.stages.length, 12);
+  assert.ok(journal.stages.every((stage) => stage.status === "complete"));
   if (!maintenance) {
     await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled({ timeout: 60_000 });
     await next("Continue");
@@ -339,6 +341,16 @@ try {
     await page.getByRole("button", { name: /^Repair installation/ }).click();
     await waitForReview(true); await applyAndReady(true);
     assert.equal(await fileHash(repairPath), repairFile.installed_sha256);
+    const repairedLock = JSON.parse(await readFile(join(project, ".hoi4-mod-setup/install.lock.json"), "utf8"));
+    assert.equal(new Set(repairedLock.files.map((file) => `${file.external}:${file.path.toLowerCase()}`)).size, repairedLock.files.length);
+    result.repaired = { files: repairedLock.files.length, instructionRecords: {} };
+    for (const path of ["CLAUDE.md", "AGENTS.md"]) {
+      const records = repairedLock.files.filter((file) => !file.external && file.path === path);
+      assert.equal(records.length, 1);
+      assert.equal(records[0].ownership, lock.files.find((file) => !file.external && file.path === path).ownership);
+      assert.equal(await fileHash(inside(project, join(project, path))), records[0].installed_sha256);
+      result.repaired.instructionRecords[path] = records.length;
+    }
     if (scenario !== "new") await assertOriginals(project, original, { gitignoreText });
     await next("Finish"); await at("Congratulations, you are all set!"); await record("finished");
   }
