@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { cleanAppEnvironment, inside, inventoryDigest, requireHostedWindows, sanitizeReport, setupPythonPath, startPlannerFixture, stopOwnedSession, verifiedCandidate } from "./released_e2e_support.mjs";
+import { cleanAppEnvironment, inside, inventoryDigest, requireHostedWindows, reviewedApplyLabel, sanitizeReport, setupPythonPath, startPlannerFixture, stopOwnedSession, verifiedCandidate } from "./released_e2e_support.mjs";
 
 test("remote-only guard refuses a local or self-hosted session", () => {
   const previous = process.env.RUNNER_ENVIRONMENT;
@@ -41,6 +41,18 @@ test("owned-path checks reject root and sibling escapes", () => {
   assert.throws(() => inside(root, resolve("owned-other", "file")));
   assert.throws(() => inside(root, join(root, "..", "file")));
   assert.equal(inside(root, join(root, "file")), join(root, "file"));
+});
+
+test("apply controls follow the actual reviewed screen for installation and maintenance", () => {
+  for (const maintenance of [false, true]) {
+    assert.equal(reviewedApplyLabel("Review changes", maintenance), "Start installation");
+    assert.equal(reviewedApplyLabel("Start a mod project", maintenance), undefined);
+    assert.equal(reviewedApplyLabel("Project ready", maintenance), undefined);
+  }
+  assert.equal(reviewedApplyLabel("Resolve file conflicts", true), "Apply");
+  assert.equal(reviewedApplyLabel("Resolve file conflicts", false), undefined);
+  assert.equal(reviewedApplyLabel("Update and repair", true), "Apply reviewed plan");
+  assert.equal(reviewedApplyLabel("Update and repair", false), undefined);
 });
 
 test("the extraction runtime requires absolute setup-python identity", async () => {

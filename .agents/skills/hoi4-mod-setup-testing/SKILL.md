@@ -85,6 +85,12 @@ Tests that mutate process-global command state must take the shared test-state
 guard so the default parallel Rust test runner cannot cross-contaminate evidence,
 session, cancellation, credential-health, or analysis assertions.
 
+Native acceptance chooses an apply control from the actual reviewed screen,
+not only the operation type: conflict-free maintenance shares the dry-run
+screen and Start installation button. Maintenance completion goes directly to
+Ready without the first-install Continue step. Require the real completed
+journal, readiness report, and original/repaired file hashes for both paths.
+
 ## Property examples
 
 - normalized destinations remain inside the approved root

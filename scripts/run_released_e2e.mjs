@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { chromium, expect } from "@playwright/test";
 import { assertWindowsInstallerRegistryIsClean, cleanupWindowsInstallerRegistry, resolveNativeSystemExecutable, resolveSystemPowerShellPath, uninstallKey, windowsRegistry } from "./windows_installer_registry.mjs";
-import { assertOriginals, cleanAppEnvironment, cleanProcessEnvironment, downloadPublic, fileHash, githubJson, inside, inventoryDigest, requireHostedWindows, sanitizeReport, setupPythonPath, snapshot, startPlannerFixture, stopOwnedSession, verifiedCandidate } from "./released_e2e_support.mjs";
+import { assertOriginals, cleanAppEnvironment, cleanProcessEnvironment, downloadPublic, fileHash, githubJson, inside, inventoryDigest, requireHostedWindows, reviewedApplyLabel, sanitizeReport, setupPythonPath, snapshot, startPlannerFixture, stopOwnedSession, verifiedCandidate } from "./released_e2e_support.mjs";
 import { configureHostedWebView } from "./released_e2e_windows.mjs";
 
 requireHostedWindows();
@@ -168,8 +168,11 @@ async function waitForReview(maintenance) {
       await waitUntil(async () => await done.isEnabled() || await page.locator(".conflict-actions p").innerText() !== message, 30_000, "conflict decision acknowledgement");
       return false;
     }
-    const apply = page.getByRole("button", { name: maintenance ? "Apply reviewed plan" : "Start installation", exact: true });
-    if (await apply.count() && await apply.isEnabled()) return true;
+    const label = reviewedApplyLabel(title, maintenance);
+    if (label) {
+      const apply = page.getByRole("button", { name: label, exact: true });
+      if (await apply.count() && await apply.isEnabled()) return true;
+    }
     const errors = await page.getByRole("alert").allTextContents();
     if (errors.some((text) => /could not|unavailable|failed|error/i.test(text))) throw new Error(errors.join(" ").slice(0, 1500));
     return false;
@@ -179,10 +182,15 @@ async function waitForReview(maintenance) {
 async function applyAndReady(maintenance = false) {
   const previousIds = (await journals()).map((item) => item.transaction_id);
   const title = await heading().innerText();
-  await next(title === "Resolve file conflicts" ? "Apply" : maintenance ? "Apply reviewed plan" : "Start installation");
+  const label = reviewedApplyLabel(title, maintenance);
+  assert.ok(label, "Installation requires a recognized reviewed-plan screen.");
+  await next(label);
   const journal = await completedTransaction(previousIds);
-  await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled({ timeout: 60_000 });
-  await next("Continue"); await at("Project ready");
+  if (!maintenance) {
+    await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled({ timeout: 60_000 });
+    await next("Continue");
+  }
+  await at("Project ready");
   await expect(page.getByRole("heading", { name: / is ready$/ })).toBeVisible({ timeout: 90_000 });
   const readiness = JSON.parse(await readFile(join(journalRoot, journal.transaction_id, "readiness-report.json"), "utf8"));
   assert.equal(readiness.core_ready, true);

@@ -20,6 +20,13 @@ export function inside(root, path) {
   return resolve(path);
 }
 
+export function reviewedApplyLabel(title, maintenance) {
+  if (title === "Review changes") return "Start installation";
+  if (maintenance && title === "Resolve file conflicts") return "Apply";
+  if (maintenance && title === "Update and repair") return "Apply reviewed plan";
+  return undefined;
+}
+
 export async function fileHash(path) {
   const hash = createHash("sha256");
   for await (const bytes of createReadStream(path)) hash.update(bytes);

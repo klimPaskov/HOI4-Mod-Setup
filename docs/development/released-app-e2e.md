@@ -76,6 +76,12 @@ failures honestly rather than making them a gate for unrelated candidate fixes.
    Undo changes without provider authentication, and require exact restoration
    of the complete original inventory with no success lock.
 
+The driver selects the apply control from the actual reviewed screen:
+conflict-free maintenance opens the shared Review changes screen with Start
+installation, while maintenance conflicts expose Apply. Completed maintenance
+goes directly to Ready; only first installation has the intermediate Continue.
+Both paths still require a completed real journal and a core-ready report.
+
 The scenarios do not run Hearts of Iron IV or validate gameplay. Browser
 screenshots, successful creation and core readiness do not prove a real
 launcher/game session. Findings from an immutable published version must be
