@@ -8651,7 +8651,20 @@ fn append_additional_component_operations(
         .iter()
         .map(|file| (file.path.as_str(), file.external))
         .collect::<std::collections::HashSet<_>>();
-    for (index, selection) in selections.iter().enumerate() {
+    // Refresh the seeded maintenance operation; overlapping component batches
+    // must not create a second write to the same destination.
+    let mut planned_paths = BTreeMap::new();
+    for (index, operation) in operations.iter().enumerate().filter(|(_, op)| !op.external) {
+        if planned_paths
+            .insert(canonical_relative_key(&operation.destination)?, index)
+            .is_some()
+        {
+            return Err(AppError::Source(
+                "maintenance plan already contains a duplicate destination".into(),
+            ));
+        }
+    }
+    for selection in selections {
         let refresh_managed_agents = refresh_agents
             && (selection.component_id == "core.agents"
                 || selection.component_id == "core.claude.instructions"
@@ -8677,6 +8690,44 @@ fn append_additional_component_operations(
                 selection.source_path
             ))
         })?;
+        let destination_key = canonical_relative_key(&adapted_destination)?;
+        let existing_index = planned_paths.get(&destination_key).copied();
+        if let Some(index) = existing_index {
+            let operation = &operations[index];
+            if operation.destination != adapted_destination
+                || operation.component_id != selection.component_id
+                || operation.ownership != Some(selection.ownership)
+                || operation.location_scope.as_deref() != Some("project")
+                || matches!(
+                    operation.action,
+                    OperationAction::DeleteManaged
+                        | OperationAction::Rename
+                        | OperationAction::Merge
+                )
+                || matches!(
+                    operation.resolution.as_deref(),
+                    Some("keep" | "skip" | "replace" | "merge" | "rename")
+                )
+            {
+                return Err(AppError::Source(
+                    "maintenance selection conflicts with an already planned destination".into(),
+                ));
+            }
+            if !refresh_managed_agents
+                && (operation.source_path.as_deref() != Some(selection.source_path.as_str())
+                    || operation.source_sha256.as_deref() != Some(expected_sha256)
+                    || operation.source_size != selection.expected_size
+                    || operation.platform != Some(selection.platform)
+                    || operation.executable != selection.executable)
+            {
+                return Err(AppError::Source(
+                    "repeated maintenance selection has different source evidence".into(),
+                ));
+            }
+        }
+        if existing_index.is_some() && !refresh_managed_agents {
+            continue;
+        }
         let destination = safe_join(root, &adapted_destination)?;
         let local_sha256 = if destination.is_file() {
             Some(sha256_file(&destination)?)
@@ -8696,24 +8747,42 @@ fn append_additional_component_operations(
             .map(|file| file.installed_sha256.as_str())
             .unwrap_or(expected_sha256);
         let (action, local_state, resolution) = match local_sha256.as_deref() {
-            None => (OperationAction::Create, LocalState::Absent, None),
-            Some(hash) if hash == unmodified_sha256 => (
-                OperationAction::Replace,
-                LocalState::Unmodified,
-                Some(if refresh_managed_agents {
-                    "optional_guidance_refresh".into()
-                } else {
-                    "new_component_file".into()
-                }),
+            None if current_locked_file.is_some_and(|file| file.preserved_local) => (
+                OperationAction::Skip,
+                LocalState::Unknown,
+                Some("review_required".into()),
             ),
+            None => (OperationAction::Create, LocalState::Absent, None),
+            Some(hash)
+                if hash == unmodified_sha256
+                    && !current_locked_file.is_some_and(|file| file.preserved_local) =>
+            {
+                (
+                    OperationAction::Replace,
+                    LocalState::Unmodified,
+                    Some(if refresh_managed_agents {
+                        "optional_guidance_refresh".into()
+                    } else {
+                        "new_component_file".into()
+                    }),
+                )
+            }
             Some(_) => (
                 OperationAction::Skip,
                 LocalState::Modified,
                 Some("review_required".into()),
             ),
         };
-        operations.push(PlanOperation {
-            id: format!("repair-add-{}-{index:05}", selection.component_id),
+        let operation = PlanOperation {
+            id: existing_index
+                .map(|index| operations[index].id.clone())
+                .unwrap_or_else(|| {
+                    format!(
+                        "repair-add-{}-{}",
+                        selection.component_id,
+                        sha256_bytes(destination_key.as_bytes())
+                    )
+                }),
             component_id: selection.component_id.clone(),
             ownership: Some(selection.ownership),
             location_scope: Some("project".into()),
@@ -8736,7 +8805,13 @@ fn append_additional_component_operations(
                 RollbackAction::RestoreBackup
             },
             external_parent_identity: None,
-        });
+        };
+        if let Some(index) = existing_index {
+            operations[index] = operation;
+        } else {
+            planned_paths.insert(destination_key, operations.len());
+            operations.push(operation);
+        }
     }
     Ok(())
 }
@@ -14852,6 +14927,206 @@ developer_instructions = "Work on the named files."
         assert_eq!(latest.mode, SourceMode::Latest);
         assert!(latest.requested_ref.is_none());
         assert!(latest.release.is_none());
+    }
+
+    #[test]
+    fn guidance_refresh_reconciles_real_maintenance_operations_without_losing_local_review() {
+        for mode in ["repair", "reinstall"] {
+            for (path, component) in [
+                ("CLAUDE.md", "core.claude.instructions"),
+                ("AGENTS.md", "core.agents"),
+            ] {
+                for state in [
+                    "healthy",
+                    "missing",
+                    "modified",
+                    "preserved",
+                    "preserved_missing",
+                ] {
+                    let project = tempfile::tempdir().unwrap();
+                    let mut lock: InstallationLock = serde_json::from_str(include_str!(
+                        "../../docs/examples/installation-lock.example.json"
+                    ))
+                    .unwrap();
+                    lock.files.retain(|file| file.path == "AGENTS.md");
+                    let file = &mut lock.files[0];
+                    file.path = path.into();
+                    file.component_id = component.into();
+                    file.source_path = format!("{path}.template");
+                    file.source_sha256 = sha256_bytes(b"source guidance");
+                    file.source_size = Some(15);
+                    file.installed_sha256 = sha256_bytes(b"adapted guidance");
+                    file.preserved_local = matches!(state, "preserved" | "preserved_missing");
+                    file.platform = Some(ManifestPlatform::All);
+                    let selection = crate::source::SelectedSourceFile {
+                        component_id: component.into(),
+                        source_path: file.source_path.clone(),
+                        destination: path.into(),
+                        ownership: file.ownership,
+                        expected_sha256: Some(file.source_sha256.clone()),
+                        expected_size: file.source_size,
+                        executable: false,
+                        platform: ManifestPlatform::All,
+                    };
+                    if !matches!(state, "missing" | "preserved_missing") {
+                        std::fs::write(
+                            project.path().join(path),
+                            if state == "modified" {
+                                b"user changes".as_slice()
+                            } else {
+                                b"adapted guidance".as_slice()
+                            },
+                        )
+                        .unwrap();
+                    }
+                    let before = std::fs::read(project.path().join(path)).ok();
+                    let mut operations = if mode == "repair" {
+                        crate::transaction::repair_operations(&lock, project.path())
+                    } else {
+                        crate::transaction::reinstall_operations(&lock, project.path())
+                    }
+                    .unwrap();
+                    let original_id = operations[0].id.clone();
+                    for _ in 0..2 {
+                        append_additional_component_operations(
+                            &mut operations,
+                            std::slice::from_ref(&selection),
+                            &lock,
+                            project.path(),
+                            &super_events_test_identity(),
+                            true,
+                        )
+                        .unwrap();
+                        assert_eq!(operations.len(), 1, "{mode} {path} {state}");
+                        assert_eq!(operations[0].id, original_id);
+                    }
+                    let operation = &operations[0];
+                    let expected = match state {
+                        "healthy" => OperationAction::Replace,
+                        "missing" => OperationAction::Create,
+                        _ => OperationAction::Skip,
+                    };
+                    assert_eq!(operation.action, expected, "{mode} {path} {state}");
+                    assert_eq!(operation.source_sha256, selection.expected_sha256);
+                    assert_eq!(operation.ownership, Some(selection.ownership));
+                    if matches!(state, "modified" | "preserved" | "preserved_missing") {
+                        assert_eq!(
+                            operation.local_state,
+                            if state == "preserved_missing" {
+                                LocalState::Unknown
+                            } else {
+                                LocalState::Modified
+                            }
+                        );
+                        assert_eq!(operation.resolution.as_deref(), Some("review_required"));
+                        assert_eq!(
+                            maintenance_conflicts(&operations, &[], &HashMap::new()).len(),
+                            1
+                        );
+                    }
+                    assert_eq!(std::fs::read(project.path().join(path)).ok(), before);
+                    let mut plan: InstallationPlan = serde_json::from_str(include_str!(
+                        "../../docs/examples/installation-plan.example.json"
+                    ))
+                    .unwrap();
+                    plan.operations = operations;
+                    plan.generated_artifacts.clear();
+                    plan.conflicts.clear();
+                    plan.git_setup = None;
+                    plan.approvals.dry_run_reviewed = true;
+                    plan.approvals.external_actions_reviewed = true;
+                    crate::transaction::validate_plan(&plan).unwrap();
+                    let mut duplicate = plan.operations[0].clone();
+                    duplicate.id.push_str("-duplicate");
+                    plan.operations.push(duplicate);
+                    assert!(crate::transaction::validate_plan(&plan)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("duplicate plan destination"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn maintenance_dependency_overlap_is_idempotent_but_conflicting_evidence_is_rejected() {
+        let project = tempfile::tempdir().unwrap();
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        lock.files.clear();
+        lock.components.clear();
+        let selection = crate::source::SelectedSourceFile {
+            component_id: "workflow.example".into(),
+            source_path: "example.md".into(),
+            destination: "example.md".into(),
+            ownership: Ownership::Managed,
+            expected_sha256: Some(sha256_bytes(b"incoming")),
+            expected_size: Some(8),
+            executable: false,
+            platform: ManifestPlatform::All,
+        };
+        let mut operations = Vec::new();
+        for _ in 0..2 {
+            append_additional_component_operations(
+                &mut operations,
+                std::slice::from_ref(&selection),
+                &lock,
+                project.path(),
+                &super_events_test_identity(),
+                false,
+            )
+            .unwrap();
+        }
+        assert_eq!(operations.len(), 1);
+        for mutation in [
+            "owner",
+            "ownership",
+            "scope",
+            "hash",
+            "case",
+            "decision",
+            "delete",
+        ] {
+            let mut conflicting = operations.clone();
+            match mutation {
+                "owner" => conflicting[0].component_id = "other.owner".into(),
+                "ownership" => conflicting[0].ownership = Some(Ownership::Merged),
+                "scope" => conflicting[0].location_scope = Some("application_data".into()),
+                "hash" => conflicting[0].source_sha256 = Some("f".repeat(64)),
+                "case" => conflicting[0].destination = "EXAMPLE.md".into(),
+                "decision" => conflicting[0].resolution = Some("keep".into()),
+                "delete" => conflicting[0].action = OperationAction::DeleteManaged,
+                _ => unreachable!(),
+            }
+            let before = serde_json::to_value(&conflicting).unwrap();
+            assert!(append_additional_component_operations(
+                &mut conflicting,
+                std::slice::from_ref(&selection),
+                &lock,
+                project.path(),
+                &super_events_test_identity(),
+                false
+            )
+            .is_err());
+            assert_eq!(serde_json::to_value(&conflicting).unwrap(), before);
+        }
+        let mut other_selection = selection.clone();
+        other_selection.source_path = "other.md".into();
+        other_selection.destination = "other.md".into();
+        append_additional_component_operations(
+            &mut operations,
+            &[other_selection],
+            &lock,
+            project.path(),
+            &super_events_test_identity(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(operations.len(), 2);
+        assert_ne!(operations[0].id, operations[1].id);
+        assert!(!project.path().join("example.md").exists());
     }
 
     #[test]

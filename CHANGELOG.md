@@ -8,6 +8,7 @@ HOI4 Mod Setup follows semantic versioning.
 
 - Fix source-cache preparation and atomic filesystem operations on non-English Windows by preserving typed I/O errors instead of matching localized error messages.
 - Scan newly installed projects before maintenance planning, and preserve kept Workshop descriptors during repair without treating local bytes as the rejected generated baseline.
+- Reconcile refreshed instructions with existing repair operations, preventing duplicate destinations while preserving local-change review.
 - Use verified private npm toolchains for reproducible HOI4 Agent Tools installation on Windows and Linux without replacing the user's npm executable or weakening package integrity checks.
 - Add remote published-app acceptance coverage and link the README video with its supplied thumbnail.
 - Update rustls to 0.23.46 for TLS security fixes and include Linux in application platform metadata.

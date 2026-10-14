@@ -117,6 +117,8 @@ async function journals() {
 }
 async function completedTransaction(previousIds = []) {
   return waitUntil(async () => {
+    const errors = await page.getByRole("alert").allTextContents();
+    if (errors.some((text) => /could not|unavailable|failed|error|recovering the previous/i.test(text))) throw new Error(errors.join(" ").slice(0, 1500));
     const journal = (await journals()).findLast((item) => !previousIds.includes(item.transaction_id) && item.transaction_kind === "installation");
     if (journal?.state === "interrupted") throw new Error(`Installation interrupted: ${journal.error?.message ?? journal.last_checkpoint}`);
     return journal?.state === "completed" && journal;

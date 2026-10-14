@@ -113,6 +113,18 @@ recorded incoming payload stays Skip without fabricating incoming bytes; retain
 its source provenance. Further edits offer only Keep/Skip when no verified
 replacement exists, and a missing preserved file must still fail safely.
 
+Maintenance guidance refresh replaces its existing same-owner project operation
+in place and retains its ID, rather than appending a duplicate destination.
+Track canonical planned paths and use destination-derived IDs for new operations
+across component batches. Already-managed dependencies not selected for refresh
+remain untouched. New selections skip only identical repeated dependency
+evidence; refresh and new additions reject foreign owners,
+different evidence, aliases, deletion/merge/rename operations and already
+reviewed choices. A preserved-local instruction remains a conflict even when
+its hash matches the lock. Seed refresh tests with real Repair/Reinstall
+operations, not an empty vector, and cover healthy, missing, modified and kept
+files; keep the transaction's duplicate-destination rejection unchanged.
+
 Conflict previews are distinct from merge eligibility. `.mod` descriptors may
 show redacted UTF-8 text while retaining conservative merge choices; invalid
 UTF-8, binary bytes, links, and directories must not become mergeable through
