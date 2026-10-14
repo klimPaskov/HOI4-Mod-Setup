@@ -1,5 +1,11 @@
 # Transaction and rollback design
 
+Filesystem control flow retains native I/O errors through `AppError::Io`.
+Missing-entry and already-existing-entry checks use `std::io::ErrorKind`, not
+localized messages or formatted error-code strings. Other failures remain
+fatal; diagnostic rendering and redaction happen after these decisions. This
+also applies to first-time verified cache writes and missing parent folders.
+
 ## Metadata layout
 
 ```text

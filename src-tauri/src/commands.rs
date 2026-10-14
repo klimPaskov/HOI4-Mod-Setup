@@ -614,7 +614,7 @@ fn provider_analysis_user_error(error: AppError) -> String {
             "The approved project scan could not be used for analysis. Scan the project again and retry."
                 .into()
         }
-        AppError::Merge(_) | AppError::Transaction(_) => {
+        AppError::Merge(_) | AppError::Transaction(_) | AppError::Io(_) => {
             "The analysis could not be prepared safely. Your draft and scan remain unchanged; try again."
                 .into()
         }
@@ -741,7 +741,7 @@ fn planning_user_message(error: AppError) -> String {
                     .into()
             }
         }
-        AppError::Transaction(_) | AppError::Merge(_) => {
+        AppError::Transaction(_) | AppError::Io(_) | AppError::Merge(_) => {
             "The changes could not be prepared safely. Nothing was changed; try again.".into()
         }
         AppError::PathSecurity(_) => {
@@ -13948,6 +13948,7 @@ developer_instructions = "Work on the named files."
             AppError::Scan(sentinel.into()),
             AppError::Merge(sentinel.into()),
             AppError::Transaction(sentinel.into()),
+            AppError::Io(std::io::Error::other(sentinel)),
             AppError::Credential(sentinel.into()),
             AppError::Process(sentinel.into()),
             AppError::Protocol(sentinel.into()),
@@ -13976,6 +13977,7 @@ developer_instructions = "Work on the named files."
         for error in [
             AppError::Source(format!("write verified cache: {sentinel}")),
             AppError::Transaction(format!("directory durability flush failed: {sentinel}")),
+            AppError::Io(std::io::Error::other(sentinel)),
             AppError::PathSecurity(sentinel.into()),
             AppError::Process(sentinel.into()),
             AppError::Merge(sentinel.into()),

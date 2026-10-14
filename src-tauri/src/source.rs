@@ -3267,6 +3267,43 @@ mod tests {
     }
 
     #[test]
+    fn cold_verified_cache_commits_first_blob_and_removes_partial_file() {
+        let root = tempfile::tempdir().unwrap();
+        let client = HttpSourceClient::with_cache_root(root.path().to_path_buf()).unwrap();
+        let revision = "599497ea2f93612d9094461c6fde114fc87a5c0f";
+        let trusted = b"first verified download";
+        let digest = sha256_bytes(trusted);
+        let cache_path = client.cache_root.join("blobs").join(revision).join(&digest);
+        assert!(!cache_path.exists());
+        let returned = client
+            .fetch_verified_file_with_download(
+                revision,
+                "core/first.txt",
+                &digest,
+                Some(trusted.len() as u64),
+                |_, partial, _| {
+                    fs::create_dir_all(partial.parent().unwrap())?;
+                    fs::write(partial, trusted)?;
+                    Ok(trusted.to_vec())
+                },
+            )
+            .unwrap();
+        assert_eq!(returned, trusted);
+        assert_eq!(fs::read(&cache_path).unwrap(), trusted);
+        assert!(!cache_path.with_extension("part").exists());
+        let cached = client
+            .fetch_verified_file_with_download(
+                revision,
+                "core/first.txt",
+                &digest,
+                Some(trusted.len() as u64),
+                |_, _, _| panic!("the first verified blob must be reusable"),
+            )
+            .unwrap();
+        assert_eq!(cached, trusted);
+    }
+
+    #[test]
     fn corrupt_immutable_cache_is_replaced_by_verified_download() {
         let root = tempfile::tempdir().unwrap();
         let client = HttpSourceClient::with_cache_root(root.path().to_path_buf()).unwrap();

@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Fix source-cache preparation and atomic filesystem operations on non-English Windows by preserving typed I/O errors instead of matching localized error messages.
+
 ## 0.6.0 - 2026-10-13
 
 - Offer the verified Claude model catalog, use Haiku 5.5 at medium effort by default, and allow another supported Claude model ID under Advanced.

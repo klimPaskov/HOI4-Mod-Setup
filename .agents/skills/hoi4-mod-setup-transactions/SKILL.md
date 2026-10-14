@@ -122,6 +122,13 @@ read calls to production transaction code. The current source regression only
 catches selected direct calls; it does not prove that path-helper wrappers
 retain the same project/app-data identity through the mutation.
 
+Preserve `std::io::Error` in `AppError::Io` until filesystem control-flow checks
+finish. Classify missing/existing entries with `ErrorKind`, never localized text
+or formatted OS-code suffixes. Windows directory-open and I/O round-trip helpers
+must retain the original kind and raw code; permission and path-security errors
+must never become benign missing entries. Cover localized messages, spoofed
+error text, native error codes, new parents, first cache writes and no-replace.
+
 Existing-project scans capture a project-root identity, and semantic review
 and plan construction must confirm that same directory. Plans bind an
 existing project by its directory identity and a new project by its existing

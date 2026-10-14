@@ -47,6 +47,8 @@ pub enum AppError {
     Merge(String),
     #[error("transaction error: {0}")]
     Transaction(String),
+    #[error("transaction error: {0}")]
+    Io(#[source] std::io::Error),
     #[error("credential error: {0}")]
     Credential(String),
     #[error("private provider output was discarded: {0}")]
@@ -63,7 +65,7 @@ pub enum AppError {
 
 impl From<std::io::Error> for AppError {
     fn from(value: std::io::Error) -> Self {
-        Self::Transaction(value.to_string())
+        Self::Io(value)
     }
 }
 
