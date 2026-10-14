@@ -235,6 +235,9 @@ Use setup-python's absolute interpreter with `-I -S`, an owned working directory
 and a minimal environment for archive validation. Authenticate CRLF archive text
 against its LF Git blob without changing the extracted bytes. Recompute approved
 analysis-input hashes and sanitize every result field before artifact upload.
+The hosted MCP diagnostic matrix compares clean supported Node/npm installs;
+`HOI4_MCP_DIAGNOSTICS=1` retains public package hashes only. Never replace a
+reviewed tree hash with a diagnostic result merely to make a test pass.
 
 Use fake source clients for the rate-limit-only GitHub REST 403/429 fallback:
 accept only the fixed repository's bounded `info/refs?service=git-upload-pack`

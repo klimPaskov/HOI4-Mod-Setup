@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { chromium, expect } from "@playwright/test";
-import { assertWindowsInstallerRegistryIsClean, cleanupWindowsInstallerRegistry, resolveNativeSystemExecutable, resolveSystemPowerShellPath } from "./windows_installer_registry.mjs";
+import { assertWindowsInstallerRegistryIsClean, cleanupWindowsInstallerRegistry, resolveNativeSystemExecutable, resolveSystemPowerShellPath, uninstallKey, windowsRegistry } from "./windows_installer_registry.mjs";
 import { assertOriginals, cleanAppEnvironment, cleanProcessEnvironment, downloadPublic, fileHash, githubJson, inside, inventoryDigest, requireHostedWindows, sanitizeReport, setupPythonPath, snapshot, startPlannerFixture, stopOwnedSession } from "./released_e2e_support.mjs";
 import { configureHostedWebView } from "./released_e2e_windows.mjs";
 
@@ -333,6 +333,7 @@ try {
       if (uninstaller) {
         await exec(join(installRoot, uninstaller), ["/S"], { windowsHide: true, timeout: 120_000 });
         await waitUntil(() => !existsSync(executable), 60_000, "NSIS application removal");
+        await waitUntil(async () => !await windowsRegistry.keyExists(uninstallKey), 60_000, "NSIS uninstall registration removal");
       }
       await cleanupWindowsInstallerRegistry({ workRoot, installRoot, tempRoot: process.env.RUNNER_TEMP });
     } catch (error) { failure ??= error; result.cleanupError = `Owned installer cleanup failed: ${String(error.message).slice(0, 1500)}`; }

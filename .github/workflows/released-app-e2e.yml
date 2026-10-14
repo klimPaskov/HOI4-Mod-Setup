@@ -9,6 +9,7 @@ on:
       - "scripts/released_e2e_support.mjs"
       - "scripts/released_e2e_windows.mjs"
       - "scripts/extract_mod_fixture.py"
+      - "scripts/test_live_mcp.mjs"
       - "tests/remote/**"
 
 permissions:
@@ -19,6 +20,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  mcp-runtime:
+    name: Public MCP runtime (Node ${{ matrix.node }})
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "24"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Verify the complete public MCP runtime
+        env:
+          HOI4_MCP_DIAGNOSTICS: "1"
+        run: node scripts/test_live_mcp.mjs
+      - name: Retain public package hash inventory only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: public-mcp-node${{ matrix.node }}
+          path: test-results/mcp-runtime/tree-*.json
+          retention-days: 14
+          if-no-files-found: warn
+
   published-wizard:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     name: Published v0.6.0 (${{ matrix.scenario }})

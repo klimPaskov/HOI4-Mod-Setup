@@ -74,6 +74,11 @@ reported separately from any later candidate fix; never move its release tag.
 
 ## Maintenance
 
+The workflow also verifies the public HOI4 Agent Tools runtime under Node 22
+and 24. `HOI4_MCP_DIAGNOSTICS=1` is restricted to hosted CI and retains only
+public-package paths, sizes, hashes and runtime versions when checking a tree
+mismatch. It never approves changed hashes or uploads installed package bytes.
+
 The workflow is `.github/workflows/released-app-e2e.yml`. The driver is
 `scripts/run_released_e2e.mjs`, with bounded support functions and an archive
 validator beside it. NSIS registration preflight and cleanup reuse the existing

@@ -113,8 +113,20 @@ async function verifyInstalledPackage(prefix) {
     if (error?.code !== "ENOENT") throw error;
   }
   const tree = await packageFiles(packageRoot, pin.package_symlinks ?? {});
+  if (process.env.HOI4_MCP_DIAGNOSTICS === "1") {
+    if (process.env.GITHUB_ACTIONS !== "true" || process.env.RUNNER_ENVIRONMENT !== "github-hosted") throw new Error("MCP diagnostic inventory is hosted-runner-only.");
+    const output = resolve(root, "test-results", "mcp-runtime");
+    await mkdir(output, { recursive: true });
+    await writeFile(join(output, `tree-${platform}-node${process.versions.node}.json`), JSON.stringify({
+      package: health.package_name, version: health.package_version, integrity: health.package_integrity,
+      node: process.versions.node, npm: await runNode([npmCli, "--version"], { cwd: root, env: environment }, "npm version"),
+      expected: { sha256: pin.package_tree_sha256, count: pin.package_file_count },
+      actual: { sha256: tree.sha256, count: tree.files.length },
+      files: tree.files.map(({ path, bytes }) => ({ path, size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") })),
+    }, null, 2) + "\n");
+  }
   if (tree.sha256 !== pin.package_tree_sha256 || tree.files.length !== pin.package_file_count) {
-    throw new Error("Installed MCP package tree does not match the manifest evidence.");
+    throw new Error(`Installed MCP package tree does not match the manifest evidence: expected ${pin.package_tree_sha256}/${pin.package_file_count}, received ${tree.sha256}/${tree.files.length}.`);
   }
   const entry = resolve(packageRoot, health.runtime_entry);
   const entryBytes = await readFile(entry);
