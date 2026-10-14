@@ -1264,7 +1264,7 @@ describe("HOI4 Mod Setup wizard", () => {
 
   it("scans a newly installed project before preparing its repair", async () => {
     enableTauriRuntime();
-    window.__HOI4_DOCUMENTATION_STATE__ = { ...initialState, ...readyState(), identity: { ...initialState.identity, ...readyState().identity }, projectPathEdited: true, screen: "update", scanContext: undefined };
+    window.__HOI4_DOCUMENTATION_STATE__ = { ...initialState, ...readyState(), identity: { ...initialState.identity, ...readyState().identity }, projectPathsOverridden: true, screen: "update", scanContext: undefined };
     let finishScan: ((value: Awaited<ReturnType<typeof scanProject>>) => void) | undefined;
     vi.mocked(scanProject).mockReturnValue(new Promise((resolve) => { finishScan = resolve; }));
     render(<App />);
@@ -1281,7 +1281,7 @@ describe("HOI4 Mod Setup wizard", () => {
 
   it.each([null, { partial: true, cancelled: false }, { partial: false, cancelled: true }])("does not plan repair after an incomplete scan: %j", async (scan) => {
     enableTauriRuntime();
-    window.__HOI4_DOCUMENTATION_STATE__ = { ...initialState, ...readyState(), identity: { ...initialState.identity, ...readyState().identity }, projectPathEdited: true, screen: "update", scanContext: undefined };
+    window.__HOI4_DOCUMENTATION_STATE__ = { ...initialState, ...readyState(), identity: { ...initialState.identity, ...readyState().identity }, projectPathsOverridden: true, screen: "update", scanContext: undefined };
     vi.mocked(scanProject).mockResolvedValue(scan as never);
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: /Repair installation/ }));
