@@ -249,7 +249,7 @@ function probeTools(entry, childEnvironment, projectRoot) {
 
 requireEvidence();
 const nodeDirectory = dirname(process.execPath);
-const npmCli = platform === "linux" ? await realpath("/usr/bin/npm") : resolve(nodeDirectory, "node_modules", "npm", "bin", "npm-cli.js");
+const npmCli = platform === "linux" ? await realpath(join(nodeDirectory, "npm")) : resolve(nodeDirectory, "node_modules", "npm", "bin", "npm-cli.js");
 if (!(await lstat(npmCli)).isFile() || (platform === "linux" && !npmCli.endsWith("/npm-cli.js"))) {
   throw new Error("The native npm JavaScript entry is unavailable.");
 }

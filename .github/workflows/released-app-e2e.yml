@@ -21,14 +21,18 @@ concurrency:
 
 jobs:
   mcp-runtime:
-    name: Public MCP runtime (Node ${{ matrix.node }})
+    name: Public MCP (${{ matrix.os }}, Node ${{ matrix.node }}, npm ${{ matrix.npm }})
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        node: ["22", "24"]
+        include:
+          - { os: windows-latest, node: "22", npm: "11.19.0" }
+          - { os: windows-latest, node: "24", npm: "10.9.9" }
+          - { os: ubuntu-22.04, node: "22", npm: "10.9.9" }
+          - { os: ubuntu-22.04, node: "24", npm: "11.19.0" }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,6 +40,21 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node }}
+      - name: Install the independently pinned npm comparison toolchain
+        shell: pwsh
+        env:
+          E2E_NPM_VERSION: ${{ matrix.npm }}
+        run: |
+          $pins = @{
+            '11.19.0' = 'sha512-SDd/hHg3KqHE5Ht2NHWxNYNtqCQ2pXAPLl6OtQhPyED5PHsRfrOtO199MZTIG2cQoQ1ZRI9t28shrD+2cr3AAw=='
+            '10.9.9' = 'sha512-1g+6jLQvaIuB4zwvHL7yrXuXcWZwDsCtBX8bbWDqbvJSSr9nPiDDWTHNgwXR27iIcTTW7v3A57hDW9RYv2W4Yg=='
+          }
+          if (-not $pins.ContainsKey($env:E2E_NPM_VERSION)) { throw 'Unreviewed npm comparison version' }
+          $actual = npm view "npm@$env:E2E_NPM_VERSION" dist.integrity --json --registry=https://registry.npmjs.org | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $actual -cne $pins[$env:E2E_NPM_VERSION]) { throw 'npm comparison artifact integrity changed' }
+          $prefix = node -p "process.platform === 'win32' ? require('path').dirname(process.execPath) : require('path').dirname(require('path').dirname(process.execPath))"
+          npm install --global --prefix $prefix --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org "npm@$env:E2E_NPM_VERSION"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify the complete public MCP runtime
         env:
           HOI4_MCP_DIAGNOSTICS: "1"
@@ -44,7 +63,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: public-mcp-node${{ matrix.node }}
+          name: public-mcp-${{ matrix.os }}-node${{ matrix.node }}-npm${{ matrix.npm }}
           path: test-results/mcp-runtime/tree-*.json
           retention-days: 14
           if-no-files-found: warn
@@ -64,7 +83,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"

@@ -74,8 +74,10 @@ reported separately from any later candidate fix; never move its release tag.
 
 ## Maintenance
 
-The workflow also verifies the public HOI4 Agent Tools runtime under Node 22
-and 24. `HOI4_MCP_DIAGNOSTICS=1` is restricted to hosted CI and retains only
+The workflow also compares the public HOI4 Agent Tools runtime under Node 22
+and 24 and independently pinned npm 10/11 on Windows and Linux. The published
+UI lane uses Node 24; the separate matrix retains the older-runtime regression.
+`HOI4_MCP_DIAGNOSTICS=1` is restricted to hosted CI and retains only
 public-package paths, sizes, hashes and runtime versions when checking a tree
 mismatch. It never approves changed hashes or uploads installed package bytes.
 
