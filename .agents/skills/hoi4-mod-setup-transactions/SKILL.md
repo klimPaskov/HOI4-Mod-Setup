@@ -121,7 +121,9 @@ remain untouched. New selections skip only identical repeated dependency
 evidence; refresh and new additions reject foreign owners,
 different evidence, aliases, deletion/merge/rename operations and already
 reviewed choices. A preserved-local instruction remains a conflict even when
-its hash matches the lock. Seed refresh tests with real Repair/Reinstall
+its hash matches the lock or the file is missing. Derive rollback from reviewed
+prior existence, including a skipped missing file later chosen for replacement.
+Seed refresh tests with real Repair/Reinstall
 operations, not an empty vector, and cover healthy, missing, modified and kept
 files; keep the transaction's duplicate-destination rejection unchanged.
 

@@ -8773,6 +8773,11 @@ fn append_additional_component_operations(
                 Some("review_required".into()),
             ),
         };
+        let rollback = if local_sha256.is_none() {
+            RollbackAction::RemoveCreated
+        } else {
+            RollbackAction::RestoreBackup
+        };
         let operation = PlanOperation {
             id: existing_index
                 .map(|index| operations[index].id.clone())
@@ -8799,11 +8804,7 @@ fn append_additional_component_operations(
             local_state,
             resolution,
             external: false,
-            rollback: if action == OperationAction::Create {
-                RollbackAction::RemoveCreated
-            } else {
-                RollbackAction::RestoreBackup
-            },
+            rollback,
             external_parent_identity: None,
         };
         if let Some(index) = existing_index {
@@ -15024,6 +15025,14 @@ developer_instructions = "Work on the named files."
                             1
                         );
                     }
+                    assert_eq!(
+                        operation.rollback,
+                        if matches!(state, "missing" | "preserved_missing") {
+                            RollbackAction::RemoveCreated
+                        } else {
+                            RollbackAction::RestoreBackup
+                        }
+                    );
                     assert_eq!(std::fs::read(project.path().join(path)).ok(), before);
                     let mut plan: InstallationPlan = serde_json::from_str(include_str!(
                         "../../docs/examples/installation-plan.example.json"
@@ -15036,6 +15045,12 @@ developer_instructions = "Work on the named files."
                     plan.approvals.dry_run_reviewed = true;
                     plan.approvals.external_actions_reviewed = true;
                     crate::transaction::validate_plan(&plan).unwrap();
+                    if state == "preserved_missing" {
+                        plan.operations[0].action = OperationAction::Replace;
+                        plan.operations[0].resolution = Some("replace".into());
+                        crate::transaction::validate_plan(&plan).unwrap();
+                        assert_eq!(plan.operations[0].rollback, RollbackAction::RemoveCreated);
+                    }
                     let mut duplicate = plan.operations[0].clone();
                     duplicate.id.push_str("-duplicate");
                     plan.operations.push(duplicate);
