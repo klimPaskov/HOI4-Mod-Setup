@@ -1,6 +1,6 @@
 {
   "name": "hoi4-mod-setup",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "license": "Apache-2.0",
   "description": "Windows, macOS and Linux desktop wizard for preparing HOI4 mods for agentic development.",
@@ -19,6 +19,8 @@
     "test:workflows": "node scripts/run_python.mjs scripts/check_workflow_security.py",
     "test:a11y": "node scripts/check_accessibility.mjs",
     "test:e2e": "node scripts/run_e2e_smoke.mjs",
+    "test:released-e2e": "node scripts/run_released_e2e.mjs",
+    "test:released-harness": "node --test scripts/released_e2e.node-test.mjs && node scripts/run_python.mjs -m unittest scripts/test_extract_mod_fixture.py",
     "docs:screenshots": "node scripts/run_e2e_smoke.mjs --update-documentation",
     "test:mcp-live": "node scripts/test_live_mcp.mjs",
     "test:scratch-live": "node scripts/run_scratch_install.mjs",

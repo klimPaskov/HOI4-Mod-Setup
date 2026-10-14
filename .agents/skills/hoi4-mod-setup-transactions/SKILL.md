@@ -106,6 +106,27 @@ evidence during maintenance, and derive post-lock launcher/thumbnail obligations
 from locked files as well as component metadata. Do not reinterpret a failed
 post-apply readiness journal as resumable or successful: rollback precedes retry.
 
+Repair, reinstall and removal start with a fresh complete read-only scan, even
+when entered directly from Ready after creating a project. Update retains its
+separate scan-bound reanalysis. A live preserved-local generated file with no
+recorded incoming payload stays Skip without fabricating incoming bytes; retain
+its source provenance. Further edits offer only Keep/Skip when no verified
+replacement exists, and a missing preserved file must still fail safely.
+
+Maintenance guidance refresh replaces its existing same-owner project operation
+in place and retains its ID, rather than appending a duplicate destination.
+Track canonical planned paths and use destination-derived IDs for new operations
+across component batches. Already-managed dependencies not selected for refresh
+remain untouched. New selections skip only identical repeated dependency
+evidence; refresh and new additions reject foreign owners,
+different evidence, aliases, deletion/merge/rename operations and already
+reviewed choices. A preserved-local instruction remains a conflict even when
+its hash matches the lock or the file is missing. Derive rollback from reviewed
+prior existence, including a skipped missing file later chosen for replacement.
+Seed refresh tests with real Repair/Reinstall
+operations, not an empty vector, and cover healthy, missing, modified and kept
+files; keep the transaction's duplicate-destination rejection unchanged.
+
 Conflict previews are distinct from merge eligibility. `.mod` descriptors may
 show redacted UTF-8 text while retaining conservative merge choices; invalid
 UTF-8, binary bytes, links, and directories must not become mergeable through
@@ -121,6 +142,13 @@ executable-mode updates, and bounded staging-tree removal. Use
 read calls to production transaction code. The current source regression only
 catches selected direct calls; it does not prove that path-helper wrappers
 retain the same project/app-data identity through the mutation.
+
+Preserve `std::io::Error` in `AppError::Io` until filesystem control-flow checks
+finish. Classify missing/existing entries with `ErrorKind`, never localized text
+or formatted OS-code suffixes. Windows directory-open and I/O round-trip helpers
+must retain the original kind and raw code; permission and path-security errors
+must never become benign missing entries. Cover localized messages, spoofed
+error text, native error codes, new parents, first cache writes and no-replace.
 
 Existing-project scans capture a project-root identity, and semantic review
 and plan construction must confirm that same directory. Plans bind an

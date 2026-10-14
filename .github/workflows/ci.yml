@@ -30,7 +30,7 @@ jobs:
       - name: Check release workflow authority boundaries
         run: |
           python scripts/check_workflow_security.py
-          python -m unittest scripts/test_linux_release_gates.py
+          python -m unittest scripts/test_linux_release_gates.py scripts/test_released_acceptance_workflow.py
 
   frontend:
     runs-on: ubuntu-latest
@@ -67,6 +67,9 @@ jobs:
       - name: Test release updater assets
         if: steps.detect.outputs.present == 'true'
         run: pnpm test:release-assets
+      - name: Test remote acceptance harness boundaries
+        if: steps.detect.outputs.present == 'true'
+        run: pnpm test:released-harness
       - name: Build frontend
         if: steps.detect.outputs.present == 'true'
         run: pnpm build
@@ -266,3 +269,48 @@ jobs:
           name: hoi4-mod-setup-ci-${{ matrix.platform }}
           path: dist/release/**
           if-no-files-found: error
+
+  candidate-acceptance:
+    name: Candidate acceptance (${{ matrix.scenario }})
+    needs: desktop-e2e
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [new, kaiserreich, recovery]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: hoi4-mod-setup-ci-windows-x64
+          path: dist/release
+      - name: Install test dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Exercise the source-bound native candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          E2E_SCENARIO: ${{ matrix.scenario }}
+          HOI4_E2E_CANDIDATE_DIR: ${{ github.workspace }}/dist/release
+        run: pnpm test:released-e2e $env:E2E_SCENARIO
+      - name: Retain only screenshots and sanitized candidate results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-acceptance-${{ matrix.scenario }}
+          path: |
+            test-results/released-${{ matrix.scenario }}/*.png
+            test-results/released-${{ matrix.scenario }}/result.json
+          if-no-files-found: warn
+          retention-days: 14

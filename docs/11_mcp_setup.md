@@ -20,10 +20,20 @@ spawn. The `.cmd` wrapper is used only to locate the current-user npm
 prefix and is never executed. Node must be a regular link-free executable with
 a valid OpenJS Foundation signature; its actual SHA-256 is captured and
 rechecked immediately at spawn. The current pinned source snapshot declares the current
-28 required MCP routes and a bundled dependency tree; exact package file counts
+28 required MCP routes and a shrinkwrapped dependency closure; exact package file counts
 come from the canonical source manifest. The application reads
 the exact route list from the resolved manifest; no package, command, version,
 tool, or macOS route is invented.
+
+The source-verified bootstrap realizes that closure with a private SHA-512-pinned
+npm CLI: npm 11 on Windows and npm 10 on Linux x64. Exact versions and hashes
+belong to the pinned script, not an app-side guess. It uses a fresh neutral
+temporary directory, isolated npm configuration/home/cache, and a minimal
+environment, without replacing the user's ambient npm executable. Node must
+match the package engine contract: native x64 Node 22.19+ within major 22, or
+Node 24. Installing a missing compatible Node distribution is separately
+disclosed and may install its bundled npm. The lock remains bound to its exact
+source revision; old pinned Repair does not adopt a newer bootstrap.
 
 Package verification allows at most 32 MiB per file while retaining the
 512 MiB total-tree and 10,000-file bounds. npm versions that emit a hidden

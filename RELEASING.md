@@ -110,9 +110,9 @@ For the current prepared candidate, the maintainer's publication sequence is:
    presents all five installer links. Confirm GitHub Pages uses GitHub Actions;
    merging the page changes into `main` runs `Publish project page`, or dispatch
    that workflow manually if Pages needs its first deployment.
-7. Keep the README video placeholder until the editors provide an approved
-   video link. Video editing and delivery are separate from the installer
-   release. Media stays outside Git and updater metadata.
+7. Keep the README's approved video link and repository thumbnail current.
+   Video editing and hosting are separate from the installer release; video
+   files stay outside Git, updater metadata, and the installer asset set.
 
 ## Public release assets
 

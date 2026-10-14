@@ -1,7 +1,7 @@
 {
   "schema_version": "5.0.0",
   "manifest_id": "agentic-hoi4-modding",
-  "generated_for_revision": "1fdf5e91b76a39e21a7ecc7e0ba8341b2c392bbb",
+  "generated_for_revision": "4ce68a2f090de9fc885b63b1398b9f8999b84fbf",
   "repository": {
     "provider": "github",
     "owner": "klimPaskov",
@@ -8341,6 +8341,7 @@
           "id": "node-npm",
           "required": true,
           "version_policy": "repository_script",
+          "version": "Native x64 Node.js 22.19+ in major 22 or major 24; private npm 11.19.0 on Windows and npm 10.9.9 on Linux",
           "commands": [
             "winget install OpenJS.NodeJS.LTS --scope user --silent --disable-interactivity --accept-source-agreements --accept-package-agreements"
           ],
@@ -8364,13 +8365,15 @@
             "arguments": [
               "--quiet"
             ],
-            "network_access": "Required to install the exact hoi4-agent-tools@4.0.3 package from https://registry.npmjs.org. Windows can install current-user Node.js LTS when missing; Linux requires native Node.js LTS and npm beforehand.",
+            "network_access": "Downloads the SHA-512-pinned private npm 11.19.0 (Windows) or npm 10.9.9 (Linux) archive, then the exact hoi4-agent-tools@4.0.3 package from https://registry.npmjs.org. Requires native x64 Node.js 22.19+ in major 22 or major 24; Windows may install current-user Node.js LTS when missing.",
             "expected_writes": [
               "%APPDATA%/npm/** on Windows",
-              "$XDG_DATA_HOME/hoi4-mod-setup/npm/** on Linux (fallback ~/.local/share/hoi4-mod-setup/npm)"
+              "Current-user winget-managed Node.js LTS distribution, including bundled npm, when a compatible runtime is missing on Windows",
+              "$XDG_DATA_HOME/hoi4-mod-setup/npm/** on Linux (fallback ~/.local/share/hoi4-mod-setup/npm)",
+              "Fresh system-temporary hoi4-setup-npm-* directory for verified npm files, isolated config and cache; removed on ordinary completion"
             ],
             "privilege": "current_user",
-            "rollback_boundary": "Managed project files roll back transactionally. The user-scoped Node.js LTS package, npm cache, and exact global hoi4-agent-tools package are external tool state and are reported but not removed automatically."
+            "rollback_boundary": "Managed project files roll back transactionally. Node.js and the user-scoped hoi4-agent-tools package are external tool state; replaced package versions are not restored automatically. Private npm never replaces the ambient npm executable or config. Installing a missing compatible Node.js distribution also installs its bundled npm. Temporary private npm files are cleaned on ordinary completion and never reused after interruption."
           }
         }
       ],
@@ -8387,8 +8390,8 @@
       "expected_files": [
         {
           "path": ".tools/mcp/bootstrap_hoi4_agent_tools.py",
-          "sha256": "1660162bc89ca613d6874b37a641e0a250b2b7fa66e2a404e9984f1673dd037e",
-          "size": 18710
+          "sha256": "4c1a968d2f5603ac52035ba2d7b13e90c452bb96f738cf5f98b6fc3f4fef0639",
+          "size": 26671
         }
       ]
     },
@@ -8427,7 +8430,7 @@
             "node --version",
             "npm --version"
           ],
-          "version": "Native supported LTS (22 or newer on Linux)"
+          "version": "Native x64 Node.js 22.19+ in major 22 or Node.js 24 LTS"
         },
         {
           "id": "hoi4-agent-tools.cmd",
@@ -8645,8 +8648,8 @@
       "expected_files": [
         {
           "path": "docs/systems/hoi4_agent_tools_mcp_integration.md",
-          "sha256": "a927c0842df240deb069b78946e863a47deda9208bc4079cc236483039c5824f",
-          "size": 27543
+          "sha256": "9aedcbb55a0f7c7f97769ea8767f0e9c998e53d539c8f32ec8c21461158672af",
+          "size": 28745
         }
       ]
     },
@@ -8694,8 +8697,8 @@
       "expected_files": [
         {
           "path": "README.md",
-          "sha256": "7a91c96c19bc06408f86bd46b077f24884c8d402fc1c71103ffc3aba972b6c5b",
-          "size": 12485
+          "sha256": "f5159e178e945125a8ec2fec9c86dbddeb50f769e97bc4eddf4d9060f8994f3b",
+          "size": 12633
         }
       ]
     },
@@ -11527,8 +11530,8 @@
       "expected_files": [
         {
           "path": "docs/linux.md",
-          "sha256": "91c2a851d6563039d9fd219e90773cd90c48489ec6a55fafc165cd77d1407893",
-          "size": 6777
+          "sha256": "a8ec4724cf296bc7f2764103c47ca9f4775aeaac44ddb120c41a1dcb4b2cf7a3",
+          "size": 7126
         }
       ]
     }

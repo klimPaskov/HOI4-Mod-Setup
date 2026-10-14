@@ -43,6 +43,20 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 
 ## CI rules
 
+- `Released app E2E` is a read-only, remote-only acceptance workflow for an
+  immutable published Windows installer. It has no signing/publication secrets,
+  uses clean installer-registration preflight, pins artifact bytes and official
+  mod inputs, and uploads only named screenshots and sanitized result metadata.
+  It must not alter the published binary, mock application IPC, or imply that a
+  deterministic loopback planner validates real provider authentication.
+
+- `Candidate acceptance` consumes the Windows artifact from the same successful
+  native CI workflow, verifies its complete hash inventory and exact build SHA,
+  then runs the real wizard in fresh hosted profiles. Candidate reports never
+  stand in for signing/publication evidence. Historical released-app acceptance
+  is a separate manual workflow, so a known old-release failure is not hidden or
+  treated as the result of a newer candidate.
+
 - Every job running `pnpm test:e2e` first runs `pnpm test:e2e:install` to
   install the pinned Playwright browser and required OS libraries. This gate
   now executes browser interactions rather than checking HTML source text.
@@ -103,9 +117,9 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 - A publication job that intentionally omits source checkout must pass
   `--repo "$GITHUB_REPOSITORY"` to every `gh release` command; it must not rely
   on Git metadata being available in the runner workspace.
-- Video editing and delivery belong to the editors. Keep the README placeholder
-  until they supply an approved link; media remains outside Git, updater metadata
-  and the curated installer asset set.
+- Video editing and hosting belong to the editors. The README uses an approved
+  external video link with a repository thumbnail; video files remain outside
+  Git, updater metadata, and the curated installer asset set.
 
 Use the package scripts as the stable local release surface: run
 `pnpm release:build`, `pnpm release:verify`, `pnpm desktop:e2e`, and

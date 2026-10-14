@@ -94,6 +94,13 @@ Pinned commit uses the supplied commit for every step. Pinned release resolves a
 7. Test latest and pinned reproducibility.
 8. Update source audit and docs.
 
+The checked-in manifest fixture is bound to
+`docs/source-audit/current_manifest_identity.json`: record its exact published
+commit, generator revision, raw byte hash and size, Git blob, and release.
+Keep historical repository inventories separate; do not rewrite their old
+observations or use them to validate a newer manifest fixture. The source
+repository still owns generation of every component's file evidence.
+
 ## Wiki rules
 
 Install the manifest-declared wiki tree at `<mod_project>/paradox_wiki/`. Validate required page coverage, hashes, path containment, case collisions, media policy, and update behavior. Report missing formal provenance or license data exactly as missing.
@@ -118,6 +125,15 @@ package-tree identity with a clean install into a disposable prefix. A tree
 hash captured from mutable transitive resolution can become uninstallable;
 fix it upstream with a bundled runtime or integrity-complete pinned closure.
 Never bless the current machine's changed hash or relax installed-tree checks.
+
+The HOI4 Agent Tools bootstrap owns a private per-platform npm toolchain, pinned
+by SHA-512 inside its source-verified script. npm majors can realize different
+optional-platform closures from the same shrinkwrap. Verify each supported
+Node/platform combination without changing existing MCP tree hashes, isolate
+npm configuration and cwd, and never replace the user's ambient npm executable.
+Publish changed script evidence through the source-owned generator and consume
+that immutable manifest commit; old pinned repairs must not silently substitute
+a newer bootstrap.
 
 ## Repeatable MCP package verification
 

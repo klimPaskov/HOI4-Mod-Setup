@@ -54,6 +54,14 @@ modified legacy file remains a reviewable conflict.
 
 Repair defaults to the locked revision. Check missing, corrupted, modified, parse-invalid, incomplete generated, MCP health, wiki coverage, and external dependency evidence. Healthy files are explicit no-op operations; missing files can be recreated, and a changed file becomes a reviewable replace/keep decision rather than an inferred repair. Modified files require review.
 
+When a workflow selection refreshes instructions or client configuration,
+reconcile it with the existing maintenance operation for that destination.
+There is exactly one operation per canonical destination, with a stable ID
+across overlapping component batches. Repeated identical dependencies are
+no-ops; conflicting ownership, source evidence, case aliases, removals, or
+already reviewed choices fail closed. Kept local instructions still require
+review, even when their bytes match the last installed lock.
+
 If the lock shows that `workflow.3d` was previously `not_selected`, the repair
 screen offers the **3D models workflow** title again. Selecting it expands the locked manifest's declared
 dependencies, fetches the same exact locked revision, and plans only the new

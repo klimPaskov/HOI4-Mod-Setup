@@ -19,6 +19,22 @@ Use that closed error map for model catalogs and Create/Import/Update/Repair
 capability checks as well; never send raw provider protocol or serialization
 detail to the renderer.
 
+Analysis input preparation keeps typed failures through root/evidence/source
+binding and applies the closed provider error map before returning through IPC.
+Maintenance preparation retains `AppError` through the blocking builder and
+maps it exactly once at the asynchronous command boundary, retaining redacted
+technical diagnostics separately. Never wrap already sanitized strings as
+transaction errors: sign-in, usage-limit, stale-review, source, and scan states
+must keep their distinct next steps. Test real command failure paths and typed
+I/O, account-gate, and reanalysis failures through that async dispatcher, not
+only mapper helpers.
+Bounded flatten reads must retain typed open/read errors rather than converting
+OS text into renderer-visible `InvalidInput`; unsupported coding-environment
+messages must not echo unvalidated input values.
+Non-update rescans use their completed installed-state snapshot for the same
+plan request without overwriting user choices or creating semantic authority;
+Update retains its already confirmed scan-bound reanalysis.
+
 Fetch Codex models through App Server `model/list` and hosted-provider models
 through the authenticated official Models API. Bind model plus reasoning effort
 to the analysis record, plan, and lock. The checked-in fallback defaults are

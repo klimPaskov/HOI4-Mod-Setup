@@ -292,7 +292,7 @@ export const initialState: WizardState = {
   projectPathStatus: "resolving",
   description: DEFAULT_DESCRIPTION,
   sourceMode: "pinned_release",
-  pinnedRef: "package-2026-10-13.2",
+  pinnedRef: "package-2026-10-14.1",
   aiProvider: "claude_account",
   aiModel: CLAUDE_HAIKU_MODEL,
   aiReasoningEffort: "medium",
@@ -1421,18 +1421,42 @@ export default function App() {
       }
       return;
     }
-    const addOptionalComponents = state.existingInstallationDetected === true
+    let planningState = state;
+    if (mode !== "update" && isTauriRuntime()) {
+      const scanned = await scanProject(state.identity.projectRoot, undefined, undefined, state.identity.launcherDescriptorPath);
+      if (!scanned || scanned.partial || scanned.cancelled) {
+        update({ transactionError: "The project could not be fully scanned. Nothing was changed; try the review again." });
+        return;
+      }
+      setFindings(scanned.findings);
+      const managed = managedInstallationDetails(scanned.findings);
+      const scannedState: Partial<WizardState> = {
+        scanContext: { scanId: scanned.scanId, projectRoot: scanned.projectRoot, completedAt: scanned.completedAt, partial: false, limitsHit: scanned.limitsHit },
+        existingInstallationDetected: managed.present && managed.valid,
+        installedComponentIds: managed.componentIds,
+        installedCodingEnvironments: managed.detectedCodingEnvironments,
+        installedWorkflow3dState: managed.workflow3d,
+        installedSuperEventsState: managed.superEvents,
+        installedPortraitState: managed.portraitPipeline?.enabled && managed.portraitPipeline.provider !== "disabled"
+          ? managed.portraitPipeline.providerStatus === "ready" ? "ready" : "incomplete"
+          : "not_selected",
+        installedPortraitProvider: managed.portraitPipeline?.provider,
+      };
+      planningState = { ...state, ...scannedState };
+      update(scannedState);
+    }
+    const addOptionalComponents = planningState.existingInstallationDetected === true
       && (mode === "repair" || mode === "update")
       ? [
-        ...dynamicMaintenanceOptionalComponentIds(state),
-        ...(state.meshSelected && state.installedWorkflow3dState === "not_selected" ? ["workflow.3d"] : []),
-        ...(state.superEventsSelected && state.installedSuperEventsState === "not_selected" ? ["workflow.super_events"] : []),
-        ...(state.portraitPipeline.enabled && state.portraitPipeline.provider !== "disabled" && (state.installedPortraitState === "not_selected" || state.installedPortraitProvider !== state.portraitPipeline.provider)
-          ? portraitComponentIdsFor(state.portraitPipeline.provider)
+        ...dynamicMaintenanceOptionalComponentIds(planningState),
+        ...(planningState.meshSelected && planningState.installedWorkflow3dState === "not_selected" ? ["workflow.3d"] : []),
+        ...(planningState.superEventsSelected && planningState.installedSuperEventsState === "not_selected" ? ["workflow.super_events"] : []),
+        ...(planningState.portraitPipeline.enabled && planningState.portraitPipeline.provider !== "disabled" && (planningState.installedPortraitState === "not_selected" || planningState.installedPortraitProvider !== planningState.portraitPipeline.provider)
+          ? portraitComponentIdsFor(planningState.portraitPipeline.provider)
           : []),
       ]
       : [];
-    const planResult = await buildMaintenancePlanResult(mode, state.identity.projectRoot, state.maintenanceCodexAnalysisRecord, addOptionalComponents, state.portraitPipeline, state.primaryCodingEnvironment, state.additionalCodingEnvironments, state.codexAnalysis ? buildAnalysisConfirmationValues(state) : undefined, state.imageGeneration, state.liveTesting);
+    const planResult = await buildMaintenancePlanResult(mode, planningState.identity.projectRoot, planningState.maintenanceCodexAnalysisRecord, addOptionalComponents, planningState.portraitPipeline, planningState.primaryCodingEnvironment, planningState.additionalCodingEnvironments, planningState.codexAnalysis ? buildAnalysisConfirmationValues(planningState) : undefined, planningState.imageGeneration, planningState.liveTesting);
     const plan = planResult.value;
     if (!plan) {
       update({ transactionError: planResult.error ? `The maintenance plan is unavailable: ${planResult.error}` : "The maintenance plan is unavailable. Nothing was changed." });

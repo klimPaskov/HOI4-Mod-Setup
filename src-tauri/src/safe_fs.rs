@@ -866,23 +866,11 @@ fn lexical_absolute_path(path: &Path) -> Result<PathBuf, AppError> {
 }
 
 fn error_is_missing(error: &AppError) -> bool {
-    match error {
-        AppError::Transaction(message) => {
-            let message = message.to_ascii_lowercase();
-            message.contains("no such file")
-                || message.contains("not found")
-                || message.contains("cannot find the file")
-                || message.contains("cannot find the path")
-        }
-        _ => false,
-    }
+    matches!(error, AppError::Io(source) if source.kind() == io::ErrorKind::NotFound)
 }
 
 fn error_is_exists(error: &AppError) -> bool {
-    match error {
-        AppError::Transaction(message) => message.to_ascii_lowercase().contains("exist"),
-        _ => false,
-    }
+    matches!(error, AppError::Io(source) if source.kind() == io::ErrorKind::AlreadyExists)
 }
 
 fn absolute_filesystem_root(path: &Path) -> Result<PathBuf, AppError> {
@@ -955,13 +943,7 @@ fn open_directory_path(path: &Path, deny_delete_share: bool) -> Result<File, App
             } else {
                 FILE_SHARE_DELETE
             },
-    )
-    .map_err(|error| {
-        AppError::Transaction(format!(
-            "could not open directory root {}: {error}",
-            path.display()
-        ))
-    })?;
+    )?;
     validate_windows_directory_handle(&file)?;
     Ok(file)
 }
@@ -1008,13 +990,7 @@ fn open_child_directory(
             } else {
                 FILE_SHARE_DELETE
             },
-    )
-    .map_err(|error| {
-        AppError::Transaction(format!(
-            "could not open directory component {}: {error}",
-            display_path.display()
-        ))
-    })?;
+    )?;
     validate_windows_directory_handle(&file)?;
     Ok(file)
 }
@@ -1377,7 +1353,10 @@ fn remove_directory_impl(parent: &RootedDir, name: &OsStr) -> io::Result<()> {
 
 #[cfg(windows)]
 fn app_error_to_io(error: AppError) -> io::Error {
-    io::Error::other(error.to_string())
+    match error {
+        AppError::Io(source) => source,
+        other => io::Error::other(other.to_string()),
+    }
 }
 
 #[cfg(unix)]
@@ -1995,6 +1974,79 @@ fn windows_file_identity(file: &File) -> Result<(u64, [u8; 16]), AppError> {
         ));
     }
     Ok((information.VolumeSerialNumber, file_id))
+}
+
+#[cfg(test)]
+mod io_error_tests {
+    use super::*;
+
+    #[test]
+    fn io_classification_is_independent_of_localized_error_text() {
+        for message in [
+            "Le fichier est introuvable",
+            "Die Datei wurde nicht gefunden",
+            "\u{041d}\u{0435} \u{0443}\u{0434}\u{0430}\u{0435}\u{0442}\u{0441}\u{044f} \u{043d}\u{0430}\u{0439}\u{0442}\u{0438} \u{0444}\u{0430}\u{0439}\u{043b}",
+        ] {
+            let missing = AppError::from(io::Error::new(io::ErrorKind::NotFound, message));
+            assert!(error_is_missing(&missing));
+            assert!(!error_is_exists(&missing));
+            let exists = AppError::from(io::Error::new(io::ErrorKind::AlreadyExists, message));
+            assert!(error_is_exists(&exists));
+            assert!(!error_is_missing(&exists));
+        }
+    }
+
+    #[test]
+    fn missing_and_exists_words_cannot_mask_other_failures() {
+        let message = "not found; already exists; (os error 2); (os error 183)";
+        for error in [
+            AppError::from(io::Error::new(io::ErrorKind::PermissionDenied, message)),
+            AppError::from(io::Error::other(message)),
+            AppError::Transaction(message.into()),
+            AppError::PathSecurity(message.into()),
+        ] {
+            assert!(!error_is_missing(&error));
+            assert!(!error_is_exists(&error));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_io_codes_survive_conversion_and_round_trip() {
+        for (code, missing, exists) in [
+            (2, true, false),
+            (3, true, false),
+            (80, false, true),
+            (183, false, true),
+            (5, false, false),
+            (32, false, false),
+        ] {
+            let error = AppError::from(io::Error::from_raw_os_error(code));
+            assert_eq!(error_is_missing(&error), missing);
+            assert_eq!(error_is_exists(&error), exists);
+            assert_eq!(app_error_to_io(error).raw_os_error(), Some(code));
+        }
+    }
+
+    #[test]
+    fn missing_parent_and_leaf_are_normal_atomic_write_preconditions() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = RootedDir::open(directory.path()).unwrap();
+        assert!(!root.exists("new-parent/blob").unwrap());
+        assert!(!root.is_regular_file("new-parent/blob").unwrap());
+        assert!(!root.is_directory("new-parent/child").unwrap());
+        root.write_atomic("new-parent/blob", b"verified bytes")
+            .unwrap();
+        assert!(root.is_regular_file("new-parent/blob").unwrap());
+        assert!(root.is_directory("new-parent").unwrap());
+        assert!(!root
+            .write_atomic_noreplace("new-parent/blob", b"other")
+            .unwrap());
+        assert_eq!(
+            fs::read(directory.path().join("new-parent/blob")).unwrap(),
+            b"verified bytes"
+        );
+    }
 }
 
 #[cfg(test)]

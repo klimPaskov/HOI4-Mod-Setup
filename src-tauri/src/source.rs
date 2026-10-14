@@ -2384,17 +2384,19 @@ mod tests {
         assert_eq!(MANIFEST_PATH, "hoi4-mod-setup.manifest.json");
         let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let inventory: Value = serde_json::from_str(include_str!(
-            "../../docs/source-audit/live_repository_inventory.json"
+            "../../docs/source-audit/current_manifest_identity.json"
         ))
         .unwrap();
         let manifest_sha256 = sha256_bytes(bytes);
-        for field in ["manifest_sha256", "workspace_manifest_sha256"] {
-            assert_eq!(
-                inventory[field].as_str(),
-                Some(manifest_sha256.as_str()),
-                "source audit must identify the exact bundled manifest bytes"
-            );
-        }
+        assert_eq!(
+            inventory["manifest_sha256"].as_str(),
+            Some(manifest_sha256.as_str()),
+            "source audit must identify the exact bundled manifest bytes"
+        );
+        assert_eq!(
+            inventory["manifest_size"].as_u64(),
+            Some(bytes.len() as u64)
+        );
         let source_snapshot = inventory["manifest_generated_for_revision"]
             .as_str()
             .unwrap();
@@ -2743,17 +2745,17 @@ mod tests {
         let bundled_bytes =
             include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let remote_bytes = bundled_bytes.to_vec();
-        let resolved_revision = "ef01612bd845bd310efe70f3336ca83e2cdf1d2d";
+        let inventory: Value = serde_json::from_str(include_str!(
+            "../../docs/source-audit/current_manifest_identity.json"
+        ))
+        .unwrap();
+        let resolved_revision = inventory["resolved_commit"].as_str().unwrap();
 
         let (selected_bytes, manifest, origin) =
             select_manifest_for_revision(&remote_bytes, resolved_revision).unwrap();
 
         assert_eq!(origin, "remote");
         assert_eq!(selected_bytes, remote_bytes);
-        let inventory: Value = serde_json::from_str(include_str!(
-            "../../docs/source-audit/live_repository_inventory.json"
-        ))
-        .unwrap();
         assert_eq!(
             manifest.generated_for_revision.as_deref(),
             inventory
@@ -2765,7 +2767,7 @@ mod tests {
     fn live_tools_manifest_value() -> (Value, String) {
         let bytes = include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json");
         let inventory: Value = serde_json::from_str(include_str!(
-            "../../docs/source-audit/live_repository_inventory.json"
+            "../../docs/source-audit/current_manifest_identity.json"
         ))
         .unwrap();
         (
@@ -3264,6 +3266,43 @@ mod tests {
                 .unwrap();
             assert_eq!(sha256_bytes(&bytes), *sha256);
         }
+    }
+
+    #[test]
+    fn cold_verified_cache_commits_first_blob_and_removes_partial_file() {
+        let root = tempfile::tempdir().unwrap();
+        let client = HttpSourceClient::with_cache_root(root.path().to_path_buf()).unwrap();
+        let revision = "599497ea2f93612d9094461c6fde114fc87a5c0f";
+        let trusted = b"first verified download";
+        let digest = sha256_bytes(trusted);
+        let cache_path = client.cache_root.join("blobs").join(revision).join(&digest);
+        assert!(!cache_path.exists());
+        let returned = client
+            .fetch_verified_file_with_download(
+                revision,
+                "core/first.txt",
+                &digest,
+                Some(trusted.len() as u64),
+                |_, partial, _| {
+                    fs::create_dir_all(partial.parent().unwrap())?;
+                    fs::write(partial, trusted)?;
+                    Ok(trusted.to_vec())
+                },
+            )
+            .unwrap();
+        assert_eq!(returned, trusted);
+        assert_eq!(fs::read(&cache_path).unwrap(), trusted);
+        assert!(!cache_path.with_extension("part").exists());
+        let cached = client
+            .fetch_verified_file_with_download(
+                revision,
+                "core/first.txt",
+                &digest,
+                Some(trusted.len() as u64),
+                |_, _, _| panic!("the first verified blob must be reusable"),
+            )
+            .unwrap();
+        assert_eq!(cached, trusted);
     }
 
     #[test]

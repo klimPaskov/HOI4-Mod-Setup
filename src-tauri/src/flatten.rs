@@ -475,11 +475,7 @@ impl BoundedReadRoot {
     {
         let normalized = normalize_relative_path(relative)?;
         let path = safe_join(&self.canonical, &normalized)?;
-        let mut file = open_regular_file_under_root(self, &normalized).map_err(|error| {
-            AppError::InvalidInput(format!(
-                "flattened file is not readable: {relative}: {error}"
-            ))
-        })?;
+        let mut file = open_regular_file_under_root(self, &normalized)?;
         verify_open_file_contained(&file, &self.canonical, relative)?;
         let metadata = file.metadata()?;
         if !metadata.is_file() || is_link_metadata(&metadata) {
@@ -505,11 +501,7 @@ impl BoundedReadRoot {
                 .saturating_add(1)
                 .saturating_sub(bytes.len() as u64) as usize;
             let chunk_len = chunk.len().min(remaining);
-            let read = file.read(&mut chunk[..chunk_len]).map_err(|error| {
-                AppError::InvalidInput(format!(
-                    "flattened file could not be read: {relative}: {error}"
-                ))
-            })?;
+            let read = file.read(&mut chunk[..chunk_len])?;
             if read == 0 {
                 break;
             }

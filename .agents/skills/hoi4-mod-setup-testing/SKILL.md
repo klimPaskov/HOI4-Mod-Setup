@@ -85,6 +85,12 @@ Tests that mutate process-global command state must take the shared test-state
 guard so the default parallel Rust test runner cannot cross-contaminate evidence,
 session, cancellation, credential-health, or analysis assertions.
 
+Native acceptance chooses an apply control from the actual reviewed screen,
+not only the operation type: conflict-free maintenance shares the dry-run
+screen and Start installation button. Maintenance completion goes directly to
+Ready without the first-install Continue step. Require the real completed
+journal, readiness report, and original/repaired file hashes for both paths.
+
 ## Property examples
 
 - normalized destinations remain inside the approved root
@@ -215,6 +221,34 @@ session, cancellation, credential-health, or analysis assertions.
   exposes a retry
 
 ## Integration tests
+
+For a published Windows installer, use the remote-only `Released app E2E`
+workflow and `pnpm test:released-e2e <scenario>`. The immutable artifact and mod
+pins live in `tests/remote/released-app-pins.json`; read them instead of copying
+a temporary release version into a skill. `scripts/run_released_e2e.mjs` drives
+the unmodified WebView2 UI through Playwright CDP with real Rust IPC and real
+transactions. Only the supported loopback planning endpoint is a deterministic
+fixture; do not equate it with hosted authentication or model-quality evidence.
+The new, Kaiserreich and interrupted-import scenarios verify original-file
+hashes, persisted readiness, repair and rollback. Read
+`docs/development/released-app-e2e.md` for the complete boundary. The runtime
+guard refuses local/self-hosted execution. Keep all new harness checks under
+`pnpm test:released-harness` and run them in CI when the desktop must remain free.
+
+Elevated hosted Windows runners require an executable-specific WebView2 HKLM
+override; refuse existing values and remove only exact owned values on shutdown.
+Use setup-python's absolute interpreter with `-I -S`, an owned working directory
+and a minimal environment for archive validation. Authenticate CRLF archive text
+against its LF Git blob without changing the extracted bytes. Recompute approved
+analysis-input hashes and sanitize every result field before artifact upload.
+Candidate acceptance reuses the same driver only after native CI verification;
+the same-workflow artifact must match all recorded hashes and exact build SHA,
+version, product, architecture and bundle. Label this separately from signed
+published-binary evidence. Historical released-app pins run manually and retain
+known failures; never weaken those assertions to approve a candidate fix.
+The hosted MCP diagnostic matrix compares clean supported Node/npm installs;
+`HOI4_MCP_DIAGNOSTICS=1` retains public package hashes only. Never replace a
+reviewed tree hash with a diagnostic result merely to make a test pass.
 
 Use fake source clients for the rate-limit-only GitHub REST 403/429 fallback:
 accept only the fixed repository's bounded `info/refs?service=git-upload-pack`

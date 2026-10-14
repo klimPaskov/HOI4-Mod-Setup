@@ -2,13 +2,13 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App, { analysisBrief, ChatSources, CodingEnvironments, Components, Conflict, DryRun, Findings, Git, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import type { AiAccountStatus, AiProviderId, ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), approveScanEvidence: vi.fn(), buildInstallationPlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewInstallationConflict: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), scanProject: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), approveScanEvidence: vi.fn(), buildInstallationPlanResult: vi.fn(), buildMaintenancePlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewInstallationConflict: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), scanProject: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
 });
 
 afterEach(() => {
@@ -41,6 +41,7 @@ beforeEach(() => {
   vi.mocked(previewInstallationConflict).mockResolvedValue(null);
   vi.mocked(approveScanEvidence).mockResolvedValue(true);
   vi.mocked(scanProject).mockResolvedValue(null);
+  vi.mocked(buildMaintenancePlanResult).mockResolvedValue({ value: null, error: "Plan fixture stopped." });
   vi.mocked(startCodexLogin).mockResolvedValue(null);
   vi.mocked(suggestProjectPaths).mockResolvedValue(null);
   vi.mocked(waitForCodexLoginResult).mockResolvedValue({ value: null });
@@ -118,7 +119,7 @@ function semanticAnalysisFixture() {
 describe("HOI4 Mod Setup wizard", () => {
   it("starts new projects with the Atlantis Rising example", () => {
     expect(initialState.sourceMode).toBe("pinned_release");
-    expect(initialState.pinnedRef).toBe("package-2026-10-13.2");
+    expect(initialState.pinnedRef).toBe("package-2026-10-14.1");
     expect(initialState.identity.displayName).toBe("Atlantis Rising");
     expect(initialState.description).toBe("An Atlantis total conversion with a new Atlantic island, naval expansion, custom units, national focuses, and original mechanics.");
     expect(initialState.aiProvider).toBe("claude_account");
@@ -1259,6 +1260,65 @@ describe("HOI4 Mod Setup wizard", () => {
 
     expect(screen.getByRole("switch", { name: /Future tools workflow/ })).toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: /Future runtime internals/ })).not.toBeInTheDocument();
+  });
+
+  it.each(["repair", "remove"] as const)("scans a newly installed project before %s planning", async (mode) => {
+    enableTauriRuntime();
+    window.__HOI4_DOCUMENTATION_STATE__ = { ...initialState, ...readyState(), identity: { ...initialState.identity, ...readyState().identity }, projectPathsOverridden: true, screen: "update", scanContext: undefined };
+    let finishScan: ((value: Awaited<ReturnType<typeof scanProject>>) => void) | undefined;
+    vi.mocked(scanProject).mockReturnValue(new Promise((resolve) => { finishScan = resolve; }));
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: mode === "repair" ? /Repair installation/ : /Remove components/ }));
+    await waitFor(() => expect(scanProject).toHaveBeenCalled());
+    expect(buildMaintenancePlanResult).not.toHaveBeenCalled();
+    await act(async () => finishScan?.({
+      findings: [], scanId: "fresh-maintenance", projectRoot: "C:\\mods\\cold-war-curtain", partial: false, cancelled: false,
+      limitsHit: [], filesScanned: 1, directoriesScanned: 1, bytesRead: 1, completedAt: "2026-10-14T00:00:00Z",
+    } as never));
+    await waitFor(() => expect(buildMaintenancePlanResult).toHaveBeenCalled());
+    expect(vi.mocked(scanProject).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(buildMaintenancePlanResult).mock.invocationCallOrder[0]);
+  });
+
+  it("uses the fresh installed snapshot without overwriting the requested workflow", async () => {
+    enableTauriRuntime();
+    window.__HOI4_DOCUMENTATION_STATE__ = {
+      ...initialState, ...readyState(), identity: { ...initialState.identity, ...readyState().identity },
+      projectPathsOverridden: true, screen: "update", scanContext: undefined,
+      existingInstallationDetected: false, meshSelected: true, installedWorkflow3dState: "ready",
+    };
+    vi.mocked(scanProject).mockResolvedValue({
+      findings: [{ id: "installation.managed", value: JSON.stringify({ present: true, valid: true, component_ids: ["core.agents"], workflow_3d_state: "not_selected" }) }],
+      scanId: "fresh", projectRoot: "C:\\mods\\cold-war-curtain", partial: false, cancelled: false, limitsHit: [], completedAt: "2026-10-14T00:00:00Z",
+    } as never);
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /Repair installation/ }));
+    await waitFor(() => expect(buildMaintenancePlanResult).toHaveBeenCalled());
+    expect(vi.mocked(buildMaintenancePlanResult).mock.calls[0][3]).toContain("workflow.3d");
+  });
+
+  it("keeps confirmed Update reanalysis bound to its original scan", async () => {
+    enableTauriRuntime();
+    const record = { analysis_id: "confirmed-update", confirmed_fields: ["display_name"], scan_id: "confirmed-scan" } as unknown as WizardState["maintenanceCodexAnalysisRecord"];
+    window.__HOI4_DOCUMENTATION_STATE__ = {
+      ...initialState, ...readyState(), identity: { ...initialState.identity, ...readyState().identity },
+      projectPathsOverridden: true, screen: "update", maintenanceEvidenceReady: true,
+      maintenanceCodexAnalysisRecord: record,
+    };
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /Check for updates/ }));
+    await waitFor(() => expect(buildMaintenancePlanResult).toHaveBeenCalled());
+    expect(scanProject).not.toHaveBeenCalled();
+    expect(vi.mocked(buildMaintenancePlanResult).mock.calls[0][2]).toBe(record);
+  });
+
+  it.each([null, { partial: true, cancelled: false }, { partial: false, cancelled: true }])("does not plan repair after an incomplete scan: %j", async (scan) => {
+    enableTauriRuntime();
+    window.__HOI4_DOCUMENTATION_STATE__ = { ...initialState, ...readyState(), identity: { ...initialState.identity, ...readyState().identity }, projectPathsOverridden: true, screen: "update", scanContext: undefined };
+    vi.mocked(scanProject).mockResolvedValue(scan as never);
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /Repair installation/ }));
+    await screen.findByText("The project could not be fully scanned. Nothing was changed; try the review again.");
+    expect(buildMaintenancePlanResult).not.toHaveBeenCalled();
   });
 
   it("offers both optional workflows again for an existing managed setup", () => {
