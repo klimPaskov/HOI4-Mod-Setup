@@ -15042,6 +15042,11 @@ developer_instructions = "Work on the named files."
                     plan.generated_artifacts.clear();
                     plan.conflicts.clear();
                     plan.git_setup = None;
+                    let record = plan.codex_analysis.as_mut().unwrap();
+                    record.provider = Some(plan.ai_provider.clone());
+                    record.model = Some(plan.ai_model.clone());
+                    record.reasoning_effort = Some(plan.ai_reasoning_effort.clone());
+                    record.optimization_profile = Some(plan.ai_optimization_profile.clone());
                     plan.approvals.dry_run_reviewed = true;
                     plan.approvals.external_actions_reviewed = true;
                     crate::transaction::validate_plan(&plan).unwrap();
