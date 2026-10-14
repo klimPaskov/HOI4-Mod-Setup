@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { cleanAppEnvironment, inside, inventoryDigest, requireHostedWindows, sanitizeReport, setupPythonPath, startPlannerFixture, stopOwnedSession } from "./released_e2e_support.mjs";
+import { cleanAppEnvironment, inside, inventoryDigest, requireHostedWindows, sanitizeReport, setupPythonPath, startPlannerFixture, stopOwnedSession, verifiedCandidate } from "./released_e2e_support.mjs";
 
 test("remote-only guard refuses a local or self-hosted session", () => {
   const previous = process.env.RUNNER_ENVIRONMENT;
@@ -59,6 +61,33 @@ test("owned policy cleanup runs even when process or browser shutdown fails", as
     await assert.rejects(stopOwnedSession(...operations), /Owned session cleanup failed/);
     assert.deepEqual(called, [0, 1, 2]);
   }
+});
+
+test("candidate artifacts require exact build identity and complete file hashes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "hoi4-candidate-evidence-"));
+  try {
+    const revision = "a".repeat(40);
+    const metadata = JSON.stringify({ product: "HOI4 Mod Setup", version: "1.2.3", sourceRevision: revision, frontendOnly: false, platform: "Windows", architecture: "X64", bundle: "nsis", artifact_manifest: "ARTIFACTS.sha256" });
+    const installerPath = "packages/nsis/example.exe";
+    const installer = Buffer.from("synthetic installer bytes; never executed");
+    const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+    await mkdir(join(root, "packages/nsis"), { recursive: true });
+    await writeFile(join(root, "BUILD_METADATA.json"), metadata);
+    await writeFile(join(root, installerPath), installer);
+    const entries = [{ path: "BUILD_METADATA.json", sha256: digest(metadata) }, { path: installerPath, sha256: digest(installer) }];
+    const manifest = join(root, "ARTIFACTS.sha256");
+    await writeFile(manifest, JSON.stringify(entries));
+    assert.equal((await verifiedCandidate(root, "1.2.3", revision)).sha256, digest(installer));
+    await assert.rejects(verifiedCandidate(root, "1.2.4", revision));
+    await assert.rejects(verifiedCandidate(root, "1.2.3", "b".repeat(40)));
+    await writeFile(join(root, installerPath), "changed");
+    await assert.rejects(verifiedCandidate(root, "1.2.3", revision));
+    await writeFile(join(root, installerPath), installer);
+    await writeFile(manifest, JSON.stringify([...entries, entries[1]]));
+    await assert.rejects(verifiedCandidate(root, "1.2.3", revision));
+    await writeFile(manifest, JSON.stringify([{ path: "../outside", sha256: "b".repeat(64) }]));
+    await assert.rejects(verifiedCandidate(root, "1.2.3", revision));
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("inventory identity is stable regardless of enumeration order", () => {

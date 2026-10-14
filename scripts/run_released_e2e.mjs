@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { chromium, expect } from "@playwright/test";
 import { assertWindowsInstallerRegistryIsClean, cleanupWindowsInstallerRegistry, resolveNativeSystemExecutable, resolveSystemPowerShellPath, uninstallKey, windowsRegistry } from "./windows_installer_registry.mjs";
-import { assertOriginals, cleanAppEnvironment, cleanProcessEnvironment, downloadPublic, fileHash, githubJson, inside, inventoryDigest, requireHostedWindows, sanitizeReport, setupPythonPath, snapshot, startPlannerFixture, stopOwnedSession } from "./released_e2e_support.mjs";
+import { assertOriginals, cleanAppEnvironment, cleanProcessEnvironment, downloadPublic, fileHash, githubJson, inside, inventoryDigest, requireHostedWindows, sanitizeReport, setupPythonPath, snapshot, startPlannerFixture, stopOwnedSession, verifiedCandidate } from "./released_e2e_support.mjs";
 import { configureHostedWebView } from "./released_e2e_windows.mjs";
 
 requireHostedWindows();
@@ -19,6 +19,14 @@ for (const name of Object.keys(process.env)) {
 const exec = promisify(execFile);
 const repository = resolve(import.meta.dirname, "..");
 const pins = JSON.parse(await readFile(join(repository, "tests/remote/released-app-pins.json"), "utf8"));
+const candidateDirectory = process.env.HOI4_E2E_CANDIDATE_DIR;
+const applicationKind = candidateDirectory ? "candidate" : "published";
+if (candidateDirectory) {
+  inside(repository, candidateDirectory);
+  pins.app.version = JSON.parse(await readFile(join(repository, "package.json"), "utf8")).version;
+  pins.app.commit = process.env.GITHUB_SHA;
+}
+const expectedSourceRevision = candidateDirectory ? pins.candidate.sourceRevision : pins.app.sourceRevision;
 const scenario = process.argv[2];
 assert.ok(["new", "kaiserreich", "recovery"].includes(scenario), "Unknown remote scenario.");
 const workRoot = await mkdtemp(join(process.env.RUNNER_TEMP, "hoi4-mod-setup-installer-e2e-"));
@@ -29,9 +37,9 @@ const output = resolve(repository, "test-results", `released-${scenario}`);
 for (const path of [output, mods, ...["home", "config", "data", "temp"].map((part) => join(profile, part))]) await mkdir(path, { recursive: true });
 const journalRoot = join(profile, "data", "HOI4 Mod Setup", "transactions");
 const project = join(mods, scenario === "new" ? "remote_acceptance_mod" : "kaiserreich");
-const result = { scenario, applicationVersion: pins.app.version, releaseSourceCommitFromPin: pins.app.commit, runner: process.env.RUNNER_OS,
+const result = { scenario, applicationKind, applicationVersion: pins.app.version, releaseSourceCommitFromPin: pins.app.commit, runner: process.env.RUNNER_OS,
   ai: "deterministic loopback HTTP fixture; real provider authentication and semantic quality are not tested",
-  nativeIpc: "unmodified published binary; no IPC mocks or application test hooks", stages: [], screenshots: [], success: false };
+  nativeIpc: `unmodified ${applicationKind} binary; no IPC mocks or application test hooks`, stages: [], screenshots: [], success: false };
 let app;
 let browser;
 let page;
@@ -187,9 +195,17 @@ async function applyAndReady(maintenance = false) {
 
 try {
   const installer = join(workRoot, "installer.exe");
+  if (candidateDirectory) {
+    const candidate = await verifiedCandidate(candidateDirectory, pins.app.version, pins.app.commit);
+    await copyFile(candidate.installer, installer);
+    assert.equal(await fileHash(installer), candidate.sha256);
+    result.installer = { origin: "same-workflow native build", sha256: candidate.sha256, size: candidate.size, sourceRevision: candidate.sourceRevision };
+    result.signing = "Candidate artifact; not signed release evidence.";
+  } else {
   result.installer = await downloadPublic(pins.app.url, installer, 32 * 1024 * 1024, pins.app.sha256);
   assert.equal(result.installer.size, pins.app.size);
   await exec(resolveSystemPowerShellPath(), ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; Import-Module ($PSHOME + '\\Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1'); $s=Get-AuthenticodeSignature -LiteralPath $env:HOI4_E2E_INSTALLER; if (-not $s.SignerCertificate -or $s.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false) -ne 'ChaosX' -or $s.Status -eq 'HashMismatch') { throw 'Published installer signature mismatch' }"], { env: { ...process.env, HOI4_E2E_INSTALLER: installer }, windowsHide: true, timeout: 30_000 });
+  }
   await assertWindowsInstallerRegistryIsClean(); ownsRegistry = true;
   await exec(installer, ["/S", `/D=${installRoot}`], { windowsHide: true, timeout: 120_000 });
   executable = join(installRoot, "hoi4-mod-setup.exe");
@@ -277,7 +293,7 @@ try {
     const { readiness } = await applyAndReady();
     const lock = JSON.parse(await readFile(join(project, ".hoi4-mod-setup/install.lock.json"), "utf8"));
     assert.equal(lock.ai_provider, "local");
-    assert.equal(lock.source.revision, "4c06817803a6c64ae54d43063d019617fd991c24");
+    assert.equal(lock.source.revision, expectedSourceRevision);
     assert.equal(lock.codex_analysis.account_identity_persisted, false);
     assert.equal(lock.primary_coding_environment, "claude_code");
     assert.ok(lock.additional_coding_environments.includes("codex"));
@@ -345,4 +361,4 @@ try {
   await rm(workRoot, { recursive: true, force: true });
 }
 if (failure) throw new Error(result.error ?? result.cleanupError ?? "Remote E2E failed.");
-console.log(`Published ${pins.app.version} ${scenario} E2E passed.`);
+console.log(`${applicationKind} ${pins.app.version} ${scenario} E2E passed.`);

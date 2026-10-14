@@ -235,6 +235,11 @@ Use setup-python's absolute interpreter with `-I -S`, an owned working directory
 and a minimal environment for archive validation. Authenticate CRLF archive text
 against its LF Git blob without changing the extracted bytes. Recompute approved
 analysis-input hashes and sanitize every result field before artifact upload.
+Candidate acceptance reuses the same driver only after native CI verification;
+the same-workflow artifact must match all recorded hashes and exact build SHA,
+version, product, architecture and bundle. Label this separately from signed
+published-binary evidence. Historical released-app pins run manually and retain
+known failures; never weaken those assertions to approve a candidate fix.
 The hosted MCP diagnostic matrix compares clean supported Node/npm installs;
 `HOI4_MCP_DIAGNOSTICS=1` retains public package hashes only. Never replace a
 reviewed tree hash with a diagnostic result merely to make a test pass.

@@ -6,6 +6,15 @@ does not launch anything on a contributor's desktop. The repository command is
 local and self-hosted execution. `pnpm test:released-harness` checks the harness
 boundaries separately in CI.
 
+Ordinary CI runs `Candidate acceptance` after all native package gates pass.
+It downloads the Windows artifact from that same workflow, validates every
+artifact hash, and binds metadata to the exact checked-out SHA, product,
+version, architecture and bundle. Only then does `HOI4_E2E_CANDIDATE_DIR` select
+it for the same UI scenarios. Reports label it `candidate`; it is not signed
+published-release evidence. The separate manual `Released app E2E` workflow
+keeps the historical checked-in release pins and records published-version
+failures honestly rather than making them a gate for unrelated candidate fixes.
+
 ## Evidence boundaries
 
 - Install the exact public NSIS artifact pinned in
@@ -74,8 +83,8 @@ reported separately from any later candidate fix; never move its release tag.
 
 ## Maintenance
 
-The workflow also compares the public HOI4 Agent Tools runtime under Node 22
-and 24 and independently pinned npm 10/11 on Windows and Linux. The published
+The workflow also verifies the public HOI4 Agent Tools runtime under Node 22
+and 24 with independently pinned npm 11 on Windows and npm 10 on Linux. The published
 UI lane uses Node 24; the separate matrix retains the older-runtime regression.
 `HOI4_MCP_DIAGNOSTICS=1` is restricted to hosted CI and retains only
 public-package paths, sizes, hashes and runtime versions when checking a tree

@@ -26,6 +26,49 @@ export async function fileHash(path) {
   return hash.digest("hex");
 }
 
+export async function verifiedCandidate(root, version, revision) {
+  const rootMetadata = await lstat(root);
+  assert.ok(rootMetadata.isDirectory() && !rootMetadata.isSymbolicLink());
+  async function regularArtifact(name) {
+    const path = inside(root, join(root, name));
+    const parts = relative(root, path).split(/[\\/]/);
+    let current = root;
+    for (const [index, part] of parts.entries()) {
+      current = join(current, part);
+      const metadata = await lstat(current);
+      assert.ok(!metadata.isSymbolicLink());
+      assert.ok(index === parts.length - 1 ? metadata.isFile() : metadata.isDirectory());
+    }
+    return path;
+  }
+  const metadata = JSON.parse(await readFile(await regularArtifact("BUILD_METADATA.json"), "utf8"));
+  assert.equal(metadata.product, "HOI4 Mod Setup");
+  assert.equal(metadata.version, version);
+  assert.equal(metadata.sourceRevision, revision);
+  assert.match(revision, /^[a-f0-9]{40}$/);
+  assert.equal(metadata.frontendOnly, false);
+  assert.equal(metadata.platform, "Windows");
+  assert.equal(metadata.architecture, "X64");
+  assert.equal(metadata.bundle, "nsis");
+  assert.equal(metadata.artifact_manifest, "ARTIFACTS.sha256");
+  const entries = JSON.parse(await readFile(await regularArtifact("ARTIFACTS.sha256"), "utf8"));
+  assert.ok(Array.isArray(entries) && entries.length < 10_000);
+  const names = new Set();
+  for (const entry of entries) {
+    assert.equal(typeof entry.path, "string");
+    assert.ok(!names.has(entry.path) && !entry.path.includes("\\") && !entry.path.split("/").includes(".."));
+    assert.match(entry.sha256, /^[a-f0-9]{64}$/);
+    names.add(entry.path);
+    const path = await regularArtifact(entry.path);
+    assert.equal(await fileHash(path), entry.sha256);
+  }
+  assert.ok(names.has("BUILD_METADATA.json"));
+  const installers = entries.filter((entry) => /^packages\/nsis\/[^/]+\.exe$/i.test(entry.path));
+  assert.equal(installers.length, 1);
+  const installer = inside(root, join(root, installers[0].path));
+  return { installer, sha256: installers[0].sha256, size: (await lstat(installer)).size, sourceRevision: metadata.sourceRevision };
+}
+
 export function cleanProcessEnvironment(profile) {
   const keep = new Set(["PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432", "PROGRAMDATA", "ALLUSERSPROFILE", "PROCESSOR_ARCHITECTURE", "PROCESSOR_ARCHITEW6432", "NUMBER_OF_PROCESSORS"]);
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => keep.has(name.toUpperCase())));

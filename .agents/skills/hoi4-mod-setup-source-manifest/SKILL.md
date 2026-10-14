@@ -119,6 +119,15 @@ hash captured from mutable transitive resolution can become uninstallable;
 fix it upstream with a bundled runtime or integrity-complete pinned closure.
 Never bless the current machine's changed hash or relax installed-tree checks.
 
+The HOI4 Agent Tools bootstrap owns a private per-platform npm toolchain, pinned
+by SHA-512 inside its source-verified script. npm majors can realize different
+optional-platform closures from the same shrinkwrap. Verify each supported
+Node/platform combination without changing existing MCP tree hashes, isolate
+npm configuration and cwd, and never replace the user's ambient npm executable.
+Publish changed script evidence through the source-owned generator and consume
+that immutable manifest commit; old pinned repairs must not silently substitute
+a newer bootstrap.
+
 ## Repeatable MCP package verification
 
 - Run `pnpm test:scratch-live` with an explicit committed source checkout to

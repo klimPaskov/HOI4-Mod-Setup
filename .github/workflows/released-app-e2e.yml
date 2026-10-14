@@ -2,15 +2,6 @@ name: Released app E2E
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - ".github/workflows/released-app-e2e.yml"
-      - "scripts/run_released_e2e.mjs"
-      - "scripts/released_e2e_support.mjs"
-      - "scripts/released_e2e_windows.mjs"
-      - "scripts/extract_mod_fixture.py"
-      - "scripts/test_live_mcp.mjs"
-      - "tests/remote/**"
 
 permissions:
   contents: read
@@ -30,9 +21,9 @@ jobs:
       matrix:
         include:
           - { os: windows-latest, node: "22", npm: "11.19.0" }
-          - { os: windows-latest, node: "24", npm: "10.9.9" }
+          - { os: windows-latest, node: "24", npm: "11.19.0" }
           - { os: ubuntu-22.04, node: "22", npm: "10.9.9" }
-          - { os: ubuntu-22.04, node: "24", npm: "11.19.0" }
+          - { os: ubuntu-22.04, node: "24", npm: "10.9.9" }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

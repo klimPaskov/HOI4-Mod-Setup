@@ -50,6 +50,13 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
   It must not alter the published binary, mock application IPC, or imply that a
   deterministic loopback planner validates real provider authentication.
 
+- `Candidate acceptance` consumes the Windows artifact from the same successful
+  native CI workflow, verifies its complete hash inventory and exact build SHA,
+  then runs the real wizard in fresh hosted profiles. Candidate reports never
+  stand in for signing/publication evidence. Historical released-app acceptance
+  is a separate manual workflow, so a known old-release failure is not hidden or
+  treated as the result of a newer candidate.
+
 - Every job running `pnpm test:e2e` first runs `pnpm test:e2e:install` to
   install the pinned Playwright browser and required OS libraries. This gate
   now executes browser interactions rather than checking HTML source text.
