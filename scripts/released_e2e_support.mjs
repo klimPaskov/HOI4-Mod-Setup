@@ -118,12 +118,34 @@ export async function stopOwnedSession(stopProcess, closeBrowser, clearPolicy) {
   if (errors.length) throw new AggregateError(errors, "Owned session cleanup failed.");
 }
 
-export async function downloadPublic(url, destination, maximumBytes, expectedHash) {
+export function reviewedDownloadUrl(url, expectedHash) {
   const allowed = new Set(["github.com", "release-assets.githubusercontent.com", "codeload.github.com"]);
+  const parsed = new URL(url);
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) return false;
+  if (parsed.hostname === "raw.githubusercontent.com") {
+    return /^\/[k]limPaskov\/Agentic-HOI4-Modding\/[a-f0-9]{40}\/hoi4-mod-setup\.manifest\.json$/.test(parsed.pathname)
+      && !parsed.search && !parsed.hash && /^[a-f0-9]{64}$/.test(expectedHash ?? "");
+  }
+  return allowed.has(parsed.hostname);
+}
+
+export function reviewedMetadataPath(path) {
+  if (path.startsWith("/repos/Kaiserreich/Kaiserreich-HOI4/git/")) return true;
+  const repository = "/repos/klimPaskov/Agentic-HOI4-Modding";
+  if (path === repository) return true;
+  if (!path.startsWith(`${repository}/commits/`)) return false;
+  const ref = path.slice(`${repository}/commits/`.length);
+  try {
+    const decoded = decodeURIComponent(ref);
+    return decoded.length > 0 && decoded.length <= 256 && !/[\x00-\x1f\x7f]/.test(decoded)
+      && ![".", ".."].includes(decoded) && encodeURIComponent(decoded) === ref;
+  } catch { return false; }
+}
+
+export async function downloadPublic(url, destination, maximumBytes, expectedHash) {
   let current = url;
   for (let redirect = 0; redirect < 5; redirect++) {
-    const parsed = new URL(current);
-    if (parsed.protocol !== "https:" || !allowed.has(parsed.hostname) || parsed.username || parsed.password || parsed.port) throw new Error("Unreviewed download origin.");
+    if (!reviewedDownloadUrl(current, expectedHash)) throw new Error("Unreviewed download origin.");
     const response = await fetch(current, { redirect: "manual", signal: AbortSignal.timeout(600_000) });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       current = new URL(response.headers.get("location"), current).href;
@@ -147,7 +169,7 @@ export async function downloadPublic(url, destination, maximumBytes, expectedHas
 }
 
 export async function githubJson(path, token) {
-  if (!path.startsWith("/repos/Kaiserreich/Kaiserreich-HOI4/git/")) throw new Error("Unreviewed fixture metadata route.");
+  if (!reviewedMetadataPath(path)) throw new Error("Unreviewed fixture metadata route.");
   const response = await fetch(`https://api.github.com${path}`, {
     redirect: "error", signal: AbortSignal.timeout(60_000),
     headers: { Accept: "application/vnd.github+json", "User-Agent": "hoi4-mod-setup-remote-e2e",
