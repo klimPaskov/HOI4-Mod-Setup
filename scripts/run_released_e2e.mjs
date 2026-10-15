@@ -206,6 +206,12 @@ async function applyAndReady(maintenance = false) {
 }
 
 try {
+  if (candidateDirectory) {
+    const sourceRepository = await githubJson("/repos/klimPaskov/Agentic-HOI4-Modding", metadataToken);
+    const sourceCommit = await githubJson(`/repos/klimPaskov/Agentic-HOI4-Modding/commits/${encodeURIComponent(sourceRepository.default_branch)}`, metadataToken);
+    expectedSourceRevision = sourceCommit.sha;
+    result.latestSourceAtStart = expectedSourceRevision;
+  }
   const installer = join(workRoot, "installer.exe");
   if (candidateDirectory) {
     const candidate = await verifiedCandidate(candidateDirectory, pins.app.version, pins.app.commit);
@@ -248,12 +254,6 @@ try {
     result.originalDigest = inventoryDigest(original);
   }
 
-  if (candidateDirectory) {
-    const sourceRepository = await githubJson("/repos/klimPaskov/Agentic-HOI4-Modding", metadataToken);
-    const sourceCommit = await githubJson(`/repos/klimPaskov/Agentic-HOI4-Modding/commits/${encodeURIComponent(sourceRepository.default_branch)}`, metadataToken);
-    expectedSourceRevision = sourceCommit.sha;
-    result.latestSourceAtStart = expectedSourceRevision;
-  }
   planner = await startPlannerFixture({ malformedFirst: scenario === "new", projectName: scenario === "new" ? "Remote Acceptance Mod" : "Kaiserreich" });
   await launch("webview-initial"); await record("welcome");
   await page.getByRole("button", { name: scenario === "new" ? /^Create new mod/ : /^Import existing mod/ }).click();
@@ -349,6 +349,10 @@ try {
     await waitForReview(true); await applyAndReady(true);
     assert.equal(await fileHash(repairPath), repairFile.installed_sha256);
     const repairedLock = JSON.parse(await readFile(join(project, ".hoi4-mod-setup/install.lock.json"), "utf8"));
+    assert.deepEqual(repairedLock.source, lock.source);
+    const repairedFile = repairedLock.files.find((file) => !file.external && file.path === repairFile.path);
+    assert.equal(repairedFile.source_revision, repairFile.source_revision);
+    assert.equal(repairedFile.source_sha256, repairFile.source_sha256);
     assert.equal(new Set(repairedLock.files.map((file) => `${file.external}:${file.path.toLowerCase()}`)).size, repairedLock.files.length);
     result.repaired = { files: repairedLock.files.length, instructionRecords: {} };
     for (const path of ["CLAUDE.md", "AGENTS.md"]) {
@@ -375,10 +379,14 @@ try {
         await approveSuggestions();
         await page.getByRole("button", { name: /^Check for updates/ }).click();
         await waitForReview(true);
-        const { journal: updateJournal } = await applyAndReady(true);
+        const { journal: updateJournal, readiness: updateReadiness } = await applyAndReady(true);
         const updated = JSON.parse(await readFile(join(project, ".hoi4-mod-setup/install.lock.json"), "utf8"));
         assert.equal(updated.source.mode, target);
         assert.equal(updated.source.revision, expectedSourceRevision);
+        assert.equal(updated.source.requested_ref ?? null, target === "pinned_commit" ? expectedSourceRevision : null);
+        assert.equal(updated.source.release ?? null, null);
+        assert.equal(updated.source.repository, "klimPaskov/Agentic-HOI4-Modding");
+        assert.equal(updated.source.manifest_origin, "remote");
         assert.equal(updated.codex_analysis.source_revision, updated.source.revision);
         assert.equal(updated.codex_analysis.source_manifest_sha256, updated.source.manifest_sha256);
         const sourcePath = join(workRoot, `verified-${target}.json`);
@@ -387,10 +395,25 @@ try {
         const health = manifest.components.find((component) => component.id === "mcp.hoi4_agent_tools").validation.find((rule) => rule.parameters?.package_version);
         const mcp = updated.components.find((component) => component.id === "mcp.hoi4_agent_tools");
         assert.equal(mcp.version, health.parameters.package_version);
+        assert.equal(mcp.state, "installed");
+        assert.equal(mcp.validation, "pass");
+        assert.equal(updateReadiness.checks.find((check) => check.id === "mcp.hoi4").status, "pass");
         assert.equal(new Set(updated.files.map((file) => `${file.external}:${file.path.toLowerCase()}`)).size, updated.files.length);
         if (scenario !== "new") await assertOriginals(project, original, { gitignoreText });
         result.updates ??= [];
-        result.updates.push({ target, source: updated.source, mcpVersion: mcp.version, transactionId: updateJournal.transaction_id });
+        result.updates.push({ target, source: updated.source, mcpVersion: mcp.version, mcpHealth: "pass", transactionId: updateJournal.transaction_id });
+        if (target === "pinned_commit") {
+          const pinnedFile = updated.files.find((file) => !file.external && file.path === repairFile.path);
+          await rm(repairPath);
+          await page.getByRole("button", { name: "Manage installation", exact: true }).click();
+          await at("Update and repair");
+          await page.getByRole("button", { name: /^Repair installation/ }).click();
+          await waitForReview(true); await applyAndReady(true);
+          const pinnedRepair = JSON.parse(await readFile(join(project, ".hoi4-mod-setup/install.lock.json"), "utf8"));
+          assert.deepEqual(pinnedRepair.source, updated.source);
+          assert.equal(await fileHash(repairPath), pinnedFile.installed_sha256);
+          result.pinnedRepair = { source: pinnedRepair.source, restoredFile: pinnedFile.path };
+        }
       }
     }
     await next("Finish"); await at("Congratulations, you are all set!"); await record("finished");
