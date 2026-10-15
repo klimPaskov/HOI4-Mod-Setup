@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { analysisBrief, ChatSources, CodingEnvironments, Components, Conflict, DryRun, Findings, Git, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
+import App, { analysisBrief, ChatSources, CodingEnvironments, Components, Conflict, DryRun, Findings, Git, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, UpdateSourceOptions, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import type { AiAccountStatus, AiProviderId, ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
@@ -118,8 +118,8 @@ function semanticAnalysisFixture() {
 
 describe("HOI4 Mod Setup wizard", () => {
   it("starts new projects with the Atlantis Rising example", () => {
-    expect(initialState.sourceMode).toBe("pinned_release");
-    expect(initialState.pinnedRef).toBe("package-2026-10-14.1");
+    expect(initialState.sourceMode).toBe("latest");
+    expect(initialState.pinnedRef).toBe("");
     expect(initialState.identity.displayName).toBe("Atlantis Rising");
     expect(initialState.description).toBe("An Atlantis total conversion with a new Atlantic island, naval expansion, custom units, national focuses, and original mechanics.");
     expect(initialState.aiProvider).toBe("claude_account");
@@ -397,6 +397,36 @@ describe("HOI4 Mod Setup wizard", () => {
   it("opens every prepared maintenance plan in a visible review step", () => {
     expect(maintenanceReviewScreen({ conflicts: [] })).toBe("dry-run");
     expect(maintenanceReviewScreen({ conflicts: [{ selected: undefined }] as never })).toBe("conflict");
+  });
+
+  it("prevents duplicate maintenance analysis and discards a late response after retargeting", async () => {
+    enableTauriRuntime();
+    vi.mocked(readCodexAccount).mockResolvedValue({ available: true, authenticated: true, auth_mode: "chatgpt", usage_limited: false });
+    window.__HOI4_DOCUMENTATION_STATE__ = {
+      ...initialState, ...readyState(), identity: { ...initialState.identity, ...readyState().identity },
+      screen: "update", projectPathsOverridden: true,
+    };
+    vi.mocked(scanProject).mockResolvedValue({
+      findings: [{ id: "descriptor.name", category: "descriptor", label: "Name", value: "Example", status: "accepted", confidence: 1, evidencePath: "descriptor.mod", evidenceExcerpt: "name=\"Example\"" }],
+      scanId: "update-scan", projectRoot: "C:\\mods\\cold-war-curtain", partial: false, cancelled: false, limitsHit: [], completedAt: "2026-10-15T00:00:00Z",
+    } as never);
+    let finish: ((response: Awaited<ReturnType<typeof runCodexAnalysisResult>>) => void) | undefined;
+    vi.mocked(runCodexAnalysisResult).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Scan the project" }));
+    const run = await screen.findByRole("button", { name: "Run Codex reanalysis" });
+    fireEvent.click(run);
+    await waitFor(() => expect(runCodexAnalysisResult).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("combobox", { name: "Target version" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Review in progress..." })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Review in progress..." }));
+    expect(runCodexAnalysisResult).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(runCodexAnalysisResult).mock.calls[0][0].constraints).toMatchObject({ update_source: { mode: "latest" } });
+    // Programmatic state change models navigation or a late external update.
+    fireEvent.change(screen.getByRole("combobox", { name: "Target version" }), { target: { value: "pinned_release" } });
+    await act(async () => finish?.({ value: { analysis: semanticAnalysisFixture(), record: { analysis_id: "stale", confirmed_fields: [] } } as unknown as CodexAnalysisResult }));
+    expect(screen.queryByRole("button", { name: "Confirm Codex suggestions" })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Target version" })).toHaveValue("pinned_release");
   });
 
   it("estimates remaining installation time from measured elapsed progress", () => {
@@ -1309,6 +1339,26 @@ describe("HOI4 Mod Setup wizard", () => {
     await waitFor(() => expect(buildMaintenancePlanResult).toHaveBeenCalled());
     expect(scanProject).not.toHaveBeenCalled();
     expect(vi.mocked(buildMaintenancePlanResult).mock.calls[0][2]).toBe(record);
+    expect(vi.mocked(buildMaintenancePlanResult).mock.calls[0][10]).toEqual({ mode: "latest", selected_ref: undefined });
+  });
+
+  it("defaults to Latest and invalidates review when the update target changes", () => {
+    expect(initialState.sourceMode).toBe("latest");
+    expect(initialState.pinnedRef).toBe("");
+    const update = vi.fn();
+    render(<UpdateSourceOptions state={initialState} update={update} />);
+    expect(screen.getByRole("combobox", { name: "Target version" })).toHaveValue("latest");
+    fireEvent.change(screen.getByRole("combobox", { name: "Target version" }), { target: { value: "pinned_release" } });
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({
+      sourceMode: "pinned_release", pinnedRef: "", plan: undefined, manifestPreview: undefined,
+      maintenanceEvidenceReady: false, maintenanceCodexAnalysisRecord: undefined, codexAnalysisRecord: undefined,
+    }));
+    cleanup();
+    render(<UpdateSourceOptions state={{ ...initialState, sourceMode: "pinned_release", pinnedRef: "old" }} update={update} />);
+    fireEvent.change(screen.getByLabelText("Release", { exact: true }), { target: { value: "new" } });
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ sourceMode: "pinned_release", pinnedRef: "new", maintenanceCodexAnalysisRecord: undefined }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Target version" }), { target: { value: "latest" } });
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ sourceMode: "latest", pinnedRef: "" }));
   });
 
   it.each([null, { partial: true, cancelled: false }, { partial: false, cancelled: true }])("does not plan repair after an incomplete scan: %j", async (scan) => {

@@ -31,7 +31,23 @@ does not create a project journal, backup, lock update, or project mutation.
 
 ## Update
 
-Latest mode resolves the current default branch. Pinned mode stays fixed until the user selects another commit or release.
+Latest mode resolves the current default branch. New setup and the Update
+target selector default to Latest. An existing pinned project can explicitly
+select Latest, another full commit, or another release in Update source. The
+installed policy and bytes stay unchanged until the new plan is reviewed and
+applied; an omitted target from a legacy caller retains the recorded policy.
+The same release tag may not move to another commit. Repair and reinstall
+cannot accept an Update source override and remain bound to the installed
+revision.
+
+Maintenance reanalysis and planning resolve the same explicit target. Changing
+it clears the UI's review and plan; Rust rejects a confirmed analysis whose
+revision or manifest hash differs from the resolved target, before component
+downloads. Selected MCP bootstrap, health, version, integrity, and package-tree
+evidence all come from that target manifest, including standalone Live Tools.
+The resulting lock records the reviewed package version rather than carrying
+forward the predecessor's MCP version. Registry `latest` tags never substitute
+for manifest evidence. New command routes still require an app-owned adapter.
 
 The preview shows revision, manifest version, component additions and removals, dependency and command changes, platform changes, wiki coverage changes, conflicts, download size, and backup size.
 

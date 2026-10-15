@@ -35,6 +35,13 @@ Non-update rescans use their completed installed-state snapshot for the same
 plan request without overwriting user choices or creating semantic authority;
 Update retains its already confirmed scan-bound reanalysis.
 
+Update reanalysis accepts an explicit bounded `update_source` selection. Its
+component registry and core-owned record bind the selected target revision and
+manifest hash, not the installed pin. Planning receives the same `updateSource`
+and rejects changed source evidence before downloads. Omitted selections retain
+legacy lock-policy behavior. UI source edits invalidate proposals, confirmation,
+scan-review state, and plans; they never edit the installed lock directly.
+
 Fetch Codex models through App Server `model/list` and hosted-provider models
 through the authenticated official Models API. Bind model plus reasoning effort
 to the analysis record, plan, and lock. The checked-in fallback defaults are

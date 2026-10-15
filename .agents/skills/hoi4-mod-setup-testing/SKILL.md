@@ -91,6 +91,13 @@ screen and Start installation button. Maintenance completion goes directly to
 Ready without the first-install Continue step. Require the real completed
 journal, readiness report, and original/repaired file hashes for both paths.
 
+Candidate native acceptance resolves the public default branch at run start,
+tests Latest setup, same-revision Repair, an explicit commit pin followed by
+Latest, and Kaiserreich Update. Verify each resulting source/analysis binding
+and MCP version against the exact public manifest. These same-package policy
+transitions are not evidence of a live version-to-version MCP upgrade; synthetic
+incoming-manifest and lock regressions cover changing package identities.
+
 ## Property examples
 
 - normalized destinations remain inside the approved root

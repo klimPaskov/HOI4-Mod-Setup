@@ -4,7 +4,19 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { cleanAppEnvironment, inside, inventoryDigest, requireHostedWindows, reviewedApplyLabel, sanitizeReport, setupPythonPath, startPlannerFixture, stopOwnedSession, verifiedCandidate } from "./released_e2e_support.mjs";
+import { cleanAppEnvironment, inside, inventoryDigest, requireHostedWindows, reviewedApplyLabel, reviewedDownloadUrl, reviewedMetadataPath, sanitizeReport, setupPythonPath, startPlannerFixture, stopOwnedSession, verifiedCandidate } from "./released_e2e_support.mjs";
+
+test("Latest acceptance metadata stays in the fixed repository and immutable manifest route", () => {
+  const repository = "/repos/klimPaskov/Agentic-HOI4-Modding";
+  assert.equal(reviewedMetadataPath(repository), true);
+  assert.equal(reviewedMetadataPath(`${repository}/commits/main`), true);
+  assert.equal(reviewedMetadataPath(`${repository}/commits/${encodeURIComponent("release/current")}`), true);
+  for (const path of [`${repository}/commits/..`, `${repository}/commits/main?extra=1`, `${repository}/commits/%0a`, `${repository}/commits/%`, "/repos/other/project"]) assert.equal(reviewedMetadataPath(path), false);
+  const url = `https://raw.githubusercontent.com/klimPaskov/Agentic-HOI4-Modding/${"a".repeat(40)}/hoi4-mod-setup.manifest.json`;
+  assert.equal(reviewedDownloadUrl(url, "b".repeat(64)), true);
+  for (const changed of [url.replace("a".repeat(40), "main"), url.replace("klimPaskov", "other"), `${url}?raw=1`, url.replace("https:", "http:")]) assert.equal(reviewedDownloadUrl(changed, "b".repeat(64)), false);
+  assert.equal(reviewedDownloadUrl(url), false);
+});
 
 test("remote-only guard refuses a local or self-hosted session", () => {
   const previous = process.env.RUNNER_ENVIRONMENT;

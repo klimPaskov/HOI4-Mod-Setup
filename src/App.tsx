@@ -291,8 +291,8 @@ export const initialState: WizardState = {
   projectPathsOverridden: false,
   projectPathStatus: "resolving",
   description: DEFAULT_DESCRIPTION,
-  sourceMode: "pinned_release",
-  pinnedRef: "package-2026-10-14.1",
+  sourceMode: "latest",
+  pinnedRef: "",
   aiProvider: "claude_account",
   aiModel: CLAUDE_HAIKU_MODEL,
   aiReasoningEffort: "medium",
@@ -549,6 +549,9 @@ export function maintenanceReviewScreen(plan: Pick<InstallationPlan, "conflicts"
 
 export default function App() {
   const [state, setState] = useState<WizardState>(() => import.meta.env.DEV && window.__HOI4_DOCUMENTATION_STATE__ ? window.__HOI4_DOCUMENTATION_STATE__ : initialState);
+  const maintenanceAnalysisBusy = useRef(false);
+  const maintenanceReviewKey = useRef("");
+  maintenanceReviewKey.current = JSON.stringify([state.screen, state.sourceMode, state.pinnedRef, state.identity.projectRoot, state.scanContext?.scanId, state.aiProvider, state.aiModel, state.aiReasoningEffort, state.aiEndpoint]);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [scanComplete, setScanComplete] = useState(false);
   const [scanError, setScanError] = useState<string>();
@@ -1188,7 +1191,8 @@ export default function App() {
     });
     return !scanWasPartial;
   };
-  const runMaintenanceReanalysis = async (): Promise<boolean> => {
+  const performMaintenanceReanalysis = async (): Promise<boolean> => {
+    const requestKey = maintenanceReviewKey.current;
     if (!state.maintenanceEvidenceReady) return prepareMaintenanceReanalysis();
     if (!state.scanContext) {
       update({ transactionError: "Scan the project again before reviewing it." });
@@ -1248,6 +1252,7 @@ export default function App() {
       evidence,
       constraints: {
         analysis_purpose: "maintenance_reanalysis",
+        update_source: { mode: state.sourceMode, selected_ref: state.sourceMode === "latest" ? undefined : state.pinnedRef },
         project_id_pattern: "^[a-z][a-z0-9_]{1,63}$",
       },
       analysis_purpose: "maintenance_reanalysis",
@@ -1263,6 +1268,7 @@ export default function App() {
         reasoning_effort: state.aiReasoningEffort,
         endpoint: state.aiEndpoint,
       });
+    if (requestKey !== maintenanceReviewKey.current) return false;
     const result = response.value;
     if (!result) {
       update({
@@ -1284,6 +1290,17 @@ export default function App() {
       screen: "update",
     });
     return true;
+  };
+  const runMaintenanceReanalysis = async (): Promise<boolean> => {
+    if (maintenanceAnalysisBusy.current || maintenancePending) return false;
+    maintenanceAnalysisBusy.current = true;
+    setMaintenancePending(true);
+    try {
+      return await performMaintenanceReanalysis();
+    } finally {
+      maintenanceAnalysisBusy.current = false;
+      setMaintenancePending(false);
+    }
   };
   const confirmAnalysis = async () => {
     if (!state.codexAnalysis || !state.codexAnalysisRecord) {
@@ -1456,7 +1473,7 @@ export default function App() {
           : []),
       ]
       : [];
-    const planResult = await buildMaintenancePlanResult(mode, planningState.identity.projectRoot, planningState.maintenanceCodexAnalysisRecord, addOptionalComponents, planningState.portraitPipeline, planningState.primaryCodingEnvironment, planningState.additionalCodingEnvironments, planningState.codexAnalysis ? buildAnalysisConfirmationValues(planningState) : undefined, planningState.imageGeneration, planningState.liveTesting);
+    const planResult = await buildMaintenancePlanResult(mode, planningState.identity.projectRoot, planningState.maintenanceCodexAnalysisRecord, addOptionalComponents, planningState.portraitPipeline, planningState.primaryCodingEnvironment, planningState.additionalCodingEnvironments, planningState.codexAnalysis ? buildAnalysisConfirmationValues(planningState) : undefined, planningState.imageGeneration, planningState.liveTesting, mode === "update" ? { mode: planningState.sourceMode, selected_ref: planningState.sourceMode === "latest" ? undefined : planningState.pinnedRef } : undefined);
     const plan = planResult.value;
     if (!plan) {
       update({ transactionError: planResult.error ? `The maintenance plan is unavailable: ${planResult.error}` : "The maintenance plan is unavailable. Nothing was changed." });
@@ -1694,6 +1711,7 @@ export default function App() {
     update({
       ...(scannedName ? { identity: { ...state.identity, displayName: scannedName } } : {}),
       screen,
+      ...(screen === "update" ? { sourceMode: "latest" as const, pinnedRef: "", manifestPreview: undefined } : {}),
       transaction: screen === "recovery" ? transaction ?? undefined : state.transaction,
       recoveryChoice: transaction ? preferredRecoveryChoice(transaction) : state.recoveryChoice,
       plan: undefined,
@@ -3874,6 +3892,22 @@ function PortraitMaintenanceSetup({
   </section>;
 }
 
+export function UpdateSourceOptions({ state, update, disabled = false }: { state: WizardState; update: (patch: Partial<WizardState>) => void; disabled?: boolean }) {
+  const choose = (sourceMode: WizardState["sourceMode"], pinnedRef: string) => update({
+    sourceMode, pinnedRef, manifestPreview: undefined, plan: undefined,
+    codexAnalysis: undefined, codexAnalysisRecord: undefined,
+    maintenanceCodexAnalysisRecord: undefined, maintenanceEvidenceReady: false, semanticComponentRecommendations: undefined,
+    transactionError: undefined,
+  });
+  return <fieldset className="stack update-source-options" disabled={disabled}>
+    <legend>Update source</legend>
+    <label className="field"><span className="field-label">Target version</span><select className="text-input" value={state.sourceMode ?? "latest"} onChange={(event) => choose(event.target.value as WizardState["sourceMode"], "")}>
+      <option value="latest">Latest verified source</option><option value="pinned_commit">Specific commit</option><option value="pinned_release">Release</option>
+    </select></label>
+    {state.sourceMode !== "latest" && state.sourceMode && <Field label={state.sourceMode === "pinned_commit" ? "Commit" : "Release"} value={state.pinnedRef} onChange={(value) => choose(state.sourceMode, value)} mono />}
+  </fieldset>;
+}
+
 function MaintenanceCodingEnvironmentOptions({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
   const options = codingEnvironmentOptions(state.manifestPreview);
   const selection = import.meta.env.DEV && new URLSearchParams(window.location.search).get("coding-environments") === "none" && state.primaryCodingEnvironment === "" ? { primary: "", additional: state.additionalCodingEnvironments } : normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments, options);
@@ -3895,8 +3929,8 @@ export function Update({ state, update, updateIdentity, updateDescription, findi
   const portraitPipeline = state.portraitPipeline ?? DEFAULT_PORTRAIT_PIPELINE;
   const portraits = portraitPipeline.enabled ? `${portraitPipeline.provider} · ${portraitPipeline.providerStatus}` : "Disabled";
   const providerLabel = aiProviderLabel(state.aiProvider, state.aiProfiles);
-  const reanalysisLabel = state.maintenanceEvidenceReady ? state.maintenanceCodexAnalysisRecord ? "Run again" : `Run ${providerLabel} reanalysis` : "Scan the project";
-  return <div className="stack"><div className="action-grid"><ActionTile title="Check for updates" detail="Compare this project with a newer setup." onClick={() => onStartMaintenance("update")} /><ActionTile title="Repair installation" detail="Restore missing or damaged setup files." onClick={() => onStartMaintenance("repair")} /><ActionTile title="Remove components" detail="Review the files before removing app-managed setup." onClick={() => onStartMaintenance("remove")} /><ActionTile title="Recover interrupted setup" detail="Continue or undo an interrupted change." onClick={() => onMaintenance("recovery")} />{state.chatSourcesAvailable && onPackageChatSources && <ActionTile title="Package ChatGPT project sources" detail="Choose detected files and download a source ZIP." onClick={() => void onPackageChatSources()} />}</div><MaintenanceCodingEnvironmentOptions state={state} update={update} /><ImageGenerationSetup state={state} update={update} /><MaintenanceWorkflowOptions state={state} update={update} />{state.manifestPreview?.components.some((item) => item.id === "workflow.live_testing") && <section className="panel"><ToggleRow label="Live testing" detail="Choose a live-game testing provider" checked={state.liveTesting?.provider !== "none" && [...state.selectedComponents, ...(state.maintenanceOptionalSelections ?? []), ...(state.installedComponentIds ?? [])].includes("workflow.live_testing")} onChange={(checked) => update({ selectedComponents: checked ? [...state.selectedComponents, "workflow.live_testing"] : state.selectedComponents.filter((id) => id !== "workflow.live_testing"), maintenanceOptionalSelections: checked ? [...(state.maintenanceOptionalSelections ?? []), "workflow.live_testing"] : (state.maintenanceOptionalSelections ?? []).filter((id) => id !== "workflow.live_testing"), liveTesting: { ...state.liveTesting, provider: checked ? "clausewitz_mcp" : "none", linux_ready: false }, plan: undefined })} /></section>}{[...state.selectedComponents, ...(state.installedComponentIds ?? []), ...(state.maintenanceOptionalSelections ?? [])].some((id) => id === "workflow.live_testing" || id === "workflow.live_tools") && <LiveTestingSetup state={state} update={update} />}<section className="panel"><PanelTitle title="Project review" /><p className="muted">Review the project before updating its setup.</p><button type="button" className="button secondary" onClick={() => void onReanalyze()}>{reanalysisLabel}</button>{state.maintenanceEvidenceReady && <details open><summary>{modelVisibleFindings(findings).length} approved findings</summary><div className="manifest-details">{modelVisibleFindings(findings).map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small><button type="button" className="text-button" aria-pressed="true" onClick={() => setFindings((current) => current.map((candidate) => candidate.id === finding.id ? { ...candidate, status: "rejected" } : candidate))}>Exclude</button></div>)}</div></details>}{state.maintenanceCodexAnalysisRecord && <p className="muted" role="status">Review returned. Confirm the {providerLabel} suggestions before checking for updates.</p>}{state.maintenanceCodexAnalysisRecord && state.codexAnalysis && onConfirmAnalysis && <CodexReview state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onConfirmAnalysis={onConfirmAnalysis} />}</section><section className="panel"><PanelTitle title="Installed state" /><CheckRow label="Core setup" status={plan ? `${plan.operations.length} planned changes` : "No plan loaded"} tone={plan ? "info" : "muted"} /><CheckRow label="Optional 3D workflow" status={optional3d} tone={state.meshSelected ? "review" : "muted"} /><CheckRow label="Super Events workflow" status={superEvents} tone={state.superEventsSelected ? "review" : "muted"} /><CheckRow label="Portrait production" status={portraits} tone={portraitPipeline.enabled ? "review" : "muted"} /><CheckRow label="Modified files" status={plan ? String(plan.conflicts.length) : "Not evaluated"} tone={plan?.conflicts.length ? "review" : "muted"} />{plan && <details open><summary>Reviewed changes</summary><p className="muted">Modified files remain visible until resolved.</p></details>}</section></div>;
+  const reanalysisLabel = pending ? "Review in progress..." : state.maintenanceEvidenceReady ? state.maintenanceCodexAnalysisRecord ? "Run again" : `Run ${providerLabel} reanalysis` : "Scan the project";
+  return <fieldset className="stack maintenance-content" disabled={pending} aria-busy={pending}><UpdateSourceOptions state={state} update={update} disabled={pending} /><div className="action-grid"><ActionTile title="Check for updates" detail="Compare this project with a newer setup." onClick={() => onStartMaintenance("update")} /><ActionTile title="Repair installation" detail="Restore missing or damaged setup files." onClick={() => onStartMaintenance("repair")} /><ActionTile title="Remove components" detail="Review the files before removing app-managed setup." onClick={() => onStartMaintenance("remove")} /><ActionTile title="Recover interrupted setup" detail="Continue or undo an interrupted change." onClick={() => onMaintenance("recovery")} />{state.chatSourcesAvailable && onPackageChatSources && <ActionTile title="Package ChatGPT project sources" detail="Choose detected files and download a source ZIP." onClick={() => void onPackageChatSources()} />}</div><MaintenanceCodingEnvironmentOptions state={state} update={update} /><ImageGenerationSetup state={state} update={update} /><MaintenanceWorkflowOptions state={state} update={update} />{state.manifestPreview?.components.some((item) => item.id === "workflow.live_testing") && <section className="panel"><ToggleRow label="Live testing" detail="Choose a live-game testing provider" checked={state.liveTesting?.provider !== "none" && [...state.selectedComponents, ...(state.maintenanceOptionalSelections ?? []), ...(state.installedComponentIds ?? [])].includes("workflow.live_testing")} onChange={(checked) => update({ selectedComponents: checked ? [...state.selectedComponents, "workflow.live_testing"] : state.selectedComponents.filter((id) => id !== "workflow.live_testing"), maintenanceOptionalSelections: checked ? [...(state.maintenanceOptionalSelections ?? []), "workflow.live_testing"] : (state.maintenanceOptionalSelections ?? []).filter((id) => id !== "workflow.live_testing"), liveTesting: { ...state.liveTesting, provider: checked ? "clausewitz_mcp" : "none", linux_ready: false }, plan: undefined })} /></section>}{[...state.selectedComponents, ...(state.installedComponentIds ?? []), ...(state.maintenanceOptionalSelections ?? [])].some((id) => id === "workflow.live_testing" || id === "workflow.live_tools") && <LiveTestingSetup state={state} update={update} />}<section className="panel"><PanelTitle title="Project review" /><p className="muted">Review the project before updating its setup.</p><button type="button" className="button secondary" onClick={() => void onReanalyze()}>{reanalysisLabel}</button>{state.maintenanceEvidenceReady && <details open><summary>{modelVisibleFindings(findings).length} approved findings</summary><div className="manifest-details">{modelVisibleFindings(findings).map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small><button type="button" className="text-button" aria-pressed="true" onClick={() => setFindings((current) => current.map((candidate) => candidate.id === finding.id ? { ...candidate, status: "rejected" } : candidate))}>Exclude</button></div>)}</div></details>}{state.maintenanceCodexAnalysisRecord && <p className="muted" role="status">Review returned. Confirm the {providerLabel} suggestions before checking for updates.</p>}{state.maintenanceCodexAnalysisRecord && state.codexAnalysis && onConfirmAnalysis && <CodexReview state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onConfirmAnalysis={onConfirmAnalysis} />}</section><section className="panel"><PanelTitle title="Installed state" /><CheckRow label="Core setup" status={plan ? `${plan.operations.length} planned changes` : "No plan loaded"} tone={plan ? "info" : "muted"} /><CheckRow label="Optional 3D workflow" status={optional3d} tone={state.meshSelected ? "review" : "muted"} /><CheckRow label="Super Events workflow" status={superEvents} tone={state.superEventsSelected ? "review" : "muted"} /><CheckRow label="Portrait production" status={portraits} tone={portraitPipeline.enabled ? "review" : "muted"} /><CheckRow label="Modified files" status={plan ? String(plan.conflicts.length) : "Not evaluated"} tone={plan?.conflicts.length ? "review" : "muted"} />{plan && <details open><summary>Reviewed changes</summary><p className="muted">Modified files remain visible until resolved.</p></details>}</section></fieldset>;
 }
 
 export function ChatSources({ state, update, onPickFolder }: { state: WizardState; update: (patch: Partial<WizardState>) => void; onPickFolder: () => Promise<void> }) {

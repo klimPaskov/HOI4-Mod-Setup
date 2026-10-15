@@ -14,6 +14,10 @@ manifest filenames as update history.
 
 ## Latest mode
 
+Latest is the default for new setups and for the explicit existing-project
+Update target. Commit and release pinning remain optional. The installed lock
+changes only after reviewed apply; Repair uses the recorded immutable source.
+
 1. Query repository metadata.
 2. Read the current default branch.
 3. Resolve it to a commit SHA.

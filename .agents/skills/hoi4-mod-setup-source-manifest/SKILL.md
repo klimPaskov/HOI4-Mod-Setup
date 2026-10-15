@@ -50,6 +50,16 @@ This is an optimization and never source identity.
 
 Pinned commit uses the supplied commit for every step. Pinned release resolves and records both release identity and exact commit when available.
 
+Latest is the new-setup and explicit Update-target default. Maintenance may
+retarget a pinned lock only through the reviewed `updateSource` selection;
+legacy callers that omit it retain the lock policy. Bind reanalysis's
+`update_source` to the same resolved revision and manifest hash before any
+component download. Reject a moved same-name release, but allow an explicitly
+chosen different release, commit, or Latest. Repair/reinstall reject overrides.
+All selected MCP actions use the incoming manifest, including Live Tools without
+Agent Tools. Record reviewed package versions in the resulting lock; never
+resolve an independent registry `latest` or silently change the source on repair.
+
 ## Hard rules
 
 - Never clone the complete source repository through the application.

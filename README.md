@@ -108,7 +108,7 @@ The final dependency and file plan is always checked by the app core.
 
 ![Choose instructions, skills, tools, wiki, and ChatGPT files](docs/screenshots/04-components.png)
 
-**Latest** uses the current published Agentic HOI4 Modding package. You can also
+**Latest** is the default and uses the current published Agentic HOI4 Modding package. You can also
 choose a specific commit or release. Updates bring in published components and
 keep your optional workflow choices.
 
@@ -191,6 +191,11 @@ export. See the [source-packaging guide](docs/33_chatgpt_source_packaging.md).
 Open **Manage an existing project** to update or repair setup files, change
 coding clients or the portrait provider, add workflows, remove components, or
 recover an interrupted installation.
+
+**Update source** defaults to **Latest verified source**, including for projects
+installed from an older pin. Choose a commit or release to pin instead, then
+review and confirm the update. MCP versions follow the selected package's
+verified manifest. **Repair installation** keeps the installed revision.
 
 **Remove components** removes unchanged files installed by the app and the
 folders left empty. Edited setup files are shown for review; your mod content
