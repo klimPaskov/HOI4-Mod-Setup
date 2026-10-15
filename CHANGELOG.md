@@ -17,6 +17,10 @@ MCP versions follow verified package evidence, not unreviewed registry latest
 tags. Experimental Gemini/Grok account sign-in remains unverified with real
 accounts; macOS account handoff remains unavailable. Real provider sign-ins,
 paid image generation, and HOI4 gameplay are not covered by fixture-based CI.
+This patch also retains explicit live-validation deferrals for updater
+replacement/restart/retry, Windows/macOS credential-vault round-trips, and full
+native macOS wizard testing; automated regression and package checks do not
+stand in for those results.
 
 ## 0.6.1 - 2026-10-14
 
