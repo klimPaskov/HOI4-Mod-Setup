@@ -4,6 +4,20 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+## 0.6.2 - 2026-10-15
+
+- Make Latest the default for new setups and existing-project Update, while keeping exact commit and release pinning available.
+- Let pinned projects explicitly move to the latest verified source. Bind review and installation to the same source revision and manifest, and keep Repair on the installed revision.
+- Use the selected source manifest for MCP updates, including standalone Live Tools, and record the reviewed MCP version in the installation lock.
+- Show the update target before the maintenance actions, prevent duplicate reanalysis, and discard results after the reviewed source or project changes.
+- Fix rollback of missing maintenance files and keep removal operation IDs unique across independently planned component batches.
+- Extend hosted native acceptance through new-mod creation, Kaiserreich import/update, pinned Repair, return to Latest, and interrupted-install rollback.
+
+MCP versions follow verified package evidence, not unreviewed registry latest
+tags. Experimental Gemini/Grok account sign-in remains unverified with real
+accounts; macOS account handoff remains unavailable. Real provider sign-ins,
+paid image generation, and HOI4 gameplay are not covered by fixture-based CI.
+
 ## 0.6.1 - 2026-10-14
 
 - Fix source-cache preparation and atomic filesystem operations on non-English Windows by preserving typed I/O errors instead of matching localized error messages.
