@@ -191,6 +191,18 @@ describe("typed scanner bridge", () => {
     });
   });
 
+  it.each([
+    { mode: "latest" as const },
+    { mode: "pinned_commit" as const, selected_ref: "f".repeat(40) },
+    { mode: "pinned_release" as const, selected_ref: "package-test" },
+  ])("passes the explicit Update target through both typed wrappers: %j", async (target) => {
+    invoke.mockResolvedValue(undefined);
+    for (const build of [buildMaintenancePlan, buildMaintenancePlanResult]) {
+      await build("update", "C:/mods/example", undefined, [], undefined, undefined, undefined, undefined, undefined, undefined, target);
+      expect(invoke).toHaveBeenLastCalledWith("build_maintenance_plan", expect.objectContaining({ updateSource: target }));
+    }
+  });
+
   it("persists the selected portrait provider through readiness and maintenance commands", async () => {
     invoke.mockResolvedValue({
       checks: [],

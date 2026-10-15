@@ -26,7 +26,7 @@ if (candidateDirectory) {
   pins.app.version = JSON.parse(await readFile(join(repository, "package.json"), "utf8")).version;
   pins.app.commit = process.env.GITHUB_SHA;
 }
-const expectedSourceRevision = candidateDirectory ? pins.candidate.sourceRevision : pins.app.sourceRevision;
+let expectedSourceRevision = candidateDirectory ? pins.candidate.sourceRevision : pins.app.sourceRevision;
 const scenario = process.argv[2];
 assert.ok(["new", "kaiserreich", "recovery"].includes(scenario), "Unknown remote scenario.");
 const workRoot = await mkdtemp(join(process.env.RUNNER_TEMP, "hoi4-mod-setup-installer-e2e-"));
@@ -248,7 +248,13 @@ try {
     result.originalDigest = inventoryDigest(original);
   }
 
-  planner = await startPlannerFixture({ malformedFirst: scenario === "new" });
+  if (candidateDirectory) {
+    const sourceRepository = await githubJson("/repos/klimPaskov/Agentic-HOI4-Modding", metadataToken);
+    const sourceCommit = await githubJson(`/repos/klimPaskov/Agentic-HOI4-Modding/commits/${encodeURIComponent(sourceRepository.default_branch)}`, metadataToken);
+    expectedSourceRevision = sourceCommit.sha;
+    result.latestSourceAtStart = expectedSourceRevision;
+  }
+  planner = await startPlannerFixture({ malformedFirst: scenario === "new", projectName: scenario === "new" ? "Remote Acceptance Mod" : "Kaiserreich" });
   await launch("webview-initial"); await record("welcome");
   await page.getByRole("button", { name: scenario === "new" ? /^Create new mod/ : /^Import existing mod/ }).click();
   await page.getByRole("combobox", { name: "AI provider", exact: true }).selectOption("local");
@@ -306,6 +312,7 @@ try {
     const lock = JSON.parse(await readFile(join(project, ".hoi4-mod-setup/install.lock.json"), "utf8"));
     assert.equal(lock.ai_provider, "local");
     assert.equal(lock.source.revision, expectedSourceRevision);
+    if (candidateDirectory) assert.equal(lock.source.mode, "latest");
     assert.equal(lock.codex_analysis.account_identity_persisted, false);
     assert.equal(lock.primary_coding_environment, "claude_code");
     assert.ok(lock.additional_coding_environments.includes("codex"));
@@ -352,6 +359,40 @@ try {
       result.repaired.instructionRecords[path] = records.length;
     }
     if (scenario !== "new") await assertOriginals(project, original, { gitignoreText });
+    if (candidateDirectory) {
+      // Exercise a real pin and then explicitly leave it through the native UI.
+      for (const target of scenario === "new" ? ["pinned_commit", "latest"] : ["latest"]) {
+        await page.getByRole("button", { name: "Manage installation", exact: true }).click();
+        await at("Update and repair");
+        const version = page.getByRole("combobox", { name: "Target version", exact: true });
+        await expect(version).toHaveValue("latest");
+        await version.selectOption(target);
+        if (target === "pinned_commit") await page.getByLabel("Commit", { exact: true }).fill(expectedSourceRevision);
+        await record(`update-${target}-target`);
+        await page.getByRole("button", { name: "Scan the project", exact: true }).click();
+        await page.getByRole("button", { name: "Run Local model reanalysis", exact: true }).click({ timeout: 180_000 });
+        await page.getByRole("button", { name: "Confirm Local model suggestions", exact: true }).waitFor({ timeout: 180_000 });
+        await approveSuggestions();
+        await page.getByRole("button", { name: /^Check for updates/ }).click();
+        await waitForReview(true);
+        const { journal: updateJournal } = await applyAndReady(true);
+        const updated = JSON.parse(await readFile(join(project, ".hoi4-mod-setup/install.lock.json"), "utf8"));
+        assert.equal(updated.source.mode, target);
+        assert.equal(updated.source.revision, expectedSourceRevision);
+        assert.equal(updated.codex_analysis.source_revision, updated.source.revision);
+        assert.equal(updated.codex_analysis.source_manifest_sha256, updated.source.manifest_sha256);
+        const sourcePath = join(workRoot, `verified-${target}.json`);
+        await downloadPublic(`https://raw.githubusercontent.com/klimPaskov/Agentic-HOI4-Modding/${updated.source.revision}/hoi4-mod-setup.manifest.json`, sourcePath, 4 * 1024 * 1024, updated.source.manifest_sha256);
+        const manifest = JSON.parse(await readFile(sourcePath, "utf8"));
+        const health = manifest.components.find((component) => component.id === "mcp.hoi4_agent_tools").validation.find((rule) => rule.parameters?.package_version);
+        const mcp = updated.components.find((component) => component.id === "mcp.hoi4_agent_tools");
+        assert.equal(mcp.version, health.parameters.package_version);
+        assert.equal(new Set(updated.files.map((file) => `${file.external}:${file.path.toLowerCase()}`)).size, updated.files.length);
+        if (scenario !== "new") await assertOriginals(project, original, { gitignoreText });
+        result.updates ??= [];
+        result.updates.push({ target, source: updated.source, mcpVersion: mcp.version, transactionId: updateJournal.transaction_id });
+      }
+    }
     await next("Finish"); await at("Congratulations, you are all set!"); await record("finished");
   }
   assert.ok(!result.pageErrors?.length, "The native renderer reported an uncaught error.");

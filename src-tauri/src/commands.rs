@@ -1599,6 +1599,78 @@ fn analysis_source_request(request: &CodexAnalysisRequest) -> Result<SourceReque
     })
 }
 
+#[derive(Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateSourceSelection {
+    mode: SourceMode,
+    #[serde(default)]
+    selected_ref: Option<String>,
+}
+
+impl UpdateSourceSelection {
+    fn request(&self) -> Result<SourceRequest, AppError> {
+        let selected = self.selected_ref.as_deref().unwrap_or("").trim();
+        match self.mode {
+            SourceMode::Latest if !selected.is_empty() => {
+                return Err(AppError::InvalidInput(
+                    "Latest cannot include a pinned reference".into(),
+                ));
+            }
+            SourceMode::PinnedCommit => crate::source::validate_commit(selected)?,
+            SourceMode::PinnedRelease
+                if selected.is_empty()
+                    || selected.len() > 256
+                    || selected.chars().any(char::is_control) =>
+            {
+                return Err(AppError::InvalidInput("Choose a valid release tag".into()));
+            }
+            _ => {}
+        }
+        Ok(SourceRequest {
+            mode: self.mode,
+            requested_ref: (self.mode == SourceMode::PinnedCommit).then(|| selected.to_owned()),
+            release: (self.mode == SourceMode::PinnedRelease).then(|| selected.to_owned()),
+        })
+    }
+}
+
+fn maintenance_source_request(
+    lock: &InstallationLock,
+    selection: Option<&UpdateSourceSelection>,
+) -> Result<SourceRequest, AppError> {
+    if let Some(selection) = selection {
+        return selection.request();
+    }
+    // Older callers retain their recorded policy until they explicitly retarget.
+    Ok(SourceRequest {
+        mode: lock.source.mode,
+        requested_ref: lock.source.requested_ref.clone(),
+        release: lock.source.release.clone(),
+    })
+}
+
+fn validate_update_release_identity(
+    lock: &InstallationLock,
+    request: &SourceRequest,
+    resolved: &SourceIdentity,
+) -> Result<(), AppError> {
+    let same_release = request.mode == SourceMode::PinnedRelease
+        && lock.source.mode == SourceMode::PinnedRelease
+        && request.release.as_ref().or(request.requested_ref.as_ref())
+            == lock
+                .source
+                .release
+                .as_ref()
+                .or(lock.source.requested_ref.as_ref());
+    if same_release && resolved.resolved_revision != lock.source.revision {
+        return Err(AppError::InvalidInput(
+            "the pinned release resolved to a different commit; choose a new release explicitly"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 fn source_request_for_analysis(request: &CodexAnalysisRequest) -> Result<SourceRequest, AppError> {
     if request.analysis_purpose.as_deref() != Some("maintenance_reanalysis") {
         return analysis_source_request(request);
@@ -1608,11 +1680,15 @@ fn source_request_for_analysis(request: &CodexAnalysisRequest) -> Result<SourceR
         .as_deref()
         .ok_or_else(|| AppError::PathSecurity("maintenance analysis has no project root".into()))?;
     let lock = read_project_lock(Path::new(project_root))?;
-    Ok(SourceRequest {
-        mode: lock.source.mode,
-        requested_ref: lock.source.requested_ref,
-        release: lock.source.release,
-    })
+    let selection = request
+        .constraints
+        .get("update_source")
+        .map(|value| {
+            serde_json::from_value::<UpdateSourceSelection>(value.clone())
+                .map_err(|_| AppError::InvalidInput("Invalid update source selection".into()))
+        })
+        .transpose()?;
+    maintenance_source_request(&lock, selection.as_ref())
 }
 
 fn bind_analysis_component_registry(
@@ -8956,6 +9032,7 @@ async fn build_maintenance_plan(
     analysis_confirmation_values: Option<Value>,
     image_generation: Option<Value>,
     live_testing: Option<Value>,
+    update_source: Option<UpdateSourceSelection>,
 ) -> Result<InstallationPlan, String> {
     run_maintenance_command(move || {
         build_maintenance_plan_blocking(
@@ -8969,6 +9046,7 @@ async fn build_maintenance_plan(
             analysis_confirmation_values,
             image_generation,
             live_testing,
+            update_source,
         )
     })
     .await
@@ -8997,7 +9075,13 @@ fn build_maintenance_plan_blocking(
     analysis_confirmation_values: Option<Value>,
     image_generation_value: Option<Value>,
     live_testing_value: Option<Value>,
+    update_source: Option<UpdateSourceSelection>,
 ) -> Result<InstallationPlan, AppError> {
+    if update_source.is_some() && mode != "update" {
+        return Err(AppError::InvalidInput(
+            "Only Update can change the source policy".into(),
+        ));
+    }
     let root =
         validate_project_root_or_destination(Path::new(&project_root)).map(|(root, _)| root)?;
     let conventions = analysis_confirmation_values
@@ -9010,6 +9094,7 @@ fn build_maintenance_plan_blocking(
         .map(confirmation_values_sha256)
         .transpose()?;
     let lock = read_project_lock(&root)?;
+    let update_source_request = maintenance_source_request(&lock, update_source.as_ref())?;
     let image_generation_input = image_generation_value;
     let mut selected_live_testing = Some(
         lock.live_testing
@@ -9193,22 +9278,13 @@ fn build_maintenance_plan_blocking(
         maintenance_components.retain(|id| !id.starts_with("workflow.portraits"));
     }
     let (mut operations, mut plan_source, mut source_revision) = if mode == "update" {
-        let resolution = resolve_source(
-            &client,
-            &SourceRequest {
-                mode: lock.source.mode,
-                requested_ref: lock.source.requested_ref.clone(),
-                release: lock.source.release.clone(),
-            },
-        )?;
-        if lock.source.mode == SourceMode::PinnedRelease
-            && resolution.identity.resolved_revision != lock.source.revision
-        {
-            return Err(AppError::InvalidInput(
-                "the pinned release resolved to a different commit; choose a new release explicitly"
-                    .into(),
-            ));
+        let resolution = resolve_source(&client, &update_source_request)?;
+        validate_update_release_identity(&lock, &update_source_request, &resolution.identity)?;
+        if let Some(record) = codex_analysis.as_ref() {
+            validate_analysis_source_binding(record, &resolution.identity)?;
         }
+        // Every selected MCP action, including standalone Live Tools, uses the target manifest.
+        maintenance_mcp_manifest = Some(resolution.manifest.clone());
         let manifest_component_ids = resolution
             .manifest
             .components
@@ -13620,6 +13696,54 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
     }
 
     #[test]
+    fn updated_manifest_mcp_identity_reaches_review_without_app_version_constants() {
+        let mut manifest = crate::source::parse_manifest(
+            include_bytes!("../../docs/source-manifest/hoi4-mod-setup.manifest.json"),
+            None,
+        )
+        .unwrap();
+        let rule = manifest
+            .components
+            .iter_mut()
+            .find(|component| component.id == crate::mcp::COMPONENT_ID)
+            .unwrap()
+            .validation
+            .iter_mut()
+            .find(|rule| rule.id == crate::mcp::HEALTH_RULE_ID)
+            .unwrap();
+        rule.parameters
+            .insert("package_version".into(), serde_json::json!("99.1.0"));
+        rule.parameters.insert(
+            "package_integrity".into(),
+            serde_json::json!(format!("sha512-{}", "A".repeat(86) + "==")),
+        );
+        rule.parameters.insert(
+            "package_tree_sha256".into(),
+            serde_json::json!("d".repeat(64)),
+        );
+        if let Some(pins) = rule
+            .parameters
+            .get_mut("platform_pins")
+            .and_then(Value::as_object_mut)
+        {
+            for pin in pins.values_mut() {
+                pin["package_tree_sha256"] = serde_json::json!("d".repeat(64));
+            }
+        }
+        let actions = manifest_external_actions(&manifest, &[crate::mcp::COMPONENT_ID.into()]);
+        let target = crate::mcp::reviewed_plan_target(&actions).unwrap();
+        assert_eq!(target.package_version, "99.1.0");
+        assert_eq!(target.package_tree_sha256, "d".repeat(64));
+        assert_eq!(
+            target.package_integrity,
+            format!("sha512-{}", "A".repeat(86) + "==")
+        );
+        let mut missing = actions;
+        missing[0].verified_package_tree_sha256 = None;
+        assert!(crate::mcp::reviewed_plan_target(&missing).is_err());
+    }
+
+    #[test]
     fn enabled_portrait_selection_adds_the_complete_component_closure() {
         let enabled = selected_ids(
             &serde_json::json!({
@@ -14112,6 +14236,7 @@ developer_instructions = "Work on the named files."
         let error = tauri::async_runtime::block_on(build_maintenance_plan(
             "repair".into(),
             root.display().to_string(),
+            None,
             None,
             None,
             None,
@@ -14928,6 +15053,127 @@ developer_instructions = "Work on the named files."
         assert_eq!(latest.mode, SourceMode::Latest);
         assert!(latest.requested_ref.is_none());
         assert!(latest.release.is_none());
+    }
+
+    #[test]
+    fn explicit_update_targets_replace_pins_without_mutating_the_installed_lock() {
+        let project = tempfile::tempdir().unwrap();
+        let lock_path = project.path().join(".hoi4-mod-setup/install.lock.json");
+        std::fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        lock.source.mode = SourceMode::PinnedRelease;
+        lock.source.release = Some("old-release".into());
+        let bytes = serde_json::to_vec(&lock).unwrap();
+        std::fs::write(&lock_path, &bytes).unwrap();
+        for value in [
+            serde_json::json!({"mode": "latest"}),
+            serde_json::json!({"mode": "pinned_commit", "selected_ref": "f".repeat(40)}),
+            serde_json::json!({"mode": "pinned_release", "selected_ref": "new-release"}),
+        ] {
+            let selection: UpdateSourceSelection = serde_json::from_value(value.clone()).unwrap();
+            let plan_request = maintenance_source_request(&lock, Some(&selection)).unwrap();
+            let request = CodexAnalysisRequest {
+                mode: "existing_project_semantics".into(),
+                brief: String::new(),
+                evidence: Vec::new(),
+                constraints: serde_json::json!({"update_source": value}),
+                analysis_purpose: Some("maintenance_reanalysis".into()),
+                project_root: Some(project.path().display().to_string()),
+                scan_id: None,
+            };
+            let analysis_request = source_request_for_analysis(&request).unwrap();
+            assert_eq!(
+                serde_json::to_value(plan_request).unwrap(),
+                serde_json::to_value(analysis_request).unwrap()
+            );
+            assert_eq!(std::fs::read(&lock_path).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn update_source_rejects_incomplete_or_ambiguous_pins() {
+        for value in [
+            serde_json::json!({"mode": "latest", "selected_ref": "old"}),
+            serde_json::json!({"mode": "pinned_commit", "selected_ref": "main"}),
+            serde_json::json!({"mode": "pinned_release"}),
+            serde_json::json!({"mode": "pinned_release", "selected_ref": "a\nb"}),
+            serde_json::json!({"mode": "pinned_release", "selected_ref": "a".repeat(257)}),
+        ] {
+            let selection: UpdateSourceSelection = serde_json::from_value(value).unwrap();
+            assert!(selection.request().is_err());
+        }
+        assert!(serde_json::from_value::<UpdateSourceSelection>(
+            serde_json::json!({"mode": "latest", "repository": "other"})
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn update_keeps_same_release_immutable_but_allows_explicit_retargeting() {
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        lock.source.mode = SourceMode::PinnedRelease;
+        lock.source.release = Some("old".into());
+        let resolved = SourceIdentity {
+            repository: lock.source.repository.clone(),
+            mode: SourceMode::PinnedRelease,
+            resolved_revision: "f".repeat(40),
+            requested_ref: None,
+            release: Some("old".into()),
+            manifest_sha256: "a".repeat(64),
+            manifest_origin: "remote".into(),
+        };
+        let same = maintenance_source_request(&lock, None).unwrap();
+        assert!(validate_update_release_identity(&lock, &same, &resolved).is_err());
+        for selection in [
+            UpdateSourceSelection {
+                mode: SourceMode::Latest,
+                selected_ref: None,
+            },
+            UpdateSourceSelection {
+                mode: SourceMode::PinnedRelease,
+                selected_ref: Some("new".into()),
+            },
+            UpdateSourceSelection {
+                mode: SourceMode::PinnedCommit,
+                selected_ref: Some("f".repeat(40)),
+            },
+        ] {
+            assert!(validate_update_release_identity(
+                &lock,
+                &selection.request().unwrap(),
+                &resolved
+            )
+            .is_ok());
+        }
+    }
+
+    #[test]
+    fn repair_cannot_receive_an_update_source_override() {
+        let error = tauri::async_runtime::block_on(build_maintenance_plan(
+            "repair".into(),
+            "unopened-project".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(UpdateSourceSelection {
+                mode: SourceMode::Latest,
+                selected_ref: None,
+            }),
+        ))
+        .unwrap_err();
+        assert!(!error.contains("unopened-project"));
+        assert!(error.contains("Only Update"));
     }
 
     #[test]

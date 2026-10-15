@@ -152,6 +152,11 @@ export interface ChatSourcesPackageResult {
 
 export type ConflictChoice = "keep" | "replace" | "merge" | "rename" | "skip";
 
+export interface UpdateSourceSelection {
+  mode: SourceMode;
+  selected_ref?: string;
+}
+
 export type RecoveryChoice = "resume" | "rollback" | "discard";
 export type GitOnlineAction = "none" | "push_remote" | "create_public_github";
 

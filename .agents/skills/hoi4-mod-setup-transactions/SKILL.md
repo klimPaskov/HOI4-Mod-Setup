@@ -58,6 +58,12 @@ unchanged projections remain eligible for reviewed removal.
 
 ## Operation model
 
+Update can explicitly retarget Latest or an optional commit/release pin while
+Repair/reinstall stay on the installed revision. Successful locks derive MCP
+versions from reviewed target actions. File rollback follows prior existence,
+including missing merged files later chosen for replacement; independent
+removal batches use destination-derived IDs rather than restarting a counter.
+
 Every operation needs:
 
 - stable operation ID

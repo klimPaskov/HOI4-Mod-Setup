@@ -5880,12 +5880,22 @@ fn build_lock(
         .iter()
         .map(|id| LockComponent {
             id: id.clone(),
-            version: previous_lock.and_then(|lock| {
-                lock.components
-                    .iter()
-                    .find(|component| component.id == *id)
-                    .and_then(|component| component.version.clone())
-            }),
+            version: plan
+                .external_actions
+                .iter()
+                .find_map(|action| {
+                    (action.component_id == *id)
+                        .then(|| action.verified_package_version.clone())
+                        .flatten()
+                })
+                .or_else(|| {
+                    previous_lock.and_then(|lock| {
+                        lock.components
+                            .iter()
+                            .find(|component| component.id == *id)
+                            .and_then(|component| component.version.clone())
+                    })
+                }),
             state: if removing {
                 "removed".into()
             } else {
@@ -8505,6 +8515,11 @@ pub fn repair_operations(
                 Some(_) => (OperationAction::Skip, LocalState::Modified),
             }
         };
+        let rollback = if current.is_none() {
+            RollbackAction::RemoveCreated
+        } else {
+            RollbackAction::RestoreBackup
+        };
         operations.push(PlanOperation {
             id: format!("repair-{index:05}"),
             component_id: file.component_id.clone(),
@@ -8539,11 +8554,7 @@ pub fn repair_operations(
                 None
             },
             external: file.external,
-            rollback: if action == OperationAction::Create {
-                RollbackAction::RemoveCreated
-            } else {
-                RollbackAction::RestoreBackup
-            },
+            rollback,
             external_parent_identity: None,
         });
     }
@@ -8580,7 +8591,7 @@ pub fn managed_removal_operations(
     project_root: &Path,
 ) -> Result<Vec<PlanOperation>, AppError> {
     let mut operations = Vec::new();
-    for (index, file) in lock.files.iter().enumerate() {
+    for file in &lock.files {
         let destination = locked_file_destination(project_root, file)?;
         let current = if destination.is_file() {
             Some(sha256_file(&destination)?)
@@ -8591,7 +8602,10 @@ pub fn managed_removal_operations(
         let reversible = !file.preserved_local
             && !matches!(file.ownership, Ownership::Merged | Ownership::External);
         operations.push(PlanOperation {
-            id: format!("remove-{index:05}"),
+            id: format!(
+                "remove-{}",
+                sha256_bytes(format!("{}\0{}", file.external, file.path).as_bytes())
+            ),
             component_id: file.component_id.clone(),
             ownership: Some(file.ownership),
             location_scope: Some(location_scope_for_file(file)),
@@ -8685,7 +8699,11 @@ pub fn reinstall_operations(
                     .into(),
                 ),
                 external: file.external,
-                rollback: RollbackAction::RestoreBackup,
+                rollback: if local_state == LocalState::Absent {
+                    RollbackAction::RemoveCreated
+                } else {
+                    RollbackAction::RestoreBackup
+                },
                 external_parent_identity: None,
             })
         })
@@ -8755,7 +8773,7 @@ pub fn update_operations(
                     .into()
                 }),
                 external: file.external,
-                rollback: if action == OperationAction::Create {
+                rollback: if local_state == LocalState::Absent {
                     RollbackAction::RemoveCreated
                 } else {
                     RollbackAction::RestoreBackup
@@ -9292,6 +9310,68 @@ mod tests {
             .iter()
             .any(|component| component.id == future_id));
         assert!(!lock.files.iter().any(|file| file.component_id == future_id));
+    }
+
+    #[test]
+    fn updated_lock_records_the_reviewed_mcp_version_not_the_predecessor() {
+        let project = tempdir().unwrap();
+        let mut predecessor: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        predecessor
+            .components
+            .retain(|component| component.id != crate::mcp::COMPONENT_ID);
+        predecessor.components.push(LockComponent {
+            id: crate::mcp::COMPONENT_ID.into(),
+            version: Some("1.0.0".into()),
+            state: "installed".into(),
+            source_revision: Some(predecessor.source.revision.clone()),
+            validation: Some("pass".into()),
+        });
+        let mut plan = plan();
+        plan.maintenance_mode = Some("update".into());
+        plan.operations.clear();
+        plan.selected_components = vec![crate::mcp::COMPONENT_ID.into()];
+        let action: ExternalAction = serde_json::from_value(serde_json::json!({
+            "id": "external.mcp.health", "component_id": crate::mcp::COMPONENT_ID,
+            "platform": "windows", "command_source": "manifest", "network_access": "none",
+            "privilege": "current_user", "rollback_boundary": "none", "risk": "review",
+            "requires_approval": true, "verified_package_version": "4.0.3"
+        }))
+        .unwrap();
+        plan.external_actions = vec![action];
+        let journal = new_journal(&plan, &plan.project_id, project.path());
+        let directory = RootedDir::open_read(project.path()).unwrap();
+        let updated = build_lock(
+            &plan,
+            &[],
+            &journal,
+            Some(&predecessor),
+            project.path(),
+            &directory,
+        )
+        .unwrap();
+        assert_eq!(
+            updated
+                .components
+                .iter()
+                .find(|component| component.id == crate::mcp::COMPONENT_ID)
+                .unwrap()
+                .version
+                .as_deref(),
+            Some("4.0.3")
+        );
+        assert_eq!(
+            predecessor
+                .components
+                .iter()
+                .find(|component| component.id == crate::mcp::COMPONENT_ID)
+                .unwrap()
+                .version
+                .as_deref(),
+            Some("1.0.0")
+        );
     }
 
     #[test]
@@ -13454,6 +13534,143 @@ mod tests {
             expected_sha256: sha256_bytes(b"new"),
         }];
         (second_plan, second_prepared, predecessor)
+    }
+
+    #[test]
+    fn missing_maintenance_files_rollback_across_unicode_paths_and_apply_faults() {
+        for folder in [
+            "mod with spaces ' quoted",
+            "\u{041C}\u{043E}\u{0434}-\u{4E2D}\u{6587}",
+            "\u{0130}stanbul-e\u{301}-\u{1F30D}",
+        ] {
+            for mode in ["repair", "reinstall", "update"] {
+                for fault in ["none", "before", "after-live", "after-checkpoint"] {
+                    let container = tempdir().unwrap();
+                    let project = container.path().join(folder);
+                    let app = container.path().join(format!("app-{folder}"));
+                    fs::create_dir(&project).unwrap();
+                    fs::create_dir(&app).unwrap();
+                    let (mut plan, _, _) = maintenance_fixture(&project, &app);
+                    let lock_path = project.join(".hoi4-mod-setup/install.lock.json");
+                    let mut predecessor: InstallationLock =
+                        serde_json::from_slice(&fs::read(&lock_path).unwrap()).unwrap();
+                    // Exercise explicit replacement of a missing merged file as
+                    // well as ordinary missing-file restoration.
+                    if mode != "reinstall" {
+                        predecessor.files[0].ownership = Ownership::Merged;
+                        fs::write(&lock_path, serde_json::to_vec(&predecessor).unwrap()).unwrap();
+                    }
+                    let predecessor_bytes = fs::read(&lock_path).unwrap();
+                    fs::remove_file(project.join("AGENTS.md")).unwrap();
+                    plan.maintenance_mode = Some(mode.into());
+                    plan.operations = match mode {
+                        "repair" => repair_operations(&predecessor, &project),
+                        "reinstall" => reinstall_operations(&predecessor, &project),
+                        _ => update_operations(&predecessor, &predecessor.files, &project),
+                    }
+                    .unwrap();
+                    assert_eq!(plan.operations.len(), 1);
+                    let operation = &mut plan.operations[0];
+                    assert_eq!(
+                        operation.rollback,
+                        RollbackAction::RemoveCreated,
+                        "{mode} {folder}"
+                    );
+                    if operation.action == OperationAction::Skip {
+                        operation.action = OperationAction::Replace;
+                        operation.resolution = Some("replace".into());
+                        plan.conflicts = vec![PlanConflict {
+                            id: format!("conflict.{}", operation.id),
+                            path: operation.destination.clone(),
+                            options: vec!["keep".into(), "replace".into(), "skip".into()],
+                            selected: Some("replace".into()),
+                            apply_to_identical: false,
+                        }];
+                    }
+                    let prepared = vec![PreparedFile {
+                        operation_id: operation.id.clone(),
+                        destination: operation.destination.clone(),
+                        bytes: b"old".to_vec(),
+                        expected_sha256: sha256_bytes(b"old"),
+                    }];
+                    let result = run_test_transaction(
+                        &project,
+                        &plan,
+                        &prepared,
+                        &TransactionOptions {
+                            app_data_root: Some(app.clone()),
+                            fail_before_operation: (fault == "before").then_some(0),
+                            fail_after_live_mutation: (fault == "after-live").then_some(0),
+                            fail_after_operation: (fault == "after-checkpoint").then_some(0),
+                            ..Default::default()
+                        },
+                    );
+                    if fault == "none" {
+                        assert_eq!(result.unwrap().0.state, "completed", "{mode} {folder}");
+                    } else {
+                        assert!(result.unwrap_err().to_string().contains("fault injected"));
+                        assert_eq!(fs::read(&lock_path).unwrap(), predecessor_bytes);
+                    }
+                    let journal_path = transaction_journal_path(&app, plan.plan_id);
+                    let mut journal = read_journal(&journal_path).unwrap();
+                    rollback_transaction(&project, &mut journal, &journal_path)
+                        .unwrap_or_else(|error| panic!("{mode} {folder} {fault}: {error}"));
+                    assert!(
+                        !project.join("AGENTS.md").exists(),
+                        "{mode} {folder} {fault}"
+                    );
+                    assert_eq!(fs::read(&lock_path).unwrap(), predecessor_bytes);
+                    assert!(quarantine_files(&project).is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn independently_planned_removal_batches_have_stable_unique_ids() {
+        let project = tempdir().unwrap();
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let template = lock.files[0].clone();
+        lock.files = ["provider.json", "guidance.md"]
+            .into_iter()
+            .map(|path| {
+                fs::write(project.path().join(path), b"owned").unwrap();
+                LockedFile {
+                    path: path.into(),
+                    component_id: format!("imagegen.{path}"),
+                    installed_sha256: sha256_bytes(b"owned"),
+                    ownership: Ownership::Managed,
+                    external: false,
+                    preserved_local: false,
+                    ..template.clone()
+                }
+            })
+            .collect();
+        let complete = managed_removal_operations(&lock, project.path()).unwrap();
+        let mut batches = Vec::new();
+        for file in &lock.files {
+            let one = InstallationLock {
+                files: vec![file.clone()],
+                ..lock.clone()
+            };
+            batches.extend(managed_removal_operations(&one, project.path()).unwrap());
+        }
+        assert_eq!(
+            complete.iter().map(|op| &op.id).collect::<Vec<_>>(),
+            batches.iter().map(|op| &op.id).collect::<Vec<_>>()
+        );
+        assert_ne!(batches[0].id, batches[1].id);
+        let mut plan = plan();
+        plan.operations = batches;
+        validate_plan(&plan).unwrap();
+        plan.operations[1].id = plan.operations[0].id.clone();
+        assert!(validate_plan(&plan)
+            .unwrap_err()
+            .to_string()
+            .contains("operation IDs"));
     }
 
     #[test]

@@ -203,7 +203,7 @@ export async function assertOriginals(root, original, { exact = false, gitignore
   return { originalFiles: original.size, currentFiles: current.size, originalDigest: inventoryDigest(original) };
 }
 
-export async function startPlannerFixture({ malformedFirst = false } = {}) {
+export async function startPlannerFixture({ malformedFirst = false, projectName } = {}) {
   const requests = [];
   const server = createServer(async (request, response) => {
     const send = (status, value) => { response.writeHead(status, { "Content-Type": "application/json" }); response.end(JSON.stringify(value)); };
@@ -225,7 +225,7 @@ export async function startPlannerFixture({ malformedFirst = false } = {}) {
       assert.equal(createHash("sha256").update(inputJson).digest("hex"), match[1], "Approved input digest mismatch.");
       const input = JSON.parse(inputJson);
       const existing = input.mode === "existing_project_semantics";
-      const name = input.constraints?.requested_mod_name || (existing ? "Kaiserreich" : "Remote Acceptance Mod");
+      const name = input.constraints?.requested_mod_name || projectName || (existing ? "Kaiserreich" : "Remote Acceptance Mod");
       const id = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
       const description = existing ? "An existing alternative-history mod for Hearts of Iron IV." : "An alternative-history mod focused on diplomacy in Europe.";
       const values = { display_name: name, project_id: id, script_prefix: id, primary_namespace: id, descriptor_tags: ["Alternative History"], folder_profile: ["common", "events", "gfx", "localisation/english", "docs"], project_description: description, agents_profile: "default", localisation_convention: "english", documentation_convention: "markdown" };
