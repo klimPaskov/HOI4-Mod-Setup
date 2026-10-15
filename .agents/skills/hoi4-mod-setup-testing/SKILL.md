@@ -44,6 +44,10 @@ Use the smallest useful layer and keep high-risk behavior covered at more than o
 - UI component and accessibility tests
 - Windows, macOS, and Linux end-to-end tests
 - performance tests
+- hosted Kaiserreich acceptance asserts indexed-file and sample counts, gameplay
+  categories, namespaces, localisation headers, and documentation reach the
+  approved planner input; the loopback planner remains a transport/schema test,
+  not evidence of a real provider's semantic quality
 - release artifact verification
 
 The stable Rust command is `pnpm test:rust`, which runs the workspace

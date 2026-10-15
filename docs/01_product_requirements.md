@@ -207,14 +207,23 @@ The user selects one root. The scanner detects:
 - native coding-client configuration
 - MCP definitions
 - absolute paths and project-specific examples
+- a bounded project profile covering observed gameplay structure, identifiers,
+  localisation conventions, and documentation shape
 - conflicts with incoming components
 - launcher descriptor registrations and thumbnail state
 
-The scanner does not inventory ordinary HOI4 gameplay, localisation, media,
-generated documentation corpora, or root data dumps. Namespace, prefix,
-naming, localisation, and folder-profile ideas are provider suggestions derived
-only from the approved agentic evidence and remain subject to deterministic
-validation and user confirmation.
+The existing targeted setup inventory remains limited to setup-relevant files
+and does not inventory ordinary gameplay, localisation, media, generated
+documentation corpora, or root data dumps. A separate contained project-profile
+pass establishes bounded metadata and deterministic text-prefix observations
+from eligible gameplay, localisation, and documentation paths. It skips hidden,
+cache, tooling, wiki, secret-like, and binary/media content bytes, and it does
+not perform exhaustive gameplay validation or infer project-wide conventions.
+Profile counts and samples remain distinct from setup-file counts. Namespace,
+prefix, naming, localisation, and folder-profile ideas are provider suggestions
+derived from approved deterministic evidence, including profile summaries, and
+remain subject to deterministic validation and user confirmation. See
+`docs/35_project_profiling.md` for the profile limits and evidence contract.
 
 Before the scan starts, the app performs a bounded, read-only discovery of
 direct `*.mod` candidates in the selected root's immediate parent. It shows the

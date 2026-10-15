@@ -464,6 +464,60 @@ impl BoundedReadRoot {
         }
     }
 
+    /// Read a declared prefix for profiling without treating its hash as a
+    /// full-file hash. The returned size records the unsampled remainder.
+    pub(crate) fn read_prefix_with_check<F>(
+        &self,
+        relative: &str,
+        max_bytes: usize,
+        mut should_stop: F,
+    ) -> Result<(Vec<u8>, u64), AppError>
+    where
+        F: FnMut() -> bool,
+    {
+        if max_bytes == 0 || max_bytes > 1024 * 1024 {
+            return Err(AppError::InvalidInput(
+                "invalid profile prefix bound".into(),
+            ));
+        }
+        let normalized = normalize_relative_path(relative)?;
+        let path = safe_join(&self.canonical, &normalized)?;
+        let mut file = open_regular_file_under_root(self, &normalized)?;
+        verify_open_file_contained(&file, &self.canonical, relative)?;
+        let before = file.metadata()?;
+        if !before.is_file() || is_link_metadata(&before) {
+            return Err(AppError::PathSecurity(
+                "profile input is not a regular file".into(),
+            ));
+        }
+        let length = before.len().min(max_bytes as u64) as usize;
+        let mut bytes = Vec::with_capacity(length);
+        let mut chunk = [0_u8; 8192];
+        while bytes.len() < length {
+            if should_stop() {
+                return Err(AppError::Scan("profile read cancelled".into()));
+            }
+            let remaining = chunk.len().min(length - bytes.len());
+            let read = file.read(&mut chunk[..remaining])?;
+            if read == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..read]);
+        }
+        let after = file.metadata()?;
+        verify_open_file_contained(&file, &self.canonical, relative)?;
+        if bytes.len() != length
+            || before.len() != after.len()
+            || before.modified().ok() != after.modified().ok()
+            || path_has_link_component_for_flatten(&path)
+        {
+            return Err(AppError::PathSecurity(
+                "profile input changed during read".into(),
+            ));
+        }
+        Ok((bytes, before.len()))
+    }
+
     pub(crate) fn read_bounded_with_check<F>(
         &self,
         relative: &str,

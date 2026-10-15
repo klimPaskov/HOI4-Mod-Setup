@@ -6,6 +6,7 @@ interface RawScanFinding {
   category?: string;
   key: string;
   value: unknown;
+  model_excerpt?: string | null;
   status: string;
   origin?: "deterministic" | "provider_suggested" | "user_confirmed";
   confidence?: number;
@@ -34,6 +35,7 @@ interface RawScanResult {
   files_scanned?: number;
   directories_scanned?: number;
   bytes_read?: number;
+  profile_stats?: ScanSnapshot["profileStats"];
   findings?: RawScanFinding[];
   conflicts?: RawScanConflict[];
 }
@@ -45,6 +47,7 @@ interface RawScanProgress {
   files_scanned: number;
   directories_scanned: number;
   bytes_read: number;
+  profile_stats?: ScanSnapshot["profileStats"];
 }
 
 interface RawReadinessReport {
@@ -397,6 +400,7 @@ export async function scanProject(
             filesScanned: event.payload.files_scanned,
             directoriesScanned: event.payload.directories_scanned,
             bytesRead: event.payload.bytes_read,
+            profileStats: event.payload.profile_stats,
           });
         });
       } catch {
@@ -416,7 +420,7 @@ export async function scanProject(
         label: `${finding.origin === "provider_suggested" ? "Suggested" : finding.origin === "user_confirmed" ? "Confirmed" : "Detected"} · ${findingLabel(finding.key)}`,
         value: typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? "",
         displayValue: findingDisplayValue(finding.key, typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? ""),
-        evidenceExcerpt: typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? "",
+        evidenceExcerpt: finding.model_excerpt ?? (typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? ""),
         confidence: finding.confidence ?? Math.max(0, ...(finding.evidence ?? []).map((evidence) => evidence.confidence)),
         evidencePath: finding.evidence?.[0]?.path,
         status: finding.status === "blocking" ? "blocking" as const : finding.status === "needs_review" ? "needs_review" as const : "accepted" as const,
@@ -448,6 +452,7 @@ export async function scanProject(
       filesScanned: result.files_scanned ?? 0,
       directoriesScanned: result.directories_scanned ?? 0,
       bytesRead: result.bytes_read ?? 0,
+      profileStats: result.profile_stats,
     };
   } finally {
     unlisten?.();

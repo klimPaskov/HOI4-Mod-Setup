@@ -276,6 +276,7 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .selected-body { padding: 18px; }
 .selected-body .confidence { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }
 .evidence-block { margin: 25px 0 18px; }
+.profile-evidence { max-height: 28rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .evidence-block > span { color: #aebbd0; font-size: 12px; font-weight: 700; }
 .evidence-block p { margin: 7px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
 

@@ -381,6 +381,16 @@ export interface ScanProgress {
   filesScanned: number;
   directoriesScanned: number;
   bytesRead: number;
+  profileStats?: ProjectProfileStats;
+}
+
+export interface ProjectProfileStats {
+  files_indexed: number;
+  directories_indexed: number;
+  samples_read: number;
+  bytes_read: number;
+  excluded_entries: number;
+  coverage: string;
 }
 
 export interface ScanSnapshot {
@@ -394,6 +404,7 @@ export interface ScanSnapshot {
   filesScanned: number;
   directoriesScanned: number;
   bytesRead: number;
+  profileStats?: ProjectProfileStats;
 }
 
 export interface ComponentRow {

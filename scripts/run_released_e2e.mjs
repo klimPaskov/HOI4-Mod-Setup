@@ -282,6 +282,17 @@ try {
     await assertOriginals(project, original, { exact: true });
     await next("Review with Local model");
     await approveSuggestions();
+    if (candidateDirectory) {
+      const profile = planner.requests.at(-1)?.projectProfile;
+      assert.ok(profile?.filesIndexed > 1000, "Kaiserreich must have a real project inventory, not just setup files.");
+      assert.ok(profile.samplesRead > 10 && profile.samplesRead <= 256);
+      assert.ok(profile.categories.includes("common/national_focus"));
+      assert.ok(profile.categories.includes("events/root"));
+      assert.ok(profile.namespaceCount > 0, "Approved provider input must contain sampled namespaces.");
+      assert.ok(profile.languageCount > 0, "Approved provider input must contain actual localisation headers.");
+      assert.ok(profile.documentationCount > 0);
+      result.projectProfile = profile;
+    }
     await assertOriginals(project, original, { exact: true });
     await record("confirmed-read-only-scan"); await next();
   }

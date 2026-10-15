@@ -16,6 +16,7 @@ Read:
 - `AGENTS.md`
 - `docs/02_user_flows.md`
 - `docs/03_scanner_design.md`
+- `docs/35_project_profiling.md`
 - `docs/schemas/scan-result.schema.json`
 - `docs/examples/scan-result.existing.example.json`
 - `docs/20_testing_strategy.md`
@@ -46,6 +47,8 @@ Detect only with evidence:
 - launcher descriptor
 - Git root, branch, remotes, ignore rules, and dirty state
 - documentation
+- bounded project profiling for gameplay structure, identifiers, localisation,
+  and documentation facts
 - canonical `.claude/skills` and legacy `.agents/skills`
 - canonical `.claude/agents` and generated `.codex/agents`
 - Codex config
@@ -61,8 +64,11 @@ Detect native coding environments only inside the selected root: Claude Code
 surfaces. Prefer the managed lock's recorded primary/additional selection; for
 fresh installs the manifest default is Claude Code, while a legacy project
 without a recorded primary uses Codex as the compatibility migration default.
-This finding is bounded setup evidence, not a reason to scan gameplay or media
-trees.
+This finding is bounded setup evidence, not a reason to widen the setup scan or
+its Git pathspecs. The separate project profile in
+`docs/35_project_profiling.md` may collect bounded metadata and approved text
+prefixes from eligible gameplay, localisation, and documentation paths, while
+keeping binary/media bytes and unapproved content out of semantic input.
 
 ## Launcher and standard-path boundary
 
@@ -153,22 +159,39 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
   installed feature or current scan finding. A missing lock is
   absent/non-blocking; link, size, read, parse, or schema failures are blocking
   and must not be guessed into an installed state.
-- The default targeted inventory covers 150,000 setup-relevant files, 200,000
-  directories, depth 64, and ten minutes. Prune ordinary gameplay,
+- The default targeted setup inventory covers 150,000 setup-relevant files,
+  200,000 directories, depth 64, and ten minutes. It prunes ordinary gameplay,
   localisation, binary/media, root data dumps, and generated `docs/assets/`
-  or `docs/formables/` corpora before file inventory; those intentional
-  exclusions do not make a scan partial. Classify every directory entry before
-  charging the targeted entry-count, entry-name, path, file, or directory
-  budgets. Traverse skills only through `.claude/skills/<skill>/SKILL.md` or the
-  legacy `.agents/skills/<skill>/SKILL.md`, canonical and native agents only
-  through their direct files, and approved documentation only through
-  `docs/<section>/<file>`. Nested references,
-  archives, and assets are not scan inputs. Read only bounded detector inputs:
+  or `docs/formables/` corpora before setup file inventory; those intentional
+  setup exclusions do not make that pass partial. Classify every directory
+  entry before charging the targeted entry-count, entry-name, path, file, or
+  directory budgets. Traverse skills only through
+  `.claude/skills/<skill>/SKILL.md` or the legacy
+  `.agents/skills/<skill>/SKILL.md`, canonical and native agents only through
+  their direct files, and approved documentation only through
+  `docs/<section>/<file>`. Nested references, archives, and assets are not
+  setup-scan inputs. Read only bounded detector inputs:
   project and launcher descriptors, thumbnail, root CLAUDE/AGENTS/README and
   `.gitignore`, approved docs, skills, canonical Markdown subagents, generated
   Codex TOML projections, and the separately
   bounded managed lock. Detector text is capped at 16 MiB per
   file and 256 MiB per scan; retained parser evidence is capped at 128 MiB.
+-  Run the project profile as a separate contained metadata walk. It has
+  independent limits of 500,000 files, 200,000 directories, depth 64, 50,000
+  relevant entries and 8 MiB of relevant entry names per directory, 96 content
+  categories, 256 samples, 32 KiB per sampled prefix, and 8 MiB sampled bytes.
+  Use deterministic path-hash sampling with at most four candidates per
+  category and fair round-robin scheduling. Skip hidden, cache, tooling, wiki,
+  and secret-like paths; use metadata only for binaries/media; never execute
+  scripts, follow links, inspect Git, or invoke content filters. Report
+  `profile_stats` separately from setup counters and label coverage `sampled`
+  or `truncated`; a profile limit or read/link error blocks semantic planning
+  until a complete scan is available.
+  Emit `profile.coverage`, `profile.structure`, `profile.identifiers`,
+  `profile.localisation`, and `profile.documentation` findings with observed
+  counts, sampled namespaces/identifier prefixes, actual localisation headers,
+  BOM and quoted-key style, and redacted short documentation overviews. Never
+  infer a project-wide convention or exhaustive gameplay validity.
 - Bind project-tree and launcher-parent enumeration, reads, and read-only Git
   probes to retained, no-follow, identity-checked directory handles. Unix name
   enumeration must use a duplicated descriptor-backed directory stream so an
@@ -226,16 +249,17 @@ Use `confirmed`, `probable`, `ambiguous`, `missing`, and `conflicting` or the sc
 Present findings in small groups:
 
 1. project identity and descriptors
-2. instructions and paths
-3. Codex, skills, subagents, and MCP
-4. Git
-5. conflicts and unresolved findings
+2. project profile
+3. instructions and paths
+4. Codex, skills, subagents, and MCP
+5. Git
+6. conflicts and unresolved findings
 
 Do not show a giant scan report as the default screen.
 
 ## Setup-assistant boundary
 
-After deterministic scan completion, send only the approved evidence through the selected setup-assistant adapter. Codex uses `codex app-server` over stdio JSONL with managed ChatGPT authentication. Every provider requires an approved input manifest, read-only analysis, the shared strict output schema, deterministic proposal validation, and user confirmation. Missing provider configuration, authentication where required, or valid output blocks new planning while preserving scan evidence. The setup-assistant choice never selects or configures the AI tools installed for later mod development.
+After deterministic scan completion, send only the approved evidence through the selected setup-assistant adapter. Core-owned `model_excerpt` strings are the canonical normalized/redacted representation used for evidence hashes; UI-only values such as absolute launcher paths must not leak into semantic input or change the hash through reordering. Codex uses `codex app-server` over stdio JSONL with managed ChatGPT authentication. Every provider requires an approved input manifest, read-only analysis, the shared strict output schema, deterministic proposal validation, and user confirmation. Missing provider configuration, authentication where required, or valid output blocks new planning while preserving scan evidence. The setup-assistant choice never selects or configures the AI tools installed for later mod development.
 
 ## Required tests
 
@@ -254,9 +278,16 @@ After deterministic scan completion, send only the approved evidence through the
   unselected `workflow.super_events`
 - malformed, linked, oversized, and unreadable managed-lock states
 - cancellation and timeout
-- proof that large gameplay/media/root-data/generated-doc trees are pruned,
-  targeted detector-text and retained-memory budgets, and a real approved
-  very-large mod fixture whose targeted scan leaves app-owned metadata unchanged
+- proof that large gameplay/media/root-data/generated-doc trees are excluded
+  from the targeted setup inventory and setup-only Git pathspecs, while a
+  separate profile records bounded metadata and text-prefix observations;
+  include targeted detector-text, profile-prefix, and retained-memory budgets
+  and a real approved very-large mod fixture whose scan leaves app-owned
+  metadata unchanged
+- synthetic profile tests for read-only/cancellation, links, large files,
+  depth and per-directory limits, deterministic fair sampling, localisation
+  headers/BOM/quoted-key style, documentation redaction, model-excerpt hash
+  stability, schema validation, and token-shaped value absence
 - progress event correlation, indeterminate progress, and cancelled-evidence invalidation
 - confidence downgrade when evidence conflicts
 - standard HOI4 mod-directory resolution, collision reporting, malformed/link
@@ -267,4 +298,6 @@ After deterministic scan completion, send only the approved evidence through the
 
 ## Update this skill when
 
-Update this skill when scan categories, evidence, confidence, grouping, boundaries, parser behavior, performance limits, or read-only guarantees change.
+Update this skill when scan or profile categories, evidence, confidence,
+grouping, boundaries, parser behavior, performance limits, provider-input
+projection, or read-only guarantees change.

@@ -548,6 +548,9 @@ pub struct ScanFinding {
     pub category: String,
     pub key: String,
     pub value: Value,
+    /// Model-visible projection; UI-only paths never become approved text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_excerpt: Option<String>,
     pub status: String,
     #[serde(default = "default_scan_origin")]
     pub origin: String,
@@ -592,6 +595,16 @@ pub struct ScanSummary {
     pub warnings: u32,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProfileStats {
+    pub files_indexed: u32,
+    pub directories_indexed: u32,
+    pub samples_read: u32,
+    pub bytes_read: u64,
+    pub excluded_entries: u32,
+    pub coverage: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResult {
     pub schema_version: String,
@@ -603,6 +616,8 @@ pub struct ScanResult {
     pub started_at: String,
     pub completed_at: Option<String>,
     pub read_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_stats: Option<ProfileStats>,
     #[serde(default)]
     pub scanner_version: Option<String>,
     #[serde(default)]

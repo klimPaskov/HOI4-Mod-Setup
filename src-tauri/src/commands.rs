@@ -2547,10 +2547,14 @@ fn scan_evidence_entries(
 ) -> Result<HashMap<String, Vec<(String, String)>>, String> {
     let mut entries = HashMap::<String, Vec<(String, String)>>::new();
     for finding in &result.findings {
-        let excerpt = match &finding.value {
-            Value::String(value) => value.clone(),
-            value => serde_json::to_string(value)
-                .map_err(|error| format!("scan evidence could not be serialized: {error}"))?,
+        let excerpt = if let Some(excerpt) = &finding.model_excerpt {
+            excerpt.clone()
+        } else {
+            match &finding.value {
+                Value::String(value) => value.clone(),
+                value => serde_json::to_string(value)
+                    .map_err(|error| format!("scan evidence could not be serialized: {error}"))?,
+            }
         };
         let excerpt_sha256 = sha256_bytes(excerpt.as_bytes());
         let finding_entries = entries.entry(finding.id.clone()).or_default();
@@ -14755,10 +14759,14 @@ developer_instructions = "Work on the named files."
             .findings
             .iter()
             .map(|finding| {
-                let excerpt = match &finding.value {
-                    Value::String(text) => text.clone(),
-                    value => serde_json::to_string(value).unwrap(),
-                };
+                let excerpt =
+                    finding
+                        .model_excerpt
+                        .clone()
+                        .unwrap_or_else(|| match &finding.value {
+                            Value::String(text) => text.clone(),
+                            value => serde_json::to_string(value).unwrap(),
+                        });
                 ApprovedEvidence {
                     reference: finding.id.clone(),
                     path: finding.evidence[0].path.clone(),

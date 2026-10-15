@@ -253,7 +253,16 @@ export async function startPlannerFixture({ malformedFirst = false, projectName 
       const values = { display_name: name, project_id: id, script_prefix: id, primary_namespace: id, descriptor_tags: ["Alternative History"], folder_profile: ["common", "events", "gfx", "localisation/english", "docs"], project_description: description, agents_profile: "default", localisation_convention: "english", documentation_convention: "markdown" };
       const result = { schema_version: "1.0.0", analysis_id: "remote-e2e", mode: input.mode, input_sha256: match[1], project_summary: description,
         proposals: Object.entries(values).map(([key, value]) => ({ key, value, confidence: 0.8, reason: "The mod name and brief provide a consistent starting point.", evidence_refs: [] })), component_recommendations: [], warnings: [] };
-      requests.push({ mode: input.mode, inputSha256: match[1], correction: prompt.includes("The previous response was rejected") });
+      const profile = Object.fromEntries((input.evidence ?? []).filter((entry) => entry.reference?.startsWith("profile.")).map((entry) => [entry.reference, JSON.parse(entry.excerpt)]));
+      requests.push({ mode: input.mode, inputSha256: match[1], correction: prompt.includes("The previous response was rejected"),
+        projectProfile: profile["profile.coverage"] ? {
+          filesIndexed: profile["profile.coverage"].coverage.files_indexed,
+          samplesRead: profile["profile.coverage"].coverage.samples_read,
+          categories: (profile["profile.structure"]?.content_categories ?? []).map((item) => item.category),
+          namespaceCount: profile["profile.identifiers"]?.namespace_declarations?.length ?? 0,
+          languageCount: profile["profile.localisation"]?.language_headers?.length ?? 0,
+          documentationCount: profile["profile.documentation"]?.documents?.length ?? 0,
+        } : undefined });
       const content = malformedFirst && requests.length === 1 ? "{}" : JSON.stringify(result);
       send(200, { choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }] });
     } catch { send(400, { error: "invalid bounded fixture request" }); }

@@ -277,6 +277,8 @@ pub struct ScanProgress {
     pub files_scanned: u32,
     pub directories_scanned: u32,
     pub bytes_read: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_stats: Option<ProfileStats>,
 }
 
 #[derive(Debug, Clone)]
@@ -411,6 +413,7 @@ where
     let mut directories = 0_usize;
     let mut sensitive_path_warning_emitted = false;
     let mut detector_evidence = ScanEvidenceState::default();
+    let mut profile_stats = None;
     let deadline = Instant::now() + options.max_duration;
     emit_progress(
         &mut progress,
@@ -583,6 +586,51 @@ where
             }
         );
 
+        detect_phase!("profiling_project", Path::new("."), {
+            let profile = crate::project_profile::scan(
+                &read_root,
+                &|| scan_stopped(options, observations.len()) || Instant::now() >= deadline,
+                &mut |stats, path| {
+                    progress(ScanProgress {
+                        stage: if stats.samples_read == 0 {
+                            "indexing_project"
+                        } else {
+                            "sampling_project"
+                        }
+                        .into(),
+                        current_path: safe_scan_display_path(path),
+                        files_scanned: observations.len() as u32,
+                        directories_scanned: directories as u32,
+                        bytes_read: total_bytes + stats.bytes_read,
+                        profile_stats: Some(stats.clone()),
+                    })
+                },
+            )?;
+            for issue in &profile.problems {
+                if *issue == "stopped" {
+                    if scan_stopped(options, observations.len()) {
+                        mark_cancelled(
+                            &root,
+                            &mut conflicts,
+                            &mut progress,
+                            &observations,
+                            directories,
+                            total_bytes,
+                        );
+                    } else {
+                        mark_timed_out(&root, &root, &mut conflicts);
+                    }
+                } else {
+                    conflicts.push(ScanConflict { id: format!("scan.profile.{issue}"), path: "@scan/profile/coverage".into(),
+                        kind: "other".into(), severity: "warn".into(),
+                        details: Some("Project profiling encountered an unreadable, unsafe, or over-budget input. Coverage is incomplete; review the profile before rescanning.".into()) });
+                }
+            }
+            total_bytes += profile.stats.bytes_read;
+            profile_stats = Some(profile.stats);
+            findings.extend(profile.findings);
+        });
+
         if !scan_phase_stopped(
             options,
             deadline,
@@ -649,7 +697,10 @@ where
     let cancelled = limits_hit.iter().any(|id| id == "scan.cancelled");
     let timed_out = limits_hit.iter().any(|id| id == "scan.timeout");
     emit_progress(
-        &mut progress,
+        &mut |mut event: ScanProgress| {
+            event.profile_stats = profile_stats.clone();
+            progress(event);
+        },
         if cancelled {
             "cancelled"
         } else if timed_out {
@@ -672,6 +723,7 @@ where
         started_at,
         completed_at: Some(Utc::now().to_rfc3339()),
         read_only: true,
+        profile_stats,
         scanner_version: Some("0.1.0".into()),
         partial: !limits_hit.is_empty(),
         cancelled,
@@ -1468,6 +1520,8 @@ fn targeted_scan_directory(relative: &str) -> bool {
             | [".codex"]
             | [".codex", "agents"]
             | [".claude"]
+            | [".claude", "skills"]
+            | [".claude", "skills", _]
             | [".claude", "agents"]
             | [".cursor"]
             | [".cursor", "agents"]
@@ -1623,6 +1677,7 @@ fn emit_progress(
         files_scanned: observations.len() as u32,
         directories_scanned: directories as u32,
         bytes_read,
+        profile_stats: None,
     });
 }
 
@@ -1635,7 +1690,7 @@ fn safe_scan_display_path(path: &str) -> String {
     }
 }
 
-fn sensitive_scan_path(relative: &str) -> bool {
+pub(crate) fn sensitive_scan_path(relative: &str) -> bool {
     let normalized = normalized_scan_path(relative);
     let segments = normalized.split('/').collect::<Vec<_>>();
     if segments.iter().any(|segment| {
@@ -1654,6 +1709,22 @@ fn sensitive_scan_path(relative: &str) -> bool {
         return true;
     }
     let name = segments.last().copied().unwrap_or_default();
+    let stem = name.split('.').next().unwrap_or_default();
+    if matches!(
+        stem,
+        "password"
+            | "passwords"
+            | "api-key"
+            | "api_key"
+            | "apikey"
+            | "credentials"
+            | "secret"
+            | "secrets"
+            | "private-key"
+            | "private_key"
+    ) {
+        return true;
+    }
     name == ".env"
         || name.starts_with(".env.")
         || name.ends_with(".pem")
@@ -1765,6 +1836,34 @@ fn detect_descriptors(
     if let Some(descriptor) = descriptor.filter(|file| !file.is_symlink) {
         let parsed = crate::descriptors::parse_descriptor(&descriptor.bytes);
         if let Ok(parsed) = parsed {
+            let metadata = parsed
+                .fields
+                .iter()
+                .filter(|(key, _)| {
+                    matches!(
+                        key.as_str(),
+                        "version"
+                            | "supported_version"
+                            | "tags"
+                            | "dependencies"
+                            | "replace_path"
+                            | "picture"
+                    )
+                })
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        json!(crate::project_profile::clean_text(value, 1024)),
+                    )
+                })
+                .collect::<serde_json::Map<String, Value>>();
+            if !metadata.is_empty() {
+                findings.push(finding(
+                    "descriptor.metadata", "descriptor", "descriptor_metadata", json!(metadata), "needs_review",
+                    evidence("descriptor_parser", "descriptor.mod", 1.0, Some("Parsed descriptor fields; long field values are bounded to 1024 characters.")),
+                    Some("Preserve existing descriptor metadata unless explicitly changed during review."),
+                ));
+            }
             if let Some(name) = parsed.fields.get("name") {
                 findings.push(finding(
                     "descriptor.name",
@@ -2995,8 +3094,14 @@ fn finding(
     recommendation: Option<&str>,
 ) -> ScanFinding {
     redact_scan_value(&mut value);
+    let semantic_value =
+        (id == "descriptor.launcher").then(|| json!({"approved":true,"exists":true}));
+    let model_excerpt = match semantic_value.as_ref().unwrap_or(&value) {
+        Value::String(text) => text.clone(),
+        value => serde_json::to_string(value).expect("scan finding value is JSON"),
+    };
     if evidence.excerpt_sha256.is_none() {
-        let excerpt = match &value {
+        let excerpt = match semantic_value.as_ref().unwrap_or(&value) {
             Value::String(text) => Some(text.clone()),
             value => serde_json::to_string(value).ok(),
         };
@@ -3010,6 +3115,7 @@ fn finding(
         category: category.into(),
         key: key.into(),
         value,
+        model_excerpt: Some(model_excerpt),
         status: status.into(),
         origin: "deterministic".into(),
         user_value: None,
