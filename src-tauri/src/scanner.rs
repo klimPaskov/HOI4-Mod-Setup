@@ -23,7 +23,9 @@ const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_TEXT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_RETAINED_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_THUMBNAIL_BYTES: u64 = 16 * 1024 * 1024;
-const MAX_INSTALLATION_LOCK_BYTES: u64 = 2 * 1024 * 1024;
+// A lock for a project with every coding client holds several thousand file
+// records plus generated thumbnail bytes; 2 MiB made such projects unscannable.
+const MAX_INSTALLATION_LOCK_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_DIRECTORY_ENTRIES: usize = 50_000;
 const MAX_DIRECTORY_ENTRY_NAME_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_RELATIVE_PATH_BYTES: usize = 4 * 1024;
@@ -4031,6 +4033,26 @@ mod tests {
             .findings
             .iter()
             .any(|finding| finding.id == "descriptor.launcher"));
+    }
+
+    #[test]
+    fn a_lock_for_every_coding_client_stays_within_the_scan_bound() {
+        // A realistic record shape for the largest selection: canonical
+        // skills, the shared copy, three client copies, and every projection.
+        let record = serde_json::json!({
+            "path": ".kiro/skills/hoi4-decisions-missions/templates/formable_state_puzzle/formable_state_puzzle_scripted_localisation.txt",
+            "location_scope": "project", "component_id": "runtime.kiro.skills",
+            "source_path": ".claude/skills/hoi4-decisions-missions/templates/formable_state_puzzle/formable_state_puzzle_scripted_localisation.txt",
+            "source_revision": "a".repeat(40), "source_sha256": "b".repeat(64), "source_size": 4096,
+            "base_sha256": "c".repeat(64), "installed_sha256": "d".repeat(64), "installed_size": 4096,
+            "ownership": "managed", "preserved_local": false, "external": false, "executable": false
+        });
+        let bytes = serde_json::to_vec_pretty(&vec![record; 6_000]).unwrap();
+        assert!(
+            (bytes.len() as u64) < MAX_INSTALLATION_LOCK_BYTES / 4,
+            "{}",
+            bytes.len()
+        );
     }
 
     #[test]

@@ -228,7 +228,7 @@ gameplay, localisation, binary/media, root data dumps, and generated
 `docs/assets/` and `docs/formables/` corpora before file inventory. Read at most
 16 MiB from a detector-relevant text file and 256 MiB across the scan; launcher
 and project descriptors remain capped at 256 KiB, thumbnails at 16 MiB, the
-managed lock at 2 MiB, and retained parser evidence at 128 MiB. Feed a bounded
+managed lock at 32 MiB (a project with every coding client holds several thousand records), and retained parser evidence at 128 MiB. Feed a bounded
 absolute-path accumulator as each approved text file is read, then discard
 content that no later parser needs. File reads do not follow links, traversal
 fences the stable filesystem identity of the selected root and each directory,
