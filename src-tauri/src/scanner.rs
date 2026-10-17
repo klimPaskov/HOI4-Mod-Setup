@@ -381,6 +381,9 @@ struct ScanContentPolicy {
     max_bytes: u64,
     retain: bool,
     absolute_paths: bool,
+    /// Record that the file exists without reading it. Client folders and
+    /// configuration files that can hold credentials are detected this way.
+    presence_only: bool,
 }
 
 pub fn scan_project(root: &Path, options: &ScanOptions) -> Result<ScanResult, AppError> {
@@ -1196,6 +1199,7 @@ fn collect_files(
                 continue;
             };
             let mut bytes = match policy {
+                policy if policy.presence_only => Vec::new(),
                 policy
                     if metadata.len() > policy.max_bytes
                         || total_bytes.saturating_add(metadata.len()) > MAX_TOTAL_BYTES =>
@@ -1412,6 +1416,7 @@ fn scan_content_policy(relative: &str) -> Option<ScanContentPolicy> {
             max_bytes: MAX_THUMBNAIL_BYTES,
             retain: true,
             absolute_paths: false,
+            presence_only: false,
         });
     }
     if normalized == "descriptor.mod" {
@@ -1419,7 +1424,11 @@ fn scan_content_policy(relative: &str) -> Option<ScanContentPolicy> {
             max_bytes: MAX_LAUNCHER_DESCRIPTOR_BYTES,
             retain: true,
             absolute_paths: true,
+            presence_only: false,
         });
+    }
+    if let Some(policy) = client_content_policy(&normalized) {
+        return Some(policy);
     }
     let segments = normalized.split('/').collect::<Vec<_>>();
     let name = segments.last().copied().unwrap_or_default();
@@ -1502,7 +1511,41 @@ fn scan_content_policy(relative: &str) -> Option<ScanContentPolicy> {
             || native_json
             || native_map
             || root_text,
+        presence_only: false,
     })
+}
+
+/// Native client files from the coding-client registry. Small configuration
+/// files are retained and parsed; other markers are observed by presence
+/// only, so a client folder never exposes its contents to the scan.
+fn client_content_policy(normalized: &str) -> Option<ScanContentPolicy> {
+    if crate::coding_environment::config_format_for_path(normalized).is_some() {
+        return Some(ScanContentPolicy {
+            max_bytes: MAX_TEXT_BYTES,
+            retain: true,
+            absolute_paths: true,
+            presence_only: false,
+        });
+    }
+    let presence = Some(ScanContentPolicy {
+        max_bytes: MAX_TEXT_BYTES,
+        retain: false,
+        absolute_paths: false,
+        presence_only: true,
+    });
+    let marker = crate::coding_environment::NATIVE_CLIENTS
+        .iter()
+        .filter(|client| !crate::coding_environment::SUPPORTED.contains(&client.id))
+        .flat_map(|client| client.markers.iter())
+        .any(|marker| !marker.ends_with('/') && marker.eq_ignore_ascii_case(normalized));
+    if marker {
+        return presence;
+    }
+    let (parent, name) = normalized.rsplit_once('/')?;
+    let extension = name.rsplit_once('.').map(|(_, extension)| extension)?;
+    (crate::coding_environment::is_client_scan_directory(parent)
+        && matches!(extension, "md" | "json" | "jsonc" | "toml" | "yaml" | "yml"))
+    .then_some(presence)?
 }
 
 fn targeted_scan_directory(relative: &str) -> bool {
@@ -1532,6 +1575,7 @@ fn targeted_scan_directory(relative: &str) -> bool {
             | ["docs"]
     ) || (matches!(segments.as_slice(), ["docs", _])
         && !matches!(segments.get(1).copied(), Some("assets" | "formables")))
+        || crate::coding_environment::is_client_scan_directory(&normalized)
 }
 
 pub(crate) fn targeted_scan_path_candidate(relative: &str) -> bool {
@@ -2492,67 +2536,37 @@ fn detect_coding_environments(
             .iter()
             .any(|file| !file.is_symlink && file.relative.to_ascii_lowercase().starts_with(&prefix))
     };
-    let mut detected = Vec::new();
     // Canonical Codex agent TOMLs are a shared synchronization source and
     // are installed for every coding-environment selection.  They therefore
-    // cannot, by themselves, prove that the Codex native package is present.
-    if has(".codex/config.toml") {
-        detected.push("codex");
-    }
-    if has("CLAUDE.md")
-        || has(".claude/settings.json")
-        || has(".claude/agent-map.md")
-        || under(".claude/agents/")
-    {
-        detected.push("claude_code");
-    }
-    if has(".cursor/agent-map.md")
-        || has(".cursor/mcp.json")
-        || has(".cursor/settings.json")
-        || under(".cursor/agents/")
-    {
-        detected.push("cursor");
-    }
-    if has(".qoder/agent-map.md")
-        || has(".qoder/settings.json")
-        || has(".qoder/mcp.json")
-        || under(".qoder/agents/")
-    {
-        detected.push("qoder");
-    }
-    if has("opencode.json")
-        || has(".opencode/agent-map.md")
-        || has(".opencode/settings.json")
-        || has(".opencode/mcp.json")
-        || under(".opencode/agent/")
-    {
-        detected.push("opencode");
-    }
-    let parse_json = |path: &str| -> bool {
+    // cannot, by themselves, prove that the Codex native package is present;
+    // the registry's Codex marker is its project configuration.
+    let detected = crate::coding_environment::detected_clients(has, under);
+    let parse = |path: &str, format: crate::native_mcp::McpFormat| -> bool {
         observations
             .iter()
             .find(|file| !file.is_symlink && file.relative.eq_ignore_ascii_case(path))
-            .is_some_and(|file| serde_json::from_slice::<Value>(&file.bytes).is_ok())
+            .is_some_and(|file| {
+                if format.is_toml() {
+                    std::str::from_utf8(&file.bytes)
+                        .ok()
+                        .is_some_and(|text| text.parse::<toml::Value>().is_ok())
+                } else {
+                    serde_json::from_slice::<Value>(&file.bytes).is_ok()
+                }
+            })
     };
-    for (environment, path) in [
-        ("claude_code", ".claude/settings.json"),
-        ("claude_code", ".mcp.json"),
-        ("cursor", ".cursor/settings.json"),
-        ("cursor", ".cursor/mcp.json"),
-        ("qoder", ".qoder/settings.json"),
-        ("qoder", ".qoder/mcp.json"),
-        ("opencode", ".opencode/settings.json"),
-        ("opencode", ".opencode/mcp.json"),
-        ("opencode", "opencode.json"),
-    ] {
-        if has(path) && !parse_json(path) {
-            conflicts.push(ScanConflict {
-                id: format!("conflict.{environment}.config.parse"),
-                path: path.into(),
-                kind: "other".into(),
-                severity: "block".into(),
-                details: Some(format!("{environment} configuration is not valid JSON.")),
-            });
+    for client in crate::coding_environment::NATIVE_CLIENTS {
+        for (path, format) in client.config_files {
+            if has(path) && !parse(path, *format) {
+                let kind = if format.is_toml() { "TOML" } else { "JSON" };
+                conflicts.push(ScanConflict {
+                    id: format!("conflict.{}.config.parse", client.id),
+                    path: (*path).into(),
+                    kind: "other".into(),
+                    severity: "block".into(),
+                    details: Some(format!("{} configuration is not valid {kind}.", client.id)),
+                });
+            }
         }
     }
     // A scan cannot infer a user-recorded primary from loose files. Codex is
@@ -2560,14 +2574,9 @@ fn detect_coding_environments(
     let primary = "codex";
     let evidence_path = detected
         .first()
-        .map(|id| match *id {
-            "codex" => ".codex/config.toml",
-            "claude_code" => "CLAUDE.md",
-            "cursor" => ".cursor/agent-map.md",
-            "qoder" => ".qoder/agent-map.md",
-            "opencode" => "opencode.json",
-            _ => "@scan/coding-environments",
-        })
+        .and_then(|id| crate::coding_environment::native_client(id))
+        .and_then(|client| client.markers.first())
+        .map(|marker| marker.trim_end_matches('/'))
         .unwrap_or("@scan/coding-environments");
     findings.push(finding(
         "coding.environments",

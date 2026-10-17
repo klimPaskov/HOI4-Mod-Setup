@@ -185,6 +185,60 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByRole("group", { name: /additional coding environments/i })).toContainElement(screen.getByRole("checkbox", { name: /Cursor/ }));
   });
 
+  const formatSixPreview = {
+    schema_version: "6.0.0",
+    coding_environments: [
+      { id: "claude_code", display_name: "Claude Code", default_primary: true, mcp_support: "project" },
+      { id: "gemini_cli", display_name: "Gemini CLI", description: "GEMINI.md, .gemini agents, shared .agents skills, and MCP", mcp_support: "project", documentation_url: "https://geminicli.com/docs/tools/mcp-server/" },
+      { id: "cline", display_name: "Cline", description: "AGENTS.md, a Cline rule, and Claude-format skills", mcp_support: "manual", documentation_url: "https://docs.cline.bot/mcp/configuring-mcp-servers" },
+      { id: "aider", display_name: "Aider", description: "An .aider.conf.yml that reads AGENTS.md", mcp_support: "none" },
+    ],
+    unavailable_coding_environments: [{ id: "augment", display_name: "Augment (Auggie CLI)", reason: "This client is not supported on Windows." }],
+  } as unknown as SourceManifestPreview;
+
+  it("labels manual and absent MCP routes and lists clients this version cannot install", () => {
+    const state = { ...initialState, manifestPreview: formatSixPreview, primaryCodingEnvironment: "claude_code", additionalCodingEnvironments: [] } as WizardState;
+    render(<CodingEnvironments state={state} update={vi.fn()} />);
+    const primary = screen.getByRole("radiogroup", { name: /primary coding environment/i });
+    expect(within(primary).getAllByRole("radio")).toHaveLength(4);
+    expect(within(primary).getByText("Gemini CLI").closest(".coding-environment-copy")).toHaveTextContent(/\.gemini agents/);
+    expect(within(primary).getByText("Gemini CLI").closest(".coding-environment-copy")).not.toHaveTextContent(/set up in the client/);
+    expect(within(primary).getByText("Cline").closest(".coding-environment-copy")).toHaveTextContent("MCP is set up in the client");
+    expect(within(primary).getByText("Aider").closest(".coding-environment-copy")).toHaveTextContent("No MCP support");
+    // Unavailable clients are visible behind disclosure but never selectable.
+    expect(screen.queryByRole("radio", { name: /Augment/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Augment/ })).not.toBeInTheDocument();
+    const unavailable = screen.getByText("Not available (1)").closest("details")!;
+    expect(unavailable).toHaveTextContent(/Augment \(Auggie CLI\).*not supported on Windows/);
+  });
+
+  it("keeps the development-client selection independent from the setup assistant", () => {
+    for (const aiProvider of ["gemini_account", "grok_account", "claude_account", "codex"]) {
+      const update = vi.fn();
+      const state = { ...initialState, aiProvider, manifestPreview: formatSixPreview, primaryCodingEnvironment: "claude_code", additionalCodingEnvironments: [] } as unknown as WizardState;
+      render(<CodingEnvironments state={state} update={update} />);
+      expect(screen.getByRole("radio", { name: /^Claude Code/ })).toBeChecked();
+      expect(screen.getByRole("radio", { name: /^Gemini CLI/ })).not.toBeChecked();
+      expect(update).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("radio", { name: /^Gemini CLI/ }));
+      expect(update).toHaveBeenCalledWith(expect.objectContaining({ primaryCodingEnvironment: "gemini_cli", additionalCodingEnvironments: [] }));
+      expect(update.mock.calls[0][0]).not.toHaveProperty("aiProvider");
+      cleanup();
+    }
+  });
+
+  it("shows a manual MCP to-do with the reviewed guide only for selected manual clients", () => {
+    const state = { ...readyState(), manifestPreview: formatSixPreview, selectedComponents: ["mcp.hoi4_agent_tools"], primaryCodingEnvironment: "gemini_cli", additionalCodingEnvironments: ["cline", "aider"] } as WizardState;
+    render(<Ready state={state} update={vi.fn()} onMaintenance={vi.fn()} />);
+    expect(screen.getByText(/To-do: add HOI4 Agent Tools in Cline's own MCP settings/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Cline MCP guide" })).toHaveAttribute("href", "https://docs.cline.bot/mcp/configuring-mcp-servers");
+    expect(screen.queryByText(/in Gemini CLI's own MCP settings/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/in Aider's own MCP settings/)).not.toBeInTheDocument();
+    cleanup();
+    render(<Ready state={{ ...state, selectedComponents: [] }} update={vi.fn()} onMaintenance={vi.fn()} />);
+    expect(screen.queryByText(/To-do: add HOI4 Agent Tools/)).not.toBeInTheDocument();
+  });
+
   it("shows the default image route and keeps the primary separate from optional routes", () => {
     window.history.replaceState({}, "", "/?screenshot=image-generation");
     const fixture = documentationFixture(readyState());

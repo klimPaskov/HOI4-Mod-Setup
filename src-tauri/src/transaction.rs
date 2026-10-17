@@ -5460,18 +5460,23 @@ fn build_transaction_readiness(
                 )
                 .iter()
                 .all(|environment| {
-                    let require_mcp = crate::models::Platform::current()
-                        == crate::models::Platform::Windows
-                        && crate::coding_environment::mcp_registration_component_id(environment)
-                            .is_some_and(|component_id| {
-                                plan.selected_components
-                                    .iter()
-                                    .any(|selected| selected == component_id)
-                            });
+                    // A tools package that is unavailable on this platform
+                    // has no route for any client to register.
+                    let mcp = crate::readiness::native_mcp_check(
+                        environment,
+                        plan.selected_components
+                            .iter()
+                            .map(String::as_str)
+                            .filter(|id| {
+                                mcp_status != "unsupported_platform"
+                                    || *id != crate::mcp::COMPONENT_ID
+                            }),
+                        crate::models::Platform::current(),
+                    );
                     crate::readiness::valid_coding_environment_with_mcp(
                         project_root,
                         environment,
-                        require_mcp,
+                        mcp,
                     )
                 })) {
             "pass".into()
@@ -5616,15 +5621,7 @@ fn build_transaction_readiness(
 }
 
 fn looks_like_coding_environment_destination(path: &str) -> bool {
-    let normalized = path.replace('\\', "/").to_ascii_lowercase();
-    normalized == "claude.md"
-        || normalized == ".mcp.json"
-        || normalized == "opencode.json"
-        || normalized.starts_with(".codex/")
-        || normalized.starts_with(".claude/")
-        || normalized.starts_with(".cursor/")
-        || normalized.starts_with(".qoder/")
-        || normalized.starts_with(".opencode/")
+    crate::coding_environment::looks_like_client_path(path)
 }
 
 fn build_lock(

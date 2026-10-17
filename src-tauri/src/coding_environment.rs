@@ -7,7 +7,11 @@
 //! those declarations.  The built-in list covers older manifests that predate
 //! environment declarations.
 
-use crate::models::{CodingEnvironmentDefinition, CodingEnvironmentSelection, RemoteManifest};
+use crate::models::{
+    CodingEnvironmentDefinition, CodingEnvironmentSelection, ComponentDefinition, McpSupport,
+    Platform, RemoteManifest, UnavailableCodingEnvironment,
+};
+use crate::native_mcp::McpFormat;
 use crate::AppError;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -18,9 +22,751 @@ pub const CURSOR: &str = "cursor";
 pub const QODER: &str = "qoder";
 pub const OPENCODE: &str = "opencode";
 
-/// Environments with built-in readiness checks and display names. A manifest
-/// may declare more; they are validated from their installed files.
+/// Environments declared by manifest formats before 6. Their packages and
+/// adapters predate per-client MCP declarations.
 pub const SUPPORTED: [&str; 5] = [CLAUDE_CODE, CODEX, CURSOR, QODER, OPENCODE];
+
+/// A readiness check for one installed native file or folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layout {
+    /// A non-empty UTF-8 text file.
+    Text(&'static str),
+    /// A parseable JSON file.
+    Json(&'static str),
+    /// A folder holding at least one agent file with the extension.
+    Agents(&'static str, &'static str),
+    /// A folder holding at least one `<name>/SKILL.md`.
+    Skills(&'static str),
+}
+
+/// A project MCP file the installer manages for one client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NativeMcp {
+    pub path: &'static str,
+    pub format: McpFormat,
+    /// The component that installs `path`.
+    pub component_id: &'static str,
+    /// The file also carries non-MCP client settings and is installed on every
+    /// platform, so the shared route is removed where no verified launch
+    /// exists instead of being left as a placeholder.
+    pub shared_file: bool,
+}
+
+/// The adapter this app version has for one coding client. A manifest can
+/// declare only clients whose project MCP route matches an adapter here, or
+/// clients whose MCP setup is manual or absent.
+#[derive(Debug, Clone, Copy)]
+pub struct NativeClient {
+    pub id: &'static str,
+    pub display_name: &'static str,
+    /// The project surfaces the package installs, in a few words.
+    pub detail: &'static str,
+    pub mcp_support: McpSupport,
+    pub mcp: Option<NativeMcp>,
+    /// A route that an older source format installed but the client never
+    /// read. Readiness keeps the old structural check while that component is
+    /// still locked; the next update moves the project to `mcp`.
+    pub legacy_mcp: Option<NativeMcp>,
+    /// Official documentation for a manual MCP setup step.
+    pub documentation_url: Option<&'static str>,
+    /// Whether image-generation and live-testing routes are adapted into the
+    /// client's MCP file. Newer clients receive the HOI4 Agent Tools route
+    /// only until the source provider tables declare them.
+    pub image_and_live_routes: bool,
+    /// Whether readiness requires the shared MCP route in `mcp`. Codex checks
+    /// its route through the dedicated Codex readiness detection.
+    pub readiness_checks_mcp: bool,
+    pub layout: &'static [Layout],
+    /// Paths that show a project already uses the client: an exact file, or a
+    /// folder prefix ending in `/`.
+    pub markers: &'static [&'static str],
+    /// Folders the read-only scanner enumerates (one level each).
+    pub scan_directories: &'static [&'static str],
+    /// Small native configuration files the scanner retains and parses.
+    pub config_files: &'static [(&'static str, McpFormat)],
+    pub open_command: Option<&'static str>,
+}
+
+const fn project_mcp(
+    path: &'static str,
+    format: McpFormat,
+    component_id: &'static str,
+) -> NativeMcp {
+    NativeMcp {
+        path,
+        format,
+        component_id,
+        shared_file: false,
+    }
+}
+
+/// Every client this app version can install, in the scanner's detection
+/// order. Manifests declare their own display order.
+pub const NATIVE_CLIENTS: &[NativeClient] = &[
+    NativeClient {
+        id: CODEX,
+        display_name: "Codex",
+        detail: "Native .codex configuration and agents",
+        mcp_support: McpSupport::Project,
+        mcp: Some(NativeMcp {
+            path: ".codex/config.toml",
+            format: McpFormat::TomlMcpServers,
+            component_id: "codex.config",
+            // Codex keeps its historical behavior: the route is retargeted
+            // on Windows and Linux and otherwise left as the source wrote it.
+            shared_file: false,
+        }),
+        legacy_mcp: None,
+        documentation_url: None,
+        image_and_live_routes: true,
+        readiness_checks_mcp: false,
+        layout: &[],
+        // Agent TOMLs are installed for every selection and do not prove a
+        // Codex package.
+        markers: &[".codex/config.toml"],
+        scan_directories: &[],
+        config_files: &[],
+        open_command: Some("codex"),
+    },
+    NativeClient {
+        id: CLAUDE_CODE,
+        display_name: "Claude Code",
+        detail: "CLAUDE.md, .claude settings, agents, map, and MCP",
+        mcp_support: McpSupport::Project,
+        mcp: Some(project_mcp(
+            ".mcp.json",
+            McpFormat::JsonMcpServers,
+            "runtime.claude.mcp",
+        )),
+        legacy_mcp: None,
+        documentation_url: None,
+        image_and_live_routes: true,
+        readiness_checks_mcp: true,
+        layout: &[
+            Layout::Text("CLAUDE.md"),
+            Layout::Json(".claude/settings.json"),
+            Layout::Text(".claude/agent-map.md"),
+            Layout::Agents(".claude/agents", ".md"),
+        ],
+        markers: &[
+            "CLAUDE.md",
+            ".claude/settings.json",
+            ".claude/agent-map.md",
+            ".claude/agents/",
+        ],
+        scan_directories: &[],
+        config_files: &[
+            (".claude/settings.json", McpFormat::JsonMcpServers),
+            (".mcp.json", McpFormat::JsonMcpServers),
+        ],
+        open_command: Some("claude"),
+    },
+    NativeClient {
+        id: CURSOR,
+        display_name: "Cursor",
+        detail: ".cursor agents, project settings, map, and MCP",
+        mcp_support: McpSupport::Project,
+        mcp: Some(project_mcp(
+            ".cursor/mcp.json",
+            McpFormat::JsonMcpServers,
+            "runtime.cursor.mcp",
+        )),
+        legacy_mcp: None,
+        documentation_url: None,
+        image_and_live_routes: true,
+        readiness_checks_mcp: true,
+        layout: &[
+            Layout::Text(".cursor/agent-map.md"),
+            Layout::Json(".cursor/settings.json"),
+            Layout::Agents(".cursor/agents", ".md"),
+        ],
+        markers: &[
+            ".cursor/agent-map.md",
+            ".cursor/mcp.json",
+            ".cursor/settings.json",
+            ".cursor/agents/",
+        ],
+        scan_directories: &[],
+        config_files: &[
+            (".cursor/settings.json", McpFormat::JsonMcpServers),
+            (".cursor/mcp.json", McpFormat::JsonMcpServers),
+        ],
+        open_command: None,
+    },
+    NativeClient {
+        id: QODER,
+        display_name: "Qoder",
+        detail: ".qoder agents, project settings, map, and MCP",
+        mcp_support: McpSupport::Project,
+        mcp: Some(project_mcp(
+            ".qoder/mcp.json",
+            McpFormat::JsonMcpServers,
+            "runtime.qoder.mcp",
+        )),
+        legacy_mcp: None,
+        documentation_url: None,
+        image_and_live_routes: true,
+        readiness_checks_mcp: true,
+        layout: &[
+            Layout::Json(".qoder/settings.json"),
+            Layout::Text(".qoder/agent-map.md"),
+            Layout::Agents(".qoder/agents", ".md"),
+        ],
+        markers: &[
+            ".qoder/agent-map.md",
+            ".qoder/settings.json",
+            ".qoder/mcp.json",
+            ".qoder/agents/",
+        ],
+        scan_directories: &[],
+        config_files: &[
+            (".qoder/settings.json", McpFormat::JsonMcpServers),
+            (".qoder/mcp.json", McpFormat::JsonMcpServers),
+        ],
+        open_command: None,
+    },
+    NativeClient {
+        id: OPENCODE,
+        display_name: "OpenCode",
+        detail: "opencode.json, .opencode agents, map, and MCP",
+        mcp_support: McpSupport::Project,
+        // OpenCode reads MCP servers only from `opencode.json(c)`.
+        mcp: Some(NativeMcp {
+            path: "opencode.json",
+            format: McpFormat::LocalCommandArray,
+            component_id: "runtime.opencode.config",
+            shared_file: true,
+        }),
+        legacy_mcp: Some(project_mcp(
+            ".opencode/mcp.json",
+            McpFormat::JsonMcpServers,
+            "runtime.opencode.mcp",
+        )),
+        documentation_url: Some("https://opencode.ai/docs/mcp-servers/"),
+        image_and_live_routes: true,
+        readiness_checks_mcp: true,
+        layout: &[
+            Layout::Json("opencode.json"),
+            Layout::Json(".opencode/settings.json"),
+            Layout::Text(".opencode/agent-map.md"),
+            Layout::Agents(".opencode/agent", ".md"),
+        ],
+        markers: &[
+            "opencode.json",
+            ".opencode/agent-map.md",
+            ".opencode/settings.json",
+            ".opencode/mcp.json",
+            ".opencode/agent/",
+        ],
+        scan_directories: &[],
+        config_files: &[
+            (".opencode/settings.json", McpFormat::JsonMcpServers),
+            (".opencode/mcp.json", McpFormat::JsonMcpServers),
+            ("opencode.json", McpFormat::LocalCommandArray),
+        ],
+        open_command: None,
+    },
+    NativeClient {
+        id: "gemini_cli",
+        display_name: "Gemini CLI",
+        detail: "GEMINI.md, .gemini agents, shared .agents skills, and MCP",
+        mcp_support: McpSupport::Project,
+        mcp: Some(project_mcp(
+            ".gemini/settings.json",
+            McpFormat::JsonMcpServers,
+            "runtime.gemini.mcp",
+        )),
+        legacy_mcp: None,
+        documentation_url: Some("https://geminicli.com/docs/tools/mcp-server/"),
+        image_and_live_routes: false,
+        readiness_checks_mcp: true,
+        layout: &[
+            Layout::Text("GEMINI.md"),
+            Layout::Text("AGENTS.md"),
+            Layout::Agents(".gemini/agents", ".md"),
+            Layout::Skills(".agents/skills"),
+        ],
+        markers: &["GEMINI.md", ".gemini/"],
+        scan_directories: &[".gemini", ".gemini/agents"],
+        config_files: &[(".gemini/settings.json", McpFormat::JsonMcpServers)],
+        open_command: Some("gemini"),
+    },
+    NativeClient {
+        id: "antigravity",
+        display_name: "Antigravity",
+        detail: "AGENTS.md, .agents agents and skills, and MCP",
+        mcp_support: McpSupport::Project,
+        mcp: Some(project_mcp(
+            ".agents/mcp_config.json",
+            McpFormat::JsonMcpServers,
+            "runtime.antigravity.mcp",
+        )),
+        legacy_mcp: None,
+        documentation_url: Some("https://antigravity.google/docs/mcp"),
+        image_and_live_routes: false,
+        readiness_checks_mcp: true,
+        layout: &[
+            Layout::Text("AGENTS.md"),
+            Layout::Agents(".agents/agents", ".md"),
+            Layout::Skills(".agents/skills"),
+        ],
+        markers: &[
+            ".agents/mcp_config.json",
+            ".agents/agents/",
+            ".agents/rules/",
+        ],
+        scan_directories: &[".agents/agents", ".agents/rules"],
+        config_files: &[(".agents/mcp_config.json", McpFormat::JsonMcpServers)],
+        open_command: Some("agy"),
+    },
+    NativeClient {
+        id: "grok_build",
+        display_name: "Grok Build",
+        detail: "AGENTS.md, .grok skills, and MCP",
+        mcp_support: McpSupport::Project,
+        mcp: Some(project_mcp(
+            ".grok/config.toml",
+            McpFormat::TomlMcpServers,
+            "runtime.grok.mcp",
+        )),
+        legacy_mcp: None,
+        documentation_url: Some("https://docs.x.ai/build/features/mcp-servers"),
+        image_and_live_routes: false,
+        readiness_checks_mcp: true,
+        layout: &[Layout::Text("AGENTS.md"), Layout::Skills(".grok/skills")],
+        markers: &[".grok/"],
+        scan_directories: &[".grok"],
+        config_files: &[(".grok/config.toml", McpFormat::TomlMcpServers)],
+        open_command: Some("grok"),
+    },
+    NativeClient {
+        id: "github_copilot",
+        display_name: "GitHub Copilot (VS Code)",
+        detail: "Copilot instructions, Claude-format agents and skills, and VS Code MCP",
+        mcp_support: McpSupport::Project,
+        mcp: Some(project_mcp(
+            ".vscode/mcp.json",
+            McpFormat::VscodeServers,
+            "runtime.copilot.mcp",
+        )),
+        legacy_mcp: None,
+        documentation_url: Some(
+            "https://code.visualstudio.com/docs/copilot/customization/mcp-servers",
+        ),
+        image_and_live_routes: false,
+        readiness_checks_mcp: true,
+        layout: &[
+            Layout::Text("AGENTS.md"),
+            Layout::Text(".github/instructions/hoi4-mod-setup.instructions.md"),
+            Layout::Agents(".claude/agents", ".md"),
+            Layout::Skills(".claude/skills"),
+        ],
+        markers: &[
+            ".github/copilot-instructions.md",
+            ".github/instructions/",
+            ".github/agents/",
+            ".github/skills/",
+            ".vscode/mcp.json",
+        ],
+        scan_directories: &[
+            ".github",
+            ".github/instructions",
+            ".github/agents",
+            ".vscode",
+        ],
+        config_files: &[(".vscode/mcp.json", McpFormat::VscodeServers)],
+        open_command: None,
+    },
+    NativeClient {
+        id: "kilo_code",
+        display_name: "Kilo Code",
+        detail: "AGENTS.md, .kilo agents, shared .agents skills, and MCP",
+        mcp_support: McpSupport::Project,
+        mcp: Some(project_mcp(
+            ".kilo/kilo.json",
+            McpFormat::LocalCommandArray,
+            "runtime.kilo.mcp",
+        )),
+        legacy_mcp: None,
+        documentation_url: Some("https://kilo.ai/docs/automate/mcp/using-in-kilo-code"),
+        image_and_live_routes: false,
+        readiness_checks_mcp: true,
+        layout: &[
+            Layout::Text("AGENTS.md"),
+            Layout::Agents(".kilo/agents", ".md"),
+            Layout::Skills(".agents/skills"),
+        ],
+        markers: &["kilo.json", "kilo.jsonc", ".kilo/", ".kilocode/"],
+        scan_directories: &[".kilo", ".kilo/agents", ".kilocode"],
+        config_files: &[(".kilo/kilo.json", McpFormat::LocalCommandArray)],
+        open_command: Some("kilo"),
+    },
+    NativeClient {
+        id: "kiro",
+        display_name: "Kiro",
+        detail: "AGENTS.md, .kiro agents and skills, and MCP",
+        mcp_support: McpSupport::Project,
+        mcp: Some(project_mcp(
+            ".kiro/settings/mcp.json",
+            McpFormat::JsonMcpServers,
+            "runtime.kiro.mcp",
+        )),
+        legacy_mcp: None,
+        documentation_url: Some("https://kiro.dev/docs/mcp/configuration/"),
+        image_and_live_routes: false,
+        readiness_checks_mcp: true,
+        layout: &[
+            Layout::Text("AGENTS.md"),
+            Layout::Agents(".kiro/agents", ".md"),
+            Layout::Skills(".kiro/skills"),
+        ],
+        markers: &[".kiro/"],
+        scan_directories: &[".kiro", ".kiro/agents", ".kiro/settings", ".kiro/steering"],
+        config_files: &[(".kiro/settings/mcp.json", McpFormat::JsonMcpServers)],
+        open_command: None,
+    },
+    NativeClient {
+        id: "qwen_code",
+        display_name: "Qwen Code",
+        detail: "AGENTS.md, .qwen agents and skills, and MCP",
+        mcp_support: McpSupport::Project,
+        mcp: Some(project_mcp(
+            ".qwen/settings.json",
+            McpFormat::JsonMcpServers,
+            "runtime.qwen.mcp",
+        )),
+        legacy_mcp: None,
+        documentation_url: Some("https://qwenlm.github.io/qwen-code-docs/en/users/features/mcp/"),
+        image_and_live_routes: false,
+        readiness_checks_mcp: true,
+        layout: &[
+            Layout::Text("AGENTS.md"),
+            Layout::Agents(".qwen/agents", ".md"),
+            Layout::Skills(".qwen/skills"),
+        ],
+        markers: &["QWEN.md", ".qwen/"],
+        scan_directories: &[".qwen", ".qwen/agents"],
+        config_files: &[(".qwen/settings.json", McpFormat::JsonMcpServers)],
+        open_command: Some("qwen"),
+    },
+    NativeClient {
+        id: "devin_desktop",
+        display_name: "Devin Desktop",
+        detail: "AGENTS.md, .devin agents, and shared .agents skills; MCP is set up in Devin",
+        mcp_support: McpSupport::Manual,
+        mcp: None,
+        legacy_mcp: None,
+        documentation_url: Some("https://docs.devin.ai/desktop/devin-local"),
+        image_and_live_routes: false,
+        readiness_checks_mcp: false,
+        layout: &[
+            Layout::Text("AGENTS.md"),
+            Layout::Agents(".devin/agents", ".md"),
+            Layout::Skills(".agents/skills"),
+        ],
+        markers: &[".devin/", ".windsurf/"],
+        scan_directories: &[".devin", ".devin/agents", ".windsurf"],
+        config_files: &[],
+        open_command: None,
+    },
+    NativeClient {
+        id: "augment",
+        display_name: "Augment (Auggie CLI)",
+        detail: "AGENTS.md, .augment agents, and Claude-format skills; MCP is set up in Auggie",
+        mcp_support: McpSupport::Manual,
+        mcp: None,
+        legacy_mcp: None,
+        documentation_url: Some("https://docs.augmentcode.com/cli/integrations"),
+        image_and_live_routes: false,
+        readiness_checks_mcp: false,
+        layout: &[
+            Layout::Text("AGENTS.md"),
+            Layout::Agents(".augment/agents", ".md"),
+            Layout::Skills(".claude/skills"),
+        ],
+        markers: &[".augment/", ".augment-guidelines"],
+        scan_directories: &[".augment", ".augment/agents"],
+        config_files: &[],
+        open_command: Some("auggie"),
+    },
+    NativeClient {
+        id: "cline",
+        display_name: "Cline",
+        detail: "AGENTS.md, a Cline rule, and Claude-format skills; MCP is set up in Cline",
+        mcp_support: McpSupport::Manual,
+        mcp: None,
+        legacy_mcp: None,
+        documentation_url: Some("https://docs.cline.bot/mcp/configuring-mcp-servers"),
+        image_and_live_routes: false,
+        readiness_checks_mcp: false,
+        layout: &[
+            Layout::Text("AGENTS.md"),
+            Layout::Text(".clinerules/hoi4-mod-setup.md"),
+            Layout::Skills(".claude/skills"),
+        ],
+        markers: &[".clinerules", ".clinerules/", ".cline/"],
+        scan_directories: &[".clinerules", ".cline"],
+        config_files: &[],
+        open_command: None,
+    },
+    NativeClient {
+        id: "continue",
+        display_name: "Continue",
+        detail:
+            "A Continue rule that points to AGENTS.md and the skills; MCP is set up in Continue",
+        mcp_support: McpSupport::Manual,
+        mcp: None,
+        legacy_mcp: None,
+        documentation_url: Some("https://docs.continue.dev/customize/deep-dives/mcp"),
+        image_and_live_routes: false,
+        readiness_checks_mcp: false,
+        layout: &[
+            Layout::Text("AGENTS.md"),
+            Layout::Text(".continue/rules/hoi4-mod-setup.md"),
+        ],
+        markers: &[".continue/"],
+        scan_directories: &[".continue", ".continue/rules"],
+        config_files: &[],
+        open_command: None,
+    },
+    NativeClient {
+        id: "aider",
+        display_name: "Aider",
+        detail: "An .aider.conf.yml that reads AGENTS.md; Aider has no MCP support",
+        mcp_support: McpSupport::None,
+        mcp: None,
+        legacy_mcp: None,
+        documentation_url: Some("https://aider.chat/docs/usage/conventions.html"),
+        image_and_live_routes: false,
+        readiness_checks_mcp: false,
+        layout: &[Layout::Text("AGENTS.md"), Layout::Text(".aider.conf.yml")],
+        markers: &[".aider.conf.yml"],
+        scan_directories: &[],
+        config_files: &[],
+        open_command: Some("aider"),
+    },
+];
+
+pub fn native_client(id: &str) -> Option<&'static NativeClient> {
+    NATIVE_CLIENTS.iter().find(|client| client.id == id)
+}
+
+fn path_key(path: &str) -> String {
+    path.replace('\\', "/").to_ascii_lowercase()
+}
+
+/// The client and managed MCP route that own a project path. Legacy routes
+/// that the client never read are not adapted.
+pub fn mcp_route_for_path(path: &str) -> Option<(&'static NativeClient, NativeMcp)> {
+    let key = path_key(path);
+    NATIVE_CLIENTS.iter().find_map(|client| {
+        client
+            .mcp
+            .filter(|mcp| path_key(mcp.path) == key)
+            .map(|mcp| (client, mcp))
+    })
+}
+
+/// The format of any native client configuration file, including legacy
+/// routes, so a managed file is always merged and validated structurally.
+pub fn config_format_for_path(path: &str) -> Option<McpFormat> {
+    let key = path_key(path);
+    NATIVE_CLIENTS.iter().find_map(|client| {
+        client
+            .mcp
+            .iter()
+            .chain(client.legacy_mcp.iter())
+            .find(|mcp| path_key(mcp.path) == key)
+            .map(|mcp| mcp.format)
+            .or_else(|| {
+                client
+                    .config_files
+                    .iter()
+                    .find(|(file, _)| path_key(file) == key)
+                    .map(|(_, format)| *format)
+            })
+    })
+}
+
+/// Whether a project path is a native client MCP file the installer merges
+/// with local content instead of replacing.
+pub fn is_native_mcp_config_path(path: &str) -> bool {
+    let key = path_key(path);
+    NATIVE_CLIENTS.iter().any(|client| {
+        client
+            .mcp
+            .iter()
+            .chain(client.legacy_mcp.iter())
+            .any(|mcp| path_key(mcp.path) == key)
+    })
+}
+
+fn marker_matches(marker: &str, key: &str) -> bool {
+    let marker = path_key(marker);
+    match marker.strip_suffix('/') {
+        Some(folder) => key == folder || key.starts_with(&marker),
+        None => key == marker,
+    }
+}
+
+/// Whether a project path belongs to a coding-client package rather than
+/// the runtime-neutral core. `AGENTS.md` and the canonical skills are core.
+pub fn looks_like_client_path(path: &str) -> bool {
+    let key = path_key(path);
+    matches!(key.as_str(), "claude.md" | ".mcp.json" | "opencode.json")
+        || [".codex/", ".claude/", ".cursor/", ".qoder/", ".opencode/"]
+            .iter()
+            .any(|prefix| key.starts_with(prefix))
+        || NATIVE_CLIENTS.iter().any(|client| {
+            client
+                .markers
+                .iter()
+                .any(|marker| marker_matches(marker, &key))
+                || client
+                    .mcp
+                    .iter()
+                    .chain(client.legacy_mcp.iter())
+                    .any(|mcp| path_key(mcp.path) == key)
+        })
+}
+
+/// Clients whose project markers exist, in registry order. Markers are
+/// evidence of a project surface, not proof that the client is installed.
+pub fn detected_clients(
+    has: impl Fn(&str) -> bool,
+    under: impl Fn(&str) -> bool,
+) -> Vec<&'static str> {
+    NATIVE_CLIENTS
+        .iter()
+        .filter(|client| {
+            client
+                .markers
+                .iter()
+                .any(|marker| match marker.strip_suffix('/') {
+                    Some(folder) => under(&format!("{folder}/")),
+                    None => has(marker),
+                })
+        })
+        .map(|client| client.id)
+        .collect()
+}
+
+/// Whether the read-only scanner enumerates this folder (one level).
+pub fn is_client_scan_directory(path: &str) -> bool {
+    let key = path_key(path);
+    NATIVE_CLIENTS
+        .iter()
+        .flat_map(|client| client.scan_directories.iter())
+        .any(|folder| path_key(folder) == key)
+}
+
+/// The MCP file whose image-generation and live-testing routes the installer
+/// adapts for a client, when the provider tables support that client.
+pub fn image_and_live_config_path(environment: &str) -> Option<&'static str> {
+    native_client(environment)
+        .filter(|client| client.image_and_live_routes)
+        .and_then(|client| client.mcp)
+        .map(|mcp| mcp.path)
+}
+
+/// Whether readiness must find the shared HOI4 Agent Tools route for the
+/// client. The route is installed only where the verified tools package
+/// exists (Windows and Linux) and only when the client's MCP component is
+/// part of the installation.
+pub fn native_registration_required<'a>(
+    environment: &str,
+    selected_components: impl Iterator<Item = &'a str> + Clone,
+    platform: Platform,
+) -> bool {
+    if !matches!(platform, Platform::Windows | Platform::Linux) {
+        return false;
+    }
+    let Some(client) = native_client(environment) else {
+        return false;
+    };
+    let Some(mcp) = client.mcp.filter(|_| client.readiness_checks_mcp) else {
+        return false;
+    };
+    let selected = |id: &str| selected_components.clone().any(|selected| selected == id);
+    let client_route = selected(mcp.component_id)
+        || client
+            .legacy_mcp
+            .is_some_and(|legacy| selected(legacy.component_id));
+    client_route && selected(crate::mcp::COMPONENT_ID)
+}
+
+fn manifest_major(manifest: &RemoteManifest) -> u64 {
+    manifest
+        .schema_version
+        .split('.')
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
+}
+
+fn owned_components<'a>(
+    manifest: &'a RemoteManifest,
+    environment: &'a str,
+) -> impl Iterator<Item = &'a ComponentDefinition> + 'a {
+    manifest
+        .components
+        .iter()
+        .filter(move |component| component.coding_environment.as_deref() == Some(environment))
+}
+
+/// Why this app version cannot offer a declared client, if it cannot.
+fn unavailable_reason(
+    manifest: &RemoteManifest,
+    definition: &CodingEnvironmentDefinition,
+    platform: Platform,
+) -> Option<String> {
+    let client = native_client(&definition.id);
+    if manifest_major(manifest) < 6 {
+        // Older formats carry no MCP declaration; only the clients those
+        // formats shipped have adapters for them.
+        if !SUPPORTED.contains(&definition.id.as_str()) {
+            return Some("This client needs a newer setup package.".into());
+        }
+    } else {
+        match definition.mcp_support {
+            Some(McpSupport::Project) => {
+                let Some(declared) = definition.mcp_registration.as_ref() else {
+                    return Some(
+                        "The setup package does not declare this client's MCP file.".into(),
+                    );
+                };
+                let known = client.and_then(|client| client.mcp).is_some_and(|mcp| {
+                    path_key(mcp.path) == path_key(&declared.path) && mcp.format == declared.format
+                });
+                if !known {
+                    return Some("This client needs a newer version of HOI4 Mod Setup.".into());
+                }
+            }
+            Some(McpSupport::Manual | McpSupport::None) => {}
+            None => {
+                return Some("The setup package does not declare this client's MCP support.".into())
+            }
+        }
+    }
+    let required = owned_components(manifest, &definition.id)
+        .filter(|component| !component.optional)
+        .collect::<Vec<_>>();
+    if required.is_empty() {
+        return Some("The setup package does not include this client's files.".into());
+    }
+    if !required.iter().all(|component| {
+        component
+            .platforms
+            .iter()
+            .any(|declared| declared.supports(platform))
+    }) {
+        return Some(format!(
+            "This client is not supported on {}.",
+            platform.display_name()
+        ));
+    }
+    None
+}
 
 pub fn default_selection() -> CodingEnvironmentSelection {
     CodingEnvironmentSelection {
@@ -39,31 +785,25 @@ pub fn is_supported(value: &str) -> bool {
 }
 
 fn built_in_definition(id: &str) -> CodingEnvironmentDefinition {
-    let (display_name, description) = match id {
-        CLAUDE_CODE => (
-            "Claude Code",
-            "CLAUDE.md, .claude settings, agents, map, and MCP",
-        ),
-        CODEX => ("Codex", "Native .codex configuration and agents"),
-        CURSOR => ("Cursor", ".cursor agents, project settings, map, and MCP"),
-        QODER => ("Qoder", ".qoder agents, project settings, map, and MCP"),
-        _ => ("OpenCode", ".opencode agents, opencode.json, map, and MCP"),
-    };
+    let client = native_client(id).expect("built-in definitions use registry clients");
     CodingEnvironmentDefinition {
         id: id.into(),
-        display_name: display_name.into(),
-        description: Some(description.into()),
+        display_name: client.display_name.into(),
+        description: Some(client.detail.into()),
         default_primary: id == CLAUDE_CODE,
+        // Only the original command-line clients have a verified Open action.
         open_command: match id {
-            CLAUDE_CODE => Some("claude".into()),
-            CODEX => Some("codex".into()),
+            CLAUDE_CODE | CODEX => client.open_command.map(Into::into),
             _ => None,
         },
+        mcp_support: None,
+        mcp_registration: None,
+        documentation_url: None,
     }
 }
 
-/// The environments a manifest offers, in display order.
-pub fn definitions(manifest: &RemoteManifest) -> Vec<CodingEnvironmentDefinition> {
+/// Every environment the manifest declares, in display order.
+fn declared_definitions(manifest: &RemoteManifest) -> Vec<CodingEnvironmentDefinition> {
     if !manifest.coding_environments.is_empty() {
         return manifest.coding_environments.clone();
     }
@@ -77,6 +817,72 @@ pub fn definitions(manifest: &RemoteManifest) -> Vec<CodingEnvironmentDefinition
         .filter(|id| declared.contains(**id))
         .map(|id| built_in_definition(id))
         .collect()
+}
+
+/// The environments this app version can install from the manifest on the
+/// platform, in display order.
+pub fn definitions_for_platform(
+    manifest: &RemoteManifest,
+    platform: Platform,
+) -> Vec<CodingEnvironmentDefinition> {
+    declared_definitions(manifest)
+        .into_iter()
+        .filter(|definition| unavailable_reason(manifest, definition, platform).is_none())
+        .map(|mut definition| {
+            // The app opens only documentation it has reviewed for the client.
+            definition.documentation_url = native_client(&definition.id)
+                .and_then(|client| client.documentation_url)
+                .map(Into::into);
+            definition.mcp_support = mcp_support(manifest, &definition.id);
+            definition
+        })
+        .collect()
+}
+
+/// The environments the manifest offers on this machine, in display order.
+pub fn definitions(manifest: &RemoteManifest) -> Vec<CodingEnvironmentDefinition> {
+    definitions_for_platform(manifest, Platform::current())
+}
+
+/// Declared environments this app version cannot offer, with a short reason.
+/// They are shown as unavailable instead of being silently dropped.
+pub fn unavailable_definitions(
+    manifest: &RemoteManifest,
+    platform: Platform,
+) -> Vec<UnavailableCodingEnvironment> {
+    declared_definitions(manifest)
+        .into_iter()
+        .filter_map(|definition| {
+            unavailable_reason(manifest, &definition, platform).map(|reason| {
+                UnavailableCodingEnvironment {
+                    id: definition.id,
+                    display_name: definition.display_name,
+                    reason,
+                }
+            })
+        })
+        .collect()
+}
+
+/// The MCP setup for a selected environment: the manifest declaration when
+/// present, otherwise the built-in client table.
+pub fn mcp_support(manifest: &RemoteManifest, environment: &str) -> Option<McpSupport> {
+    manifest
+        .coding_environments
+        .iter()
+        .find(|definition| definition.id == environment)
+        .and_then(|definition| definition.mcp_support)
+        .or_else(|| native_client(environment).map(|client| client.mcp_support))
+}
+
+/// Whether a component installs files for a coding environment, either as
+/// its owner or as a shared copy the environment reads from the same path.
+pub fn serves_environment(component: &ComponentDefinition, environment: &str) -> bool {
+    component.coding_environment.as_deref() == Some(environment)
+        || component
+            .shared_coding_environments
+            .iter()
+            .any(|shared| shared == environment)
 }
 
 /// The manifest's default primary environment, or Claude Code.
@@ -193,10 +999,24 @@ pub fn component_ids(
     let mut requested = vec![selection.primary.as_str()];
     requested.extend(selection.additional.iter().map(String::as_str));
     for environment in requested {
+        if manifest_major(manifest) >= 6 {
+            if let Some(definition) = declared_definitions(manifest)
+                .into_iter()
+                .find(|definition| definition.id == environment)
+            {
+                if let Some(reason) = unavailable_reason(manifest, &definition, Platform::current())
+                {
+                    return Err(AppError::Source(format!(
+                        "{} cannot be installed: {reason}",
+                        definition.display_name
+                    )));
+                }
+            }
+        }
         let ids = manifest
             .components
             .iter()
-            .filter(|component| component.coding_environment.as_deref() == Some(environment))
+            .filter(|component| serves_environment(component, environment))
             .filter(|component| {
                 if !component.optional {
                     return true;
@@ -238,16 +1058,6 @@ pub fn selected_environment_ids(selection: &CodingEnvironmentSelection) -> Vec<S
     let mut result = vec![selection.primary.clone()];
     result.extend(selection.additional.clone());
     result
-}
-
-pub fn mcp_registration_component_id(environment: &str) -> Option<&'static str> {
-    match environment {
-        CLAUDE_CODE => Some("runtime.claude.mcp"),
-        CURSOR => Some("runtime.cursor.mcp"),
-        QODER => Some("runtime.qoder.mcp"),
-        OPENCODE => Some("runtime.opencode.mcp"),
-        _ => None,
-    }
 }
 
 /// Compatibility helper for lock reconciliation. Future source manifests may
@@ -356,25 +1166,316 @@ mod tests {
     }
 
     #[test]
-    fn optional_mcp_registration_ids_are_bounded_to_verified_environments() {
+    fn native_registration_is_required_only_for_selected_project_routes_on_tool_platforms() {
+        let selected = |ids: &'static [&'static str]| ids.iter().copied();
+        for platform in [Platform::Windows, Platform::Linux] {
+            for (environment, component) in [
+                (CLAUDE_CODE, "runtime.claude.mcp"),
+                (CURSOR, "runtime.cursor.mcp"),
+                (QODER, "runtime.qoder.mcp"),
+                ("gemini_cli", "runtime.gemini.mcp"),
+                ("github_copilot", "runtime.copilot.mcp"),
+                ("grok_build", "runtime.grok.mcp"),
+            ] {
+                let both: Vec<&str> = vec![component, crate::mcp::COMPONENT_ID];
+                assert!(native_registration_required(
+                    environment,
+                    both.iter().copied(),
+                    platform
+                ));
+                assert!(!native_registration_required(
+                    environment,
+                    selected(&["mcp.hoi4_agent_tools"]),
+                    platform
+                ));
+                let only_client: Vec<&str> = vec![component];
+                assert!(!native_registration_required(
+                    environment,
+                    only_client.iter().copied(),
+                    platform
+                ));
+            }
+            // A legacy OpenCode lock keeps its old structural check; a format 6
+            // lock requires the route in opencode.json.
+            assert!(native_registration_required(
+                OPENCODE,
+                selected(&["runtime.opencode.mcp", "mcp.hoi4_agent_tools"]),
+                platform
+            ));
+            assert!(native_registration_required(
+                OPENCODE,
+                selected(&["runtime.opencode.config", "mcp.hoi4_agent_tools"]),
+                platform
+            ));
+            for environment in [CODEX, "cline", "devin_desktop", "aider", "unknown_client"] {
+                assert!(!native_registration_required(
+                    environment,
+                    selected(&["codex.config", "mcp.hoi4_agent_tools"]),
+                    platform
+                ));
+            }
+        }
+        assert!(!native_registration_required(
+            CLAUDE_CODE,
+            selected(&["runtime.claude.mcp", "mcp.hoi4_agent_tools"]),
+            Platform::Macos
+        ));
+    }
+
+    #[test]
+    fn client_registry_is_unique_contained_and_honest_about_mcp() {
+        let mut ids = HashSet::new();
+        let mut mcp_paths = HashSet::new();
+        for client in NATIVE_CLIENTS {
+            assert!(is_supported(client.id), "{}", client.id);
+            assert!(ids.insert(client.id), "duplicate client {}", client.id);
+            assert!(!client.display_name.is_empty() && client.display_name.len() <= 64);
+            match client.mcp_support {
+                McpSupport::Project => assert!(client.mcp.is_some(), "{}", client.id),
+                McpSupport::Manual | McpSupport::None => {
+                    assert!(client.mcp.is_none() && client.legacy_mcp.is_none());
+                    assert!(!client.readiness_checks_mcp && !client.image_and_live_routes);
+                    assert!(client
+                        .documentation_url
+                        .is_some_and(|url| url.starts_with("https://")));
+                }
+            }
+            for mcp in client.mcp.iter().chain(client.legacy_mcp.iter()) {
+                assert!(
+                    mcp_paths.insert(path_key(mcp.path)),
+                    "shared MCP path {}",
+                    mcp.path
+                );
+                assert_eq!(
+                    crate::security::normalize_relative_path(mcp.path).unwrap(),
+                    mcp.path
+                );
+                assert!(
+                    mcp.component_id.starts_with("runtime.") || mcp.component_id == "codex.config"
+                );
+            }
+            for path in client
+                .scan_directories
+                .iter()
+                .chain(client.config_files.iter().map(|(path, _)| path))
+                .chain(client.markers.iter())
+            {
+                let trimmed = path.trim_end_matches('/');
+                assert_eq!(
+                    crate::security::normalize_relative_path(trimmed).unwrap(),
+                    trimmed,
+                    "{path}"
+                );
+            }
+            assert!(!client.layout.is_empty() || client.id == CODEX);
+        }
+        for id in SUPPORTED {
+            assert!(native_client(id).is_some());
+        }
         assert_eq!(
-            mcp_registration_component_id(CLAUDE_CODE),
-            Some("runtime.claude.mcp")
+            mcp_route_for_path(".VSCODE\\mcp.json").map(|(client, _)| client.id),
+            Some("github_copilot")
         );
+        assert!(mcp_route_for_path(".opencode/mcp.json").is_none());
+        assert!(is_native_mcp_config_path(".opencode/mcp.json"));
         assert_eq!(
-            mcp_registration_component_id(CURSOR),
-            Some("runtime.cursor.mcp")
+            config_format_for_path(".grok/config.toml"),
+            Some(McpFormat::TomlMcpServers)
         );
+        assert_eq!(image_and_live_config_path(OPENCODE), Some("opencode.json"));
+        assert_eq!(image_and_live_config_path("gemini_cli"), None);
+    }
+
+    fn format_six(mut manifest: RemoteManifest) -> RemoteManifest {
+        manifest.schema_version = "6.0.0".into();
+        for definition in &mut manifest.coding_environments {
+            let client = native_client(&definition.id).unwrap();
+            definition.mcp_support = Some(client.mcp_support);
+            definition.mcp_registration = client.mcp.map(|mcp| crate::models::McpRegistration {
+                component_id: mcp.component_id.into(),
+                path: mcp.path.into(),
+                format: mcp.format,
+            });
+        }
+        manifest
+    }
+
+    fn add_client(
+        manifest: &mut RemoteManifest,
+        id: &str,
+        support: McpSupport,
+        registration: Option<(&str, McpFormat)>,
+        platforms: Vec<crate::models::ManifestPlatform>,
+    ) {
+        let mut component = manifest
+            .components
+            .iter()
+            .find(|component| component.id == "runtime.cursor")
+            .unwrap()
+            .clone();
+        component.id = format!("runtime.{id}");
+        component.coding_environment = Some(id.into());
+        component.platforms = platforms;
+        manifest.components.push(component);
+        manifest
+            .coding_environments
+            .push(CodingEnvironmentDefinition {
+                id: id.into(),
+                display_name: id.into(),
+                description: None,
+                default_primary: false,
+                open_command: None,
+                mcp_support: Some(support),
+                mcp_registration: registration.map(|(path, format)| {
+                    crate::models::McpRegistration {
+                        component_id: format!("runtime.{id}"),
+                        path: path.into(),
+                        format,
+                    }
+                }),
+                documentation_url: None,
+            });
+    }
+
+    #[test]
+    fn format_six_offers_only_clients_with_a_matching_adapter_or_manual_setup() {
+        use crate::models::ManifestPlatform;
+        let mut manifest = format_six(published_manifest());
+        add_client(
+            &mut manifest,
+            "gemini_cli",
+            McpSupport::Project,
+            Some((".gemini/settings.json", McpFormat::JsonMcpServers)),
+            vec![ManifestPlatform::All],
+        );
+        add_client(
+            &mut manifest,
+            "kiro",
+            McpSupport::Project,
+            Some((".kiro/settings/mcp.json", McpFormat::VscodeServers)),
+            vec![ManifestPlatform::All],
+        );
+        add_client(
+            &mut manifest,
+            "future_ide",
+            McpSupport::Project,
+            Some((".future/mcp.json", McpFormat::JsonMcpServers)),
+            vec![ManifestPlatform::All],
+        );
+        add_client(
+            &mut manifest,
+            "future_manual",
+            McpSupport::Manual,
+            None,
+            vec![ManifestPlatform::All],
+        );
+        add_client(
+            &mut manifest,
+            "augment",
+            McpSupport::Manual,
+            None,
+            vec![ManifestPlatform::Macos, ManifestPlatform::Linux],
+        );
+        let offered = |platform| {
+            definitions_for_platform(&manifest, platform)
+                .into_iter()
+                .map(|definition| definition.id)
+                .collect::<Vec<_>>()
+        };
+        let windows = offered(Platform::Windows);
+        for id in SUPPORTED
+            .iter()
+            .copied()
+            .chain(["gemini_cli", "future_manual"])
+        {
+            assert!(windows.iter().any(|offered| offered == id), "{id}");
+        }
+        // A format mismatch, an unknown project route, and a platform gap are
+        // shown as unavailable with a reason, never offered.
+        for id in ["kiro", "future_ide", "augment"] {
+            assert!(!windows.iter().any(|offered| offered == id), "{id}");
+        }
+        let unavailable = unavailable_definitions(&manifest, Platform::Windows);
         assert_eq!(
-            mcp_registration_component_id(QODER),
-            Some("runtime.qoder.mcp")
+            unavailable
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["kiro", "future_ide", "augment"]
         );
+        assert!(unavailable[0].reason.contains("newer version"));
+        assert!(unavailable[2].reason.contains("Windows"));
+        assert!(offered(Platform::Linux).iter().any(|id| id == "augment"));
+
+        let active = ["mcp.hoi4_agent_tools".to_string()].into_iter().collect();
+        if Platform::current() != Platform::Unsupported {
+            let error = component_ids(
+                &manifest,
+                &CodingEnvironmentSelection {
+                    primary: "future_ide".into(),
+                    additional: vec![],
+                },
+                &active,
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("cannot be installed"));
+        }
+        // A format 5 package never offers a client it did not ship.
+        let mut legacy = published_manifest();
+        add_client(
+            &mut legacy,
+            "gemini_cli",
+            McpSupport::Project,
+            Some((".gemini/settings.json", McpFormat::JsonMcpServers)),
+            vec![ManifestPlatform::All],
+        );
+        assert!(!definitions_for_platform(&legacy, Platform::Windows)
+            .iter()
+            .any(|definition| definition.id == "gemini_cli"));
+    }
+
+    #[test]
+    fn shared_components_serve_every_listed_client_without_duplicate_destinations() {
+        let mut manifest = format_six(published_manifest());
+        add_client(
+            &mut manifest,
+            "antigravity",
+            McpSupport::Manual,
+            None,
+            vec![crate::models::ManifestPlatform::All],
+        );
+        for component in &mut manifest.components {
+            if component.id == "runtime.codex.skills" {
+                component.shared_coding_environments = vec!["antigravity".into()];
+            }
+        }
+        let active = ["mcp.hoi4_agent_tools".to_string()].into_iter().collect();
+        let antigravity = component_ids(
+            &manifest,
+            &CodingEnvironmentSelection {
+                primary: "antigravity".into(),
+                additional: vec![],
+            },
+            &active,
+        )
+        .unwrap();
+        assert!(antigravity.iter().any(|id| id == "runtime.codex.skills"));
+        assert!(!antigravity.iter().any(|id| id == "codex.config"));
+        let both = component_ids(
+            &manifest,
+            &CodingEnvironmentSelection {
+                primary: "antigravity".into(),
+                additional: vec![CODEX.into()],
+            },
+            &active,
+        )
+        .unwrap();
         assert_eq!(
-            mcp_registration_component_id(OPENCODE),
-            Some("runtime.opencode.mcp")
+            both.iter()
+                .filter(|id| id.as_str() == "runtime.codex.skills")
+                .count(),
+            1
         );
-        assert_eq!(mcp_registration_component_id(CODEX), None);
-        assert_eq!(mcp_registration_component_id("dsh"), None);
     }
 
     #[test]

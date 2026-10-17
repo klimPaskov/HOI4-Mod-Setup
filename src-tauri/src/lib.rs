@@ -21,6 +21,7 @@ pub mod merge;
 pub mod meshy;
 pub mod migrations;
 pub mod models;
+pub mod native_mcp;
 pub mod paths;
 pub mod portraits;
 pub mod process;

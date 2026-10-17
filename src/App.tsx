@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
 import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, packageChatSources, pickChatSourcesFolder, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewChatSources, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
-import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPreview, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
+import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPreview, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, McpSupport, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
 import claudeModels from "./claude-models.json";
 import { AccountProviderAccess } from "./AccountProviderAccess";
@@ -17,7 +17,7 @@ const PHASES: Array<{ id: PhaseId; label: string }> = [
   { id: "ready", label: "Ready" },
 ];
 
-export interface CodingEnvironmentOption { id: CodingEnvironmentId; label: string; detail: string; defaultPrimary?: boolean }
+export interface CodingEnvironmentOption { id: CodingEnvironmentId; label: string; detail: string; defaultPrimary?: boolean; mcpSupport?: McpSupport; documentationUrl?: string }
 
 /** Used until the source manifest is loaded, and for manifests that predate
  * environment declarations. */
@@ -35,12 +35,26 @@ export const DEFAULT_PRIMARY_CODING_ENVIRONMENT: CodingEnvironmentId = "claude_c
 export function codingEnvironmentOptions(manifest?: SourceManifestPreview | null): CodingEnvironmentOption[] {
   const declared = manifest?.coding_environments ?? [];
   if (declared.length === 0) return CODING_ENVIRONMENTS;
-  return declared.map((environment) => ({
-    id: environment.id,
-    label: environment.display_name,
-    detail: CODING_ENVIRONMENTS.find((candidate) => candidate.id === environment.id)?.detail ?? "Project instructions, skills, agents, and MCP",
-    defaultPrimary: environment.default_primary === true,
-  }));
+  return declared.map((environment) => {
+    const mcpSupport = environment.mcp_support ?? (CODING_ENVIRONMENTS.some((candidate) => candidate.id === environment.id) ? "project" : undefined);
+    return {
+      id: environment.id,
+      label: environment.display_name,
+      detail: CODING_ENVIRONMENTS.find((candidate) => candidate.id === environment.id)?.detail
+        ?? environment.description
+        ?? (mcpSupport === "project" ? "Project instructions, skills, agents, and MCP" : "Project instructions, skills, and agents"),
+      defaultPrimary: environment.default_primary === true,
+      mcpSupport,
+      documentationUrl: environment.documentation_url ?? undefined,
+    };
+  });
+}
+
+/** A short, non-color cue for clients whose MCP setup the installer cannot do. */
+export function mcpSupportNote(option: Pick<CodingEnvironmentOption, "mcpSupport">): string | undefined {
+  if (option.mcpSupport === "manual") return "MCP is set up in the client";
+  if (option.mcpSupport === "none") return "No MCP support";
+  return undefined;
 }
 
 export function codingEnvironmentLabel(id: CodingEnvironmentId, manifest?: SourceManifestPreview | null): string {
@@ -2928,6 +2942,7 @@ function flattenedChatFiles(state: WizardState, manifest: SourceManifestPreview 
 
 export function CodingEnvironments({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
   const options = codingEnvironmentOptions(state.manifestPreview);
+  const unavailable = state.manifestPreview?.unavailable_coding_environments ?? [];
   const selection = import.meta.env.DEV && new URLSearchParams(window.location.search).get("coding-environments") === "none" && state.primaryCodingEnvironment === "" ? { primary: "", additional: state.additionalCodingEnvironments } : normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments, options);
   const choosePrimary = (primary: CodingEnvironmentId) => {
     const next = normalizeCodingEnvironmentSelection(primary, selection.additional, options);
@@ -2947,7 +2962,7 @@ export function CodingEnvironments({ state, update }: { state: WizardState; upda
       <div className="coding-environment-options" role="radiogroup" aria-label="Primary coding environment">
         {options.map((environment) => <label className="coding-environment-option" key={environment.id}>
           <input type="radio" name="primary-coding-environment" value={environment.id} checked={selection.primary === environment.id} onChange={() => choosePrimary(environment.id)} />
-          <span className="coding-environment-copy"><strong>{environment.label}</strong><small>{environment.detail}</small></span>
+          <span className="coding-environment-copy"><strong>{environment.label}</strong><small>{environment.detail}</small>{mcpSupportNote(environment) && <small className="coding-environment-note">{mcpSupportNote(environment)}</small>}</span>
           {selection.primary === environment.id && <Status label="Primary" tone="info" />}
         </label>)}
       </div>
@@ -2958,10 +2973,14 @@ export function CodingEnvironments({ state, update }: { state: WizardState; upda
       <div className="stack" role="group" aria-label="Additional coding environments">
         {options.filter((environment) => environment.id !== selection.primary).map((environment) => <label className="radio-row" key={environment.id}>
           <input type="checkbox" checked={selection.additional.includes(environment.id)} onChange={(event) => toggleAdditional(environment.id, event.target.checked)} />
-          <span><strong>{environment.label}</strong><small>{environment.detail}</small></span>
+          <span><strong>{environment.label}</strong><small>{environment.detail}</small>{mcpSupportNote(environment) && <small className="coding-environment-note">{mcpSupportNote(environment)}</small>}</span>
           {selection.additional.includes(environment.id) && <Status label="Selected" tone="pass" />}
         </label>)}
       </div>
+      {unavailable.length > 0 && <details className="coding-environment-unavailable">
+        <summary>{`Not available (${unavailable.length})`}</summary>
+        <ul>{unavailable.map((environment) => <li key={environment.id}><strong>{environment.display_name}</strong> <span className="muted">{environment.reason}</span></li>)}</ul>
+      </details>}
     </section>
   </div>;
 }
@@ -3703,6 +3722,10 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
   const coreReady = report?.coreReady === true;
   const primaryEnvironment = normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments, codingEnvironmentOptions(state.manifestPreview)).primary;
   const primaryLabel = codingEnvironmentLabel(primaryEnvironment, state.manifestPreview);
+  const environmentOptions = codingEnvironmentOptions(state.manifestPreview);
+  const manualMcpClients = [state.primaryCodingEnvironment, ...state.additionalCodingEnvironments]
+    .map((id) => environmentOptions.find((environment) => environment.id === id))
+    .filter((environment): environment is CodingEnvironmentOption => environment?.mcpSupport === "manual");
   const nativeTerminal = currentUiPlatform() === "linux" && ["claude_code", "codex"].includes(primaryEnvironment);
   const opensCodex = primaryEnvironment === "codex";
   const open = opensCodex ? report?.openInCodex === true : report?.coreReady === true;
@@ -3774,6 +3797,7 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
           </div>
           {state.selectedComponents.includes("mcp.hoi4_agent_tools") && canCheckMcp && <button type="button" className="button secondary ready-panel-action" onClick={() => void runMcpCheck()}>Check integration</button>}
           {mcpCheck && <p className="ready-panel-note muted" role="status">{mcpCheck.status === "ready" ? "Integration checked" : "Integration needs review"}</p>}
+          {state.selectedComponents.includes("mcp.hoi4_agent_tools") && manualMcpClients.map((environment) => <p className="ready-panel-note muted" key={environment.id}>{`To-do: add HOI4 Agent Tools in ${environment.label}'s own MCP settings.`}{environment.documentationUrl && <> <ExternalLink href={environment.documentationUrl}>{`${environment.label} MCP guide`}</ExternalLink></>}</p>)}
         </section>
         <section className="panel ready-options-panel">
           <div className="ready-check-list">

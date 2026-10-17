@@ -1136,6 +1136,19 @@ fn select_manifest_for_revision(
 pub fn parse_manifest(bytes: &[u8], revision: Option<&str>) -> Result<RemoteManifest, AppError> {
     let value: Value = serde_json::from_slice(bytes)
         .map_err(|error| AppError::Source(format!("manifest JSON is invalid: {error}")))?;
+    // A newer format is reported as needing an app update before any
+    // checked-in schema is applied to it.
+    if let Some(major) = value
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .and_then(|version| version.split('.').next())
+        .and_then(|version| version.parse::<u64>().ok())
+        .filter(|major| *major > CURRENT_MANIFEST_MAJOR)
+    {
+        return Err(AppError::Source(format!(
+            "the setup package uses manifest format {major}, which needs a newer HOI4 Mod Setup. Update the app, then try again"
+        )));
+    }
     validate_manifest_schema(&value)?;
     let manifest: RemoteManifest = serde_json::from_value(value)
         .map_err(|error| AppError::Source(format!("manifest model is invalid: {error}")))?;
@@ -1147,12 +1160,20 @@ fn validate_manifest_schema(value: &Value) -> Result<(), AppError> {
     static SCHEMA: OnceLock<Value> = OnceLock::new();
     static SCHEMA_V4: OnceLock<Value> = OnceLock::new();
     static SCHEMA_V5: OnceLock<Value> = OnceLock::new();
+    static SCHEMA_V6: OnceLock<Value> = OnceLock::new();
     let major = value
         .get("schema_version")
         .and_then(Value::as_str)
         .and_then(|version| version.split('.').next())
         .and_then(|version| version.parse::<u64>().ok());
-    let schema = if major == Some(5) {
+    let schema = if major == Some(6) {
+        SCHEMA_V6.get_or_init(|| {
+            serde_json::from_str(include_str!(
+                "../../docs/schemas/remote-manifest.v6.schema.json"
+            ))
+            .expect("checked-in v6 remote manifest schema must be valid JSON")
+        })
+    } else if major == Some(5) {
         SCHEMA_V5.get_or_init(|| {
             serde_json::from_str(include_str!(
                 "../../docs/schemas/remote-manifest.v5.schema.json"
@@ -1215,6 +1236,77 @@ fn require_canonical_manifest_path(raw: &str, label: &str) -> Result<String, App
     Ok(normalized)
 }
 
+/// Format 6 declares how each client registers MCP. A project route must name
+/// a file the client's own component installs, so the installer never writes
+/// a client setting outside that client's package.
+fn validate_environment_mcp_declarations(
+    manifest: &RemoteManifest,
+    major: u64,
+) -> Result<(), AppError> {
+    for environment in &manifest.coding_environments {
+        let invalid = |detail: &str| {
+            AppError::Source(format!(
+                "coding environment {} has an invalid MCP declaration: {detail}",
+                environment.id
+            ))
+        };
+        if major < 6 {
+            if environment.mcp_support.is_some()
+                || environment.mcp_registration.is_some()
+                || environment.documentation_url.is_some()
+            {
+                return Err(invalid("MCP declarations need manifest format 6"));
+            }
+            continue;
+        }
+        if environment
+            .documentation_url
+            .as_deref()
+            .is_some_and(|url| !url.starts_with("https://") || url.len() > 300)
+        {
+            return Err(invalid("documentation must use an HTTPS address"));
+        }
+        match (
+            environment.mcp_support,
+            environment.mcp_registration.as_ref(),
+        ) {
+            (None, _) => return Err(invalid("mcp_support is required")),
+            (Some(McpSupport::Project), None) => {
+                return Err(invalid("a project route needs mcp_registration"))
+            }
+            (Some(McpSupport::Manual | McpSupport::None), Some(_)) => {
+                return Err(invalid("only a project route has an MCP file"))
+            }
+            (Some(McpSupport::Project), Some(registration)) => {
+                let path = require_canonical_manifest_path(&registration.path, "MCP registration")?;
+                let component = manifest
+                    .components
+                    .iter()
+                    .find(|component| component.id == registration.component_id)
+                    .ok_or_else(|| invalid("the registration component is not declared"))?;
+                if component.coding_environment.as_deref() != Some(environment.id.as_str()) {
+                    return Err(invalid(
+                        "the registration component belongs to another client",
+                    ));
+                }
+                let destination = component.destination.path.replace('\\', "/");
+                let installs_path = destination.trim_end_matches('/') == path
+                    || component
+                        .expected_files
+                        .iter()
+                        .any(|file| file.path.replace('\\', "/") == path);
+                if !installs_path {
+                    return Err(invalid(
+                        "the registration component does not install the MCP file",
+                    ));
+                }
+            }
+            (Some(McpSupport::Manual | McpSupport::None), None) => {}
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_manifest(
     manifest: &RemoteManifest,
     revision: Option<&str>,
@@ -1270,6 +1362,7 @@ pub fn validate_manifest(
             "the manifest does not declare its coding environments".into(),
         ));
     }
+    validate_environment_mcp_declarations(manifest, major)?;
     if manifest.manifest_id.trim().is_empty()
         || !Regex::new(r"^[a-z0-9][a-z0-9._-]*$")
             .expect("static manifest ID regex")
@@ -1373,6 +1466,27 @@ pub fn validate_manifest(
                 "environment component {} must declare coding_environment",
                 component.id
             )));
+        }
+        if !component.shared_coding_environments.is_empty() {
+            let owner = component.coding_environment.as_deref().ok_or_else(|| {
+                AppError::Source(format!(
+                    "component {} shares files without an owning coding environment",
+                    component.id
+                ))
+            })?;
+            let mut shared = HashSet::new();
+            for environment in &component.shared_coding_environments {
+                if major < 6
+                    || environment == owner
+                    || !declared_environments.contains(environment.as_str())
+                    || !shared.insert(environment.as_str())
+                {
+                    return Err(AppError::Source(format!(
+                        "component {} declares an invalid shared coding environment: {environment}",
+                        component.id
+                    )));
+                }
+            }
         }
         if component.platforms.is_empty() {
             return Err(AppError::Source(format!(
@@ -2348,6 +2462,7 @@ mod tests {
             description: None,
             category: ComponentCategory::Core,
             coding_environment: None,
+            shared_coding_environments: vec![],
             optional: false,
             platforms: vec![ManifestPlatform::All],
             source: SourceDefinition {
@@ -3654,5 +3769,129 @@ mod tests {
             image_generation: None,
             live_testing: None,
         }
+    }
+
+    fn format_six_fixture() -> Value {
+        let mut value: Value = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+        ))
+        .unwrap();
+        value["schema_version"] = serde_json::json!("6.0.0");
+        for environment in value["coding_environments"].as_array_mut().unwrap() {
+            let id = environment["id"].as_str().unwrap().to_string();
+            let mcp = crate::coding_environment::native_client(&id)
+                .and_then(|client| client.mcp)
+                .unwrap();
+            environment["mcp_support"] = serde_json::json!("project");
+            environment["mcp_registration"] = serde_json::json!({
+                "component_id": mcp.component_id,
+                "path": mcp.path,
+                "format": mcp.format,
+            });
+        }
+        value
+    }
+
+    fn parse_value(value: &Value) -> Result<RemoteManifest, AppError> {
+        parse_manifest(&serde_json::to_vec(value).unwrap(), None)
+    }
+
+    #[test]
+    fn format_six_mcp_declarations_and_shared_components_are_validated() {
+        let mut legacy: Value = serde_json::from_slice(include_bytes!(
+            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+        ))
+        .unwrap();
+        legacy["coding_environments"][0]["mcp_support"] = serde_json::json!("project");
+        assert!(
+            parse_value(&legacy).is_err(),
+            "format 5 has no MCP declarations"
+        );
+
+        let valid = format_six_fixture();
+        let manifest = parse_value(&valid).unwrap();
+        assert_eq!(manifest.schema_version, "6.0.0");
+        assert!(manifest
+            .coding_environments
+            .iter()
+            .all(|environment| environment.mcp_support == Some(McpSupport::Project)));
+
+        let shared = |environments: Value| {
+            let mut value = valid.clone();
+            let component = value["components"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|component| component["id"] == "runtime.codex.skills")
+                .unwrap();
+            component["shared_coding_environments"] = environments;
+            value
+        };
+        assert!(parse_value(&shared(serde_json::json!(["cursor", "opencode"]))).is_ok());
+        for invalid in [
+            serde_json::json!(["unknown_client"]),
+            serde_json::json!(["codex"]),
+            serde_json::json!(["cursor", "cursor"]),
+        ] {
+            assert!(parse_value(&shared(invalid.clone())).is_err(), "{invalid}");
+        }
+
+        let environment = |id: &str, edit: &dyn Fn(&mut Value)| {
+            let mut value = valid.clone();
+            let entry = value["coding_environments"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|environment| environment["id"] == id)
+                .unwrap();
+            edit(entry);
+            value
+        };
+        let invalid = [
+            environment("codex", &|entry| {
+                entry.as_object_mut().unwrap().remove("mcp_registration");
+            }),
+            environment("cursor", &|entry| {
+                entry["mcp_support"] = serde_json::json!("manual")
+            }),
+            environment("claude_code", &|entry| {
+                entry.as_object_mut().unwrap().remove("mcp_support");
+            }),
+            environment("claude_code", &|entry| {
+                entry["mcp_registration"]["component_id"] = serde_json::json!("runtime.cursor.mcp")
+            }),
+            environment("claude_code", &|entry| {
+                entry["mcp_registration"]["path"] = serde_json::json!(".claude/settings.json")
+            }),
+            environment("claude_code", &|entry| {
+                entry["mcp_registration"]["path"] = serde_json::json!("../.mcp.json")
+            }),
+            environment("claude_code", &|entry| {
+                entry["mcp_registration"]["format"] = serde_json::json!("yaml_servers")
+            }),
+            environment("qoder", &|entry| {
+                entry["documentation_url"] = serde_json::json!("http://example.com/mcp")
+            }),
+        ];
+        for (index, value) in invalid.iter().enumerate() {
+            assert!(
+                parse_value(value).is_err(),
+                "invalid declaration {index} was accepted"
+            );
+        }
+        let manual = environment("cursor", &|entry| {
+            entry["mcp_support"] = serde_json::json!("manual");
+            entry.as_object_mut().unwrap().remove("mcp_registration");
+            entry["documentation_url"] = serde_json::json!("https://docs.cursor.com/");
+        });
+        assert!(parse_value(&manual).is_ok());
+    }
+
+    #[test]
+    fn newer_manifest_formats_ask_for_an_app_update() {
+        let mut value = format_six_fixture();
+        value["schema_version"] = serde_json::json!("7.0.0");
+        let error = parse_value(&value).unwrap_err().to_string();
+        assert!(error.contains("needs a newer HOI4 Mod Setup"), "{error}");
     }
 }

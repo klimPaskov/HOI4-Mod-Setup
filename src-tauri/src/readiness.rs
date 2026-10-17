@@ -208,86 +208,141 @@ fn valid_text_file(path: &Path) -> bool {
             .is_some_and(|text| !text.trim().is_empty())
 }
 
+/// How readiness checks a selected client's HOI4 Agent Tools registration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum McpCheck {
+    /// MCP is not installed for this client on this platform.
+    NotRequired,
+    /// The client's project MCP file must register the shared route.
+    Route,
+    /// An older package installed a file the client never read; only its
+    /// structure is checked until the next update moves the route.
+    LegacyFile,
+}
+
+/// The MCP check for one client, given the components the installation
+/// selected.
+pub(crate) fn native_mcp_check<'a>(
+    environment: &str,
+    selected_components: impl Iterator<Item = &'a str> + Clone,
+    platform: Platform,
+) -> McpCheck {
+    if !crate::coding_environment::native_registration_required(
+        environment,
+        selected_components.clone(),
+        platform,
+    ) {
+        return McpCheck::NotRequired;
+    }
+    let legacy = crate::coding_environment::native_client(environment)
+        .and_then(|client| client.legacy_mcp)
+        .is_some_and(|legacy| {
+            selected_components
+                .clone()
+                .any(|selected| selected == legacy.component_id)
+        });
+    if legacy {
+        McpCheck::LegacyFile
+    } else {
+        McpCheck::Route
+    }
+}
+
+fn valid_skill_folder(root: &Path) -> bool {
+    bounded_agent_files(root, "SKILL.md")
+        .is_some_and(|files| !files.is_empty() && valid_frontmatter_files(&files))
+}
+
+fn valid_layout(project_root: &Path, layout: crate::coding_environment::Layout) -> bool {
+    use crate::coding_environment::Layout;
+    match layout {
+        Layout::Text(path) => valid_text_file(&project_root.join(path)),
+        Layout::Json(path) => valid_json_file(&project_root.join(path)),
+        Layout::Agents(folder, extension) => {
+            bounded_agent_files(&project_root.join(folder), extension).is_some_and(|files| {
+                !files.is_empty() && files.iter().all(|path| valid_text_file(path))
+            })
+        }
+        Layout::Skills(folder) => valid_skill_folder(&project_root.join(folder)),
+    }
+}
+
+fn registered_route(project_root: &Path, mcp: crate::coding_environment::NativeMcp) -> bool {
+    crate::flatten::read_bounded_regular_file_no_follow_under_root(
+        project_root,
+        mcp.path,
+        crate::native_mcp::MAX_CONFIG_BYTES as u64,
+    )
+    .ok()
+    .is_some_and(|bytes| {
+        crate::native_mcp::registration(mcp.format, &bytes)
+            .ok()
+            .flatten()
+            .is_some()
+    })
+}
+
 /// Validate the complete native package for one coding client. Native
 /// projections are generated from the canonical Claude Code files by the
 /// source synchronizers; readiness checks their presence and parseability
 /// without executing a client.
 #[cfg(test)]
 fn valid_coding_environment(project_root: &Path, environment: &str) -> bool {
-    valid_coding_environment_with_mcp(project_root, environment, true)
+    valid_coding_environment_with_mcp(project_root, environment, McpCheck::Route)
 }
 
 pub(crate) fn valid_coding_environment_with_mcp(
     project_root: &Path,
     environment: &str,
-    require_native_mcp_registration: bool,
+    mcp: McpCheck,
 ) -> bool {
-    match environment {
-        "codex" => {
-            fs::read_to_string(project_root.join(".codex/config.toml"))
-                .ok()
-                .is_some_and(|text| text.parse::<toml::Value>().is_ok())
-                && valid_subagent_tree(project_root)
-        }
-        "claude_code" => {
-            valid_text_file(&project_root.join("CLAUDE.md"))
-                && valid_json_file(&project_root.join(".claude/settings.json"))
-                && valid_text_file(&project_root.join(".claude/agent-map.md"))
-                && bounded_agent_files(&project_root.join(".claude/agents"), ".md").is_some_and(
-                    |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
-                )
-                && (!require_native_mcp_registration
-                    || valid_json_file(&project_root.join(".mcp.json")))
-        }
-        "cursor" => {
-            valid_text_file(&project_root.join(".cursor/agent-map.md"))
-                && (!require_native_mcp_registration
-                    || valid_json_file(&project_root.join(".cursor/mcp.json")))
-                && valid_json_file(&project_root.join(".cursor/settings.json"))
-                && bounded_agent_files(&project_root.join(".cursor/agents"), ".md").is_some_and(
-                    |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
-                )
-        }
-        "qoder" => {
-            valid_json_file(&project_root.join(".qoder/settings.json"))
-                && (!require_native_mcp_registration
-                    || valid_json_file(&project_root.join(".qoder/mcp.json")))
-                && valid_text_file(&project_root.join(".qoder/agent-map.md"))
-                && bounded_agent_files(&project_root.join(".qoder/agents"), ".md").is_some_and(
-                    |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
-                )
-        }
-        "opencode" => {
-            valid_json_file(&project_root.join("opencode.json"))
-                && valid_json_file(&project_root.join(".opencode/settings.json"))
-                && (!require_native_mcp_registration
-                    || valid_json_file(&project_root.join(".opencode/mcp.json")))
-                && valid_text_file(&project_root.join(".opencode/agent-map.md"))
-                && bounded_agent_files(&project_root.join(".opencode/agent"), ".md").is_some_and(
-                    |files| !files.is_empty() && files.iter().all(|path| valid_text_file(path)),
-                )
-        }
+    if environment == crate::coding_environment::CODEX {
+        // The Codex MCP route is checked by the dedicated Codex detection.
+        return fs::read_to_string(project_root.join(".codex/config.toml"))
+            .ok()
+            .is_some_and(|text| text.parse::<toml::Value>().is_ok())
+            && valid_subagent_tree(project_root);
+    }
+    let Some(client) = crate::coding_environment::native_client(environment) else {
         // An environment declared only by the manifest has no built-in layout
         // check; its installed files are verified by the managed-file checks.
-        _ => crate::coding_environment::is_supported(environment),
-    }
+        return crate::coding_environment::is_supported(environment);
+    };
+    client
+        .layout
+        .iter()
+        .all(|layout| valid_layout(project_root, *layout))
+        && match mcp {
+            McpCheck::NotRequired => true,
+            McpCheck::LegacyFile => client
+                .legacy_mcp
+                .is_some_and(|legacy| valid_json_file(&project_root.join(legacy.path))),
+            McpCheck::Route => client
+                .mcp
+                .is_some_and(|route| registered_route(project_root, route)),
+        }
 }
 
-fn native_mcp_registration_required(
+fn native_mcp_check_for_lock(
     components: &[LockComponent],
     environment: &str,
     platform: Platform,
-) -> bool {
-    if platform != Platform::Windows {
-        return false;
-    }
-    let Some(component_id) = crate::coding_environment::mcp_registration_component_id(environment)
-    else {
-        return false;
-    };
-    components.iter().any(|component| {
-        component.id == component_id && mcp_component_is_selected(&component.state)
-    })
+) -> McpCheck {
+    native_mcp_check(
+        environment,
+        components
+            .iter()
+            .filter(|component| {
+                mcp_component_is_selected(&component.state)
+                    && !(component.id == crate::mcp::COMPONENT_ID
+                        && matches!(
+                            component.validation.as_deref(),
+                            Some("planned_unavailable" | "unsupported_platform")
+                        ))
+            })
+            .map(|component| component.id.as_str()),
+        platform,
+    )
 }
 
 pub(crate) fn flattened_artifact_status(
@@ -1648,14 +1703,17 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
             && crate::coding_environment::selected_environment_ids(selection)
                 .iter()
                 .all(|environment| {
-                    let require_mcp = lock.as_ref().is_some_and(|lock| {
-                        native_mcp_registration_required(
-                            &lock.components,
-                            environment,
-                            Platform::current(),
-                        )
-                    });
-                    valid_coding_environment_with_mcp(project_root, environment, require_mcp)
+                    let mcp = lock
+                        .as_ref()
+                        .map(|lock| {
+                            native_mcp_check_for_lock(
+                                &lock.components,
+                                environment,
+                                Platform::current(),
+                            )
+                        })
+                        .unwrap_or(McpCheck::NotRequired);
+                    valid_coding_environment_with_mcp(project_root, environment, mcp)
                 })
         {
             "pass"
@@ -2058,6 +2116,50 @@ mod tests {
         assert!(!valid_subagent_tree(project.path()));
     }
 
+    fn write_native_package(project: &Path, environment: &str) {
+        let write = |relative: &str, content: &str| {
+            let path = project.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        };
+        let client = crate::coding_environment::native_client(environment).unwrap();
+        for layout in client.layout {
+            use crate::coding_environment::Layout;
+            match *layout {
+                Layout::Text(path) => write(path, "# Instructions\n"),
+                Layout::Json(path) => write(path, "{}\n"),
+                Layout::Agents(folder, extension) => write(
+                    &format!("{folder}/example{extension}"),
+                    "---\nname: example\ndescription: Example agent.\nmodel: haiku\n---\n\nBody.\n",
+                ),
+                Layout::Skills(folder) => write(
+                    &format!("{folder}/example/SKILL.md"),
+                    "---\nname: example\ndescription: Example skill.\n---\n\nBody.\n",
+                ),
+            }
+        }
+        if let Some(mcp) = client.mcp {
+            let route = match mcp.format {
+                crate::native_mcp::McpFormat::TomlMcpServers => {
+                    "[mcp_servers.hoi4_agent_tools]\ncommand = 'hoi4-agent-tools.cmd'\n".to_string()
+                }
+                crate::native_mcp::McpFormat::LocalCommandArray => serde_json::to_string(
+                    &json!({"mcp": {"hoi4_agent_tools": {"type": "local", "command": ["hoi4-agent-tools.cmd"]}}}),
+                )
+                .unwrap(),
+                crate::native_mcp::McpFormat::VscodeServers => serde_json::to_string(
+                    &json!({"servers": {"hoi4_agent_tools": {"type": "stdio", "command": "hoi4-agent-tools.cmd", "args": []}}}),
+                )
+                .unwrap(),
+                crate::native_mcp::McpFormat::JsonMcpServers => serde_json::to_string(
+                    &json!({"mcpServers": {"hoi4_agent_tools": {"command": "hoi4-agent-tools.cmd", "args": []}}}),
+                )
+                .unwrap(),
+            };
+            write(mcp.path, &route);
+        }
+    }
+
     #[test]
     fn readiness_parses_the_complete_native_package_for_every_environment() {
         let project = tempfile::tempdir().unwrap();
@@ -2066,7 +2168,6 @@ mod tests {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, content).unwrap();
         };
-
         write(
             ".codex/config.toml",
             "[mcp_servers.hoi4_agent_tools]\ncommand = 'hoi4-agent-tools.cmd'\n",
@@ -2075,91 +2176,169 @@ mod tests {
             ".codex/agents/example.toml",
             "name = 'example'\nfork_context = false\n",
         );
-        write("CLAUDE.md", "# Claude\n");
-        write(".claude/settings.json", "{}\n");
-        write(".claude/agent-map.md", "# Agents\n");
-        write(
-            ".claude/agents/example.md",
-            "---\nname: example\ndescription: Example agent.\nmodel: haiku\n---\n\nBody.\n",
-        );
-        write(".mcp.json", "{\"mcpServers\":{}}\n");
-        write(".cursor/settings.json", "{}\n");
-        write(".cursor/mcp.json", "{}\n");
-        write(".cursor/agent-map.md", "# Agents\n");
-        write(".cursor/agents/example.md", "# Example\n");
-        write(".qoder/settings.json", "{}\n");
-        write(".qoder/mcp.json", "{}\n");
-        write(".qoder/agent-map.md", "# Agents\n");
-        write(".qoder/agents/example.md", "# Example\n");
-        write("opencode.json", "{}\n");
-        write(".opencode/settings.json", "{}\n");
-        write(".opencode/mcp.json", "{}\n");
-        write(".opencode/agent-map.md", "# Agents\n");
-        write(".opencode/agent/example.md", "# Example\n");
-
-        for environment in crate::coding_environment::SUPPORTED {
+        for client in crate::coding_environment::NATIVE_CLIENTS {
+            if client.id != crate::coding_environment::CODEX {
+                write_native_package(project.path(), client.id);
+            }
+        }
+        for client in crate::coding_environment::NATIVE_CLIENTS {
+            let check = if client.mcp.is_some() && client.readiness_checks_mcp {
+                McpCheck::Route
+            } else {
+                McpCheck::NotRequired
+            };
             assert!(
-                valid_coding_environment(project.path(), environment),
-                "native package should be ready for {environment}"
+                valid_coding_environment_with_mcp(project.path(), client.id, check),
+                "native package should be ready for {}",
+                client.id
             );
         }
         fs::write(project.path().join(".cursor/settings.json"), "not json").unwrap();
         assert!(!valid_coding_environment(project.path(), "cursor"));
+        // A missing agent projection or skill copy blocks the client that
+        // needs it, not the others.
+        fs::remove_dir_all(project.path().join(".kiro/skills")).unwrap();
+        assert!(!valid_coding_environment(project.path(), "kiro"));
+        assert!(valid_coding_environment(project.path(), "qwen_code"));
+        fs::write(project.path().join(".gemini/agents/example.md"), "  \n").unwrap();
+        assert!(!valid_coding_environment(project.path(), "gemini_cli"));
+        // A manifest-only client has no built-in layout to check.
+        assert!(valid_coding_environment_with_mcp(
+            project.path(),
+            "future_client",
+            McpCheck::NotRequired
+        ));
     }
 
     #[test]
-    fn unsupported_native_mcp_registration_does_not_block_environment_readiness() {
-        let project = tempfile::tempdir().unwrap();
-        let write = |relative: &str, content: &str| {
-            let path = project.path().join(relative);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, content).unwrap();
-        };
-        write(".cursor/settings.json", "{}\n");
-        write(".cursor/agent-map.md", "# Agents\n");
-        write(".cursor/agents/example.md", "# Example\n");
+    fn native_mcp_readiness_requires_the_registered_route_not_just_parseable_json() {
+        for environment in [
+            "cursor",
+            "gemini_cli",
+            "github_copilot",
+            "kilo_code",
+            "grok_build",
+        ] {
+            let project = tempfile::tempdir().unwrap();
+            write_native_package(project.path(), environment);
+            assert!(
+                valid_coding_environment(project.path(), environment),
+                "{environment}"
+            );
+            let mcp = crate::coding_environment::native_client(environment)
+                .unwrap()
+                .mcp
+                .unwrap();
+            let empty: &[u8] = if mcp.format.is_toml() {
+                b"[mcp_servers]\n"
+            } else {
+                b"{}"
+            };
+            fs::write(project.path().join(mcp.path), empty).unwrap();
+            assert!(
+                valid_coding_environment_with_mcp(
+                    project.path(),
+                    environment,
+                    McpCheck::NotRequired
+                ),
+                "{environment}"
+            );
+            assert!(
+                !valid_coding_environment(project.path(), environment),
+                "{environment}"
+            );
+            fs::remove_file(project.path().join(mcp.path)).unwrap();
+            assert!(
+                !valid_coding_environment(project.path(), environment),
+                "{environment}"
+            );
+        }
+    }
 
+    #[test]
+    fn legacy_opencode_locks_keep_the_structural_check_until_updated() {
+        let project = tempfile::tempdir().unwrap();
+        write_native_package(project.path(), "opencode");
+        fs::write(project.path().join("opencode.json"), "{}").unwrap();
+        fs::write(
+            project.path().join(".opencode/mcp.json"),
+            "{\"mcpServers\":{}}",
+        )
+        .unwrap();
         assert!(valid_coding_environment_with_mcp(
             project.path(),
-            "cursor",
-            false
+            "opencode",
+            McpCheck::LegacyFile
         ));
         assert!(!valid_coding_environment_with_mcp(
             project.path(),
-            "cursor",
-            true
+            "opencode",
+            McpCheck::Route
+        ));
+        fs::write(project.path().join(".opencode/mcp.json"), "not json").unwrap();
+        assert!(!valid_coding_environment_with_mcp(
+            project.path(),
+            "opencode",
+            McpCheck::LegacyFile
         ));
     }
 
     #[test]
-    fn native_mcp_registration_requirement_tracks_platform_support() {
-        let installed = LockComponent {
-            id: "runtime.cursor.mcp".into(),
+    fn native_mcp_check_tracks_platform_selection_and_legacy_components() {
+        let component = |id: &str, state: &str| LockComponent {
+            id: id.into(),
             version: None,
-            state: "installed".into(),
+            state: state.into(),
             source_revision: None,
             validation: Some("pass".into()),
         };
-        assert!(native_mcp_registration_required(
-            std::slice::from_ref(&installed),
-            "cursor",
-            Platform::Windows
-        ));
-        assert!(!native_mcp_registration_required(
-            std::slice::from_ref(&installed),
-            "cursor",
-            Platform::Macos
-        ));
-
-        let unsupported = LockComponent {
-            state: "unsupported_platform".into(),
-            ..installed
-        };
-        assert!(!native_mcp_registration_required(
-            &[unsupported],
-            "cursor",
-            Platform::Windows
-        ));
+        let cursor = [
+            component("runtime.cursor.mcp", "installed"),
+            component("mcp.hoi4_agent_tools", "installed"),
+        ];
+        for platform in [Platform::Windows, Platform::Linux] {
+            assert_eq!(
+                native_mcp_check_for_lock(&cursor, "cursor", platform),
+                McpCheck::Route
+            );
+        }
+        assert_eq!(
+            native_mcp_check_for_lock(&cursor, "cursor", Platform::Macos),
+            McpCheck::NotRequired
+        );
+        let unsupported = [
+            component("runtime.cursor.mcp", "unsupported_platform"),
+            component("mcp.hoi4_agent_tools", "installed"),
+        ];
+        assert_eq!(
+            native_mcp_check_for_lock(&unsupported, "cursor", Platform::Windows),
+            McpCheck::NotRequired
+        );
+        let legacy = [
+            component("runtime.opencode.config", "installed"),
+            component("runtime.opencode.mcp", "installed"),
+            component("mcp.hoi4_agent_tools", "installed"),
+        ];
+        assert_eq!(
+            native_mcp_check_for_lock(&legacy, "opencode", Platform::Windows),
+            McpCheck::LegacyFile
+        );
+        let current = [
+            component("runtime.opencode.config", "installed"),
+            component("mcp.hoi4_agent_tools", "installed"),
+        ];
+        assert_eq!(
+            native_mcp_check_for_lock(&current, "opencode", Platform::Linux),
+            McpCheck::Route
+        );
+        let manual = [
+            component("runtime.cline", "installed"),
+            component("mcp.hoi4_agent_tools", "installed"),
+        ];
+        assert_eq!(
+            native_mcp_check_for_lock(&manual, "cline", Platform::Windows),
+            McpCheck::NotRequired
+        );
     }
 
     #[test]

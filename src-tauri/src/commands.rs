@@ -114,6 +114,9 @@ struct SourceManifestPreview {
     components: Vec<ComponentDefinition>,
     profiles: Vec<Profile>,
     coding_environments: Vec<CodingEnvironmentDefinition>,
+    /// Declared clients this app version or platform cannot install.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unavailable_coding_environments: Vec<UnavailableCodingEnvironment>,
     #[serde(skip_serializing_if = "Option::is_none")]
     image_generation: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1490,6 +1493,10 @@ fn is_allowed_external_url(url: &str) -> bool {
         "https://klimpaskov.github.io/Agentic-HOI4-Modding/",
     ];
     ALLOWED_URLS.contains(&url)
+        || coding_environment::NATIVE_CLIENTS
+            .iter()
+            .filter_map(|client| client.documentation_url)
+            .any(|documentation| documentation == url)
         || ai::provider_profiles()
             .iter()
             .filter_map(|profile| profile.account_url.as_deref())
@@ -3960,11 +3967,23 @@ fn installed_mcp_target(
     environments.sort();
     environments.dedup();
     for environment in environments {
-        let destination = image_client_config_path(environment).ok_or_else(|| {
-            AppError::Process(
-                "a selected coding client has no verified MCP registration route".into(),
-            )
-        })?;
+        // Clients whose MCP servers live only in user or IDE settings are a
+        // manual step reported by readiness; there is no project route to
+        // verify for them.
+        if matches!(
+            coding_environment::mcp_support(&manifest, environment),
+            Some(McpSupport::Manual | McpSupport::None)
+        ) {
+            continue;
+        }
+        let destination = coding_environment::native_client(environment)
+            .and_then(|client| client.mcp)
+            .map(|mcp| mcp.path)
+            .ok_or_else(|| {
+                AppError::Process(
+                    "a selected coding client has no verified MCP registration route".into(),
+                )
+            })?;
         let bytes = crate::flatten::read_bounded_regular_file_no_follow_under_root(
             project_root,
             destination,
@@ -4011,60 +4030,10 @@ fn retarget_native_mcp_config(
     destination: &str,
     launch: Option<&(String, Vec<String>)>,
 ) -> Result<Vec<u8>, AppError> {
-    if destination == ".codex/config.toml" {
-        let mut config: toml::Value = std::str::from_utf8(bytes)
-            .map_err(|_| AppError::Source("client MCP configuration is not UTF-8".into()))?
-            .parse()
-            .map_err(|e: toml::de::Error| AppError::Source(e.to_string()))?;
-        if let Some(servers) = config
-            .get_mut("mcp_servers")
-            .and_then(toml::Value::as_table_mut)
-        {
-            if let Some((command, args)) = launch {
-                if let Some(route) = servers
-                    .get_mut("hoi4_agent_tools")
-                    .and_then(toml::Value::as_table_mut)
-                {
-                    route.insert("command".into(), toml::Value::String(command.clone()));
-                    route.insert(
-                        "args".into(),
-                        toml::Value::Array(args.iter().cloned().map(toml::Value::String).collect()),
-                    );
-                }
-            } else {
-                servers.remove("hoi4_agent_tools");
-            }
-        }
-        return toml::to_string_pretty(&config)
-            .map(String::into_bytes)
-            .map_err(|e| AppError::Source(e.to_string()));
-    }
-    let mut config: Value = serde_json::from_slice(bytes)?;
-    let key = if destination == "opencode.json" {
-        "mcp"
-    } else {
-        "mcpServers"
+    let Some((_, route)) = coding_environment::mcp_route_for_path(destination) else {
+        return Ok(bytes.to_vec());
     };
-    if let Some(servers) = config.get_mut(key).and_then(Value::as_object_mut) {
-        if let Some((command, args)) = launch {
-            if let Some(route) = servers
-                .get_mut("hoi4_agent_tools")
-                .and_then(Value::as_object_mut)
-            {
-                if key == "mcp" {
-                    let mut command_line = vec![command.clone()];
-                    command_line.extend(args.clone());
-                    route.insert("command".into(), serde_json::json!(command_line));
-                } else {
-                    route.insert("command".into(), serde_json::json!(command));
-                    route.insert("args".into(), serde_json::json!(args));
-                }
-            }
-        } else {
-            servers.remove("hoi4_agent_tools");
-        }
-    }
-    serde_json::to_vec_pretty(&config).map_err(AppError::from)
+    crate::native_mcp::retarget(route.format, bytes, launch)
 }
 
 #[tauri::command(async)]
@@ -4405,6 +4374,10 @@ fn preview_source_manifest_blocking(
     let client = HttpSourceClient::new().map_err(command_error)?;
     let resolution = resolve_source(&client, &request).map_err(command_error)?;
     let coding_environments = crate::coding_environment::definitions(&resolution.manifest);
+    let unavailable_coding_environments = crate::coding_environment::unavailable_definitions(
+        &resolution.manifest,
+        Platform::current(),
+    );
     Ok(SourceManifestPreview {
         schema_version: resolution.manifest.schema_version.clone(),
         manifest_id: resolution.manifest.manifest_id.clone(),
@@ -4413,6 +4386,7 @@ fn preview_source_manifest_blocking(
         components: resolution.manifest.components,
         profiles: resolution.manifest.profiles,
         coding_environments,
+        unavailable_coding_environments,
         image_generation: resolution.manifest.image_generation.clone(),
         live_testing: resolution.manifest.live_testing.clone(),
         local_source: crate::local_source::configured_repository()
@@ -6319,14 +6293,7 @@ fn image_server_route(provider: &Value, _project_root: &Path) -> Option<serde_js
 }
 
 fn image_client_config_path(environment: &str) -> Option<&'static str> {
-    match environment {
-        coding_environment::CLAUDE_CODE => Some(".mcp.json"),
-        coding_environment::CODEX => Some(".codex/config.toml"),
-        coding_environment::CURSOR => Some(".cursor/mcp.json"),
-        coding_environment::QODER => Some(".qoder/mcp.json"),
-        coding_environment::OPENCODE => Some("opencode.json"),
-        _ => None,
-    }
+    coding_environment::image_and_live_config_path(environment)
 }
 
 fn image_client_config_ownership(
@@ -6350,10 +6317,9 @@ fn image_client_config_source_destinations(
         .components
         .iter()
         .filter(|component| {
-            component
-                .coding_environment
-                .as_ref()
-                .is_some_and(|environment| selected.iter().any(|selected| selected == environment))
+            selected
+                .iter()
+                .any(|environment| coding_environment::serves_environment(component, environment))
                 && component
                     .platforms
                     .iter()
@@ -6425,8 +6391,9 @@ fn merge_existing_image_client_config(
             )))
         }
     };
-    let normalized = destination.replace('\\', "/").to_ascii_lowercase();
-    if normalized == ".codex/config.toml" {
+    if coding_environment::config_format_for_path(destination)
+        .is_some_and(crate::native_mcp::McpFormat::is_toml)
+    {
         let incoming_text = std::str::from_utf8(incoming).map_err(|error| {
             AppError::Source(format!("Codex configuration is not UTF-8: {error}"))
         })?;
@@ -6754,14 +6721,8 @@ fn adapt_image_generation_client_config_for_platform(
         project_root,
     )?;
     let normalized = destination.replace('\\', "/").to_ascii_lowercase();
-    let environment = match normalized.as_str() {
-        ".mcp.json" => Some(coding_environment::CLAUDE_CODE),
-        ".cursor/mcp.json" => Some(coding_environment::CURSOR),
-        ".qoder/mcp.json" => Some(coding_environment::QODER),
-        "opencode.json" => Some(coding_environment::OPENCODE),
-        ".codex/config.toml" => Some(coding_environment::CODEX),
-        _ => None,
-    };
+    let route = coding_environment::mcp_route_for_path(destination);
+    let environment = route.map(|(client, _)| client.id);
     let disabled = LiveTestingSelection {
         provider: "none".into(),
         ..Default::default()
@@ -6775,8 +6736,8 @@ fn adapt_image_generation_client_config_for_platform(
     } else {
         live_selection
     };
-    let image_bytes =
-        if matches!(platform, Platform::Windows | Platform::Linux) && environment.is_some() {
+    let image_bytes = match route {
+        Some(_) if matches!(platform, Platform::Windows | Platform::Linux) => {
             let target = crate::mcp::manifest_target_for_platform(manifest, platform).ok();
             if platform == Platform::Windows && target.is_none() {
                 image_bytes
@@ -6787,9 +6748,14 @@ fn adapt_image_generation_client_config_for_platform(
                     .transpose()?;
                 retarget_native_mcp_config(&image_bytes, destination, launch.as_ref())?
             }
-        } else {
-            image_bytes
-        };
+        }
+        // A settings file installed on every platform never keeps a route to
+        // a tools package that does not exist here.
+        Some((_, mcp)) if mcp.shared_file => {
+            retarget_native_mcp_config(&image_bytes, destination, None)?
+        }
+        _ => image_bytes,
+    };
     let adapted =
         crate::live_testing::adapt_config(&image_bytes, destination, live_selection, platform)?;
     // Historical packages without provider adaptation must remain reproducible
@@ -6813,20 +6779,9 @@ fn adapt_image_only_client_config(
     coding_environments: &CodingEnvironmentSelection,
     project_root: &Path,
 ) -> Result<Vec<u8>, AppError> {
-    let normalized = destination.replace('\\', "/").to_ascii_lowercase();
-    let environment = if normalized == ".mcp.json" {
-        Some(coding_environment::CLAUDE_CODE)
-    } else if normalized == ".cursor/mcp.json" {
-        Some(coding_environment::CURSOR)
-    } else if normalized == ".qoder/mcp.json" {
-        Some(coding_environment::QODER)
-    } else if normalized == "opencode.json" {
-        Some(coding_environment::OPENCODE)
-    } else if normalized == ".codex/config.toml" {
-        Some(coding_environment::CODEX)
-    } else {
-        None
-    };
+    let environment = coding_environment::mcp_route_for_path(destination)
+        .filter(|(client, _)| client.image_and_live_routes)
+        .map(|(client, _)| client.id);
     let Some(environment) = environment.filter(|environment| {
         coding_environment::selected_environment_ids(coding_environments)
             .iter()
@@ -9011,16 +8966,10 @@ fn maintenance_conflicts(
         .collect()
 }
 
+/// Native client MCP files are merged with the project's local content so
+/// user-owned servers and settings survive install, update, and repair.
 fn is_image_generation_client_config_path(path: &str) -> bool {
-    matches!(
-        path.replace('\\', "/").to_ascii_lowercase().as_str(),
-        ".mcp.json"
-            | ".codex/config.toml"
-            | ".cursor/mcp.json"
-            | ".qoder/mcp.json"
-            | "opencode.json"
-            | ".opencode/mcp.json"
-    )
+    coding_environment::is_native_mcp_config_path(path)
 }
 
 #[tauri::command(async)]
@@ -9835,12 +9784,9 @@ fn build_maintenance_plan_blocking(
                             "codex.config",
                         ]
                         .contains(&component.id.as_str())
-                            || component
-                                .coding_environment
-                                .as_deref()
-                                .is_some_and(|environment| {
-                                    selected_environments.iter().any(|id| id == environment)
-                                })
+                            || selected_environments.iter().any(|environment| {
+                                coding_environment::serves_environment(component, environment)
+                            })
                     })
                     .map(|component| component.id.clone())
                     .collect::<Vec<_>>();
@@ -11224,12 +11170,29 @@ fn open_in_coding_environment(
             ),
         });
     }
-    Ok(OpenInCodexResult {
-        opened: false,
-        message: format!(
+    // Other clients are never launched: their executables have no verified
+    // identity here. The message names the client and its documented command.
+    let message = match coding_environment::native_client(&environment) {
+        Some(client) => match client.open_command {
+            Some(command) => format!(
+                "Open a terminal in {} and run {command} to start {}.",
+                root.display(),
+                client.display_name
+            ),
+            None => format!(
+                "Open this folder in {}: {}",
+                client.display_name,
+                root.display()
+            ),
+        },
+        None => format!(
             "Open this folder in your coding environment: {}",
             root.display()
         ),
+    };
+    Ok(OpenInCodexResult {
+        opened: false,
+        message,
     })
 }
 
@@ -13439,17 +13402,15 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
     #[test]
     fn native_mcp_retargeting_preserves_custom_routes_and_source_environment_for_every_client() {
         let launch = ("/usr/bin/node".to_string(), vec!["/home/example/.local/share/hoi4-mod-setup/npm/lib/node_modules/hoi4-agent-tools/dist/bin/stdio.js".to_string()]);
-        for path in [
-            ".mcp.json",
-            ".cursor/mcp.json",
-            ".qoder/mcp.json",
-            "opencode.json",
-        ] {
-            let key = if path == "opencode.json" {
-                "mcp"
-            } else {
-                "mcpServers"
-            };
+        let json_routes = coding_environment::NATIVE_CLIENTS
+            .iter()
+            .filter_map(|client| client.mcp)
+            .filter(|mcp| !mcp.format.is_toml())
+            .collect::<Vec<_>>();
+        assert!(json_routes.len() >= 10);
+        for mcp in json_routes {
+            let path = mcp.path;
+            let key = mcp.format.servers_key();
             let bytes = serde_json::to_vec(&serde_json::json!({(key):{"hoi4_agent_tools":{"command":"hoi4-agent-tools.cmd","args":["old"],"env":{"HOI4_AGENT_STDIO_IDLE_EXIT_MINUTES":"30"}},"custom":{"command":"keep-me"}}})).unwrap();
             let value: Value = serde_json::from_slice(
                 &retarget_native_mcp_config(&bytes, path, Some(&launch)).unwrap(),
@@ -13460,7 +13421,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
                 value[key]["hoi4_agent_tools"]["env"]["HOI4_AGENT_STDIO_IDLE_EXIT_MINUTES"],
                 "30"
             );
-            if key == "mcp" {
+            if mcp.format == crate::native_mcp::McpFormat::LocalCommandArray {
                 assert_eq!(
                     value[key]["hoi4_agent_tools"]["command"],
                     serde_json::json!([launch.0, launch.1[0]])
@@ -13498,6 +13459,23 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
         assert_eq!(
             removed["mcp_servers"]["custom"]["command"].as_str(),
             Some("keep-me")
+        );
+        // Grok Build shares the TOML route shape; an unregistered or legacy
+        // path is never rewritten.
+        let grok: toml::Value = String::from_utf8(
+            retarget_native_mcp_config(source, ".grok/config.toml", Some(&launch)).unwrap(),
+        )
+        .unwrap()
+        .parse()
+        .unwrap();
+        assert_eq!(
+            grok["mcp_servers"]["hoi4_agent_tools"]["command"].as_str(),
+            Some(launch.0.as_str())
+        );
+        let legacy = br#"{"mcpServers":{"hoi4_agent_tools":{"command":["hoi4-agent-tools.cmd"]}}}"#;
+        assert_eq!(
+            retarget_native_mcp_config(legacy, ".opencode/mcp.json", Some(&launch)).unwrap(),
+            legacy.to_vec()
         );
     }
 
