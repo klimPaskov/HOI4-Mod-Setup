@@ -288,13 +288,20 @@ impl Collector<'_> {
 pub(crate) fn clean_text(value: &str, limit: usize) -> String {
     static LOCAL: OnceLock<Regex> = OnceLock::new();
     static LINK: OnceLock<Regex> = OnceLock::new();
-    let local =
-        LOCAL.get_or_init(|| Regex::new(r"(?i)(?:[a-z]:[\\/]|\\\\|/users/|/home/|/mnt/)").unwrap());
-    if local.is_match(value) {
+    // Links are replaced first so a URL scheme such as `https:/` is never
+    // mistaken for a drive letter. Absolute roots must start a token so a
+    // contained relative path such as `gfx/home/` is preserved.
+    let link = LINK.get_or_init(|| Regex::new(r"(?i)\b(?:https?|ftp|file)://\S+").unwrap());
+    let value = link.replace_all(value, "[link]");
+    let local = LOCAL.get_or_init(|| {
+        Regex::new(
+            r"(?i)(?:^|[^a-z0-9_.\-/\\])(?:[a-z]:[\\/]|\\\\|/(?:users|home|mnt|private|var|tmp)/|~/)",
+        )
+        .unwrap()
+    });
+    if local.is_match(&value) {
         return "[machine-local reference omitted]".into();
     }
-    let link = LINK.get_or_init(|| Regex::new(r"https?://\S+").unwrap());
-    let value = link.replace_all(value, "[link]");
     redact_secrets(&value, &[]).chars().take(limit).collect()
 }
 
@@ -889,6 +896,21 @@ mod tests {
                 calls.get() > 1
             })
             .is_err());
+        put(dir.path(), "empty.txt", b"");
+        assert!(root
+            .read_prefix_with_check("empty.txt", 4, &|| true)
+            .is_err());
+        assert_eq!(
+            root.read_prefix_with_check("empty.txt", 4, &|| false)
+                .unwrap(),
+            (Vec::new(), 0)
+        );
+        assert!(root
+            .read_prefix_with_check("sample.txt", 0, &|| false)
+            .is_err());
+        assert!(root
+            .read_prefix_with_check("sample.txt", 1024 * 1024 + 1, &|| false)
+            .is_err());
     }
 
     #[cfg(unix)]
@@ -925,5 +947,37 @@ mod tests {
             clean_text("See https://example.com/?token=private", 600),
             "See [link]"
         );
+        assert_eq!(
+            clean_text("Docs: https://example.com/a and http://x.test/b", 600),
+            "Docs: [link] and [link]"
+        );
+        for local in [
+            "Copy D:/Games/mod",
+            r"Read C:\mods\x",
+            r"\\server\share\mod",
+            "/home/user/mod",
+            "/Users/user/mod",
+            "/mnt/c/mod",
+            "~/mods/x",
+        ] {
+            assert_eq!(
+                clean_text(local, 600),
+                "[machine-local reference omitted]",
+                "{local}"
+            );
+        }
+        assert_eq!(clean_text("file:///C:/Users/x", 600), "[link]");
+        for relative in [
+            "gfx/home/flags.dds",
+            "common/users/x.txt",
+            "events/mnt_events.txt",
+        ] {
+            assert_eq!(clean_text(relative, 600), relative);
+        }
+        assert_eq!(
+            clean_text("ratio a:b and key: value", 600),
+            "ratio a:b and key: value"
+        );
+        assert_eq!(clean_text("abcdef", 3), "abc");
     }
 }

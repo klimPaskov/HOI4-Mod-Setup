@@ -504,6 +504,11 @@ impl BoundedReadRoot {
             }
             bytes.extend_from_slice(&chunk[..read]);
         }
+        // A cancellation raised during the final chunk, or for an empty file,
+        // is honored before the sample is returned.
+        if should_stop() {
+            return Err(AppError::Scan("profile read cancelled".into()));
+        }
         let after = file.metadata()?;
         verify_open_file_contained(&file, &self.canonical, relative)?;
         if bytes.len() != length

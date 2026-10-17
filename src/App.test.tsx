@@ -1797,11 +1797,30 @@ describe("HOI4 Mod Setup wizard", () => {
 
     expect(screen.getByText("Checking Git state")).toBeInTheDocument();
     expect(screen.getByText(".git")).toBeInTheDocument();
-    expect(screen.getByText(/12 files/)).toBeInTheDocument();
+    expect(screen.getByText(/12 setup files, 4 setup directories/)).toBeInTheDocument();
+    expect(screen.queryByText(/files indexed/)).not.toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: "Project scan progress" })).not.toHaveAttribute("aria-valuenow");
     expect(screen.getByRole("progressbar", { name: "Project scan progress" })).toHaveAttribute("aria-valuetext", "Scan in progress");
     fireEvent.click(screen.getByRole("button", { name: "Cancel scan" }));
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("separates indexed project files and content samples from setup files during profiling", () => {
+    const progress: ScanProgress = {
+      stage: "profiling_project",
+      currentPath: "common/national_focus/germany.txt",
+      filesScanned: 12,
+      directoriesScanned: 4,
+      bytesRead: 3 * 1024 * 1024,
+      profileStats: { files_indexed: 842, directories_indexed: 97, samples_read: 31, bytes_read: 3 * 1024 * 1024 - 4096, excluded_entries: 5, coverage: "complete" },
+    };
+    render(<Scan state={{ mode: "existing" } as unknown as WizardState} complete={false} progress={progress} partial={false} limitsHit={[]} canCancel cancellationRequested={false} onCancel={vi.fn().mockResolvedValue(undefined)} />);
+
+    expect(screen.getByText("common/national_focus/germany.txt")).toBeInTheDocument();
+    expect(screen.getByText(/842 files indexed, 31 content samples, 12 setup files/)).toBeInTheDocument();
+    expect(screen.queryByText(/setup directories/)).not.toBeInTheDocument();
+    expect(screen.getByText(/3\.0 MB read/)).toBeInTheDocument();
+    expect(screen.getByText("Profiling the mod")).toBeInTheDocument();
   });
 
   it("keeps a truncated scan visibly partial and does not call it a full scan", () => {
