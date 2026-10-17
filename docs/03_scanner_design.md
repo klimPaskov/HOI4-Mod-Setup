@@ -119,8 +119,9 @@ provider has write access.
    surfaces, and an exact top-level `fork_context=false` gate where applicable.
    Helpers, assets, and model choices are reviewed later through selected
    component and merge previews rather than executed or inferred by the scan.
-   Native Claude Code, Codex, Cursor, Qoder, and OpenCode files are detected
-   inside the selected root. A validated managed lock supplies the recorded
+   Native files for every client in the coding-client registry are detected
+   inside the selected root. Client folders are observed by presence only;
+   only their small MCP files are read and parsed. A validated managed lock supplies the recorded
    primary and additional environment selection; loose files are merged into
    the detected set, and Codex is the compatibility migration default only
    when no valid recorded selection exists.

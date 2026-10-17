@@ -57,9 +57,9 @@ Read:
 - Latest mode records an exact commit.
 - Pinned mode is reproducible.
 - Coding environments are a separate composable selection: exactly one primary
-  (Claude Code by default) plus any additional supported clients (Codex,
-  Cursor, Qoder, or OpenCode). The resolved manifest owns each complete native
-  package; the setup assistant and Core/Core plus 3D profiles do not encode
+  (Claude Code by default) plus any additional offered clients. The resolved
+  manifest owns each complete native package and, from format 6, each
+  client's MCP support (`docs/36_coding_environment_catalog.md`); the setup assistant and Core/Core plus 3D profiles do not encode
   environment combinations.
 - `CLAUDE.md`, `.claude/skills/`, and `.claude/agents/` are the canonical
   authoring package. The adapted `AGENTS.md`, `.agents/skills/`,

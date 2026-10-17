@@ -115,7 +115,9 @@ schema, and Rust remains the authority for deterministic facts and writes.
 Coding-client selection is a separate setup step from the setup assistant and
 from workflow profiles such as Core or Core plus 3D. Exactly one primary client
 is required. New installs use the manifest-declared default, currently Claude
-Code; Codex, Cursor, Qoder, and OpenCode may be added alongside it. Changing
+Code; any other offered client may be added alongside it. Format 6 packages
+declare each client's MCP support (`project`, `manual`, or `none`); see
+`docs/36_coding_environment_catalog.md`. Changing
 the primary client automatically removes it from the additional list.
 
 The resolved source manifest supplies a complete native package for each

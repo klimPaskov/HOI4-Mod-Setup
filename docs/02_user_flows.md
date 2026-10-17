@@ -79,7 +79,9 @@ Choose latest, pinned commit, or pinned release. Select components and review au
 
 After identity or scan review, choose exactly one primary coding environment;
 new installs use the manifest-declared default (currently Claude Code). Add any
-number of the other supported clients: Codex, Cursor, Qoder, and OpenCode. The
+number of the other offered clients (Codex, Cursor, Qoder, and OpenCode, plus
+the format 6 clients in `docs/36_coding_environment_catalog.md`). Clients this
+app version or platform cannot install appear under "Not available". The
 primary is removed from the additional choices whenever it changes. Existing
 projects preserve a valid recorded primary, including an older Codex selection;
 projects without one use Codex as the compatibility migration default. This

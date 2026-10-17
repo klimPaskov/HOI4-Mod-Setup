@@ -16,6 +16,9 @@ You can update the setup, repair it, or add workflows later.
 
 Choose any supported coding client. Codex, Claude Code, Cursor, Qoder, and
 OpenCode can use the same modding guidance through their own client packages.
+Setup packages in manifest format 6 add GitHub Copilot (VS Code), Gemini CLI,
+Antigravity, Grok Build, Kilo Code, Kiro, Qwen Code, Cline, Devin Desktop,
+Augment, Continue, and Aider.
 The workflow comes from [Agentic HOI4 Modding](https://github.com/klimPaskov/Agentic-HOI4-Modding).
 It also installs [HOI4 Agent Tools](https://github.com/klimPaskov/hoi4-agent-tools), which lets your agent build focus trees, events, decisions and maps, and offers optional live testing with [Clausewitz MCP by smerss](https://github.com/smerss/Clausewitz-MCP) or experimental [HOI4 Live Tools](https://github.com/klimPaskov/HOI4-Live-Tools).
 
@@ -85,7 +88,10 @@ subagents, client configuration, and Git state, then shows what needs attention.
 ### Choose your coding clients and components
 
 Select any supported coding client as your main one, then add other clients you use.
-Codex, Claude Code, Cursor, Qoder, and OpenCode are supported.
+Codex, Claude Code, Cursor, Qoder, and OpenCode are supported, and setup
+packages in manifest format 6 add twelve more clients. Cline, Devin Desktop,
+Augment, and Continue keep MCP servers in their own settings, so the Ready
+screen links their setup guide; Aider has no MCP support.
 
 ![Choose one primary coding environment and any additional clients](docs/screenshots/15-coding-environments.png)
 

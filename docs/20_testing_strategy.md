@@ -89,8 +89,14 @@ may use a real account; ordinary CI must not.
   for new installs, validates exactly one primary, filters the primary from
   additional choices, and resolves every primary/additional combination against
   the published manifest
-- complete native package parsing for Claude Code, Codex, Cursor, Qoder, and
-  OpenCode; canonical Claude-file-to-projection synchronization and drift checks
+- complete native package parsing for every registry client, the registered
+  MCP route in each project MCP format, the legacy OpenCode structural check,
+  and format 6 availability gating; canonical Claude-file-to-projection
+  synchronization and drift checks
+- hosted candidate acceptance (`clients`): update a Latest install to the
+  pinned format 6 source, add every client, deselect clients while keeping a
+  modified agent and a user MCP server, repair a deleted projection, and refuse
+  an older format that lacks the recorded clients
 - existing-project environment detection, preservation of a recorded Codex or
   other primary, compatibility migration when no primary is recorded,
   managed-file preservation, deselection removal rules, and persisted selections

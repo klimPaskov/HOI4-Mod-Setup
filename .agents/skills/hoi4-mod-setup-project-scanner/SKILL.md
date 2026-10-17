@@ -57,11 +57,17 @@ Detect only with evidence:
 - absolute paths and machine-local assumptions
 - possible install conflicts
 
-Detect native coding environments only inside the selected root: Claude Code
-(`CLAUDE.md`, `.claude/`, and `.mcp.json`) is the canonical package; Codex
-(`.codex/config.toml` and generated TOML agents), Cursor (`.cursor/`), Qoder
-(`.qoder/`), and OpenCode (`opencode.json` and `.opencode/`) are native client
-surfaces. Prefer the managed lock's recorded primary/additional selection; for
+Detect native coding environments only inside the selected root, from the
+markers in the `NATIVE_CLIENTS` registry (`src-tauri/src/coding_environment.rs`).
+Claude Code (`CLAUDE.md`, `.claude/`, and `.mcp.json`) is the canonical package;
+Codex is detected only by `.codex/config.toml`, because generated TOML agents
+are installed for every selection. The registry's `scan_directories` are the
+only extra folders the scanner enumerates, one level each. Files there and
+exact client markers use a presence-only content policy: they are observed
+without reading their bytes, because client folders such as `.continue/` or
+`.aider.conf.yml` can hold credentials. Only the registry's small
+`config_files` are read, retained, and parsed; an unparseable JSON or TOML file
+is a blocking `conflict.<client>.config.parse`. Prefer the managed lock's recorded primary/additional selection; for
 fresh installs the manifest default is Claude Code, while a legacy project
 without a recorded primary uses Codex as the compatibility migration default.
 This finding is bounded setup evidence, not a reason to widen the setup scan or
