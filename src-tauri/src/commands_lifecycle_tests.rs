@@ -1034,6 +1034,7 @@ mod offline_lifecycle {
                     generated_bytes: None,
                     executable: operation.executable,
                     platform: operation.platform,
+                    installer_created: false,
                 })
             })
             .collect()

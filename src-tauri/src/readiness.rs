@@ -325,9 +325,15 @@ pub(crate) fn valid_coding_environment_with_mcp(
 
 fn native_mcp_check_for_lock(
     components: &[LockComponent],
+    files: &[LockedFile],
     environment: &str,
     platform: Platform,
 ) -> McpCheck {
+    // The legacy structural check applies only while the legacy component
+    // still owns its locked file; an update that retired the file or released
+    // it from management moves the client to its current route.
+    let legacy =
+        crate::coding_environment::native_client(environment).and_then(|client| client.legacy_mcp);
     native_mcp_check(
         environment,
         components
@@ -339,6 +345,17 @@ fn native_mcp_check_for_lock(
                             component.validation.as_deref(),
                             Some("planned_unavailable" | "unsupported_platform")
                         ))
+                    && !legacy.is_some_and(|legacy| {
+                        component.id == legacy.component_id
+                            && !files.iter().any(|file| {
+                                !file.external
+                                    && file.component_id == legacy.component_id
+                                    && file
+                                        .path
+                                        .replace('\\', "/")
+                                        .eq_ignore_ascii_case(legacy.path)
+                            })
+                    })
             })
             .map(|component| component.id.as_str()),
         platform,
@@ -1708,6 +1725,7 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
                         .map(|lock| {
                             native_mcp_check_for_lock(
                                 &lock.components,
+                                &lock.files,
                                 environment,
                                 Platform::current(),
                             )
@@ -2298,12 +2316,12 @@ mod tests {
         ];
         for platform in [Platform::Windows, Platform::Linux] {
             assert_eq!(
-                native_mcp_check_for_lock(&cursor, "cursor", platform),
+                native_mcp_check_for_lock(&cursor, &[], "cursor", platform),
                 McpCheck::Route
             );
         }
         assert_eq!(
-            native_mcp_check_for_lock(&cursor, "cursor", Platform::Macos),
+            native_mcp_check_for_lock(&cursor, &[], "cursor", Platform::Macos),
             McpCheck::NotRequired
         );
         let unsupported = [
@@ -2311,7 +2329,7 @@ mod tests {
             component("mcp.hoi4_agent_tools", "installed"),
         ];
         assert_eq!(
-            native_mcp_check_for_lock(&unsupported, "cursor", Platform::Windows),
+            native_mcp_check_for_lock(&unsupported, &[], "cursor", Platform::Windows),
             McpCheck::NotRequired
         );
         let legacy = [
@@ -2319,16 +2337,55 @@ mod tests {
             component("runtime.opencode.mcp", "installed"),
             component("mcp.hoi4_agent_tools", "installed"),
         ];
+        let legacy_file = LockedFile {
+            path: ".opencode/mcp.json".into(),
+            location_scope: Some("project".into()),
+            component_id: "runtime.opencode.mcp".into(),
+            source_path: ".opencode/mcp.json".into(),
+            source_revision: "a".repeat(40),
+            source_sha256: "a".repeat(64),
+            source_size: Some(1),
+            base_sha256: None,
+            installed_sha256: "a".repeat(64),
+            installed_size: Some(1),
+            ownership: Ownership::Merged,
+            preserved_local: false,
+            external: false,
+            generated_content: None,
+            generated_bytes: None,
+            executable: false,
+            platform: Some(ManifestPlatform::All),
+            installer_created: false,
+        };
         assert_eq!(
-            native_mcp_check_for_lock(&legacy, "opencode", Platform::Windows),
+            native_mcp_check_for_lock(
+                &legacy,
+                std::slice::from_ref(&legacy_file),
+                "opencode",
+                Platform::Windows
+            ),
             McpCheck::LegacyFile
+        );
+        // After an update retires or releases the legacy file, a component
+        // left behind no longer holds the client on the old check.
+        assert_eq!(
+            native_mcp_check_for_lock(&legacy, &[], "opencode", Platform::Windows),
+            McpCheck::Route
+        );
+        let moved = LockedFile {
+            component_id: "runtime.opencode.config".into(),
+            ..legacy_file.clone()
+        };
+        assert_eq!(
+            native_mcp_check_for_lock(&legacy, &[moved], "opencode", Platform::Windows),
+            McpCheck::Route
         );
         let current = [
             component("runtime.opencode.config", "installed"),
             component("mcp.hoi4_agent_tools", "installed"),
         ];
         assert_eq!(
-            native_mcp_check_for_lock(&current, "opencode", Platform::Linux),
+            native_mcp_check_for_lock(&current, &[], "opencode", Platform::Linux),
             McpCheck::Route
         );
         let manual = [
@@ -2336,7 +2393,7 @@ mod tests {
             component("mcp.hoi4_agent_tools", "installed"),
         ];
         assert_eq!(
-            native_mcp_check_for_lock(&manual, "cline", Platform::Windows),
+            native_mcp_check_for_lock(&manual, &[], "cline", Platform::Windows),
             McpCheck::NotRequired
         );
     }

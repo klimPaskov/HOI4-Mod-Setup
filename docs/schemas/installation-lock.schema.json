@@ -783,6 +783,9 @@
         "executable": {
           "type": "boolean"
         },
+        "installer_created": {
+          "type": "boolean"
+        },
         "platform": {
           "enum": [
             "windows",

@@ -1047,6 +1047,16 @@ pub struct LockedFile {
     pub executable: bool,
     #[serde(default)]
     pub platform: Option<ManifestPlatform>,
+    /// True when this installation created the file at a destination that
+    /// was absent at review, and no later merge added local content. Only
+    /// then may removing a native client MCP route also delete the file.
+    /// Locks written before this evidence existed read as false.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub installer_created: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

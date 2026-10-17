@@ -220,6 +220,27 @@ pub fn registration(
     Ok(Some((command, args)))
 }
 
+/// Whether a native configuration declares a HOI4 Agent Tools entry at all,
+/// enabled or not.
+pub fn declares_route(format: McpFormat, bytes: &[u8]) -> Result<bool, AppError> {
+    Ok(json_view(format, bytes)?
+        .get(format.servers_key())
+        .and_then(|servers| servers.get(SERVER_ID))
+        .is_some())
+}
+
+/// Whether a native configuration holds nothing but an empty server table,
+/// so deleting the file loses no setting.
+pub fn is_empty(format: McpFormat, bytes: &[u8]) -> Result<bool, AppError> {
+    Ok(match json_view(format, bytes)? {
+        Value::Object(map) => map.iter().all(|(key, value)| {
+            key == format.servers_key()
+                && value.as_object().is_some_and(|servers| servers.is_empty())
+        }),
+        _ => false,
+    })
+}
+
 /// Point the HOI4 Agent Tools route at the verified launch for this machine,
 /// or remove the route when no verified launch exists. Other servers and
 /// route fields are preserved; an absent route is never invented.
@@ -363,6 +384,75 @@ mod tests {
             assert_eq!(registration(format, &removed).unwrap(), None, "{format:?}");
             assert!(String::from_utf8(removed).unwrap().contains("other"));
         }
+    }
+
+    #[test]
+    fn every_format_removes_only_the_shared_route_and_detects_an_empty_remainder() {
+        let launch = ("node".to_string(), vec!["/opt/entry.js".to_string()]);
+        for format in ALL {
+            let without_route = retarget(format, &sample(format, "x", &[]), None).unwrap();
+            let route_only = match format {
+                McpFormat::TomlMcpServers => {
+                    b"[mcp_servers.hoi4_agent_tools]\ncommand = 'x'\nargs = []\n".to_vec()
+                }
+                McpFormat::LocalCommandArray => serde_json::to_vec(&json!({
+                    "mcp": {"hoi4_agent_tools": {"type": "local", "command": ["x"], "enabled": true}}
+                }))
+                .unwrap(),
+                McpFormat::VscodeServers => serde_json::to_vec(&json!({
+                    "servers": {"hoi4_agent_tools": {"type": "stdio", "command": "x", "args": []}}
+                }))
+                .unwrap(),
+                McpFormat::JsonMcpServers => serde_json::to_vec(&json!({
+                    "mcpServers": {"hoi4_agent_tools": {"command": "x", "args": []}}
+                }))
+                .unwrap(),
+            };
+            assert!(declares_route(format, &route_only).unwrap(), "{format:?}");
+            assert!(!is_empty(format, &route_only).unwrap(), "{format:?}");
+            let emptied = retarget(format, &route_only, None).unwrap();
+            assert!(!declares_route(format, &emptied).unwrap(), "{format:?}");
+            assert!(is_empty(format, &emptied).unwrap(), "{format:?}");
+            // Every other server and key survives the removal.
+            assert!(
+                !declares_route(format, &without_route).unwrap(),
+                "{format:?}"
+            );
+            assert!(!is_empty(format, &without_route).unwrap(), "{format:?}");
+            let before = json_view(format, &sample(format, "x", &[])).unwrap();
+            let mut expected = before.clone();
+            expected[format.servers_key()]
+                .as_object_mut()
+                .unwrap()
+                .remove(SERVER_ID);
+            assert_eq!(
+                json_view(format, &without_route).unwrap(),
+                expected,
+                "{format:?}"
+            );
+            // A retargeted file is reversed to the same remainder.
+            let retargeted = retarget(format, &sample(format, "x", &[]), Some(&launch)).unwrap();
+            assert_eq!(
+                json_view(format, &retarget(format, &retargeted, None).unwrap()).unwrap(),
+                expected,
+                "{format:?}"
+            );
+            // A disabled entry is still a declared route.
+            let mut disabled = before.clone();
+            disabled[format.servers_key()][SERVER_ID]["disabled"] = json!(true);
+            let disabled = if format.is_toml() {
+                toml::to_string(&disabled).unwrap().into_bytes()
+            } else {
+                serde_json::to_vec(&disabled).unwrap()
+            };
+            assert!(declares_route(format, &disabled).unwrap(), "{format:?}");
+        }
+        assert!(is_empty(McpFormat::TomlMcpServers, b"").unwrap());
+        assert!(is_empty(McpFormat::JsonMcpServers, b"{}").unwrap());
+        assert!(!is_empty(McpFormat::JsonMcpServers, b"[]").unwrap());
+        assert!(!is_empty(McpFormat::JsonMcpServers, br#"{"mcpServers": []}"#).unwrap());
+        assert!(declares_route(McpFormat::JsonMcpServers, b"{not json").is_err());
+        assert!(is_empty(McpFormat::TomlMcpServers, b"[unclosed").is_err());
     }
 
     #[test]

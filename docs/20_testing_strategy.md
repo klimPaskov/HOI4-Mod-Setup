@@ -93,10 +93,14 @@ may use a real account; ordinary CI must not.
   MCP route in each project MCP format, the legacy OpenCode structural check,
   and format 6 availability gating; canonical Claude-file-to-projection
   synchronization and drift checks
+- reverse merge of the shared MCP route in every format on removal, deselection,
+  and Update, creation evidence, component retirement, and a route-removal
+  fault matrix with rollback to the original bytes
 - hosted candidate acceptance (`clients`): update a Latest install to the
-  pinned format 6 source, add every client, deselect clients while keeping a
-  modified agent and a user MCP server, repair a deleted projection, and refuse
-  an older format that lacks the recorded clients
+  pinned format 6 source, add every client while merging a pre-existing Kiro MCP
+  file, deselect clients while keeping a modified agent and a user MCP server,
+  assert that the unchanged Kiro MCP file loses only the shared route, repair a
+  deleted projection, and refuse an older format that lacks the recorded clients
 - existing-project environment detection, preservation of a recorded Codex or
   other primary, compatibility migration when no primary is recorded,
   managed-file preservation, deselection removal rules, and persisted selections

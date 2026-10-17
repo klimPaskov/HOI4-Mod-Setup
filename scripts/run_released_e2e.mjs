@@ -164,7 +164,9 @@ async function commonSetup() {
   await next();
   await waitForReview(false);
 }
-async function waitForReview(maintenance) {
+// `choices` maps a conflict path to the button that resolves it; any other
+// conflict keeps the current file.
+async function waitForReview(maintenance, choices = {}) {
   await waitUntil(async () => {
     const title = await heading().innerText();
     if (title === "Resolve file conflicts") {
@@ -174,7 +176,9 @@ async function waitForReview(maintenance) {
         return maintenance;
       }
       const message = await page.locator(".conflict-actions p").innerText();
-      await page.getByRole("button", { name: "Keep current", exact: true }).click();
+      const shown = await page.locator(".diff-grid").innerText();
+      const choice = Object.entries(choices).find(([path]) => shown.includes(path))?.[1] ?? "Keep current";
+      await page.getByRole("button", { name: choice, exact: true }).click();
       await waitUntil(async () => await done.isEnabled() || await page.locator(".conflict-actions p").innerText() !== message, 30_000, "conflict decision acknowledgement");
       return false;
     }
@@ -248,7 +252,12 @@ async function openAdditionalClients() {
 }
 async function clientPackagesFlow() {
   // 1. Move the Latest (format 5) install to the pinned format 6 source and
-  // add every newly published client.
+  // add every newly published client. A Kiro MCP file the user already had is
+  // merged with the shared route instead of being replaced.
+  const kiroMcp = ".kiro/settings/mcp.json";
+  const kiroUser = { kept_setting: { value: 1 }, mcpServers: { user_server: { command: "user-tool" } } };
+  await mkdir(join(project, ".kiro/settings"), { recursive: true });
+  await writeFile(join(project, kiroMcp), JSON.stringify(kiroUser, null, 2));
   await openMaintenance("pinned_commit", clientSourceRevision);
   await reviewProject();
   await openAdditionalClients();
@@ -257,7 +266,7 @@ async function clientPackagesFlow() {
   for (const [, label] of ADDED_CLIENTS) await clientCheckbox(label).check();
   await record("clients-selected");
   await page.getByRole("button", { name: /^Check for updates/ }).click();
-  await waitForReview(true);
+  await waitForReview(true, { [kiroMcp]: "Use new" });
   const { readiness: addedReadiness } = await applyAndReady(true);
   const added = await readLock();
   assert.equal(added.source.mode, "pinned_commit");
@@ -285,6 +294,12 @@ async function clientPackagesFlow() {
     assert.equal(route.command, claudeRoute.command, path);
     assert.deepEqual(route.args ?? [], claudeRoute.args ?? [], path);
   }
+  const kiroMerged = await readProjectJson(kiroMcp);
+  assert.deepEqual(kiroMerged.mcpServers.user_server, kiroUser.mcpServers.user_server, "the merge keeps the user's Kiro server");
+  assert.deepEqual(kiroMerged.kept_setting, kiroUser.kept_setting);
+  const kiroLocked = added.files.find((file) => !file.external && file.path === kiroMcp);
+  assert.equal(kiroLocked?.ownership, "merged");
+  assert.ok(!kiroLocked.installer_created, "a file the user had before setup is not installer-created");
   const vscode = (await readProjectJson(".vscode/mcp.json")).servers.hoi4_agent_tools;
   assert.equal(vscode.type, "stdio");
   assert.equal(vscode.command, claudeRoute.command);
@@ -323,6 +338,11 @@ async function clientPackagesFlow() {
   assert.ok(!existsSync(join(project, ".github/instructions/hoi4-mod-setup.instructions.md")));
   assert.equal((await readProjectJson(".vscode/mcp.json")).servers.user_server.command, "user-tool");
   assert.ok(!reduced.files.some((file) => !file.external && file.path.startsWith(".kiro/skills/")));
+  // The unchanged, merged Kiro MCP file loses only the shared route, leaves the
+  // lock, and its component is retired.
+  assert.deepEqual(await readProjectJson(kiroMcp), kiroUser, "the deselected Kiro MCP file loses only the shared route");
+  assert.ok(!reduced.files.some((file) => !file.external && file.path === kiroMcp), "the Kiro MCP file stays managed");
+  assert.ok(!reduced.components.some((component) => component.id === kiroLocked.component_id), "the Kiro MCP component stays locked");
   // Kept edits of a deselected client leave management instead of holding
   // readiness in review.
   for (const path of [keptAgent, ".vscode/mcp.json"]) {
@@ -330,7 +350,7 @@ async function clientPackagesFlow() {
     assert.ok(!(reduced.local_modifications ?? []).some((item) => item.path === path), `${path} stays a local modification`);
   }
   assert.ok(existsSync(join(project, ".qwen/skills/hoi4-ai-strategies/SKILL.md")), "other clients keep their packages");
-  result.clientDeselection = { removed: ["kiro", "github_copilot"], keptModified: [keptAgent, ".vscode/mcp.json"] };
+  result.clientDeselection = { removed: ["kiro", "github_copilot"], keptModified: [keptAgent, ".vscode/mcp.json"], routeRemoved: [kiroMcp] };
 
   // 3. Repair restores a deleted new-client projection at the pinned revision.
   const repaired = reduced.files.find((file) => !file.external && file.path === ".gemini/agents/hoi4-repo-explorer.md");

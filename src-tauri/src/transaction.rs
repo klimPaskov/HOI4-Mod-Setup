@@ -235,12 +235,7 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
     }
     let removing = plan.maintenance_mode.as_deref() == Some("remove")
         && !plan.operations.is_empty()
-        && plan.operations.iter().all(|operation| {
-            matches!(
-                operation.action,
-                OperationAction::Skip | OperationAction::DeleteManaged
-            )
-        })
+        && plan.operations.iter().all(is_removal_operation)
         && plan.generated_artifacts.is_empty()
         && plan.external_actions.iter().all(|action| {
             action.id == "external.imagegen.gptimage.cleanup"
@@ -444,6 +439,24 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
                     operation.destination
                 )));
             }
+        }
+        // A route removal rewrites only an unchanged, merged native client
+        // MCP file, and its rollback restores the backed-up original bytes.
+        if operation.resolution.as_deref() == Some(MCP_ROUTE_REMOVAL)
+            && !(operation.action == OperationAction::Replace
+                && operation.ownership == Some(Ownership::Merged)
+                && !operation.external
+                && operation.local_state == LocalState::Unmodified
+                && operation.local_sha256.is_some()
+                && operation.result_sha256.is_some()
+                && operation.result_sha256 == operation.source_sha256
+                && operation.rollback == RollbackAction::RestoreBackup
+                && crate::coding_environment::is_native_mcp_config_path(&operation.destination))
+        {
+            return Err(AppError::Transaction(format!(
+                "client MCP route removal is not bound to an unchanged merged file: {}",
+                operation.destination
+            )));
         }
     }
     for conflict in &plan.conflicts {
@@ -2867,6 +2880,17 @@ fn validate_prepared_files(
                 operation.destination
             )));
         }
+        if operation.resolution.as_deref() == Some(MCP_ROUTE_REMOVAL) {
+            let still_routed =
+                crate::coding_environment::config_format_for_path(&operation.destination)
+                    .map(|format| crate::native_mcp::declares_route(format, &prepared.bytes));
+            if !matches!(still_routed, Some(Ok(false))) {
+                return Err(AppError::Transaction(format!(
+                    "client MCP route removal does not remove the shared route: {}",
+                    operation.destination
+                )));
+            }
+        }
         if operation.action != OperationAction::Skip {
             let expected = operation
                 .result_sha256
@@ -5168,12 +5192,7 @@ fn build_transaction_readiness(
 ) -> Result<crate::models::ReadinessReport, AppError> {
     let removing = plan.maintenance_mode.as_deref() == Some("remove")
         && !plan.operations.is_empty()
-        && plan.operations.iter().all(|operation| {
-            matches!(
-                operation.action,
-                OperationAction::Skip | OperationAction::DeleteManaged
-            )
-        });
+        && plan.operations.iter().all(is_removal_operation);
     if removing {
         let (integration, auth_mode) = crate::ai::integration_and_auth_mode(&plan.ai_provider);
         let confirmed_field_count = plan
@@ -5634,12 +5653,7 @@ fn build_lock(
 ) -> Result<InstallationLock, AppError> {
     let removing = plan.maintenance_mode.as_deref() == Some("remove")
         && !plan.operations.is_empty()
-        && plan.operations.iter().all(|operation| {
-            matches!(
-                operation.action,
-                OperationAction::Skip | OperationAction::DeleteManaged
-            )
-        });
+        && plan.operations.iter().all(is_removal_operation);
     let prepared: HashMap<&str, &PreparedFile> = prepared_files
         .iter()
         .map(|file| (file.operation_id.as_str(), file))
@@ -5660,6 +5674,14 @@ fn build_lock(
     let mut released = std::collections::HashSet::new();
     for operation in &plan.operations {
         let key = key_for(&operation.destination, operation.external);
+        // A client MCP file that lost the shared route, or never had it, now
+        // holds only local content: it stays on disk outside management.
+        if operation_releases_mcp_file(operation) {
+            files.remove(&key);
+            remove_local_modification(&mut local_modifications, &operation.destination);
+            released.insert(operation.id.clone());
+            continue;
+        }
         // A coding-client file the user changed, whose component this
         // maintenance plan no longer selects, stays on disk untouched and
         // leaves management: it is no longer an installed file of any selected
@@ -5783,6 +5805,7 @@ fn build_lock(
                             generated_bytes: None,
                             executable: operation.executable,
                             platform: operation.platform.or(Some(ManifestPlatform::All)),
+                            installer_created: false,
                         },
                     );
                 }
@@ -5807,6 +5830,19 @@ fn build_lock(
                         .source_path
                         .as_deref()
                         .is_some_and(|path| path.starts_with("generated:"));
+                // Creation evidence: the destination was absent at review, or
+                // the installer created it earlier and this unchanged file is
+                // replaced without merging local content into it.
+                let installer_created = match operation.local_state {
+                    LocalState::Absent => operation.local_sha256.is_none(),
+                    LocalState::Unmodified => {
+                        operation.action != OperationAction::Merge
+                            && files
+                                .get(&key)
+                                .is_some_and(|existing| existing.installer_created)
+                    }
+                    LocalState::Modified | LocalState::Unknown => false,
+                };
                 let locked_file = LockedFile {
                     path: operation.destination.clone(),
                     location_scope: Some(if operation.external {
@@ -5841,6 +5877,7 @@ fn build_lock(
                     generated_bytes: generated.then_some(prepared.bytes.clone()),
                     executable: operation.executable,
                     platform: operation.platform.or(Some(ManifestPlatform::All)),
+                    installer_created,
                 };
                 files.insert(key, locked_file);
                 remove_local_modification(&mut local_modifications, &operation.destination);
@@ -5883,7 +5920,21 @@ fn build_lock(
                         operation.component_id == component.id
                             && looks_like_coding_environment_destination(&operation.destination)
                     });
-            if !looks_like_environment || has_live_file || has_non_delete_operation {
+            // An update resolves a newer manifest. A component it no longer
+            // selects, which owned files and has none left after this plan
+            // removed or released them, is retired as well; optional
+            // workflows keep their recorded state.
+            let retired_by_update = plan.maintenance_mode.as_deref() == Some("update")
+                && previous
+                    .files
+                    .iter()
+                    .any(|file| file.component_id == component.id)
+                && !plan.optional_workflows.contains_key(&component.id)
+                && !previous.optional_workflows.contains_key(&component.id);
+            if (!looks_like_environment && !retired_by_update)
+                || has_live_file
+                || has_non_delete_operation
+            {
                 component_ids.push(component.id.clone());
             }
         }
@@ -8606,6 +8657,190 @@ fn prune_emptied_directories(root: &RootedDir, plan: &InstallationPlan) {
     }
 }
 
+/// Resolution of a reviewed operation that removes only the shared
+/// `hoi4_agent_tools` route from a native client MCP file the installer
+/// merged, keeping every other server and key.
+pub const MCP_ROUTE_REMOVAL: &str = "mcp_route_removal";
+/// Resolution of an unchanged native client MCP file that has no shared route
+/// left to remove: nothing is written and the file leaves management.
+pub const MCP_ROUTE_RELEASE: &str = "mcp_route_release";
+
+/// How an unchanged native client MCP file leaves management.
+enum McpRouteReversal {
+    /// The installer created the file and only an empty server table remains.
+    Delete,
+    /// The file without the shared route.
+    Rewrite(Vec<u8>),
+    /// The file has no shared route; it stays as it is.
+    Release,
+}
+
+/// Whether removing a component's merged MCP file may reverse the route.
+/// Image-generation and live-testing routes are regenerated for the selected
+/// clients by their own planners, so those components keep today's review.
+fn removal_reverses_mcp_route(component_id: &str) -> bool {
+    !(component_id.starts_with("image_generation.")
+        || component_id.starts_with("imagegen.")
+        || component_id.starts_with("workflow.live")
+        || component_id.starts_with("mcp.hoi4_live"))
+}
+
+fn read_native_mcp_file(project_root: &Path, path: &str) -> Result<Vec<u8>, AppError> {
+    crate::flatten::read_bounded_regular_file_no_follow_under_root(
+        project_root,
+        path,
+        crate::native_mcp::MAX_CONFIG_BYTES as u64,
+    )
+}
+
+/// Plan the reverse merge of a native client MCP file that no selected
+/// component installs any more. Only a merged project file whose bytes are
+/// still exactly the installed bytes qualifies; anything else returns `None`
+/// and keeps the existing keep/release review.
+fn reverse_mcp_route(
+    project_root: &Path,
+    file: &LockedFile,
+    current_sha256: Option<&str>,
+) -> Result<Option<McpRouteReversal>, AppError> {
+    if file.external
+        || file.preserved_local
+        || file.ownership != Ownership::Merged
+        || current_sha256 != Some(file.installed_sha256.as_str())
+        || !crate::coding_environment::is_native_mcp_config_path(&file.path)
+    {
+        return Ok(None);
+    }
+    let Some(format) = crate::coding_environment::config_format_for_path(&file.path) else {
+        return Ok(None);
+    };
+    let Ok(bytes) = read_native_mcp_file(project_root, &file.path) else {
+        return Ok(None);
+    };
+    if sha256_bytes(&bytes) != file.installed_sha256 {
+        return Ok(None);
+    }
+    let Ok(declared) = crate::native_mcp::declares_route(format, &bytes) else {
+        return Ok(None);
+    };
+    let remainder = if declared {
+        match crate::native_mcp::retarget(format, &bytes, None) {
+            Ok(remainder) => remainder,
+            Err(_) => return Ok(None),
+        }
+    } else {
+        bytes
+    };
+    let empty = crate::native_mcp::is_empty(format, &remainder).unwrap_or(false);
+    Ok(Some(if file.installer_created && empty {
+        McpRouteReversal::Delete
+    } else if declared {
+        McpRouteReversal::Rewrite(remainder)
+    } else {
+        McpRouteReversal::Release
+    }))
+}
+
+fn mcp_route_reversal_operation(
+    id: String,
+    file: &LockedFile,
+    local_sha256: String,
+    reversal: &McpRouteReversal,
+    delete_resolution: &str,
+) -> PlanOperation {
+    let (action, result, resolution) = match reversal {
+        McpRouteReversal::Delete => (OperationAction::DeleteManaged, None, delete_resolution),
+        McpRouteReversal::Rewrite(bytes) => (
+            OperationAction::Replace,
+            Some((sha256_bytes(bytes), bytes.len() as u64)),
+            MCP_ROUTE_REMOVAL,
+        ),
+        McpRouteReversal::Release => (OperationAction::Skip, None, MCP_ROUTE_RELEASE),
+    };
+    PlanOperation {
+        id,
+        component_id: file.component_id.clone(),
+        ownership: Some(file.ownership),
+        location_scope: Some(location_scope_for_file(file)),
+        action,
+        source_path: result.as_ref().map(|_| format!("generated:{}", file.path)),
+        destination: file.path.clone(),
+        source_sha256: result.as_ref().map(|(sha256, _)| sha256.clone()),
+        source_size: result.as_ref().map(|(_, size)| *size).or(file.source_size),
+        platform: file.platform,
+        executable: file.executable,
+        result_sha256: result.as_ref().map(|(sha256, _)| sha256.clone()),
+        base_sha256: Some(file.installed_sha256.clone()),
+        local_sha256: Some(local_sha256),
+        local_state: LocalState::Unmodified,
+        resolution: Some(resolution.into()),
+        external: false,
+        rollback: RollbackAction::RestoreBackup,
+        external_parent_identity: None,
+    }
+}
+
+/// The reviewed bytes of a route-removal operation, re-derived from the
+/// unchanged live file. The read must still match the reviewed local hash and
+/// reproduce the reviewed result, so planning never stages other bytes.
+pub fn prepare_mcp_route_removal(
+    project_root: &Path,
+    operation: &PlanOperation,
+) -> Result<PreparedFile, AppError> {
+    let changed = || {
+        AppError::Transaction(format!(
+            "client MCP configuration changed while the removal was planned: {}",
+            operation.destination
+        ))
+    };
+    let format = crate::coding_environment::config_format_for_path(&operation.destination)
+        .filter(|_| {
+            operation.resolution.as_deref() == Some(MCP_ROUTE_REMOVAL)
+                && operation.action == OperationAction::Replace
+                && !operation.external
+        })
+        .ok_or_else(|| {
+            AppError::Transaction(format!(
+                "operation is not a client MCP route removal: {}",
+                operation.destination
+            ))
+        })?;
+    let bytes = read_native_mcp_file(project_root, &operation.destination)?;
+    if operation.local_sha256.as_deref() != Some(sha256_bytes(&bytes).as_str()) {
+        return Err(changed());
+    }
+    let result = crate::native_mcp::retarget(format, &bytes, None)?;
+    let expected_sha256 = sha256_bytes(&result);
+    if operation.result_sha256.as_deref() != Some(expected_sha256.as_str()) {
+        return Err(changed());
+    }
+    Ok(PreparedFile {
+        operation_id: operation.id.clone(),
+        destination: operation.destination.clone(),
+        bytes: result,
+        expected_sha256,
+    })
+}
+
+/// Whether an operation belongs in a managed-removal plan: it deletes,
+/// keeps, or only removes the shared MCP route from a client file.
+fn is_removal_operation(operation: &PlanOperation) -> bool {
+    matches!(
+        operation.action,
+        OperationAction::Skip | OperationAction::DeleteManaged
+    ) || (operation.action == OperationAction::Replace
+        && operation.resolution.as_deref() == Some(MCP_ROUTE_REMOVAL))
+}
+
+/// Whether the lock forgets this file after the operation: it was removed,
+/// or it stays on disk outside management.
+fn operation_releases_mcp_file(operation: &PlanOperation) -> bool {
+    matches!(
+        (operation.action, operation.resolution.as_deref()),
+        (OperationAction::Replace, Some(MCP_ROUTE_REMOVAL))
+            | (OperationAction::Skip, Some(MCP_ROUTE_RELEASE))
+    )
+}
+
 pub fn managed_removal_operations(
     lock: &InstallationLock,
     project_root: &Path,
@@ -8618,14 +8853,30 @@ pub fn managed_removal_operations(
         } else {
             None
         };
+        let id = format!(
+            "remove-{}",
+            sha256_bytes(format!("{}\0{}", file.external, file.path).as_bytes())
+        );
+        if removal_reverses_mcp_route(&file.component_id) {
+            if let (Some(reversal), Some(local)) = (
+                reverse_mcp_route(project_root, file, current.as_deref())?,
+                current.clone(),
+            ) {
+                operations.push(mcp_route_reversal_operation(
+                    id,
+                    file,
+                    local,
+                    &reversal,
+                    "managed_remove",
+                ));
+                continue;
+            }
+        }
         let unchanged = current.as_deref() == Some(file.installed_sha256.as_str());
         let reversible = !file.preserved_local
             && !matches!(file.ownership, Ownership::Merged | Ownership::External);
         operations.push(PlanOperation {
-            id: format!(
-                "remove-{}",
-                sha256_bytes(format!("{}\0{}", file.external, file.path).as_bytes())
-            ),
+            id,
             component_id: file.component_id.clone(),
             ownership: Some(file.ownership),
             location_scope: Some(location_scope_for_file(file)),
@@ -8815,6 +9066,22 @@ pub fn update_operations(
         } else {
             None
         };
+        // No selected component ships this path any more, so a client MCP
+        // file the installer merged loses only the shared route, whichever
+        // component recorded it.
+        if let (Some(reversal), Some(local)) = (
+            reverse_mcp_route(project_root, file, local_sha256.as_deref())?,
+            local_sha256.clone(),
+        ) {
+            operations.push(mcp_route_reversal_operation(
+                format!("update-obsolete-{index:05}"),
+                file,
+                local,
+                &reversal,
+                "obsolete_managed_remove",
+            ));
+            continue;
+        }
         let unchanged = local_sha256.as_deref() == Some(file.installed_sha256.as_str());
         let removable = !file.preserved_local
             && !matches!(file.ownership, Ownership::Merged | Ownership::External);
@@ -9204,6 +9471,7 @@ mod tests {
             generated_bytes: None,
             executable: false,
             platform: Some(ManifestPlatform::All),
+            installer_created: false,
         }];
 
         let mut plan = plan();
@@ -9288,6 +9556,7 @@ mod tests {
             generated_bytes: None,
             executable: false,
             platform: Some(ManifestPlatform::All),
+            installer_created: false,
         });
 
         let mut plan = plan();
@@ -9364,6 +9633,7 @@ mod tests {
             generated_bytes: None,
             executable: false,
             platform: Some(ManifestPlatform::All),
+            installer_created: false,
         });
         let keep = |selected: Vec<String>| {
             let mut plan = plan();
@@ -9426,6 +9696,784 @@ mod tests {
             .local_modifications
             .iter()
             .any(|modification| modification.path == ".kiro/agents/hoi4-repo-explorer.md"));
+    }
+
+    /// One registered native client MCP path per format.
+    const MCP_ROUTE_FIXTURES: [(&str, &str, crate::native_mcp::McpFormat); 4] = [
+        (
+            ".kiro/settings/mcp.json",
+            "runtime.kiro.mcp",
+            crate::native_mcp::McpFormat::JsonMcpServers,
+        ),
+        (
+            ".vscode/mcp.json",
+            "runtime.copilot.mcp",
+            crate::native_mcp::McpFormat::VscodeServers,
+        ),
+        (
+            ".kilo/kilo.json",
+            "runtime.kilo.mcp",
+            crate::native_mcp::McpFormat::LocalCommandArray,
+        ),
+        (
+            ".grok/config.toml",
+            "runtime.grok.mcp",
+            crate::native_mcp::McpFormat::TomlMcpServers,
+        ),
+    ];
+
+    /// An installed client MCP file with the shared route and, optionally, a
+    /// user's own server and setting merged into it.
+    fn mcp_route_bytes(format: crate::native_mcp::McpFormat, user_content: bool) -> Vec<u8> {
+        use crate::native_mcp::McpFormat;
+        use serde_json::json;
+        if format == McpFormat::TomlMcpServers {
+            let mut text = String::new();
+            if user_content {
+                text.push_str(
+                    "model = \"kept\"\n\n[mcp_servers.user_server]\ncommand = \"user-tool\"\n\n",
+                );
+            }
+            text.push_str(
+                "[mcp_servers.hoi4_agent_tools]\ncommand = \"C:\\\\npm\\\\hoi4-agent-tools.cmd\"\nargs = []\n",
+            );
+            return text.into_bytes();
+        }
+        let (route, user) = match format {
+            McpFormat::LocalCommandArray => (
+                json!({"type": "local", "command": ["C:\\npm\\hoi4-agent-tools.cmd"], "enabled": true}),
+                json!({"type": "local", "command": ["user-tool"]}),
+            ),
+            McpFormat::VscodeServers => (
+                json!({"type": "stdio", "command": "C:\\npm\\hoi4-agent-tools.cmd", "args": []}),
+                json!({"type": "stdio", "command": "user-tool"}),
+            ),
+            _ => (
+                json!({"command": "C:\\npm\\hoi4-agent-tools.cmd", "args": []}),
+                json!({"command": "user-tool"}),
+            ),
+        };
+        let mut servers = serde_json::Map::new();
+        let mut root = serde_json::Map::new();
+        if user_content {
+            servers.insert("user_server".into(), user);
+            root.insert("kept_setting".into(), json!({"value": 1}));
+        }
+        servers.insert("hoi4_agent_tools".into(), route);
+        root.insert(
+            format.servers_key().into(),
+            serde_json::Value::Object(servers),
+        );
+        serde_json::to_vec_pretty(&serde_json::Value::Object(root)).unwrap()
+    }
+
+    fn mcp_locked_file(
+        path: &str,
+        component_id: &str,
+        bytes: &[u8],
+        installer_created: bool,
+        revision: &str,
+    ) -> LockedFile {
+        LockedFile {
+            path: path.into(),
+            location_scope: Some("project".into()),
+            component_id: component_id.into(),
+            source_path: path.into(),
+            source_revision: revision.into(),
+            source_sha256: "a".repeat(64),
+            source_size: Some(1),
+            base_sha256: None,
+            installed_sha256: sha256_bytes(bytes),
+            installed_size: Some(bytes.len() as u64),
+            ownership: Ownership::Merged,
+            preserved_local: false,
+            external: false,
+            generated_content: None,
+            generated_bytes: None,
+            executable: false,
+            platform: Some(ManifestPlatform::All),
+            installer_created,
+        }
+    }
+
+    fn write_project_file(root: &Path, path: &str, bytes: &[u8]) {
+        let destination = root.join(path);
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::write(destination, bytes).unwrap();
+    }
+
+    fn example_lock_without_files() -> InstallationLock {
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        lock.files.clear();
+        lock.local_modifications.clear();
+        lock
+    }
+
+    #[test]
+    fn removal_and_update_reverse_only_the_shared_route_in_every_mcp_format() {
+        use crate::native_mcp::{declares_route, is_empty, retarget};
+        for (path, component, format) in MCP_ROUTE_FIXTURES {
+            let project = tempdir().unwrap();
+            let root = project.path();
+            let mut lock = example_lock_without_files();
+            let revision = lock.source.revision.clone();
+            let plan_for = |lock: &InstallationLock, update: bool| {
+                if update {
+                    update_operations(lock, &[], root).unwrap()
+                } else {
+                    managed_removal_operations(lock, root).unwrap()
+                }
+            };
+            for update in [false, true] {
+                // A file merged with the user's own server and setting loses
+                // only the shared route.
+                let merged = mcp_route_bytes(format, true);
+                write_project_file(root, path, &merged);
+                lock.files = vec![mcp_locked_file(path, component, &merged, false, &revision)];
+                let operations = plan_for(&lock, update);
+                assert_eq!(operations.len(), 1, "{path}");
+                let operation = &operations[0];
+                assert_eq!(operation.action, OperationAction::Replace, "{path}");
+                assert_eq!(operation.resolution.as_deref(), Some(MCP_ROUTE_REMOVAL));
+                assert_eq!(operation.rollback, RollbackAction::RestoreBackup);
+                assert_eq!(operation.ownership, Some(Ownership::Merged));
+                assert_eq!(operation.local_state, LocalState::Unmodified);
+                assert_eq!(operation.local_sha256, Some(sha256_bytes(&merged)));
+                assert!(operation
+                    .source_path
+                    .as_deref()
+                    .is_some_and(|source| source.starts_with("generated:")));
+                let prepared = prepare_mcp_route_removal(root, operation).unwrap();
+                assert_eq!(
+                    Some(&prepared.expected_sha256),
+                    operation.result_sha256.as_ref()
+                );
+                assert_eq!(prepared.bytes, retarget(format, &merged, None).unwrap());
+                assert!(!declares_route(format, &prepared.bytes).unwrap(), "{path}");
+                let text = String::from_utf8(prepared.bytes.clone()).unwrap();
+                assert!(
+                    text.contains("user-tool") && text.contains("kept"),
+                    "{path}"
+                );
+                let mut checked = plan();
+                checked.maintenance_mode = Some(if update { "update" } else { "remove" }.into());
+                checked.operations = operations.clone();
+                validate_plan(&checked).unwrap();
+                validate_prepared_files(&checked, std::slice::from_ref(&prepared)).unwrap();
+                // A route-bearing payload or an edit after planning is refused.
+                let mut routed = prepared.clone();
+                routed.bytes = merged.clone();
+                routed.expected_sha256 = sha256_bytes(&merged);
+                checked.operations[0].result_sha256 = Some(routed.expected_sha256.clone());
+                checked.operations[0].source_sha256 = Some(routed.expected_sha256.clone());
+                assert!(
+                    validate_prepared_files(&checked, &[routed]).is_err(),
+                    "{path}"
+                );
+                write_project_file(root, path, b"{}");
+                assert!(
+                    prepare_mcp_route_removal(root, operation).is_err(),
+                    "{path}"
+                );
+
+                // Only the route remains: an installer-created file is deleted,
+                // one that existed before setup keeps its empty table.
+                let only_route = mcp_route_bytes(format, false);
+                write_project_file(root, path, &only_route);
+                for created in [true, false] {
+                    lock.files = vec![mcp_locked_file(
+                        path,
+                        component,
+                        &only_route,
+                        created,
+                        &revision,
+                    )];
+                    let operation = plan_for(&lock, update).remove(0);
+                    if created {
+                        assert_eq!(operation.action, OperationAction::DeleteManaged, "{path}");
+                        assert_eq!(
+                            operation.resolution.as_deref(),
+                            Some(if update {
+                                "obsolete_managed_remove"
+                            } else {
+                                "managed_remove"
+                            })
+                        );
+                    } else {
+                        assert_eq!(operation.action, OperationAction::Replace, "{path}");
+                        let prepared = prepare_mcp_route_removal(root, &operation).unwrap();
+                        assert!(is_empty(format, &prepared.bytes).unwrap(), "{path}");
+                    }
+                }
+
+                // A file without the shared route is released untouched.
+                let without_route = retarget(format, &merged, None).unwrap();
+                write_project_file(root, path, &without_route);
+                lock.files = vec![mcp_locked_file(
+                    path,
+                    component,
+                    &without_route,
+                    false,
+                    &revision,
+                )];
+                let operation = plan_for(&lock, update).remove(0);
+                assert_eq!(operation.action, OperationAction::Skip, "{path}");
+                assert_eq!(operation.resolution.as_deref(), Some(MCP_ROUTE_RELEASE));
+
+                // A file the user changed keeps today's review.
+                write_project_file(root, path, &merged);
+                lock.files = vec![mcp_locked_file(
+                    path,
+                    component,
+                    &only_route,
+                    true,
+                    &revision,
+                )];
+                let operation = plan_for(&lock, update).remove(0);
+                assert_eq!(operation.action, OperationAction::Skip, "{path}");
+                assert_eq!(operation.local_state, LocalState::Modified, "{path}");
+                assert_ne!(operation.resolution.as_deref(), Some(MCP_ROUTE_REMOVAL));
+            }
+
+            // A removal never reverses an image-generation client route; the
+            // image planner regenerates it for the clients that stay selected.
+            let only_route = mcp_route_bytes(format, false);
+            write_project_file(root, path, &only_route);
+            lock.files = vec![mcp_locked_file(
+                path,
+                "image_generation.client_config.kiro",
+                &only_route,
+                true,
+                &revision,
+            )];
+            let operation = managed_removal_operations(&lock, root).unwrap().remove(0);
+            assert_eq!(operation.action, OperationAction::Skip, "{path}");
+            assert_eq!(
+                operation.resolution.as_deref(),
+                Some("reverse_merge_required")
+            );
+        }
+    }
+
+    #[test]
+    fn a_route_removal_operation_is_bound_to_an_unchanged_merged_mcp_file() {
+        let project = tempdir().unwrap();
+        let mut lock = example_lock_without_files();
+        let merged = mcp_route_bytes(crate::native_mcp::McpFormat::JsonMcpServers, true);
+        write_project_file(project.path(), ".kiro/settings/mcp.json", &merged);
+        lock.files = vec![mcp_locked_file(
+            ".kiro/settings/mcp.json",
+            "runtime.kiro.mcp",
+            &merged,
+            false,
+            &lock.source.revision.clone(),
+        )];
+        let reviewed = managed_removal_operations(&lock, project.path())
+            .unwrap()
+            .remove(0);
+        for tamper in ["destination", "ownership", "modified", "rollback", "result"] {
+            let mut operation = reviewed.clone();
+            match tamper {
+                "destination" => operation.destination = "AGENTS.md".into(),
+                "ownership" => operation.ownership = Some(Ownership::Managed),
+                "modified" => operation.local_state = LocalState::Modified,
+                "rollback" => operation.rollback = RollbackAction::RemoveCreated,
+                _ => operation.result_sha256 = Some("b".repeat(64)),
+            }
+            let mut checked = plan();
+            checked.maintenance_mode = Some("remove".into());
+            checked.operations = vec![operation];
+            assert!(validate_plan(&checked).is_err(), "{tamper}");
+        }
+    }
+
+    #[test]
+    fn update_retires_components_the_newer_manifest_dropped_and_their_legacy_check() {
+        let project = tempdir().unwrap();
+        let root = project.path();
+        let mut predecessor = example_lock_without_files();
+        let revision = predecessor.source.revision.clone();
+        // The example lock already records the optional `workflow.3d`.
+        for id in [
+            "runtime.opencode.config",
+            "runtime.opencode.mcp",
+            "mcp.hoi4_agent_tools",
+            "workflow.retired_example",
+        ] {
+            predecessor.components.push(LockComponent {
+                id: id.into(),
+                version: None,
+                state: "installed".into(),
+                source_revision: Some(revision.clone()),
+                validation: Some("pass".into()),
+            });
+        }
+        assert!(predecessor.optional_workflows.contains_key("workflow.3d"));
+        // Format 5 installed the route in `.opencode/mcp.json`, which
+        // OpenCode never read, and recorded no creation evidence.
+        let legacy = mcp_route_bytes(crate::native_mcp::McpFormat::JsonMcpServers, false);
+        write_project_file(root, ".opencode/mcp.json", &legacy);
+        predecessor.files.push(mcp_locked_file(
+            ".opencode/mcp.json",
+            "runtime.opencode.mcp",
+            &legacy,
+            false,
+            &revision,
+        ));
+        write_project_file(root, "tools/retired.txt", b"retired");
+        predecessor.files.push(LockedFile {
+            ownership: Ownership::Managed,
+            ..mcp_locked_file(
+                "tools/retired.txt",
+                "workflow.retired_example",
+                b"retired",
+                true,
+                &revision,
+            )
+        });
+        let legacy_components = predecessor
+            .components
+            .iter()
+            .map(|component| component.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            crate::readiness::native_mcp_check(
+                "opencode",
+                legacy_components.iter().copied(),
+                Platform::Windows
+            ),
+            crate::readiness::McpCheck::LegacyFile
+        );
+
+        let mut plan = plan();
+        plan.maintenance_mode = Some("update".into());
+        plan.selected_components = vec![
+            "core.agents".into(),
+            "runtime.opencode.config".into(),
+            "mcp.hoi4_agent_tools".into(),
+        ];
+        plan.operations = update_operations(&predecessor, &[], root).unwrap();
+        let route = plan
+            .operations
+            .iter()
+            .find(|operation| operation.destination == ".opencode/mcp.json")
+            .unwrap();
+        assert_eq!(route.resolution.as_deref(), Some(MCP_ROUTE_REMOVAL));
+        let prepared = vec![prepare_mcp_route_removal(root, route).unwrap()];
+        let journal = new_journal(&plan, &plan.project_id, root);
+        let directory = RootedDir::open_read(root).unwrap();
+        let lock = build_lock(
+            &plan,
+            &prepared,
+            &journal,
+            Some(&predecessor),
+            root,
+            &directory,
+        )
+        .unwrap();
+        assert!(!lock
+            .files
+            .iter()
+            .any(|file| file.path == ".opencode/mcp.json" || file.path == "tools/retired.txt"));
+        let ids = lock
+            .components
+            .iter()
+            .map(|component| component.id.as_str())
+            .collect::<Vec<_>>();
+        assert!(!ids.contains(&"runtime.opencode.mcp"), "{ids:?}");
+        assert!(!ids.contains(&"workflow.retired_example"), "{ids:?}");
+        assert!(
+            ids.contains(&"workflow.3d"),
+            "optional workflows keep their state"
+        );
+        assert!(ids.contains(&"runtime.opencode.config"));
+        assert_eq!(
+            crate::readiness::native_mcp_check("opencode", ids.iter().copied(), Platform::Windows),
+            crate::readiness::McpCheck::Route
+        );
+        // A repair keeps the predecessor's audit components.
+        plan.maintenance_mode = Some("repair".into());
+        let repaired = build_lock(
+            &plan,
+            &prepared,
+            &journal,
+            Some(&predecessor),
+            root,
+            &directory,
+        )
+        .unwrap();
+        assert!(repaired
+            .components
+            .iter()
+            .any(|component| component.id == "workflow.retired_example"));
+    }
+
+    #[test]
+    fn lock_records_installer_creation_only_without_merged_local_content() {
+        let project = tempdir().unwrap();
+        let mut predecessor = example_lock_without_files();
+        let revision = predecessor.source.revision.clone();
+        predecessor.files = vec![mcp_locked_file(
+            ".kiro/settings/mcp.json",
+            "runtime.kiro.mcp",
+            b"old",
+            true,
+            &revision,
+        )];
+        let operation = |action, local_state, local: Option<&[u8]>| PlanOperation {
+            id: "kiro".into(),
+            component_id: "runtime.kiro.mcp".into(),
+            ownership: Some(Ownership::Merged),
+            location_scope: Some("project".into()),
+            action,
+            source_path: Some(".kiro/settings/mcp.json".into()),
+            destination: ".kiro/settings/mcp.json".into(),
+            source_sha256: Some(sha256_bytes(b"new")),
+            source_size: Some(3),
+            platform: Some(ManifestPlatform::All),
+            executable: false,
+            result_sha256: Some(sha256_bytes(b"new")),
+            base_sha256: None,
+            local_sha256: local.map(sha256_bytes),
+            local_state,
+            resolution: None,
+            external: false,
+            rollback: RollbackAction::RestoreBackup,
+            external_parent_identity: None,
+        };
+        let prepared = vec![PreparedFile {
+            operation_id: "kiro".into(),
+            destination: ".kiro/settings/mcp.json".into(),
+            bytes: b"new".to_vec(),
+            expected_sha256: sha256_bytes(b"new"),
+        }];
+        let created = |operation: PlanOperation, previous: Option<&InstallationLock>| {
+            let mut plan = plan();
+            plan.selected_components = vec!["core.agents".into(), "runtime.kiro.mcp".into()];
+            plan.operations = vec![operation];
+            let journal = new_journal(&plan, &plan.project_id, project.path());
+            let directory = RootedDir::open_read(project.path()).unwrap();
+            build_lock(
+                &plan,
+                &prepared,
+                &journal,
+                previous,
+                project.path(),
+                &directory,
+            )
+            .unwrap()
+            .files
+            .iter()
+            .find(|file| file.path == ".kiro/settings/mcp.json")
+            .unwrap()
+            .installer_created
+        };
+        let old: &[u8] = b"old";
+        assert!(created(
+            operation(OperationAction::Create, LocalState::Absent, None),
+            None
+        ));
+        assert!(!created(
+            operation(OperationAction::Merge, LocalState::Unmodified, Some(old)),
+            None
+        ));
+        assert!(created(
+            operation(OperationAction::Replace, LocalState::Unmodified, Some(old)),
+            Some(&predecessor)
+        ));
+        assert!(!created(
+            operation(OperationAction::Merge, LocalState::Unmodified, Some(old)),
+            Some(&predecessor)
+        ));
+        assert!(!created(
+            operation(
+                OperationAction::Replace,
+                LocalState::Modified,
+                Some(b"edit".as_slice())
+            ),
+            Some(&predecessor)
+        ));
+        // Locks written before the evidence existed read as not created.
+        let legacy: LockedFile = serde_json::from_value({
+            let mut value = serde_json::to_value(&predecessor.files[0]).unwrap();
+            value.as_object_mut().unwrap().remove("installer_created");
+            value
+        })
+        .unwrap();
+        assert!(!legacy.installer_created);
+        assert!(serde_json::to_value(&legacy)
+            .unwrap()
+            .get("installer_created")
+            .is_none());
+    }
+
+    /// Install AGENTS.md and a Kiro MCP file, then plan the update that
+    /// deselects Kiro. With `user_content` the Kiro file existed before setup
+    /// and was merged, so the update rewrites it; otherwise the installer
+    /// created it and the update deletes it.
+    fn deselected_kiro_route_fixture(
+        project_root: &Path,
+        app_root: &Path,
+        user_content: bool,
+    ) -> (InstallationPlan, Vec<PreparedFile>, Vec<u8>, Vec<u8>) {
+        use crate::native_mcp::McpFormat;
+        let path = ".kiro/settings/mcp.json";
+        let installed = mcp_route_bytes(McpFormat::JsonMcpServers, user_content);
+        let mut first = ready_plan(project_root);
+        first.selected_components.push("runtime.kiro.mcp".into());
+        let mut kiro = first.operations[0].clone();
+        kiro.id = "op-kiro".into();
+        kiro.component_id = "runtime.kiro.mcp".into();
+        kiro.ownership = Some(Ownership::Merged);
+        kiro.destination = path.into();
+        kiro.source_path = Some("generated:kiro".into());
+        kiro.source_sha256 = Some(sha256_bytes(&installed));
+        kiro.source_size = Some(installed.len() as u64);
+        kiro.result_sha256 = Some(sha256_bytes(&installed));
+        if user_content {
+            let local = br#"{"kept_setting": {"value": 1}, "mcpServers": {"user_server": {"command": "user-tool"}}}"#;
+            write_project_file(project_root, path, local);
+            kiro.action = OperationAction::Merge;
+            kiro.local_state = LocalState::Unmodified;
+            kiro.local_sha256 = Some(sha256_bytes(local));
+            kiro.rollback = RollbackAction::RestoreBackup;
+        }
+        first.operations.push(kiro);
+        let first_prepared = vec![
+            PreparedFile {
+                operation_id: "op-1".into(),
+                destination: "AGENTS.md".into(),
+                bytes: b"safe".to_vec(),
+                expected_sha256: sha256_bytes(b"safe"),
+            },
+            PreparedFile {
+                operation_id: "op-kiro".into(),
+                destination: path.into(),
+                bytes: installed.clone(),
+                expected_sha256: sha256_bytes(&installed),
+            },
+        ];
+        let (_, installed_lock) = run_test_transaction(
+            project_root,
+            &first,
+            &first_prepared,
+            &TransactionOptions {
+                app_data_root: Some(app_root.into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let locked = installed_lock
+            .files
+            .iter()
+            .find(|file| file.path == path)
+            .unwrap();
+        assert_eq!(locked.installer_created, !user_content);
+        let predecessor = fs::read(project_root.join(".hoi4-mod-setup/install.lock.json")).unwrap();
+        let mut update = ready_plan(project_root);
+        update.plan_id = Uuid::new_v4();
+        update.maintenance_mode = Some("update".into());
+        let incoming = installed_lock
+            .files
+            .iter()
+            .filter(|file| file.path != path)
+            .cloned()
+            .collect::<Vec<_>>();
+        update.operations = update_operations(&installed_lock, &incoming, project_root)
+            .unwrap()
+            .into_iter()
+            .filter(|operation| operation.destination == path)
+            .collect();
+        assert_eq!(update.operations.len(), 1);
+        let prepared = if user_content {
+            assert_eq!(update.operations[0].action, OperationAction::Replace);
+            vec![prepare_mcp_route_removal(project_root, &update.operations[0]).unwrap()]
+        } else {
+            assert_eq!(update.operations[0].action, OperationAction::DeleteManaged);
+            vec![]
+        };
+        (update, prepared, installed, predecessor)
+    }
+
+    #[test]
+    fn deselected_client_mcp_route_removal_applies_and_rolls_back_the_original_bytes() {
+        let path = ".kiro/settings/mcp.json";
+        for user_content in [true, false] {
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let (plan, prepared, installed, predecessor) =
+                deselected_kiro_route_fixture(project.path(), app.path(), user_content);
+            let (_, lock) = run_test_transaction(
+                project.path(),
+                &plan,
+                &prepared,
+                &TransactionOptions {
+                    app_data_root: Some(app.path().into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let live = project.path().join(path);
+            if user_content {
+                let value: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&live).unwrap()).unwrap();
+                assert_eq!(
+                    value,
+                    serde_json::json!({
+                        "kept_setting": {"value": 1},
+                        "mcpServers": {"user_server": {"command": "user-tool"}}
+                    })
+                );
+            } else {
+                assert!(!live.exists());
+            }
+            assert!(!lock.files.iter().any(|file| file.path == path));
+            assert!(!lock
+                .components
+                .iter()
+                .any(|component| component.id == "runtime.kiro.mcp"));
+            if user_content {
+                assert!(quarantine_files(&project.path().join(".kiro/settings")).is_empty());
+            }
+
+            let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+            let mut journal = read_journal(&journal_path).unwrap();
+            rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+            assert_eq!(fs::read(&live).unwrap(), installed, "{user_content}");
+            assert_eq!(
+                fs::read(project.path().join(".hoi4-mod-setup/install.lock.json")).unwrap(),
+                predecessor
+            );
+        }
+    }
+
+    #[test]
+    fn mcp_route_removal_faults_never_commit_and_recover_the_original_bytes() {
+        let path = ".kiro/settings/mcp.json";
+        let mut faults: Vec<(String, TransactionOptions)> = Vec::new();
+        for stage in 0..TRANSACTION_STAGES.len() {
+            faults.push((
+                format!("before stage {stage}"),
+                TransactionOptions {
+                    fail_before_stage: Some(stage),
+                    ..Default::default()
+                },
+            ));
+            faults.push((
+                format!("after stage {stage}"),
+                TransactionOptions {
+                    fail_after_stage: Some(stage),
+                    ..Default::default()
+                },
+            ));
+        }
+        for (name, options) in [
+            (
+                "before operation",
+                TransactionOptions {
+                    fail_before_operation: Some(0),
+                    ..Default::default()
+                },
+            ),
+            (
+                "after live mutation",
+                TransactionOptions {
+                    fail_after_live_mutation: Some(0),
+                    ..Default::default()
+                },
+            ),
+            (
+                "after operation",
+                TransactionOptions {
+                    fail_after_operation: Some(0),
+                    ..Default::default()
+                },
+            ),
+        ] {
+            faults.push((name.into(), options));
+        }
+        for boundary in [
+            QuarantineBoundary::BeforeRename,
+            QuarantineBoundary::AfterRename,
+            QuarantineBoundary::AfterVerification,
+            QuarantineBoundary::BeforeRelease,
+        ] {
+            faults.push((
+                format!("quarantine {boundary:?}"),
+                TransactionOptions {
+                    fail_at_quarantine: Some((0, boundary)),
+                    ..Default::default()
+                },
+            ));
+            faults.push((
+                format!("lock quarantine {boundary:?}"),
+                TransactionOptions {
+                    fail_at_lock_quarantine: Some(boundary),
+                    ..Default::default()
+                },
+            ));
+        }
+        for user_content in [true, false] {
+            for (name, options) in &faults {
+                let project = tempdir().unwrap();
+                let app = tempdir().unwrap();
+                let (plan, prepared, installed, predecessor) =
+                    deselected_kiro_route_fixture(project.path(), app.path(), user_content);
+                let options = TransactionOptions {
+                    app_data_root: Some(app.path().into()),
+                    ..options.clone()
+                };
+                let result = run_test_transaction(project.path(), &plan, &prepared, &options);
+                assert!(result.is_err(), "{name} ({user_content})");
+                let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+                // A stop inside the success-lock commit is settled by resume:
+                // it finishes a durable lock or moves the predecessor back and
+                // leaves rollback to restore the files.
+                let completed = options.fail_at_lock_quarantine.is_some()
+                    && resume_transaction(project.path(), app.path(), plan.plan_id).is_ok();
+                if !completed && journal_path.exists() {
+                    let mut journal = read_journal(&journal_path).unwrap();
+                    normalize_incomplete_recovery(&mut journal);
+                    if journal.recovery.rollback_allowed {
+                        rollback_transaction(project.path(), &mut journal, &journal_path)
+                            .unwrap_or_else(|error| panic!("{name} ({user_content}): {error}"));
+                    } else if journal.recovery.discard_staging_allowed {
+                        discard_staging(project.path(), app.path(), plan.plan_id).unwrap();
+                    }
+                }
+                let live = project.path().join(path);
+                let lock_bytes =
+                    fs::read(project.path().join(".hoi4-mod-setup/install.lock.json")).unwrap();
+                if completed {
+                    match prepared.first() {
+                        Some(reversed) => assert_eq!(fs::read(&live).unwrap(), reversed.bytes),
+                        None => assert!(!live.exists(), "{name}"),
+                    }
+                    let lock: InstallationLock = serde_json::from_slice(&lock_bytes).unwrap();
+                    assert!(!lock.files.iter().any(|file| file.path == path), "{name}");
+                } else {
+                    assert_eq!(
+                        fs::read(&live).unwrap(),
+                        installed,
+                        "{name} ({user_content})"
+                    );
+                    assert_eq!(lock_bytes, predecessor, "{name} ({user_content})");
+                }
+                if live.parent().unwrap().exists() {
+                    assert!(
+                        quarantine_files(live.parent().unwrap()).is_empty(),
+                        "{name} ({user_content})"
+                    );
+                }
+                assert!(
+                    quarantine_files(&project.path().join(".hoi4-mod-setup")).is_empty(),
+                    "{name} ({user_content})"
+                );
+            }
+        }
     }
 
     #[test]
@@ -13014,6 +14062,7 @@ mod tests {
                 generated_bytes: None,
                 executable: false,
                 platform: Some(ManifestPlatform::All),
+                installer_created: false,
             }],
             merge_choices: vec![],
             optional_workflows: std::collections::BTreeMap::new(),
@@ -13082,6 +14131,7 @@ mod tests {
                 generated_bytes: None,
                 executable: false,
                 platform: Some(ManifestPlatform::All),
+                installer_created: false,
             }],
             merge_choices: vec![],
             optional_workflows: Default::default(),

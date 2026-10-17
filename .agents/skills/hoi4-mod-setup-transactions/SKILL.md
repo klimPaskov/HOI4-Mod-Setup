@@ -59,7 +59,14 @@ unchanged projections remain eligible for reviewed removal.
 When maintenance deselects a client, a file of that client the user changed
 and chose to keep is released: it stays on disk untouched and leaves the lock
 and its recorded local modifications, so readiness is not held in review for a
-file no selected client uses. Unchanged files are removed as before.
+file no selected client uses. Unchanged files are removed as before, and an
+unchanged merged MCP file loses only the shared route.
+
+Lock reconciliation retires a predecessor coding-client component with no
+remaining files or non-delete operations. An Update also retires any other
+predecessor component it no longer selects once every file that component
+owned is removed or released; optional workflows keep their recorded state,
+and Repair, Reinstall, and Remove keep predecessor components for audit.
 
 A component shared by several clients (`shared_coding_environments`) stays in
 the desired set while any selected client uses it, so deselecting Codex keeps
@@ -75,10 +82,32 @@ launch; a settings file that is installed on every platform (format 6
 `opencode.json`) loses the route where no verified launch exists. Readiness
 requires the registered route, not only parseable JSON, whenever the client's
 MCP component and HOI4 Agent Tools are installed on Windows or Linux and the
-tools package is not planned-unavailable. A format 5 lock that still contains
-`runtime.opencode.mcp` keeps the old structural check until Update moves the
-route into `opencode.json`. Manual and absent MCP routes never block readiness
-or the health check.
+tools package is not planned-unavailable. A format 5 lock keeps the old
+structural check only while `runtime.opencode.mcp` still owns its locked
+`.opencode/mcp.json`. Manual and absent MCP routes never block readiness or
+the health check.
+
+An unchanged merged native MCP file that leaves the selection (managed
+removal, a deselected client, or an Update path no selected component ships)
+is reverse-merged, never deleted wholesale. `managed_removal_operations` and
+the obsolete loop of `update_operations` call `reverse_mcp_route`, which plans
+a `replace` with resolution `MCP_ROUTE_REMOVAL` (bytes from
+`native_mcp::retarget(format, bytes, None)`), a `delete_managed` only when the
+lock's `installer_created` evidence holds and nothing but an empty server table
+remains, or a `skip` with `MCP_ROUTE_RELEASE` when no route is left. The
+maintenance prepare loop stages those bytes with `prepare_mcp_route_removal`,
+which re-reads the live file and requires the reviewed local and result
+hashes; `validate_plan` and `validate_prepared_files` reject a route removal
+that is not an unchanged merged MCP file or whose bytes still declare the
+route. `is_removal_operation` keeps such a plan a removal. `build_lock` drops
+the file from the lock for both resolutions. Removal does not reverse files
+owned by image-generation or live-testing components; Update reverses any
+obsolete MCP path. Modified files keep the keep/release review.
+
+`installer_created` is lock evidence: true only for a destination absent at
+review, carried through unchanged non-merge replacements, false after a merge
+or a modified file, and absent (false) in older locks. Never infer it from
+content.
 
 ## Operation model
 
@@ -480,7 +509,7 @@ Opaque OS-vault credential references are carried separately from secret values.
   `not_selected` state is recorded in the lock and its readiness check is
   always `blocking: false`.
 - Repair may add the 3D files at the lock's exact revision and may refresh only the opaque Meshy reference for an already-selected incomplete workflow; a previously `ready` workflow remains ready when its existing reference is carried forward.
-- Reinstall and repair must re-read the locked revision and preserve modified files for review. Managed removal must not delete merged ownership wholesale. The current planners are `repair_operations`, `reinstall_operations`, `update_operations`, and `managed_removal_operations` in `src-tauri/src/transaction.rs`.
+- Reinstall and repair must re-read the locked revision and preserve modified files for review. Managed removal must not delete merged ownership wholesale; native client MCP files use the route reverse merge above. The current planners are `repair_operations`, `reinstall_operations`, `update_operations`, and `managed_removal_operations` in `src-tauri/src/transaction.rs`.
 - Every successful Update, Repair, Reinstall, or Remove plan opens the ordinary dry-run review, or conflict review when unresolved conflicts exist. Do not leave a newly built maintenance plan on the action-selection screen.
 - Update preserves the lock's latest/pinned source mode and filters generated artifact IDs out of manifest component expansion. Descriptor, external launcher, and thumbnail artifacts are planned independently for both new and existing projects.
 - Repair and reinstall do not reconstruct a merged file from a raw source blob without a verified merge base; missing or changed merged files become reverse-merge review entries.
@@ -513,6 +542,9 @@ Inject failure at every stage and operation boundary:
   precondition, placement, and post-placement windows
 
 Verify that recovery never creates a false success lock and rollback restores expected hashes.
+Route removal has its own matrix
+(`mcp_route_removal_faults_never_commit_and_recover_the_original_bytes`):
+extend it when the operation gains a boundary.
 
 The current Rust fault test iterates every stage and operation before/after boundary and asserts that no success lock is written; targeted regression tests also cover absent-root creation at apply, pre-apply staging discard, root removal, inverse recreation, later-user-content retention, skipped-file rollback, immutable ownership, remote approval, reanalysis scan binding, inverse rollback refusal after later file or lock edits, and the completed child inverse path. Native execution still requires the supported CI toolchains.
 

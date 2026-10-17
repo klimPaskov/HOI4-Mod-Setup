@@ -9497,6 +9497,7 @@ fn build_maintenance_plan_blocking(
                     generated_bytes: None,
                     executable: selection.executable,
                     platform: Some(selection.platform),
+                    installer_created: false,
                 })
             })
             .collect::<Result<Vec<_>, AppError>>()?;
@@ -10076,6 +10077,14 @@ fn build_maintenance_plan_blocking(
     let mut download_ledger = Vec::new();
     let mut merge_contexts = HashMap::new();
     for operation in &mut operations {
+        // A deselected client's MCP file loses only the shared route. Its
+        // bytes come from the unchanged live file, not from the source.
+        if operation.resolution.as_deref() == Some(crate::transaction::MCP_ROUTE_REMOVAL) {
+            prepared.push(crate::transaction::prepare_mcp_route_removal(
+                &root, operation,
+            )?);
+            continue;
+        }
         if operation.action == OperationAction::DeleteManaged
             || operation.source_sha256.is_none()
             || (mode == "remove" && operation.action == OperationAction::Skip)
@@ -12556,6 +12565,7 @@ mod tests {
                 generated_bytes: None,
                 executable: false,
                 platform: Some(ManifestPlatform::All),
+                installer_created: false,
             },
             LockedFile {
                 path: generated_path.into(),
@@ -12575,6 +12585,7 @@ mod tests {
                 generated_bytes: None,
                 executable: false,
                 platform: Some(ManifestPlatform::All),
+                installer_created: false,
             },
         ];
         let operations =

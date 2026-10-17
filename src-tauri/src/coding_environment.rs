@@ -64,8 +64,9 @@ pub struct NativeClient {
     pub mcp_support: McpSupport,
     pub mcp: Option<NativeMcp>,
     /// A route that an older source format installed but the client never
-    /// read. Readiness keeps the old structural check while that component is
-    /// still locked; the next update moves the project to `mcp`.
+    /// read. Readiness keeps the old structural check while that component
+    /// still owns its locked file; the next update removes the shared route
+    /// from it, retires the component, and moves the project to `mcp`.
     pub legacy_mcp: Option<NativeMcp>,
     /// Official documentation for a manual MCP setup step.
     pub documentation_url: Option<&'static str>,

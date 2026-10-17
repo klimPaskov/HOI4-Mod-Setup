@@ -148,8 +148,9 @@ The pre-implementation draft of this document contained errors that the
 - OpenCode reads MCP servers only from `opencode.json(c)` under `mcp`. The
   format 5 package installed `.opencode/mcp.json`, which OpenCode never read.
   Format 6 moves the route into `opencode.json` and retires that component.
-  Readiness keeps the old structural check for a format 5 lock until Update
-  moves the project.
+  Readiness keeps the old structural check only while a format 5 lock still
+  records `.opencode/mcp.json` for that component; Update removes the route
+  from the unchanged file and retires the component.
 - Augment has project instructions (`CLAUDE.md`, `AGENTS.md`,
   `.augment/rules/`), skills (`.augment/skills/`, `.claude/skills/`,
   `.agents/skills/`), and agents (`.augment/agents/`), and runs on macOS,
@@ -168,15 +169,17 @@ The pre-implementation draft of this document contained errors that the
 - A file of a deselected client that the user changed and kept is released
   from management: it stays on disk untouched and no longer counts as a local
   modification.
-- Deselecting a client never removes its MCP file. The file is merged with
-  user content, and a reverse merge of only the `hoi4_agent_tools` route is not
-  implemented, so the file and its lock entry stay and maintenance shows the
-  kept file for review. This predates format 6 and now applies to every
-  project-MCP client.
-- After Update moves a format 5 OpenCode project to format 6, the retired
-  `.opencode/mcp.json` is a merged file and stays, so readiness keeps the old
-  structural check while that component remains locked. Retiring components
-  that a newer manifest drops needs a lock reconciliation change.
+- A deselected client's MCP file that the installer merged with content the
+  user already had keeps the setup's own non-route keys (for example a
+  `context` setting) when the shared route is removed: the lock records the
+  merged result, not a byte-exact base. Only the `hoi4_agent_tools` route is
+  removed.
+- A file of a deselected client that the installer created before the lock
+  recorded creation evidence (locks written before 2026-10-17) is never
+  deleted: it keeps its empty server table and leaves management.
+- MCP files whose lock entry belongs to an image-generation or live-testing
+  component keep the existing reverse-merge review on removal, because their
+  own planners regenerate those routes for the clients that stay selected.
 - `.vscode/mcp.json`, `opencode.json`, and `.kilo/kilo.json` may contain JSONC
   comments. They are parsed tolerantly, but a merge writes plain JSON, so a
   reviewed merge drops those comments.
@@ -196,12 +199,27 @@ The pre-implementation draft of this document contained errors that the
 - Native MCP files are merged with local content. Only the
   `hoi4_agent_tools` route is retargeted to the verified launch; other servers
   and keys are preserved.
+- When a client is deselected, removed, or dropped by a newer manifest, its
+  unchanged merged MCP file goes through a reviewed reverse merge:
+  `native_mcp::retarget(format, bytes, None)` removes only the shared route
+  (`mcp_route_removal`). The file is deleted instead only when the lock
+  records that the installer created it (`installer_created`) and nothing but
+  an empty server table would remain. A file without the route is released
+  untouched (`mcp_route_release`). Either way the file leaves the lock, and a
+  component with no remaining files is retired. A file the user changed keeps
+  today's behavior: it is kept and, for a deselected client, released from
+  management.
+- Readiness applies the legacy OpenCode check only while the legacy
+  component still owns its locked `.opencode/mcp.json`.
 - Image-generation and live-testing routes are adapted only for the five
   original clients until the source provider tables declare the others.
 
 ## Evidence
 
 - Rust: registry invariants, every MCP format's read, retarget, and removal,
+  reverse merge on removal and update for every format, creation evidence,
+  component retirement, the staged route removal with rollback to the
+  original bytes, and every stage, operation, and quarantine fault boundary,
   format 6 schema and semantic validation, availability gating, shared
   components, readiness layouts and routes, and the legacy OpenCode check.
 - UI: MCP cues, the unavailable list, the Ready to-do, maintenance handling
