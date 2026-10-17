@@ -10222,8 +10222,9 @@ mod tests {
         use crate::native_mcp::McpFormat;
         let path = ".kiro/settings/mcp.json";
         let installed = mcp_route_bytes(McpFormat::JsonMcpServers, user_content);
+        // The Kiro component stays unselected so readiness does not require
+        // its complete native package; only the MCP file is under test.
         let mut first = ready_plan(project_root);
-        first.selected_components.push("runtime.kiro.mcp".into());
         let mut kiro = first.operations[0].clone();
         kiro.id = "op-kiro".into();
         kiro.component_id = "runtime.kiro.mcp".into();
