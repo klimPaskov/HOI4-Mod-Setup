@@ -10222,9 +10222,26 @@ mod tests {
         use crate::native_mcp::McpFormat;
         let path = ".kiro/settings/mcp.json";
         let installed = mcp_route_bytes(McpFormat::JsonMcpServers, user_content);
-        // The Kiro component stays unselected so readiness does not require
-        // its complete native package; only the MCP file is under test.
+        // A client-path operation makes readiness check the primary client's
+        // native package, so the fixture carries a complete Kiro layout. The
+        // Kiro MCP component stays unselected, so no route is required.
+        write_project_file(
+            project_root,
+            ".kiro/agents/explorer.md",
+            b"# Explorer
+",
+        );
+        write_project_file(
+            project_root,
+            ".kiro/skills/example/SKILL.md",
+            b"---
+name: example
+description: Example skill.
+---
+",
+        );
         let mut first = ready_plan(project_root);
+        first.primary_coding_environment = "kiro".into();
         let mut kiro = first.operations[0].clone();
         kiro.id = "op-kiro".into();
         kiro.component_id = "runtime.kiro.mcp".into();
@@ -10276,6 +10293,7 @@ mod tests {
         let predecessor = fs::read(project_root.join(".hoi4-mod-setup/install.lock.json")).unwrap();
         let mut update = ready_plan(project_root);
         update.plan_id = Uuid::new_v4();
+        update.primary_coding_environment = "kiro".into();
         update.maintenance_mode = Some("update".into());
         let incoming = installed_lock
             .files
