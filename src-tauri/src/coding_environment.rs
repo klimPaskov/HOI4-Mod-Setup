@@ -1006,8 +1006,10 @@ pub fn component_ids(
             {
                 if let Some(reason) = unavailable_reason(manifest, &definition, Platform::current())
                 {
-                    return Err(AppError::Source(format!(
-                        "{} cannot be installed: {reason}",
+                    // A selection the user can change is reported as such,
+                    // never as a download failure.
+                    return Err(AppError::InvalidInput(format!(
+                        "{} cannot be installed from this setup version. {reason} Deselect it or choose another version; nothing was changed.",
                         definition.display_name
                     )));
                 }
@@ -1034,8 +1036,11 @@ pub fn component_ids(
             .map(|component| component.id.clone())
             .collect::<Vec<_>>();
         if ids.is_empty() {
-            return Err(AppError::Source(format!(
-                "the verified source manifest does not declare a complete {environment} coding-environment package"
+            let label = native_client(environment)
+                .map(|client| client.display_name)
+                .unwrap_or(environment);
+            return Err(AppError::InvalidInput(format!(
+                "{label} is not included in this setup version, so its files cannot be kept. Choose a version that includes it or deselect it; nothing was changed."
             )));
         }
         result.extend(ids);

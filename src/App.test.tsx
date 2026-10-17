@@ -1479,6 +1479,41 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByLabelText("Meshy API key")).toBeInTheDocument();
   });
 
+  it("keeps an installed client that the selected source version does not offer and says why", () => {
+    const update = vi.fn();
+    const preview = {
+      schema_version: "5.0.0", components: [], profiles: [],
+      coding_environments: [{ id: "claude_code", display_name: "Claude Code", default_primary: true }, { id: "codex", display_name: "Codex" }, { id: "cursor", display_name: "Cursor" }],
+    } as unknown as SourceManifestPreview;
+    render(<Update
+      state={{
+        ...readyState(),
+        aiProvider: "codex",
+        existingInstallationDetected: true,
+        installedWorkflow3dState: "not_selected",
+        installedSuperEventsState: "not_selected",
+        meshSelected: false,
+        superEventsSelected: false,
+        meshKeyDraft: "",
+        meshKeyStatus: "missing",
+        maintenanceEvidenceReady: false,
+        findings: [],
+        manifestPreview: preview,
+        primaryCodingEnvironment: "claude_code",
+        additionalCodingEnvironments: ["gemini_cli", "codex"],
+      } as unknown as WizardState}
+      update={update}
+      findings={[]}
+      setFindings={vi.fn()}
+      onMaintenance={vi.fn()}
+      onStartMaintenance={vi.fn()}
+      onReanalyze={vi.fn().mockResolvedValue(true)}
+    />);
+    expect(screen.getByText(/Installed but not in this source version: gemini_cli\..*will not remove its files implicitly/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /^Cursor/, hidden: true }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ primaryCodingEnvironment: "claude_code", additionalCodingEnvironments: ["codex", "cursor", "gemini_cli"] }));
+  });
+
   it("offers ChatGPT source packaging when the scan finds source files", () => {
     const onPackageChatSources = vi.fn().mockResolvedValue(undefined);
     render(<Update
