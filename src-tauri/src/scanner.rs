@@ -626,7 +626,7 @@ where
                 } else {
                     conflicts.push(ScanConflict { id: format!("scan.profile.{issue}"), path: "@scan/profile/coverage".into(),
                         kind: "other".into(), severity: "warn".into(),
-                        details: Some("Project profiling encountered an unreadable, unsafe, or over-budget input. Coverage is incomplete; review the profile before rescanning.".into()) });
+                        details: Some("Project profiling skipped an unreadable, linked, or over-budget input. The profile is marked truncated; setup evidence is unaffected.".into()) });
                 }
             }
             total_bytes += profile.stats.bytes_read;
@@ -759,8 +759,13 @@ where
 /// an incomplete Git status probe remains visible for review, but it does not
 /// mean the targeted agentic project scan was truncated.
 fn scan_conflict_truncated_detector_evidence(id: &str) -> bool {
+    // A profile limitation (a linked entry, a category or path budget) is
+    // deterministic, so rescanning cannot clear it. It stays a visible warning
+    // and truncated profile coverage, while the setup evidence remains
+    // complete; cancellation and timeout still make the scan partial.
     id.starts_with("scan.")
         && !id.starts_with("scan.sensitive.")
+        && !id.starts_with("scan.profile.")
         && !matches!(
             id,
             "scan.git.inspection" | "scan.git.link" | "scan.git.head_link" | "scan.git.head_read"
@@ -827,7 +832,11 @@ fn enumerate_targeted_directory(
             result.sensitive_found = true;
             return true;
         }
-        if is_unrelated_scan_directory(&name) || is_unrelated_scan_file(&name) {
+        // Registry client surfaces (for example `.vscode/mcp.json`) are
+        // explicit scan targets even inside an otherwise ignored folder.
+        let client_path = crate::coding_environment::is_client_scan_directory(&relative)
+            || client_content_policy(&normalized_scan_path(&relative)).is_some();
+        if (is_unrelated_scan_directory(&name) || is_unrelated_scan_file(&name)) && !client_path {
             return true;
         }
         if !targeted_scan_path_candidate(&relative) {
@@ -1158,11 +1167,21 @@ fn collect_files(
             }
         };
         if is_link_metadata(&metadata) {
+            // A presence-only client marker is never read, so a linked one
+            // (for example `GEMINI.md` linking to `AGENTS.md`) is reported
+            // without blocking the scan.
+            let presence_only =
+                scan_content_policy(&relative).is_some_and(|policy| policy.presence_only);
+            let prefix = if presence_only {
+                "client.marker_link"
+            } else {
+                "scan.link"
+            };
             link_conflicts.push(ScanConflict {
-                id: format!("scan.link.{}", &sha256_bytes(relative.as_bytes())[..12]),
+                id: format!("{prefix}.{}", &sha256_bytes(relative.as_bytes())[..12]),
                 path: relative.clone(),
                 kind: "other".into(),
-                severity: "block".into(),
+                severity: if presence_only { "warn" } else { "block" }.into(),
                 details: Some("Symlink or junction was not followed during scan.".into()),
             });
             observations.push(FileObservation {
@@ -1543,7 +1562,10 @@ fn client_content_policy(normalized: &str) -> Option<ScanContentPolicy> {
     }
     let (parent, name) = normalized.rsplit_once('/')?;
     let extension = name.rsplit_once('.').map(|(_, extension)| extension)?;
-    (crate::coding_environment::is_client_scan_directory(parent)
+    // `.github` and `.vscode` hold unrelated project files (workflows, editor
+    // settings); only their exact client markers and config files count.
+    (!matches!(parent, ".github" | ".vscode")
+        && crate::coding_environment::is_client_scan_directory(parent)
         && matches!(extension, "md" | "json" | "jsonc" | "toml" | "yaml" | "yml"))
     .then_some(presence)?
 }
@@ -2551,7 +2573,7 @@ fn detect_coding_environments(
                         .ok()
                         .is_some_and(|text| text.parse::<toml::Value>().is_ok())
                 } else {
-                    serde_json::from_slice::<Value>(&file.bytes).is_ok()
+                    crate::native_mcp::parse_json_lenient(&file.bytes).is_ok()
                 }
             })
     };
@@ -2559,11 +2581,15 @@ fn detect_coding_environments(
         for (path, format) in client.config_files {
             if has(path) && !parse(path, *format) {
                 let kind = if format.is_toml() { "TOML" } else { "JSON" };
+                // The original clients' configurations are part of their
+                // installed packages; another client's file only warns, so an
+                // unrelated editor configuration never blocks a scan.
+                let legacy = crate::coding_environment::SUPPORTED.contains(&client.id);
                 conflicts.push(ScanConflict {
                     id: format!("conflict.{}.config.parse", client.id),
                     path: (*path).into(),
                     kind: "other".into(),
-                    severity: "block".into(),
+                    severity: if legacy { "block" } else { "warn" }.into(),
                     details: Some(format!("{} configuration is not valid {kind}.", client.id)),
                 });
             }
@@ -3418,6 +3444,111 @@ mod tests {
                 .all(|evidence| evidence.excerpt_sha256.as_deref() == Some(expected.as_str())));
         }
         assert!(!result.partial);
+    }
+
+    #[test]
+    fn profile_limits_truncate_the_profile_without_blocking_scan_approval() {
+        let directory = tempdir().unwrap();
+        fs::write(
+            directory.path().join("descriptor.mod"),
+            "name=\"Budget\"\nsupported_version=\"1.19.*\"\n",
+        )
+        .unwrap();
+        for index in 0..110 {
+            let folder = directory.path().join(format!("common/category_{index:03}"));
+            fs::create_dir_all(&folder).unwrap();
+            fs::write(folder.join("entry.txt"), "example = { }\n").unwrap();
+        }
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+        assert!(
+            !result.partial,
+            "a deterministic profile budget must not block approval"
+        );
+        assert!(result.conflicts.iter().any(
+            |conflict| conflict.id == "scan.profile.group_limit" && conflict.severity == "warn"
+        ));
+        assert!(!result
+            .limits_hit
+            .iter()
+            .any(|id| id.starts_with("scan.profile.")));
+        assert_eq!(result.profile_stats.as_ref().unwrap().coverage, "truncated");
+        assert!(scan_conflict_truncated_detector_evidence("scan.timeout"));
+        assert!(scan_conflict_truncated_detector_evidence("scan.cancelled"));
+        assert!(!scan_conflict_truncated_detector_evidence(
+            "scan.profile.linked_entry"
+        ));
+    }
+
+    #[test]
+    fn client_markers_are_observed_by_presence_and_unrelated_configs_never_block() {
+        let directory = tempdir().unwrap();
+        let root = directory.path();
+        let write = |relative: &str, content: &str| {
+            let path = root.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        };
+        write(
+            "descriptor.mod",
+            "name=\"Clients\"\nsupported_version=\"1.19.*\"\n",
+        );
+        write(
+            ".vscode/mcp.json",
+            "{\n  // VS Code comment\n  \"servers\": {},\n}\n",
+        );
+        write(".vscode/settings.json", "not json at all");
+        write("GEMINI.md", "@./AGENTS.md\n");
+        write(
+            ".continue/config.yaml",
+            "apiKey: presence-only-sentinel-value\n",
+        );
+        write(".kiro/settings/mcp.json", "{broken");
+        let result = scan_project(root, &ScanOptions::default()).unwrap();
+        assert!(!result.partial);
+        let detected = result
+            .findings
+            .iter()
+            .find(|finding| finding.id == "coding.environments")
+            .map(|finding| finding.value["detected"].clone())
+            .unwrap();
+        for client in ["github_copilot", "gemini_cli", "continue", "kiro"] {
+            assert!(
+                detected.as_array().unwrap().iter().any(|id| id == client),
+                "{client} not detected: {detected}"
+            );
+        }
+        assert!(!result
+            .conflicts
+            .iter()
+            .any(|conflict| conflict.path == ".vscode/mcp.json"));
+        let kiro = result
+            .conflicts
+            .iter()
+            .find(|conflict| conflict.id == "conflict.kiro.config.parse")
+            .unwrap();
+        assert_eq!(kiro.severity, "warn");
+        assert!(!serde_json::to_string(&result)
+            .unwrap()
+            .contains("presence-only-sentinel-value"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_presence_only_marker_warns_without_making_the_scan_partial() {
+        let directory = tempdir().unwrap();
+        let root = directory.path();
+        fs::write(root.join("descriptor.mod"), "name=\"Linked\"\n").unwrap();
+        fs::write(root.join("AGENTS.md"), "# Rules\n").unwrap();
+        std::os::unix::fs::symlink("AGENTS.md", root.join("GEMINI.md")).unwrap();
+        let result = scan_project(root, &ScanOptions::default()).unwrap();
+        assert!(!result.partial);
+        let link = result
+            .conflicts
+            .iter()
+            .find(|conflict| conflict.path == "GEMINI.md")
+            .unwrap();
+        assert_eq!(link.severity, "warn");
+        assert!(link.id.starts_with("client.marker_link."));
     }
 
     #[test]

@@ -42,9 +42,11 @@ the Core, 3D, portrait, Super Events, and live-testing choices:
 
 ## Manifest format 6
 
-Format 6 adds two declarations. Earlier app releases reject format 6 with
-"needs a newer HOI4 Mod Setup", so they never offer a client they cannot
-register.
+Format 6 adds two declarations. Earlier app releases (v0.6.2 and older)
+reject a format 6 manifest during schema validation, so they never offer a
+client they cannot register; their error is a generic schema failure. From
+this release on, a newer major is reported as needing an app update before
+any schema is applied.
 
 Each `coding_environments` entry declares `mcp_support`:
 
@@ -160,6 +162,21 @@ The pre-implementation draft of this document contained errors that the
   `.claude/agents/`. The Copilot CLI reads `.mcp.json`, not `.vscode/mcp.json`.
 - Kilo Code loads `.kilo/rules/` only when listed in `instructions`; the
   package relies on `AGENTS.md` instead.
+
+## Known limitations
+
+- Deselecting a client never removes its MCP file. The file is merged with
+  user content, and a reverse merge of only the `hoi4_agent_tools` route is not
+  implemented, so the file and its lock entry stay and maintenance shows the
+  kept file for review. This predates format 6 and now applies to every
+  project-MCP client.
+- After Update moves a format 5 OpenCode project to format 6, the retired
+  `.opencode/mcp.json` is a merged file and stays, so readiness keeps the old
+  structural check while that component remains locked. Retiring components
+  that a newer manifest drops needs a lock reconciliation change.
+- `.vscode/mcp.json`, `opencode.json`, and `.kilo/kilo.json` may contain JSONC
+  comments. They are parsed tolerantly, but a merge writes plain JSON, so a
+  reviewed merge drops those comments.
 
 ## Scanner, readiness, and transaction rules
 

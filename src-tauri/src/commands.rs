@@ -6395,30 +6395,40 @@ fn merge_existing_image_client_config(
         .is_some_and(crate::native_mcp::McpFormat::is_toml)
     {
         let incoming_text = std::str::from_utf8(incoming).map_err(|error| {
-            AppError::Source(format!("Codex configuration is not UTF-8: {error}"))
+            AppError::Source(format!(
+                "coding client TOML configuration is not UTF-8: {error}"
+            ))
         })?;
         let local_text = std::str::from_utf8(&local_bytes).map_err(|error| {
-            AppError::Source(format!("Codex configuration is not UTF-8: {error}"))
+            AppError::Source(format!(
+                "coding client TOML configuration is not UTF-8: {error}"
+            ))
         })?;
         let mut incoming_value = incoming_text.parse::<toml::Value>().map_err(|error| {
-            AppError::Source(format!("Codex configuration is not valid TOML: {error}"))
+            AppError::Source(format!(
+                "coding client TOML configuration is not valid TOML: {error}"
+            ))
         })?;
         let local_value = local_text.parse::<toml::Value>().map_err(|error| {
-            AppError::Source(format!("Codex configuration is not valid TOML: {error}"))
+            AppError::Source(format!(
+                "coding client TOML configuration is not valid TOML: {error}"
+            ))
         })?;
         let (Some(incoming_table), Some(local_table)) = (
             incoming_value.as_table_mut(),
             local_value.as_table().cloned(),
         ) else {
             return Err(AppError::Source(
-                "Codex configuration is not a TOML table".into(),
+                "coding client TOML configuration is not a TOML table".into(),
             ));
         };
         merge_toml_tables_preserving_local(incoming_table, local_table);
         return toml::to_string_pretty(&incoming_value)
             .map(|value| value.into_bytes())
             .map_err(|error| {
-                AppError::Source(format!("Codex configuration could not be merged: {error}"))
+                AppError::Source(format!(
+                    "coding client TOML configuration could not be merged: {error}"
+                ))
             });
     }
     let mut incoming_value: Value = serde_json::from_slice(incoming).map_err(|error| {
@@ -6426,11 +6436,13 @@ fn merge_existing_image_client_config(
             "coding client configuration is not valid JSON: {error}"
         ))
     })?;
-    let local_value: Value = serde_json::from_slice(&local_bytes).map_err(|error| {
-        AppError::Source(format!(
-            "existing coding client configuration is not valid JSON: {error}"
-        ))
-    })?;
+    // Local client files may use JSONC comments and trailing commas.
+    let local_value: Value =
+        crate::native_mcp::parse_json_lenient(&local_bytes).map_err(|error| {
+            AppError::Source(format!(
+                "existing coding client configuration is not valid JSON: {error}"
+            ))
+        })?;
     let (Some(incoming_object), Some(local_object)) = (
         incoming_value.as_object_mut(),
         local_value.as_object().cloned(),

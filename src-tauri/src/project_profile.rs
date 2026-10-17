@@ -166,7 +166,7 @@ impl Collector<'_> {
         self.result.stats.directories_indexed += 1;
         let mut names = Vec::new();
         let mut name_bytes = 0;
-        directory.visit_directory_names(|entry| {
+        let visited = directory.visit_directory_names(|entry| {
             if self.stop() {
                 return false;
             }
@@ -194,7 +194,13 @@ impl Collector<'_> {
             }
             names.push(name.to_owned());
             true
-        })?;
+        });
+        if visited.is_err() {
+            // A folder that vanishes or changes during the walk is incomplete
+            // coverage, never a failed scan.
+            self.result.problems.insert("directory_read");
+            return Ok(());
+        }
         names.sort();
         let mut collision_keys = BTreeSet::new();
         for name in names {
@@ -210,13 +216,19 @@ impl Collector<'_> {
                 self.result.problems.insert("path_limit");
                 continue;
             }
-            if !collision_keys.insert(crate::security::canonical_relative_key(&name)?) {
+            // Names legal on one platform but outside the portable path rules
+            // (a colon, a trailing dot, a reserved device name) are skipped.
+            let Ok(key) = crate::security::canonical_relative_key(&name) else {
+                self.result.problems.insert("name_limit");
+                continue;
+            };
+            if !collision_keys.insert(key) {
                 self.result.problems.insert("case_collision");
                 continue;
             }
-            let metadata = directory
-                .with_stable_path(|stable| std::fs::symlink_metadata(stable.join(&name)))?;
-            let Ok(metadata) = metadata else {
+            let Ok(Ok(metadata)) =
+                directory.with_stable_path(|stable| std::fs::symlink_metadata(stable.join(&name)))
+            else {
                 self.result.problems.insert("metadata_read");
                 continue;
             };
@@ -229,7 +241,11 @@ impl Collector<'_> {
                     self.roots.entry(name.clone()).or_default();
                 }
                 match directory.open_child_directory(&name) {
-                    Ok(child) => self.walk(&child, &relative, depth + 1)?,
+                    Ok(child) => {
+                        if self.walk(&child, &relative, depth + 1).is_err() {
+                            self.result.problems.insert("directory_read");
+                        }
+                    }
                     Err(_) => {
                         self.result.problems.insert("directory_read");
                     }
@@ -288,21 +304,46 @@ impl Collector<'_> {
 pub(crate) fn clean_text(value: &str, limit: usize) -> String {
     static LOCAL: OnceLock<Regex> = OnceLock::new();
     static LINK: OnceLock<Regex> = OnceLock::new();
+    static TOKEN: OnceLock<Regex> = OnceLock::new();
+    static EMAIL: OnceLock<Regex> = OnceLock::new();
     // Links are replaced first so a URL scheme such as `https:/` is never
     // mistaken for a drive letter. Absolute roots must start a token so a
     // contained relative path such as `gfx/home/` is preserved.
-    let link = LINK.get_or_init(|| Regex::new(r"(?i)\b(?:https?|ftp|file)://\S+").unwrap());
+    let link = LINK.get_or_init(|| {
+        Regex::new(r"(?i)\b(?:[a-z][a-z0-9+.\-]*://\S+|file:\S+|mailto:\S+)").unwrap()
+    });
     let value = link.replace_all(value, "[link]");
     let local = LOCAL.get_or_init(|| {
         Regex::new(
-            r"(?i)(?:^|[^a-z0-9_.\-/\\])(?:[a-z]:[\\/]|\\\\|/(?:users|home|mnt|private|var|tmp)/|~/)",
+            r"(?i)(?:^|[^a-z0-9_.\-/\\])(?:[a-z]:[\\/]|\\\\|//[a-z0-9]|/(?:[a-z]|cygdrive|users|home|mnt|private|var|tmp|volumes|media|run|opt|root|srv)/|~/)",
         )
         .unwrap()
     });
     if local.is_match(&value) {
         return "[machine-local reference omitted]".into();
     }
-    redact_secrets(&value, &[]).chars().take(limit).collect()
+    // Credential shapes beyond the shared redaction set: provider tokens,
+    // cloud keys, JWTs, and plain secret assignments. The whole piece is
+    // omitted so no key name or fragment remains.
+    let token = TOKEN.get_or_init(|| {
+        Regex::new(
+            r"(?i)\b(?:gh[pousr]_[a-z0-9]{20,}|github_pat_[a-z0-9_]{20,}|xox[abprs]-[a-z0-9-]{10,}|akia[0-9a-z]{16}|hf_[a-z0-9]{20,}|eyj[a-z0-9_-]{8,}\.[a-z0-9_-]{8,}\.[a-z0-9_-]{8,})|\b(?:password|passwd|secret|token)\s*[:=]\s*\S+",
+        )
+        .unwrap()
+    });
+    if token.is_match(&value) || redact_secrets(&value, &[]) != value {
+        return "[credential-shaped text omitted]".into();
+    }
+    let email = EMAIL
+        .get_or_init(|| Regex::new(r"(?i)\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b").unwrap());
+    let value = email.replace_all(&value, "[email omitted]");
+    let cleaned: String = value.chars().take(limit).collect();
+    // Only a redaction fixed point may reach approved evidence.
+    if redact_secrets(&cleaned, &[]) == cleaned {
+        cleaned
+    } else {
+        "[credential-shaped text omitted]".into()
+    }
 }
 
 fn compact_model_value(value: &Value, array_limit: usize) -> Value {
@@ -344,8 +385,12 @@ fn add_finding(
             projected["model_projection"] = json!({"array_items_per_field":limit,"text_bytes_per_field":256,"full_details_available_in_review":true});
         }
         let bytes = serde_json::to_vec(&projected).expect("profile value is JSON");
-        (bytes.len() <= 24 * 1024).then_some(bytes)
-    }).unwrap_or_else(|| br#"{"model_projection":"summary exceeds budget; review details locally"}"#.to_vec());
+        // Approval re-checks that redaction leaves an excerpt unchanged, so a
+        // projection that truncation turned credential-shaped is never offered.
+        let stable = std::str::from_utf8(&bytes)
+            .is_ok_and(|text| redact_secrets(text, &[]) == text);
+        (bytes.len() <= 24 * 1024 && stable).then_some(bytes)
+    }).unwrap_or_else(|| br#"{"model_projection":"summary omitted; review details locally"}"#.to_vec());
     result.findings.push(ScanFinding {
         id: format!("profile.{id}"), category: category.into(), key: format!("project_{id}"), value,
         model_excerpt: Some(String::from_utf8(excerpt.clone()).expect("JSON is UTF-8")), status: "needs_review".into(), origin: "deterministic".into(), user_value: None,
@@ -979,5 +1024,19 @@ mod tests {
             "ratio a:b and key: value"
         );
         assert_eq!(clean_text("abcdef", 3), "abc");
+        // Every cleaned value is a redaction fixed point, including when the
+        // limit cuts a redaction marker, so approval never rejects it later.
+        for (text, limit) in [
+            (
+                "Set api_key=sk-abcdefghijklmnopqrstuvwxyz0123456789 in config",
+                600,
+            ),
+            ("api_key=sk-abcdefghijklmnopqrstuvwxyz0123456789", 14),
+            ("token ghp_abcdefghijklmnopqrstuvwxyz0123456789 here", 20),
+        ] {
+            let cleaned = clean_text(text, limit);
+            assert_eq!(redact_secrets(&cleaned, &[]), cleaned, "{text} at {limit}");
+            assert!(!cleaned.contains("qrstuvwxyz0123456789"), "{text}");
+        }
     }
 }

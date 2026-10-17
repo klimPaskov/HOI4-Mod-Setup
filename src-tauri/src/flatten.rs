@@ -750,6 +750,10 @@ fn open_relative_under_root(
         let mut flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
         if !is_final || final_directory {
             flags |= libc::O_DIRECTORY;
+        } else {
+            // A FIFO or device swapped in for a regular file must not block the
+            // open; callers verify the opened descriptor is a regular file.
+            flags |= libc::O_NONBLOCK;
         }
         let descriptor = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), flags) };
         if descriptor < 0 {

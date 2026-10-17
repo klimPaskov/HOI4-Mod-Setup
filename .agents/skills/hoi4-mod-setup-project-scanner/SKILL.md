@@ -66,8 +66,13 @@ only extra folders the scanner enumerates, one level each. Files there and
 exact client markers use a presence-only content policy: they are observed
 without reading their bytes, because client folders such as `.continue/` or
 `.aider.conf.yml` can hold credentials. Only the registry's small
-`config_files` are read, retained, and parsed; an unparseable JSON or TOML file
-is a blocking `conflict.<client>.config.parse`. Prefer the managed lock's recorded primary/additional selection; for
+`config_files` are read, retained, and parsed with JSONC tolerance; an
+unparseable file is a blocking `conflict.<client>.config.parse` only for the
+original five clients and a warning for any other client. Registry client
+paths pass the ignore list (`.vscode/mcp.json`), but `.github` and `.vscode`
+files count only as exact markers or config files. A linked presence-only
+marker is a warning, not a blocking link conflict, because it is never read.
+Project-profile limits (`scan.profile.*`) never make the setup scan partial. Prefer the managed lock's recorded primary/additional selection; for
 fresh installs the manifest default is Claude Code, while a legacy project
 without a recorded primary uses Codex as the compatibility migration default.
 This finding is bounded setup evidence, not a reason to widen the setup scan or

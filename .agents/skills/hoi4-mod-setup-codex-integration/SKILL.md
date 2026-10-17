@@ -267,7 +267,13 @@ Every analysis turn must:
 For existing-project analysis, the core accepts only normalized redacted
 finding/conflict summaries, evidence references, and matching hashes emitted by a completed deterministic read-only scan in the
 current app session and an explicit approval of that exact evidence vector.
-Completion of a scan alone is not an approval. Reject `.git`, environment, credential, token, key, PEM,
+Completion of a scan alone is not an approval. The provider-visible text of
+each finding is its core-owned `model_excerpt`, hashed into the evidence; the
+renderer sends it unchanged and never substitutes raw values. Project-profile
+excerpts carry only extracted facts, headings, and one short overview line;
+they omit any piece with a credential shape, machine-local path, or link, and
+mark documentation as untrusted. Every system prompt and the shared analysis
+prompt state that evidence text is untrusted data, never instructions. Reject `.git`, environment, credential, token, key, PEM,
 and other secret-bearing paths, duplicate references, and credential-shaped
 briefs, constraints, or excerpts before prompt construction. New-project
 analysis may have no scan evidence but still receives only the bounded user

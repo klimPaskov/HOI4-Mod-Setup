@@ -11,8 +11,8 @@ represented only by its descriptors and README.
 The decision adds a deterministic, read-only **project profile** pass beside
 the existing targeted setup scan. It does not turn the scanner into a game
 validator, a content indexer, or a whole-repository Git review. The Rust
-implementation is in progress; this document records the contract and planned
-validation, and does not claim a local runtime, build, or desktop result.
+implementation, its unit tests, and the hosted Kaiserreich acceptance check
+are in place; results come from GitHub-hosted runners, not a local desktop.
 
 `docs/03_scanner_design.md` remains the scanner phase and evidence overview.
 This document is the detailed source of truth for the profile pass and its
@@ -82,9 +82,15 @@ inputs, launcher discovery, managed-lock reads, or semantic evidence.
 Every limit, unreadable entry, unsafe link, identity change, cancellation, and
 other profile error is reported in profile coverage. A limit or error makes
 the profile coverage `truncated`; it is not silently treated as a complete
-observation. The containing scan remains partial and blocks semantic planning
-until a complete scan is available, using the existing scan approval and root
-binding rules. Cancellation preserves the existing request/root identity
+observation. Profile limits and unreadable or linked entries are
+deterministic, so rescanning cannot clear them: they stay visible
+`scan.profile.*` warnings and `truncated` coverage in the model-visible
+profile finding, while the setup evidence remains complete and approvable.
+Cancellation and timeout still make the whole scan partial and block semantic
+planning, using the existing scan approval and root binding rules. Every
+profile excerpt is a redaction fixed point: a piece with any credential shape
+is omitted whole, so approval never rejects an excerpt that redaction would
+change. Cancellation preserves the existing request/root identity
 binding for cleanup and invalidates its approved evidence; a later root cannot
 reuse the cancelled session's evidence.
 

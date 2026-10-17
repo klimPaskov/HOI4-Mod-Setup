@@ -59,6 +59,90 @@ fn malformed() -> AppError {
     AppError::Process("the managed MCP client registration is malformed".into())
 }
 
+/// Parse JSON that may contain JSONC comments and trailing commas, as VS
+/// Code, OpenCode, and Kilo configuration files allow. Strict JSON is
+/// returned unchanged; string contents are never altered.
+pub fn parse_json_lenient(bytes: &[u8]) -> Result<Value, serde_json::Error> {
+    if let Ok(value) = serde_json::from_slice(bytes) {
+        return Ok(value);
+    }
+    let text = String::from_utf8_lossy(bytes);
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_string = false;
+    while let Some(character) = chars.next() {
+        if in_string {
+            out.push(character);
+            match character {
+                '\\' => {
+                    if let Some(escaped) = chars.next() {
+                        out.push(escaped);
+                    }
+                }
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match (character, chars.peek()) {
+            ('"', _) => {
+                in_string = true;
+                out.push(character);
+            }
+            ('/', Some('/')) => {
+                for next in chars.by_ref() {
+                    if next == '\n' {
+                        out.push('\n');
+                        break;
+                    }
+                }
+            }
+            ('/', Some('*')) => {
+                chars.next();
+                let mut previous = '\0';
+                for next in chars.by_ref() {
+                    if previous == '*' && next == '/' {
+                        break;
+                    }
+                    previous = next;
+                }
+                out.push(' ');
+            }
+            _ => out.push(character),
+        }
+    }
+    // Drop a comma that directly precedes a closing bracket or brace.
+    let mut cleaned = String::with_capacity(out.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    let characters = out.chars().collect::<Vec<_>>();
+    for (index, character) in characters.iter().enumerate() {
+        if in_string {
+            cleaned.push(*character);
+            if escaped {
+                escaped = false;
+            } else if *character == '\\' {
+                escaped = true;
+            } else if *character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if *character == '"' {
+            in_string = true;
+        } else if *character == ',' {
+            let next = characters[index + 1..]
+                .iter()
+                .find(|candidate| !candidate.is_whitespace());
+            if matches!(next, Some('}' | ']')) {
+                continue;
+            }
+        }
+        cleaned.push(*character);
+    }
+    serde_json::from_str(&cleaned)
+}
+
 /// Parse a native configuration into a JSON view. TOML is converted so one
 /// validator covers every format.
 fn json_view(format: McpFormat, bytes: &[u8]) -> Result<Value, AppError> {
@@ -72,7 +156,7 @@ fn json_view(format: McpFormat, bytes: &[u8]) -> Result<Value, AppError> {
             .map_err(|_| malformed())?;
         serde_json::to_value(config).map_err(|_| malformed())
     } else {
-        serde_json::from_slice(bytes).map_err(|_| malformed())
+        parse_json_lenient(bytes).map_err(|_| malformed())
     }
 }
 
@@ -177,7 +261,7 @@ pub fn retarget(
             .map(String::into_bytes)
             .map_err(|error| AppError::Source(error.to_string()));
     }
-    let mut config: Value = serde_json::from_slice(bytes)?;
+    let mut config: Value = parse_json_lenient(bytes)?;
     if let Some(servers) = config
         .get_mut(format.servers_key())
         .and_then(Value::as_object_mut)
@@ -364,6 +448,38 @@ mod tests {
             &serde_json::to_vec(&long_args).unwrap()
         )
         .is_err());
+    }
+
+    #[test]
+    fn jsonc_comments_and_trailing_commas_are_accepted_without_touching_strings() {
+        let jsonc = br#"{
+  // VS Code allows comments in mcp.json
+  "servers": {
+    /* the user's own server */
+    "user": {"type": "stdio", "command": "tool // not a comment", "args": ["/* kept */",],},
+    "hoi4_agent_tools": {"type": "stdio", "command": "hoi4-agent-tools.cmd", "args": []},
+  },
+}"#;
+        assert_eq!(
+            registration(McpFormat::VscodeServers, jsonc).unwrap(),
+            Some(("hoi4-agent-tools.cmd".into(), vec![]))
+        );
+        let launch = ("C:\\npm\\hoi4-agent-tools.cmd".to_string(), vec![]);
+        let retargeted: Value = serde_json::from_slice(
+            &retarget(McpFormat::VscodeServers, jsonc, Some(&launch)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            retargeted["servers"]["user"]["command"],
+            "tool // not a comment"
+        );
+        assert_eq!(retargeted["servers"]["user"]["args"][0], "/* kept */");
+        assert_eq!(
+            retargeted["servers"]["hoi4_agent_tools"]["command"],
+            "C:\\npm\\hoi4-agent-tools.cmd"
+        );
+        assert!(parse_json_lenient(br#"{"a": "unterminated}"#).is_err());
+        assert!(parse_json_lenient(br#"{"a": 1 /* open"#).is_err());
     }
 
     #[test]
