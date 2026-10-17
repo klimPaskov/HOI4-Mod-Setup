@@ -380,6 +380,15 @@ scanner reports the unsafe metadata without following it.
 Compile the immutable secret-redaction pattern set once and reuse it; per-
 finding regex compilation is an avoidable large-project scan bottleneck.
 
+Coding-client folders and markers are observed by presence only; the scanner
+reads and parses only the registry's small native MCP files. Installed client
+MCP files contain the source's placeholder or the verified launch and nothing
+else from the app; user servers and keys are preserved by structured merge.
+The installer never writes a client's user, IDE, or cloud settings, so a manual
+route stays a to-do. `open_external_url` admits a client guide only when it is
+the exact `documentation_url` reviewed in the client registry; a manifest
+cannot add an openable address.
+
 ## Update this skill when
 
 Update this skill when credential storage, redaction, path containment, archive rules, process policy, source trust, updater trust, Git safety, GitHub Actions permissions, or security test expectations change.

@@ -370,7 +370,15 @@ pub fn validate_catalog(manifest: &RemoteManifest) -> Result<(), AppError> {
         .as_array()
         .ok_or_else(|| invalid("providers"))?;
     let mut seen = std::collections::HashSet::new();
-    let platforms = if manifest.schema_version.starts_with("5.") {
+    // Native Linux live testing arrived with format 5 and applies to every
+    // later format.
+    let native_linux = manifest
+        .schema_version
+        .split('.')
+        .next()
+        .and_then(|major| major.parse::<u64>().ok())
+        .is_some_and(|major| major >= 5);
+    let platforms = if native_linux {
         json!(["windows", "macos", "linux"])
     } else {
         json!(["windows", "macos"])

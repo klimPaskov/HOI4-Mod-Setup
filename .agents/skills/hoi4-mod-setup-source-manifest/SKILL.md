@@ -303,9 +303,45 @@ a newer bootstrap.
   of those optional dependencies are in the selected closure. Use the same
   pattern for platform-specific MCP registrations; never place a Windows
   `.cmd` command in an all-platform source component.
+- Manifest format 6 adds per-client MCP declarations and shared components
+  (`docs/36_coding_environment_catalog.md`). Each environment declares
+  `mcp_support` (`project`, `manual`, or `none`); a `project` route names the
+  owning `component_id`, its exact `path`, and a closed `format`
+  (`json_mcp_servers`, `vscode_servers`, `local_command_array`,
+  `toml_mcp_servers`). `validate_environment_mcp_declarations` rejects a route
+  whose component belongs to another client or does not install that path.
+  The app offers a format 6 client only when the `NATIVE_CLIENTS` registry in
+  `src-tauri/src/coding_environment.rs` has a matching path and format, or when
+  the route is manual or absent; anything else is listed as unavailable with
+  a reason, and `component_ids` refuses it with an `InvalidInput` message that
+  the UI shows unchanged. Format 5 and older manifests offer only the five
+  clients they shipped.
+- `shared_coding_environments` lets one component serve several clients from
+  the same path (the `.agents/skills` copy serves Codex, Gemini CLI,
+  Antigravity, Kilo Code, and Devin Desktop). It requires an owning
+  `coding_environment`, names only other declared clients, and needs format 6.
+  Use `coding_environment::serves_environment` wherever selection or
+  maintenance asks which components belong to a client; never declare a second
+  component for the same destination. Cross-client `dependencies` alone are
+  not enough, because maintenance compares unexpanded per-client component
+  lists against the lock.
+- Adding a client with an existing MCP format needs a source declaration and a
+  registry row (path, format, layout, markers, scan folders, documentation
+  URL). A manual or absent route needs only the source declaration. A new MCP
+  format needs app code in `src-tauri/src/native_mcp.rs` and therefore an app
+  release. Bumping the manifest major makes older releases refuse the
+  canonical manifest, so merge a format bump in the source only together with
+  the app release that reads it.
+- The source repository owns the client table in
+  `scripts/coding_environment_data.py`; the evidence generator applies it and
+  `validate_published_manifests.py` keeps the table and generated declarations
+  exact. A source pull request cannot publish evidence: its validation job
+  uploads a `hoi4-mod-setup-manifest-preview` artifact built by the owned
+  generator for the head commit, and only that output may be committed as the
+  branch's manifest.
 - The canonical authoring source is `CLAUDE.md`, `.claude/skills/**`, and
   `.claude/agents/*.md`. Source-side synchronizers generate the adapted
-  `AGENTS.md` plus Codex, Cursor, Qoder, and OpenCode projections; `--check`
+  `AGENTS.md` plus every other client's agent projections; `--check`
   must fail on missing, stale, extra, or drifted projections before a manifest
   is published.
 - Expected file evidence carries both SHA-256 and byte size into selected-file records, operations, locks, and readiness. Command-bearing validation rules become plan-visible, approval-bound external actions; their target, platform, and risk come from the verified manifest rather than renderer input. All-platform command declarations are bound to the current supported platform so they are not silently dropped.
@@ -366,7 +402,14 @@ a newer bootstrap.
   no parallel versioned manifest filename is bundled or requested
 - branch to commit resolution and publication-commit manifest binding
 - commit immutability
-- manifest major rejection
+- manifest major rejection, including a newer major reported as needing an app
+  update before any schema is applied
+- format 6 MCP declarations: a project route without a registration, a manual
+  route with one, a registration owned by another client or not installing its
+  path, an unknown format, a non-HTTPS documentation link, and invalid shared
+  clients; format 5 rejects every format 6 field
+- availability gating: unknown or mismatched project routes, platform gaps, and
+  format 5 manifests never offer an unshipped client
 - authoritative schema rejection for unknown top-level and nested fields before
   typed deserialization
 - schema acceptance for all six executable/interpreter/runtime identity fields

@@ -167,14 +167,16 @@
 - ENV-01: Setup includes a dedicated Coding Environments step with exactly one
   primary selection; new installs use the manifest-declared default, currently
   Claude Code.
-- ENV-02: Additional selections allow any subset of the other supported
-  environments (Codex, Claude Code, Cursor, Qoder, and OpenCode), never include
-  the primary, and update automatically when the primary changes.
+- ENV-02: Additional selections allow any subset of the other offered
+  environments, never include the primary, and update automatically when the
+  primary changes. A format 6 client is offered only when its project MCP route
+  matches an app adapter or its route is manual or absent; format 5 offers only
+  the five clients it shipped.
 - ENV-03: The manifest-declared native package is complete for every selected
   environment, while shared runtime-neutral components remain installed.
 - ENV-04: `CLAUDE.md`, `.claude/skills/`, and `.claude/agents/` are canonical;
-  `AGENTS.md`, Codex, Cursor, Qoder, and OpenCode projections are generated and
-  checked for drift.
+  `AGENTS.md` and every other client's projections are generated and checked
+  for drift.
 - ENV-05: Environment selection is independent of Core/Core plus 3D workflow
   profiles and is resolved through composable manifest components.
 - ENV-06: Existing-project scans detect installed environments, preserve a

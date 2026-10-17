@@ -185,6 +185,60 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByRole("group", { name: /additional coding environments/i })).toContainElement(screen.getByRole("checkbox", { name: /Cursor/ }));
   });
 
+  const formatSixPreview = {
+    schema_version: "6.0.0",
+    coding_environments: [
+      { id: "claude_code", display_name: "Claude Code", default_primary: true, mcp_support: "project" },
+      { id: "gemini_cli", display_name: "Gemini CLI", description: "GEMINI.md, .gemini agents, shared .agents skills, and MCP", mcp_support: "project", documentation_url: "https://geminicli.com/docs/tools/mcp-server/" },
+      { id: "cline", display_name: "Cline", description: "AGENTS.md, a Cline rule, and Claude-format skills", mcp_support: "manual", documentation_url: "https://docs.cline.bot/mcp/configuring-mcp-servers" },
+      { id: "aider", display_name: "Aider", description: "An .aider.conf.yml that reads AGENTS.md", mcp_support: "none" },
+    ],
+    unavailable_coding_environments: [{ id: "augment", display_name: "Augment (Auggie CLI)", reason: "This client is not supported on Windows." }],
+  } as unknown as SourceManifestPreview;
+
+  it("labels manual and absent MCP routes and lists clients this version cannot install", () => {
+    const state = { ...initialState, manifestPreview: formatSixPreview, primaryCodingEnvironment: "claude_code", additionalCodingEnvironments: [] } as WizardState;
+    render(<CodingEnvironments state={state} update={vi.fn()} />);
+    const primary = screen.getByRole("radiogroup", { name: /primary coding environment/i });
+    expect(within(primary).getAllByRole("radio")).toHaveLength(4);
+    expect(within(primary).getByText("Gemini CLI").closest(".coding-environment-copy")).toHaveTextContent(/\.gemini agents/);
+    expect(within(primary).getByText("Gemini CLI").closest(".coding-environment-copy")).not.toHaveTextContent(/set up in the client/);
+    expect(within(primary).getByText("Cline").closest(".coding-environment-copy")).toHaveTextContent("MCP is set up in the client");
+    expect(within(primary).getByText("Aider").closest(".coding-environment-copy")).toHaveTextContent("No MCP support");
+    // Unavailable clients are visible behind disclosure but never selectable.
+    expect(screen.queryByRole("radio", { name: /Augment/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Augment/ })).not.toBeInTheDocument();
+    const unavailable = screen.getByText("Not available (1)").closest("details")!;
+    expect(unavailable).toHaveTextContent(/Augment \(Auggie CLI\).*not supported on Windows/);
+  });
+
+  it("keeps the development-client selection independent from the setup assistant", () => {
+    for (const aiProvider of ["gemini_account", "grok_account", "claude_account", "codex"]) {
+      const update = vi.fn();
+      const state = { ...initialState, aiProvider, manifestPreview: formatSixPreview, primaryCodingEnvironment: "claude_code", additionalCodingEnvironments: [] } as unknown as WizardState;
+      render(<CodingEnvironments state={state} update={update} />);
+      expect(screen.getByRole("radio", { name: /^Claude Code/ })).toBeChecked();
+      expect(screen.getByRole("radio", { name: /^Gemini CLI/ })).not.toBeChecked();
+      expect(update).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("radio", { name: /^Gemini CLI/ }));
+      expect(update).toHaveBeenCalledWith(expect.objectContaining({ primaryCodingEnvironment: "gemini_cli", additionalCodingEnvironments: [] }));
+      expect(update.mock.calls[0][0]).not.toHaveProperty("aiProvider");
+      cleanup();
+    }
+  });
+
+  it("shows a manual MCP to-do with the reviewed guide only for selected manual clients", () => {
+    const state = { ...readyState(), manifestPreview: formatSixPreview, selectedComponents: ["mcp.hoi4_agent_tools"], primaryCodingEnvironment: "gemini_cli", additionalCodingEnvironments: ["cline", "aider"] } as WizardState;
+    render(<Ready state={state} update={vi.fn()} onMaintenance={vi.fn()} />);
+    expect(screen.getByText(/To-do: add HOI4 Agent Tools in Cline's own MCP settings/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Cline MCP guide" })).toHaveAttribute("href", "https://docs.cline.bot/mcp/configuring-mcp-servers");
+    expect(screen.queryByText(/in Gemini CLI's own MCP settings/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/in Aider's own MCP settings/)).not.toBeInTheDocument();
+    cleanup();
+    render(<Ready state={{ ...state, selectedComponents: [] }} update={vi.fn()} onMaintenance={vi.fn()} />);
+    expect(screen.queryByText(/To-do: add HOI4 Agent Tools/)).not.toBeInTheDocument();
+  });
+
   it("shows the default image route and keeps the primary separate from optional routes", () => {
     window.history.replaceState({}, "", "/?screenshot=image-generation");
     const fixture = documentationFixture(readyState());
@@ -1425,6 +1479,41 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByLabelText("Meshy API key")).toBeInTheDocument();
   });
 
+  it("keeps an installed client that the selected source version does not offer and says why", () => {
+    const update = vi.fn();
+    const preview = {
+      schema_version: "5.0.0", components: [], profiles: [],
+      coding_environments: [{ id: "claude_code", display_name: "Claude Code", default_primary: true }, { id: "codex", display_name: "Codex" }, { id: "cursor", display_name: "Cursor" }],
+    } as unknown as SourceManifestPreview;
+    render(<Update
+      state={{
+        ...readyState(),
+        aiProvider: "codex",
+        existingInstallationDetected: true,
+        installedWorkflow3dState: "not_selected",
+        installedSuperEventsState: "not_selected",
+        meshSelected: false,
+        superEventsSelected: false,
+        meshKeyDraft: "",
+        meshKeyStatus: "missing",
+        maintenanceEvidenceReady: false,
+        findings: [],
+        manifestPreview: preview,
+        primaryCodingEnvironment: "claude_code",
+        additionalCodingEnvironments: ["gemini_cli", "codex"],
+      } as unknown as WizardState}
+      update={update}
+      findings={[]}
+      setFindings={vi.fn()}
+      onMaintenance={vi.fn()}
+      onStartMaintenance={vi.fn()}
+      onReanalyze={vi.fn().mockResolvedValue(true)}
+    />);
+    expect(screen.getByText(/Installed but not in this source version: gemini_cli\..*will not remove its files implicitly/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /^Cursor/, hidden: true }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ primaryCodingEnvironment: "claude_code", additionalCodingEnvironments: ["codex", "cursor", "gemini_cli"] }));
+  });
+
   it("offers ChatGPT source packaging when the scan finds source files", () => {
     const onPackageChatSources = vi.fn().mockResolvedValue(undefined);
     render(<Update
@@ -1797,11 +1886,30 @@ describe("HOI4 Mod Setup wizard", () => {
 
     expect(screen.getByText("Checking Git state")).toBeInTheDocument();
     expect(screen.getByText(".git")).toBeInTheDocument();
-    expect(screen.getByText(/12 files/)).toBeInTheDocument();
+    expect(screen.getByText(/12 setup files, 4 setup directories/)).toBeInTheDocument();
+    expect(screen.queryByText(/files indexed/)).not.toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: "Project scan progress" })).not.toHaveAttribute("aria-valuenow");
     expect(screen.getByRole("progressbar", { name: "Project scan progress" })).toHaveAttribute("aria-valuetext", "Scan in progress");
     fireEvent.click(screen.getByRole("button", { name: "Cancel scan" }));
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("separates indexed project files and content samples from setup files during profiling", () => {
+    const progress: ScanProgress = {
+      stage: "profiling_project",
+      currentPath: "common/national_focus/germany.txt",
+      filesScanned: 12,
+      directoriesScanned: 4,
+      bytesRead: 3 * 1024 * 1024,
+      profileStats: { files_indexed: 842, directories_indexed: 97, samples_read: 31, bytes_read: 3 * 1024 * 1024 - 4096, excluded_entries: 5, coverage: "complete" },
+    };
+    render(<Scan state={{ mode: "existing" } as unknown as WizardState} complete={false} progress={progress} partial={false} limitsHit={[]} canCancel cancellationRequested={false} onCancel={vi.fn().mockResolvedValue(undefined)} />);
+
+    expect(screen.getByText("common/national_focus/germany.txt")).toBeInTheDocument();
+    expect(screen.getByText(/842 files indexed, 31 content samples, 12 setup files/)).toBeInTheDocument();
+    expect(screen.queryByText(/setup directories/)).not.toBeInTheDocument();
+    expect(screen.getByText(/3\.0 MB read/)).toBeInTheDocument();
+    expect(screen.getByText("Profiling the mod")).toBeInTheDocument();
   });
 
   it("keeps a truncated scan visibly partial and does not call it a full scan", () => {

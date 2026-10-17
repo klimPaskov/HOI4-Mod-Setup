@@ -211,8 +211,18 @@ Resolve complete native packages from manifest components tagged with
 canonical adapted `CLAUDE.md`, `.claude/skills/`, and `.claude/agents/`, the
 adapted `AGENTS.md` projection, `.tools/sync/`, shared documentation, and
 selected workflows. The Claude instruction, skill, and Markdown-subagent files
-are the source package; Codex, Cursor, Qoder, and OpenCode files are generated
-projections and must pass source-side drift checks.
+are the source package; every other client's instructions, agents, and skill
+copies are generated projections and must pass source-side drift checks.
+
+Manifest format 6 declares each client's MCP support: a `project` file the
+installer manages, a `manual` route in settings the client owns, or `none`.
+Offer a format 6 client only when its project route matches an adapter in
+`src-tauri/src/coding_environment.rs`, or when its route is manual or absent.
+Never write a client's user, IDE, or cloud settings. A component may serve
+several clients through `shared_coding_environments`, so one installed copy
+never duplicates a destination. Format 5 and older manifests offer only the
+five clients they shipped. The catalog, evidence, and unsupported routes are
+in `docs/36_coding_environment_catalog.md`.
 
 Persist primary and additional IDs in project state, plans, locks, and journals.
 Existing-project scans preserve a valid recorded selection, including a prior

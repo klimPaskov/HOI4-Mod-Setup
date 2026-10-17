@@ -55,6 +55,14 @@ may use a real account; ordinary CI must not.
   routes instead of presenting them as all-platform
 - hashing
 - file classification
+- bounded project profiling: separate metadata counts and samples, content
+  categories, path-hash sampling, four-per-category fairness, 256-sample and
+  8 MiB aggregate caps, 32 KiB prefix-only hashes, metadata-only binaries, and
+  explicit sampled/truncated coverage
+- profile findings for observed namespaces and identifier prefixes, actual
+  localisation language headers/BOM/versioned quoted-key style, and redacted
+  documentation headings/short overviews without project-wide convention
+  inference
 - three-way and TOML merge
 - generic manifest-declared optional workflows render/select without an app
   enum, while provider/platform/dependency gates remain enforced
@@ -81,8 +89,14 @@ may use a real account; ordinary CI must not.
   for new installs, validates exactly one primary, filters the primary from
   additional choices, and resolves every primary/additional combination against
   the published manifest
-- complete native package parsing for Claude Code, Codex, Cursor, Qoder, and
-  OpenCode; canonical Claude-file-to-projection synchronization and drift checks
+- complete native package parsing for every registry client, the registered
+  MCP route in each project MCP format, the legacy OpenCode structural check,
+  and format 6 availability gating; canonical Claude-file-to-projection
+  synchronization and drift checks
+- hosted candidate acceptance (`clients`): update a Latest install to the
+  pinned format 6 source, add every client, deselect clients while keeping a
+  modified agent and a user MCP server, repair a deleted projection, and refuse
+  an older format that lacks the recorded clients
 - existing-project environment detection, preservation of a recorded Codex or
   other primary, compatibility migration when no primary is recorded,
   managed-file preservation, deselection removal rules, and persisted selections
@@ -151,6 +165,16 @@ path, and Codex targets.
 - bounded parent-level launcher descriptor discovery, explicit pre-scan
   confirmation/decline/cancel, candidate mismatch, and no read of an
   unconfirmed candidate
+- project-profile synthetic fixtures for read-only behavior, cancellation,
+  linked entries, hidden/cache/tooling/wiki/secret-like exclusions, very large
+  files, deep trees, per-directory limits, profile truncation, and no script,
+  Git, link-following, or content-filter execution
+- a native remote Kaiserreich fixture proving useful bounded gameplay,
+  localisation, identifier, and documentation observations without turning the
+  existing setup scan or Git pathspec into a whole-repository review
+- scan-to-provider evidence approval with the core-owned normalized model
+  excerpt, absolute-launcher-path redaction, stable excerpt hashes despite UI
+  ordering, no raw gameplay input, and cancellation/root-binding invalidation
 - provider API envelopes and bounded response bodies
 - flattened canonical skill names, required project documents, and subagent names
 - Super Events manifest selection, exact `.claude/skills/hoi4-super-events/`
@@ -192,7 +216,10 @@ open the project.
 ### Existing Windows project
 
 Scan local CLAUDE/AGENTS instructions, canonical or legacy skills and subagents,
-and native client files; review, merge, install, update, repair, and roll back.
+and native client files; run the bounded project profile; review, merge, install,
+update, repair, and roll back. Assert that profile counts/samples remain
+separate from setup-file inventory and that sampled coverage is not presented as
+exhaustive gameplay validation.
 
 ### Coding-environment matrix
 
@@ -268,8 +295,8 @@ and restored HOI4 Live Tools selection plus its live-testing provider state.
 ## Golden files
 
 Descriptors, provider-adapted CLAUDE/AGENTS and README, flattened Chat sources,
-TOML merge, scan, plan, lock, readiness, journal, and conflict preview. Golden
-updates require review.
+TOML merge, setup scan plus project-profile findings, plan, lock, readiness,
+journal, and conflict preview. Golden updates require review.
 
 ChatGPT source-export tests cover eligibility from scan-detected AGENTS, skills,
 or subagents without an installation lock, the Downloads default,
@@ -299,17 +326,22 @@ external browser URLs. Persist prefixed, quoted-field, and unquoted-assignment
 credential shapes in a multibyte transaction failure and prove that journal
 storage, current and legacy journal reads, Recovery Details, and direct
 transaction and rollback errors contain only 2 KiB UTF-8-safe redacted text and
-never the raw value.
+never the raw value. Profile samples must additionally prove that token-shaped
+and machine-local values are redacted from documentation overviews and
+model-visible excerpts, while prefix hashes remain hashes of only the sampled
+bytes.
 
 ## Performance
 
 Test targeted setup inventories containing 500, 20,000, and 150,000 approved
-agentic files, plus mods with very large gameplay, media, wiki, and generated
-data trees that must be pruned. Measure first finding, total scan, memory, UI
-responsiveness, and cancellation latency. Large-mod evidence must prove that
-out-of-scope directory entries are filtered before targeted sort/count/path
-budgets, out-of-scope content is neither opened nor counted, and detector text stays
-within its retained-content bound. An isolated fixture keeps its complete
+agentic files separately from project-profile fixtures approaching the 500,000
+file and 200,000 directory bounds. Include mods with very large gameplay,
+localisation, media, wiki, and generated-data trees. Measure first finding,
+total scan, profile memory, UI responsiveness, and cancellation latency.
+Large-mod evidence must prove that out-of-scope setup entries are filtered
+before targeted sort/count/path budgets, profile exclusions are not followed,
+profile samples stay within the prefix and aggregate bounds, and detector text
+stays within its retained-content bound. An isolated fixture keeps its complete
 path/size/modified-time signature unchanged; an approved live fixture also
 snapshots app-owned metadata and reports unrelated concurrent changes instead
 of attributing them to the scanner. Windows installer lifecycle evidence must

@@ -23,7 +23,9 @@ const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_TEXT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_RETAINED_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_THUMBNAIL_BYTES: u64 = 16 * 1024 * 1024;
-const MAX_INSTALLATION_LOCK_BYTES: u64 = 2 * 1024 * 1024;
+// A lock for a project with every coding client holds several thousand file
+// records plus generated thumbnail bytes; 2 MiB made such projects unscannable.
+const MAX_INSTALLATION_LOCK_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_DIRECTORY_ENTRIES: usize = 50_000;
 const MAX_DIRECTORY_ENTRY_NAME_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_RELATIVE_PATH_BYTES: usize = 4 * 1024;
@@ -277,6 +279,8 @@ pub struct ScanProgress {
     pub files_scanned: u32,
     pub directories_scanned: u32,
     pub bytes_read: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_stats: Option<ProfileStats>,
 }
 
 #[derive(Debug, Clone)]
@@ -379,6 +383,9 @@ struct ScanContentPolicy {
     max_bytes: u64,
     retain: bool,
     absolute_paths: bool,
+    /// Record that the file exists without reading it. Client folders and
+    /// configuration files that can hold credentials are detected this way.
+    presence_only: bool,
 }
 
 pub fn scan_project(root: &Path, options: &ScanOptions) -> Result<ScanResult, AppError> {
@@ -411,6 +418,7 @@ where
     let mut directories = 0_usize;
     let mut sensitive_path_warning_emitted = false;
     let mut detector_evidence = ScanEvidenceState::default();
+    let mut profile_stats = None;
     let deadline = Instant::now() + options.max_duration;
     emit_progress(
         &mut progress,
@@ -583,6 +591,51 @@ where
             }
         );
 
+        detect_phase!("profiling_project", Path::new("."), {
+            let profile = crate::project_profile::scan(
+                &read_root,
+                &|| scan_stopped(options, observations.len()) || Instant::now() >= deadline,
+                &mut |stats, path| {
+                    progress(ScanProgress {
+                        stage: if stats.samples_read == 0 {
+                            "indexing_project"
+                        } else {
+                            "sampling_project"
+                        }
+                        .into(),
+                        current_path: safe_scan_display_path(path),
+                        files_scanned: observations.len() as u32,
+                        directories_scanned: directories as u32,
+                        bytes_read: total_bytes + stats.bytes_read,
+                        profile_stats: Some(stats.clone()),
+                    })
+                },
+            )?;
+            for issue in &profile.problems {
+                if *issue == "stopped" {
+                    if scan_stopped(options, observations.len()) {
+                        mark_cancelled(
+                            &root,
+                            &mut conflicts,
+                            &mut progress,
+                            &observations,
+                            directories,
+                            total_bytes,
+                        );
+                    } else {
+                        mark_timed_out(&root, &root, &mut conflicts);
+                    }
+                } else {
+                    conflicts.push(ScanConflict { id: format!("scan.profile.{issue}"), path: "@scan/profile/coverage".into(),
+                        kind: "other".into(), severity: "warn".into(),
+                        details: Some("Project profiling skipped an unreadable, linked, or over-budget input. The profile is marked truncated; setup evidence is unaffected.".into()) });
+                }
+            }
+            total_bytes += profile.stats.bytes_read;
+            profile_stats = Some(profile.stats);
+            findings.extend(profile.findings);
+        });
+
         if !scan_phase_stopped(
             options,
             deadline,
@@ -649,7 +702,10 @@ where
     let cancelled = limits_hit.iter().any(|id| id == "scan.cancelled");
     let timed_out = limits_hit.iter().any(|id| id == "scan.timeout");
     emit_progress(
-        &mut progress,
+        &mut |mut event: ScanProgress| {
+            event.profile_stats = profile_stats.clone();
+            progress(event);
+        },
         if cancelled {
             "cancelled"
         } else if timed_out {
@@ -672,6 +728,7 @@ where
         started_at,
         completed_at: Some(Utc::now().to_rfc3339()),
         read_only: true,
+        profile_stats,
         scanner_version: Some("0.1.0".into()),
         partial: !limits_hit.is_empty(),
         cancelled,
@@ -704,8 +761,13 @@ where
 /// an incomplete Git status probe remains visible for review, but it does not
 /// mean the targeted agentic project scan was truncated.
 fn scan_conflict_truncated_detector_evidence(id: &str) -> bool {
+    // A profile limitation (a linked entry, a category or path budget) is
+    // deterministic, so rescanning cannot clear it. It stays a visible warning
+    // and truncated profile coverage, while the setup evidence remains
+    // complete; cancellation and timeout still make the scan partial.
     id.starts_with("scan.")
         && !id.starts_with("scan.sensitive.")
+        && !id.starts_with("scan.profile.")
         && !matches!(
             id,
             "scan.git.inspection" | "scan.git.link" | "scan.git.head_link" | "scan.git.head_read"
@@ -772,7 +834,11 @@ fn enumerate_targeted_directory(
             result.sensitive_found = true;
             return true;
         }
-        if is_unrelated_scan_directory(&name) || is_unrelated_scan_file(&name) {
+        // Registry client surfaces (for example `.vscode/mcp.json`) are
+        // explicit scan targets even inside an otherwise ignored folder.
+        let client_path = crate::coding_environment::is_client_scan_directory(&relative)
+            || client_content_policy(&normalized_scan_path(&relative)).is_some();
+        if (is_unrelated_scan_directory(&name) || is_unrelated_scan_file(&name)) && !client_path {
             return true;
         }
         if !targeted_scan_path_candidate(&relative) {
@@ -1103,11 +1169,21 @@ fn collect_files(
             }
         };
         if is_link_metadata(&metadata) {
+            // A presence-only client marker is never read, so a linked one
+            // (for example `GEMINI.md` linking to `AGENTS.md`) is reported
+            // without blocking the scan.
+            let presence_only =
+                scan_content_policy(&relative).is_some_and(|policy| policy.presence_only);
+            let prefix = if presence_only {
+                "client.marker_link"
+            } else {
+                "scan.link"
+            };
             link_conflicts.push(ScanConflict {
-                id: format!("scan.link.{}", &sha256_bytes(relative.as_bytes())[..12]),
+                id: format!("{prefix}.{}", &sha256_bytes(relative.as_bytes())[..12]),
                 path: relative.clone(),
                 kind: "other".into(),
-                severity: "block".into(),
+                severity: if presence_only { "warn" } else { "block" }.into(),
                 details: Some("Symlink or junction was not followed during scan.".into()),
             });
             observations.push(FileObservation {
@@ -1144,6 +1220,7 @@ fn collect_files(
                 continue;
             };
             let mut bytes = match policy {
+                policy if policy.presence_only => Vec::new(),
                 policy
                     if metadata.len() > policy.max_bytes
                         || total_bytes.saturating_add(metadata.len()) > MAX_TOTAL_BYTES =>
@@ -1360,6 +1437,7 @@ fn scan_content_policy(relative: &str) -> Option<ScanContentPolicy> {
             max_bytes: MAX_THUMBNAIL_BYTES,
             retain: true,
             absolute_paths: false,
+            presence_only: false,
         });
     }
     if normalized == "descriptor.mod" {
@@ -1367,7 +1445,11 @@ fn scan_content_policy(relative: &str) -> Option<ScanContentPolicy> {
             max_bytes: MAX_LAUNCHER_DESCRIPTOR_BYTES,
             retain: true,
             absolute_paths: true,
+            presence_only: false,
         });
+    }
+    if let Some(policy) = client_content_policy(&normalized) {
+        return Some(policy);
     }
     let segments = normalized.split('/').collect::<Vec<_>>();
     let name = segments.last().copied().unwrap_or_default();
@@ -1450,7 +1532,44 @@ fn scan_content_policy(relative: &str) -> Option<ScanContentPolicy> {
             || native_json
             || native_map
             || root_text,
+        presence_only: false,
     })
+}
+
+/// Native client files from the coding-client registry. Small configuration
+/// files are retained and parsed; other markers are observed by presence
+/// only, so a client folder never exposes its contents to the scan.
+fn client_content_policy(normalized: &str) -> Option<ScanContentPolicy> {
+    if crate::coding_environment::config_format_for_path(normalized).is_some() {
+        return Some(ScanContentPolicy {
+            max_bytes: MAX_TEXT_BYTES,
+            retain: true,
+            absolute_paths: true,
+            presence_only: false,
+        });
+    }
+    let presence = Some(ScanContentPolicy {
+        max_bytes: MAX_TEXT_BYTES,
+        retain: false,
+        absolute_paths: false,
+        presence_only: true,
+    });
+    let marker = crate::coding_environment::NATIVE_CLIENTS
+        .iter()
+        .filter(|client| !crate::coding_environment::SUPPORTED.contains(&client.id))
+        .flat_map(|client| client.markers.iter())
+        .any(|marker| !marker.ends_with('/') && marker.eq_ignore_ascii_case(normalized));
+    if marker {
+        return presence;
+    }
+    let (parent, name) = normalized.rsplit_once('/')?;
+    let extension = name.rsplit_once('.').map(|(_, extension)| extension)?;
+    // `.github` and `.vscode` hold unrelated project files (workflows, editor
+    // settings); only their exact client markers and config files count.
+    (!matches!(parent, ".github" | ".vscode")
+        && crate::coding_environment::is_client_scan_directory(parent)
+        && matches!(extension, "md" | "json" | "jsonc" | "toml" | "yaml" | "yml"))
+    .then_some(presence)?
 }
 
 fn targeted_scan_directory(relative: &str) -> bool {
@@ -1468,6 +1587,8 @@ fn targeted_scan_directory(relative: &str) -> bool {
             | [".codex"]
             | [".codex", "agents"]
             | [".claude"]
+            | [".claude", "skills"]
+            | [".claude", "skills", _]
             | [".claude", "agents"]
             | [".cursor"]
             | [".cursor", "agents"]
@@ -1478,6 +1599,7 @@ fn targeted_scan_directory(relative: &str) -> bool {
             | ["docs"]
     ) || (matches!(segments.as_slice(), ["docs", _])
         && !matches!(segments.get(1).copied(), Some("assets" | "formables")))
+        || crate::coding_environment::is_client_scan_directory(&normalized)
 }
 
 pub(crate) fn targeted_scan_path_candidate(relative: &str) -> bool {
@@ -1623,6 +1745,7 @@ fn emit_progress(
         files_scanned: observations.len() as u32,
         directories_scanned: directories as u32,
         bytes_read,
+        profile_stats: None,
     });
 }
 
@@ -1635,7 +1758,7 @@ fn safe_scan_display_path(path: &str) -> String {
     }
 }
 
-fn sensitive_scan_path(relative: &str) -> bool {
+pub(crate) fn sensitive_scan_path(relative: &str) -> bool {
     let normalized = normalized_scan_path(relative);
     let segments = normalized.split('/').collect::<Vec<_>>();
     if segments.iter().any(|segment| {
@@ -1654,6 +1777,22 @@ fn sensitive_scan_path(relative: &str) -> bool {
         return true;
     }
     let name = segments.last().copied().unwrap_or_default();
+    let stem = name.split('.').next().unwrap_or_default();
+    if matches!(
+        stem,
+        "password"
+            | "passwords"
+            | "api-key"
+            | "api_key"
+            | "apikey"
+            | "credentials"
+            | "secret"
+            | "secrets"
+            | "private-key"
+            | "private_key"
+    ) {
+        return true;
+    }
     name == ".env"
         || name.starts_with(".env.")
         || name.ends_with(".pem")
@@ -1765,6 +1904,34 @@ fn detect_descriptors(
     if let Some(descriptor) = descriptor.filter(|file| !file.is_symlink) {
         let parsed = crate::descriptors::parse_descriptor(&descriptor.bytes);
         if let Ok(parsed) = parsed {
+            let metadata = parsed
+                .fields
+                .iter()
+                .filter(|(key, _)| {
+                    matches!(
+                        key.as_str(),
+                        "version"
+                            | "supported_version"
+                            | "tags"
+                            | "dependencies"
+                            | "replace_path"
+                            | "picture"
+                    )
+                })
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        json!(crate::project_profile::clean_text(value, 1024)),
+                    )
+                })
+                .collect::<serde_json::Map<String, Value>>();
+            if !metadata.is_empty() {
+                findings.push(finding(
+                    "descriptor.metadata", "descriptor", "descriptor_metadata", json!(metadata), "needs_review",
+                    evidence("descriptor_parser", "descriptor.mod", 1.0, Some("Parsed descriptor fields; long field values are bounded to 1024 characters.")),
+                    Some("Preserve existing descriptor metadata unless explicitly changed during review."),
+                ));
+            }
             if let Some(name) = parsed.fields.get("name") {
                 findings.push(finding(
                     "descriptor.name",
@@ -2393,67 +2560,41 @@ fn detect_coding_environments(
             .iter()
             .any(|file| !file.is_symlink && file.relative.to_ascii_lowercase().starts_with(&prefix))
     };
-    let mut detected = Vec::new();
     // Canonical Codex agent TOMLs are a shared synchronization source and
     // are installed for every coding-environment selection.  They therefore
-    // cannot, by themselves, prove that the Codex native package is present.
-    if has(".codex/config.toml") {
-        detected.push("codex");
-    }
-    if has("CLAUDE.md")
-        || has(".claude/settings.json")
-        || has(".claude/agent-map.md")
-        || under(".claude/agents/")
-    {
-        detected.push("claude_code");
-    }
-    if has(".cursor/agent-map.md")
-        || has(".cursor/mcp.json")
-        || has(".cursor/settings.json")
-        || under(".cursor/agents/")
-    {
-        detected.push("cursor");
-    }
-    if has(".qoder/agent-map.md")
-        || has(".qoder/settings.json")
-        || has(".qoder/mcp.json")
-        || under(".qoder/agents/")
-    {
-        detected.push("qoder");
-    }
-    if has("opencode.json")
-        || has(".opencode/agent-map.md")
-        || has(".opencode/settings.json")
-        || has(".opencode/mcp.json")
-        || under(".opencode/agent/")
-    {
-        detected.push("opencode");
-    }
-    let parse_json = |path: &str| -> bool {
+    // cannot, by themselves, prove that the Codex native package is present;
+    // the registry's Codex marker is its project configuration.
+    let detected = crate::coding_environment::detected_clients(has, under);
+    let parse = |path: &str, format: crate::native_mcp::McpFormat| -> bool {
         observations
             .iter()
             .find(|file| !file.is_symlink && file.relative.eq_ignore_ascii_case(path))
-            .is_some_and(|file| serde_json::from_slice::<Value>(&file.bytes).is_ok())
+            .is_some_and(|file| {
+                if format.is_toml() {
+                    std::str::from_utf8(&file.bytes)
+                        .ok()
+                        .is_some_and(|text| text.parse::<toml::Value>().is_ok())
+                } else {
+                    crate::native_mcp::parse_json_lenient(&file.bytes).is_ok()
+                }
+            })
     };
-    for (environment, path) in [
-        ("claude_code", ".claude/settings.json"),
-        ("claude_code", ".mcp.json"),
-        ("cursor", ".cursor/settings.json"),
-        ("cursor", ".cursor/mcp.json"),
-        ("qoder", ".qoder/settings.json"),
-        ("qoder", ".qoder/mcp.json"),
-        ("opencode", ".opencode/settings.json"),
-        ("opencode", ".opencode/mcp.json"),
-        ("opencode", "opencode.json"),
-    ] {
-        if has(path) && !parse_json(path) {
-            conflicts.push(ScanConflict {
-                id: format!("conflict.{environment}.config.parse"),
-                path: path.into(),
-                kind: "other".into(),
-                severity: "block".into(),
-                details: Some(format!("{environment} configuration is not valid JSON.")),
-            });
+    for client in crate::coding_environment::NATIVE_CLIENTS {
+        for (path, format) in client.config_files {
+            if has(path) && !parse(path, *format) {
+                let kind = if format.is_toml() { "TOML" } else { "JSON" };
+                // The original clients' configurations are part of their
+                // installed packages; another client's file only warns, so an
+                // unrelated editor configuration never blocks a scan.
+                let legacy = crate::coding_environment::SUPPORTED.contains(&client.id);
+                conflicts.push(ScanConflict {
+                    id: format!("conflict.{}.config.parse", client.id),
+                    path: (*path).into(),
+                    kind: "other".into(),
+                    severity: if legacy { "block" } else { "warn" }.into(),
+                    details: Some(format!("{} configuration is not valid {kind}.", client.id)),
+                });
+            }
         }
     }
     // A scan cannot infer a user-recorded primary from loose files. Codex is
@@ -2461,14 +2602,9 @@ fn detect_coding_environments(
     let primary = "codex";
     let evidence_path = detected
         .first()
-        .map(|id| match *id {
-            "codex" => ".codex/config.toml",
-            "claude_code" => "CLAUDE.md",
-            "cursor" => ".cursor/agent-map.md",
-            "qoder" => ".qoder/agent-map.md",
-            "opencode" => "opencode.json",
-            _ => "@scan/coding-environments",
-        })
+        .and_then(|id| crate::coding_environment::native_client(id))
+        .and_then(|client| client.markers.first())
+        .map(|marker| marker.trim_end_matches('/'))
         .unwrap_or("@scan/coding-environments");
     findings.push(finding(
         "coding.environments",
@@ -2995,8 +3131,14 @@ fn finding(
     recommendation: Option<&str>,
 ) -> ScanFinding {
     redact_scan_value(&mut value);
+    let semantic_value =
+        (id == "descriptor.launcher").then(|| json!({"approved":true,"exists":true}));
+    let model_excerpt = match semantic_value.as_ref().unwrap_or(&value) {
+        Value::String(text) => text.clone(),
+        value => serde_json::to_string(value).expect("scan finding value is JSON"),
+    };
     if evidence.excerpt_sha256.is_none() {
-        let excerpt = match &value {
+        let excerpt = match semantic_value.as_ref().unwrap_or(&value) {
             Value::String(text) => Some(text.clone()),
             value => serde_json::to_string(value).ok(),
         };
@@ -3010,6 +3152,7 @@ fn finding(
         category: category.into(),
         key: key.into(),
         value,
+        model_excerpt: Some(model_excerpt),
         status: status.into(),
         origin: "deterministic".into(),
         user_value: None,
@@ -3303,6 +3446,111 @@ mod tests {
                 .all(|evidence| evidence.excerpt_sha256.as_deref() == Some(expected.as_str())));
         }
         assert!(!result.partial);
+    }
+
+    #[test]
+    fn profile_limits_truncate_the_profile_without_blocking_scan_approval() {
+        let directory = tempdir().unwrap();
+        fs::write(
+            directory.path().join("descriptor.mod"),
+            "name=\"Budget\"\nsupported_version=\"1.19.*\"\n",
+        )
+        .unwrap();
+        for index in 0..110 {
+            let folder = directory.path().join(format!("common/category_{index:03}"));
+            fs::create_dir_all(&folder).unwrap();
+            fs::write(folder.join("entry.txt"), "example = { }\n").unwrap();
+        }
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+        assert!(
+            !result.partial,
+            "a deterministic profile budget must not block approval"
+        );
+        assert!(result.conflicts.iter().any(
+            |conflict| conflict.id == "scan.profile.group_limit" && conflict.severity == "warn"
+        ));
+        assert!(!result
+            .limits_hit
+            .iter()
+            .any(|id| id.starts_with("scan.profile.")));
+        assert_eq!(result.profile_stats.as_ref().unwrap().coverage, "truncated");
+        assert!(scan_conflict_truncated_detector_evidence("scan.timeout"));
+        assert!(scan_conflict_truncated_detector_evidence("scan.cancelled"));
+        assert!(!scan_conflict_truncated_detector_evidence(
+            "scan.profile.linked_entry"
+        ));
+    }
+
+    #[test]
+    fn client_markers_are_observed_by_presence_and_unrelated_configs_never_block() {
+        let directory = tempdir().unwrap();
+        let root = directory.path();
+        let write = |relative: &str, content: &str| {
+            let path = root.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        };
+        write(
+            "descriptor.mod",
+            "name=\"Clients\"\nsupported_version=\"1.19.*\"\n",
+        );
+        write(
+            ".vscode/mcp.json",
+            "{\n  // VS Code comment\n  \"servers\": {},\n}\n",
+        );
+        write(".vscode/settings.json", "not json at all");
+        write("GEMINI.md", "@./AGENTS.md\n");
+        write(
+            ".continue/config.yaml",
+            "apiKey: presence-only-sentinel-value\n",
+        );
+        write(".kiro/settings/mcp.json", "{broken");
+        let result = scan_project(root, &ScanOptions::default()).unwrap();
+        assert!(!result.partial);
+        let detected = result
+            .findings
+            .iter()
+            .find(|finding| finding.id == "coding.environments")
+            .map(|finding| finding.value["detected"].clone())
+            .unwrap();
+        for client in ["github_copilot", "gemini_cli", "continue", "kiro"] {
+            assert!(
+                detected.as_array().unwrap().iter().any(|id| id == client),
+                "{client} not detected: {detected}"
+            );
+        }
+        assert!(!result
+            .conflicts
+            .iter()
+            .any(|conflict| conflict.path == ".vscode/mcp.json"));
+        let kiro = result
+            .conflicts
+            .iter()
+            .find(|conflict| conflict.id == "conflict.kiro.config.parse")
+            .unwrap();
+        assert_eq!(kiro.severity, "warn");
+        assert!(!serde_json::to_string(&result)
+            .unwrap()
+            .contains("presence-only-sentinel-value"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_presence_only_marker_warns_without_making_the_scan_partial() {
+        let directory = tempdir().unwrap();
+        let root = directory.path();
+        fs::write(root.join("descriptor.mod"), "name=\"Linked\"\n").unwrap();
+        fs::write(root.join("AGENTS.md"), "# Rules\n").unwrap();
+        std::os::unix::fs::symlink("AGENTS.md", root.join("GEMINI.md")).unwrap();
+        let result = scan_project(root, &ScanOptions::default()).unwrap();
+        assert!(!result.partial);
+        let link = result
+            .conflicts
+            .iter()
+            .find(|conflict| conflict.path == "GEMINI.md")
+            .unwrap();
+        assert_eq!(link.severity, "warn");
+        assert!(link.id.starts_with("client.marker_link."));
     }
 
     #[test]
@@ -3785,6 +4033,26 @@ mod tests {
             .findings
             .iter()
             .any(|finding| finding.id == "descriptor.launcher"));
+    }
+
+    #[test]
+    fn a_lock_for_every_coding_client_stays_within_the_scan_bound() {
+        // A realistic record shape for the largest selection: canonical
+        // skills, the shared copy, three client copies, and every projection.
+        let record = serde_json::json!({
+            "path": ".kiro/skills/hoi4-decisions-missions/templates/formable_state_puzzle/formable_state_puzzle_scripted_localisation.txt",
+            "location_scope": "project", "component_id": "runtime.kiro.skills",
+            "source_path": ".claude/skills/hoi4-decisions-missions/templates/formable_state_puzzle/formable_state_puzzle_scripted_localisation.txt",
+            "source_revision": "a".repeat(40), "source_sha256": "b".repeat(64), "source_size": 4096,
+            "base_sha256": "c".repeat(64), "installed_sha256": "d".repeat(64), "installed_size": 4096,
+            "ownership": "managed", "preserved_local": false, "external": false, "executable": false
+        });
+        let bytes = serde_json::to_vec_pretty(&vec![record; 6_000]).unwrap();
+        assert!(
+            (bytes.len() as u64) < MAX_INSTALLATION_LOCK_BYTES / 4,
+            "{}",
+            bytes.len()
+        );
     }
 
     #[test]

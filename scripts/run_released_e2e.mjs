@@ -28,7 +28,15 @@ if (candidateDirectory) {
 }
 let expectedSourceRevision = candidateDirectory ? pins.candidate.sourceRevision : pins.app.sourceRevision;
 const scenario = process.argv[2];
-assert.ok(["new", "kaiserreich", "recovery"].includes(scenario), "Unknown remote scenario.");
+assert.ok(["new", "kaiserreich", "recovery", "clients"].includes(scenario), "Unknown remote scenario.");
+// The clients scenario creates a new mod like "new", then moves it to the
+// pinned source revision that publishes the additional coding clients.
+const fresh = scenario === "new" || scenario === "clients";
+const clientSourceRevision = pins.clientPackages?.sourceRevision;
+if (scenario === "clients") {
+  assert.ok(candidateDirectory, "The clients scenario exercises a same-workflow candidate.");
+  assert.match(clientSourceRevision ?? "", /^[0-9a-f]{40}$/, "Pin the source revision that publishes the client packages.");
+}
 const workRoot = await mkdtemp(join(process.env.RUNNER_TEMP, "hoi4-mod-setup-installer-e2e-"));
 const installRoot = join(workRoot, "installed");
 const profile = join(workRoot, "profile");
@@ -36,7 +44,7 @@ const mods = join(workRoot, "mods");
 const output = resolve(repository, "test-results", `released-${scenario}`);
 for (const path of [output, mods, ...["home", "config", "data", "temp"].map((part) => join(profile, part))]) await mkdir(path, { recursive: true });
 const journalRoot = join(profile, "data", "HOI4 Mod Setup", "transactions");
-const project = join(mods, scenario === "new" ? "remote_acceptance_mod" : "kaiserreich");
+const project = join(mods, fresh ? "remote_acceptance_mod" : "kaiserreich");
 const result = { scenario, applicationKind, applicationVersion: pins.app.version, releaseSourceCommitFromPin: pins.app.commit, runner: process.env.RUNNER_OS,
   ai: "deterministic loopback HTTP fixture; real provider authentication and semantic quality are not tested",
   nativeIpc: `unmodified ${applicationKind} binary; no IPC mocks or application test hooks`, stages: [], screenshots: [], success: false };
@@ -134,7 +142,7 @@ async function commonSetup() {
   await page.getByRole("checkbox", { name: /^Codex / }).check();
   await record("coding-environments"); await next();
   await at("Image generation");
-  if (scenario === "new") {
+  if (fresh) {
     await expect(page.getByRole("radio", { name: /^ChatGPT subscription \(GPTImage\)/ })).toBeChecked({ timeout: 180_000 });
   } else {
     await page.getByRole("radio", { name: /^fal\.ai / }).check();
@@ -142,8 +150,8 @@ async function commonSetup() {
   }
   await record("image-provider"); await next();
   await at("Choose what to install");
-  await expect(page.getByRole("button", { name: /Image provider MCP adapter/ })).toHaveAttribute("aria-pressed", scenario === "new" ? "false" : "true");
-  await expect(page.getByRole("button", { name: /GPTImage MCP source/ })).toHaveAttribute("aria-pressed", scenario === "new" ? "true" : "false");
+  await expect(page.getByRole("button", { name: /Image provider MCP adapter/ })).toHaveAttribute("aria-pressed", fresh ? "false" : "true");
+  await expect(page.getByRole("button", { name: /GPTImage MCP source/ })).toHaveAttribute("aria-pressed", fresh ? "true" : "false");
   await record("selected-components"); await next();
   await at("Optional workflows");
   await expect(page.getByRole("switch", { name: /^HOI4 Live Tools/ })).toBeVisible();
@@ -205,6 +213,153 @@ async function applyAndReady(maintenance = false) {
   return { journal, readiness };
 }
 
+// Coding clients published by the pinned source revision. Augment runs only on
+// macOS and Linux, so this Windows run must not offer it.
+const ADDED_CLIENTS = [
+  ["gemini_cli", "Gemini CLI"], ["github_copilot", "GitHub Copilot (VS Code)"], ["antigravity", "Antigravity"],
+  ["grok_build", "Grok Build"], ["kilo_code", "Kilo Code"], ["kiro", "Kiro"], ["qwen_code", "Qwen Code"],
+  ["cline", "Cline"], ["devin_desktop", "Devin Desktop"], ["continue", "Continue"], ["aider", "Aider"],
+];
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+async function readProjectJson(path) { return JSON.parse(await readFile(inside(project, join(project, path)), "utf8")); }
+async function readLock() { return readProjectJson(".hoi4-mod-setup/install.lock.json"); }
+async function openMaintenance(target, ref) {
+  await page.getByRole("button", { name: "Manage installation", exact: true }).click();
+  await at("Update and repair");
+  const version = page.getByRole("combobox", { name: "Target version", exact: true });
+  await expect(version).toHaveValue("latest");
+  if (target !== "latest") {
+    await version.selectOption(target);
+    await page.getByLabel("Commit", { exact: true }).fill(ref);
+  }
+}
+async function reviewProject() {
+  await page.getByRole("button", { name: "Scan the project", exact: true }).click();
+  await page.getByRole("button", { name: "Run Local model reanalysis", exact: true }).click({ timeout: 180_000 });
+  await page.getByRole("button", { name: "Confirm Local model suggestions", exact: true }).waitFor({ timeout: 180_000 });
+  await approveSuggestions();
+}
+function clientCheckbox(label) {
+  return page.locator(".maintenance-environment-panel").getByRole("checkbox", { name: new RegExp(`^${escapeRegExp(label)}(?:\\s|$)`) });
+}
+async function openAdditionalClients() {
+  const details = page.locator(".maintenance-environment-panel details");
+  if (!await details.evaluate((element) => element.open)) await details.locator("summary").click();
+}
+async function clientPackagesFlow() {
+  // 1. Move the Latest (format 5) install to the pinned format 6 source and
+  // add every newly published client.
+  await openMaintenance("pinned_commit", clientSourceRevision);
+  await reviewProject();
+  await openAdditionalClients();
+  await expect(clientCheckbox("Gemini CLI")).toBeVisible({ timeout: 180_000 });
+  await expect(clientCheckbox("Augment")).toHaveCount(0);
+  for (const [, label] of ADDED_CLIENTS) await clientCheckbox(label).check();
+  await record("clients-selected");
+  await page.getByRole("button", { name: /^Check for updates/ }).click();
+  await waitForReview(true);
+  const { readiness: addedReadiness } = await applyAndReady(true);
+  const added = await readLock();
+  assert.equal(added.source.mode, "pinned_commit");
+  assert.equal(added.source.revision, clientSourceRevision);
+  assert.equal(added.primary_coding_environment, "claude_code");
+  for (const [id] of ADDED_CLIENTS) assert.ok(added.additional_coding_environments.includes(id), `missing ${id}`);
+  assert.ok(added.additional_coding_environments.includes("codex"));
+  assert.equal(addedReadiness.checks.find((check) => check.id === "coding.environments").status, "pass");
+  assert.equal(new Set(added.files.map((file) => `${file.external}:${file.path.toLowerCase()}`)).size, added.files.length);
+  for (const path of [
+    "GEMINI.md", ".gemini/agents/hoi4-repo-explorer.md", ".agents/agents/hoi4-repo-explorer.md", ".kilo/agents/hoi4-repo-explorer.md",
+    ".kiro/agents/hoi4-repo-explorer.md", ".qwen/agents/hoi4-repo-explorer.md", ".devin/agents/hoi4-repo-explorer.md",
+    ".grok/skills/hoi4-ai-strategies/SKILL.md", ".kiro/skills/hoi4-ai-strategies/SKILL.md", ".qwen/skills/hoi4-ai-strategies/SKILL.md",
+    ".github/instructions/hoi4-mod-setup.instructions.md", ".clinerules/hoi4-mod-setup.md", ".continue/rules/hoi4-mod-setup.md", ".aider.conf.yml",
+  ]) assert.ok(existsSync(join(project, path)), `missing ${path}`);
+  assert.match(await readFile(join(project, "GEMINI.md"), "utf8"), /@\.\/AGENTS\.md/);
+  // One shared .agents/skills copy serves Codex, Gemini CLI, Antigravity, Kilo Code, and Devin.
+  const sharedSkill = added.files.filter((file) => !file.external && file.path === ".agents/skills/hoi4-ai-strategies/SKILL.md");
+  assert.equal(sharedSkill.length, 1);
+  // Every project MCP file registers the same verified, retargeted launch.
+  const claudeRoute = (await readProjectJson(".mcp.json")).mcpServers.hoi4_agent_tools;
+  assert.notEqual(claudeRoute.command, "hoi4-agent-tools.cmd", "Windows registrations must point at the reviewed user prefix.");
+  for (const path of [".gemini/settings.json", ".agents/mcp_config.json", ".kiro/settings/mcp.json", ".qwen/settings.json"]) {
+    const route = (await readProjectJson(path)).mcpServers.hoi4_agent_tools;
+    assert.equal(route.command, claudeRoute.command, path);
+    assert.deepEqual(route.args ?? [], claudeRoute.args ?? [], path);
+  }
+  const vscode = (await readProjectJson(".vscode/mcp.json")).servers.hoi4_agent_tools;
+  assert.equal(vscode.type, "stdio");
+  assert.equal(vscode.command, claudeRoute.command);
+  const kilo = (await readProjectJson(".kilo/kilo.json")).mcp.hoi4_agent_tools;
+  assert.equal(kilo.type, "local");
+  assert.deepEqual(kilo.command, [claudeRoute.command, ...(claudeRoute.args ?? [])]);
+  const grok = await readFile(join(project, ".grok/config.toml"), "utf8");
+  assert.match(grok, /\[mcp_servers\.hoi4_agent_tools\]/);
+  assert.match(grok, /command = ["'][A-Za-z]:[\\/]/);
+  for (const path of [".clinerules", ".continue/rules", ".aider.conf.yml"]) assert.ok(!(await readFile(join(project, path.endsWith(".yml") ? path : `${path}/hoi4-mod-setup.md`), "utf8")).includes("mcpServers"), path);
+  result.clientPackages = { source: added.source, additional: added.additional_coding_environments, files: added.files.length };
+
+  // 2. Deselect Kiro and GitHub Copilot after local edits: unchanged files are
+  // removed, a modified agent and a user-extended MCP file are kept.
+  const keptAgent = ".kiro/agents/hoi4-repo-explorer.md";
+  const keptAgentText = `${await readFile(join(project, keptAgent), "utf8")}\nLocal note that must be kept.\n`;
+  await writeFile(join(project, keptAgent), keptAgentText);
+  const vscodeConfig = await readProjectJson(".vscode/mcp.json");
+  vscodeConfig.servers.user_server = { type: "stdio", command: "user-tool" };
+  await writeFile(join(project, ".vscode/mcp.json"), JSON.stringify(vscodeConfig, null, 2));
+  await openMaintenance("pinned_commit", clientSourceRevision);
+  await reviewProject();
+  await openAdditionalClients();
+  await clientCheckbox("Kiro").uncheck();
+  await clientCheckbox("GitHub Copilot (VS Code)").uncheck();
+  await record("clients-deselected");
+  await page.getByRole("button", { name: /^Check for updates/ }).click();
+  await waitForReview(true);
+  await applyAndReady(true);
+  const reduced = await readLock();
+  assert.ok(!reduced.additional_coding_environments.includes("kiro"));
+  assert.ok(!reduced.additional_coding_environments.includes("github_copilot"));
+  assert.equal(await readFile(join(project, keptAgent), "utf8"), keptAgentText);
+  assert.ok(!existsSync(join(project, ".kiro/agents/hoi4-skill-maintainer.md")), "unchanged Kiro agents are removed");
+  assert.ok(!existsSync(join(project, ".kiro/skills/hoi4-ai-strategies/SKILL.md")), "the unchanged Kiro skill copy is removed");
+  assert.ok(!existsSync(join(project, ".github/instructions/hoi4-mod-setup.instructions.md")));
+  assert.equal((await readProjectJson(".vscode/mcp.json")).servers.user_server.command, "user-tool");
+  assert.ok(!reduced.files.some((file) => !file.external && file.path.startsWith(".kiro/skills/")));
+  // Kept edits of a deselected client leave management instead of holding
+  // readiness in review.
+  for (const path of [keptAgent, ".vscode/mcp.json"]) {
+    assert.ok(!reduced.files.some((file) => !file.external && file.path === path), `${path} stays managed`);
+    assert.ok(!(reduced.local_modifications ?? []).some((item) => item.path === path), `${path} stays a local modification`);
+  }
+  assert.ok(existsSync(join(project, ".qwen/skills/hoi4-ai-strategies/SKILL.md")), "other clients keep their packages");
+  result.clientDeselection = { removed: ["kiro", "github_copilot"], keptModified: [keptAgent, ".vscode/mcp.json"] };
+
+  // 3. Repair restores a deleted new-client projection at the pinned revision.
+  const repaired = reduced.files.find((file) => !file.external && file.path === ".gemini/agents/hoi4-repo-explorer.md");
+  assert.ok(repaired);
+  await rm(join(project, repaired.path));
+  await page.getByRole("button", { name: "Manage installation", exact: true }).click();
+  await at("Update and repair");
+  await page.getByRole("button", { name: /^Repair installation/ }).click();
+  await waitForReview(true); await applyAndReady(true);
+  assert.equal(await fileHash(join(project, repaired.path)), repaired.installed_sha256);
+  assert.deepEqual((await readLock()).source, reduced.source);
+
+  // 4. Latest (format 5) cannot keep the new clients, so it refuses before
+  // planning any removal and the project stays unchanged.
+  const before = await readLock();
+  await openMaintenance("latest");
+  await reviewProject();
+  await expect(page.getByText(/Installed but not in this source version:/)).toBeVisible({ timeout: 180_000 });
+  await record("clients-unavailable-in-latest");
+  await page.getByRole("button", { name: /^Check for updates/ }).click();
+  // The update screen shows a planning refusal as its supporting text.
+  await expect(page.getByText(/not included in this setup version|cannot be installed from this setup version/i).first()).toBeVisible({ timeout: 300_000 });
+  await record("clients-refused-on-latest");
+  assert.deepEqual(await readLock(), before);
+  result.clientsRefusedOnOlderSource = true;
+  await next("Back");
+  await at("Project ready");
+}
+
 try {
   if (candidateDirectory) {
     const sourceRepository = await githubJson("/repos/klimPaskov/Agentic-HOI4-Modding", metadataToken);
@@ -230,7 +385,7 @@ try {
   assert.ok(existsSync(executable));
   result.executableSha256 = await fileHash(executable);
 
-  if (scenario !== "new") {
+  if (!fresh) {
     const version = scenario === "recovery" ? "1.6.4" : "1.7";
     const pin = pins.kaiserreich.versions[version];
     const commit = await githubJson(`/repos/${pins.kaiserreich.repository}/git/commits/${pin.commit}`, metadataToken);
@@ -254,15 +409,15 @@ try {
     result.originalDigest = inventoryDigest(original);
   }
 
-  planner = await startPlannerFixture({ malformedFirst: scenario === "new", projectName: scenario === "new" ? "Remote Acceptance Mod" : "Kaiserreich" });
+  planner = await startPlannerFixture({ malformedFirst: scenario === "new", projectName: fresh ? "Remote Acceptance Mod" : "Kaiserreich" });
   await launch("webview-initial"); await record("welcome");
-  await page.getByRole("button", { name: scenario === "new" ? /^Create new mod/ : /^Import existing mod/ }).click();
+  await page.getByRole("button", { name: fresh ? /^Create new mod/ : /^Import existing mod/ }).click();
   await page.getByRole("combobox", { name: "AI provider", exact: true }).selectOption("local");
   await page.getByLabel("Model", { exact: true }).fill("e2e-planner");
   await page.getByLabel("Local model address", { exact: true }).fill(planner.endpoint);
   await page.getByRole("button", { name: /^(Connect|Check) Local model$/ }).click();
   await next("Continue");
-  if (scenario === "new") {
+  if (fresh) {
     await at("Describe the mod");
     await page.getByLabel("Mod name", { exact: true }).fill("Remote Acceptance Mod");
     await page.getByLabel("Mod description", { exact: true }).fill("An alternative-history mod focused on diplomacy in Europe.");
@@ -273,8 +428,10 @@ try {
     await approveSuggestions();
     assert.ok(!existsSync(project));
     assert.ok(!existsSync(join(mods, "remote_acceptance_mod.mod")));
-    assert.equal(planner.requests.length, 2, "One malformed proposal should receive exactly one corrective request.");
-    assert.equal(planner.requests[1].correction, true);
+    if (scenario === "new") {
+      assert.equal(planner.requests.length, 2, "One malformed proposal should receive exactly one corrective request.");
+      assert.equal(planner.requests[1].correction, true);
+    }
     await record("confirmed-identity"); await next();
   } else {
     await at("Project identity"); await page.getByLabel("Project folder", { exact: true }).fill(project);
@@ -282,11 +439,22 @@ try {
     await assertOriginals(project, original, { exact: true });
     await next("Review with Local model");
     await approveSuggestions();
+    if (candidateDirectory) {
+      const profile = planner.requests.at(-1)?.projectProfile;
+      assert.ok(profile?.filesIndexed > 1000, "Kaiserreich must have a real project inventory, not just setup files.");
+      assert.ok(profile.samplesRead > 10 && profile.samplesRead <= 256);
+      assert.ok(profile.categories.includes("common/national_focus"));
+      assert.ok(profile.categories.includes("events/root"));
+      assert.ok(profile.namespaceCount > 0, "Approved provider input must contain sampled namespaces.");
+      assert.ok(profile.languageCount > 0, "Approved provider input must contain actual localisation headers.");
+      assert.ok(profile.documentationCount > 0);
+      result.projectProfile = profile;
+    }
     await assertOriginals(project, original, { exact: true });
     await record("confirmed-read-only-scan"); await next();
   }
   await commonSetup();
-  if (scenario === "new") assert.ok(!existsSync(project));
+  if (fresh) assert.ok(!existsSync(project));
   else await assertOriginals(project, original, { exact: true });
 
   if (scenario === "recovery") {
@@ -319,7 +487,7 @@ try {
     assert.ok(existsSync(join(project, "CLAUDE.md")) && existsSync(join(project, "AGENTS.md")));
     assert.ok(existsSync(join(project, ".codex/config.toml")) && existsSync(join(project, ".mcp.json")));
     result.installed = { files: lock.files.length, source: lock.source, primary: lock.primary_coding_environment, additional: lock.additional_coding_environments, image: lock.image_generation.primary_provider };
-    if (scenario === "new") {
+    if (fresh) {
       const descriptor = await readFile(join(project, "descriptor.mod"), "utf8");
       const launcher = await readFile(join(mods, "remote_acceptance_mod.mod"), "utf8");
       assert.match(descriptor, /picture="thumbnail\.png"/);
@@ -339,7 +507,9 @@ try {
       assert.equal(lock.image_generation.primary_provider, "fal_ai");
       assert.match(lock.image_generation.route_settings.fal_ai.model, /ideogram.*transparent/);
     }
-    const repairFile = lock.files.find((file) => !file.external && !file.preserved_local && file.path.startsWith(".agents/skills/") && file.path.endsWith("/SKILL.md"));
+    if (scenario === "clients") await clientPackagesFlow();
+    const repairFile = scenario === "clients" ? undefined : lock.files.find((file) => !file.external && !file.preserved_local && file.path.startsWith(".agents/skills/") && file.path.endsWith("/SKILL.md"));
+    if (scenario !== "clients") {
     assert.ok(repairFile);
     const repairPath = inside(project, join(project, repairFile.path));
     await rm(repairPath);
@@ -415,6 +585,7 @@ try {
           result.pinnedRepair = { source: pinnedRepair.source, restoredFile: pinnedFile.path };
         }
       }
+    }
     }
     await next("Finish"); await at("Congratulations, you are all set!"); await record("finished");
   }

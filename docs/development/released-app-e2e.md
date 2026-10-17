@@ -2,7 +2,7 @@
 
 `Released app E2E` runs only on disposable GitHub-hosted Windows runners. It
 does not launch anything on a contributor's desktop. The repository command is
-`pnpm test:released-e2e <new|kaiserreich|recovery>`; the runtime guard rejects
+`pnpm test:released-e2e <new|kaiserreich|recovery|clients>`; the runtime guard rejects
 local and self-hosted execution. `pnpm test:released-harness` checks the harness
 boundaries separately in CI.
 
@@ -75,6 +75,15 @@ failures honestly rather than making them a gate for unrelated candidate fixes.
    retaining backend journals. Stop the planner before recovery. Use Manage and
    Undo changes without provider authentication, and require exact restoration
    of the complete original inventory with no success lock.
+4. Clients (candidate only): create a mod from Latest, then update it to the
+   pinned `clientPackages.sourceRevision` and add every coding client that
+   source publishes. Require one retargeted HOI4 Agent Tools launch in each
+   native MCP format, one shared `.agents/skills` record, and core readiness.
+   Deselect Kiro and GitHub Copilot after editing a Kiro agent and adding a
+   user server to `.vscode/mcp.json`; unchanged files are removed and both
+   edits remain. Repair a deleted Gemini CLI agent, then confirm that moving
+   to Latest is refused before any removal because that source lacks the
+   recorded clients. Coding clients themselves are never started.
 
 The driver selects the apply control from the actual reviewed screen:
 conflict-free maintenance opens the shared Review changes screen with Start

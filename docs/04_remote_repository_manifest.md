@@ -290,7 +290,12 @@ is never substituted for a newly resolved remote commit.
 
 ## Compatibility
 
-- unknown major schema blocks
+- unknown major schema blocks; a major newer than the app reads is reported as
+  needing an app update before any schema is applied
+- format 6 adds `mcp_support`, `mcp_registration`, and `documentation_url` to
+  each coding environment and `shared_coding_environments` to components (see
+  `docs/36_coding_environment_catalog.md`); format 5 schemas reject them, and
+  a format 5 manifest offers only the five clients it shipped
 - unknown optional component can be shown unsupported
 - removed IDs remain recognized for migration and uninstall
 - pinned commit cache is immutable after hash verification

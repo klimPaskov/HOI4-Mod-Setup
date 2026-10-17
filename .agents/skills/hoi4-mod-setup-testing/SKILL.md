@@ -44,6 +44,10 @@ Use the smallest useful layer and keep high-risk behavior covered at more than o
 - UI component and accessibility tests
 - Windows, macOS, and Linux end-to-end tests
 - performance tests
+- hosted Kaiserreich acceptance asserts indexed-file and sample counts, gameplay
+  categories, namespaces, localisation headers, and documentation reach the
+  approved planner input; the loopback planner remains a transport/schema test,
+  not evidence of a real provider's semantic quality
 - release artifact verification
 
 The stable Rust command is `pnpm test:rust`, which runs the workspace
@@ -115,9 +119,10 @@ incoming-manifest and lock regressions cover changing package identities.
   exactly one primary, primary/additional filtering, every supported primary
   and multi-environment combination, and persisted selection migration; a
   missing primary in legacy state remains the Codex compatibility default
-- native package fixtures parse Codex, Claude Code, Cursor, Qoder, and OpenCode
-  settings/MCP files and canonical agent projections; drift, missing files, and
-  malformed runtime configuration fail readiness
+- native package fixtures parse every registry client's layout and require the
+  registered `hoi4_agent_tools` route in each project MCP format; drift,
+  missing files, malformed runtime configuration, and a missing route fail
+  readiness, while manual and absent MCP routes never block it
 - existing-project detection plus update, repair, reinstall, rollback, and
   removal preserve modified/unmanaged client files and remove only unchanged
   managed files when an environment is deselected
@@ -248,6 +253,15 @@ Use setup-python's absolute interpreter with `-I -S`, an owned working directory
 and a minimal environment for archive validation. Authenticate CRLF archive text
 against its LF Git blob without changing the extracted bytes. Recompute approved
 analysis-input hashes and sanitize every result field before artifact upload.
+The candidate `clients` scenario creates a mod from Latest, updates it to
+`clientPackages.sourceRevision` from the pins file, adds every newly published
+client, checks one retargeted launch in each native MCP format and a single
+shared `.agents/skills` record, deselects clients while keeping a modified
+agent and a user MCP server, repairs a deleted projection, and confirms that
+moving back to an older format is refused without changing the lock. Point the
+pin at a source commit whose manifest evidence came from the owned generator;
+after the source merges format 6 and Latest offers the clients, keep the pin
+or move it to the merged commit.
 Candidate acceptance reuses the same driver only after native CI verification;
 the same-workflow artifact must match all recorded hashes and exact build SHA,
 version, product, architecture and bundle. Label this separately from signed

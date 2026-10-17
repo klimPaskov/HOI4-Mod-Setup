@@ -30,7 +30,9 @@ The bundled manifest and its exact source/evidence revisions are recorded in
 [`source-audit/live_repository_inventory.json`](source-audit/live_repository_inventory.json).
 It includes complete native Claude Code, Codex, Cursor, Qoder, and OpenCode
 packages, with `CLAUDE.md`, Claude skills, and Claude Markdown agents as the
-canonical sources and other clients as generated projections. The app resolves the remote
+canonical sources and other clients as generated projections. Manifest format 6
+adds twelve more clients and per-client MCP support declarations; see
+[`36_coding_environment_catalog.md`](36_coding_environment_catalog.md). The app resolves the remote
 default branch to one exact commit at runtime. The source-owned publication
 workflow refreshes selected-file evidence for changed skills, subagents, and
 declared component trees, allowing compatible file-only additions to flow into

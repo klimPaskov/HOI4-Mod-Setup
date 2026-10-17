@@ -92,6 +92,15 @@ render the exact manifest-declared dependencies, platform routes, destination,
 and declared file count for each component. Keep hashes and full source paths
 in the dry-run evidence instead of expanding the default component rows.
 
+Coding-environment rows show a text cue, not color, for clients whose MCP setup
+the installer cannot do ("MCP is set up in the client", "No MCP support").
+Clients that this app version or platform cannot install stay behind a
+`Not available (n)` disclosure with their reason and are never selectable.
+Ready adds one to-do line per selected manual-MCP client with its reviewed
+guide. Maintenance keeps a recorded client that the chosen source version does
+not offer and shows an `Installed but not in this source version` notice
+instead of hiding or dropping it.
+
 Conflict review is the exception. It may show a three-way comparison and more controls because comparison is the primary task.
 
 ## Interaction rules

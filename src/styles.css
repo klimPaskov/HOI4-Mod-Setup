@@ -276,6 +276,7 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .selected-body { padding: 18px; }
 .selected-body .confidence { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }
 .evidence-block { margin: 25px 0 18px; }
+.profile-evidence { max-height: 28rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .evidence-block > span { color: #aebbd0; font-size: 12px; font-weight: 700; }
 .evidence-block p { margin: 7px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
 
@@ -299,6 +300,9 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .coding-environment-copy strong, .coding-environment-copy small { display: block; min-width: 0; overflow-wrap: anywhere; }
 .coding-environment-copy strong { color: #e6edf8; font-size: 13px; line-height: 1.35; }
 .coding-environment-copy small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.coding-environment-unavailable { margin-top: 12px; }
+.coding-environment-unavailable ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 6px; font-size: 12px; line-height: 1.5; }
+.coding-environment-unavailable li strong { color: #e6edf8; }
 .coding-environment-option > .status { align-self: start; justify-content: flex-end; text-align: right; }
 .check-row > input + span { min-width: 0; display: grid; gap: 6px; }
 .workflow-provider-panel { min-width: 0; border-top: 1px solid var(--line); }

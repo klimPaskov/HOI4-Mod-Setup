@@ -5460,18 +5460,23 @@ fn build_transaction_readiness(
                 )
                 .iter()
                 .all(|environment| {
-                    let require_mcp = crate::models::Platform::current()
-                        == crate::models::Platform::Windows
-                        && crate::coding_environment::mcp_registration_component_id(environment)
-                            .is_some_and(|component_id| {
-                                plan.selected_components
-                                    .iter()
-                                    .any(|selected| selected == component_id)
-                            });
+                    // A tools package that is unavailable on this platform
+                    // has no route for any client to register.
+                    let mcp = crate::readiness::native_mcp_check(
+                        environment,
+                        plan.selected_components
+                            .iter()
+                            .map(String::as_str)
+                            .filter(|id| {
+                                mcp_status != "unsupported_platform"
+                                    || *id != crate::mcp::COMPONENT_ID
+                            }),
+                        crate::models::Platform::current(),
+                    );
                     crate::readiness::valid_coding_environment_with_mcp(
                         project_root,
                         environment,
-                        require_mcp,
+                        mcp,
                     )
                 })) {
             "pass".into()
@@ -5616,15 +5621,7 @@ fn build_transaction_readiness(
 }
 
 fn looks_like_coding_environment_destination(path: &str) -> bool {
-    let normalized = path.replace('\\', "/").to_ascii_lowercase();
-    normalized == "claude.md"
-        || normalized == ".mcp.json"
-        || normalized == "opencode.json"
-        || normalized.starts_with(".codex/")
-        || normalized.starts_with(".claude/")
-        || normalized.starts_with(".cursor/")
-        || normalized.starts_with(".qoder/")
-        || normalized.starts_with(".opencode/")
+    crate::coding_environment::looks_like_client_path(path)
 }
 
 fn build_lock(
@@ -5660,8 +5657,30 @@ fn build_lock(
     let mut local_modifications = previous_lock
         .map(|lock| lock.local_modifications.clone())
         .unwrap_or_default();
+    let mut released = std::collections::HashSet::new();
     for operation in &plan.operations {
         let key = key_for(&operation.destination, operation.external);
+        // A coding-client file the user changed, whose component this
+        // maintenance plan no longer selects, stays on disk untouched and
+        // leaves management: it is no longer an installed file of any selected
+        // client, so it must not hold readiness in review indefinitely.
+        if plan.maintenance_mode.is_some()
+            && !removing
+            && operation.action == OperationAction::Skip
+            && operation.local_state == LocalState::Modified
+            && operation.local_sha256.is_some()
+            && !operation.external
+            && !plan
+                .selected_components
+                .iter()
+                .any(|id| id == &operation.component_id)
+            && crate::coding_environment::looks_like_client_path(&operation.destination)
+        {
+            files.remove(&key);
+            remove_local_modification(&mut local_modifications, &operation.destination);
+            released.insert(operation.id.clone());
+            continue;
+        }
         let ownership = operation.ownership.ok_or_else(|| {
             AppError::Transaction(format!(
                 "operation ownership is missing for {}",
@@ -5854,6 +5873,7 @@ fn build_lock(
             let has_non_delete_operation = plan.operations.iter().any(|operation| {
                 operation.component_id == component.id
                     && operation.action != OperationAction::DeleteManaged
+                    && !released.contains(&operation.id)
             });
             let looks_like_environment =
                 crate::coding_environment::is_known_environment_component_id(&component.id)
@@ -9310,6 +9330,102 @@ mod tests {
             .iter()
             .any(|component| component.id == future_id));
         assert!(!lock.files.iter().any(|file| file.component_id == future_id));
+    }
+
+    #[test]
+    fn a_deselected_clients_modified_file_is_kept_on_disk_and_released_from_the_lock() {
+        let project = tempdir().unwrap();
+        let mut predecessor: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        predecessor.components.push(LockComponent {
+            id: "runtime.kiro".into(),
+            version: None,
+            state: "installed".into(),
+            source_revision: Some(predecessor.source.revision.clone()),
+            validation: Some("pass".into()),
+        });
+        predecessor.files.push(LockedFile {
+            path: ".kiro/agents/hoi4-repo-explorer.md".into(),
+            location_scope: Some("project".into()),
+            component_id: "runtime.kiro".into(),
+            source_path: ".kiro/agents/hoi4-repo-explorer.md".into(),
+            source_revision: predecessor.source.revision.clone(),
+            source_sha256: "a".repeat(64),
+            source_size: Some(1),
+            base_sha256: None,
+            installed_sha256: "a".repeat(64),
+            installed_size: Some(1),
+            ownership: Ownership::Managed,
+            preserved_local: false,
+            external: false,
+            generated_content: None,
+            generated_bytes: None,
+            executable: false,
+            platform: Some(ManifestPlatform::All),
+        });
+        let keep = |selected: Vec<String>| {
+            let mut plan = plan();
+            plan.maintenance_mode = Some("update".into());
+            plan.selected_components = selected;
+            plan.operations = vec![PlanOperation {
+                id: "keep-kiro-agent".into(),
+                component_id: "runtime.kiro".into(),
+                ownership: Some(Ownership::Managed),
+                location_scope: Some("project".into()),
+                action: OperationAction::Skip,
+                source_path: None,
+                destination: ".kiro/agents/hoi4-repo-explorer.md".into(),
+                source_sha256: None,
+                source_size: Some(1),
+                platform: Some(ManifestPlatform::All),
+                executable: false,
+                result_sha256: None,
+                base_sha256: None,
+                local_sha256: Some("b".repeat(64)),
+                local_state: LocalState::Modified,
+                resolution: Some("keep_user_modification".into()),
+                external: false,
+                rollback: RollbackAction::RestoreBackup,
+                external_parent_identity: None,
+            }];
+            let journal = new_journal(&plan, &plan.project_id, project.path());
+            let directory = RootedDir::open_read(project.path()).unwrap();
+            build_lock(
+                &plan,
+                &[],
+                &journal,
+                Some(&predecessor),
+                project.path(),
+                &directory,
+            )
+            .unwrap()
+        };
+        let released = keep(vec!["core.agents".into()]);
+        assert!(!released
+            .files
+            .iter()
+            .any(|file| file.path == ".kiro/agents/hoi4-repo-explorer.md"));
+        assert!(!released
+            .components
+            .iter()
+            .any(|component| component.id == "runtime.kiro"));
+        assert!(!released
+            .local_modifications
+            .iter()
+            .any(|modification| modification.path == ".kiro/agents/hoi4-repo-explorer.md"));
+        // While the client stays selected, the kept edit remains a recorded
+        // local modification of its managed file.
+        let selected = keep(vec!["core.agents".into(), "runtime.kiro".into()]);
+        assert!(selected
+            .files
+            .iter()
+            .any(|file| file.path == ".kiro/agents/hoi4-repo-explorer.md"));
+        assert!(selected
+            .local_modifications
+            .iter()
+            .any(|modification| modification.path == ".kiro/agents/hoi4-repo-explorer.md"));
     }
 
     #[test]

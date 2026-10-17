@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { findingDisplayValue, findingLabel } from "./findings";
 
 describe("scan finding presentation", () => {
+  it("summarizes actual profile coverage and observed conventions", () => {
+    expect(findingDisplayValue("project_coverage", JSON.stringify({ coverage: { files_indexed: 12345, samples_read: 120, coverage: "sampled" } }))).toContain("120 content samples");
+    expect(findingDisplayValue("project_structure", JSON.stringify({ content_categories: [{ category: "common/national_focus", files: 300 }] }))).toBe("common/national_focus: 300");
+    expect(findingDisplayValue("project_identifiers", JSON.stringify({ namespace_declarations: [{ value: "GER" }, { value: "FRA" }], identifier_prefixes: [{ value: "GER" }] }))).toBe("Sampled: GER, FRA");
+    expect(findingDisplayValue("project_localisation", JSON.stringify({ language_headers: [{ value: "english" }], utf8_bom: 4 }))).toBe("english; 4 sampled files with UTF-8 BOM");
+    expect(findingDisplayValue("project_documentation", JSON.stringify({ documents: [{ path: "README.md", headings: ["Kaiserreich"] }] }))).toBe("README.md: Kaiserreich");
+  });
   it("uses readable labels instead of machine keys", () => {
     expect(findingLabel("project_instructions")).toBe("Project instructions");
     expect(findingLabel("installed_environments")).toBe("Coding environments");

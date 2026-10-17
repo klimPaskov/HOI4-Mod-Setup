@@ -86,6 +86,19 @@
       "type": "integer",
       "minimum": 0
     },
+    "profile_stats": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["files_indexed", "directories_indexed", "samples_read", "bytes_read", "excluded_entries", "coverage"],
+      "properties": {
+        "files_indexed": {"type": "integer", "minimum": 0, "maximum": 500000},
+        "directories_indexed": {"type": "integer", "minimum": 0, "maximum": 200000},
+        "samples_read": {"type": "integer", "minimum": 0, "maximum": 256},
+        "bytes_read": {"type": "integer", "minimum": 0, "maximum": 8388608},
+        "excluded_entries": {"type": "integer", "minimum": 0},
+        "coverage": {"enum": ["sampled", "truncated"]}
+      }
+    },
     "findings": {
       "type": "array",
       "items": {
@@ -225,6 +238,7 @@
           "type": "string"
         },
         "value": {},
+        "model_excerpt": {"type": ["string", "null"]},
         "status": {
           "enum": [
             "accepted",

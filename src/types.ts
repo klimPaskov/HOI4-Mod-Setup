@@ -29,12 +29,25 @@ export type AiProviderId = "claude_account" | "codex" | "gemini_account" | "grok
 /** Built-in environment ids; a source manifest may declare more. */
 export type CodingEnvironmentId = "claude_code" | "codex" | "cursor" | "qoder" | "opencode" | (string & {});
 
+/** Where a client registers MCP servers: a managed project file, the client's
+ * own settings (a manual step), or nowhere. */
+export type McpSupport = "project" | "manual" | "none";
+
 export interface CodingEnvironmentDefinition {
   id: CodingEnvironmentId;
   display_name: string;
   description?: string | null;
   default_primary?: boolean;
   open_command?: string | null;
+  mcp_support?: McpSupport | null;
+  /** Reviewed client documentation for a manual setup step. */
+  documentation_url?: string | null;
+}
+
+export interface UnavailableCodingEnvironment {
+  id: string;
+  display_name: string;
+  reason: string;
 }
 
 export interface ImageGenerationProviderDefinition {
@@ -381,6 +394,16 @@ export interface ScanProgress {
   filesScanned: number;
   directoriesScanned: number;
   bytesRead: number;
+  profileStats?: ProjectProfileStats;
+}
+
+export interface ProjectProfileStats {
+  files_indexed: number;
+  directories_indexed: number;
+  samples_read: number;
+  bytes_read: number;
+  excluded_entries: number;
+  coverage: string;
 }
 
 export interface ScanSnapshot {
@@ -394,6 +417,7 @@ export interface ScanSnapshot {
   filesScanned: number;
   directoriesScanned: number;
   bytesRead: number;
+  profileStats?: ProjectProfileStats;
 }
 
 export interface ComponentRow {
@@ -532,6 +556,8 @@ export interface SourceManifestPreview {
   components: ManifestComponentPreview[];
   profiles: Array<{ id: string; display_name: string; components: string[]; default: boolean }>;
   coding_environments?: CodingEnvironmentDefinition[];
+  /** Declared clients this app version or platform cannot install. */
+  unavailable_coding_environments?: UnavailableCodingEnvironment[];
   image_generation?: ImageGenerationCatalog;
   live_testing?: LiveTestingCatalog;
   local_source?: string | null;

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
 import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, packageChatSources, pickChatSourcesFolder, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewChatSources, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
-import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPreview, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
+import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPreview, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, McpSupport, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
 import claudeModels from "./claude-models.json";
 import { AccountProviderAccess } from "./AccountProviderAccess";
@@ -17,7 +17,7 @@ const PHASES: Array<{ id: PhaseId; label: string }> = [
   { id: "ready", label: "Ready" },
 ];
 
-export interface CodingEnvironmentOption { id: CodingEnvironmentId; label: string; detail: string; defaultPrimary?: boolean }
+export interface CodingEnvironmentOption { id: CodingEnvironmentId; label: string; detail: string; defaultPrimary?: boolean; mcpSupport?: McpSupport; documentationUrl?: string }
 
 /** Used until the source manifest is loaded, and for manifests that predate
  * environment declarations. */
@@ -35,12 +35,26 @@ export const DEFAULT_PRIMARY_CODING_ENVIRONMENT: CodingEnvironmentId = "claude_c
 export function codingEnvironmentOptions(manifest?: SourceManifestPreview | null): CodingEnvironmentOption[] {
   const declared = manifest?.coding_environments ?? [];
   if (declared.length === 0) return CODING_ENVIRONMENTS;
-  return declared.map((environment) => ({
-    id: environment.id,
-    label: environment.display_name,
-    detail: CODING_ENVIRONMENTS.find((candidate) => candidate.id === environment.id)?.detail ?? "Project instructions, skills, agents, and MCP",
-    defaultPrimary: environment.default_primary === true,
-  }));
+  return declared.map((environment) => {
+    const mcpSupport = environment.mcp_support ?? (CODING_ENVIRONMENTS.some((candidate) => candidate.id === environment.id) ? "project" : undefined);
+    return {
+      id: environment.id,
+      label: environment.display_name,
+      detail: CODING_ENVIRONMENTS.find((candidate) => candidate.id === environment.id)?.detail
+        ?? environment.description
+        ?? (mcpSupport === "project" ? "Project instructions, skills, agents, and MCP" : "Project instructions, skills, and agents"),
+      defaultPrimary: environment.default_primary === true,
+      mcpSupport,
+      documentationUrl: environment.documentation_url ?? undefined,
+    };
+  });
+}
+
+/** A short, non-color cue for clients whose MCP setup the installer cannot do. */
+export function mcpSupportNote(option: Pick<CodingEnvironmentOption, "mcpSupport">): string | undefined {
+  if (option.mcpSupport === "manual") return "MCP is set up in the client";
+  if (option.mcpSupport === "none") return "No MCP support";
+  return undefined;
 }
 
 export function codingEnvironmentLabel(id: CodingEnvironmentId, manifest?: SourceManifestPreview | null): string {
@@ -747,6 +761,7 @@ export default function App() {
           filesScanned: result.filesScanned,
           directoriesScanned: result.directoriesScanned,
           bytesRead: result.bytesRead,
+          profileStats: result.profileStats,
         }));
         setScanPartial(result.partial);
         setScanLimitsHit(result.limitsHit);
@@ -756,6 +771,7 @@ export default function App() {
           return;
         }
         setFindings(result.findings);
+        setSelectedFinding(result.findings.some((finding) => finding.id === "profile.structure") ? "profile.structure" : result.findings[0]?.id ?? "");
         const managed = managedInstallationDetails(result.findings);
         const launcherFinding = result.findings.find((finding) => finding.id === "descriptor.launcher");
         let detectedLauncherPath: string | undefined;
@@ -2786,6 +2802,9 @@ const SCAN_STAGE_LABELS: Record<string, string> = {
   detecting_identifiers: "Checking identifiers and namespaces",
   detecting_localisation: "Checking localisation",
   detecting_documentation: "Checking documentation",
+  profiling_project: "Profiling the mod",
+  indexing_project: "Indexing project content",
+  sampling_project: "Inspecting representative content",
   detecting_agentic_files: "Checking agent files and skills",
   detecting_paths: "Checking project paths",
   detecting_components: "Checking managed components",
@@ -2809,7 +2828,7 @@ export function Scan({ state, complete, error, progress, partial, limitsHit, can
       {error && <p className="callout block" role="alert">{error}</p>}
       {partial && !error && <p className="callout review" role="status">Some files were not checked. Review the partial results.</p>}
       {partial && limitsHit.length > 0 && <details><summary>Show scan limits</summary><p className="muted">{limitsHit.join(", ")}</p></details>}
-      <div className="list-row no-border"><div><strong>{complete ? partial ? "Partial scan evidence saved for review" : "Scan evidence saved for review" : "Detected so far"}</strong><span>Current path: <code className="scan-path">{progress.currentPath || "."}</code></span><span>{progress.filesScanned.toLocaleString()} files, {progress.directoriesScanned.toLocaleString()} directories, {formatScanBytes(progress.bytesRead)} read</span></div><span className="muted">{state.mode === "existing" ? "bounded scan" : "new project"}</span></div>
+      <div className="list-row no-border"><div><strong>{complete ? partial ? "Partial scan evidence saved for review" : "Scan evidence saved for review" : "Detected so far"}</strong><span>Current path: <code className="scan-path">{progress.currentPath || "."}</code></span><span>{progress.profileStats ? `${progress.profileStats.files_indexed.toLocaleString()} files indexed, ${progress.profileStats.samples_read} content samples, ${progress.filesScanned.toLocaleString()} setup files` : `${progress.filesScanned.toLocaleString()} setup files, ${progress.directoriesScanned.toLocaleString()} setup directories`}, {formatScanBytes(progress.bytesRead)} read</span></div><span className="muted">{state.mode === "existing" ? "bounded scan" : "new project"}</span></div>
       {canCancel && !complete && <button type="button" className="text-button scan-cancel" onClick={() => void onCancel()} disabled={cancellationRequested}>{cancellationRequested ? "Cancelling scan..." : "Cancel scan"}</button>}
     </section></div>
   );
@@ -2818,7 +2837,11 @@ export function Scan({ state, complete, error, progress, partial, limitsHit, can
 export function Findings({ state, update, updateIdentity, updateDescription, findings, selected, setSelected, setFindings, onConfirmAnalysis, onManageExisting, onPackageChatSources }: { state: WizardState; update?: (patch: Partial<WizardState>) => void; updateIdentity?: (patch: Partial<ProjectIdentity>) => void; updateDescription?: (description: string, preserveAnalysis?: boolean) => void; findings: ScanFinding[]; selected: string; setSelected: (id: string) => void; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onConfirmAnalysis: () => Promise<void>; onManageExisting: () => void; onPackageChatSources: () => Promise<void> }) {
   const active = findings.find((finding) => finding.id === selected) ?? findings[0];
   const managed = managedInstallationDetails(findings);
-  return <div className="stack"><details><summary>{aiProviderLabel(state.aiProvider, state.aiProfiles)} input preview</summary><div className="manifest-details">{modelVisibleFindings(findings).map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small></div>)}</div></details>{managed.present && managed.valid && <section className="callout info existing-setup-callout"><div><strong>Existing setup found</strong><p>This project already has a managed setup. You can repair it now or add the 3D workflow later without starting over.</p></div><button type="button" className="button secondary" onClick={onManageExisting}>Repair or add workflows</button></section>}{managed.chatSourcesAvailable && <section className="callout info existing-setup-callout"><div><strong>ChatGPT project sources found</strong><p>Package the detected instructions, skills, subagents, and optional root Markdown outside the mod project.</p></div><button type="button" className="button secondary" onClick={() => void onPackageChatSources()}>Package ChatGPT project sources</button></section>}{state.codexAnalysis && <CodexReview state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel"><PanelTitle title="Project facts" />{findings.length ? <div>{findings.map((finding) => <button type="button" key={finding.id} className={`finding-row ${finding.status === "needs_review" ? "review" : ""}`} aria-pressed={finding.id === active?.id} onClick={() => setSelected(finding.id)}><span className={`state-icon ${finding.status === "needs_review" ? "review" : "pass"}`}>{finding.status === "needs_review" ? "!" : "✓"}</span><span><strong>{finding.label}</strong><small>{finding.status === "edited" ? finding.value : finding.displayValue ?? finding.value}</small></span><span className="text-button">{finding.status === "needs_review" ? "Review" : "Edit"}</span></button>)}</div> : <p className="muted">No scan findings are available in this runtime. The desktop scanner must return evidence before values can be accepted.</p>}</section><section className="panel selected-finding"><PanelTitle title="Selected finding" />{active ? <div className="selected-body"><label className="field-label" htmlFor="finding-value">Editable project value: {active.label}</label><input id="finding-value" className="text-input focused" value={active.value} onChange={(event) => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, value: event.target.value, status: "edited" } : finding))} /><span className="confidence">{Math.round(active.confidence * 100)}% confidence</span><button type="button" className="text-button" aria-pressed={active.status !== "rejected"} onClick={() => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, status: finding.status === "rejected" ? "accepted" : "rejected" } : finding))}>{active.status === "rejected" ? `Include in ${aiProviderLabel(state.aiProvider, state.aiProfiles)} input` : `Exclude from ${aiProviderLabel(state.aiProvider, state.aiProfiles) } input`}</button><div className="evidence-block"><span>Evidence</span><p>{active.evidence}</p></div><details><summary>Show matching files</summary><p className="muted">Full evidence and hashes stay behind progressive disclosure.</p></details></div> : <p className="muted">Select a finding after the bounded scan returns.</p>}</section></div></div>;
+  return <div className="stack"><details><summary>{aiProviderLabel(state.aiProvider, state.aiProfiles)} input preview</summary><div className="manifest-details">{modelVisibleFindings(findings).map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small></div>)}</div></details>{managed.present && managed.valid && <section className="callout info existing-setup-callout"><div><strong>Existing setup found</strong><p>This project already has a managed setup. You can repair it now or add the 3D workflow later without starting over.</p></div><button type="button" className="button secondary" onClick={onManageExisting}>Repair or add workflows</button></section>}{managed.chatSourcesAvailable && <section className="callout info existing-setup-callout"><div><strong>ChatGPT project sources found</strong><p>Package the detected instructions, skills, subagents, and optional root Markdown outside the mod project.</p></div><button type="button" className="button secondary" onClick={() => void onPackageChatSources()}>Package ChatGPT project sources</button></section>}{state.codexAnalysis && <CodexReview state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel"><PanelTitle title="Project facts" />{findings.length ? <div>{findings.map((finding) => <button type="button" key={finding.id} className={`finding-row ${finding.status === "needs_review" ? "review" : ""}`} aria-pressed={finding.id === active?.id} onClick={() => setSelected(finding.id)}><span className={`state-icon ${finding.status === "needs_review" ? "review" : "pass"}`}>{finding.status === "needs_review" ? "!" : "✓"}</span><span><strong>{finding.label}</strong><small>{finding.status === "edited" ? finding.value : finding.displayValue ?? finding.value}</small></span><span className="text-button">{finding.status === "needs_review" ? "Review" : "Edit"}</span></button>)}</div> : <p className="muted">No scan findings are available in this runtime. The desktop scanner must return evidence before values can be accepted.</p>}</section><section className="panel selected-finding"><PanelTitle title="Selected finding" />{active ? <div className="selected-body">{active.id.startsWith("profile.") || active.id === "descriptor.metadata" ? <><strong>{active.label}</strong><p>{active.displayValue}</p><details><summary>Observed facts and sample evidence</summary><pre className="profile-evidence">{formatFindingDetails(active.value)}</pre></details></> : <><label className="field-label" htmlFor="finding-value">Editable project value: {active.label}</label><input id="finding-value" className="text-input focused" value={active.value} onChange={(event) => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, value: event.target.value, status: "edited" } : finding))} /></>}<span className="confidence">{Math.round(active.confidence * 100)}% confidence</span><button type="button" className="text-button" aria-pressed={active.status !== "rejected"} onClick={() => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, status: finding.status === "rejected" ? "accepted" : "rejected" } : finding))}>{active.status === "rejected" ? `Include in ${aiProviderLabel(state.aiProvider, state.aiProfiles)} input` : `Exclude from ${aiProviderLabel(state.aiProvider, state.aiProfiles) } input`}</button><div className="evidence-block"><span>Evidence</span><p>{active.evidence}</p></div><details><summary>Show matching files</summary><p className="muted">Full evidence and hashes stay behind progressive disclosure.</p></details></div> : <p className="muted">Select a finding after the bounded scan returns.</p>}</section></div></div>;
+}
+
+function formatFindingDetails(raw: string): string {
+  try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return raw; }
 }
 
 function formatManifestSize(component: ManifestComponentPreview): string {
@@ -2919,6 +2942,7 @@ function flattenedChatFiles(state: WizardState, manifest: SourceManifestPreview 
 
 export function CodingEnvironments({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
   const options = codingEnvironmentOptions(state.manifestPreview);
+  const unavailable = state.manifestPreview?.unavailable_coding_environments ?? [];
   const selection = import.meta.env.DEV && new URLSearchParams(window.location.search).get("coding-environments") === "none" && state.primaryCodingEnvironment === "" ? { primary: "", additional: state.additionalCodingEnvironments } : normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments, options);
   const choosePrimary = (primary: CodingEnvironmentId) => {
     const next = normalizeCodingEnvironmentSelection(primary, selection.additional, options);
@@ -2938,7 +2962,7 @@ export function CodingEnvironments({ state, update }: { state: WizardState; upda
       <div className="coding-environment-options" role="radiogroup" aria-label="Primary coding environment">
         {options.map((environment) => <label className="coding-environment-option" key={environment.id}>
           <input type="radio" name="primary-coding-environment" value={environment.id} checked={selection.primary === environment.id} onChange={() => choosePrimary(environment.id)} />
-          <span className="coding-environment-copy"><strong>{environment.label}</strong><small>{environment.detail}</small></span>
+          <span className="coding-environment-copy"><strong>{environment.label}</strong><small>{environment.detail}</small>{mcpSupportNote(environment) && <small className="coding-environment-note">{mcpSupportNote(environment)}</small>}</span>
           {selection.primary === environment.id && <Status label="Primary" tone="info" />}
         </label>)}
       </div>
@@ -2949,10 +2973,14 @@ export function CodingEnvironments({ state, update }: { state: WizardState; upda
       <div className="stack" role="group" aria-label="Additional coding environments">
         {options.filter((environment) => environment.id !== selection.primary).map((environment) => <label className="radio-row" key={environment.id}>
           <input type="checkbox" checked={selection.additional.includes(environment.id)} onChange={(event) => toggleAdditional(environment.id, event.target.checked)} />
-          <span><strong>{environment.label}</strong><small>{environment.detail}</small></span>
+          <span><strong>{environment.label}</strong><small>{environment.detail}</small>{mcpSupportNote(environment) && <small className="coding-environment-note">{mcpSupportNote(environment)}</small>}</span>
           {selection.additional.includes(environment.id) && <Status label="Selected" tone="pass" />}
         </label>)}
       </div>
+      {unavailable.length > 0 && <details className="coding-environment-unavailable">
+        <summary>{`Not available (${unavailable.length})`}</summary>
+        <ul>{unavailable.map((environment) => <li key={environment.id}><strong>{environment.display_name}</strong> <span className="muted">{environment.reason}</span></li>)}</ul>
+      </details>}
     </section>
   </div>;
 }
@@ -3694,6 +3722,10 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
   const coreReady = report?.coreReady === true;
   const primaryEnvironment = normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments, codingEnvironmentOptions(state.manifestPreview)).primary;
   const primaryLabel = codingEnvironmentLabel(primaryEnvironment, state.manifestPreview);
+  const environmentOptions = codingEnvironmentOptions(state.manifestPreview);
+  const manualMcpClients = [state.primaryCodingEnvironment, ...state.additionalCodingEnvironments]
+    .map((id) => environmentOptions.find((environment) => environment.id === id))
+    .filter((environment): environment is CodingEnvironmentOption => environment?.mcpSupport === "manual");
   const nativeTerminal = currentUiPlatform() === "linux" && ["claude_code", "codex"].includes(primaryEnvironment);
   const opensCodex = primaryEnvironment === "codex";
   const open = opensCodex ? report?.openInCodex === true : report?.coreReady === true;
@@ -3765,6 +3797,7 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
           </div>
           {state.selectedComponents.includes("mcp.hoi4_agent_tools") && canCheckMcp && <button type="button" className="button secondary ready-panel-action" onClick={() => void runMcpCheck()}>Check integration</button>}
           {mcpCheck && <p className="ready-panel-note muted" role="status">{mcpCheck.status === "ready" ? "Integration checked" : "Integration needs review"}</p>}
+          {state.selectedComponents.includes("mcp.hoi4_agent_tools") && manualMcpClients.map((environment) => <p className="ready-panel-note muted" key={environment.id}>{`To-do: add HOI4 Agent Tools in ${environment.label}'s own MCP settings.`}{environment.documentationUrl && <> <ExternalLink href={environment.documentationUrl}>{`${environment.label} MCP guide`}</ExternalLink></>}</p>)}
         </section>
         <section className="panel ready-options-panel">
           <div className="ready-check-list">
@@ -3910,16 +3943,22 @@ export function UpdateSourceOptions({ state, update, disabled = false }: { state
 
 function MaintenanceCodingEnvironmentOptions({ state, update }: { state: WizardState; update: (patch: Partial<WizardState>) => void }) {
   const options = codingEnvironmentOptions(state.manifestPreview);
+  // A recorded client that the selected source version does not offer stays
+  // selected, so changing another client never removes its files implicitly;
+  // planning then reports that this version cannot keep it.
+  const recordedUnavailable = state.manifestPreview ? [state.primaryCodingEnvironment, ...state.additionalCodingEnvironments].filter((id) => id && !options.some((option) => option.id === id)) : [];
+  const unavailableLabel = (id: string) => state.manifestPreview?.unavailable_coding_environments?.find((item) => item.id === id)?.display_name ?? codingEnvironmentLabel(id, state.manifestPreview);
+  const keepRecorded = (next: CodingEnvironmentSelection) => ({ ...next, additional: [...next.additional, ...recordedUnavailable.filter((id) => id !== next.primary && !next.additional.includes(id))] });
   const selection = import.meta.env.DEV && new URLSearchParams(window.location.search).get("coding-environments") === "none" && state.primaryCodingEnvironment === "" ? { primary: "", additional: state.additionalCodingEnvironments } : normalizeCodingEnvironmentSelection(state.primaryCodingEnvironment, state.additionalCodingEnvironments, options);
   const choosePrimary = (primary: CodingEnvironmentId) => {
-    const next = normalizeCodingEnvironmentSelection(primary, selection.additional, options);
+    const next = keepRecorded(normalizeCodingEnvironmentSelection(primary, selection.additional, options));
     update({ primaryCodingEnvironment: next.primary, additionalCodingEnvironments: next.additional, plan: undefined, transactionError: undefined });
   };
   const toggle = (id: CodingEnvironmentId, checked: boolean) => {
-    const next = normalizeCodingEnvironmentSelection(selection.primary, checked ? [...selection.additional, id] : selection.additional.filter((candidate) => candidate !== id), options);
+    const next = keepRecorded(normalizeCodingEnvironmentSelection(selection.primary, checked ? [...selection.additional, id] : selection.additional.filter((candidate) => candidate !== id), options));
     update({ primaryCodingEnvironment: next.primary, additionalCodingEnvironments: next.additional, plan: undefined, transactionError: undefined });
   };
-  return <section className="panel maintenance-environment-panel"><PanelTitle title="Coding environments" /><p className="muted">Existing and locally modified files are preserved. Deselecting removes only unchanged files after review.</p><div className="coding-environment-options" role="radiogroup" aria-label="Primary coding environment">{options.map((environment) => <label className="coding-environment-option" key={environment.id}><input type="radio" name="maintenance-primary-coding-environment" checked={selection.primary === environment.id} onChange={() => choosePrimary(environment.id)} /><span className="coding-environment-copy"><strong>{environment.label}</strong><small>{environment.detail}</small></span>{selection.primary === environment.id && <Status label="Primary" tone="info" />}</label>)}</div><details><summary>Additional environments</summary><div className="stack" role="group" aria-label="Additional coding environments">{options.filter((environment) => environment.id !== selection.primary).map((environment) => <label className="radio-row" key={environment.id}><input type="checkbox" checked={selection.additional.includes(environment.id)} onChange={(event) => toggle(environment.id, event.target.checked)} /><span><strong>{environment.label}</strong><small>Keep this native package installed alongside the primary.</small></span></label>)}</div></details></section>;
+  return <section className="panel maintenance-environment-panel"><PanelTitle title="Coding environments" /><p className="muted">Existing and locally modified files are preserved. Deselecting removes only unchanged files after review.</p>{recordedUnavailable.length > 0 && <p className="callout review" role="status">{`Installed but not in this source version: ${recordedUnavailable.map(unavailableLabel).join(", ")}. Choose a version that includes ${recordedUnavailable.length === 1 ? "it" : "them"}; setup will not remove ${recordedUnavailable.length === 1 ? "its" : "their"} files implicitly.`}</p>}<div className="coding-environment-options" role="radiogroup" aria-label="Primary coding environment">{options.map((environment) => <label className="coding-environment-option" key={environment.id}><input type="radio" name="maintenance-primary-coding-environment" checked={selection.primary === environment.id} onChange={() => choosePrimary(environment.id)} /><span className="coding-environment-copy"><strong>{environment.label}</strong><small>{environment.detail}</small></span>{selection.primary === environment.id && <Status label="Primary" tone="info" />}</label>)}</div><details><summary>Additional environments</summary><div className="stack" role="group" aria-label="Additional coding environments">{options.filter((environment) => environment.id !== selection.primary).map((environment) => <label className="radio-row" key={environment.id}><input type="checkbox" checked={selection.additional.includes(environment.id)} onChange={(event) => toggle(environment.id, event.target.checked)} /><span><strong>{environment.label}</strong><small>Keep this native package installed alongside the primary.</small></span></label>)}</div></details></section>;
 }
 
 export function Update({ state, update, updateIdentity, updateDescription, findings, setFindings, onMaintenance, onStartMaintenance, onReanalyze, onConfirmAnalysis, onPackageChatSources, pending = false }: { state: WizardState; update: (patch: Partial<WizardState>) => void; updateIdentity?: (patch: Partial<ProjectIdentity>) => void; updateDescription?: (description: string, preserveAnalysis?: boolean) => void; onConfirmAnalysis?: () => Promise<void>; findings: ScanFinding[]; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onMaintenance: (screen: "update" | "conflict" | "recovery") => void; onStartMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void; onReanalyze: () => Promise<boolean>; onPackageChatSources?: () => Promise<void>; pending?: boolean }) {

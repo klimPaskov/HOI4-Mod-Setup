@@ -79,7 +79,9 @@ Choose latest, pinned commit, or pinned release. Select components and review au
 
 After identity or scan review, choose exactly one primary coding environment;
 new installs use the manifest-declared default (currently Claude Code). Add any
-number of the other supported clients: Codex, Cursor, Qoder, and OpenCode. The
+number of the other offered clients (Codex, Cursor, Qoder, and OpenCode, plus
+the format 6 clients in `docs/36_coding_environment_catalog.md`). Clients this
+app version or platform cannot install appear under "Not available". The
 primary is removed from the additional choices whenever it changes. Existing
 projects preserve a valid recorded primary, including an older Codex selection;
 projects without one use Codex as the compatibility migration default. This
@@ -182,10 +184,15 @@ folders, and it reads only the candidate the user confirms.
 Run staged detectors with progress and current-path evidence. The scan reads a
 parent-level launcher descriptor only when the user confirmed it in the
 pre-scan choice. Cancellation stops reads and discards unapproved profile
-state. The targeted inventory covers descriptors, approved setup instructions,
-skills, subagents, Codex/MCP configuration, managed setup state, and bounded
-Git evidence. It does not open or count ordinary gameplay, localisation,
-media, generated documentation corpora, or unrelated root data dumps.
+state. The targeted setup inventory covers descriptors, approved setup
+instructions, skills, subagents, Codex/MCP configuration, managed setup state,
+and bounded Git evidence; it remains setup-only and does not open or count
+ordinary gameplay, localisation, media, generated documentation corpora, or
+unrelated root data dumps. A separate contained project-profile stage records
+bounded metadata and deterministic text-prefix observations for eligible
+gameplay structure, localisation, identifiers, and documentation. It skips
+hidden/cache/tooling/wiki/secret-like paths and binary/media content bytes;
+profile coverage is sampled and never presented as exhaustive validation.
 
 When the bounded scan finds a valid managed lock, it reports the stored states
 of `workflow.3d` and `workflow.super_events` in its concise optional-workflow
@@ -196,17 +203,20 @@ decline until Update or Repair changes it.
 ### Review sequence
 
 1. identity and descriptors
-2. documentation and project rules
-3. skills and helpers
-4. subagents
-5. Codex and MCP
-6. Git
-7. managed setup state
-8. conflicts and platform limits
+2. project profile
+3. documentation and project rules
+4. skills and helpers
+5. subagents
+6. Codex and MCP
+7. Git
+8. managed setup state
+9. conflicts and platform limits
 
 Namespace, prefix, naming, localisation, and folder-profile proposals belong
-to the separate selected-provider review. They are not deterministic scan
-findings and do not justify reading unrelated mod content.
+to the separate selected-provider review. The profile contributes deterministic
+observations and bounded samples, but it does not itself propose a project-wide
+namespace, naming convention, localisation policy, or folder profile, and it
+does not justify reading unrelated mod content.
 
 Every deterministic finding shows value, confidence, evidence path, line or file set, impact, and recommendation. Required setup-assistant suggestions show the approved input manifest, selected provider/model/profile as analysis provenance, linked deterministic evidence, and separate confidence. The user can accept, edit, reject, or defer non-required proposals. Every field required for planning must be confirmed. The resulting project guidance does not identify that setup assistant as the future development client.
 

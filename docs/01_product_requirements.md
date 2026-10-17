@@ -115,7 +115,9 @@ schema, and Rust remains the authority for deterministic facts and writes.
 Coding-client selection is a separate setup step from the setup assistant and
 from workflow profiles such as Core or Core plus 3D. Exactly one primary client
 is required. New installs use the manifest-declared default, currently Claude
-Code; Codex, Cursor, Qoder, and OpenCode may be added alongside it. Changing
+Code; any other offered client may be added alongside it. Format 6 packages
+declare each client's MCP support (`project`, `manual`, or `none`); see
+`docs/36_coding_environment_catalog.md`. Changing
 the primary client automatically removes it from the additional list.
 
 The resolved source manifest supplies a complete native package for each
@@ -207,14 +209,23 @@ The user selects one root. The scanner detects:
 - native coding-client configuration
 - MCP definitions
 - absolute paths and project-specific examples
+- a bounded project profile covering observed gameplay structure, identifiers,
+  localisation conventions, and documentation shape
 - conflicts with incoming components
 - launcher descriptor registrations and thumbnail state
 
-The scanner does not inventory ordinary HOI4 gameplay, localisation, media,
-generated documentation corpora, or root data dumps. Namespace, prefix,
-naming, localisation, and folder-profile ideas are provider suggestions derived
-only from the approved agentic evidence and remain subject to deterministic
-validation and user confirmation.
+The existing targeted setup inventory remains limited to setup-relevant files
+and does not inventory ordinary gameplay, localisation, media, generated
+documentation corpora, or root data dumps. A separate contained project-profile
+pass establishes bounded metadata and deterministic text-prefix observations
+from eligible gameplay, localisation, and documentation paths. It skips hidden,
+cache, tooling, wiki, secret-like, and binary/media content bytes, and it does
+not perform exhaustive gameplay validation or infer project-wide conventions.
+Profile counts and samples remain distinct from setup-file counts. Namespace,
+prefix, naming, localisation, and folder-profile ideas are provider suggestions
+derived from approved deterministic evidence, including profile summaries, and
+remain subject to deterministic validation and user confirmation. See
+`docs/35_project_profiling.md` for the profile limits and evidence contract.
 
 Before the scan starts, the app performs a bounded, read-only discovery of
 direct `*.mod` candidates in the selected root's immediate parent. It shows the

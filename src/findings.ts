@@ -18,6 +18,12 @@ const FINDING_LABELS: Record<string, string> = {
   skill_count: "Skills",
   subagent_count: "Subagents",
   thumbnail: "Thumbnail",
+  descriptor_metadata: "Descriptor metadata",
+  project_coverage: "Scan coverage",
+  project_structure: "Gameplay and folder structure",
+  project_identifiers: "Namespaces and identifiers",
+  project_localisation: "Localisation conventions",
+  project_documentation: "Documentation conventions",
 };
 
 const ENVIRONMENT_LABELS: Record<string, string> = {
@@ -69,6 +75,30 @@ export function findingDisplayValue(key: string, raw: string): string {
   const value = parse(raw);
   const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
   switch (key) {
+    case "project_coverage": {
+      const coverage = record?.coverage as Record<string, unknown> | undefined;
+      if (coverage) return `${Number(coverage.files_indexed ?? 0).toLocaleString()} files indexed, ${Number(coverage.samples_read ?? 0)} content samples (${String(coverage.coverage)})`;
+      break;
+    }
+    case "project_structure": {
+      const categories = record?.content_categories;
+      if (Array.isArray(categories)) return categories.length ? categories.slice(0, 5).map((item) => `${item.category}: ${Number(item.files).toLocaleString()}`).join("; ") : "No eligible gameplay categories found";
+      break;
+    }
+    case "project_identifiers": {
+      const namespaces = record?.namespace_declarations;
+      const prefixes = record?.identifier_prefixes;
+      const observed = [...(Array.isArray(namespaces) ? namespaces : []), ...(Array.isArray(prefixes) ? prefixes : [])];
+      return observed.length ? `Sampled: ${[...new Set(observed.map((item) => String(item.value)))].slice(0, 8).join(", ")}` : "No namespaces or identifier prefixes in sampled content";
+    }
+    case "project_localisation": {
+      const languages = record?.language_headers;
+      return Array.isArray(languages) && languages.length ? `${languages.map((item) => item.value).join(", ")}; ${Number(record?.utf8_bom ?? 0)} sampled files with UTF-8 BOM` : "No language headers in sampled content";
+    }
+    case "project_documentation": {
+      const documents = record?.documents;
+      return Array.isArray(documents) && documents.length ? documents.slice(0, 3).map((item) => `${item.path}${item.headings?.length ? `: ${item.headings[0]}` : ""}`).join("; ") : "No eligible documentation samples";
+    }
     case "project_instructions":
       return value === true || raw === "true" ? "Found (AGENTS.md)" : "Not found";
     case "config_present":

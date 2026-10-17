@@ -4,6 +4,16 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Profile existing mods from a bounded, read-only inventory and content samples so semantic review sees real gameplay structure, identifiers, localisation conventions, and documentation, not only the descriptor and README.
+- Read setup manifest format 6, which declares each coding client's MCP support and lets one component serve several clients. Offer GitHub Copilot (VS Code), Gemini CLI, Antigravity, Grok Build, Kilo Code, Kiro, and Qwen Code with project MCP registration, and Cline, Devin Desktop, Augment, Continue, and Aider with project guidance, when the source publishes them.
+- Show clients this version or platform cannot install as unavailable, label manual and absent MCP routes, and list a to-do with the reviewed guide for clients whose MCP servers live in their own settings.
+- Require the registered HOI4 Agent Tools route, not just parseable JSON, for every selected client on Windows and Linux. Register OpenCode in `opencode.json`, the only file it reads, once the source publishes format 6.
+- Keep a recorded client that the chosen source version does not offer, and explain the refusal instead of reporting a download failure.
+- Report a newer manifest format as needing an app update before schema validation, and apply format 5 live-testing rules to later formats.
+- Build the updater without its archive feature, removing the vulnerable `zip` crate (RUSTSEC-2026-0367, -0368, -0369); release payloads are raw signed installers.
+
+Coding clients are never started by setup; client sign-in and in-client behavior beyond reading the documented files are not tested.
+
 ## 0.6.2 - 2026-10-15
 
 - Make Latest the default for new setups and existing-project Update, while keeping exact commit and release pinning available.

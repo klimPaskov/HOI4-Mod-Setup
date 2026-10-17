@@ -431,75 +431,11 @@ pub fn client_registration(
     bytes: &[u8],
     destination: &str,
 ) -> Result<Option<(String, Vec<String>)>, AppError> {
-    let invalid = || AppError::Process("the managed MCP client registration is malformed".into());
-    if bytes.len() > 1024 * 1024 {
-        return Err(invalid());
-    }
-    let value: Value = if destination == ".codex/config.toml" {
-        let config: toml::Value = std::str::from_utf8(bytes)
-            .map_err(|_| invalid())?
-            .parse()
-            .map_err(|_| invalid())?;
-        serde_json::to_value(config).map_err(|_| invalid())?
-    } else {
-        serde_json::from_slice(bytes).map_err(|_| invalid())?
-    };
-    let key = match destination {
-        ".codex/config.toml" => "mcp_servers",
-        "opencode.json" => "mcp",
-        ".mcp.json" | ".cursor/mcp.json" | ".qoder/mcp.json" => "mcpServers",
-        _ => return Err(invalid()),
-    };
-    let Some(route) = value.get(key).and_then(|v| v.get("hoi4_agent_tools")) else {
-        return Ok(None);
-    };
-    for name in ["enabled", "disabled"] {
-        if route.get(name).is_some_and(|v| !v.is_boolean()) {
-            return Err(invalid());
-        }
-    }
-    if route["enabled"] == false || route["disabled"] == true {
-        return Ok(None);
-    }
-    let (command, args) = if key == "mcp" {
-        let command_line = route["command"].as_array().ok_or_else(invalid)?;
-        let command = command_line
-            .first()
-            .and_then(Value::as_str)
-            .ok_or_else(invalid)?
-            .to_owned();
-        let args = command_line[1..]
-            .iter()
-            .map(|v| v.as_str().map(str::to_owned).ok_or_else(invalid))
-            .collect::<Result<Vec<_>, _>>()?;
-        (command, args)
-    } else {
-        let command = route["command"].as_str().ok_or_else(invalid)?.to_owned();
-        let args = route
-            .get("args")
-            .map(|v| {
-                v.as_array().ok_or_else(invalid).and_then(|items| {
-                    items
-                        .iter()
-                        .map(|v| v.as_str().map(str::to_owned).ok_or_else(invalid))
-                        .collect::<Result<Vec<_>, _>>()
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
-        (command, args)
-    };
-    if command.is_empty()
-        || command.len() > 4096
-        || command.chars().any(char::is_control)
-        || args.len() > 256
-        || args
-            .iter()
-            .any(|v| v.len() > 4096 || v.chars().any(char::is_control))
-    {
-        return Err(invalid());
-    }
-    Ok(Some((command, args)))
+    let (_, route) =
+        crate::coding_environment::mcp_route_for_path(destination).ok_or_else(|| {
+            AppError::Process("the managed MCP client registration is malformed".into())
+        })?;
+    crate::native_mcp::registration(route.format, bytes)
 }
 
 fn required_parameter<'a>(

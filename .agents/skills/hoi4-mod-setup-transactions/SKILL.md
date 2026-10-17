@@ -56,6 +56,30 @@ fresh setup and maintenance so optional projected agents appear only for a
 selected workflow and selected environment, while a deselected environment's
 unchanged projections remain eligible for reviewed removal.
 
+When maintenance deselects a client, a file of that client the user changed
+and chose to keep is released: it stays on disk untouched and leaves the lock
+and its recorded local modifications, so readiness is not held in review for a
+file no selected client uses. Unchanged files are removed as before.
+
+A component shared by several clients (`shared_coding_environments`) stays in
+the desired set while any selected client uses it, so deselecting Codex keeps
+the `.agents/skills` copy that Gemini CLI or Antigravity still reads. When the
+chosen source version does not offer a recorded client, planning stops with an
+actionable `InvalidInput` message before any removal is planned; never drop the
+client from the selection to make a plan succeed.
+
+Native client MCP files are merged with local content and only the shared
+`hoi4_agent_tools` route is adapted, through `native_mcp::retarget` for the
+registered format. On Windows and Linux the route points at the verified
+launch; a settings file that is installed on every platform (format 6
+`opencode.json`) loses the route where no verified launch exists. Readiness
+requires the registered route, not only parseable JSON, whenever the client's
+MCP component and HOI4 Agent Tools are installed on Windows or Linux and the
+tools package is not planned-unavailable. A format 5 lock that still contains
+`runtime.opencode.mcp` keeps the old structural check until Update moves the
+route into `opencode.json`. Manual and absent MCP routes never block readiness
+or the health check.
+
 ## Operation model
 
 Update can explicitly retarget Latest or an optional commit/release pin while
