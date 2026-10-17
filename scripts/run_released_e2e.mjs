@@ -240,7 +240,7 @@ async function reviewProject() {
   await approveSuggestions();
 }
 function clientCheckbox(label) {
-  return page.locator(".maintenance-environment-panel").getByRole("checkbox", { name: new RegExp(`^${escapeRegExp(label)}\\b`) });
+  return page.locator(".maintenance-environment-panel").getByRole("checkbox", { name: new RegExp(`^${escapeRegExp(label)}(?:\\s|$)`) });
 }
 async function openAdditionalClients() {
   const details = page.locator(".maintenance-environment-panel details");
@@ -345,9 +345,13 @@ async function clientPackagesFlow() {
   await expect(page.getByText(/Installed but not in this source version:/)).toBeVisible({ timeout: 180_000 });
   await record("clients-unavailable-in-latest");
   await page.getByRole("button", { name: /^Check for updates/ }).click();
-  await expect(page.getByRole("alert").filter({ hasText: /not included in this setup version|cannot be installed from this setup version/i }).first()).toBeVisible({ timeout: 300_000 });
+  // The update screen shows a planning refusal as its supporting text.
+  await expect(page.getByText(/not included in this setup version|cannot be installed from this setup version/i).first()).toBeVisible({ timeout: 300_000 });
+  await record("clients-refused-on-latest");
   assert.deepEqual(await readLock(), before);
   result.clientsRefusedOnOlderSource = true;
+  await next("Back");
+  await at("Project ready");
 }
 
 try {
