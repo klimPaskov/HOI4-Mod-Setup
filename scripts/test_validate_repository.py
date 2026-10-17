@@ -11,8 +11,15 @@ class ManifestSchemaSelectionTests(unittest.TestCase):
     def test_v5_uses_native_linux_contract_schema(self):
         self.assertIn('linux', str(load_manifest_schema({'schema_version': '5.0.0'})))
 
+    def test_v6_uses_per_client_mcp_contract_schema(self):
+        schema = load_manifest_schema({'schema_version': '6.0.0'})
+        self.assertEqual(schema['title'], 'HOI4 Mod Setup Remote Manifest v6')
+        environment = schema['$defs']['codingEnvironment']
+        self.assertIn('mcp_support', environment['required'])
+        self.assertIn('shared_coding_environments', schema['$defs']['component']['properties'])
+
     def test_unknown_or_missing_version_is_rejected(self):
-        for manifest in ({}, {'schema_version': '6.0.0'}, {'schema_version': '4.bad'}, {'schema_version': 4}):
+        for manifest in ({}, {'schema_version': '7.0.0'}, {'schema_version': '4.bad'}, {'schema_version': 4}):
             with self.subTest(manifest=manifest), self.assertRaises(AssertionError):
                 load_manifest_schema(manifest)
 
