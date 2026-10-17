@@ -56,6 +56,11 @@ fresh setup and maintenance so optional projected agents appear only for a
 selected workflow and selected environment, while a deselected environment's
 unchanged projections remain eligible for reviewed removal.
 
+When maintenance deselects a client, a file of that client the user changed
+and chose to keep is released: it stays on disk untouched and leaves the lock
+and its recorded local modifications, so readiness is not held in review for a
+file no selected client uses. Unchanged files are removed as before.
+
 A component shared by several clients (`shared_coding_environments`) stays in
 the desired set while any selected client uses it, so deselecting Codex keeps
 the `.agents/skills` copy that Gemini CLI or Antigravity still reads. When the

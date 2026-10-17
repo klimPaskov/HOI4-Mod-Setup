@@ -165,6 +165,9 @@ The pre-implementation draft of this document contained errors that the
 
 ## Known limitations
 
+- A file of a deselected client that the user changed and kept is released
+  from management: it stays on disk untouched and no longer counts as a local
+  modification.
 - Deselecting a client never removes its MCP file. The file is merged with
   user content, and a reverse merge of only the `hoi4_agent_tools` route is not
   implemented, so the file and its lock entry stay and maintenance shows the

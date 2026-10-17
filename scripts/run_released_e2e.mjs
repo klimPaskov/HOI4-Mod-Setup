@@ -323,6 +323,12 @@ async function clientPackagesFlow() {
   assert.ok(!existsSync(join(project, ".github/instructions/hoi4-mod-setup.instructions.md")));
   assert.equal((await readProjectJson(".vscode/mcp.json")).servers.user_server.command, "user-tool");
   assert.ok(!reduced.files.some((file) => !file.external && file.path.startsWith(".kiro/skills/")));
+  // Kept edits of a deselected client leave management instead of holding
+  // readiness in review.
+  for (const path of [keptAgent, ".vscode/mcp.json"]) {
+    assert.ok(!reduced.files.some((file) => !file.external && file.path === path), `${path} stays managed`);
+    assert.ok(!(reduced.local_modifications ?? []).some((item) => item.path === path), `${path} stays a local modification`);
+  }
   assert.ok(existsSync(join(project, ".qwen/skills/hoi4-ai-strategies/SKILL.md")), "other clients keep their packages");
   result.clientDeselection = { removed: ["kiro", "github_copilot"], keptModified: [keptAgent, ".vscode/mcp.json"] };
 
