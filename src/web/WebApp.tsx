@@ -9,11 +9,12 @@ import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "../identity";
 import { renderCoverPng } from "../lib/images";
 import { startCoreWorker } from "./core-client";
 import type { CoreClient } from "./core-client";
+import { BROWSER_PROVIDERS, proposal, provenanceFor, routeFor, runAssistant } from "./assistant";
 import { folderFromDrop, folderFromInput } from "./folder";
 import type { FolderSelection } from "./folder";
 import { fetchRaw, MANIFEST_PATH, networkLog, onNetworkLog, resolveSource, SOURCE_NAME, SOURCE_OWNER } from "./github";
 import type { NetworkRecord, ResolvedSource, SourceMode } from "./github";
-import type { Decision, ExportEntry, Comparison, Platform, ScanSummary, SourcePreview } from "./protocol";
+import type { Analysis, AnalysisRequest, AssistantProvenance, Decision, ExportEntry, Comparison, Platform, ScanSummary, SourcePreview } from "./protocol";
 
 type Step = "start" | "describe" | "components" | "review" | "done";
 const STEPS: Array<{ id: Step; label: string }> = [
@@ -27,6 +28,7 @@ const STEPS: Array<{ id: Step; label: string }> = [
 const DESKTOP_ONLY_COMPONENTS = new Set(["workflow.3d"]);
 const READ_BATCH_BYTES = 32 * 1024 * 1024;
 const PROJECT_ID = /^[a-z][a-z0-9_]{1,63}$/;
+const EXISTING_PROJECT_BRIEF = "Review this existing HOI4 mod using only the approved scan evidence. Keep detected facts unchanged, infer conventions only from that evidence, and do not invent the mod's theme or content.";
 
 interface Identity {
   displayName: string;
@@ -100,6 +102,15 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   const [identity, setIdentity] = useState<Identity>({ displayName: "", projectId: "", description: "", author: "", primaryNamespace: "", scriptPrefix: "", descriptorTags: [] });
   const [edited, setEdited] = useState<Set<keyof Identity>>(new Set());
   const [thumbnail, setThumbnail] = useState<string | null>(null);
+  const [assistantId, setAssistantId] = useState(BROWSER_PROVIDERS[0].id);
+  const assistantProvider = BROWSER_PROVIDERS.find((item) => item.id === assistantId) ?? BROWSER_PROVIDERS[0];
+  const [assistantModel, setAssistantModel] = useState(BROWSER_PROVIDERS[0].defaultModel);
+  const [assistantEffort, setAssistantEffort] = useState(BROWSER_PROVIDERS[0].defaultEffort);
+  // The key lives only in this component's memory and is never stored.
+  const [apiKey, setApiKey] = useState("");
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [provenance, setProvenance] = useState<AssistantProvenance | null>(null);
+  const [suggested, setSuggested] = useState<Set<keyof Identity>>(new Set());
   const [profileId, setProfileId] = useState<string>("");
   const [optional, setOptional] = useState<Set<string>>(new Set());
   const [primary, setPrimary] = useState("");
@@ -217,6 +228,11 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
 
   const updateIdentity = (key: keyof Identity, value: string | string[]) => {
     setEdited((current) => new Set(current).add(key));
+    setSuggested((current) => {
+      const next = new Set(current);
+      next.delete(key);
+      return next;
+    });
     setIdentity((current) => {
       const next = { ...current, [key]: value } as Identity;
       if (kind === "new" && key === "displayName") {
@@ -247,11 +263,74 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     }
   };
 
+  const assistantName = provenance ? (BROWSER_PROVIDERS.find((item) => item.id === provenance.provider)?.label ?? provenance.provider).replace(/ API key$/, "") : "";
+  const badge = (key: keyof Identity, detectedKey?: string): string | undefined => {
+    if (kind === "existing" && detectedKey && !edited.has(key) && detectedString(scan, detectedKey) !== undefined) return "Detected";
+    if (suggested.has(key)) return `Suggested by ${assistantName}`;
+    return undefined;
+  };
+
   const identityProblem = useMemo(() => {
     if (!identity.displayName.trim()) return "Enter the mod name.";
     if (!PROJECT_ID.test(identity.projectId)) return "The mod ID must start with a lowercase letter and use only lowercase letters, digits, and underscores.";
     return null;
   }, [identity]);
+
+  const chooseAssistant = (id: string) => {
+    const next = BROWSER_PROVIDERS.find((item) => item.id === id) ?? BROWSER_PROVIDERS[0];
+    setAssistantId(next.id);
+    setAssistantModel(next.defaultModel);
+    setAssistantEffort(next.defaultEffort);
+    setApiKey("");
+  };
+
+  const suggest = () => run(`Asking ${assistantProvider.label.replace(/ API key$/, "")}`, async () => {
+    if (!preview) await loadSource();
+    const registry = await client().call("registry", {});
+    const evidence = kind === "existing" ? await client().call("evidence", {}) : [];
+    const name = identity.displayName.trim();
+    const request: AnalysisRequest = {
+      mode: kind === "existing" ? "existing_project_semantics" : "new_project_identity",
+      brief: kind === "existing" ? EXISTING_PROJECT_BRIEF : identity.description.trim(),
+      evidence,
+      constraints: {
+        project_id_pattern: "^[a-z][a-z0-9_]{1,63}$",
+        source: { mode: sourceMode, selected_ref: sourceMode === "latest" ? undefined : sourceRef.trim() },
+        component_registry: registry,
+        ...(kind === "new" && name ? { requested_mod_name: name } : {}),
+      },
+    };
+    const route = routeFor(assistantProvider, assistantModel.trim(), assistantEffort);
+    const result = await runAssistant(client(), route, apiKey, request);
+    const text = (key: string) => {
+      const value = proposal(result, key);
+      return typeof value === "string" ? value : undefined;
+    };
+    const tags = proposal(result, "descriptor_tags");
+    const values: Partial<Record<keyof Identity, string | string[]>> = {
+      displayName: text("display_name"),
+      projectId: text("project_id"),
+      primaryNamespace: text("primary_namespace"),
+      scriptPrefix: text("script_prefix"),
+      description: text("project_description"),
+      descriptorTags: Array.isArray(tags) ? tags.filter((tag): tag is string => typeof tag === "string" && (HOI4_DESCRIPTOR_TAGS as readonly string[]).includes(tag)) : undefined,
+    };
+    // A value the user typed always wins over a suggestion.
+    const applied = new Set<keyof Identity>();
+    setIdentity((current) => {
+      const next = { ...current };
+      for (const [key, value] of Object.entries(values) as Array<[keyof Identity, string | string[] | undefined]>) {
+        if (value === undefined || edited.has(key)) continue;
+        (next as Record<keyof Identity, string | string[]>)[key] = value;
+        applied.add(key);
+      }
+      return next;
+    });
+    setSuggested(applied);
+    setEdited((current) => new Set([...current, ...applied]));
+    setAnalysis(result);
+    setProvenance(provenanceFor(route));
+  });
 
   const goToComponents = () => run("Reading the setup source", async () => {
     if (!preview) await loadSource();
@@ -270,6 +349,8 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   const profile = preview?.profiles.find((item) => item.id === profileId);
   const optionalComponents = useMemo(() => (preview?.components ?? []).filter((component) =>
     component.optional && !component.coding_environment && !(profile?.components.includes(component.id))), [preview, profile]);
+
+  const recommended = useMemo(() => new Set((analysis?.component_recommendations ?? []).filter((item) => item.recommendation !== "not_recommended").map((item) => item.component_id)), [analysis]);
 
   const prepare = () => run("Downloading verified files", async () => {
     const selected = [...(profile?.components ?? []), ...optional].filter((id) => !DESKTOP_ONLY_COMPONENTS.has(id));
@@ -297,13 +378,14 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
         },
         description: identity.description.trim(),
         conventions: {
-          agentsProfile: profile?.display_name ?? "",
-          localisationConvention: detectedString(scan, "localisation_convention") ?? "",
-          documentationConvention: detectedString(scan, "documentation_convention") ?? "",
+          agentsProfile: (analysis && typeof proposal(analysis, "agents_profile") === "string" ? proposal(analysis, "agents_profile") as string : profile?.display_name) ?? "",
+          localisationConvention: detectedString(scan, "localisation_convention") ?? (analysis && typeof proposal(analysis, "localisation_convention") === "string" ? proposal(analysis, "localisation_convention") as string : ""),
+          documentationConvention: detectedString(scan, "documentation_convention") ?? (analysis && typeof proposal(analysis, "documentation_convention") === "string" ? proposal(analysis, "documentation_convention") as string : ""),
         },
         layout,
         installedAt: new Date().toISOString(),
         thumbnailPng: thumbnail,
+        assistant: provenance,
       },
     });
     setEntries(result);
@@ -421,10 +503,10 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
               <Screen title="Describe the mod" sentence={kind === "existing" ? "Values found in the folder are filled in. Change anything that is wrong." : undefined} headingRef={headingRef}>
                 <div className="panel form-panel">
                   <div className="form-grid">
-                    <TextField label="Mod name" value={identity.displayName} onChange={(value) => updateIdentity("displayName", value)} detected={kind === "existing" && !edited.has("displayName") && detectedString(scan, "display_name") !== undefined} />
-                    <TextField label="Mod ID" value={identity.projectId} onChange={(value) => updateIdentity("projectId", value.toLowerCase())} mono />
-                    <TextField label="Event namespace" value={identity.primaryNamespace} onChange={(value) => updateIdentity("primaryNamespace", value)} mono detected={kind === "existing" && !edited.has("primaryNamespace") && detectedString(scan, "primary_namespace") !== undefined} />
-                    <TextField label="Script prefix" value={identity.scriptPrefix} onChange={(value) => updateIdentity("scriptPrefix", value)} mono detected={kind === "existing" && !edited.has("scriptPrefix") && detectedString(scan, "script_prefix") !== undefined} />
+                    <TextField label="Mod name" value={identity.displayName} onChange={(value) => updateIdentity("displayName", value)} badge={badge("displayName", "display_name")} />
+                    <TextField label="Mod ID" value={identity.projectId} onChange={(value) => updateIdentity("projectId", value.toLowerCase())} mono badge={badge("projectId")} />
+                    <TextField label="Event namespace" value={identity.primaryNamespace} onChange={(value) => updateIdentity("primaryNamespace", value)} mono badge={badge("primaryNamespace", "primary_namespace")} />
+                    <TextField label="Script prefix" value={identity.scriptPrefix} onChange={(value) => updateIdentity("scriptPrefix", value)} mono badge={badge("scriptPrefix", "script_prefix")} />
                     <TextField label="Author (optional)" value={identity.author} onChange={(value) => updateIdentity("author", value)} />
                   </div>
                   <label className="field">
@@ -442,6 +524,47 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                       ))}
                     </div>
                   </fieldset>
+                  <details className="web-assistant">
+                    <summary className="details">Suggest values with an AI provider (optional)</summary>
+                    <div className="web-assistant-body">
+                      <p className="muted">Your API key stays in this tab's memory and is sent only to {new URL(assistantProvider.endpoint).host}. It is forgotten when you close or reload the page. {kind === "existing" ? "The provider sees the scan summary, not your files." : "The provider sees the name and description above."}</p>
+                      <div className="form-grid">
+                        <label className="field">
+                          <span className="field-label">Provider</span>
+                          <select className="text-input" value={assistantId} onChange={(event) => chooseAssistant(event.target.value)}>
+                            {BROWSER_PROVIDERS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                          </select>
+                        </label>
+                        <label className="field">
+                          <span className="field-label">API key</span>
+                          <input className="text-input mono" type="password" autoComplete="off" spellCheck={false} value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
+                        </label>
+                        <label className="field">
+                          <span className="field-label">Model</span>
+                          <input className="text-input mono" value={assistantModel} onChange={(event) => setAssistantModel(event.target.value)} />
+                        </label>
+                        {assistantProvider.efforts.length > 1 && (
+                          <label className="field">
+                            <span className="field-label">Reasoning effort</span>
+                            <select className="text-input" value={assistantEffort} onChange={(event) => setAssistantEffort(event.target.value)}>
+                              {assistantProvider.efforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+                            </select>
+                          </label>
+                        )}
+                      </div>
+                      <div className="button-row web-assistant-actions">
+                        <a className="external-link" href={assistantProvider.keyUrl} target="_blank" rel="noreferrer noopener">Get a key</a>
+                        <button type="button" className="button" disabled={busy !== null || !apiKey.trim() || (kind === "new" && !identity.displayName.trim() && !identity.description.trim())} onClick={suggest}>Suggest values</button>
+                      </div>
+                      {analysis && (
+                        <div className="web-assistant-result" role="status">
+                          <p>{analysis.project_summary}</p>
+                          {analysis.warnings.map((warning) => <p key={warning} className="status-review">{warning}</p>)}
+                          <button type="button" className="text-button" onClick={() => { setAnalysis(null); setProvenance(null); setSuggested(new Set()); }}>Discard suggestions</button>
+                        </div>
+                      )}
+                    </div>
+                  </details>
                   <div className="web-thumbnail">
                     {thumbnail ? <img src={`data:image/png;base64,${thumbnail}`} alt="Thumbnail preview" width={96} height={96} /> : <span className="muted">{kind === "existing" ? "The current thumbnail is kept." : "A placeholder thumbnail is used."}</span>}
                     <label className="button">
@@ -470,7 +593,7 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                       return (
                         <label key={component.id} className="check-row">
                           <input type="checkbox" disabled={desktopOnly} checked={optional.has(component.id)} onChange={(event) => setOptional((current) => { const next = new Set(current); if (event.target.checked) next.add(component.id); else next.delete(component.id); return next; })} />
-                          <span>{component.display_name}{desktopOnly && <span className="muted"> — desktop app only</span>}</span>
+                          <span>{component.display_name}{desktopOnly && <span className="muted"> — desktop app only</span>}{!desktopOnly && recommended.has(component.id) && <span className="status-info"> · Recommended by {assistantName}</span>}</span>
                         </label>
                       );
                     })}
@@ -610,10 +733,10 @@ function Screen({ title, sentence, children, headingRef }: { title: string; sent
   );
 }
 
-function TextField({ label, value, onChange, mono, detected }: { label: string; value: string; onChange: (value: string) => void; mono?: boolean; detected?: boolean }) {
+function TextField({ label, value, onChange, mono, badge }: { label: string; value: string; onChange: (value: string) => void; mono?: boolean; badge?: string }) {
   return (
     <label className="field">
-      <span className="field-label">{label}{detected && <span className="status status-pass web-detected-label"> · Detected</span>}</span>
+      <span className="field-label">{label}{badge && <span className={`status ${badge === "Detected" ? "status-pass" : "status-info"} web-detected-label`}> · {badge}</span>}</span>
       <input className={`text-input${mono ? " mono" : ""}`} value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
   );

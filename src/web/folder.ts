@@ -87,7 +87,7 @@ function fileOf(entry: EntryLike): Promise<File> {
 export async function folderFromDrop(items: DataTransferItemList): Promise<FolderSelection> {
   const entries = Array.from(items)
     .filter((item) => item.kind === "file")
-    .map((item) => (item as DataTransferItem & { webkitGetAsEntry?: () => EntryLike | null }).webkitGetAsEntry?.() ?? null)
+    .map((item) => (item as unknown as { webkitGetAsEntry?: () => EntryLike | null }).webkitGetAsEntry?.() ?? null)
     .filter((entry): entry is EntryLike => entry !== null);
   const directories = entries.filter((entry) => entry.isDirectory);
   if (directories.length !== 1 || entries.length !== 1) {

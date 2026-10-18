@@ -14,6 +14,11 @@ use hoi4_setup_core::adapt::{
     GameFolders, ProjectConventions,
 };
 use hoi4_setup_core::adapters::ProjectFs;
+use hoi4_setup_core::analysis::{
+    analysis_input_sha256, analysis_prompt_for_provider, correctable_output_error,
+    corrective_analysis_prompt, extract_structured_output, provider_request,
+    validate_analysis_output, ApprovedEvidence, CodexAnalysis, CodexAnalysisRequest,
+};
 use hoi4_setup_core::coding_environment::{definitions_for_platform, unavailable_definitions};
 use hoi4_setup_core::descriptors::{
     launcher_descriptor_text, parse_descriptor, placeholder_thumbnail_png, render_descriptor_mod,
@@ -62,6 +67,7 @@ fn platform_of(name: &str) -> Result<Platform, AppError> {
 #[wasm_bindgen]
 pub struct Project {
     fs: MemoryFs,
+    findings: Vec<ScanFinding>,
 }
 
 impl Default for Project {
@@ -76,6 +82,7 @@ impl Project {
     pub fn new() -> Project {
         Project {
             fs: MemoryFs::new(),
+            findings: Vec::new(),
         }
     }
 
@@ -96,9 +103,45 @@ impl Project {
     }
 
     /// Read-only scan: `{ findings, detected, descriptor, stats }`.
-    pub fn scan(&self) -> Result<String, JsError> {
-        scan_project(&self.fs).map_err(js)
+    pub fn scan(&mut self) -> Result<String, JsError> {
+        let (summary, findings) = scan_project(&self.fs).map_err(js)?;
+        self.findings = findings;
+        Ok(summary)
     }
+
+    /// The scan findings a setup assistant may read, as approved evidence.
+    /// Nothing else from the folder reaches a provider.
+    #[wasm_bindgen(js_name = analysisEvidence)]
+    pub fn analysis_evidence(&self) -> Result<String, JsError> {
+        to_json(&evidence_from_findings(&self.findings))
+    }
+}
+
+fn evidence_from_findings(findings: &[ScanFinding]) -> Vec<ApprovedEvidence> {
+    findings
+        .iter()
+        .filter(|finding| finding.status != "rejected")
+        .map(|finding| {
+            let excerpt = finding
+                .model_excerpt
+                .clone()
+                .unwrap_or_else(|| match &finding.value {
+                    Value::String(text) => text.clone(),
+                    other => other.to_string(),
+                });
+            ApprovedEvidence {
+                reference: finding.id.clone(),
+                path: finding
+                    .evidence
+                    .first()
+                    .map(|evidence| evidence.path.clone())
+                    .unwrap_or_default(),
+                excerpt_sha256: hoi4_setup_core::text::sha256_bytes(excerpt.as_bytes()),
+                excerpt,
+                confidence: Some(finding.confidence),
+            }
+        })
+        .collect()
 }
 
 fn scan_finding(id: &str, key: &str, value: Value, note: &str) -> ScanFinding {
@@ -132,7 +175,7 @@ fn scan_finding(id: &str, key: &str, value: Value, note: &str) -> ScanFinding {
     }
 }
 
-fn scan_project(fs: &MemoryFs) -> Result<String, AppError> {
+fn scan_project(fs: &MemoryFs) -> Result<(String, Vec<ScanFinding>), AppError> {
     let profile = hoi4_setup_core::profile::profile(fs, &|| false, &mut |_, _| {})?;
     let mut findings = profile.findings;
     let mut descriptor = Value::Null;
@@ -165,13 +208,14 @@ fn scan_project(fs: &MemoryFs) -> Result<String, AppError> {
         }
     }
     let detected = hoi4_setup_core::proposals::detect(&findings);
-    Ok(serde_json::to_string(&json!({
+    let summary = serde_json::to_string(&json!({
         "findings": findings,
         "detected": detected,
         "descriptor": descriptor,
         "stats": profile.stats,
         "issues": profile.problems.iter().collect::<Vec<_>>(),
-    }))?)
+    }))?;
+    Ok((summary, findings))
 }
 
 /// What the user chose for the installation.
@@ -259,6 +303,25 @@ impl Source {
         to_json(&self.missing_paths())
     }
 
+    /// The component IDs an assistant may recommend, bound to this exact
+    /// revision and manifest.
+    #[wasm_bindgen(js_name = componentRegistry)]
+    pub fn component_registry(&self) -> Result<String, JsError> {
+        let mut component_ids = self
+            .manifest
+            .components
+            .iter()
+            .map(|component| component.id.as_str())
+            .collect::<Vec<_>>();
+        component_ids.sort_unstable();
+        component_ids.dedup();
+        to_json(&json!({
+            "source_revision": self.revision,
+            "manifest_sha256": self.manifest_sha256,
+            "component_ids": component_ids,
+        }))
+    }
+
     /// Adapt every verified file for a new mod.
     #[wasm_bindgen(js_name = exportNew)]
     pub fn export_new(&self, request_json: &str) -> Result<Export, JsError> {
@@ -278,6 +341,7 @@ impl Source {
             request_json,
             Some(Project {
                 fs: project.fs.clone(),
+                findings: Vec::new(),
             }),
         )
         .map_err(js)
@@ -446,10 +510,60 @@ struct ExportOptions {
     /// Base64 PNG rendered from an image the user chose.
     #[serde(default)]
     thumbnail_png: Option<String>,
+    /// The browser assistant that made suggestions, when one was used.
     #[serde(default)]
-    ai_provider: Option<String>,
-    #[serde(default)]
-    ai_model: Option<String>,
+    assistant: Option<AssistantProvenance>,
+}
+
+/// Non-secret provenance of the suggestions the user reviewed.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AssistantProvenance {
+    provider: String,
+    model: String,
+    reasoning_effort: String,
+    endpoint: Option<String>,
+    optimization_profile: String,
+}
+
+/// Hosted routes the web edition can reach from the browser.
+const WEB_ASSISTANT_PROVIDERS: &[&str] = &["claude", "gemini", "grok", "deepseek", "glm"];
+
+fn assistant_provenance(
+    assistant: Option<AssistantProvenance>,
+) -> Result<AssistantProvenance, AppError> {
+    let Some(assistant) = assistant else {
+        return Ok(AssistantProvenance {
+            provider: "none".into(),
+            model: "deterministic".into(),
+            reasoning_effort: "none".into(),
+            endpoint: None,
+            optimization_profile: "Web edition setup".into(),
+        });
+    };
+    let valid_text = |value: &str| {
+        !value.trim().is_empty()
+            && value.len() <= 256
+            && !value.chars().any(char::is_control)
+            && hoi4_setup_core::text::redact_secrets(value, &[]) == value
+    };
+    if !WEB_ASSISTANT_PROVIDERS.contains(&assistant.provider.as_str())
+        || !valid_text(&assistant.model)
+        || !valid_text(&assistant.optimization_profile)
+        || !matches!(
+            assistant.reasoning_effort.as_str(),
+            "none" | "low" | "medium" | "high" | "xhigh" | "max"
+        )
+        || !assistant
+            .endpoint
+            .as_deref()
+            .is_some_and(|endpoint| endpoint.starts_with("https://") && valid_text(endpoint))
+    {
+        return Err(AppError::InvalidInput(
+            "the assistant provenance is not a reviewed browser route".into(),
+        ));
+    }
+    Ok(assistant)
 }
 
 #[derive(Debug, Deserialize)]
@@ -507,6 +621,7 @@ fn prepare_export(
     project: Option<Project>,
 ) -> Result<Export, AppError> {
     let options: ExportOptions = serde_json::from_str(request_json)?;
+    let assistant = assistant_provenance(options.assistant)?;
     let selection = source
         .selection
         .clone()
@@ -657,7 +772,7 @@ fn prepare_export(
             version: None,
             state: "installed".into(),
             source_revision: Some(source.revision.clone()),
-            validation: None,
+            validation: Some("not_run".into()),
         })
         .collect();
     let lock = LockInputs {
@@ -678,10 +793,11 @@ fn prepare_export(
             manifest_sha256: source.manifest_sha256.clone(),
             manifest_origin: "remote".into(),
         },
-        ai_provider: options.ai_provider.unwrap_or_else(|| "none".into()),
-        ai_model: options.ai_model.unwrap_or_else(|| "deterministic".into()),
-        ai_reasoning_effort: "none".into(),
-        ai_optimization_profile: "Web edition setup".into(),
+        ai_provider: assistant.provider,
+        ai_model: assistant.model,
+        ai_reasoning_effort: assistant.reasoning_effort,
+        ai_endpoint: assistant.endpoint,
+        ai_optimization_profile: assistant.optimization_profile,
         primary_coding_environment: selection.primary.clone(),
         additional_coding_environments: selection.additional.clone(),
         wiki_required_pages: source.manifest.wiki.required_pages.clone(),
@@ -698,6 +814,120 @@ fn prepare_export(
         root_files,
         lock,
     })
+}
+
+/// A reviewed hosted route chosen in the browser.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AssistantRoute {
+    provider: String,
+    protocol: String,
+    endpoint: String,
+    model: String,
+    reasoning_effort: String,
+    supports_effort: bool,
+    optimization_profile: String,
+}
+
+/// One assistant turn: the input hash and the request body and headers for
+/// the provider, without the API key. `correction` is the validator's reason
+/// from a rejected first reply.
+#[wasm_bindgen(js_name = analysisTurn)]
+pub fn analysis_turn(
+    request_json: &str,
+    route_json: &str,
+    correction: Option<String>,
+) -> Result<String, JsError> {
+    assistant_turn(request_json, route_json, correction.as_deref()).map_err(js)
+}
+
+fn assistant_turn(
+    request_json: &str,
+    route_json: &str,
+    correction: Option<&str>,
+) -> Result<String, AppError> {
+    let request: CodexAnalysisRequest = serde_json::from_str(request_json)?;
+    let route: AssistantRoute = serde_json::from_str(route_json)?;
+    let input_sha256 = analysis_input_sha256(&request)?;
+    let mut prompt =
+        analysis_prompt_for_provider(&request, &input_sha256, &route.optimization_profile)?;
+    if let Some(reason) = correction {
+        prompt = format!(
+            "{prompt}\n\n{}",
+            corrective_analysis_prompt(reason, &input_sha256)
+        );
+    }
+    let provider = provider_request(
+        &route.provider,
+        &route.protocol,
+        &route.endpoint,
+        &route.model,
+        &route.reasoning_effort,
+        &prompt,
+        route.supports_effort,
+    )?;
+    Ok(serde_json::to_string(&json!({
+        "inputSha256": input_sha256,
+        "headers": provider.headers,
+        "body": provider.body,
+    }))?)
+}
+
+/// Validate a provider's reply envelope. The result is `{ "analysis": ... }`,
+/// `{ "retry": reason }` when one corrective turn may fix it, or
+/// `{ "error": message }`. `analysis_id` is a fresh UUID from the page.
+#[wasm_bindgen(js_name = readAnalysisReply)]
+pub fn read_analysis_reply(
+    envelope_json: &str,
+    request_json: &str,
+    input_sha256: &str,
+    analysis_id: &str,
+) -> Result<String, JsError> {
+    to_json(&assistant_reply(
+        envelope_json,
+        request_json,
+        input_sha256,
+        analysis_id,
+    ))
+}
+
+fn assistant_reply(
+    envelope_json: &str,
+    request_json: &str,
+    input_sha256: &str,
+    analysis_id: &str,
+) -> Value {
+    match reply_analysis(envelope_json, request_json, input_sha256, analysis_id) {
+        Ok(analysis) => json!({ "analysis": analysis }),
+        Err(error) => match correctable_output_error(&error) {
+            Some(reason) => json!({ "retry": reason }),
+            None => {
+                json!({ "error": hoi4_setup_core::text::redact_secrets(&error.to_string(), &[]) })
+            }
+        },
+    }
+}
+
+fn reply_analysis(
+    envelope_json: &str,
+    request_json: &str,
+    input_sha256: &str,
+    analysis_id: &str,
+) -> Result<CodexAnalysis, AppError> {
+    let request: CodexAnalysisRequest = serde_json::from_str(request_json)?;
+    let analysis_id = analysis_id
+        .parse::<uuid::Uuid>()
+        .map_err(|_| AppError::InvalidInput("the analysis ID is not a UUID".into()))?;
+    let envelope: Value = serde_json::from_str(envelope_json)
+        .map_err(|_| AppError::Protocol("the provider returned an unreadable response".into()))?;
+    let reply = extract_structured_output(&envelope)?;
+    validate_analysis_output(
+        reply,
+        &request,
+        input_sha256,
+        &request.evidence,
+        analysis_id,
+    )
 }
 
 /// The reviewed export: what changes, and the ZIP once every conflict has a
@@ -813,5 +1043,53 @@ mod tests {
             "unverified bytes are refused"
         );
         assert!(source.missing_paths().contains(&first.to_owned()));
+    }
+
+    #[test]
+    fn an_assistant_turn_sends_the_schema_and_never_trusts_a_bad_reply() {
+        let request = json!({
+            "mode": "new_project_identity",
+            "brief": "A mod about the Balkans in 1936.",
+            "evidence": [],
+            "constraints": {"project_id_pattern": "^[a-z][a-z0-9_]{1,63}$"}
+        })
+        .to_string();
+        let route = json!({
+            "provider": "claude",
+            "protocol": "anthropic_messages",
+            "endpoint": "https://api.anthropic.com/v1/messages",
+            "model": "claude-haiku-5-5",
+            "reasoningEffort": "medium",
+            "supportsEffort": true,
+            "optimizationProfile": "Claude setup analysis"
+        })
+        .to_string();
+        let turn: Value =
+            serde_json::from_str(&assistant_turn(&request, &route, None).unwrap()).unwrap();
+        assert!(turn["body"]["output_config"]["format"]["schema"]["properties"].is_object());
+        assert!(turn["body"].get("tools").is_none());
+        assert!(!turn["headers"].to_string().contains("x-api-key"));
+        let input_sha256 = turn["inputSha256"].as_str().unwrap();
+        let corrected: Value = serde_json::from_str(
+            &assistant_turn(&request, &route, Some("project_id is invalid")).unwrap(),
+        )
+        .unwrap();
+        assert!(corrected["body"]["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("rejected by deterministic validation"));
+
+        let id = "00000000-0000-4000-8000-000000000000";
+        let not_json = json!({"content": [{"type": "text", "text": "not json"}]}).to_string();
+        assert!(assistant_reply(&not_json, &request, input_sha256, id)
+            .get("retry")
+            .is_some());
+        let truncated = json!({"stop_reason": "max_tokens", "content": []}).to_string();
+        assert!(assistant_reply(&truncated, &request, input_sha256, id)
+            .get("error")
+            .is_some());
+        assert!(assistant_reply("<html>", &request, input_sha256, id)
+            .get("error")
+            .is_some());
     }
 }

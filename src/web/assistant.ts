@@ -1,0 +1,127 @@
+// The optional browser assistant. It sends one structured-output request to
+// a reviewed hosted route that allows browser requests, with the API key the
+// user typed for this tab only. The WebAssembly core builds the request body
+// and validates the reply with the same rules as the desktop app; provider
+// suggestions never become detected facts or files without user review.
+
+import claudeModels from "../claude-models.json";
+import { recordRequest } from "./github";
+import type { CoreClient } from "./core-client";
+import type { Analysis, AnalysisRequest, AssistantProvenance, AssistantRoute } from "./protocol";
+
+export interface BrowserProvider {
+  id: string;
+  label: string;
+  protocol: AssistantRoute["protocol"];
+  endpoint: string;
+  defaultModel: string;
+  efforts: string[];
+  defaultEffort: string;
+  optimizationProfile: string;
+  keyUrl: string;
+}
+
+/** Providers whose APIs accept requests from a web page. Routes match the
+ * desktop app's checked-in defaults. */
+export const BROWSER_PROVIDERS: BrowserProvider[] = [
+  { id: "claude", label: "Claude API key", protocol: "anthropic_messages", endpoint: "https://api.anthropic.com/v1/messages", defaultModel: claudeModels[0]?.id ?? "claude-haiku-5-5", efforts: claudeModels[0]?.supported_reasoning_efforts ?? ["medium"], defaultEffort: claudeModels[0]?.default_reasoning_effort ?? "medium", optimizationProfile: "Claude setup analysis", keyUrl: "https://platform.claude.com/settings/keys" },
+  { id: "gemini", label: "Gemini API key", protocol: "openai_compatible", endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", defaultModel: "gemini-3.8-flash", efforts: ["low", "medium", "high"], defaultEffort: "high", optimizationProfile: "Gemini setup analysis", keyUrl: "https://aistudio.google.com/api-keys" },
+  { id: "grok", label: "Grok API key", protocol: "openai_responses", endpoint: "https://api.x.ai/v1/responses", defaultModel: "grok-4.7", efforts: ["low", "medium", "high"], defaultEffort: "high", optimizationProfile: "Grok setup analysis", keyUrl: "https://console.x.ai" },
+  { id: "deepseek", label: "DeepSeek", protocol: "openai_compatible", endpoint: "https://api.deepseek.com/chat/completions", defaultModel: "deepseek-flash", efforts: ["low", "high", "max"], defaultEffort: "high", optimizationProfile: "DeepSeek setup analysis", keyUrl: "https://platform.deepseek.com/api_keys" },
+  { id: "glm", label: "GLM", protocol: "openai_compatible", endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions", defaultModel: "glm-5.2", efforts: [], defaultEffort: "none", optimizationProfile: "GLM setup analysis", keyUrl: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys" },
+];
+
+const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 120_000;
+const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
+
+export class AssistantError extends Error {}
+
+function supportsEffort(provider: BrowserProvider, model: string): boolean {
+  if (provider.id === "claude") {
+    const entry = claudeModels.find((item) => item.id === model);
+    return (entry?.supported_reasoning_efforts.length ?? 0) > 1;
+  }
+  return provider.efforts.length > 0;
+}
+
+export function routeFor(provider: BrowserProvider, model: string, effort: string): AssistantRoute {
+  if (!MODEL_PATTERN.test(model)) throw new AssistantError("Enter a model ID without spaces.");
+  return {
+    provider: provider.id,
+    protocol: provider.protocol,
+    endpoint: provider.endpoint,
+    model,
+    reasoningEffort: effort,
+    supportsEffort: supportsEffort(provider, model),
+    optimizationProfile: provider.optimizationProfile,
+  };
+}
+
+export function provenanceFor(route: AssistantRoute): AssistantProvenance {
+  return {
+    provider: route.provider,
+    model: route.model,
+    reasoningEffort: route.supportsEffort ? route.reasoningEffort : "none",
+    endpoint: route.endpoint,
+    optimizationProfile: route.optimizationProfile,
+  };
+}
+
+async function send(route: AssistantRoute, apiKey: string, headers: Array<[string, string]>, body: unknown): Promise<string> {
+  const requestHeaders = new Headers(headers);
+  if (route.protocol === "anthropic_messages") {
+    requestHeaders.set("x-api-key", apiKey);
+    // Anthropic serves browser requests only when the page opts in.
+    requestHeaders.set("anthropic-dangerous-direct-browser-access", "true");
+  } else {
+    requestHeaders.set("authorization", `Bearer ${apiKey}`);
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(route.endpoint, {
+      method: "POST",
+      headers: requestHeaders,
+      body: JSON.stringify(body),
+      redirect: "error",
+      credentials: "omit",
+      referrerPolicy: "no-referrer",
+      signal: controller.signal,
+    });
+  } catch {
+    recordRequest(route.endpoint, "failed");
+    throw new AssistantError("The provider could not be reached. Check your connection and try again.");
+  } finally {
+    clearTimeout(timer);
+  }
+  recordRequest(route.endpoint, response.status);
+  const text = await response.text();
+  if (text.length > MAX_RESPONSE_BYTES) throw new AssistantError("The provider's reply was too large.");
+  if (response.status === 429) throw new AssistantError("Provider usage is limited right now. Try again later.");
+  if (response.status === 401 || response.status === 403) throw new AssistantError("The provider did not accept the API key.");
+  if (!response.ok) throw new AssistantError(`The provider returned HTTP ${response.status}.`);
+  return text;
+}
+
+/** One analysis with at most one corrective turn, like the desktop app. */
+export async function runAssistant(core: CoreClient, route: AssistantRoute, apiKey: string, request: AnalysisRequest): Promise<Analysis> {
+  const key = apiKey.trim();
+  if (!key || /\s/.test(key)) throw new AssistantError("Enter the API key.");
+  let correction: string | null = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const turn = await core.call("assistantTurn", { request, route, correction });
+    const envelope = await send(route, key, turn.headers, turn.body);
+    const reply = await core.call("assistantReply", { envelope, request, inputSha256: turn.inputSha256, analysisId: crypto.randomUUID() });
+    if ("analysis" in reply) return reply.analysis;
+    if ("error" in reply) throw new AssistantError(`The provider's reply was not usable: ${reply.error}`);
+    correction = reply.retry;
+  }
+  throw new AssistantError("The provider's reply did not match the required format twice. Try again or continue without suggestions.");
+}
+
+/** The value of one proposal, when the reply has it. */
+export function proposal(analysis: Analysis, key: string): unknown {
+  return analysis.proposals.find((item) => item.key === key)?.value;
+}

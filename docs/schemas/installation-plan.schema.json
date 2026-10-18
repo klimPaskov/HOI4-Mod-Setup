@@ -76,7 +76,7 @@
         "properties": {
           "ai_provider": {
             "enum": [
-        "none",
+              "none",
               "codex",
               "claude_account",
               "gemini_account",
@@ -102,7 +102,6 @@
         "properties": {
           "ai_provider": {
             "enum": [
-        "none",
               "claude",
               "kimi",
               "glm",

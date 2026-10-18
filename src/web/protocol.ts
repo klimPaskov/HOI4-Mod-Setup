@@ -76,9 +76,66 @@ export interface ExportRequest {
   layout?: "overlay" | "full_copy";
   installedAt: string;
   thumbnailPng?: string | null;
-  aiProvider?: string | null;
-  aiModel?: string | null;
+  assistant?: AssistantProvenance | null;
 }
+
+/** Non-secret record of the browser assistant whose suggestions were used. */
+export interface AssistantProvenance {
+  provider: string;
+  model: string;
+  reasoningEffort: string;
+  endpoint: string;
+  optimizationProfile: string;
+}
+
+export interface ApprovedEvidence {
+  reference: string;
+  path: string;
+  excerpt: string;
+  excerpt_sha256: string;
+  confidence: number | null;
+}
+
+export interface AnalysisRequest {
+  mode: "new_project_identity" | "existing_project_semantics";
+  brief: string;
+  evidence: ApprovedEvidence[];
+  constraints: Record<string, unknown>;
+}
+
+export interface AssistantRoute {
+  provider: string;
+  protocol: "anthropic_messages" | "openai_compatible" | "openai_responses";
+  endpoint: string;
+  model: string;
+  reasoningEffort: string;
+  supportsEffort: boolean;
+  optimizationProfile: string;
+}
+
+export interface AssistantTurn {
+  inputSha256: string;
+  headers: Array<[string, string]>;
+  body: unknown;
+}
+
+export interface AnalysisProposal {
+  key: string;
+  value: unknown;
+  confidence: number;
+  reason: string;
+  evidence_refs: string[];
+}
+
+export interface Analysis {
+  analysis_id: string;
+  project_summary: string;
+  proposals: AnalysisProposal[];
+  component_recommendations: Array<{ component_id: string; recommendation: "required" | "recommended" | "not_recommended"; reason: string }>;
+  warnings: string[];
+}
+
+export type AssistantReply = { analysis: Analysis } | { retry: string } | { error: string };
 
 export interface ExportEntry {
   path: string;
@@ -109,6 +166,10 @@ export interface CoreOperations {
   export: { args: { request: ExportRequest; existing: boolean }; result: ExportEntry[] };
   compare: { args: { path: string }; result: Comparison };
   zip: { args: { decisions: Record<string, Decision> }; result: ArrayBuffer };
+  evidence: { args: Record<string, never>; result: ApprovedEvidence[] };
+  registry: { args: Record<string, never>; result: Record<string, unknown> };
+  assistantTurn: { args: { request: AnalysisRequest; route: AssistantRoute; correction: string | null }; result: AssistantTurn };
+  assistantReply: { args: { envelope: string; request: AnalysisRequest; inputSha256: string; analysisId: string }; result: AssistantReply };
 }
 
 export type Operation = keyof CoreOperations;

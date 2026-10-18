@@ -1693,6 +1693,7 @@ dependencies = [
  "hoi4-setup-core",
  "serde",
  "serde_json",
+ "uuid",
  "wasm-bindgen",
 ]
 

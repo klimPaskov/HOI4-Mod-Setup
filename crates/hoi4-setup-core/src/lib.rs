@@ -7,6 +7,7 @@
 
 pub mod adapt;
 pub mod adapters;
+pub mod analysis;
 pub mod coding_environment;
 pub mod descriptors;
 pub mod error;

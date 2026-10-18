@@ -27,7 +27,7 @@ function fakeCore(overrides: Partial<{ [Op in Operation]: (args: CoreOperations[
   const calls: Array<{ op: Operation; args: unknown }> = [];
   const answers: { [Op in Operation]: (args: CoreOperations[Op]["args"]) => CoreOperations[Op]["result"] } = {
     reset: () => null,
-    addFiles: (args) => args.files.length,
+    addFiles: (args: CoreOperations["addFiles"]["args"]) => args.files.length,
     scan: () => ({ findings: [], detected: [{ key: "primary_namespace", value: "demo", reason: "events" }], descriptor: { name: "Demo Mod" }, stats: { files_indexed: 2, directories_indexed: 1, samples_read: 2, bytes_read: 10, excluded_entries: 0, coverage: "complete" }, issues: [] }),
     openSource: () => null,
     preview: () => preview,
@@ -37,8 +37,25 @@ function fakeCore(overrides: Partial<{ [Op in Operation]: (args: CoreOperations[
       { path: "AGENTS.md", component_id: "core", action: "create", incoming_sha256: "a".repeat(64), local_sha256: null, size: 1 },
       { path: "README.md", component_id: "project.readme", action: "conflict", incoming_sha256: "b".repeat(64), local_sha256: "c".repeat(64), size: 2 },
     ],
-    compare: (args) => ({ path: args.path, incoming: "incoming text", local: "my text", binary: false }),
+    compare: (args: CoreOperations["compare"]["args"]) => ({ path: args.path, incoming: "incoming text", local: "my text", binary: false }),
     zip: () => new ArrayBuffer(4),
+    evidence: () => [],
+    registry: () => ({ source_revision: COMMIT, manifest_sha256: "d".repeat(64), component_ids: ["workflow.super_events"] }),
+    assistantTurn: () => ({ inputSha256: "e".repeat(64), headers: [["content-type", "application/json"]], body: { model: "claude-haiku-5-5" } }),
+    assistantReply: () => ({
+      analysis: {
+        analysis_id: "f2a1c1de-0000-4000-8000-000000000000",
+        project_summary: "A grand strategy overhaul of the Balkans.",
+        proposals: [
+          { key: "display_name", value: "Iron Dawn", confidence: 0.9, reason: "", evidence_refs: [] },
+          { key: "project_id", value: "suggested_id", confidence: 0.9, reason: "", evidence_refs: [] },
+          { key: "project_description", value: "Balkan nations rise in 1936.", confidence: 0.8, reason: "", evidence_refs: [] },
+          { key: "descriptor_tags", value: ["Events", "Not a tag"], confidence: 0.8, reason: "", evidence_refs: [] },
+        ],
+        component_recommendations: [{ component_id: "workflow.super_events", recommendation: "recommended", reason: "Story events." }],
+        warnings: [],
+      },
+    }),
     ...overrides,
   } as never;
   const worker = {
@@ -141,6 +158,44 @@ describe("web edition", () => {
     await screen.findByRole("heading", { name: "Your ZIP is ready" });
     expect(calls.find((call) => call.op === "export")!.args).toMatchObject({ existing: true });
     expect(calls.find((call) => call.op === "zip")!.args).toEqual({ decisions: { "README.md": "replace" } });
+  });
+
+  it("applies assistant suggestions without overriding what the user typed", async () => {
+    stubGitHub();
+    const providerCalls: Array<{ url: string; init: RequestInit }> = [];
+    const github = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      if (String(url).startsWith("https://api.anthropic.com/")) {
+        providerCalls.push({ url: String(url), init: init! });
+        return new Response("{}", { status: 200 });
+      }
+      return github(url, init);
+    });
+    const { client, calls } = fakeCore();
+    render(<WebApp client={client} />);
+    fireEvent.click(screen.getByRole("button", { name: /New mod/ }));
+    fireEvent.change(screen.getByLabelText("Mod name"), { target: { value: "Iron Dawn" } });
+    fireEvent.change(screen.getByLabelText("Mod ID"), { target: { value: "my_id" } });
+    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-ant-test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Suggest values" }));
+
+    expect(await screen.findByText("A grand strategy overhaul of the Balkans.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Mod ID")).toHaveValue("my_id");
+    expect(screen.getByLabelText(/What the mod is about/)).toHaveValue("Balkan nations rise in 1936.");
+    expect(screen.getByRole("checkbox", { name: "Events" })).toBeChecked();
+    expect(providerCalls).toHaveLength(1);
+    expect((providerCalls[0].init.headers as Headers).get("x-api-key")).toBe("sk-ant-test");
+    expect(JSON.stringify(calls)).not.toContain("sk-ant-test");
+    const turn = calls.find((call) => call.op === "assistantTurn")!.args as CoreOperations["assistantTurn"]["args"];
+    expect(turn.request.constraints).toMatchObject({ requested_mod_name: "Iron Dawn", component_registry: { component_ids: ["workflow.super_events"] } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByText(/Recommended by Claude/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Download and review" }));
+    await screen.findByRole("heading", { name: "Review the changes" });
+    const exported = calls.find((call) => call.op === "export")!.args as CoreOperations["export"]["args"];
+    expect(exported.request.assistant).toMatchObject({ provider: "claude", endpoint: "https://api.anthropic.com/v1/messages" });
+    expect(JSON.stringify(exported)).not.toContain("sk-ant-test");
   });
 
   it("shows a core error and keeps the user on the same step", async () => {

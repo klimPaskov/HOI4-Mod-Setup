@@ -7,6 +7,13 @@ import { fileURLToPath } from "node:url";
 export const WEB_CONNECT_SOURCES = [
   "https://api.github.com",
   "https://raw.githubusercontent.com",
+  // Optional assistant routes; each is contacted only after the user enters
+  // an API key for it.
+  "https://api.anthropic.com",
+  "https://generativelanguage.googleapis.com",
+  "https://api.x.ai",
+  "https://api.deepseek.com",
+  "https://open.bigmodel.cn",
 ];
 
 export const WEB_CONTENT_SECURITY_POLICY = [

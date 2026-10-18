@@ -10,6 +10,7 @@ interface WasmProject {
   addFile(path: string, bytes: Uint8Array): void;
   fileCount(): number;
   scan(): string;
+  analysisEvidence(): string;
   free(): void;
 }
 
@@ -25,6 +26,7 @@ interface WasmSource {
   select(request: string): string;
   accept(sourcePath: string, bytes: Uint8Array): void;
   missing(): string;
+  componentRegistry(): string;
   exportNew(request: string): WasmExport;
   exportExisting(request: string, project: WasmProject): WasmExport;
   free(): void;
@@ -34,6 +36,8 @@ interface WasmModule {
   default(): Promise<unknown>;
   Project: new () => WasmProject;
   Source: new (manifest: Uint8Array, revision: string, mode: string, requestedRef?: string) => WasmSource;
+  analysisTurn(request: string, route: string, correction?: string): string;
+  readAnalysisReply(envelope: string, request: string, inputSha256: string, analysisId: string): string;
 }
 
 const scope = self as unknown as {
@@ -145,6 +149,20 @@ async function handle<Op extends Operation>(op: Op, args: CoreOperations[Op]["ar
       const bytes = exported.zip(JSON.stringify((args as CoreOperations["zip"]["args"]).decisions));
       const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
       return { result: buffer, transfer: [buffer] };
+    }
+    case "evidence":
+      if (!project) throw new Error("Drop a mod folder first.");
+      return { result: JSON.parse(project.analysisEvidence()) };
+    case "registry":
+      if (!source) throw new Error("Choose the setup source first.");
+      return { result: JSON.parse(source.componentRegistry()) };
+    case "assistantTurn": {
+      const { request, route, correction } = args as CoreOperations["assistantTurn"]["args"];
+      return { result: JSON.parse(module.analysisTurn(JSON.stringify(request), JSON.stringify(route), correction ?? undefined)) };
+    }
+    case "assistantReply": {
+      const { envelope, request, inputSha256, analysisId } = args as CoreOperations["assistantReply"]["args"];
+      return { result: JSON.parse(module.readAnalysisReply(envelope, JSON.stringify(request), inputSha256, analysisId)) };
     }
     default:
       throw new Error(`Unknown operation ${String(op)}.`);
