@@ -144,6 +144,66 @@ jobs:
         if: steps.detect.outputs.present == 'true'
         run: node scripts/run_rust_tests.mjs
 
+  core-wasm:
+    name: Portable core (wasm32)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Configure Rust
+        shell: bash
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+          rustup component add clippy --toolchain 1.88.0
+          rustup target add wasm32-unknown-unknown --toolchain 1.88.0
+      - name: Build the core and web bindings for the browser
+        run: cargo build -p hoi4-setup-core -p hoi4-setup-web --target wasm32-unknown-unknown --release
+      - name: Lint the core and web bindings for the browser
+        run: cargo clippy -p hoi4-setup-core -p hoi4-setup-web --target wasm32-unknown-unknown -- -D warnings
+
+  web:
+    name: Web edition
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Enable package manager
+        run: corepack enable
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Configure Rust
+        shell: bash
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+          rustup target add wasm32-unknown-unknown --toolchain 1.88.0
+      - name: Install the wasm-bindgen CLI that matches Cargo.lock
+        shell: bash
+        run: |
+          version="$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)"
+          cargo install wasm-bindgen-cli --version "$version" --locked
+      - name: Build the web edition
+        run: pnpm web:build
+      - name: Check the built page
+        run: node scripts/check_web_build.mjs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-edition
+          path: dist-web
+          retention-days: 7
+      - name: Install browser engines
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - name: Test the web edition in Chromium, Firefox, and WebKit
+        run: pnpm test:web
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: web-edition-test-results
+          path: test-results
+          retention-days: 7
+
   fuzz:
     name: Fuzz target compilation
     runs-on: ubuntu-latest
@@ -279,7 +339,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario: [new, kaiserreich, recovery]
+        scenario: [new, kaiserreich, recovery, clients]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -4,6 +4,26 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Profile existing mods from a bounded, read-only inventory and content samples so semantic review sees real gameplay structure, identifiers, localisation conventions, and documentation, not only the descriptor and README.
+- Read setup manifest format 6, which declares each coding client's MCP support and lets one component serve several clients. Offer GitHub Copilot (VS Code), Gemini CLI, Antigravity, Grok Build, Kilo Code, Kiro, and Qwen Code with project MCP registration, and Cline, Devin Desktop, Augment, Continue, and Aider with project guidance, when the source publishes them.
+- Show clients this version or platform cannot install as unavailable, label manual and absent MCP routes, and list a to-do with the reviewed guide for clients whose MCP servers live in their own settings.
+- Require the registered HOI4 Agent Tools route, not just parseable JSON, for every selected client on Windows and Linux. Register OpenCode in `opencode.json`, the only file it reads, once the source publishes format 6.
+- Register image-generation and live-testing routes for Gemini CLI, Antigravity, Grok Build, GitHub Copilot (VS Code), and Qwen Code when the source lists them, and let manual image providers work with every coding client. Deselecting a client also removes the recorded image and live-testing routes from its unchanged MCP file.
+- Keep a recorded client that the chosen source version does not offer, and explain the refusal instead of reporting a download failure.
+- Report a newer manifest format as needing an app update before schema validation, and apply format 5 live-testing rules to later formats.
+- Stop setup analysis from failing on meaningless formatting: line breaks, over-long convention text, identifier case, tag spelling, and folder separators are normalized before the strict rules, a reply without a structured object gets the corrective turn, retry hints name the exact rule, and the internal reason is logged to the diagnostics file.
+- Accept relative `mod/<name>`, trailing-separator, and single-backslash `path=` values in an existing launcher file, and explain a real mismatch with the declared and selected folders instead of a "scan error".
+- Remove ChatGPT source packaging from the app: no export screen, Review or Update callout, or flattened-folder option. The packager is the optional `runtime.chatgpt_sources` component, a `.tools` script the user checks and runs. Installs that already recorded a ChatGPT folder keep it until a later migration.
+- Optionally add documents and images while describing a new mod or reviewing an existing one. Documents inform the setup assistant as redacted context and can be copied to `docs/reference/`; an image can become the thumbnail, and images can be saved to `docs/visual_direction/`.
+- Prepare plans faster: JSON Schemas are compiled once per run, a commit's manifest is downloaded and validated once even when Latest, a pin, and maintenance resolve to it, and the Components screen reuses the manifest it already has.
+- Add **Copy diagnostics** next to failure messages, copying the recent redacted diagnostics log for a report.
+- Keep the MCP and credentials review to one readable column instead of stretching across wide windows.
+- Mark values the project files decide (descriptor tags, dominant namespace and prefix, localisation and documentation conventions, folder profile) as Detected and keep them over assistant guesses, and sample focus trees, events, decisions, on_actions, and localisation first.
+- Add the web edition at `klimpaskov.github.io/HOI4-Mod-Setup/app/`: drop a mod folder or start a new mod, review each conflicting file, and download a ZIP with the installation lock. Files stay in the browser, source files are verified against the manifest hashes, and optional suggestions from Claude, Gemini, Grok, DeepSeek, or GLM use a key kept only in the tab's memory.
+- Record generated text once in the installation lock instead of also as a byte array.
+
+Coding clients are never started by setup; client sign-in and in-client behavior beyond reading the documented files are not tested.
+
 ## 0.6.3 - 2026-10-18
 
 - Fix the app-owned Meshy MCP launcher (`--run-verified-meshy-mcp`), which failed every start with Meshy 0.6.2 because its private runtime copy hid the hoisted dependencies (`dotenv`, `axios`, `express`, `zod`, and the MCP SDK) from Node. The verified copy is now materialized under a private `node_modules` directory; the tree hash and file count, package identity, pre-spawn rehash, Node publisher verification, cleared environment, and process ownership checks are unchanged.

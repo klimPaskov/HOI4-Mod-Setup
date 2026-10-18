@@ -31,6 +31,15 @@ The application handles:
 
 Treat every boundary as hostile until validated.
 
+The web edition adds a browser boundary. The built page carries a CSP with
+`default-src 'none'`, `script-src 'self' 'wasm-unsafe-eval'`, and a
+`connect-src` limited to GitHub and the reviewed assistant hosts in
+`vite.web.config.ts`; `scripts/check_web_build.mjs` rejects any other host,
+inline script, or bundle without SRI. Dropped files never leave the tab. A
+provider key lives only in React state for the open tab, goes only in the
+provider's header, and never reaches the worker, the lock, or a log. The
+assistant sees only the scan findings returned by `Project.analysisEvidence`.
+
 ## Credentials
 
 Store secrets in Windows Credential Manager, macOS Keychain, or Linux Secret Service. Store only an opaque reference in application state.
@@ -388,6 +397,15 @@ that policy around every child and discard output if the route changes; the
 scanner reports the unsafe metadata without following it.
 Compile the immutable secret-redaction pattern set once and reuse it; per-
 finding regex compilation is an avoidable large-project scan bottleneck.
+
+Coding-client folders and markers are observed by presence only; the scanner
+reads and parses only the registry's small native MCP files. Installed client
+MCP files contain the source's placeholder or the verified launch and nothing
+else from the app; user servers and keys are preserved by structured merge.
+The installer never writes a client's user, IDE, or cloud settings, so a manual
+route stays a to-do. `open_external_url` admits a client guide only when it is
+the exact `documentation_url` reviewed in the client registry; a manifest
+cannot add an openable address.
 
 ## Update this skill when
 

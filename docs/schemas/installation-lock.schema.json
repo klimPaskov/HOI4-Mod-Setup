@@ -30,6 +30,7 @@
         "properties": {
           "ai_provider": {
             "enum": [
+              "none",
               "codex",
               "claude_account",
               "gemini_account",
@@ -103,6 +104,7 @@
     },
     "ai_provider": {
       "enum": [
+        "none",
         "codex",
         "claude_account",
         "claude",
@@ -123,6 +125,7 @@
     },
     "ai_reasoning_effort": {
       "enum": [
+        "none",
         "low",
         "medium",
         "high",
@@ -141,25 +144,15 @@
       "minLength": 1
     },
     "primary_coding_environment": {
-      "enum": [
-        "codex",
-        "claude_code",
-        "cursor",
-        "qoder",
-        "opencode"
-      ]
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
     },
     "additional_coding_environments": {
       "type": "array",
       "uniqueItems": true,
       "items": {
-        "enum": [
-          "codex",
-          "claude_code",
-          "cursor",
-          "qoder",
-          "opencode"
-        ]
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]{0,63}$"
       }
     },
     "flatten_chat_sources": {
@@ -781,6 +774,9 @@
           }
         },
         "executable": {
+          "type": "boolean"
+        },
+        "installer_created": {
           "type": "boolean"
         },
         "platform": {

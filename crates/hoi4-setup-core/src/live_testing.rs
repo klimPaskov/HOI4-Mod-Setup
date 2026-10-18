@@ -217,20 +217,15 @@ pub fn adapt_config(
     selection: &LiveTestingSelection,
     platform: Platform,
 ) -> Result<Vec<u8>, AppError> {
-    let normalized = destination.replace('\\', "/").to_ascii_lowercase();
-    if ![
-        ".mcp.json",
-        ".cursor/mcp.json",
-        ".qoder/mcp.json",
-        "opencode.json",
-        ".codex/config.toml",
-    ]
-    .contains(&normalized.as_str())
-    {
+    // Live routes go only to clients whose MCP file supports a working
+    // directory and whose adapter the registry marks as route-capable.
+    let Some((client, mcp)) = crate::coding_environment::mcp_route_for_path(destination)
+        .filter(|(client, _)| client.image_and_live_routes)
+    else {
         return Ok(bytes.to_vec());
-    }
+    };
     let selected = route(selection, platform)?;
-    if normalized == ".codex/config.toml" {
+    if mcp.format.is_toml() {
         let mut config: toml::Value = std::str::from_utf8(bytes)
             .map_err(|e| AppError::Source(e.to_string()))?
             .parse()
@@ -262,7 +257,9 @@ pub fn adapt_config(
                         .collect(),
                 ),
             );
-            fields.insert("enabled".into(), toml::Value::Boolean(true));
+            if client.id == crate::coding_environment::CODEX {
+                fields.insert("enabled".into(), toml::Value::Boolean(true));
+            }
             fields.insert("startup_timeout_sec".into(), toml::Value::Integer(30));
             fields.insert("tool_timeout_sec".into(), toml::Value::Integer(1800));
             routes.insert(id.into(), toml::Value::Table(fields));
@@ -274,16 +271,12 @@ pub fn adapt_config(
             .map(String::into_bytes)
             .map_err(|e| AppError::Source(e.to_string()));
     }
-    let mut config: Value =
-        serde_json::from_slice(bytes).map_err(|e| AppError::Source(e.to_string()))?;
+    let mut config: Value = crate::native_mcp::parse_json_lenient(bytes)
+        .map_err(|e| AppError::Source(e.to_string()))?;
     let root = config
         .as_object_mut()
         .ok_or_else(|| AppError::Source("client configuration must be an object".into()))?;
-    let key = if normalized == "opencode.json" {
-        "mcp"
-    } else {
-        "mcpServers"
-    };
+    let key = mcp.format.servers_key();
     let routes = root
         .entry(key)
         .or_insert_with(|| json!({}))
@@ -292,10 +285,21 @@ pub fn adapt_config(
     routes.remove("clausewitz_linux");
     routes.remove("hoi4-live");
     if let Some((id, mut route)) = selected {
-        if key == "mcp" {
-            let mut command = vec![route["command"].clone()];
-            command.extend(route["args"].as_array().unwrap().clone());
-            route = json!({"type":"local","command":command,"enabled":true});
+        match mcp.format {
+            crate::native_mcp::McpFormat::LocalCommandArray => {
+                let mut command = vec![route["command"].clone()];
+                command.extend(route["args"].as_array().unwrap().clone());
+                route = json!({"type":"local","command":command,"enabled":true});
+            }
+            crate::native_mcp::McpFormat::VscodeServers => {
+                if let Some(fields) = route.as_object_mut() {
+                    fields.insert("type".into(), json!("stdio"));
+                    if fields.contains_key("cwd") {
+                        fields.insert("cwd".into(), json!("${workspaceFolder}"));
+                    }
+                }
+            }
+            _ => {}
         }
         routes.insert(id.into(), route);
     }
@@ -370,7 +374,15 @@ pub fn validate_catalog(manifest: &RemoteManifest) -> Result<(), AppError> {
         .as_array()
         .ok_or_else(|| invalid("providers"))?;
     let mut seen = std::collections::HashSet::new();
-    let platforms = if manifest.schema_version.starts_with("5.") {
+    // Native Linux live testing arrived with format 5 and applies to every
+    // later format.
+    let native_linux = manifest
+        .schema_version
+        .split('.')
+        .next()
+        .and_then(|major| major.parse::<u64>().ok())
+        .is_some_and(|major| major >= 5);
+    let platforms = if native_linux {
         json!(["windows", "macos", "linux"])
     } else {
         json!(["windows", "macos"])
@@ -570,21 +582,18 @@ mod tests {
     #[test]
     fn every_coding_client_preserves_unrelated_routes_during_provider_change() {
         for platform in [Platform::Windows, Platform::Macos] {
-            for destination in [
-                ".mcp.json",
-                ".cursor/mcp.json",
-                ".qoder/mcp.json",
-                "opencode.json",
-                ".codex/config.toml",
-            ] {
-                let bytes = if destination.ends_with(".toml") {
+            let routes = crate::coding_environment::NATIVE_CLIENTS
+                .iter()
+                .filter(|client| client.image_and_live_routes)
+                .filter_map(|client| client.mcp.map(|mcp| (client.id, mcp)))
+                .collect::<Vec<_>>();
+            assert!(routes.len() >= 10);
+            for (client, mcp) in routes {
+                let destination = mcp.path;
+                let bytes = if mcp.format.is_toml() {
                     b"[mcp_servers.unrelated]\ncommand = 'safe'\n[mcp_servers.hoi4-live]\ncommand = 'old'\n".to_vec()
                 } else {
-                    let key = if destination == "opencode.json" {
-                        "mcp"
-                    } else {
-                        "mcpServers"
-                    };
+                    let key = mcp.format.servers_key();
                     serde_json::to_vec(&json!({key:{"unrelated":{"command":"safe"},"hoi4-live":{"command":"old"}},"custom_setting":42})).unwrap()
                 };
                 let configured = adapt_config(&bytes, destination, &confirmed(), platform).unwrap();
@@ -604,6 +613,20 @@ mod tests {
                 }
                 assert!(!text.contains("hoi4-live"), "{destination}");
                 assert!(text.contains("unrelated"));
+                if mcp.format.is_toml() {
+                    let parsed: toml::Value = text.parse().unwrap();
+                    assert_eq!(
+                        parsed["mcp_servers"]["clausewitz_linux"]
+                            .get("enabled")
+                            .is_some(),
+                        client == crate::coding_environment::CODEX,
+                        "{client}"
+                    );
+                }
+                if mcp.format == crate::native_mcp::McpFormat::VscodeServers {
+                    let parsed: Value = serde_json::from_str(&text).unwrap();
+                    assert_eq!(parsed["servers"]["clausewitz_linux"]["type"], "stdio");
+                }
                 let none = LiveTestingSelection {
                     provider: "none".into(),
                     ..Default::default()
@@ -618,6 +641,22 @@ mod tests {
                     .unwrap()
                     .contains("clausewitz_linux"));
             }
+        }
+    }
+
+    #[test]
+    fn clients_without_a_working_directory_never_receive_live_routes() {
+        for path in [
+            ".kiro/settings/mcp.json",
+            ".kilo/kilo.json",
+            ".opencode/mcp.json",
+        ] {
+            let bytes = br#"{"mcpServers":{"hoi4-live":{"command":"old"}}}"#.to_vec();
+            assert_eq!(
+                adapt_config(&bytes, path, &confirmed(), Platform::Windows).unwrap(),
+                bytes,
+                "{path}"
+            );
         }
     }
 
@@ -678,7 +717,7 @@ mod selection_tests {
     use super::*;
     fn manifest() -> RemoteManifest {
         let mut manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
-            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+            "../../../docs/source-manifest/hoi4-mod-setup.manifest.json"
         ))
         .unwrap();
         if !manifest

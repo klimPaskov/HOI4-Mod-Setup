@@ -7,8 +7,10 @@ use uuid::Uuid;
 /// Manifest majors this build reads. Major 2 is the Codex-canonical layout
 /// (`.agents/skills`, `.codex/agents`); major 3 is the Claude-first layout
 /// (`.claude/skills`, `.claude/agents`) with declared coding environments.
-pub const SUPPORTED_MANIFEST_MAJORS: [u64; 4] = [2, 3, 4, 5];
-pub const CURRENT_MANIFEST_MAJOR: u64 = 5;
+/// Major 6 adds per-client MCP support declarations and shared client
+/// components, so an older app never offers a client it cannot register.
+pub const SUPPORTED_MANIFEST_MAJORS: [u64; 5] = [2, 3, 4, 5, 6];
+pub const CURRENT_MANIFEST_MAJOR: u64 = 6;
 
 pub const TRANSACTION_STAGES: [&str; 12] = [
     "preflight",
@@ -53,6 +55,15 @@ impl Platform {
             Self::Macos => "macos",
             Self::Linux => "linux",
             Self::Unsupported => "unsupported",
+        }
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Windows => "Windows",
+            Self::Macos => "macOS",
+            Self::Linux => "Linux",
+            Self::Unsupported => "this platform",
         }
     }
 }
@@ -253,6 +264,12 @@ pub struct ComponentDefinition {
     /// component closure.
     #[serde(default)]
     pub coding_environment: Option<String>,
+    /// Other coding clients that read this component's files from the same
+    /// project path (manifest format 6). One installed copy serves the owner
+    /// and every listed client, so selecting several never duplicates a
+    /// destination.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shared_coding_environments: Vec<String>,
     pub optional: bool,
     pub platforms: Vec<ManifestPlatform>,
     pub source: SourceDefinition,
@@ -382,6 +399,46 @@ pub struct CodingEnvironmentDefinition {
     pub default_primary: bool,
     #[serde(default)]
     pub open_command: Option<String>,
+    /// How the client registers the HOI4 Agent Tools MCP server (manifest
+    /// format 6). Older manifests omit it and use the built-in client table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_support: Option<McpSupport>,
+    /// The project file and format of a `project` MCP registration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_registration: Option<McpRegistration>,
+    /// Official client documentation for a manual setup step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub documentation_url: Option<String>,
+}
+
+/// Where a coding client's MCP registration lives.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpSupport {
+    /// A client-recognized project file that the installer manages.
+    Project,
+    /// The client reads MCP servers only from user, IDE, or cloud settings,
+    /// which the installer never writes.
+    Manual,
+    /// The client has no native MCP support.
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct McpRegistration {
+    /// The environment component that installs `path`.
+    pub component_id: String,
+    pub path: String,
+    pub format: crate::native_mcp::McpFormat,
+}
+
+/// A manifest-declared client this app version cannot install safely.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UnavailableCodingEnvironment {
+    pub id: String,
+    pub display_name: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -460,7 +517,7 @@ pub struct WikiInstallMetadata {
     pub notes: Vec<String>,
 }
 
-pub(crate) fn default_unknown_status() -> String {
+pub fn default_unknown_status() -> String {
     "unknown".into()
 }
 
@@ -482,19 +539,19 @@ fn default_manifest_origin() -> String {
     "remote".into()
 }
 
-pub(crate) fn default_ai_provider() -> String {
+pub fn default_ai_provider() -> String {
     "codex".into()
 }
 
-pub(crate) fn default_ai_model() -> String {
+pub fn default_ai_model() -> String {
     "gpt-5.6-luna".into()
 }
 
-pub(crate) fn default_ai_reasoning_effort() -> String {
+pub fn default_ai_reasoning_effort() -> String {
     "xhigh".into()
 }
 
-pub(crate) fn default_ai_optimization_profile() -> String {
+pub fn default_ai_optimization_profile() -> String {
     "Codex setup analysis".into()
 }
 
@@ -548,6 +605,9 @@ pub struct ScanFinding {
     pub category: String,
     pub key: String,
     pub value: Value,
+    /// Model-visible projection; UI-only paths never become approved text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_excerpt: Option<String>,
     pub status: String,
     #[serde(default = "default_scan_origin")]
     pub origin: String,
@@ -592,6 +652,16 @@ pub struct ScanSummary {
     pub warnings: u32,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProfileStats {
+    pub files_indexed: u32,
+    pub directories_indexed: u32,
+    pub samples_read: u32,
+    pub bytes_read: u64,
+    pub excluded_entries: u32,
+    pub coverage: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResult {
     pub schema_version: String,
@@ -603,6 +673,8 @@ pub struct ScanResult {
     pub started_at: String,
     pub completed_at: Option<String>,
     pub read_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_stats: Option<ProfileStats>,
     #[serde(default)]
     pub scanner_version: Option<String>,
     #[serde(default)]
@@ -924,7 +996,7 @@ pub struct InstallationPlan {
     #[serde(default)]
     pub download_ledger: Vec<DownloadedFile>,
     #[serde(default)]
-    pub git_setup: Option<crate::git::GitSetup>,
+    pub git_setup: Option<GitSetup>,
     #[serde(default)]
     pub credential_references: Vec<CredentialReference>,
     #[serde(default)]
@@ -975,6 +1047,16 @@ pub struct LockedFile {
     pub executable: bool,
     #[serde(default)]
     pub platform: Option<ManifestPlatform>,
+    /// True when this installation created the file at a destination that
+    /// was absent at review, and no later merge added local content. Only
+    /// then may removing a native client MCP route also delete the file.
+    /// Locks written before this evidence existed read as false.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub installer_created: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1323,7 +1405,7 @@ fn default_transaction_kind() -> String {
     "installation".into()
 }
 
-pub(crate) fn default_coding_environment() -> String {
+pub fn default_coding_environment() -> String {
     "codex".into()
 }
 
@@ -1518,4 +1600,25 @@ pub struct CodexAnalysisRecord {
     pub source_revision: Option<String>,
     #[serde(default)]
     pub source_manifest_sha256: Option<String>,
+}
+
+/// The Git choice recorded in a plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitMode {
+    Initialize,
+    Preserve,
+    Skip,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitSetup {
+    pub mode: GitMode,
+    pub branch: String,
+    pub initial_commit: bool,
+    #[serde(default)]
+    pub remote_name: Option<String>,
+    #[serde(default)]
+    pub remote_url: Option<String>,
+    pub push_approved: bool,
 }

@@ -6,11 +6,11 @@
 
 use crate::models::{CodexAnalysisRecord, Platform};
 use crate::process::ProcessSpec;
-use crate::security::{
-    is_link_metadata, redact_secrets, reject_secret_like_keys, sha256_bytes, sha256_file,
-};
+use crate::security::{is_link_metadata, redact_secrets, sha256_bytes, sha256_file};
 use crate::AppError;
 use chrono::Utc;
+#[allow(unused_imports)]
+pub use hoi4_setup_core::analysis::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -34,8 +34,6 @@ use std::os::windows::io::AsRawHandle;
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Storage::FileSystem::{GetFinalPathNameByHandleW, FILE_NAME_NORMALIZED};
 
-pub const CODEX_SCHEMA_VERSION: &str = "1.0.0";
-
 #[derive(Clone)]
 struct CachedCodexExecutable {
     path: PathBuf,
@@ -43,18 +41,6 @@ struct CachedCodexExecutable {
 }
 
 static CODEX_EXECUTABLE: OnceLock<Mutex<Option<CachedCodexExecutable>>> = OnceLock::new();
-pub const REQUIRED_ANALYSIS_PROPOSAL_KEYS: &[&str] = &[
-    "display_name",
-    "project_id",
-    "script_prefix",
-    "primary_namespace",
-    "project_description",
-    "descriptor_tags",
-    "folder_profile",
-    "agents_profile",
-    "localisation_convention",
-    "documentation_convention",
-];
 const MAX_JSONL_LINE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_BUFFERED_NOTIFICATIONS: usize = 128;
 const MAX_BUFFERED_NOTIFICATION_BYTES: usize = 2 * 1024 * 1024;
@@ -65,9 +51,6 @@ const MAX_CORRELATED_NOTIFICATION_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TRANSIENT_PROGRESS_NOTIFICATIONS: usize = 200_000;
 const MAX_PROTOCOL_ERROR_CODE_CHARS: usize = 64;
 const MAX_PROTOCOL_ERROR_DETAIL_CHARS: usize = 512;
-const MAX_BRIEF_BYTES: usize = 32 * 1024;
-const MAX_EVIDENCE_ITEMS: usize = 256;
-const MAX_EVIDENCE_BYTES: usize = 512 * 1024;
 const APP_SERVER_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -115,34 +98,6 @@ pub struct CodexLoginStart {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApprovedEvidence {
-    pub reference: String,
-    pub path: String,
-    #[serde(default)]
-    pub excerpt: String,
-    pub excerpt_sha256: String,
-    #[serde(default)]
-    pub confidence: Option<f32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodexAnalysisRequest {
-    pub mode: String,
-    #[serde(default)]
-    pub brief: String,
-    #[serde(default)]
-    pub evidence: Vec<ApprovedEvidence>,
-    #[serde(default)]
-    pub constraints: Value,
-    #[serde(default)]
-    pub analysis_purpose: Option<String>,
-    #[serde(default)]
-    pub project_root: Option<String>,
-    #[serde(default)]
-    pub scan_id: Option<Uuid>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiAnalysisRequest {
     pub provider: String,
     pub model: String,
@@ -156,67 +111,6 @@ pub struct AiAnalysisRequest {
 pub struct CodexAnalysisResult {
     pub analysis: CodexAnalysis,
     pub record: CodexAnalysisRecord,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CodexAnalysis {
-    pub schema_version: String,
-    pub analysis_id: Uuid,
-    pub mode: AnalysisMode,
-    pub input_sha256: String,
-    pub project_summary: String,
-    pub proposals: Vec<CodexProposal>,
-    pub component_recommendations: Vec<ComponentRecommendation>,
-    pub warnings: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AnalysisMode {
-    NewProjectIdentity,
-    ExistingProjectSemantics,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CodexProposal {
-    pub key: ProposalKey,
-    pub value: Value,
-    pub confidence: f64,
-    pub reason: String,
-    pub evidence_refs: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProposalKey {
-    DisplayName,
-    ProjectId,
-    ScriptPrefix,
-    PrimaryNamespace,
-    ProjectDescription,
-    DescriptorTags,
-    FolderProfile,
-    AgentsProfile,
-    LocalisationConvention,
-    DocumentationConvention,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ComponentRecommendation {
-    pub component_id: String,
-    pub recommendation: Recommendation,
-    pub reason: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Recommendation {
-    Required,
-    Recommended,
-    NotRecommended,
 }
 
 /// A small transport trait lets protocol and failure tests run without a
@@ -1000,166 +894,6 @@ fn deepest_error_message(value: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn validate_analysis_request(request: &CodexAnalysisRequest) -> Result<(), AppError> {
-    if !matches!(
-        request.mode.as_str(),
-        "new_project_identity" | "existing_project_semantics"
-    ) {
-        return Err(AppError::InvalidInput(
-            "unsupported Codex analysis mode".into(),
-        ));
-    }
-    if request.mode == "existing_project_semantics" && request.evidence.is_empty() {
-        return Err(AppError::InvalidInput(
-            "existing-project Codex analysis requires approved scan evidence".into(),
-        ));
-    }
-    if let Some(purpose) = request.analysis_purpose.as_deref() {
-        if !matches!(
-            purpose,
-            "existing_project_import" | "maintenance_reanalysis"
-        ) {
-            return Err(AppError::InvalidInput(
-                "unsupported Codex analysis purpose".into(),
-            ));
-        }
-        if matches!(
-            purpose,
-            "existing_project_import" | "maintenance_reanalysis"
-        ) && (request.mode != "existing_project_semantics"
-            || request.evidence.is_empty()
-            || request.project_root.is_none()
-            || request.scan_id.is_none())
-        {
-            return Err(AppError::InvalidInput(
-                "existing-project analysis requires a project root, scan ID, and approved evidence"
-                    .into(),
-            ));
-        }
-    }
-    if request.brief.len() > MAX_BRIEF_BYTES || request.brief.contains('\0') {
-        return Err(AppError::InvalidInput(
-            "Codex brief exceeds the bounded input limit".into(),
-        ));
-    }
-    if redact_secrets(&request.brief, &[]) != request.brief {
-        return Err(AppError::Credential(
-            "Codex brief contains credential-shaped content".into(),
-        ));
-    }
-    reject_secret_like_keys(&request.constraints)?;
-    let constraints_text = serde_json::to_string(&request.constraints)?;
-    if redact_secrets(&constraints_text, &[]) != constraints_text {
-        return Err(AppError::Credential(
-            "Codex constraints contain credential-shaped content".into(),
-        ));
-    }
-    if constraints_text.len() > MAX_EVIDENCE_BYTES {
-        return Err(AppError::InvalidInput(
-            "Codex constraints exceed the bounded input limit".into(),
-        ));
-    }
-    if request.evidence.len() > MAX_EVIDENCE_ITEMS {
-        return Err(AppError::InvalidInput(
-            "too many approved Codex evidence items".into(),
-        ));
-    }
-    let mut total = 0usize;
-    let mut references = BTreeSet::new();
-    for evidence in &request.evidence {
-        if evidence.reference.trim().is_empty()
-            || evidence.path.trim().is_empty()
-            || evidence.path.contains('\0')
-            || evidence.reference.len() > 256
-            || evidence.path.len() > 512
-            || crate::security::normalize_relative_path(&evidence.path).is_err()
-            || forbidden_evidence_path(&evidence.path)
-            || forbidden_evidence_path(&evidence.reference)
-            || !references.insert(evidence.reference.as_str())
-        {
-            return Err(AppError::PathSecurity(
-                "Codex evidence path is not project-relative".into(),
-            ));
-        }
-        if evidence.excerpt.len() > MAX_BRIEF_BYTES
-            || !is_sha256(&evidence.excerpt_sha256)
-            || sha256_bytes(evidence.excerpt.as_bytes()) != evidence.excerpt_sha256
-        {
-            return Err(AppError::InvalidInput("Codex evidence is malformed".into()));
-        }
-        if redact_secrets(&evidence.excerpt, &[]) != evidence.excerpt {
-            return Err(AppError::Credential(
-                "Codex evidence contains credential-shaped content".into(),
-            ));
-        }
-        total = total.saturating_add(evidence.excerpt.len());
-    }
-    if total > MAX_EVIDENCE_BYTES {
-        return Err(AppError::InvalidInput(
-            "Codex evidence exceeds the bounded input limit".into(),
-        ));
-    }
-    Ok(())
-}
-
-fn forbidden_evidence_path(path: &str) -> bool {
-    let normalized = path.replace('\\', "/").to_ascii_lowercase();
-    let segments = normalized.split('/');
-    if segments.clone().any(|segment| {
-        segment == ".git"
-            || segment == "auth"
-            || segment == "authentication"
-            || segment == "credential"
-            || segment == "credentials"
-            || segment == "secret"
-            || segment == "secrets"
-            || segment == "token"
-            || segment == "tokens"
-            || segment == "password"
-            || segment == "passwords"
-            || segment == "private"
-            || segment == "private_keys"
-    }) {
-        return true;
-    }
-    let file_name = normalized.rsplit('/').next().unwrap_or_default();
-    let name_tokens = file_name
-        .split(|character: char| !character.is_ascii_alphanumeric())
-        .filter(|token| !token.is_empty());
-    file_name == ".env"
-        || file_name.starts_with(".env.")
-        || file_name.ends_with(".pem")
-        || file_name.ends_with(".key")
-        || file_name.ends_with(".p12")
-        || file_name.ends_with(".pfx")
-        || name_tokens.clone().any(|token| {
-            matches!(
-                token,
-                "auth"
-                    | "authentication"
-                    | "credential"
-                    | "credentials"
-                    | "secret"
-                    | "secrets"
-                    | "token"
-                    | "tokens"
-                    | "password"
-                    | "passwords"
-                    | "passwd"
-                    | "apikey"
-                    | "key"
-                    | "access"
-                    | "rsa"
-                    | "certificate"
-                    | "cert"
-                    | "private"
-                    | "privatekey"
-                    | "private_key"
-                    | "id_rsa"
-            )
-        })
-}
-
 fn read_only_no_project_access() -> Value {
     json!({
         "type": "readOnly",
@@ -1221,598 +955,26 @@ impl Drop for AnalysisWorkingDirectory {
     }
 }
 
-fn model_visible_analysis_input(request: &CodexAnalysisRequest) -> Value {
-    json!({
-        "mode": &request.mode,
-        "brief": &request.brief,
-        "evidence": &request.evidence,
-        "constraints": &request.constraints,
-        "analysis_purpose": &request.analysis_purpose,
-    })
-}
-
-pub fn analysis_input_sha256(request: &CodexAnalysisRequest) -> Result<String, AppError> {
-    validate_analysis_request(request)?;
-    Ok(sha256_bytes(&serde_json::to_vec(
-        &model_visible_analysis_input(request),
-    )?))
-}
-
-/// Validate evidence bytes before the user-approved evidence set is added to
-/// the core-owned scan binding. This keeps the bridge from authorizing paths,
-/// secrets, oversized excerpts, or stale hashes by accident.
-pub fn validate_analysis_evidence(evidence: &[ApprovedEvidence]) -> Result<(), AppError> {
-    validate_analysis_request(&CodexAnalysisRequest {
-        mode: "existing_project_semantics".into(),
-        brief: String::new(),
-        evidence: evidence.to_vec(),
-        constraints: json!({"platform": "windows_or_macos"}),
-        analysis_purpose: None,
-        project_root: None,
-        scan_id: None,
-    })
-}
-
-pub fn evidence_manifest_sha256(evidence: &[ApprovedEvidence]) -> Result<String, AppError> {
-    Ok(sha256_bytes(&serde_json::to_vec(evidence)?))
-}
-
-/// Fuzz and integration entry point for untrusted app-server JSON. It never
-/// starts a process or accesses the filesystem; callers provide only the
-/// returned JSON payload.
-pub fn validate_analysis_payload(bytes: &[u8]) -> Result<(), AppError> {
-    let value: Value = serde_json::from_slice(bytes)?;
-    let requested_mode = value
-        .get("mode")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned();
-    let input_sha256 = value
-        .get("input_sha256")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned();
-    let request = CodexAnalysisRequest {
-        mode: requested_mode,
-        brief: String::new(),
-        evidence: Vec::new(),
-        constraints: json!({}),
-        analysis_purpose: None,
-        project_root: None,
-        scan_id: None,
-    };
-    validate_analysis_output(value, &request, &input_sha256, &[]).map(|_| ())
-}
-
-/// Total turns allowed for one analysis: the first turn plus one corrective
-/// turn after a deterministic rejection of the returned proposal set.
-pub(crate) const ANALYSIS_ATTEMPTS: u32 = 2;
-
-/// The validator's reason when a returned analysis was rejected for content
-/// the model can correct: schema shape, identifier or value rules, or an
-/// unsafe path. Credential-shaped content and every transport, sign-in, or
-/// usage failure return `None` and are never retried.
-pub(crate) fn correctable_output_error(error: &AppError) -> Option<&str> {
-    match error {
-        AppError::Serialization(reason) => Some(reason.as_str()),
-        _ => None,
-    }
-}
-
-/// Follow-up instruction after the validator rejected a response. The reason
-/// is the validator's own bounded internal message (proposal names and rule
-/// only), never user content.
-pub(crate) fn corrective_analysis_prompt(reason: &str, input_sha256: &str) -> String {
-    let reason = redact_secrets(reason, &[])
-        .chars()
-        .filter(|character| !character.is_control())
-        .take(300)
-        .collect::<String>();
-    format!(
-        "The previous response was rejected by deterministic validation: {reason}. Return the complete corrected object that matches the same output schema and every earlier rule. Copy input_sha256={input_sha256} exactly."
-    )
-}
-
-pub(crate) fn analysis_prompt_for_provider(
+/// Validate a provider reply and give it an identifier the model cannot
+/// choose.
+pub fn validate_analysis_output(
+    value: Value,
     request: &CodexAnalysisRequest,
     input_sha256: &str,
-    optimization_profile: &str,
-) -> Result<String, AppError> {
-    let input = serde_json::to_string(&model_visible_analysis_input(request))?;
-    Ok(format!(
-        "Interpret this approved HOI4 setup input using the {optimization_profile} conventions. Return only an object matching the supplied output schema. Set analysis_id to a short non-secret label; the app assigns its own identifier. Keep project_summary at most 1200 characters, each reason and warning at most 500 characters, and confidence between 0 and 1. Keep scalar proposals at most 256 characters except project_description. Return every required proposal key exactly once. When input.constraints.requested_mod_name is present, the display_name proposal must be exactly that name, and project_id, script_prefix, and primary_namespace must be derived from it. descriptor_tags and folder_profile proposal values must be JSON arrays of strings; every other proposal value must be a string. project_id, script_prefix, and primary_namespace values must use only lowercase ASCII letters, digits, and underscores, starting with a lowercase letter or underscore; never use dots, hyphens, spaces, or uppercase letters. folder_profile values are at most 32 distinct relative mod folders such as events or common/national_focus, never absolute, never containing .., and never under .agents, .codex, .git, .hoi4-mod-setup, chatgpt_project_sources, or paradox_wiki. Descriptor tags may use only these official categories: Alternative History, Balance, Events, Fixes, Gameplay, Graphics, Historical, Ideologies, Map, Military, National Focuses, Sound, Technologies, Translation, Utilities. Propose concise, user-facing reasons and evidence_refs. Evidence refs must use only the supplied approved reference IDs (input.evidence[].reference); never invent paths or references. component_recommendations may name only component_id values listed in input.constraints.component_registry.component_ids; return an empty list when none apply. Cite a supplied evidence ID only when it supports that proposal. Use an empty evidence_refs array for suggestions derived from the brief or when no supplied evidence supports the suggestion. Keep project_summary, proposal values, reasons, and warnings focused on the mod; never attribute them to the setup assistant, provider, model, or analysis process, and never describe the output schema, input.constraints, evidence_refs, or internal analysis steps. Mention a platform or Workshop issue only when the mod itself requires the user to act. Return warnings only when the user must make a decision or correct something. Do not read files, perform filesystem writes, execute commands, make network actions, or disclose account data. Input SHA-256 must be copied exactly.\n\ninput_sha256={input_sha256}\ninput={input}"
-    ))
-}
-
-const RESERVED_PROJECT_FOLDER_ROOTS: &[&str] = &[
-    ".agents",
-    ".codex",
-    ".git",
-    ".hoi4-mod-setup",
-    "chatgpt_project_sources",
-    "paradox_wiki",
-];
-
-/// Normalize selected starter folders and keep them outside application-
-/// managed roots. The same validator is used for provider proposals and the
-/// final renderer state so a later edit cannot bypass this boundary.
-pub fn validate_folder_profile_paths(folders: &[String]) -> Result<Vec<String>, AppError> {
-    let mut normalized = BTreeSet::new();
-    if folders.len() > 32 {
-        return Err(AppError::InvalidInput(
-            "folder profile contains too many paths".into(),
-        ));
-    }
-    for folder in folders {
-        let folder = crate::security::normalize_relative_path(folder).map_err(|error| {
-            AppError::InvalidInput(format!("folder profile contains an unsafe path: {error}"))
-        })?;
-        let root = folder.split('/').next().unwrap_or_default();
-        if RESERVED_PROJECT_FOLDER_ROOTS
-            .iter()
-            .any(|reserved| root.eq_ignore_ascii_case(reserved))
-        {
-            return Err(AppError::InvalidInput(format!(
-                "folder profile targets an application-managed root: {folder}"
-            )));
-        }
-        if !normalized.insert(folder) {
-            return Err(AppError::InvalidInput(
-                "folder profile contains duplicate paths".into(),
-            ));
-        }
-    }
-    Ok(normalized.into_iter().collect())
+    evidence: &[ApprovedEvidence],
+) -> Result<CodexAnalysis, AppError> {
+    hoi4_setup_core::analysis::validate_analysis_output(
+        value,
+        request,
+        input_sha256,
+        evidence,
+        Uuid::new_v4(),
+    )
 }
 
 #[cfg(test)]
 fn analysis_prompt(request: &CodexAnalysisRequest, input_sha256: &str) -> Result<String, AppError> {
     analysis_prompt_for_provider(request, input_sha256, "Codex setup analysis")
-}
-
-pub(crate) fn validate_analysis_output(
-    mut value: Value,
-    request: &CodexAnalysisRequest,
-    input_sha256: &str,
-    evidence: &[ApprovedEvidence],
-) -> Result<CodexAnalysis, AppError> {
-    // Validate every returned value before discarding model-owned metadata or
-    // interpreting schema errors. Never echo a provider value in diagnostics.
-    reject_sensitive_output_value(&value)?;
-    static SCHEMA: OnceLock<Value> = OnceLock::new();
-    let schema = SCHEMA.get_or_init(|| {
-        serde_json::from_str(include_str!(
-            "../../docs/schemas/codex-analysis.schema.json"
-        ))
-        .expect("the checked-in analysis schema must be valid JSON")
-    });
-    let validator = jsonschema::draft202012::new(schema)
-        .map_err(|_| AppError::Protocol("the analysis schema could not be loaded".into()))?;
-    validator.validate(&value).map_err(|error| {
-        AppError::Serialization(format!(
-            "analysis output failed the type or limit rule at {}",
-            error.schema_path()
-        ))
-    })?;
-    let object = value
-        .as_object()
-        .ok_or_else(|| AppError::Serialization("Codex analysis output is not an object".into()))?;
-    let allowed: BTreeSet<&str> = [
-        "schema_version",
-        "analysis_id",
-        "mode",
-        "input_sha256",
-        "project_summary",
-        "proposals",
-        "component_recommendations",
-        "warnings",
-    ]
-    .into_iter()
-    .collect();
-    if object.keys().any(|key| !allowed.contains(key.as_str())) {
-        return Err(AppError::Serialization(
-            "Codex analysis contains an unsupported field".into(),
-        ));
-    }
-    // The model does not allocate identifiers in the core confirmation store.
-    value["analysis_id"] = json!(Uuid::new_v4());
-    let analysis: CodexAnalysis = serde_json::from_value(value)?;
-    if analysis.schema_version != CODEX_SCHEMA_VERSION
-        || analysis.input_sha256 != input_sha256
-        || analysis.proposals.is_empty()
-        || (analysis.mode == AnalysisMode::NewProjectIdentity
-            && request.mode != "new_project_identity")
-        || (analysis.mode == AnalysisMode::ExistingProjectSemantics
-            && request.mode != "existing_project_semantics")
-        || analysis.project_summary.trim().is_empty()
-        || analysis.project_summary.chars().count() > 1200
-    {
-        return Err(AppError::Serialization(
-            "Codex analysis failed schema validation".into(),
-        ));
-    }
-    let mut proposal_keys = BTreeSet::new();
-    let approved_references = evidence
-        .iter()
-        .map(|item| item.reference.as_str())
-        .collect::<BTreeSet<_>>();
-    for proposal in &analysis.proposals {
-        let key = serde_json::to_string(&proposal.key)?;
-        if !proposal_keys.insert(key) {
-            return Err(AppError::Serialization(
-                "Codex analysis contains duplicate proposal keys".into(),
-            ));
-        }
-        let proposal_name = serde_json::to_string(&proposal.key)?;
-        if !(0.0..=1.0).contains(&proposal.confidence) || proposal.reason.chars().count() > 500 {
-            return Err(AppError::Serialization(format!(
-                "Codex proposal {proposal_name} failed schema validation: confidence or reason is out of range"
-            )));
-        }
-        if proposal
-            .evidence_refs
-            .iter()
-            .any(|reference| reference.trim().is_empty())
-            || proposal
-                .evidence_refs
-                .iter()
-                .any(|reference| !approved_references.contains(reference.as_str()))
-        {
-            return Err(AppError::Serialization(format!(
-                "Codex proposal {proposal_name} failed schema validation: it cites an unapproved evidence reference"
-            )));
-        }
-        validate_output_text(&proposal.reason, "Codex proposal reason")?;
-        validate_user_facing_analysis_text(&proposal.reason, "Codex proposal reason")?;
-        reject_sensitive_output_value(&proposal.value)?;
-        validate_proposal_value(&proposal.key, &proposal.value).map_err(|error| match error {
-            AppError::InvalidInput(_) | AppError::PathSecurity(_) => {
-                AppError::Serialization(format!(
-                    "proposal {proposal_name} does not meet the identifier, text, or path rules"
-                ))
-            }
-            other => other,
-        })?;
-    }
-    let required_keys = REQUIRED_ANALYSIS_PROPOSAL_KEYS
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<Result<BTreeSet<_>, _>>()?;
-    if required_keys.iter().any(|key| !proposal_keys.contains(key)) {
-        return Err(AppError::Serialization(
-            "Codex analysis omitted one or more required semantic proposals".into(),
-        ));
-    }
-    let allowed_component_ids = analysis_component_registry_ids(request)?;
-    if analysis
-        .component_recommendations
-        .iter()
-        .any(|recommendation| {
-            !valid_component_recommendation_id(&recommendation.component_id)
-                || !allowed_component_ids.contains(&recommendation.component_id)
-        })
-    {
-        return Err(AppError::Serialization(
-            "component recommendations must use only IDs from the supplied component registry"
-                .into(),
-        ));
-    }
-    if analysis
-        .warnings
-        .iter()
-        .any(|warning| warning.chars().count() > 500)
-    {
-        return Err(AppError::Serialization(
-            "each warning must be at most 500 characters".into(),
-        ));
-    }
-    validate_output_text(&analysis.project_summary, "Codex project summary")?;
-    validate_user_facing_analysis_text(&analysis.project_summary, "Codex project summary")?;
-    for warning in &analysis.warnings {
-        validate_output_text(warning, "Codex warning")?;
-        validate_user_facing_analysis_text(warning, "Codex warning")?;
-    }
-    for recommendation in &analysis.component_recommendations {
-        reject_sensitive_output_value(&Value::String(recommendation.component_id.clone()))?;
-        validate_output_text(&recommendation.reason, "Codex recommendation reason")?;
-        validate_user_facing_analysis_text(&recommendation.reason, "Codex recommendation reason")?;
-    }
-    Ok(keep_requested_mod_name(analysis, request))
-}
-
-/// A mod name the user typed for a new project is theirs: the display-name
-/// proposal always carries it, whatever the setup assistant suggested.
-fn keep_requested_mod_name(
-    mut analysis: CodexAnalysis,
-    request: &CodexAnalysisRequest,
-) -> CodexAnalysis {
-    if request.mode != "new_project_identity" {
-        return analysis;
-    }
-    let Some(requested) = request
-        .constraints
-        .get("requested_mod_name")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|name| {
-            !name.is_empty()
-                && name.chars().count() <= 128
-                && crate::descriptors::validate_field(name, "mod name").is_ok()
-        })
-    else {
-        return analysis;
-    };
-    if let Some(proposal) = analysis
-        .proposals
-        .iter_mut()
-        .find(|proposal| matches!(proposal.key, ProposalKey::DisplayName))
-    {
-        if proposal.value.as_str() != Some(requested) {
-            proposal.value = Value::String(requested.to_owned());
-            proposal.confidence = 1.0;
-            proposal.reason = "Kept the mod name you entered.".into();
-        }
-    }
-    analysis
-}
-
-fn analysis_component_registry_ids(
-    request: &CodexAnalysisRequest,
-) -> Result<BTreeSet<String>, AppError> {
-    let Some(registry) = request.constraints.get("component_registry") else {
-        return Ok(BTreeSet::new());
-    };
-    let object = registry.as_object().ok_or_else(|| {
-        AppError::InvalidInput("the component recommendation registry is malformed".into())
-    })?;
-    if object.len() != 3
-        || !object.contains_key("source_revision")
-        || !object.contains_key("manifest_sha256")
-        || !object.contains_key("component_ids")
-    {
-        return Err(AppError::InvalidInput(
-            "the component recommendation registry is incomplete".into(),
-        ));
-    }
-    let revision = object
-        .get("source_revision")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let manifest_sha256 = object
-        .get("manifest_sha256")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if revision.len() != 40
-        || !revision.bytes().all(|byte| byte.is_ascii_hexdigit())
-        || manifest_sha256.len() != 64
-        || !manifest_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err(AppError::InvalidInput(
-            "the component recommendation registry identity is invalid".into(),
-        ));
-    }
-    let component_ids = object
-        .get("component_ids")
-        .and_then(Value::as_array)
-        .ok_or_else(|| {
-            AppError::InvalidInput("the component recommendation registry has no IDs".into())
-        })?;
-    if component_ids.len() > 4096 {
-        return Err(AppError::InvalidInput(
-            "the component recommendation registry is too large".into(),
-        ));
-    }
-    let mut allowed = BTreeSet::new();
-    for component_id in component_ids {
-        let component_id = component_id.as_str().ok_or_else(|| {
-            AppError::InvalidInput("the component recommendation registry has an invalid ID".into())
-        })?;
-        if !valid_component_recommendation_id(component_id)
-            || !allowed.insert(component_id.to_string())
-        {
-            return Err(AppError::InvalidInput(
-                "the component recommendation registry has an invalid or duplicate ID".into(),
-            ));
-        }
-    }
-    Ok(allowed)
-}
-
-fn valid_component_recommendation_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && (value.as_bytes()[0].is_ascii_lowercase() || value.as_bytes()[0].is_ascii_digit())
-        && value.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
-        })
-}
-
-fn validate_user_facing_analysis_text(value: &str, label: &str) -> Result<(), AppError> {
-    let normalized = value.to_ascii_lowercase();
-    const INTERNAL_TERMS: &[&str] = &[
-        "approved input",
-        "input.constraints",
-        "evidence_refs",
-        "evidence refs",
-        "input_sha256",
-        "input sha-256",
-        "output schema",
-    ];
-    if INTERNAL_TERMS.iter().any(|term| normalized.contains(term)) {
-        return Err(AppError::Serialization(format!(
-            "{label} contains internal setup details"
-        )));
-    }
-    validate_provider_neutral_text(value, label)?;
-    Ok(())
-}
-
-fn validate_provider_neutral_text(value: &str, label: &str) -> Result<(), AppError> {
-    let attribution = regex::Regex::new(
-        r"(?i)(?:\b(?:generated|suggested|analy[sz]ed|prepared|written)\s+by\s+(?:codex|chatgpt|openai|claude|anthropic|kimi|moonshot|glm|zhipu|deepseek|gemini|google|grok|xai)\b|\busing\s+(?:the\s+)?(?:codex|chatgpt|openai|claude|anthropic|kimi|moonshot|glm|zhipu|deepseek|gemini|google|grok|xai)\b|\bsetup\s+(?:assistant|provider)\b|\banalysis\s+model\b)",
-    )
-    .is_ok_and(|pattern| pattern.is_match(value));
-    if attribution {
-        return Err(AppError::Serialization(format!(
-            "{label} contains setup-provider attribution"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_output_text(value: &str, label: &str) -> Result<(), AppError> {
-    let normalized = value.to_ascii_lowercase();
-    let account_shaped = regex::Regex::new(
-        r"(?i)(?:\baccount[\s_-]*id\b|\bacct_[a-z0-9_-]+\b|\b(?:account[\s_-]*plan|plan[\s_-]*type)\s*[:=]|\brate[\s_-]*limits?\s*[:=]|\busage[\s_-]*(?:limited|remaining|used)\s*[:=]|\busage\s*[:=]\s*\d+(?:\.\d+)?\s*%|\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b)",
-    )
-    .is_ok_and(|pattern| pattern.is_match(value));
-    if redact_secrets(value, &[]) != value
-        || account_shaped
-        || normalized.contains("\"email\"")
-        || normalized.contains("'email'")
-    {
-        return Err(AppError::UnsafeProviderOutput(format!(
-            "{label} contains account or credential-shaped content"
-        )));
-    }
-    Ok(())
-}
-
-fn reject_sensitive_output_value(value: &Value) -> Result<(), AppError> {
-    fn validate_recursive(value: &Value) -> Result<(), AppError> {
-        match value {
-            Value::Object(object) => {
-                for (key, child) in object {
-                    if matches!(
-                        key.to_ascii_lowercase().as_str(),
-                        "email"
-                            | "account_id"
-                            | "accountid"
-                            | "plan"
-                            | "plan_type"
-                            | "usage_limited"
-                            | "ratelimits"
-                            | "rate_limits"
-                            | "access_token"
-                            | "refresh_token"
-                            | "token"
-                    ) {
-                        return Err(AppError::UnsafeProviderOutput(
-                            "Codex proposal contains account or credential-shaped content".into(),
-                        ));
-                    }
-                    validate_recursive(child)?;
-                }
-            }
-            Value::Array(values) => {
-                for child in values {
-                    validate_recursive(child)?;
-                }
-            }
-            Value::String(value) => validate_output_text(value, "Codex proposal value")?,
-            Value::Null | Value::Bool(_) | Value::Number(_) => {}
-        }
-        Ok(())
-    }
-
-    let serialized = serde_json::to_string(value)?;
-    if redact_secrets(&serialized, &[]) != serialized {
-        return Err(AppError::UnsafeProviderOutput(
-            "Codex proposal contains account or credential-shaped content".into(),
-        ));
-    }
-    validate_recursive(value)
-}
-
-pub(crate) fn validate_proposal_value(key: &ProposalKey, value: &Value) -> Result<(), AppError> {
-    match key {
-        ProposalKey::DisplayName
-        | ProposalKey::ScriptPrefix
-        | ProposalKey::PrimaryNamespace
-        | ProposalKey::AgentsProfile
-        | ProposalKey::LocalisationConvention
-        | ProposalKey::DocumentationConvention => {
-            let value = value.as_str().ok_or_else(|| {
-                AppError::Serialization("Codex proposal must use a string value".into())
-            })?;
-            crate::descriptors::validate_field(value, "Codex proposal")?;
-            validate_provider_neutral_text(value, "Codex proposal")?;
-            if value.chars().count() > 256 {
-                return Err(AppError::Serialization(
-                    "Codex proposal string is too long".into(),
-                ));
-            }
-            if matches!(
-                key,
-                ProposalKey::ScriptPrefix | ProposalKey::PrimaryNamespace
-            ) && !value.chars().enumerate().all(|(index, character)| {
-                (index == 0 && (character.is_ascii_lowercase() || character == '_'))
-                    || (index > 0
-                        && (character.is_ascii_lowercase()
-                            || character.is_ascii_digit()
-                            || character == '_'))
-            }) {
-                return Err(AppError::Serialization(
-                    "script_prefix and primary_namespace proposals must use only lowercase ASCII letters, digits, and underscores, starting with a lowercase letter or underscore".into(),
-                ));
-            }
-        }
-        ProposalKey::ProjectId => {
-            let value = value.as_str().ok_or_else(|| {
-                AppError::Serialization("Codex project ID proposal must be a string".into())
-            })?;
-            crate::descriptors::validate_project_id(value)?;
-        }
-        ProposalKey::ProjectDescription => {
-            let value = value.as_str().ok_or_else(|| {
-                AppError::Serialization("Codex description proposal must be a string".into())
-            })?;
-            if value.trim().is_empty() || value.contains('\0') || value.len() > MAX_BRIEF_BYTES {
-                return Err(AppError::Serialization(
-                    "Codex description proposal is empty or too long".into(),
-                ));
-            }
-            validate_provider_neutral_text(value, "Codex description proposal")?;
-        }
-        ProposalKey::DescriptorTags => {
-            let tags = value.as_array().ok_or_else(|| {
-                AppError::Serialization("Codex descriptor tags proposal must be an array".into())
-            })?;
-            let tags = tags
-                .iter()
-                .map(|tag| tag.as_str().unwrap_or_default().to_string())
-                .collect::<Vec<_>>();
-            if crate::descriptors::validate_descriptor_tags(&tags).is_err() {
-                return Err(AppError::Serialization(
-                    "Codex descriptor tags proposal is invalid".into(),
-                ));
-            }
-        }
-        ProposalKey::FolderProfile => {
-            let folders = value.as_array().ok_or_else(|| {
-                AppError::Serialization("Codex folder profile proposal must be an array".into())
-            })?;
-            let folders = folders
-                .iter()
-                .map(|folder| folder.as_str().unwrap_or_default().to_string())
-                .collect::<Vec<_>>();
-            if folders.iter().any(|folder| folder.is_empty())
-                || validate_folder_profile_paths(&folders).is_err()
-            {
-                return Err(AppError::Serialization(
-                    "folder_profile must list at most 32 distinct relative mod folders such as events or common/national_focus, never absolute, never containing .., and never under .agents, .codex, .git, .hoi4-mod-setup, chatgpt_project_sources, or paradox_wiki".into(),
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn is_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .chars()
-            .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase())
 }
 
 fn parse_account_status(value: &Value) -> CodexAccountStatus {
@@ -3814,6 +2976,106 @@ mod tests {
             "nested": ["safe", {"deeper": "account_id: acct_private"}]
         }))
         .is_err());
+    }
+
+    #[test]
+    fn detected_values_replace_the_assistants_guesses() {
+        let input = "a".repeat(64);
+        let request = analysis_request_with_component_registry(&["core.skills"]);
+        let detected = serde_json::to_string(&json!([
+            {"key": "primary_namespace", "value": "kr_events", "reason": "The most common event namespace."},
+            {"key": "descriptor_tags", "value": ["Events", "Gameplay"], "reason": "The tags field of descriptor.mod."},
+            {"key": "script_prefix", "value": "Not Valid!", "reason": "Invalid on purpose."}
+        ]))
+        .unwrap();
+        let evidence = vec![ApprovedEvidence {
+            reference: "profile.detected".into(),
+            path: "@scan/profile/detected".into(),
+            excerpt_sha256: sha256_bytes(detected.as_bytes()),
+            excerpt: detected,
+            confidence: None,
+        }];
+        let accepted =
+            validate_analysis_output(valid_analysis_value(&input), &request, &input, &evidence)
+                .unwrap();
+        let proposal = |key: &str| {
+            accepted
+                .proposals
+                .iter()
+                .find(|proposal| serde_json::to_value(&proposal.key).unwrap() == json!(key))
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(proposal("primary_namespace").value, json!("kr_events"));
+        assert_eq!(
+            proposal("primary_namespace").evidence_refs,
+            ["profile.detected"]
+        );
+        assert_eq!(
+            proposal("descriptor_tags").value,
+            json!(["Events", "Gameplay"])
+        );
+        assert_eq!(
+            proposal("script_prefix").value,
+            json!("demo"),
+            "an invalid detected value is ignored"
+        );
+    }
+
+    #[test]
+    fn meaningless_formatting_is_normalized_before_the_strict_rules() {
+        let input = "a".repeat(64);
+        let request = analysis_request_with_component_registry(&["core.skills"]);
+        let mut output = valid_analysis_value(&input);
+        output["proposals"][1]["value"] = json!("Kaiser-Reich");
+        output["proposals"][2]["value"] = json!(" GER ");
+        output["proposals"][3]["value"] = json!("kr.events");
+        output["proposals"][5]["value"] = json!([
+            "national focuses",
+            "Gameplay",
+            "Total Conversion",
+            "gameplay"
+        ]);
+        output["proposals"][6]["value"] = json!(["events\\", "./common/national_focus/", "events"]);
+        output["proposals"][8]["value"] = json!("English and German headers.\nUTF-8 with BOM.");
+        output["proposals"][9]["value"] = json!(format!(
+            "Markdown guides {}",
+            "covering every subsystem ".repeat(20)
+        ));
+        let accepted = validate_analysis_output(output, &request, &input, &[]).unwrap();
+        let value = |key: &str| {
+            accepted
+                .proposals
+                .iter()
+                .find(|proposal| serde_json::to_value(&proposal.key).unwrap() == json!(key))
+                .unwrap()
+                .value
+                .clone()
+        };
+        assert_eq!(value("project_id"), json!("kaiser_reich"));
+        assert_eq!(value("script_prefix"), json!("ger"));
+        assert_eq!(value("primary_namespace"), json!("kr_events"));
+        assert_eq!(
+            value("descriptor_tags"),
+            json!(["National Focuses", "Gameplay"])
+        );
+        assert_eq!(
+            value("folder_profile"),
+            json!(["events", "common/national_focus"])
+        );
+        assert_eq!(
+            value("localisation_convention"),
+            json!("English and German headers. UTF-8 with BOM.")
+        );
+        let documentation = value("documentation_convention");
+        let documentation = documentation.as_str().unwrap();
+        assert!(documentation.chars().count() <= 256);
+        assert!(documentation.ends_with('…'));
+        // Tags with no official category are still rejected with a clear rule.
+        let mut unknown = valid_analysis_value(&input);
+        unknown["proposals"][5]["value"] = json!(["Total Conversion"]);
+        let error = validate_analysis_output(unknown, &request, &input, &[]).unwrap_err();
+        assert!(error.to_string().contains("official categories"), "{error}");
     }
 
     #[test]

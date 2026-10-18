@@ -7,7 +7,7 @@ const screenshotNames: Record<string, string> = {
   components: "04-components.png", workflows: "05-integrations.png", mcp: "06-mcp-credentials.png",
   git: "07-git.png", ready: "08-ready.png", "dry-run": "09-dry-run.png",
   provider: "10-provider-selection.png", existing: "11-existing-project.png", maintenance: "12-maintenance.png",
-  "chat-sources": "13-chat-sources.png", recovery: "14-recovery.png", environments: "15-coding-environments.png",
+  recovery: "14-recovery.png", environments: "15-coding-environments.png",
   "image-generation": "16-image-generation.png",
   "live-testing": "17-live-testing.png",
 };

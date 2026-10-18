@@ -56,6 +56,61 @@ fresh setup and maintenance so optional projected agents appear only for a
 selected workflow and selected environment, while a deselected environment's
 unchanged projections remain eligible for reviewed removal.
 
+When maintenance deselects a client, a file of that client the user changed
+and chose to keep is released: it stays on disk untouched and leaves the lock
+and its recorded local modifications, so readiness is not held in review for a
+file no selected client uses. Unchanged files are removed as before, and an
+unchanged merged MCP file loses only the installer's own routes
+(`installer_mcp_server_ids`: the shared route plus the recorded image and
+live-testing routes); planning and staging must use the same ID set.
+
+Lock reconciliation retires a predecessor coding-client component with no
+remaining files or non-delete operations. An Update also retires any other
+predecessor component it no longer selects once every file that component
+owned is removed or released; optional workflows keep their recorded state,
+and Repair, Reinstall, and Remove keep predecessor components for audit.
+
+A component shared by several clients (`shared_coding_environments`) stays in
+the desired set while any selected client uses it, so deselecting Codex keeps
+the `.agents/skills` copy that Gemini CLI or Antigravity still reads. When the
+chosen source version does not offer a recorded client, planning stops with an
+actionable `InvalidInput` message before any removal is planned; never drop the
+client from the selection to make a plan succeed.
+
+Native client MCP files are merged with local content and only the shared
+`hoi4_agent_tools` route is adapted, through `native_mcp::retarget` for the
+registered format. On Windows and Linux the route points at the verified
+launch; a settings file that is installed on every platform (format 6
+`opencode.json`) loses the route where no verified launch exists. Readiness
+requires the registered route, not only parseable JSON, whenever the client's
+MCP component and HOI4 Agent Tools are installed on Windows or Linux and the
+tools package is not planned-unavailable. A format 5 lock keeps the old
+structural check only while `runtime.opencode.mcp` still owns its locked
+`.opencode/mcp.json`. Manual and absent MCP routes never block readiness or
+the health check.
+
+An unchanged merged native MCP file that leaves the selection (managed
+removal, a deselected client, or an Update path no selected component ships)
+is reverse-merged, never deleted wholesale. `managed_removal_operations` and
+the obsolete loop of `update_operations` call `reverse_mcp_route`, which plans
+a `replace` with resolution `MCP_ROUTE_REMOVAL` (bytes from
+`native_mcp::retarget(format, bytes, None)`), a `delete_managed` only when the
+lock's `installer_created` evidence holds and nothing but an empty server table
+remains, or a `skip` with `MCP_ROUTE_RELEASE` when no route is left. The
+maintenance prepare loop stages those bytes with `prepare_mcp_route_removal`,
+which re-reads the live file and requires the reviewed local and result
+hashes; `validate_plan` and `validate_prepared_files` reject a route removal
+that is not an unchanged merged MCP file or whose bytes still declare the
+route. `is_removal_operation` keeps such a plan a removal. `build_lock` drops
+the file from the lock for both resolutions. Removal does not reverse files
+owned by image-generation or live-testing components; Update reverses any
+obsolete MCP path. Modified files keep the keep/release review.
+
+`installer_created` is lock evidence: true only for a destination absent at
+review, carried through unchanged non-merge replacements, false after a merge
+or a modified file, and absent (false) in older locks. Never infer it from
+content.
+
 ## Operation model
 
 Update can explicitly retarget Latest or an optional commit/release pin while
@@ -63,6 +118,13 @@ Repair/reinstall stay on the installed revision. Successful locks derive MCP
 versions from reviewed target actions. File rollback follows prior existence,
 including missing merged files later chosen for replacement; independent
 removal batches use destination-derived IDs rather than restarting a counter.
+
+User context copies (`project.context_reference` documents and
+`project.visual_direction` images) and a user-chosen thumbnail are ordinary
+generated artifacts built by `context::copies_from_state` and
+`context::thumbnail_from_state`. They must come from attachments bound in the
+session store; their bytes are recorded in the lock, so copies stay within
+4 MiB together.
 
 Every operation needs:
 
@@ -456,13 +518,21 @@ Opaque OS-vault credential references are carried separately from secret values.
   `not_selected` state is recorded in the lock and its readiness check is
   always `blocking: false`.
 - Repair may add the 3D files at the lock's exact revision and may refresh only the opaque Meshy reference for an already-selected incomplete workflow; a previously `ready` workflow remains ready when its existing reference is carried forward.
-- Reinstall and repair must re-read the locked revision and preserve modified files for review. Managed removal must not delete merged ownership wholesale. The current planners are `repair_operations`, `reinstall_operations`, `update_operations`, and `managed_removal_operations` in `src-tauri/src/transaction.rs`.
+- Reinstall and repair must re-read the locked revision and preserve modified files for review. Managed removal must not delete merged ownership wholesale; native client MCP files use the route reverse merge above. The current planners are `repair_operations`, `reinstall_operations`, `update_operations`, and `managed_removal_operations` in `src-tauri/src/transaction.rs`.
 - Every successful Update, Repair, Reinstall, or Remove plan opens the ordinary dry-run review, or conflict review when unresolved conflicts exist. Do not leave a newly built maintenance plan on the action-selection screen.
 - Update preserves the lock's latest/pinned source mode and filters generated artifact IDs out of manifest component expansion. Descriptor, external launcher, and thumbnail artifacts are planned independently for both new and existing projects.
 - Repair and reinstall do not reconstruct a merged file from a raw source blob without a verified merge base; missing or changed merged files become reverse-merge review entries.
 - Update planning requires a fresh confirmed selected-provider semantic reanalysis record from the current core session. The UI must first complete a bounded read-only scan, show the approved evidence manifest, run the existing-project common-schema turn, and pass only the core-confirmed record into `build_maintenance_plan`. The record is bound to the canonical project root, latest scan ID, evidence-manifest SHA-256, provider, model, reasoning effort, optimization profile, exact source revision, and exact source-manifest SHA-256. Maintenance reanalysis derives its source request from the installed lock. A legacy record may inherit those two source fields only from valid provenance already stored in the same lock; missing or malformed provenance remains blocked. Repair, reinstall, and managed removal may continue from the validated locked analysis according to their authenticated/recovery rules.
 
 ## Lock and rollback evidence
+
+Generated text output is recorded once as `generated_content`;
+`generated_bytes` is written only for binary output that is not UTF-8. Repair
+reads `generated_content` first. The web edition never applies in place: the
+core `export` module plans create, unchanged, and conflict entries against the
+dropped folder, applies the user's keep or replace decisions, and writes the
+lock (components marked `validation: not_run`) inside the ZIP. A hosted
+assistant's lock entry carries its `ai_endpoint`; `ai_provider: none` has none.
 
 Read journals through `migrations::migrate_journal`. The journal records action, component, location scope, source path/size, reviewed resolution, source/result/backup hashes, staged and observed live hashes, expected and observed existence, and per-operation intent. Rollback must refuse ambiguous later user work, restore verified backups and lock state, and persist both the parent and child rollback records after the state transition. `rollback_source_path` identifies the parent backup that supplies restored bytes; the child `backup_path` identifies the inverse backup; completed child journals also record the lock state expected before an inverse action.
 
@@ -489,6 +559,9 @@ Inject failure at every stage and operation boundary:
   precondition, placement, and post-placement windows
 
 Verify that recovery never creates a false success lock and rollback restores expected hashes.
+Route removal has its own matrix
+(`mcp_route_removal_faults_never_commit_and_recover_the_original_bytes`):
+extend it when the operation gains a boundary.
 
 The current Rust fault test iterates every stage and operation before/after boundary and asserts that no success lock is written; targeted regression tests also cover absent-root creation at apply, pre-apply staging discard, root removal, inverse recreation, later-user-content retention, skipped-file rollback, immutable ownership, remote approval, reanalysis scan binding, inverse rollback refusal after later file or lock edits, and the completed child inverse path. Native execution still requires the supported CI toolchains.
 
@@ -507,6 +580,9 @@ predecessor-lock evidence, backup/staging/apply boundaries, readiness gate,
 rollback record, maintenance path, and fault scenarios agree; optional
 external actions never turn into implicit core success.
 
-Image and live-testing provider changes are reviewed transaction inputs. Remove only unchanged managed registrations for deselected providers or clients, preserve unrelated and user-modified routes, and regenerate provider guidance with exactly one complete marker pair. Incomplete optional runtime outcomes stay incomplete in the lock and readiness report; registration is not gameplay verification.
+Image and live-testing routes are adapted by MCP format for registry clients
+marked `image_and_live_routes` (their project servers accept a working
+directory); a manual provider registers nothing and is available with every
+client. Image and live-testing provider changes are reviewed transaction inputs. Remove only unchanged managed registrations for deselected providers or clients, preserve unrelated and user-modified routes, and regenerate provider guidance with exactly one complete marker pair. Incomplete optional runtime outcomes stay incomplete in the lock and readiness report; registration is not gameplay verification.
 
 Large adapted asset skills keep a short provider section and read the generated `.tools/image_generation/selected-provider.md` from the project root. Maintain that reference through the same reviewed artifact, backup and removal flow; selected routes must never push a root SKILL.md over the package byte ceiling.

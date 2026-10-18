@@ -31,6 +31,14 @@ components depend on both the runtime base and the corresponding canonical
 workflow subagent component. Optional platform-specific MCP registrations use
 the same rule through the selected shared MCP dependency.
 
+From manifest format 6 a component may also list `shared_coding_environments`.
+It then belongs to its owner and to each listed client, and one installed copy
+serves all of them; the `.agents/skills` copy is shared by Codex, Gemini CLI,
+Antigravity, Kilo Code, and Devin Desktop. Maintenance keeps such a component
+while any selected client uses it. A cross-client dependency alone is not a
+substitute, because environment reconciliation compares each client's own
+component list with the lock.
+
 ### Tool requirement
 
 An external executable or package with version policy and health checks.

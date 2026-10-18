@@ -17,8 +17,7 @@ export type ScreenId =
   | "ready"
   | "update"
   | "conflict"
-  | "recovery"
-  | "chat-sources";
+  | "recovery";
 
 export type PhaseId = "project" | "review" | "components" | "integrations" | "git" | "install" | "ready";
 
@@ -29,12 +28,25 @@ export type AiProviderId = "claude_account" | "codex" | "gemini_account" | "grok
 /** Built-in environment ids; a source manifest may declare more. */
 export type CodingEnvironmentId = "claude_code" | "codex" | "cursor" | "qoder" | "opencode" | (string & {});
 
+/** Where a client registers MCP servers: a managed project file, the client's
+ * own settings (a manual step), or nowhere. */
+export type McpSupport = "project" | "manual" | "none";
+
 export interface CodingEnvironmentDefinition {
   id: CodingEnvironmentId;
   display_name: string;
   description?: string | null;
   default_primary?: boolean;
   open_command?: string | null;
+  mcp_support?: McpSupport | null;
+  /** Reviewed client documentation for a manual setup step. */
+  documentation_url?: string | null;
+}
+
+export interface UnavailableCodingEnvironment {
+  id: string;
+  display_name: string;
+  reason: string;
 }
 
 export interface ImageGenerationProviderDefinition {
@@ -122,32 +134,6 @@ export interface AppUpdateStatus {
   currentVersion: string;
   availableVersion?: string | null;
   available: boolean;
-}
-
-export interface ChatSourceFile {
-  id: string;
-  sourcePath: string;
-  archivePath: string;
-  category: "instructions" | "readme" | "skill" | "subagent" | "root_markdown" | string;
-  size: number;
-  required: boolean;
-  selectedByDefault: boolean;
-}
-
-export interface ChatSourcesPreview {
-  eligible: boolean;
-  message?: string | null;
-  projectRoot: string;
-  destinationDirectory: string;
-  archiveName: string;
-  files: ChatSourceFile[];
-}
-
-export interface ChatSourcesPackageResult {
-  archivePath: string;
-  includedFiles: string[];
-  bytes: number;
-  sha256: string;
 }
 
 export type ConflictChoice = "keep" | "replace" | "merge" | "rename" | "skip";
@@ -381,6 +367,16 @@ export interface ScanProgress {
   filesScanned: number;
   directoriesScanned: number;
   bytesRead: number;
+  profileStats?: ProjectProfileStats;
+}
+
+export interface ProjectProfileStats {
+  files_indexed: number;
+  directories_indexed: number;
+  samples_read: number;
+  bytes_read: number;
+  excluded_entries: number;
+  coverage: string;
 }
 
 export interface ScanSnapshot {
@@ -394,6 +390,7 @@ export interface ScanSnapshot {
   filesScanned: number;
   directoriesScanned: number;
   bytesRead: number;
+  profileStats?: ProjectProfileStats;
 }
 
 export interface ComponentRow {
@@ -532,6 +529,8 @@ export interface SourceManifestPreview {
   components: ManifestComponentPreview[];
   profiles: Array<{ id: string; display_name: string; components: string[]; default: boolean }>;
   coding_environments?: CodingEnvironmentDefinition[];
+  /** Declared clients this app version or platform cannot install. */
+  unavailable_coding_environments?: UnavailableCodingEnvironment[];
   image_generation?: ImageGenerationCatalog;
   live_testing?: LiveTestingCatalog;
   local_source?: string | null;
@@ -543,6 +542,40 @@ export interface FolderSelection {
   error?: string | null;
   cancelled: boolean;
 }
+
+/** A text document the user added as setup context. The core keeps the bytes;
+ * the interface only holds the bounded excerpt it may send for analysis. */
+export interface ContextDocument {
+  id: string;
+  name: string;
+  size: number;
+  reference: string;
+  evidence_path: string;
+  excerpt: string;
+  excerpt_sha256: string;
+  truncated: boolean;
+  redacted: boolean;
+  copyable: boolean;
+}
+
+/** An image the user added for the thumbnail or visual direction. `data_url`
+ * is for preview and rendering only. */
+export interface ContextImage {
+  id: string;
+  name: string;
+  size: number;
+  media_type: string;
+  data_url: string;
+}
+
+export interface ContextPick<T> {
+  added: T[];
+  refused: string[];
+  cancelled: boolean;
+}
+
+export type ContextDocumentState = ContextDocument & { includeInAnalysis: boolean; keepCopy: boolean };
+export type ContextImageState = ContextImage & { saveReference: boolean; referenceData?: string };
 
 export interface SuggestedProjectPaths {
   mod_directory: string;
@@ -760,7 +793,6 @@ export interface WizardState {
   meshKeyDraft: string;
   meshKeyStatus: "missing" | "present" | "verified" | "unsupported";
   meshCredentialReference?: CredentialReference;
-  flattenForChat: boolean;
   gitMode: "initialize" | "preserve" | "skip";
   gitBranch: string;
   initialCommit: boolean;
@@ -780,11 +812,6 @@ export interface WizardState {
   existingInstallationDetected?: boolean;
   installedComponentIds?: string[];
   maintenanceOptionalSelections?: string[];
-  chatSourcesAvailable?: boolean;
-  chatSourcesPreview?: ChatSourcesPreview;
-  chatSourcesDestination?: string;
-  chatSourcesSelectedIds?: string[];
-  chatSourcesResult?: ChatSourcesPackageResult;
   installedWorkflow3dState?: WorkflowState;
   installedSuperEventsState?: WorkflowState;
   installedPortraitState?: WorkflowState;
@@ -803,5 +830,13 @@ export interface WizardState {
   semanticProposalOverrides?: SemanticProposalKey[];
   semanticComponentRecommendations?: ComponentRecommendation[];
   manifestPreview?: SourceManifestPreview;
+  /** Documents the user added as optional setup context. */
+  contextDocuments?: ContextDocumentState[];
+  /** Images the user added for the thumbnail or visual references. */
+  contextImages?: ContextImageState[];
+  /** A 600 by 600 PNG (base64) rendered from one of the context images. */
+  contextThumbnail?: { attachmentId: string; png: string };
+  /** Context document IDs sent with the current analysis. */
+  contextAnalysisDocumentIds?: string[];
   draftSaved: boolean;
 }

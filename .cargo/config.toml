@@ -1,0 +1,4 @@
+# The portable core builds for the browser; getrandom reaches the Web Crypto
+# API there (crates/hoi4-setup-core).
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", 'getrandom_backend="wasm_js"']

@@ -1,5 +1,5 @@
 import sourceManifest from "../docs/source-manifest/hoi4-mod-setup.manifest.json";
-import type { ChatSourcesPreview, CodexAnalysis, CodexAnalysisRecord, InstallationPlan, ManifestComponentPreview, ReadinessReport, SemanticConventions, SourceManifestPreview, WizardState } from "./types";
+import type { CodexAnalysis, CodexAnalysisRecord, InstallationPlan, ManifestComponentPreview, ReadinessReport, SemanticConventions, SourceManifestPreview, WizardState } from "./types";
 
 import { DOCUMENTATION_SCENARIOS, type DocumentationScenario } from "./documentation-scenarios";
 export { DOCUMENTATION_SCENARIOS } from "./documentation-scenarios";
@@ -208,14 +208,8 @@ const plan: InstallationPlan = {
   source,
   ai_provider: "claude_account",
   ai_model: "claude-haiku-5-5",
-  flatten_chat_sources: true,
   selected_components: ["core.claude.instructions", "core.agents", "core.skills", "core.subagents", "runtime.agent_sync", "runtime.claude", "runtime.claude.mcp", "mcp.hoi4_agent_tools", "docs.mcp_integration", "wiki.snapshot", "workflow.super_events", "workflow.live_testing", "workflow.portraits.router", ...portraitComponentIds],
   wiki_required_pages: ["Hearts of Iron 4 Wiki", "Modding"],
-  generated_artifacts: [
-    { component_id: "chat.flattened", destination: "chatgpt_project_sources/AGENTS.md", content: "Project instructions", expected_sha256: "documentation-preview" },
-    { component_id: "chat.flattened", destination: "chatgpt_project_sources/README.md", content: "Project overview", expected_sha256: "documentation-preview" },
-    { component_id: "chat.flattened", destination: "chatgpt_project_sources/hoi4-events.md", content: "Events skill", expected_sha256: "documentation-preview" },
-  ],
   git_setup: { mode: "initialize", branch: "main", initial_commit: true, remote_name: "origin", push_approved: false },
     optional_workflows: { "workflow.3d": "not_selected", "workflow.super_events": "selected_pending", "workflow.portraits": "selected_pending" },
     portrait_pipeline: {
@@ -330,15 +324,15 @@ export function documentationFixture(base: WizardState): WizardState {
   if (scenario === "description") return { ...common, screen: "description", mode: "new", codexAnalysis: undefined, codexAnalysisRecord: undefined };
   if (scenario === "identity") return { ...common, screen: "identity", mode: "new", codexAnalysis: semanticAnalysis, codexAnalysisRecord: semanticAnalysisRecord, conventions: semanticConventions, semanticComponentRecommendations: semanticAnalysis.component_recommendations };
   if (scenario === "existing") return { ...common, screen: "identity", mode: "existing", recoveryEntry: true };
-  if (scenario === "components") return { ...common, screen: "components", flattenForChat: true };
+  if (scenario === "components") return { ...common, screen: "components" };
   if (scenario === "environments") return { ...common, screen: "environments", primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["claude_code"] };
   if (scenario === "live-testing") return { ...common, screen: "live-testing", selectedComponents: [...common.selectedComponents, "workflow.live_testing"] };
   if (scenario === "image-generation") return { ...common, screen: "image-generation", primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["claude_code"], imageGeneration: { primary_provider: "gptimage", additional_providers: ["openai_api"], route_settings: {}, credential_references: {} } };
   if (scenario === "workflows") return { ...common, screen: "workflows", meshSelected: true, superEventsSelected: true, portraitPipeline: runpodPortrait, selectedComponents: [...common.selectedComponents, "workflow.3d", "workflow.super_events", "workflow.live_testing", ...portraitComponentIds] };
   if (scenario === "mcp") return { ...common, screen: "mcp", meshSelected: true, meshKeyStatus: "present", selectedComponents: [...common.selectedComponents, "workflow.3d"] };
   if (scenario === "git") return { ...common, screen: "git", gitOnlineAction: "create_public_github", gitHubRepository: "atlantis-rising" };
-  if (scenario === "dry-run") return { ...common, screen: "dry-run", plan, flattenForChat: true, superEventsSelected: true };
-  if (scenario === "ready") return { ...common, screen: "ready", plan, readiness, flattenForChat: true, superEventsSelected: true, portraitPipeline: runpodPortrait, installedSuperEventsState: "ready", selectedComponents: [...common.selectedComponents, ...portraitComponentIds] };
+  if (scenario === "dry-run") return { ...common, screen: "dry-run", plan, superEventsSelected: true };
+  if (scenario === "ready") return { ...common, screen: "ready", plan, readiness, superEventsSelected: true, portraitPipeline: runpodPortrait, installedSuperEventsState: "ready", selectedComponents: [...common.selectedComponents, ...portraitComponentIds] };
   if (scenario === "maintenance") return { ...common, screen: "update", mode: "existing", plan, readiness, selectedComponents: [...common.selectedComponents, "workflow.live_testing"], existingInstallationDetected: true, installedWorkflow3dState: "not_selected", installedSuperEventsState: "ready", superEventsSelected: true };
   if (scenario === "recovery") {
     const stageIds = ["preflight", "repository source resolution", "selective download", "checksum verification", "dry-run review", "backup", "staging", "validation", "apply", "post-install checks", "readiness report", "rollback record"];
@@ -363,23 +357,6 @@ export function documentationFixture(base: WizardState): WizardState {
         error: { code: "transaction_error", message: "Launcher descriptor path did not match the selected project root.", stage: "validation" },
       },
     };
-  }
-  if (scenario === "chat-sources") {
-    const chatSourcesPreview: ChatSourcesPreview = {
-      eligible: true,
-      projectRoot: identity.projectRoot,
-      destinationDirectory: "C:\\Users\\Player\\Downloads",
-      archiveName: "atlantis_rising-chatgpt-project-sources.zip",
-      files: [
-        { id: "AGENTS.md", sourcePath: "AGENTS.md", archivePath: "AGENTS.md", category: "instructions", size: 18432, required: true, selectedByDefault: true },
-        { id: "README.md", sourcePath: "README.md", archivePath: "README.md", category: "readme", size: 9216, required: true, selectedByDefault: true },
-        { id: ".claude/skills/hoi4-events/SKILL.md", sourcePath: ".claude/skills/hoi4-events/SKILL.md", archivePath: "hoi4-events.md", category: "skill", size: 14336, required: true, selectedByDefault: true },
-        { id: ".claude/agents/hoi4-repo-explorer.md", sourcePath: ".claude/agents/hoi4-repo-explorer.md", archivePath: "hoi4-repo-explorer.md", category: "subagent", size: 5632, required: true, selectedByDefault: true },
-        { id: "DESIGN_NOTES.md", sourcePath: "DESIGN_NOTES.md", archivePath: "DESIGN_NOTES.md", category: "root_markdown", size: 4096, required: false, selectedByDefault: false },
-        { id: "TODO.md", sourcePath: "TODO.md", archivePath: "TODO.md", category: "root_markdown", size: 3072, required: false, selectedByDefault: false },
-      ],
-    };
-    return { ...common, screen: "chat-sources", mode: "existing", existingInstallationDetected: true, chatSourcesAvailable: true, chatSourcesPreview, chatSourcesDestination: chatSourcesPreview.destinationDirectory, chatSourcesSelectedIds: chatSourcesPreview.files.filter((file) => file.selectedByDefault).map((file) => file.id) };
   }
   return { ...common, screen: scenario };
 }

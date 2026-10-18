@@ -57,9 +57,9 @@ Read:
 - Latest mode records an exact commit.
 - Pinned mode is reproducible.
 - Coding environments are a separate composable selection: exactly one primary
-  (Claude Code by default) plus any additional supported clients (Codex,
-  Cursor, Qoder, or OpenCode). The resolved manifest owns each complete native
-  package; the setup assistant and Core/Core plus 3D profiles do not encode
+  (Claude Code by default) plus any additional offered clients. The resolved
+  manifest owns each complete native package and, from format 6, each
+  client's MCP support (`docs/36_coding_environment_catalog.md`); the setup assistant and Core/Core plus 3D profiles do not encode
   environment combinations.
 - `CLAUDE.md`, `.claude/skills/`, and `.claude/agents/` are the canonical
   authoring package. The adapted `AGENTS.md`, `.agents/skills/`,
@@ -97,11 +97,14 @@ Read:
   AGENTS/README/flattened skills/subagents selected, leaves root Markdown
   unchecked, and writes a safe external ZIP without mutating the mod.
 - The Windows desktop entry point uses the GUI subsystem, and the read-only
-  scanner inventories only agentic setup surfaces: descriptors, approved
+  scanner keeps its targeted setup inventory bounded to descriptors, approved
   instructions, skills, subagents, Codex/MCP configuration, managed setup
-  state, and bounded Git evidence. Ordinary HOI4 gameplay, localisation,
-  media, generated corpora, and unrelated root data files are not opened or
-  counted.
+  state, and bounded Git evidence. A separate contained project-profile pass
+  records bounded metadata and sampled text-prefix observations for gameplay
+  structure, identifiers, localisation, and documentation. It skips hidden,
+  cache, tooling, wiki, secret-like, and binary/media content bytes; its
+  `profile_stats` and findings remain separate from setup-file counts, and it
+  never claims exhaustive gameplay validation or a whole-repository Git state.
 - A newer signed app version shown at startup is installed and restarted
   automatically; a failed update leaves the current app usable and retryable.
 - Adapted project instructions remove the source template's complete

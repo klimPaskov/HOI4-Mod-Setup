@@ -343,6 +343,37 @@ run and journal retain that explicit boundary.
 
 The lock is a completion artifact. A partial apply cannot look successful because the lock is written only after final verification.
 
+## Native client MCP reverse merge
+
+A native client MCP file is merged with local content, so removing its
+component must not delete it wholesale. When managed removal, a deselected
+client, or an Update whose manifest no longer ships the path meets a merged
+MCP file whose bytes still equal the locked installed hash, the planner reads
+it once and plans one of three reviewed operations:
+
+- `replace` with resolution `mcp_route_removal`: the bytes are the file
+  without the `hoi4_agent_tools` route, from `native_mcp::retarget(format,
+  bytes, None)`. Every other server and key is preserved. The prepared bytes
+  are re-derived from the live file, must match the reviewed local and result
+  hashes, and must not declare the route; the operation is staged, backed up,
+  quarantined, and verified like any replace, and rollback restores the
+  original bytes from the backup.
+- `delete_managed`: only when the lock's `installer_created` evidence shows
+  the installer created the file and nothing but an empty server table would
+  remain.
+- `skip` with resolution `mcp_route_release`: the file has no route and is
+  left untouched.
+
+The lock forgets the file after any of them, and lock reconciliation retires a
+coding-client component with no remaining files; an Update also retires any
+other predecessor component that it no longer selects once its files are
+removed or released, while optional workflows keep their recorded state. A
+removal plan may contain route-removal replaces and still counts as a removal.
+`installer_created` is recorded only when the destination was absent at review
+and carried only through unchanged non-merge replacements; locks without it
+read as false, so their files are rewritten rather than deleted. A modified
+file keeps the existing keep and release review.
+
 The Rust core retains the reviewed plan and prepared bytes in its bounded session. Starting installation sends only that plan's ID and the reviewed project root; it does not send the full plan or confirmed AI-analysis record back from the renderer. This prevents a second serialization boundary from invalidating or altering an already approved plan.
 
 ## Rollback
@@ -405,6 +436,7 @@ Destination-quarantine coverage, all modelled as returned errors rather than pro
 - Forward replace: before the rename, after the rename, after a changed-bytes record before the move back, after verification, after placement before the result checkpoint, and after the result checkpoint before release; deterministic barriers for an edit after the precondition, a file created after verification, and an edit after placement; injected hash-read and journal-write errors after the rename.
 - Forward create: a stop after placement and a file created in the apply window.
 - Managed delete: a concurrent edit after the precondition and a stop after verification only.
+- Native client MCP route removal and installer-created MCP deletion during Update: every stage before and after, before and after the operation, after the live mutation, each forward and success-lock quarantine boundary, each followed by recovery that restores the original bytes and predecessor lock.
 - Rollback backup restore, rollback restore of a forward quarantine, and rollback removal of a created file: before the rename, after the rename, after verification, after placement, and before release, each followed by a retry.
 - Success-lock commit: before the rename, after the rename, after verification, and before release.
 - Rollback lock restore with a predecessor and lock removal after a first install: before the rename, after the rename, after verification, and before release.

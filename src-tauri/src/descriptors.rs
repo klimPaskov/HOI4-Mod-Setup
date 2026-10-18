@@ -5,339 +5,13 @@ use crate::models::ProjectIdentity;
 use crate::paths::user_facing_path;
 use crate::security::{sha256_bytes, validate_external_destination};
 use crate::AppError;
-use regex::Regex;
-use std::collections::BTreeMap;
-use std::io::Cursor;
+pub use hoi4_setup_core::descriptors::*;
 use std::path::Path;
-
-pub const HOI4_DESCRIPTOR_TAGS: &[&str] = &[
-    "Alternative History",
-    "Balance",
-    "Events",
-    "Fixes",
-    "Gameplay",
-    "Graphics",
-    "Historical",
-    "Ideologies",
-    "Map",
-    "Military",
-    "National Focuses",
-    "Sound",
-    "Technologies",
-    "Translation",
-    "Utilities",
-];
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Descriptor {
-    pub fields: BTreeMap<String, String>,
-}
-
-pub fn validate_project_id(value: &str) -> Result<(), AppError> {
-    let pattern = Regex::new(r"^[a-z][a-z0-9_]{1,63}$").expect("static project id regex");
-    if pattern.is_match(value) {
-        Ok(())
-    } else {
-        Err(AppError::InvalidInput(
-            "project ID must start with a lowercase letter and contain only lowercase letters, digits, and underscores".into(),
-        ))
-    }
-}
-
-pub fn validate_field(value: &str, label: &str) -> Result<(), AppError> {
-    if value.trim().is_empty()
-        || value.contains('\0')
-        || value.contains('\n')
-        || value.contains('\r')
-    {
-        return Err(AppError::InvalidInput(format!(
-            "{label} is empty or contains a newline"
-        )));
-    }
-    Ok(())
-}
-
-pub fn validate_descriptor_tags(tags: &[String]) -> Result<(), AppError> {
-    let unique = tags.iter().collect::<std::collections::BTreeSet<_>>();
-    if tags.is_empty()
-        || tags.len() > HOI4_DESCRIPTOR_TAGS.len()
-        || unique.len() != tags.len()
-        || tags
-            .iter()
-            .any(|tag| !HOI4_DESCRIPTOR_TAGS.contains(&tag.as_str()))
-    {
-        return Err(AppError::InvalidInput(
-            "descriptor tags must use the supported Hearts of Iron IV categories".into(),
-        ));
-    }
-    Ok(())
-}
-
-/// Keys that HOI4 descriptors may legitimately repeat. Repeated values are
-/// retained in order, separated by a newline (which no single value contains).
-const REPEATABLE_DESCRIPTOR_KEYS: [&str; 1] = ["replace_path"];
-
-/// Upper bound on the lines one `{ ... }` block may span, so a missing closing
-/// brace fails fast instead of consuming the rest of an untrusted file.
-const MAX_BLOCK_LINES: usize = 512;
-
-pub fn parse_descriptor(bytes: &[u8]) -> Result<Descriptor, AppError> {
-    let text = String::from_utf8(bytes.to_vec())
-        .map_err(|_| AppError::InvalidInput("descriptor is not UTF-8".into()))?;
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    let mut fields = BTreeMap::new();
-    let mut lines = text.lines().enumerate();
-    while let Some((line_number, line)) = lines.next() {
-        let trimmed = strip_trailing_comment(line.trim());
-        if trimmed.is_empty() {
-            continue;
-        }
-        // HOI4 descriptors commonly spread list blocks such as `tags={` over
-        // several lines. Join the block until its closing brace, then parse
-        // it as one assignment.
-        let mut statement = trimmed.to_string();
-        let mut depth = trimmed
-            .split_once('=')
-            .map(|(_, value)| block_depth(value))
-            .unwrap_or(0);
-        let mut consumed = 0;
-        while depth > 0 {
-            let (_, next) = lines.next().ok_or_else(|| {
-                AppError::InvalidInput(format!(
-                    "descriptor block starting on line {} is not closed",
-                    line_number + 1
-                ))
-            })?;
-            consumed += 1;
-            if consumed > MAX_BLOCK_LINES {
-                return Err(AppError::InvalidInput(format!(
-                    "descriptor block starting on line {} is too long",
-                    line_number + 1
-                )));
-            }
-            let next = strip_trailing_comment(next.trim());
-            if next.is_empty() {
-                continue;
-            }
-            depth += block_depth(next);
-            statement.push(' ');
-            statement.push_str(next);
-        }
-        let (key, value) = parse_assignment(&statement).ok_or_else(|| {
-            AppError::InvalidInput(format!("descriptor line {} is malformed", line_number + 1))
-        })?;
-        if REPEATABLE_DESCRIPTOR_KEYS.contains(&key.as_str()) {
-            fields
-                .entry(key)
-                .and_modify(|existing: &mut String| {
-                    existing.push('\n');
-                    existing.push_str(&value);
-                })
-                .or_insert(value);
-            continue;
-        }
-        if fields.insert(key.clone(), value).is_some() {
-            return Err(AppError::InvalidInput(format!(
-                "descriptor field is duplicated: {key}"
-            )));
-        }
-    }
-    if fields.is_empty() {
-        return Err(AppError::InvalidInput(
-            "descriptor contains no recognized assignments".into(),
-        ));
-    }
-    Ok(Descriptor { fields })
-}
-
-/// Net brace depth change of one descriptor fragment, ignoring braces inside
-/// quoted strings.
-fn block_depth(fragment: &str) -> i32 {
-    let mut depth = 0;
-    let mut quoted = false;
-    let mut escaped = false;
-    for character in fragment.chars() {
-        if quoted {
-            if escaped {
-                escaped = false;
-            } else if character == '\\' {
-                escaped = true;
-            } else if character == '"' {
-                quoted = false;
-            }
-            continue;
-        }
-        match character {
-            '"' => quoted = true,
-            '{' => depth += 1,
-            '}' => depth -= 1,
-            _ => {}
-        }
-    }
-    depth
-}
-
-/// Remove a `#` comment that is outside a quoted string.
-fn strip_trailing_comment(fragment: &str) -> &str {
-    let mut quoted = false;
-    let mut escaped = false;
-    for (index, character) in fragment.char_indices() {
-        if quoted {
-            if escaped {
-                escaped = false;
-            } else if character == '\\' {
-                escaped = true;
-            } else if character == '"' {
-                quoted = false;
-            }
-            continue;
-        }
-        if character == '"' {
-            quoted = true;
-        } else if character == '#' {
-            return fragment[..index].trim_end();
-        }
-    }
-    fragment
-}
-
-fn parse_assignment(line: &str) -> Option<(String, String)> {
-    let (raw_key, raw_value) = line.split_once('=')?;
-    let key = raw_key.trim();
-    if key.is_empty()
-        || !key.chars().enumerate().all(|(index, character)| {
-            if index == 0 {
-                character.is_ascii_alphabetic() || character == '_'
-            } else {
-                character.is_ascii_alphanumeric() || character == '_'
-            }
-        })
-    {
-        return None;
-    }
-    let raw_value = raw_value.trim();
-    if raw_value.starts_with('"') {
-        let mut escaped = false;
-        let mut closing = None;
-        for (index, character) in raw_value.char_indices().skip(1) {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if character == '\\' {
-                escaped = true;
-            } else if character == '"' {
-                closing = Some(index);
-                break;
-            }
-        }
-        let closing = closing?;
-        if !raw_value[closing + 1..].trim().is_empty() {
-            return None;
-        }
-        return Some((key.to_string(), unquote(&raw_value[1..closing])));
-    }
-    if raw_value.starts_with('{') {
-        if !raw_value.ends_with('}') || raw_value.len() < 2 {
-            return None;
-        }
-        return Some((key.to_string(), raw_value.to_string()));
-    }
-    if raw_value.is_empty()
-        || raw_value.chars().any(|character| character.is_whitespace())
-        || raw_value.contains('#')
-    {
-        return None;
-    }
-    Some((key.to_string(), raw_value.to_string()))
-}
-
-pub fn render_descriptor_mod(identity: &ProjectIdentity) -> Result<String, AppError> {
-    validate_project_id(&identity.project_id)?;
-    validate_field(&identity.display_name, "mod name")?;
-    validate_field(&identity.version, "version")?;
-    validate_field(&identity.supported_game_version, "supported game version")?;
-    let mut descriptor = format!(
-        "name=\"{}\"\nversion=\"{}\"\nsupported_version=\"{}\"\npicture=\"thumbnail.png\"\n",
-        quote(&identity.display_name),
-        quote(&identity.version),
-        quote(&identity.supported_game_version),
-    );
-    // Script prefixes and namespaces are project conventions, not valid HOI4
-    // descriptor fields. They are retained in installation metadata and
-    // adapted project guidance instead of being written to either .mod file.
-    if !identity.descriptor_tags.is_empty() {
-        validate_descriptor_tags(&identity.descriptor_tags)?;
-        let mut tags = identity.descriptor_tags.clone();
-        tags.sort();
-        let mut rendered = String::from("tags={");
-        for tag in tags {
-            validate_field(&tag, "descriptor tag")?;
-            if tag.chars().count() > 64 {
-                return Err(AppError::InvalidInput("descriptor tag is too long".into()));
-            }
-            rendered.push_str(&format!(" \"{}\"", quote(&tag)));
-        }
-        rendered.push_str(" }\n");
-        descriptor.push_str(&rendered);
-    }
-    Ok(descriptor)
-}
-
-/// A deterministic 600x600 black PNG keeps a fresh project launcher-ready
-/// without pretending to be user artwork. The file is replaceable and its
-/// exact bytes are tracked as generated content in the transaction lock.
-pub fn placeholder_thumbnail_png() -> Result<Vec<u8>, AppError> {
-    const SIDE: u32 = 600;
-    let mut bytes = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut bytes, SIDE, SIDE);
-        encoder.set_color(png::ColorType::Rgb);
-        encoder.set_depth(png::BitDepth::Eight);
-        encoder.set_compression(png::Compression::Best);
-        let mut writer = encoder.write_header().map_err(|error| {
-            AppError::InvalidInput(format!("thumbnail header could not be encoded: {error}"))
-        })?;
-        let pixels = vec![0_u8; (SIDE * SIDE * 3) as usize];
-        writer.write_image_data(&pixels).map_err(|error| {
-            AppError::InvalidInput(format!("thumbnail pixels could not be encoded: {error}"))
-        })?;
-    }
-    Ok(bytes)
-}
-
-pub fn validate_thumbnail_png(bytes: &[u8]) -> Result<(u32, u32), AppError> {
-    if bytes.len() > 16 * 1024 * 1024 {
-        return Err(AppError::InvalidInput(
-            "thumbnail exceeds the bounded PNG size".into(),
-        ));
-    }
-    let decoder = png::Decoder::new(Cursor::new(bytes));
-    let mut reader = decoder.read_info().map_err(|error| {
-        AppError::InvalidInput(format!("thumbnail is not a valid PNG: {error}"))
-    })?;
-    let (width, height) = {
-        let info = reader.info();
-        (info.width, info.height)
-    };
-    if width == 0 || height == 0 || width > 4096 || height > 4096 {
-        return Err(AppError::InvalidInput(
-            "thumbnail dimensions are outside the supported range".into(),
-        ));
-    }
-    let output_size = reader.output_buffer_size();
-    let mut output = vec![0_u8; output_size];
-    reader.next_frame(&mut output).map_err(|error| {
-        AppError::InvalidInput(format!("thumbnail could not be decoded: {error}"))
-    })?;
-    Ok((width, height))
-}
 
 pub fn render_launcher_descriptor(
     identity: &ProjectIdentity,
     project_root: &Path,
 ) -> Result<String, AppError> {
-    let descriptor = render_descriptor_mod(identity)?;
     let canonical_root = crate::paths::validate_project_root_or_destination(project_root)?.0;
     let raw_path = canonical_root
         .to_str()
@@ -347,8 +21,7 @@ pub fn render_launcher_descriptor(
             "project path contains a descriptor-breaking control character".into(),
         ));
     }
-    let path = launcher_path_text(&canonical_root);
-    Ok(format!("{descriptor}path=\"{}\"\n", quote(&path)))
+    launcher_descriptor_text(identity, &launcher_path_text(&canonical_root))
 }
 
 fn launcher_path_text(project_root: &Path) -> String {
@@ -364,19 +37,88 @@ fn launcher_path_text(project_root: &Path) -> String {
 /// root representation used by the renderer. Windows filesystem APIs retain
 /// a verbatim `\\?\` prefix internally, but that implementation detail is not
 /// valid user-facing launcher content.
+///
+/// The comparison is text only; the declared path is never opened. Surrounding
+/// spaces and trailing separators are ignored, and a relative value such as
+/// `mod/atlantis` is read against `user_directory` (the HOI4 user folder that
+/// holds the `mod` folder), as the launcher does. `..`, stream, and verbatim
+/// forms never match.
 pub(crate) fn launcher_path_matches_project_root(
     declared_path: &str,
     project_root: &Path,
+    user_directory: Option<&Path>,
 ) -> Result<bool, AppError> {
     let canonical_root = crate::paths::validate_project_root_or_destination(project_root)?.0;
-    let expected = launcher_path_text(&canonical_root);
-    Ok(if cfg!(target_os = "windows") {
-        declared_path
-            .replace('\\', "/")
-            .eq_ignore_ascii_case(&expected)
-    } else {
-        declared_path == expected
-    })
+    let windows = cfg!(target_os = "windows");
+    let normalize = |text: &str| {
+        let text = if windows {
+            text.replace('\\', "/")
+        } else {
+            text.to_owned()
+        };
+        let trimmed = text.trim();
+        let without_trailing = trimmed.trim_end_matches('/');
+        if without_trailing.is_empty() {
+            trimmed.to_owned()
+        } else {
+            without_trailing.to_owned()
+        }
+    };
+    let same = |left: &str, right: &str| {
+        if windows {
+            left.to_lowercase() == right.to_lowercase()
+        } else {
+            left == right
+        }
+    };
+    let declared = normalize(declared_path);
+    if same(&declared, &normalize(&launcher_path_text(&canonical_root))) {
+        return Ok(true);
+    }
+    let absolute =
+        declared.starts_with('/') || (windows && declared.as_bytes().get(1) == Some(&b':'));
+    if absolute {
+        return Ok(false);
+    }
+    let Some(user_directory) = user_directory else {
+        return Ok(false);
+    };
+    let Ok(relative_root) = canonical_root.strip_prefix(user_directory) else {
+        return Ok(false);
+    };
+    let relative_root = relative_root
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+    let declared = declared.strip_prefix("./").unwrap_or(&declared);
+    Ok(!relative_root.is_empty() && same(declared, &relative_root))
+}
+
+/// Whether a user's launcher descriptor registers the project: its parsed or
+/// raw `path=` value matches the root, reading a relative value against the
+/// HOI4 user folder (the parent of the folder that holds the project). Every
+/// read-side check uses this so discovery, approval, scan evidence, and
+/// readiness agree.
+pub(crate) fn launcher_registers_project_root(
+    bytes: &[u8],
+    declared: &str,
+    project_root: &Path,
+) -> bool {
+    let canonical = crate::paths::validate_project_root_or_destination(project_root)
+        .ok()
+        .map(|root| root.0);
+    let user_directory = canonical
+        .as_deref()
+        .and_then(Path::parent)
+        .and_then(Path::parent);
+    let matches = |value: &str| {
+        launcher_path_matches_project_root(value, project_root, user_directory).unwrap_or(false)
+    };
+    if matches(declared) {
+        return true;
+    }
+    raw_quoted_field(bytes, "path").is_some_and(|raw| matches(&raw))
 }
 
 pub fn validate_launcher_destination(identity: &ProjectIdentity) -> Result<(), AppError> {
@@ -438,32 +180,10 @@ pub fn generated_artifacts(identity: &ProjectIdentity) -> Result<Vec<GeneratedAr
     Ok(artifacts)
 }
 
-fn quote(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-fn unquote(value: &str) -> String {
-    let mut result = String::with_capacity(value.len());
-    let mut escaped = false;
-    for character in value.chars() {
-        if escaped {
-            result.push(character);
-            escaped = false;
-        } else if character == '\\' {
-            escaped = true;
-        } else {
-            result.push(character);
-        }
-    }
-    if escaped {
-        result.push('\\');
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
     use std::path::PathBuf;
 
     fn identity() -> ProjectIdentity {
@@ -574,11 +294,20 @@ mod tests {
             .0;
         let declared = user_facing_path(&canonical).replace('\\', "/");
 
-        assert!(launcher_path_matches_project_root(&declared, &project_root).unwrap());
-        assert!(
-            !launcher_path_matches_project_root(&format!("{declared}_other"), &project_root)
-                .unwrap()
-        );
+        assert!(launcher_path_matches_project_root(&declared, &project_root, None).unwrap());
+        assert!(!launcher_path_matches_project_root(
+            &format!("{declared}_other"),
+            &project_root,
+            None
+        )
+        .unwrap());
+        // Spaces and a trailing separator do not change the folder.
+        for equivalent in [format!("{declared}/"), format!(" {declared} ")] {
+            assert!(
+                launcher_path_matches_project_root(&equivalent, &project_root, None).unwrap(),
+                "{equivalent}"
+            );
+        }
         let sibling = parent.path().join("atlantis_sibling");
         let sibling_declared = user_facing_path(
             &crate::paths::validate_project_root_or_destination(&sibling)
@@ -586,24 +315,52 @@ mod tests {
                 .0,
         )
         .replace('\\', "/");
-        assert!(!launcher_path_matches_project_root(&sibling_declared, &project_root).unwrap());
+        assert!(
+            !launcher_path_matches_project_root(&sibling_declared, &project_root, None).unwrap()
+        );
         for mismatched in [
-            format!("{declared}/"),
             format!("{declared}/../atlantis_rising"),
             format!("{declared}:stream"),
             format!("//?/{declared}"),
         ] {
-            assert!(!launcher_path_matches_project_root(&mismatched, &project_root).unwrap());
+            assert!(!launcher_path_matches_project_root(&mismatched, &project_root, None).unwrap());
         }
         let different_case = declared.to_ascii_uppercase();
         assert_eq!(
-            launcher_path_matches_project_root(&different_case, &project_root).unwrap(),
+            launcher_path_matches_project_root(&different_case, &project_root, None).unwrap(),
             cfg!(target_os = "windows")
         );
         let mixed_separators = declared.replace('/', "\\");
         assert_eq!(
-            launcher_path_matches_project_root(&mixed_separators, &project_root).unwrap(),
+            launcher_path_matches_project_root(&mixed_separators, &project_root, None).unwrap(),
             cfg!(target_os = "windows")
+        );
+    }
+
+    #[test]
+    fn relative_launcher_paths_resolve_against_the_hoi4_user_folder() {
+        let user = tempfile::tempdir().unwrap();
+        let user = crate::paths::validate_project_root_or_destination(user.path())
+            .unwrap()
+            .0;
+        std::fs::create_dir_all(user.join("mod").join("atlantis")).unwrap();
+        let project_root = user.join("mod").join("atlantis");
+        for declared in ["mod/atlantis", "./mod/atlantis/", " mod/atlantis "] {
+            assert!(
+                launcher_path_matches_project_root(declared, &project_root, Some(&user)).unwrap(),
+                "{declared}"
+            );
+            assert!(!launcher_path_matches_project_root(declared, &project_root, None).unwrap());
+        }
+        for declared in ["mod/other", "atlantis", "mod/../mod/atlantis", ""] {
+            assert!(
+                !launcher_path_matches_project_root(declared, &project_root, Some(&user)).unwrap(),
+                "{declared}"
+            );
+        }
+        assert_eq!(
+            raw_quoted_field(b"name=\"A\"\npath=\"C:\\Users\\a\\mod\\x\"\n", "path").as_deref(),
+            Some("C:\\Users\\a\\mod\\x")
         );
     }
 
@@ -621,11 +378,13 @@ mod tests {
         let declared = parsed.fields.get("path").unwrap();
 
         assert!(declared.contains("atlantis\\rising"));
-        assert!(launcher_path_matches_project_root(declared, &project_root).unwrap());
-        assert!(
-            !launcher_path_matches_project_root(&declared.replace('\\', "/"), &project_root)
-                .unwrap()
-        );
+        assert!(launcher_path_matches_project_root(declared, &project_root, None).unwrap());
+        assert!(!launcher_path_matches_project_root(
+            &declared.replace('\\', "/"),
+            &project_root,
+            None
+        )
+        .unwrap());
     }
 
     #[cfg(unix)]
@@ -639,7 +398,7 @@ mod tests {
         std::fs::create_dir(&target).unwrap();
         symlink(&target, &linked).unwrap();
 
-        assert!(launcher_path_matches_project_root("/unused", &linked).is_err());
+        assert!(launcher_path_matches_project_root("/unused", &linked, None).is_err());
     }
 
     #[cfg(target_os = "windows")]

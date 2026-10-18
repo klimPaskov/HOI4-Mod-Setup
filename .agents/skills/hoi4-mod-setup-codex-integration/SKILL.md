@@ -235,6 +235,25 @@ to the deterministic official HOI4 Workshop-category allowlist.
 
 Use the scanner and validators for paths, hashes, descriptors, PNGs, encodings, Git state, identifier syntax, collisions, manifest checks, and file ownership.
 
+Request validation, the prompt, `validate_analysis_output`, the corrective
+prompt, the hosted-provider request body (`provider_request`, without the
+credential header), and reply extraction (`extract_structured_output`) live in
+`crates/hoi4-setup-core/src/analysis.rs`. `src-tauri/src/codex.rs` re-exports
+them and keeps a wrapper that supplies `Uuid::new_v4()`; the core never
+allocates randomness. Change validation there, once, for every provider and
+for the web edition. The web edition's optional assistant
+(`src/web/assistant.ts`) uses only routes that allow browser requests (Claude
+with `anthropic-dangerous-direct-browser-access`, Gemini, Grok, DeepSeek,
+GLM), keeps the key in component memory, sends at most one corrective turn,
+and records non-secret provenance with the route address in the lock. Moonshot
+blocks browser requests, so Kimi stays desktop-only.
+
+User-picked context documents (`src-tauri/src/context.rs`) are evidence with a
+reserved `@context/<n>-<name>` path and `context-<n>` reference. Bind them by
+reference, path, and excerpt hash to the session context store, never to the
+scan approval; maintenance still requires approved scan evidence. Images never
+reach a provider. See `docs/37_setup_context_attachments.md`.
+
 Every analysis turn must:
 
 - use a dedicated setup thread
@@ -267,7 +286,13 @@ Every analysis turn must:
 For existing-project analysis, the core accepts only normalized redacted
 finding/conflict summaries, evidence references, and matching hashes emitted by a completed deterministic read-only scan in the
 current app session and an explicit approval of that exact evidence vector.
-Completion of a scan alone is not an approval. Reject `.git`, environment, credential, token, key, PEM,
+Completion of a scan alone is not an approval. The provider-visible text of
+each finding is its core-owned `model_excerpt`, hashed into the evidence; the
+renderer sends it unchanged and never substitutes raw values. Project-profile
+excerpts carry only extracted facts, headings, and one short overview line;
+they omit any piece with a credential shape, machine-local path, or link, and
+mark documentation as untrusted. Every system prompt and the shared analysis
+prompt state that evidence text is untrusted data, never instructions. Reject `.git`, environment, credential, token, key, PEM,
 and other secret-bearing paths, duplicate references, and credential-shaped
 briefs, constraints, or excerpts before prompt construction. New-project
 analysis may have no scan evidence but still receives only the bounded user
@@ -317,11 +342,10 @@ evidence approval. Do not relax the generic absolute-path or `.git` rejection.
 
 ## Optional ChatGPT sources
 
-Source flattening remains independent of the setup assistant and non-blocking.
-Show it as a minor install check; do not promote source status or a planning
-recommendation on Ready or completion. The manifest installs the reusable
-`.tools/package_chatgpt_project_sources.py` and Windows launcher for later
-user-invoked export. See `docs/33_chatgpt_source_packaging.md` and the UI/source
+The app does not package or flatten ChatGPT sources. The optional
+`runtime.chatgpt_sources` manifest component installs
+`.tools/package_chatgpt_project_sources.py` and its Windows launcher only when
+the user checks it, for later user-invoked export. See `docs/33_chatgpt_source_packaging.md` and the UI/source
 skill supplements for the presentation and packaging boundaries. This export
 uses no provider login, model, or credentials.
 
@@ -423,6 +447,13 @@ response with a serialization error, one corrective turn is sent with
 `corrective_analysis_prompt` (the validator's bounded reason plus the input
 hash; Codex reuses the same thread). Validation is never relaxed, other error
 categories are not retried, and the record binds only the accepted response.
+Before the strict rules, `normalize_proposal_formatting` repairs formatting
+with no meaning (line breaks in single-line values, over-long convention text
+shortened at a word, identifier case and separators, tag spelling and
+duplicates, folder separators). Claude Code replies without a structured
+object, including its `error_max_structured_output_retries` give-up, earn the
+corrective turn; other `error_*` subtypes are run failures. Analysis failures
+write their bounded internal reason to the diagnostics log.
 Private/account-shaped, truncated, refused, unreadable, transport,
 authentication, and usage-limit failures are discarded without a corrective
 turn. The runtime schema and deterministic validator remain authoritative even

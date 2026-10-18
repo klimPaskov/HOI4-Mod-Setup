@@ -40,6 +40,23 @@ Read `AGENTS.md` before coding. Then read the repo-local skill that owns the cur
 - Platform adapters own Windows, macOS, and Linux differences.
 - Schemas define persisted project, plan, lock, journal, scan, conflict, and readiness data.
 - Tests use fake adapters so safety behavior can run without modifying real projects or using paid services.
+- `crates/hoi4-setup-core` is the portable core shared with the web edition. It
+  builds for `wasm32-unknown-unknown` and reaches files, HTTP, time, and
+  randomness only through the traits in `adapters.rs`; `MemoryFs` holds a
+  dropped folder or a fake project. It holds the models, manifest rules,
+  merge rules, coding-client registry, live-testing routes, MCP formats and
+  target, descriptors, the project profile, source adaptation, deterministic
+  proposals, analysis validation with the hosted-provider request and reply
+  rules, export planning, and the ZIP writer. The desktop crate re-exports
+  moved modules at their old `crate::` paths. CI builds and lints it with
+  `cargo build -p hoi4-setup-core --target wasm32-unknown-unknown`.
+- `crates/hoi4-setup-web` is the WebAssembly binding for the web edition
+  (`Project`, `Source`, `Export`, `analysisTurn`, `readAnalysisReply`). The
+  page lives in `src/web/` and `web/index.html`; a module worker
+  (`src/web/worker.ts`) runs the core, downloads selected files, and builds the
+  ZIP. `vite.web.config.ts` adds the Content Security Policy to the built page,
+  and `scripts/build_web.mjs` pins every bundle with SRI and writes
+  `build-info.json` with each file's SHA-256.
 
 The exact folder layout should be recorded in AGENTS and the owning skills after the source scaffold is accepted.
 
@@ -58,9 +75,22 @@ pnpm test:mcp-live
 pnpm test:scratch-live
 pnpm test:codex-live
 pnpm tauri dev
+pnpm web:dev
+pnpm web:build
+pnpm test:web
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
+
+The web edition needs the `wasm32-unknown-unknown` Rust target and the
+`wasm-bindgen` CLI at the exact version in `Cargo.lock` (`cargo install
+wasm-bindgen-cli --version <version> --locked`); `scripts/build_web.mjs` stops
+with that command when the versions differ. `pnpm web:dev` builds the core
+and serves the page at `http://localhost:1430/`. `pnpm web:build` writes
+`dist-web/`, and `pnpm test:web` runs the built page in Chromium, Firefox,
+and WebKit (`pnpm exec playwright install chromium firefox webkit` first).
+`node scripts/check_web_build.mjs` checks the CSP, SRI, connect hosts, and
+size budgets. The Pages workflow publishes the build at `/app/`.
 
 `pnpm test:rust` is the stable Rust test entry point. It bounds the default
 test concurrency at four threads so local runs do not exhaust the machine; set

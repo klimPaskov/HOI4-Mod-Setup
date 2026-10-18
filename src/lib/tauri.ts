@@ -1,11 +1,12 @@
 import { findingDisplayValue, findingLabel } from "../findings";
-import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, ChatSourcesPackageResult, ChatSourcesPreview, CodexAccountStatus, CodexAnalysisConfirmationValues, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, CodingEnvironmentId, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, UpdateSourceSelection, WizardState, WorkflowHealthResult } from "../types";
+import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, CodexAccountStatus, CodexAnalysisConfirmationValues, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, CodingEnvironmentId, ConflictPreview, ContextDocument, ContextImage, ContextPick, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, UpdateSourceSelection, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
   id: string;
   category?: string;
   key: string;
   value: unknown;
+  model_excerpt?: string | null;
   status: string;
   origin?: "deterministic" | "provider_suggested" | "user_confirmed";
   confidence?: number;
@@ -34,6 +35,7 @@ interface RawScanResult {
   files_scanned?: number;
   directories_scanned?: number;
   bytes_read?: number;
+  profile_stats?: ScanSnapshot["profileStats"];
   findings?: RawScanFinding[];
   conflicts?: RawScanConflict[];
 }
@@ -45,6 +47,7 @@ interface RawScanProgress {
   files_scanned: number;
   directories_scanned: number;
   bytes_read: number;
+  profile_stats?: ScanSnapshot["profileStats"];
 }
 
 interface RawReadinessReport {
@@ -94,16 +97,17 @@ interface TauriCommandMap {
   confirm_codex_analysis: { args: { record: CodexAnalysisRecord; confirmedFields: string[]; confirmedValues: unknown }; result: CodexAnalysisRecord };
   pick_project_folder: { args: Record<string, never>; result: FolderSelection };
   pick_launcher_folder: { args: Record<string, never>; result: FolderSelection };
-  pick_chat_sources_folder: { args: Record<string, never>; result: FolderSelection };
   suggest_project_paths: { args: { projectId: string }; result: SuggestedProjectPaths };
+  pick_context_documents: { args: Record<string, never>; result: ContextPick<ContextDocument> };
+  pick_context_images: { args: Record<string, never>; result: ContextPick<ContextImage> };
+  forget_context_attachment: { args: { id: string }; result: void };
+  read_diagnostics: { args: Record<string, never>; result: string };
   preview_source_manifest: { args: { sourceMode: WizardState["sourceMode"]; pinnedRef: string }; result: SourceManifestPreview };
   store_meshy_credential: { args: { value: string }; result: CredentialReference };
   meshy_credential_status: { args: Record<string, never>; result: CredentialReference | null };
   remove_meshy_credential: { args: { reference: CredentialReference }; result: void };
   scan_project: { args: { root: string; requestId: string; launcherDescriptorPath?: string | null }; result: RawScanResult };
   cancel_scan: { args: { requestId: string }; result: void };
-  preview_chat_sources: { args: { projectRoot: string }; result: ChatSourcesPreview };
-  package_chat_sources: { args: { projectRoot: string; destinationDirectory: string; selectedFileIds: string[] }; result: ChatSourcesPackageResult };
   evaluate_readiness: { args: { input: ReadinessInput }; result: RawReadinessReport };
   run_3d_health_check: { args: { projectRoot: string }; result: WorkflowHealthResult };
   inspect_local_portrait_provider: { args: { configuredRoot?: string | null; serverUrl: string }; result: LocalPortraitDiscovery };
@@ -355,8 +359,22 @@ export async function pickLauncherFolder(): Promise<FolderSelection | null> {
   return invokeCommand("pick_launcher_folder", {});
 }
 
-export async function pickChatSourcesFolder(): Promise<FolderSelection | null> {
-  return invokeCommand("pick_chat_sources_folder", {});
+export async function pickContextDocuments(): Promise<CommandResult<ContextPick<ContextDocument>>> {
+  return invokeCommandResult("pick_context_documents", {});
+}
+
+export async function pickContextImages(): Promise<CommandResult<ContextPick<ContextImage>>> {
+  return invokeCommandResult("pick_context_images", {});
+}
+
+export async function forgetContextAttachment(id: string): Promise<boolean> {
+  if (!id.trim()) return false;
+  return (await invokeCommandResult("forget_context_attachment", { id })).error === undefined;
+}
+
+/** Recent redacted diagnostics for the user to copy into a report. */
+export async function readDiagnostics(): Promise<string | null> {
+  return invokeCommand("read_diagnostics", {});
 }
 
 export async function suggestProjectPaths(projectId: string): Promise<SuggestedProjectPaths | null> {
@@ -397,6 +415,7 @@ export async function scanProject(
             filesScanned: event.payload.files_scanned,
             directoriesScanned: event.payload.directories_scanned,
             bytesRead: event.payload.bytes_read,
+            profileStats: event.payload.profile_stats,
           });
         });
       } catch {
@@ -416,7 +435,7 @@ export async function scanProject(
         label: `${finding.origin === "provider_suggested" ? "Suggested" : finding.origin === "user_confirmed" ? "Confirmed" : "Detected"} · ${findingLabel(finding.key)}`,
         value: typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? "",
         displayValue: findingDisplayValue(finding.key, typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? ""),
-        evidenceExcerpt: typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? "",
+        evidenceExcerpt: finding.model_excerpt ?? (typeof finding.value === "string" ? finding.value : JSON.stringify(finding.value) ?? ""),
         confidence: finding.confidence ?? Math.max(0, ...(finding.evidence ?? []).map((evidence) => evidence.confidence)),
         evidencePath: finding.evidence?.[0]?.path,
         status: finding.status === "blocking" ? "blocking" as const : finding.status === "needs_review" ? "needs_review" as const : "accepted" as const,
@@ -448,6 +467,7 @@ export async function scanProject(
       filesScanned: result.files_scanned ?? 0,
       directoriesScanned: result.directories_scanned ?? 0,
       bytesRead: result.bytes_read ?? 0,
+      profileStats: result.profile_stats,
     };
   } finally {
     unlisten?.();
@@ -456,22 +476,6 @@ export async function scanProject(
 
 export async function cancelScan(requestId: string): Promise<CommandResult<void>> {
   return invokeCommandResult("cancel_scan", { requestId });
-}
-
-export async function previewChatSources(projectRoot: string): Promise<CommandResult<ChatSourcesPreview>> {
-  return invokeCommandResult("preview_chat_sources", { projectRoot });
-}
-
-export async function packageChatSources(
-  projectRoot: string,
-  destinationDirectory: string,
-  selectedFileIds: string[],
-): Promise<CommandResult<ChatSourcesPackageResult>> {
-  return invokeCommandResult("package_chat_sources", {
-    projectRoot,
-    destinationDirectory,
-    selectedFileIds,
-  });
 }
 
 export async function evaluateReadiness(projectRoot: string, projectId: string, optional3d: string, portraitPipeline?: WizardState["portraitPipeline"]): Promise<ReadinessReport | null> {
@@ -546,7 +550,12 @@ function stateForCore(state: WizardState): WizardState {
   // Meshy input is a password draft. Keep the field for the typed command
   // shape, but never serialize its value across the renderer/core boundary.
   const { imageGenerationCredentialDrafts: _discardedDrafts, ...safeState } = state;
-  return { ...safeState, meshKeyDraft: "", imageGenerationCredentialDrafts: {} };
+  const core: WizardState = { ...safeState, meshKeyDraft: "", imageGenerationCredentialDrafts: {} };
+  // The core reads only attachment IDs, copy choices, and rendered copies; it
+  // already holds the picked bytes. Keep previews and excerpts out of planning.
+  if (state.contextImages) core.contextImages = state.contextImages.map((image) => ({ ...image, data_url: "" }));
+  if (state.contextDocuments) core.contextDocuments = state.contextDocuments.map((document) => ({ ...document, excerpt: "" }));
+  return core;
 }
 
 export async function approveInstallation(planId: string): Promise<boolean> {

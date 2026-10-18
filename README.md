@@ -16,6 +16,9 @@ You can update the setup, repair it, or add workflows later.
 
 Choose any supported coding client. Codex, Claude Code, Cursor, Qoder, and
 OpenCode can use the same modding guidance through their own client packages.
+Setup packages in manifest format 6 add GitHub Copilot (VS Code), Gemini CLI,
+Antigravity, Grok Build, Kilo Code, Kiro, Qwen Code, Cline, Devin Desktop,
+Augment, Continue, and Aider.
 The workflow comes from [Agentic HOI4 Modding](https://github.com/klimPaskov/Agentic-HOI4-Modding).
 It also installs [HOI4 Agent Tools](https://github.com/klimPaskov/hoi4-agent-tools), which lets your agent build focus trees, events, decisions and maps, and offers optional live testing with [Clausewitz MCP by smerss](https://github.com/smerss/Clausewitz-MCP) or experimental [HOI4 Live Tools](https://github.com/klimPaskov/HOI4-Live-Tools).
 
@@ -27,6 +30,21 @@ It also installs [HOI4 Agent Tools](https://github.com/klimPaskov/hoi4-agent-too
 - Mac with Intel: [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-x64.dmg)
 
 On Linux, follow the [Linux install guide](docs/LINUX.md).
+
+### Or use it in your browser
+
+The [web edition](https://klimpaskov.github.io/HOI4-Mod-Setup/app/) needs no
+install. Start a new mod or drop your mod folder on the page, review every
+change, and download a ZIP to unpack yourself. Your files stay in the browser
+tab: the page downloads only the selected modding files from GitHub at one
+exact commit and checks each against its published SHA-256 hash. Suggestions
+from Claude, Gemini, Grok, DeepSeek, or GLM are optional; the API key stays
+in the tab's memory and the provider sees only a scan summary.
+
+The web edition does not change files in place, so it has no backup or undo
+step; unpack the ZIP over a copy or a Git checkout of your mod. Account
+sign-in for Claude and Codex, MCP and image-provider setup, Git, and the 3D
+models workflow need the desktop app.
 
 On Windows, run the downloaded setup file. On Mac, open the disk image and
 move HOI4 Mod Setup to Applications. Community Windows builds are signed by
@@ -85,7 +103,10 @@ subagents, client configuration, and Git state, then shows what needs attention.
 ### Choose your coding clients and components
 
 Select any supported coding client as your main one, then add other clients you use.
-Codex, Claude Code, Cursor, Qoder, and OpenCode are supported.
+Codex, Claude Code, Cursor, Qoder, and OpenCode are supported, and setup
+packages in manifest format 6 add twelve more clients. Cline, Devin Desktop,
+Augment, and Continue keep MCP servers in their own settings, so the Ready
+screen links their setup guide; Aider has no MCP support.
 
 ![Choose one primary coding environment and any additional clients](docs/screenshots/15-coding-environments.png)
 
@@ -112,9 +133,9 @@ The final dependency and file plan is always checked by the app core.
 choose a specific commit or release. Updates bring in published components and
 keep your optional workflow choices.
 
-**Prepare a flattened ChatGPT project-sources folder** creates a separate folder
-with project guidance, README, skills, and subagents for use in ChatGPT. It does
-not include the offline wiki. Review its files and sizes before installation.
+**ChatGPT project-sources packager** is an optional component. Check it to add
+`.tools/package_chatgpt_project_sources.py`, a script you run yourself to export
+project files for a ChatGPT project.
 
 ### Add optional workflows
 
@@ -176,9 +197,9 @@ The Ready screen shows the project and tool checks. **Open in your primary
 client** starts that client in the mod folder when it is available. Optional
 workflows show their own setup status.
 
-For ChatGPT, use the prepared project-source files to start planning. The app
-does not upload them. Installed projects also include
-`.tools/package_chatgpt_project_sources.py` and a Windows `.bat` launcher.
+For ChatGPT, check the optional packager component during setup. It adds
+`.tools/package_chatgpt_project_sources.py` and a Windows `.bat` launcher; the
+app never runs them or uploads anything.
 Run `python .tools/package_chatgpt_project_sources.py` to export a folder and
 `all-project-sources.zip` to Downloads. Use `--dry-run`, `--include`, `--exclude`,
 or `--config` to adjust the selection, and a new `--output` folder for each
@@ -201,13 +222,6 @@ verified manifest. **Repair installation** keeps the installed revision.
 folders left empty. Edited setup files are shown for review; your mod content
 stays in place.
 
-When the scan finds project instructions, flattened skills, or subagents,
-**Package ChatGPT project sources** creates a ZIP in an external folder,
-defaulting to Downloads. Detected instructions, README, skills, and subagents
-stay selected; other root Markdown files are optional.
-
-![Package ChatGPT project sources](docs/screenshots/13-chat-sources.png)
-
 The app checks for updates when it opens and installs a newer signed version
 automatically. If an update fails, you can keep using the app and retry.
 
@@ -220,7 +234,9 @@ and interrupted installation fixes.
 
 HOI4 Mod Setup has no telemetry. Provider keys stay in Windows Credential
 Manager, macOS Keychain or Linux Secret Service. Claude Code and Codex handle their own account
-sign-in. Secret values are not written into the mod.
+sign-in. Secret values are not written into the mod. The web edition keeps a
+provider key only in the open tab's memory and lists every network request it
+makes under **Network**.
 
 ## License
 

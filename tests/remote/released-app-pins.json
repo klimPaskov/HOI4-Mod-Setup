@@ -24,5 +24,9 @@
         "readme_sha256": "4233181193c54f7620e8b907d405bbd40271df6d603af163e3d01ffc24f0ecea"
       }
     }
+  },
+  "clientPackages": {
+    "sourceRevision": "0b124ad9d3121fda5eb3cc5ff365f74a28db0f8f",
+    "note": "Format 6 coding-client packages in klimPaskov/Agentic-HOI4-Modding pull request 26."
   }
 }

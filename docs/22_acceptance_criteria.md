@@ -167,14 +167,16 @@
 - ENV-01: Setup includes a dedicated Coding Environments step with exactly one
   primary selection; new installs use the manifest-declared default, currently
   Claude Code.
-- ENV-02: Additional selections allow any subset of the other supported
-  environments (Codex, Claude Code, Cursor, Qoder, and OpenCode), never include
-  the primary, and update automatically when the primary changes.
+- ENV-02: Additional selections allow any subset of the other offered
+  environments, never include the primary, and update automatically when the
+  primary changes. A format 6 client is offered only when its project MCP route
+  matches an app adapter or its route is manual or absent; format 5 offers only
+  the five clients it shipped.
 - ENV-03: The manifest-declared native package is complete for every selected
   environment, while shared runtime-neutral components remain installed.
 - ENV-04: `CLAUDE.md`, `.claude/skills/`, and `.claude/agents/` are canonical;
-  `AGENTS.md`, Codex, Cursor, Qoder, and OpenCode projections are generated and
-  checked for drift.
+  `AGENTS.md` and every other client's projections are generated and checked
+  for drift.
 - ENV-05: Environment selection is independent of Core/Core plus 3D workflow
   profiles and is resolved through composable manifest components.
 - ENV-06: Existing-project scans detect installed environments, preserve a
@@ -379,10 +381,7 @@
 
 ## ChatGPT source package export
 
-- EXP-01: Existing-project management shows **Package ChatGPT project sources** when the scan finds an `AGENTS.md`, flattened skill, or subagent source; an installation lock and complete core component set are not required.
-- EXP-02: The export page defaults to the native Downloads folder, lists `AGENTS.md`, `README.md`, every flattened skill, every subagent, and immediate root Markdown files, with required entries selected and root Markdown entries unchecked.
-- EXP-03: The user can choose another existing external folder and package only the selected entries into a new ZIP; the project remains unchanged, existing archives are not overwritten, and the result reports the path and included files.
-- EXP-04: Rust rejects stale IDs, links, traversal, archive collisions, non-UTF-8 content, secret-shaped content, and per-file or aggregate limits before output is committed.
+- EXP-01: The app shows no ChatGPT packaging screen, callout, or flattening option; the optional `runtime.chatgpt_sources` component installs the user-run `.tools` packager only when checked (`docs/33_chatgpt_source_packaging.md`). EXP-02 to EXP-04 are retired.
 
 ## Application updates
 

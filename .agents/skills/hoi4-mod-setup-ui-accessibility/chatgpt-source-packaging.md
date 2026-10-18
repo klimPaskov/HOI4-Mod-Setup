@@ -1,14 +1,9 @@
 # ChatGPT packaging presentation
 
 Follow [the accepted source-packaging contract](../../../docs/33_chatgpt_source_packaging.md).
-ChatGPT project sources are optional. Show the muted line and expandable file
-evidence under Before setup; keep the Components option independent of the setup
-assistant. Ready, Readiness details, and completion contain no ChatGPT source
-status, planning card, link, or recommendation. Existing-project export remains
-available from project management.
-
-Verify Ready with flattening selected and an incomplete non-blocking source
-check: the primary development-client opener stays available and source copy is
-absent. Verify the install-check line and recapture Ready/Install review using
-the sanitized documentation fixtures. Earlier Ready recommendation requirements
-are superseded by this contract.
+The app offers no ChatGPT packaging: no export screen, Review or Update
+callout, Components flattening checkbox, or install-review check. The optional
+`runtime.chatgpt_sources` manifest component appears as an ordinary optional
+row on Components. Ready, Readiness details, and completion contain no ChatGPT
+source status, planning card, link, or recommendation; only the legacy readiness
+check of an older install stays hidden from Ready.

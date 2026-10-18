@@ -1,14 +1,21 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { analysisBrief, ChatSources, CodingEnvironments, Components, Conflict, DryRun, Findings, Git, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, UpdateSourceOptions, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
-import type { AiAccountStatus, AiProviderId, ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
+import App, { CopyDiagnosticsButton, analysisBrief, CodingEnvironments, Components, ContextAttachments, contextEvidence, Conflict, DryRun, Findings, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, UpdateSourceOptions, Welcome, Workflows, buildAnalysisConfirmationValues, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, forgetContextAttachment, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickContextDocuments, pickContextImages, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult, readDiagnostics } from "./lib/tauri";
+import type { AiAccountStatus, AiProviderId, CodexAnalysisResult, ContextDocument, ContextImage, FolderSelection, InstallationPlan, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
+import { renderCoverPng, renderReferenceJpeg } from "./lib/images";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), approveScanEvidence: vi.fn(), buildInstallationPlanResult: vi.fn(), buildMaintenancePlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewInstallationConflict: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), scanProject: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), approveScanEvidence: vi.fn(), buildInstallationPlanResult: vi.fn(), buildMaintenancePlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), findInterruptedTransaction: vi.fn(), forgetContextAttachment: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickContextDocuments: vi.fn(), pickContextImages: vi.fn(), pickProjectFolder: vi.fn(), readDiagnostics: vi.fn(), previewDescriptorsResult: vi.fn(), previewInstallationConflict: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), scanProject: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
+});
+
+// jsdom has no canvas; the context image rendering is exercised in images.test.ts.
+vi.mock("./lib/images", async () => {
+  const actual = await vi.importActual<typeof import("./lib/images")>("./lib/images");
+  return { ...actual, renderCoverPng: vi.fn(), renderReferenceJpeg: vi.fn() };
 });
 
 afterEach(() => {
@@ -67,7 +74,7 @@ function readyState(): WizardState {
 }
 
 function welcomeState(account: WizardState["codexAccount"], codexLogin?: WizardState["codexLogin"]): WizardState {
-  return { mode: "new", aiProvider: "codex", aiModel: "gpt-5.6-luna", aiReasoningEffort: "xhigh", aiEndpoint: "", selectedComponents: ["codex.config", "mcp.hoi4_agent_tools", "workflow.3d"], flattenForChat: false, meshSelected: true, codexAccount: account, codexLogin } as unknown as WizardState;
+  return { mode: "new", aiProvider: "codex", aiModel: "gpt-5.6-luna", aiReasoningEffort: "xhigh", aiEndpoint: "", selectedComponents: ["codex.config", "mcp.hoi4_agent_tools", "workflow.3d"], meshSelected: true, codexAccount: account, codexLogin } as unknown as WizardState;
 }
 
 function selectCodexProvider() {
@@ -185,6 +192,60 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByRole("group", { name: /additional coding environments/i })).toContainElement(screen.getByRole("checkbox", { name: /Cursor/ }));
   });
 
+  const formatSixPreview = {
+    schema_version: "6.0.0",
+    coding_environments: [
+      { id: "claude_code", display_name: "Claude Code", default_primary: true, mcp_support: "project" },
+      { id: "gemini_cli", display_name: "Gemini CLI", description: "GEMINI.md, .gemini agents, shared .agents skills, and MCP", mcp_support: "project", documentation_url: "https://geminicli.com/docs/tools/mcp-server/" },
+      { id: "cline", display_name: "Cline", description: "AGENTS.md, a Cline rule, and Claude-format skills", mcp_support: "manual", documentation_url: "https://docs.cline.bot/mcp/configuring-mcp-servers" },
+      { id: "aider", display_name: "Aider", description: "An .aider.conf.yml that reads AGENTS.md", mcp_support: "none" },
+    ],
+    unavailable_coding_environments: [{ id: "augment", display_name: "Augment (Auggie CLI)", reason: "This client is not supported on Windows." }],
+  } as unknown as SourceManifestPreview;
+
+  it("labels manual and absent MCP routes and lists clients this version cannot install", () => {
+    const state = { ...initialState, manifestPreview: formatSixPreview, primaryCodingEnvironment: "claude_code", additionalCodingEnvironments: [] } as WizardState;
+    render(<CodingEnvironments state={state} update={vi.fn()} />);
+    const primary = screen.getByRole("radiogroup", { name: /primary coding environment/i });
+    expect(within(primary).getAllByRole("radio")).toHaveLength(4);
+    expect(within(primary).getByText("Gemini CLI").closest(".coding-environment-copy")).toHaveTextContent(/\.gemini agents/);
+    expect(within(primary).getByText("Gemini CLI").closest(".coding-environment-copy")).not.toHaveTextContent(/set up in the client/);
+    expect(within(primary).getByText("Cline").closest(".coding-environment-copy")).toHaveTextContent("MCP is set up in the client");
+    expect(within(primary).getByText("Aider").closest(".coding-environment-copy")).toHaveTextContent("No MCP support");
+    // Unavailable clients are visible behind disclosure but never selectable.
+    expect(screen.queryByRole("radio", { name: /Augment/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Augment/ })).not.toBeInTheDocument();
+    const unavailable = screen.getByText("Not available (1)").closest("details")!;
+    expect(unavailable).toHaveTextContent(/Augment \(Auggie CLI\).*not supported on Windows/);
+  });
+
+  it("keeps the development-client selection independent from the setup assistant", () => {
+    for (const aiProvider of ["gemini_account", "grok_account", "claude_account", "codex"]) {
+      const update = vi.fn();
+      const state = { ...initialState, aiProvider, manifestPreview: formatSixPreview, primaryCodingEnvironment: "claude_code", additionalCodingEnvironments: [] } as unknown as WizardState;
+      render(<CodingEnvironments state={state} update={update} />);
+      expect(screen.getByRole("radio", { name: /^Claude Code/ })).toBeChecked();
+      expect(screen.getByRole("radio", { name: /^Gemini CLI/ })).not.toBeChecked();
+      expect(update).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("radio", { name: /^Gemini CLI/ }));
+      expect(update).toHaveBeenCalledWith(expect.objectContaining({ primaryCodingEnvironment: "gemini_cli", additionalCodingEnvironments: [] }));
+      expect(update.mock.calls[0][0]).not.toHaveProperty("aiProvider");
+      cleanup();
+    }
+  });
+
+  it("shows a manual MCP to-do with the reviewed guide only for selected manual clients", () => {
+    const state = { ...readyState(), manifestPreview: formatSixPreview, selectedComponents: ["mcp.hoi4_agent_tools"], primaryCodingEnvironment: "gemini_cli", additionalCodingEnvironments: ["cline", "aider"] } as WizardState;
+    render(<Ready state={state} update={vi.fn()} onMaintenance={vi.fn()} />);
+    expect(screen.getByText(/To-do: add HOI4 Agent Tools in Cline's own MCP settings/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Cline MCP guide" })).toHaveAttribute("href", "https://docs.cline.bot/mcp/configuring-mcp-servers");
+    expect(screen.queryByText(/in Gemini CLI's own MCP settings/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/in Aider's own MCP settings/)).not.toBeInTheDocument();
+    cleanup();
+    render(<Ready state={{ ...state, selectedComponents: [] }} update={vi.fn()} onMaintenance={vi.fn()} />);
+    expect(screen.queryByText(/To-do: add HOI4 Agent Tools/)).not.toBeInTheDocument();
+  });
+
   it("shows the default image route and keeps the primary separate from optional routes", () => {
     window.history.replaceState({}, "", "/?screenshot=image-generation");
     const fixture = documentationFixture(readyState());
@@ -203,6 +264,24 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("radio", { name: /OpenAI Images API/ }));
     expect(screen.getByRole("radio", { name: /OpenAI Images API/ })).toBeChecked();
     expect(screen.getByRole("radio", { name: /ChatGPT subscription \(GPTImage\)/ })).not.toBeChecked();
+  });
+
+  it("copies recent diagnostics for a failure report", async () => {
+    vi.mocked(readDiagnostics).mockResolvedValue("HOI4 Mod Setup 0.6.2 on Windows\nanalysis proposal \"script_prefix\" is invalid");
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    render(<CopyDiagnosticsButton />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy diagnostics" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining("script_prefix")));
+    expect(await screen.findByRole("status")).toHaveTextContent("Diagnostics copied.");
+  });
+
+  it("keeps manual image providers usable with clients the provider table does not list", () => {
+    window.history.replaceState({}, "", "/?screenshot=image-generation");
+    const fixture = { ...documentationFixture(readyState()), primaryCodingEnvironment: "aider", additionalCodingEnvironments: [] as string[] };
+    render(<ImageGenerationSetup state={fixture} update={vi.fn()} />);
+    expect(screen.getByRole("radio", { name: /^None — I will make art myself/ })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: /ChatGPT subscription \(GPTImage\)/ })).toBeDisabled();
   });
 
   it("selects the manifest image components when the provider route changes", () => {
@@ -262,16 +341,6 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(fixture.identity.projectRoot).toContain("C:\\Users\\Player\\");
   });
 
-  it("provides a sanitized ChatGPT source-package screenshot state", () => {
-    window.history.replaceState({}, "", "/?screenshot=chat-sources");
-    const fixture = documentationFixture(readyState());
-
-    expect(fixture.screen).toBe("chat-sources");
-    expect(fixture.chatSourcesAvailable).toBe(true);
-    expect(fixture.chatSourcesPreview?.destinationDirectory).toBe("C:\\Users\\Player\\Downloads");
-    expect(fixture.chatSourcesPreview?.files.some((file) => file.category === "root_markdown" && !file.selectedByDefault)).toBe(true);
-  });
-
   it("provides a sanitized interrupted-installation screenshot state", () => {
     window.history.replaceState({}, "", "/?screenshot=recovery");
     const fixture = documentationFixture(readyState());
@@ -290,18 +359,7 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(documentationFixture(base)).toBe(base);
   });
 
-  it("detects ChatGPT source packaging inputs without an installation lock", () => {
-    expect(detectedChatSourcesAvailable([
-      { id: "skill.inventory", value: JSON.stringify({ count: 1 }) } as ScanFinding,
-    ])).toBe(true);
-    expect(detectedChatSourcesAvailable([
-      { id: "subagent.inventory", value: JSON.stringify({ count: 1 }) } as ScanFinding,
-    ])).toBe(true);
-    expect(detectedChatSourcesAvailable([])).toBe(false);
-  });
-
-  it("offers source packaging from findings for an unmanaged project", () => {
-    const onPackageChatSources = vi.fn().mockResolvedValue(undefined);
+  it("does not offer ChatGPT source packaging from findings or update", () => {
     const finding = {
       id: "skill.inventory",
       label: "Skills",
@@ -318,11 +376,24 @@ describe("HOI4 Mod Setup wizard", () => {
       setFindings={vi.fn()}
       onConfirmAnalysis={vi.fn().mockResolvedValue(undefined)}
       onManageExisting={vi.fn()}
-      onPackageChatSources={onPackageChatSources}
     />);
 
-    fireEvent.click(screen.getByRole("button", { name: /Package ChatGPT project sources/ }));
-    expect(onPackageChatSources).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: /ChatGPT/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/ChatGPT/)).not.toBeInTheDocument();
+    cleanup();
+
+    render(<Update
+      state={readyState()}
+      update={vi.fn()}
+      findings={[]}
+      setFindings={vi.fn()}
+      onMaintenance={vi.fn()}
+      onStartMaintenance={vi.fn()}
+      onReanalyze={vi.fn().mockResolvedValue(true)}
+    />);
+
+    expect(screen.queryByRole("button", { name: /ChatGPT/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/ChatGPT/)).not.toBeInTheDocument();
   });
 
   it("shows blocking core scan conflicts in the review surface", () => {
@@ -347,7 +418,6 @@ describe("HOI4 Mod Setup wizard", () => {
       setFindings={vi.fn()}
       onConfirmAnalysis={vi.fn().mockResolvedValue(undefined)}
       onManageExisting={vi.fn()}
-      onPackageChatSources={vi.fn().mockResolvedValue(undefined)}
     />);
 
     expect(screen.getByText("Blocking conflict · unsafe git configuration")).toBeInTheDocument();
@@ -850,106 +920,10 @@ describe("HOI4 Mod Setup wizard", () => {
     await waitFor(() => expect(openExternalUrlResult).toHaveBeenCalledWith("https://platform.claude.com/settings/keys"));
   });
 
-  it("keeps the optional ChatGPT client package independent of the setup assistant", async () => {
-    const manifest = {
-      schema_version: "1.0.0",
-      manifest_id: "example",
-      source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
-      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
-      components: [],
-    } as unknown as SourceManifestPreview;
-    vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: manifest });
-
-    function ControlledComponents({ provider }: { provider: "codex" | "claude" }) {
-      const [state, setState] = useState({
-        aiProvider: provider,
-        flattenForChat: false,
-        sourceMode: "latest",
-        pinnedRef: "",
-        selectedComponents: [],
-      } as unknown as WizardState);
-      return <Components state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
-    }
-
-    render(<Git state={{ aiProvider: "codex", gitMode: "skip", gitBranch: "main", gitRemoteName: "origin", gitRemoteUrl: "", initialCommit: false } as unknown as WizardState} update={vi.fn()} />);
-    expect(screen.queryByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i })).not.toBeInTheDocument();
-    cleanup();
-
-    const { unmount } = render(<ControlledComponents provider="codex" />);
-    const checkbox = await screen.findByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i });
-    fireEvent.click(checkbox);
-    expect(checkbox).toBeChecked();
-    expect(screen.queryByLabelText(/Additional project files/i)).not.toBeInTheDocument();
-    unmount();
-
-    render(<ControlledComponents provider="claude" />);
-    await screen.findByText("Components loaded.");
-    expect(screen.getByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i })).toBeInTheDocument();
-    expect(screen.getByText(/independent of the setup assistant/i)).toBeInTheDocument();
-  });
-
-  it("shows flattened ChatGPT sources as a sized file package in Components after planning", async () => {
-    const manifest = {
-      schema_version: "1.0.0",
-      manifest_id: "example",
-      source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
-      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
-      components: [],
-    } as unknown as SourceManifestPreview;
-    vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: manifest });
-
-    render(<Components state={{
-      aiProvider: "codex",
-      flattenForChat: true,
-      sourceMode: "latest",
-      pinnedRef: "",
-      selectedComponents: [],
-      plan: {
-        operations: [],
-        conflicts: [],
-        generated_artifacts: [
-          { destination: "chatgpt_project_sources/AGENTS.md", content: "abc" },
-          { destination: "chatgpt_project_sources/README.md", content: "", bytes: [1, 2, 3, 4] },
-        ],
-      },
-    } as unknown as WizardState} update={vi.fn()} />);
-
-    expect(await screen.findByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i })).toBeChecked();
-    expect(screen.getByText("2 files · 7 B")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Files in the ChatGPT folder"));
-    expect(screen.getByText("AGENTS.md")).toBeInTheDocument();
-    expect(screen.getByText("README.md")).toBeInTheDocument();
-  });
-
-  it("previews flattened skill and subagent filenames and source sizes in Components", async () => {
-    const manifest = {
-      schema_version: "1.0.0",
-      manifest_id: "example",
-      source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
-      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
-      components: [
-        { id: "core.skills", display_name: "Skills", category: "skill", optional: false, platforms: ["all"], source: { kind: "tree", path: ".agents/skills" }, destination: { path: ".agents/skills/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [{ path: ".agents/skills/hoi4-events/SKILL.md", size: 120 }], capabilities: [], validation: [], update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true } },
-        { id: "core.subagents", display_name: "Subagents", category: "subagent", optional: false, platforms: ["all"], source: { kind: "tree", path: ".codex/agents" }, destination: { path: ".codex/agents/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [{ path: ".codex/agents/hoi4_researcher.toml", size: 80 }], capabilities: [], validation: [], update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true } },
-      ],
-    } as unknown as SourceManifestPreview;
-    vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: manifest });
-
-    render(<Components state={{ aiProvider: "codex", flattenForChat: true, sourceMode: "latest", pinnedRef: "", selectedComponents: ["core.skills", "core.subagents"] } as unknown as WizardState} update={vi.fn()} />);
-
-    await screen.findByText("Components loaded.");
-    fireEvent.click(screen.getByText("Files in the ChatGPT folder"));
-    expect(screen.getByText("hoi4-events.md")).toBeInTheDocument();
-    expect(screen.getByText("hoi4_researcher.toml")).toBeInTheDocument();
-    expect(screen.getByText("120 B")).toBeInTheDocument();
-    expect(screen.getByText("80 B")).toBeInTheDocument();
-    expect(screen.getAllByText("Size calculated during review")).toHaveLength(2);
-  });
-
   it("invalidates confirmed analysis when the source version changes", async () => {
     const update = vi.fn();
     render(<Components state={{
       aiProvider: "codex",
-      flattenForChat: false,
       sourceMode: "latest",
       pinnedRef: "",
       selectedComponents: ["core.skills"],
@@ -1139,7 +1113,7 @@ describe("HOI4 Mod Setup wizard", () => {
       .mockResolvedValueOnce({ value: null, error: "temporary source failure" })
       .mockResolvedValueOnce({ value: manifest });
 
-    render(<Components state={{ aiProvider: "codex", flattenForChat: false, sourceMode: "latest", pinnedRef: "", selectedComponents: [] } as unknown as WizardState} update={vi.fn()} />);
+    render(<Components state={{ aiProvider: "codex", sourceMode: "latest", pinnedRef: "", selectedComponents: [] } as unknown as WizardState} update={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Retry loading components" }));
     expect(await screen.findByText("Components loaded.")).toBeInTheDocument();
@@ -1170,7 +1144,7 @@ describe("HOI4 Mod Setup wizard", () => {
     } as unknown as SourceManifestPreview });
 
     function ControlledComponents() {
-      const [state, setState] = useState({ aiProvider: "codex", flattenForChat: false, sourceMode: "latest", pinnedRef: "", selectedComponents: [] } as unknown as WizardState);
+      const [state, setState] = useState({ aiProvider: "codex", sourceMode: "latest", pinnedRef: "", selectedComponents: [] } as unknown as WizardState);
       return <><Components state={state} update={(patch) => setState((value) => ({ ...value, ...patch }))} /><output aria-label="selected components">{state.selectedComponents.join(",")}</output></>;
     }
 
@@ -1193,7 +1167,7 @@ describe("HOI4 Mod Setup wizard", () => {
     } as unknown as SourceManifestPreview });
 
     function ControlledComponents() {
-      const [state, setState] = useState({ aiProvider: "codex", flattenForChat: false, sourceMode: "latest", pinnedRef: "", selectedComponents: [], existingInstallationDetected: true, installedComponentIds: [], maintenanceOptionalSelections: [] } as unknown as WizardState);
+      const [state, setState] = useState({ aiProvider: "codex", sourceMode: "latest", pinnedRef: "", selectedComponents: [], existingInstallationDetected: true, installedComponentIds: [], maintenanceOptionalSelections: [] } as unknown as WizardState);
       return <><Components state={state} update={(patch) => setState((value) => ({ ...value, ...patch }))} /><output aria-label="selected existing components">{state.selectedComponents.join(",")}</output></>;
     }
 
@@ -1425,53 +1399,39 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByLabelText("Meshy API key")).toBeInTheDocument();
   });
 
-  it("offers ChatGPT source packaging when the scan finds source files", () => {
-    const onPackageChatSources = vi.fn().mockResolvedValue(undefined);
+  it("keeps an installed client that the selected source version does not offer and says why", () => {
+    const update = vi.fn();
+    const preview = {
+      schema_version: "5.0.0", components: [], profiles: [],
+      coding_environments: [{ id: "claude_code", display_name: "Claude Code", default_primary: true }, { id: "codex", display_name: "Codex" }, { id: "cursor", display_name: "Cursor" }],
+    } as unknown as SourceManifestPreview;
     render(<Update
-      state={{ ...readyState(), aiProvider: "codex", chatSourcesAvailable: true } as unknown as WizardState}
-      update={vi.fn()}
+      state={{
+        ...readyState(),
+        aiProvider: "codex",
+        existingInstallationDetected: true,
+        installedWorkflow3dState: "not_selected",
+        installedSuperEventsState: "not_selected",
+        meshSelected: false,
+        superEventsSelected: false,
+        meshKeyDraft: "",
+        meshKeyStatus: "missing",
+        maintenanceEvidenceReady: false,
+        findings: [],
+        manifestPreview: preview,
+        primaryCodingEnvironment: "claude_code",
+        additionalCodingEnvironments: ["gemini_cli", "codex"],
+      } as unknown as WizardState}
+      update={update}
       findings={[]}
       setFindings={vi.fn()}
       onMaintenance={vi.fn()}
       onStartMaintenance={vi.fn()}
       onReanalyze={vi.fn().mockResolvedValue(true)}
-      onPackageChatSources={onPackageChatSources}
     />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Package ChatGPT project sources/ }));
-    expect(onPackageChatSources).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps required ChatGPT source files selected and root Markdown opt-in", () => {
-    const preview: ChatSourcesPreview = {
-      eligible: true,
-      projectRoot: "C:\\mods\\atlantis_rising",
-      destinationDirectory: "C:\\Users\\Player\\Downloads",
-      archiveName: "atlantis_rising-chatgpt-project-sources.zip",
-      files: [
-        { id: "instructions:AGENTS.md", sourcePath: "AGENTS.md", archivePath: "AGENTS.md", category: "instructions", size: 1024, required: true, selectedByDefault: true },
-        { id: "readme:README.md", sourcePath: "README.md", archivePath: "README.md", category: "readme", size: 512, required: true, selectedByDefault: true },
-        { id: "skill:hoi4-events", sourcePath: ".agents/skills/hoi4-events/SKILL.md", archivePath: "hoi4-events.md", category: "skill", size: 2048, required: true, selectedByDefault: true },
-        { id: "subagent:hoi4_researcher.toml", sourcePath: ".codex/agents/hoi4_researcher.toml", archivePath: "hoi4_researcher.toml", category: "subagent", size: 768, required: true, selectedByDefault: true },
-        { id: "root-markdown:NOTES.md", sourcePath: "NOTES.md", archivePath: "NOTES.md", category: "root_markdown", size: 256, required: false, selectedByDefault: false },
-      ],
-    };
-    const update = vi.fn();
-    const state = { ...readyState(), chatSourcesPreview: preview, chatSourcesDestination: preview.destinationDirectory, chatSourcesSelectedIds: preview.files.filter((file) => file.selectedByDefault).map((file) => file.id) } as unknown as WizardState;
-
-    render(<ChatSources state={state} update={update} onPickFolder={vi.fn().mockResolvedValue(undefined)} />);
-
-    expect(screen.getByLabelText("Download folder")).toHaveValue("C:\\Users\\Player\\Downloads");
-    const checkboxes = screen.getAllByRole("checkbox");
-    expect(checkboxes).toHaveLength(5);
-    expect(checkboxes.slice(0, 4).every((checkbox) => (checkbox as HTMLInputElement).checked && (checkbox as HTMLInputElement).disabled)).toBe(true);
-    const optional = screen.getByText("NOTES.md").closest("label");
-    expect(optional).not.toBeNull();
-    const optionalCheckbox = optional?.querySelector("input");
-    expect(optionalCheckbox).not.toBeNull();
-    expect(optionalCheckbox).not.toBeChecked();
-    fireEvent.click(optionalCheckbox as HTMLInputElement);
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({ chatSourcesSelectedIds: expect.arrayContaining(["root-markdown:NOTES.md"]) }));
+    expect(screen.getByText(/Installed but not in this source version: gemini_cli\..*will not remove its files implicitly/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /^Cursor/, hidden: true }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ primaryCodingEnvironment: "claude_code", additionalCodingEnvironments: ["codex", "cursor", "gemini_cli"] }));
   });
 
   it("uses declarative workflow titles and places Super Events immediately after 3D", async () => {
@@ -1609,7 +1569,7 @@ describe("HOI4 Mod Setup wizard", () => {
   it("keeps optional ChatGPT source status out of Ready and its details", () => {
     vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Windows NT 10.0");
     const state = readyState();
-    render(<Ready state={{ ...state, flattenForChat: true, readiness: { ...state.readiness!, checks: [...state.readiness!.checks, { id: "codex.chat_flatten", label: "ChatGPT Chat sources", status: "incomplete", blocking: false, message: "Optional source folder needs review" }] } }} update={vi.fn()} onMaintenance={vi.fn()} />);
+    render(<Ready state={{ ...state, readiness: { ...state.readiness!, checks: [...state.readiness!.checks, { id: "codex.chat_flatten", label: "ChatGPT Chat sources", status: "incomplete", blocking: false, message: "Optional source folder needs review" }] } }} update={vi.fn()} onMaintenance={vi.fn()} />);
     fireEvent.click(screen.getByText("Readiness details"));
     expect(screen.queryByText(/ChatGPT.*sources/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /ChatGPT/i })).not.toBeInTheDocument();
@@ -1797,11 +1757,30 @@ describe("HOI4 Mod Setup wizard", () => {
 
     expect(screen.getByText("Checking Git state")).toBeInTheDocument();
     expect(screen.getByText(".git")).toBeInTheDocument();
-    expect(screen.getByText(/12 files/)).toBeInTheDocument();
+    expect(screen.getByText(/12 setup files, 4 setup directories/)).toBeInTheDocument();
+    expect(screen.queryByText(/files indexed/)).not.toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: "Project scan progress" })).not.toHaveAttribute("aria-valuenow");
     expect(screen.getByRole("progressbar", { name: "Project scan progress" })).toHaveAttribute("aria-valuetext", "Scan in progress");
     fireEvent.click(screen.getByRole("button", { name: "Cancel scan" }));
     expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("separates indexed project files and content samples from setup files during profiling", () => {
+    const progress: ScanProgress = {
+      stage: "profiling_project",
+      currentPath: "common/national_focus/germany.txt",
+      filesScanned: 12,
+      directoriesScanned: 4,
+      bytesRead: 3 * 1024 * 1024,
+      profileStats: { files_indexed: 842, directories_indexed: 97, samples_read: 31, bytes_read: 3 * 1024 * 1024 - 4096, excluded_entries: 5, coverage: "complete" },
+    };
+    render(<Scan state={{ mode: "existing" } as unknown as WizardState} complete={false} progress={progress} partial={false} limitsHit={[]} canCancel cancellationRequested={false} onCancel={vi.fn().mockResolvedValue(undefined)} />);
+
+    expect(screen.getByText("common/national_focus/germany.txt")).toBeInTheDocument();
+    expect(screen.getByText(/842 files indexed, 31 content samples, 12 setup files/)).toBeInTheDocument();
+    expect(screen.queryByText(/setup directories/)).not.toBeInTheDocument();
+    expect(screen.getByText(/3\.0 MB read/)).toBeInTheDocument();
+    expect(screen.getByText("Profiling the mod")).toBeInTheDocument();
   });
 
   it("keeps a truncated scan visibly partial and does not call it a full scan", () => {
@@ -2490,7 +2469,6 @@ describe("HOI4 Mod Setup wizard", () => {
       aiProvider: "codex",
       gitBranch: "main",
       gitOnlineAction: "none",
-      flattenForChat: false,
       plan: {
         operations: [],
         conflicts: [],
@@ -2509,26 +2487,11 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByText("Check the 3D workflow")).toBeInTheDocument();
   });
 
-  it("keeps ChatGPT sources as a minor setup check for any assistant", () => {
-    render(<DryRun state={{
-      aiProvider: "deepseek",
-      gitBranch: "main",
-      gitOnlineAction: "none",
-      flattenForChat: true,
-      plan: { operations: [], conflicts: [], external_actions: [], generated_artifacts: [] },
-    } as unknown as WizardState} update={vi.fn()} />);
-
-    expect(screen.getByText("ChatGPT source files")).toBeInTheDocument();
-    expect(screen.queryByText("ChatGPT project files")).not.toBeInTheDocument();
-    expect(screen.getByText("Prepare changes to calculate")).toBeInTheDocument();
-  });
-
   it("shows the real file plan only when the user opens it", () => {
     render(<DryRun state={{
       aiProvider: "codex",
       gitBranch: "main",
       gitOnlineAction: "none",
-      flattenForChat: false,
       plan: {
         operations: [
           { id: "agents", action: "create", destination: "AGENTS.md" },
@@ -2881,5 +2844,184 @@ describe("live testing selection", () => {
     render(<Ready state={state} update={vi.fn()} onMaintenance={vi.fn()} />);
     expect(screen.getByText("To-do", { exact: true })).toBeInTheDocument();
     expect(screen.queryByText("Configured", { exact: true })).not.toBeInTheDocument();
+  });
+});
+
+function contextDocument(id: string, name: string, overrides: Partial<ContextDocument> = {}): ContextDocument {
+  const index = id.replace(/\D/g, "");
+  return { id, name, size: 2048, reference: `context-${index}`, evidence_path: `@context/${index}-${name}`, excerpt: `Notes from ${name}`, excerpt_sha256: index.repeat(64).slice(0, 64), truncated: false, redacted: false, copyable: true, ...overrides };
+}
+
+function contextImage(id: string, name: string): ContextImage {
+  const mediaType = name.endsWith(".png") ? "image/png" : "image/jpeg";
+  return { id, name, size: 4096, media_type: mediaType, data_url: `data:${mediaType};base64,${id}` };
+}
+
+let observedContextState: WizardState | undefined;
+
+function ControlledContext({ initial, resetAnalysisOnChange = false }: { initial: WizardState; resetAnalysisOnChange?: boolean }) {
+  const [state, setState] = useState<WizardState>(initial);
+  observedContextState = state;
+  return <ContextAttachments state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} resetAnalysisOnChange={resetAnalysisOnChange} />;
+}
+
+function openContextDisclosure() {
+  const summary = screen.getByText("Add context (optional)");
+  const details = summary.closest("details") as HTMLDetailsElement;
+  if (!details.open) fireEvent.click(summary);
+  if (!details.open) details.open = true;
+}
+
+describe("optional setup context", () => {
+  beforeEach(() => {
+    observedContextState = undefined;
+    vi.mocked(forgetContextAttachment).mockResolvedValue(true);
+    vi.mocked(renderReferenceJpeg).mockResolvedValue("UkVGRVJFTkNF");
+    vi.mocked(renderCoverPng).mockResolvedValue("VEhVTUI=");
+  });
+
+  it("adds documents with context on and copies off, explains uncopyable files, and removes them", async () => {
+    vi.mocked(pickContextDocuments).mockResolvedValue({ value: { added: [contextDocument("doc-1", "pitch.md"), contextDocument("doc-2", "notes.md", { copyable: false, truncated: true, redacted: true })], refused: [], cancelled: false } });
+    render(<ControlledContext initial={{ ...initialState, plan: { plan_id: "stale-plan" } as unknown as InstallationPlan }} />);
+    openContextDisclosure();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add documents…" }));
+    const pitch = (await screen.findByText("pitch.md")).closest("li") as HTMLElement;
+    expect(within(pitch).getByRole("checkbox", { name: "Use as context" })).toBeChecked();
+    expect(within(pitch).getByRole("checkbox", { name: "Keep a copy in docs/reference" })).not.toBeChecked();
+    expect(within(pitch).getByRole("checkbox", { name: "Keep a copy in docs/reference" })).toBeEnabled();
+    const notes = screen.getByText("notes.md").closest("li") as HTMLElement;
+    expect(within(notes).getByRole("checkbox", { name: "Keep a copy in docs/reference" })).toBeDisabled();
+    expect(within(notes).getByText(/Shortened/)).toBeInTheDocument();
+    expect(within(notes).getByText(/Some lines hidden/)).toBeInTheDocument();
+    expect(within(notes).getByText("Not copied because some lines were hidden.")).toBeInTheDocument();
+    expect(screen.getByText("· 2 documents")).toBeInTheDocument();
+    expect(observedContextState?.plan).toBeUndefined();
+    expect(observedContextState?.contextDocuments?.map((document) => [document.id, document.includeInAnalysis, document.keepCopy])).toEqual([["doc-1", true, false], ["doc-2", true, false]]);
+
+    fireEvent.click(within(pitch).getByRole("checkbox", { name: "Keep a copy in docs/reference" }));
+    expect(observedContextState?.contextDocuments?.[0].keepCopy).toBe(true);
+
+    fireEvent.click(within(pitch).getByRole("button", { name: "Remove pitch.md" }));
+    await waitFor(() => expect(screen.queryByText("pitch.md")).not.toBeInTheDocument());
+    expect(forgetContextAttachment).toHaveBeenCalledWith("doc-1");
+    expect(observedContextState?.contextDocuments?.map((document) => document.id)).toEqual(["doc-2"]);
+    expect(screen.getByRole("button", { name: "Add documents…" })).toHaveFocus();
+  });
+
+  it("renders the chosen thumbnail and toggles visual references", async () => {
+    vi.mocked(pickContextImages).mockResolvedValue({ value: { added: [contextImage("img-1", "cover.png"), contextImage("img-2", "flag.jpg")], refused: [], cancelled: false } });
+    render(<ControlledContext initial={{ ...initialState }} />);
+    openContextDisclosure();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add images…" }));
+    const cover = (await screen.findByRole("img", { name: "cover.png" })).closest("li") as HTMLElement;
+    const flag = screen.getByRole("img", { name: "flag.jpg" }).closest("li") as HTMLElement;
+    await waitFor(() => expect(observedContextState?.contextImages?.map((image) => image.referenceData)).toEqual(["UkVGRVJFTkNF", "UkVGRVJFTkNF"]));
+    expect(renderReferenceJpeg).toHaveBeenCalledWith("data:image/png;base64,img-1", 1600, 1024 * 1024);
+    expect(within(cover).getByRole("checkbox", { name: "Save as visual reference" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "No thumbnail from images" })).toBeChecked();
+
+    fireEvent.click(within(cover).getByRole("radio", { name: "Use as thumbnail" }));
+    await waitFor(() => expect(observedContextState?.contextThumbnail).toEqual({ attachmentId: "img-1", png: "VEhVTUI=" }));
+    expect(renderCoverPng).toHaveBeenCalledWith("data:image/png;base64,img-1", 600);
+    expect(within(cover).getByRole("radio", { name: "Use as thumbnail" })).toBeChecked();
+    expect(screen.getByRole("img", { name: "Thumbnail preview from cover.png" })).toHaveAttribute("src", "data:image/png;base64,VEhVTUI=");
+
+    fireEvent.click(within(cover).getByRole("checkbox", { name: "Save as visual reference" }));
+    await waitFor(() => expect(observedContextState?.contextImages?.[0].saveReference).toBe(false));
+    expect(observedContextState?.contextImages?.[0].referenceData).toBeUndefined();
+
+    vi.mocked(renderReferenceJpeg).mockResolvedValueOnce("U0VDT05E");
+    fireEvent.click(within(cover).getByRole("checkbox", { name: "Save as visual reference" }));
+    await waitFor(() => expect(observedContextState?.contextImages?.[0]).toMatchObject({ saveReference: true, referenceData: "U0VDT05E" }));
+
+    fireEvent.click(screen.getByRole("radio", { name: "No thumbnail from images" }));
+    expect(observedContextState?.contextThumbnail).toBeUndefined();
+
+    vi.mocked(renderCoverPng).mockRejectedValueOnce(new Error("no canvas"));
+    fireEvent.click(within(flag).getByRole("radio", { name: "Use as thumbnail" }));
+    expect(await screen.findByText("flag.jpg could not be used as the thumbnail.")).toHaveAttribute("role", "status");
+    expect(observedContextState?.contextThumbnail).toBeUndefined();
+  });
+
+  it("drops the thumbnail when its image is removed", async () => {
+    const image = { ...contextImage("img-4", "cover.png"), saveReference: true, referenceData: "UkVG" };
+    render(<ControlledContext initial={{ ...initialState, contextImages: [image], contextThumbnail: { attachmentId: "img-4", png: "VEhVTUI=" } }} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove cover.png" }));
+    await waitFor(() => expect(observedContextState?.contextImages).toEqual([]));
+    expect(forgetContextAttachment).toHaveBeenCalledWith("img-4");
+    expect(observedContextState?.contextThumbnail).toBeUndefined();
+  });
+
+  it("sends only the documents kept as context, after any scan evidence", () => {
+    const documents = [
+      { ...contextDocument("doc-1", "pitch.md"), includeInAnalysis: true, keepCopy: false },
+      { ...contextDocument("doc-2", "old-notes.md"), includeInAnalysis: false, keepCopy: true },
+    ];
+
+    expect(contextEvidence({ contextDocuments: documents })).toEqual([{ reference: "context-1", path: "@context/1-pitch.md", excerpt: "Notes from pitch.md", excerpt_sha256: "1".repeat(64), confidence: null }]);
+    expect(contextEvidence({})).toEqual([]);
+  });
+
+  it("includes the kept documents in the new-mod analysis request", async () => {
+    enableTauriRuntime();
+    vi.mocked(pickContextDocuments).mockResolvedValue({ value: { added: [contextDocument("doc-1", "pitch.md"), contextDocument("doc-2", "old-notes.md")], refused: [], cancelled: false } });
+
+    await renderAuthenticatedApp();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    openContextDisclosure();
+    fireEvent.click(screen.getByRole("button", { name: "Add documents…" }));
+    const oldNotes = (await screen.findByText("old-notes.md")).closest("li") as HTMLElement;
+    fireEvent.click(within(oldNotes).getByRole("checkbox", { name: "Use as context" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    await waitFor(() => expect(runCodexAnalysisResult).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(runCodexAnalysisResult).mock.calls[0][0].evidence).toEqual([{ reference: "context-1", path: "@context/1-pitch.md", excerpt: "Notes from pitch.md", excerpt_sha256: "1".repeat(64), confidence: null }]);
+    expect(approveScanEvidence).not.toHaveBeenCalled();
+  });
+
+  it("announces refused files, failed picks, and keeps cancelled picks silent", async () => {
+    vi.mocked(pickContextDocuments)
+      .mockResolvedValueOnce({ value: { added: [contextDocument("doc-3", "brief.md")], refused: ["tool.exe: this file type cannot be added as a document"], cancelled: false } })
+      .mockResolvedValueOnce({ value: { added: [], refused: [], cancelled: true } })
+      .mockResolvedValueOnce({ value: null, error: "The packaged desktop bridge is unavailable." });
+    render(<ControlledContext initial={{ ...initialState }} />);
+    openContextDisclosure();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add documents…" }));
+    const status = await screen.findByText(/Not added: tool\.exe: this file type cannot be added as a document/);
+    expect(status).toHaveAttribute("role", "status");
+    expect(status).toHaveTextContent("Added 1 document.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add documents…" }));
+    await waitFor(() => expect(pickContextDocuments).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add documents…" })).not.toHaveAttribute("aria-busy"));
+    expect(observedContextState?.contextDocuments?.map((document) => document.id)).toEqual(["doc-3"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add documents…" }));
+    expect(await screen.findByText("Documents could not be added: The packaged desktop bridge is unavailable.")).toHaveAttribute("role", "status");
+  });
+
+  it("discards a description analysis only when the documents sent as context change", () => {
+    const record = { analysis_id: "semantic-analysis", confirmed_fields: [] } as unknown as WizardState["codexAnalysisRecord"];
+    render(<ControlledContext resetAnalysisOnChange initial={{ ...initialState, codexAnalysis: semanticAnalysisFixture() as unknown as WizardState["codexAnalysis"], codexAnalysisRecord: record, contextDocuments: [{ ...contextDocument("doc-1", "pitch.md"), includeInAnalysis: true, keepCopy: false }] }} />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Keep a copy in docs/reference" }));
+    expect(observedContextState?.codexAnalysis).toBeDefined();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Use as context" }));
+    expect(observedContextState?.codexAnalysis).toBeUndefined();
+    expect(observedContextState?.codexAnalysisRecord).toBeUndefined();
+  });
+
+  it("offers a fresh review when the documents change after an existing-mod review", () => {
+    const update = vi.fn();
+    const state = { ...initialState, mode: "existing", codexAnalysis: semanticAnalysisFixture() as unknown as WizardState["codexAnalysis"], contextAnalysisDocumentIds: [], contextDocuments: [{ ...contextDocument("doc-1", "pitch.md"), includeInAnalysis: true, keepCopy: false }] } as WizardState;
+    render(<ContextAttachments state={state} update={update} />);
+
+    expect(screen.getByText("Context changed — run the review again to use it.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review again" }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ codexAnalysis: undefined, codexAnalysisRecord: undefined, plan: undefined }));
   });
 });

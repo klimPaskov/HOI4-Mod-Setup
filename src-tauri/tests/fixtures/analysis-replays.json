@@ -1,0 +1,67 @@
+[
+  {
+    "name": "valid structured reply",
+    "wrap": "structured",
+    "patches": [],
+    "outcome": "accepted"
+  },
+  {
+    "name": "valid JSON in a fenced text reply",
+    "wrap": "fenced_text",
+    "patches": [],
+    "outcome": "accepted"
+  },
+  {
+    "name": "multi-line convention, country-tag prefix, and lowercase tags",
+    "wrap": "structured",
+    "patches": [
+      { "pointer": "/proposals/2/value", "value": "GER" },
+      { "pointer": "/proposals/5/value", "value": ["gameplay", "Gameplay", "national focuses"] },
+      { "pointer": "/proposals/8/value", "value": "English and German headers.\nUTF-8 with BOM." }
+    ],
+    "outcome": "accepted",
+    "expect": {
+      "script_prefix": "ger",
+      "descriptor_tags": ["Gameplay", "National Focuses"],
+      "localisation_convention": "English and German headers. UTF-8 with BOM."
+    }
+  },
+  {
+    "name": "an over-long documentation convention",
+    "wrap": "structured",
+    "patches": [
+      { "pointer": "/proposals/9/value", "value": "Markdown guides covering every subsystem, every focus branch, every event chain, every decision category, every scripted effect, every localisation file, every interface file, every map change, every balance note, and every release checklist for the whole mod" }
+    ],
+    "outcome": "accepted"
+  },
+  {
+    "name": "internal planning language in the summary",
+    "wrap": "structured",
+    "patches": [
+      { "pointer": "/project_summary", "value": "The approved input describes a focus-tree mod." }
+    ],
+    "outcome": "corrective"
+  },
+  {
+    "name": "prose without a JSON object",
+    "wrap": "prose",
+    "patches": [],
+    "outcome": "corrective"
+  },
+  {
+    "name": "a missing required proposal",
+    "wrap": "structured",
+    "patches": [
+      { "pointer": "/proposals", "remove_last": true }
+    ],
+    "outcome": "corrective"
+  },
+  {
+    "name": "an account-shaped reason",
+    "wrap": "structured",
+    "patches": [
+      { "pointer": "/proposals/0/reason", "value": "Matches account_id: 12345." }
+    ],
+    "outcome": "discarded"
+  }
+]

@@ -21,8 +21,8 @@ use crate::merge::{
 };
 use crate::models::{CredentialReference, *};
 use crate::paths::{
-    application_data_root, hoi4_user_mod_directory, validate_export_directory,
-    validate_project_root, validate_project_root_or_destination,
+    application_data_root, hoi4_user_mod_directory, validate_project_root,
+    validate_project_root_or_destination,
 };
 use crate::readiness::ReadinessInput;
 use crate::safe_fs::RootedDir;
@@ -45,6 +45,8 @@ use crate::transaction::{
     TransactionOptions,
 };
 use crate::AppError;
+use hoi4_setup_core::adapt::*;
+use hoi4_setup_core::manifest::{add_supported_profile_components, default_profile_component_ids};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -114,6 +116,9 @@ struct SourceManifestPreview {
     components: Vec<ComponentDefinition>,
     profiles: Vec<Profile>,
     coding_environments: Vec<CodingEnvironmentDefinition>,
+    /// Declared clients this app version or platform cannot install.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unavailable_coding_environments: Vec<UnavailableCodingEnvironment>,
     #[serde(skip_serializing_if = "Option::is_none")]
     image_generation: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -952,12 +957,13 @@ pub fn run() {
             confirm_codex_analysis,
             pick_project_folder,
             pick_launcher_folder,
-            pick_chat_sources_folder,
             suggest_project_paths,
+            read_diagnostics,
+            pick_context_documents,
+            pick_context_images,
+            forget_context_attachment,
             scan_project,
             cancel_scan,
-            preview_chat_sources,
-            package_chat_sources,
             store_meshy_credential,
             meshy_credential_status,
             remove_meshy_credential,
@@ -1490,6 +1496,10 @@ fn is_allowed_external_url(url: &str) -> bool {
         "https://klimpaskov.github.io/Agentic-HOI4-Modding/",
     ];
     ALLOWED_URLS.contains(&url)
+        || coding_environment::NATIVE_CLIENTS
+            .iter()
+            .filter_map(|client| client.documentation_url)
+            .any(|documentation| documentation == url)
         || ai::provider_profiles()
             .iter()
             .filter_map(|profile| profile.account_url.as_deref())
@@ -1834,6 +1844,9 @@ fn ai_analyze_blocking(mut request: AiAnalysisRequest) -> Result<CodexAnalysisRe
         &request,
     )
     .map_err(|error| {
+        // The internal reason is bounded and never carries model content; it
+        // is what a user can share when every attempt is rejected.
+        crate::paths::record_diagnostic("analysis", &error.to_string());
         if request.provider == crate::claude_code::PROVIDER_ID {
             claude_user_error(error)
         } else {
@@ -1988,14 +2001,45 @@ fn validate_codex_evidence_approval(request: &CodexAnalysisRequest) -> Result<()
         }
         validate_approved_project_root_identity(&requested_root, &approved, request.scan_id)?;
     }
-    let requested_evidence_sha256 = crate::codex::evidence_manifest_sha256(&request.evidence)?;
+    // Documents the user added are bound by the context store; the scan
+    // approval covers only scan evidence.
+    let (context, scan): (Vec<_>, Vec<_>) = request
+        .evidence
+        .iter()
+        .cloned()
+        .partition(|evidence| crate::context::is_context_evidence_path(&evidence.path));
+    for evidence in &context {
+        crate::context::validate_context_evidence(
+            &evidence.reference,
+            &evidence.path,
+            &evidence.excerpt_sha256,
+        )?;
+    }
+    let mut references = BTreeSet::new();
+    for evidence in &context {
+        if !references.insert(evidence.reference.as_str()) {
+            return Err(AppError::InvalidInput(
+                "Codex evidence references must be unique".into(),
+            ));
+        }
+    }
+    if scan.is_empty() {
+        if request.analysis_purpose.as_deref() == Some("maintenance_reanalysis") {
+            return Err(AppError::Credential(
+                "maintenance analysis requires approved read-only evidence".into(),
+            ));
+        }
+        if request.analysis_purpose.as_deref() != Some("existing_project_import") {
+            return Ok(());
+        }
+    }
+    let requested_evidence_sha256 = crate::codex::evidence_manifest_sha256(&scan)?;
     if approved.evidence_sha256.as_deref() != Some(requested_evidence_sha256.as_str()) {
         return Err(AppError::Credential(
             "Codex evidence must be explicitly approved after the latest read-only scan".into(),
         ));
     }
-    let mut references = BTreeSet::new();
-    for evidence in &request.evidence {
+    for evidence in &scan {
         if !references.insert(evidence.reference.as_str()) {
             return Err(AppError::InvalidInput(
                 "Codex evidence references must be unique".into(),
@@ -2301,7 +2345,12 @@ async fn pick_project_folder(app: tauri::AppHandle) -> Result<FolderSelection, S
             Ok(FolderSelection {
                 path: Some(crate::paths::user_facing_path(&canonical)),
                 launcher_descriptor_path,
-                error: discovery.err().map(|error| error.to_string()),
+                // Discovery explains itself; the internal error category
+                // prefix would only make a review item read like a crash.
+                error: discovery.err().map(|error| match error {
+                    AppError::Scan(message) => message,
+                    other => other.to_string(),
+                }),
                 cancelled: false,
             })
         }
@@ -2343,65 +2392,112 @@ async fn pick_launcher_folder(app: tauri::AppHandle) -> Result<FolderSelection, 
     })
 }
 
+/// Result of adding context files the user picked.
+#[derive(Debug, Clone, serde::Serialize)]
+struct ContextPick<T> {
+    added: Vec<T>,
+    refused: Vec<String>,
+    cancelled: bool,
+}
+
+fn picked_paths(
+    selected: Option<Vec<tauri_plugin_dialog::FilePath>>,
+) -> Result<Option<Vec<PathBuf>>, String> {
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    selected
+        .into_iter()
+        .map(|file| {
+            file.into_path()
+                .map_err(|error| format!("selected file is not a local path: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+/// Add documents that describe the mod. Reading happens only for files the
+/// user picks in the native dialog.
 #[tauri::command(async)]
-async fn pick_chat_sources_folder(app: tauri::AppHandle) -> Result<FolderSelection, String> {
+async fn pick_context_documents(
+    app: tauri::AppHandle,
+) -> Result<ContextPick<crate::context::ContextDocument>, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    let Some(selected) = app
+    let selected = app
         .dialog()
         .file()
-        .set_title("Choose a folder for the ChatGPT source package")
-        .blocking_pick_folder()
-    else {
-        return Ok(FolderSelection {
-            path: None,
-            launcher_descriptor_path: None,
-            error: None,
+        .set_title("Add documents that describe the mod")
+        .add_filter("Documents and scripts", crate::context::DOCUMENT_EXTENSIONS)
+        .blocking_pick_files();
+    let Some(paths) = picked_paths(selected)? else {
+        return Ok(ContextPick {
+            added: Vec::new(),
+            refused: Vec::new(),
             cancelled: true,
         });
     };
-    let path = selected
-        .into_path()
-        .map_err(|error| format!("selected folder is not a local path: {error}"))?;
-    let canonical = validate_export_directory(&path).map_err(command_error)?;
-    Ok(FolderSelection {
-        path: Some(crate::paths::user_facing_path(&canonical)),
-        launcher_descriptor_path: None,
-        error: None,
-        cancelled: false,
-    })
-}
-
-#[tauri::command(async)]
-async fn preview_chat_sources(
-    project_root: String,
-) -> Result<crate::chat_sources::ChatSourcesPreview, String> {
-    run_blocking_command("chat-sources-preview", move || {
-        let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
-        let destination = crate::paths::downloads_directory()
-            .map(|path| crate::paths::user_facing_path(&path))
-            .unwrap_or_default();
-        let project_id = crate::chat_sources::project_id_from_root(&root).map_err(command_error)?;
-        crate::chat_sources::preview(&root, &project_id, destination).map_err(command_error)
+    run_blocking_command("context-documents", move || {
+        let (added, refused) = crate::context::add_documents(&paths);
+        Ok(ContextPick {
+            added,
+            refused,
+            cancelled: false,
+        })
     })
     .await
 }
 
+/// Add images for the thumbnail or visual direction.
 #[tauri::command(async)]
-async fn package_chat_sources(
-    project_root: String,
-    destination_directory: String,
-    selected_file_ids: Vec<String>,
-) -> Result<crate::chat_sources::ChatSourcesPackageResult, String> {
-    run_blocking_command("chat-sources-package", move || {
-        let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
-        let destination =
-            validate_export_directory(Path::new(&destination_directory)).map_err(command_error)?;
-        let project_id = crate::chat_sources::project_id_from_root(&root).map_err(command_error)?;
-        crate::chat_sources::package(&root, &project_id, &destination, &selected_file_ids)
-            .map_err(command_error)
+async fn pick_context_images(
+    app: tauri::AppHandle,
+) -> Result<ContextPick<crate::context::ContextImage>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let selected = app
+        .dialog()
+        .file()
+        .set_title("Add images for the thumbnail or visual direction")
+        .add_filter("Images", crate::context::IMAGE_EXTENSIONS)
+        .blocking_pick_files();
+    let Some(paths) = picked_paths(selected)? else {
+        return Ok(ContextPick {
+            added: Vec::new(),
+            refused: Vec::new(),
+            cancelled: true,
+        });
+    };
+    run_blocking_command("context-images", move || {
+        let (added, refused) = crate::context::add_images(&paths);
+        Ok(ContextPick {
+            added,
+            refused,
+            cancelled: false,
+        })
     })
     .await
+}
+
+/// The recent diagnostics log, with the app version, for the user to copy.
+#[tauri::command(async)]
+fn read_diagnostics(app: tauri::AppHandle) -> Result<String, String> {
+    let recent = crate::paths::recent_diagnostics(32 * 1024);
+    Ok(format!(
+        "HOI4 Mod Setup {} on {}\n{}",
+        app.package_info().version,
+        Platform::current().display_name(),
+        if recent.trim().is_empty() {
+            "No diagnostics have been recorded."
+        } else {
+            recent.as_str()
+        }
+    ))
+}
+
+#[tauri::command(async)]
+fn forget_context_attachment(id: String) -> Result<(), String> {
+    crate::context::forget(&id).map_err(command_error)
 }
 
 #[tauri::command(async)]
@@ -2547,10 +2643,14 @@ fn scan_evidence_entries(
 ) -> Result<HashMap<String, Vec<(String, String)>>, String> {
     let mut entries = HashMap::<String, Vec<(String, String)>>::new();
     for finding in &result.findings {
-        let excerpt = match &finding.value {
-            Value::String(value) => value.clone(),
-            value => serde_json::to_string(value)
-                .map_err(|error| format!("scan evidence could not be serialized: {error}"))?,
+        let excerpt = if let Some(excerpt) = &finding.model_excerpt {
+            excerpt.clone()
+        } else {
+            match &finding.value {
+                Value::String(value) => value.clone(),
+                value => serde_json::to_string(value)
+                    .map_err(|error| format!("scan evidence could not be serialized: {error}"))?,
+            }
         };
         let excerpt_sha256 = sha256_bytes(excerpt.as_bytes());
         let finding_entries = entries.entry(finding.id.clone()).or_default();
@@ -3956,11 +4056,23 @@ fn installed_mcp_target(
     environments.sort();
     environments.dedup();
     for environment in environments {
-        let destination = image_client_config_path(environment).ok_or_else(|| {
-            AppError::Process(
-                "a selected coding client has no verified MCP registration route".into(),
-            )
-        })?;
+        // Clients whose MCP servers live only in user or IDE settings are a
+        // manual step reported by readiness; there is no project route to
+        // verify for them.
+        if matches!(
+            coding_environment::mcp_support(&manifest, environment),
+            Some(McpSupport::Manual | McpSupport::None)
+        ) {
+            continue;
+        }
+        let destination = coding_environment::native_client(environment)
+            .and_then(|client| client.mcp)
+            .map(|mcp| mcp.path)
+            .ok_or_else(|| {
+                AppError::Process(
+                    "a selected coding client has no verified MCP registration route".into(),
+                )
+            })?;
         let bytes = crate::flatten::read_bounded_regular_file_no_follow_under_root(
             project_root,
             destination,
@@ -4007,60 +4119,10 @@ fn retarget_native_mcp_config(
     destination: &str,
     launch: Option<&(String, Vec<String>)>,
 ) -> Result<Vec<u8>, AppError> {
-    if destination == ".codex/config.toml" {
-        let mut config: toml::Value = std::str::from_utf8(bytes)
-            .map_err(|_| AppError::Source("client MCP configuration is not UTF-8".into()))?
-            .parse()
-            .map_err(|e: toml::de::Error| AppError::Source(e.to_string()))?;
-        if let Some(servers) = config
-            .get_mut("mcp_servers")
-            .and_then(toml::Value::as_table_mut)
-        {
-            if let Some((command, args)) = launch {
-                if let Some(route) = servers
-                    .get_mut("hoi4_agent_tools")
-                    .and_then(toml::Value::as_table_mut)
-                {
-                    route.insert("command".into(), toml::Value::String(command.clone()));
-                    route.insert(
-                        "args".into(),
-                        toml::Value::Array(args.iter().cloned().map(toml::Value::String).collect()),
-                    );
-                }
-            } else {
-                servers.remove("hoi4_agent_tools");
-            }
-        }
-        return toml::to_string_pretty(&config)
-            .map(String::into_bytes)
-            .map_err(|e| AppError::Source(e.to_string()));
-    }
-    let mut config: Value = serde_json::from_slice(bytes)?;
-    let key = if destination == "opencode.json" {
-        "mcp"
-    } else {
-        "mcpServers"
+    let Some((_, route)) = coding_environment::mcp_route_for_path(destination) else {
+        return Ok(bytes.to_vec());
     };
-    if let Some(servers) = config.get_mut(key).and_then(Value::as_object_mut) {
-        if let Some((command, args)) = launch {
-            if let Some(route) = servers
-                .get_mut("hoi4_agent_tools")
-                .and_then(Value::as_object_mut)
-            {
-                if key == "mcp" {
-                    let mut command_line = vec![command.clone()];
-                    command_line.extend(args.clone());
-                    route.insert("command".into(), serde_json::json!(command_line));
-                } else {
-                    route.insert("command".into(), serde_json::json!(command));
-                    route.insert("args".into(), serde_json::json!(args));
-                }
-            }
-        } else {
-            servers.remove("hoi4_agent_tools");
-        }
-    }
-    serde_json::to_vec_pretty(&config).map_err(AppError::from)
+    crate::native_mcp::retarget(route.format, bytes, launch)
 }
 
 #[tauri::command(async)]
@@ -4401,6 +4463,10 @@ fn preview_source_manifest_blocking(
     let client = HttpSourceClient::new().map_err(command_error)?;
     let resolution = resolve_source(&client, &request).map_err(command_error)?;
     let coding_environments = crate::coding_environment::definitions(&resolution.manifest);
+    let unavailable_coding_environments = crate::coding_environment::unavailable_definitions(
+        &resolution.manifest,
+        Platform::current(),
+    );
     Ok(SourceManifestPreview {
         schema_version: resolution.manifest.schema_version.clone(),
         manifest_id: resolution.manifest.manifest_id.clone(),
@@ -4409,6 +4475,7 @@ fn preview_source_manifest_blocking(
         components: resolution.manifest.components,
         profiles: resolution.manifest.profiles,
         coding_environments,
+        unavailable_coding_environments,
         image_generation: resolution.manifest.image_generation.clone(),
         live_testing: resolution.manifest.live_testing.clone(),
         local_source: crate::local_source::configured_repository()
@@ -4497,65 +4564,12 @@ fn requested_components_for_selection(
     provider: &str,
 ) -> Result<(Vec<String>, CodingEnvironmentSelection), AppError> {
     let selection = coding_environment::selection_from_manifest(manifest, state)?;
-    let environment_ids = coding_environment::all_environment_component_ids(manifest);
-    let mut requested = selected_ids(state, provider)
-        .into_iter()
-        .filter(|id| !environment_ids.contains(id))
-        .collect::<Vec<_>>();
-    // Resolve non-optional defaults from the current source manifest in Rust
-    // so a new published runtime guide or core component is included even if
-    // a renderer is stale or omits the newly declared ID.
-    let defaults = default_profile_component_ids(manifest)?;
-    add_supported_profile_components(manifest, &mut requested, &defaults, Platform::current())?;
-    // These components are runtime-neutral and are always installed.  The
-    // manifest remains authoritative: a source revision that does not declare
-    // one cannot be made complete by the app inventing a replacement.
-    for shared in [
-        "core.agents",
-        "core.skills",
-        "core.subagents",
-        "runtime.agent_sync",
-        // The verified MCP bootstrap is provider-neutral; native client
-        // configurations in every environment point at the same command.
-        "mcp.hoi4_agent_tools.bootstrap",
-        // The verified HOI4 tools package is also provider-neutral.  Its
-        // external health action is shared by every native MCP configuration;
-        // the Codex config projection remains a separate environment package.
-        "mcp.hoi4_agent_tools",
-        "docs.mcp_integration",
-        "wiki.snapshot",
-    ] {
-        if manifest
-            .components
-            .iter()
-            .any(|component| component.id == shared)
-            && !requested.iter().any(|id| id == shared)
-        {
-            requested.push(shared.into());
-        }
-    }
-    // Any other required, runtime-neutral component the source declares (for
-    // example the canonical CLAUDE.md) is installed as well.
-    for component in &manifest.components {
-        if !component.optional
-            && component.coding_environment.is_none()
-            && component
-                .platforms
-                .iter()
-                .any(|platform| platform.supports(Platform::current()))
-            && !requested.iter().any(|id| id == &component.id)
-        {
-            requested.push(component.id.clone());
-        }
-    }
-    let active_component_ids = expand_components(manifest, &requested)?
-        .into_iter()
-        .collect::<std::collections::HashSet<_>>();
-    for id in coding_environment::component_ids(manifest, &selection, &active_component_ids)? {
-        if !requested.iter().any(|selected| selected == &id) {
-            requested.push(id);
-        }
-    }
+    let mut requested = hoi4_setup_core::manifest::installation_components(
+        manifest,
+        &selected_ids(state, provider),
+        &selection,
+        Platform::current(),
+    )?;
     let image_selection = image_generation_selection_from_state(state, manifest, &selection)?;
     for provider in image_generation_provider_rows(manifest, &image_selection)? {
         let component_id = provider
@@ -4651,16 +4665,20 @@ fn image_generation_selection_from_state(
     let environments_selected = coding_environment::selected_environment_ids(environments);
     for id in &selected {
         let provider = find(id).expect("provider verified above");
-        let supported = provider
-            .get("supported_coding_environments")
-            .and_then(Value::as_array)
-            .is_some_and(|values| {
-                values.iter().filter_map(Value::as_str).any(|environment| {
-                    environments_selected
-                        .iter()
-                        .any(|selected| selected == environment)
-                })
-            });
+        // A manual provider registers nothing in any client, so it is
+        // available whichever coding clients are selected.
+        let manual = provider.pointer("/route/kind").and_then(Value::as_str) == Some("manual");
+        let supported = manual
+            || provider
+                .get("supported_coding_environments")
+                .and_then(Value::as_array)
+                .is_some_and(|values| {
+                    values.iter().filter_map(Value::as_str).any(|environment| {
+                        environments_selected
+                            .iter()
+                            .any(|selected| selected == environment)
+                    })
+                });
         if !supported {
             return Err(AppError::InvalidInput(format!(
                 "{} does not support a selected coding client",
@@ -4842,39 +4860,6 @@ fn apply_image_generation_component_selection(
     requested.sort();
     requested.dedup();
     Ok(())
-}
-
-fn add_supported_profile_components(
-    manifest: &RemoteManifest,
-    requested: &mut Vec<String>,
-    component_ids: &[String],
-    platform: Platform,
-) -> Result<(), AppError> {
-    for component_id in component_ids {
-        if requested.iter().any(|selected| selected == component_id) {
-            continue;
-        }
-        let mut candidate = requested.clone();
-        candidate.push(component_id.clone());
-        let expanded = expand_components(manifest, &candidate)?;
-        let support = crate::source::resolve_platform_support(manifest, &expanded, platform)?;
-        if support.iter().any(|item| item.state == "blocked") {
-            continue;
-        }
-        requested.push(component_id.clone());
-    }
-    Ok(())
-}
-
-fn default_profile_component_ids(manifest: &RemoteManifest) -> Result<Vec<String>, AppError> {
-    manifest
-        .profiles
-        .iter()
-        .find(|profile| profile.default)
-        .map(|profile| profile.components.clone())
-        .ok_or_else(|| {
-            AppError::Source("the verified source manifest has no default profile".into())
-        })
 }
 
 fn newly_defaulted_component_ids(
@@ -5182,269 +5167,27 @@ fn adapt_codex_config_for_selection(
     super_events_selected: bool,
     portrait: &PortraitPipelineConfig,
 ) -> Result<Vec<u8>, AppError> {
-    let bytes = adapt_optional_portrait_section(bytes, portrait.enabled)?;
-    let text = std::str::from_utf8(&bytes)
-        .map_err(|error| AppError::Source(format!("Codex configuration is not UTF-8: {error}")))?;
-    let mut config = text.parse::<toml::Value>().map_err(|error| {
-        AppError::Source(format!("Codex configuration is not valid TOML: {error}"))
-    })?;
-    if let Some(table) = config.as_table_mut() {
-        if !super_events_selected {
-            if let Some(agents) = table.get_mut("agents").and_then(toml::Value::as_table_mut) {
-                agents.retain(|id, _| !id.starts_with("hoi4_super_event_"));
-            }
-        }
-        if three_d_selected {
-            let mcp_servers = table
-                .entry("mcp_servers")
-                .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
-                .as_table_mut()
-                .ok_or_else(|| AppError::Source("Codex mcp_servers is not a TOML table".into()))?;
-            for (id, wrapper, enabled, required, approval) in [
-                ("meshy", "run_meshy_mcp.cmd", true, true, "auto"),
-                (
-                    "blender_hoi4",
-                    "run_blender_hoi4_adapter.cmd",
-                    true,
-                    true,
-                    "auto",
-                ),
-                (
-                    "blender_lab",
-                    "run_blender_lab_mcp.cmd",
-                    false,
-                    false,
-                    "prompt",
-                ),
-            ] {
-                let mut route = toml::map::Map::new();
-                route.insert("enabled".into(), toml::Value::Boolean(enabled));
-                route.insert("required".into(), toml::Value::Boolean(required));
-                if id == "meshy" {
-                    let launcher = std::env::current_exe().map_err(|error| {
-                        AppError::Process(format!(
-                            "the app-owned Meshy launcher path is unavailable: {error}"
-                        ))
-                    })?;
-                    route.insert(
-                        "command".into(),
-                        toml::Value::String(launcher.display().to_string()),
-                    );
-                    route.insert(
-                        "args".into(),
-                        toml::Value::Array(vec![toml::Value::String(
-                            "--run-verified-meshy-mcp".into(),
-                        )]),
-                    );
-                } else {
-                    route.insert("command".into(), toml::Value::String("cmd.exe".into()));
-                    route.insert(
-                        "args".into(),
-                        toml::Value::Array(
-                            [
-                                "/d".to_string(),
-                                "/c".to_string(),
-                                "call".to_string(),
-                                format!(".tools/3d_pipeline/wrappers/{wrapper}"),
-                            ]
-                            .into_iter()
-                            .map(toml::Value::String)
-                            .collect(),
-                        ),
-                    );
-                }
-                route.insert("cwd".into(), toml::Value::String(".".into()));
-                route.insert(
-                    "env_vars".into(),
-                    toml::Value::Array(if id == "meshy" {
-                        vec![toml::Value::String("MESHY_API_KEY".into())]
-                    } else {
-                        Vec::new()
-                    }),
-                );
-                route.insert("startup_timeout_sec".into(), toml::Value::Float(120.0));
-                route.insert("tool_timeout_sec".into(), toml::Value::Float(1800.0));
-                route.insert(
-                    "default_tools_approval_mode".into(),
-                    toml::Value::String(approval.into()),
-                );
-                mcp_servers.insert(id.into(), toml::Value::Table(route));
-            }
-        } else if let Some(mcp_servers) = table
-            .get_mut("mcp_servers")
-            .and_then(toml::Value::as_table_mut)
-        {
-            for id in ["meshy", "blender_hoi4", "blender_lab"] {
-                mcp_servers.remove(id);
-            }
-        }
-        let empty = table
-            .get_mut("mcp_servers")
-            .and_then(toml::Value::as_table_mut)
-            .map(|mcp| {
-                if !mcp_selected {
-                    mcp.remove("hoi4_agent_tools");
-                }
-                mcp.is_empty()
-            })
-            .unwrap_or(false);
-        if empty {
-            table.remove("mcp_servers");
-        }
-        if portrait.provider != "cloud" {
-            let empty = table
-                .get_mut("mcp_servers")
-                .and_then(toml::Value::as_table_mut)
-                .map(|mcp| {
-                    mcp.remove("comfy_cloud_portraits");
-                    mcp.is_empty()
-                })
-                .unwrap_or(false);
-            if empty {
-                table.remove("mcp_servers");
-            }
-            if let Some(portrait_table) = table
-                .get_mut("portrait_pipeline")
-                .and_then(toml::Value::as_table_mut)
-            {
-                portrait_table.remove("mcp_server");
-            }
-        }
-    }
-    let rendered = toml::to_string_pretty(&config).map_err(|error| {
-        AppError::Source(format!(
-            "adapted Codex configuration could not be written: {error}"
-        ))
-    })?;
-    rendered.parse::<toml::Value>().map_err(|error| {
-        AppError::Source(format!("adapted Codex configuration is invalid: {error}"))
-    })?;
-    Ok(rendered.into_bytes())
-}
-
-fn adapt_subagent_for_spawn(bytes: &[u8]) -> Result<Vec<u8>, AppError> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|error| AppError::Source(format!("subagent definition is not UTF-8: {error}")))?;
-    let mut value = text.parse::<toml::Value>().map_err(|error| {
-        AppError::Source(format!("subagent definition is not valid TOML: {error}"))
-    })?;
-    if let Some(fork_context) = value.get("fork_context").and_then(toml::Value::as_bool) {
-        if fork_context {
-            return Err(AppError::Source(
-                "subagent definition requires inherited conversation context".into(),
-            ));
-        }
-        return Ok(bytes.to_vec());
-    }
-    if text.contains("fork_context=false") {
-        return Ok(bytes.to_vec());
-    }
-    let instructions = value
-        .get_mut("developer_instructions")
-        .and_then(|instructions| instructions.as_str())
-        .ok_or_else(|| {
-            AppError::Source("subagent definition has no developer instructions".into())
-        })?
-        .to_string();
-    value["developer_instructions"] = toml::Value::String(format!(
-        "{instructions}\n\nThe parent must spawn this subagent with fork_context=false."
-    ));
-    let rendered = toml::to_string_pretty(&value).map_err(|error| {
-        AppError::Source(format!(
-            "adapted subagent definition could not be written: {error}"
-        ))
-    })?;
-    rendered.parse::<toml::Value>().map_err(|error| {
-        AppError::Source(format!("adapted subagent definition is invalid: {error}"))
-    })?;
-    Ok(rendered.into_bytes())
-}
-
-fn adapt_optional_super_events_skill(
-    bytes: &[u8],
-    super_events_selected: bool,
-) -> Result<Vec<u8>, AppError> {
-    const START: &str = "<!-- HOI4_MOD_SETUP_SUPER_EVENTS_START -->";
-    const END: &str = "<!-- HOI4_MOD_SETUP_SUPER_EVENTS_END -->";
-    if !bytes
-        .windows(START.len())
-        .any(|window| window == START.as_bytes())
-        && !bytes
-            .windows(END.len())
-            .any(|window| window == END.as_bytes())
-    {
-        return Ok(bytes.to_vec());
-    }
-    let text = std::str::from_utf8(bytes)
-        .map_err(|error| AppError::Source(format!("conditional skill is not UTF-8: {error}")))?;
-    match (text.find(START), text.find(END)) {
-        (Some(start), Some(end)) if start < end => {
-            let block_end = end + END.len();
-            let mut adapted = text.to_string();
-            if super_events_selected {
-                adapted.replace_range(end..block_end, "");
-                adapted.replace_range(start..start + START.len(), "");
-            } else {
-                adapted.replace_range(start..block_end, "");
-            }
-            Ok(adapted.into_bytes())
-        }
-        _ => Err(AppError::Source(
-            "skill has an incomplete optional Super Events section".into(),
-        )),
-    }
-}
-
-fn adapt_optional_portrait_section(
-    bytes: &[u8],
-    portrait_enabled: bool,
-) -> Result<Vec<u8>, AppError> {
-    const START: &str = "<!-- HOI4_MOD_SETUP_PORTRAITS_START -->";
-    const END: &str = "<!-- HOI4_MOD_SETUP_PORTRAITS_END -->";
-    if !bytes
-        .windows(START.len())
-        .any(|window| window == START.as_bytes())
-        && !bytes
-            .windows(END.len())
-            .any(|window| window == END.as_bytes())
-    {
-        return Ok(bytes.to_vec());
-    }
-    let text = std::str::from_utf8(bytes).map_err(|error| {
-        AppError::Source(format!("portrait conditional source is not UTF-8: {error}"))
-    })?;
-    let Some(start) = text.find(START) else {
-        if text.contains(END) {
-            return Err(AppError::Source(
-                "portrait section has an end marker without a start marker".into(),
-            ));
-        }
-        return Ok(bytes.to_vec());
-    };
-    let end = text
-        .find(END)
-        .ok_or_else(|| AppError::Source("portrait section has an incomplete marker pair".into()))?;
-    if start >= end {
-        return Err(AppError::Source(
-            "portrait section markers are out of order".into(),
-        ));
-    }
-    let block_end = end + END.len();
-    let mut adapted = text.to_string();
-    if portrait_enabled {
-        adapted.replace_range(end..block_end, "");
-        adapted.replace_range(start..start + START.len(), "");
+    let launcher = if three_d_selected {
+        Some(
+            std::env::current_exe()
+                .map_err(|error| {
+                    AppError::Process(format!(
+                        "the app-owned Meshy launcher path is unavailable: {error}"
+                    ))
+                })?
+                .display()
+                .to_string(),
+        )
     } else {
-        adapted.replace_range(start..block_end, "");
-    }
-    Ok(adapted.into_bytes())
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct ProjectConventions {
-    agents_profile: String,
-    localisation_convention: String,
-    documentation_convention: String,
+        None
+    };
+    hoi4_setup_core::adapt::adapt_codex_config(
+        bytes,
+        mcp_selected,
+        launcher.as_deref(),
+        super_events_selected,
+        portrait,
+    )
 }
 
 fn project_conventions_from_value(value: Option<&Value>) -> Result<ProjectConventions, AppError> {
@@ -5518,192 +5261,6 @@ fn persisted_project_conventions(project_root: &Path) -> ProjectConventions {
         .ok()
         .and_then(|state| project_conventions_from_state(&state).ok())
         .unwrap_or_default()
-}
-
-fn escape_markdown_code_span(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('`', "\\`")
-        .replace(['\r', '\n'], " ")
-}
-
-#[allow(clippy::too_many_arguments)]
-fn adapt_agents_for_selection(
-    bytes: &[u8],
-    identity: &ProjectIdentity,
-    provider: &str,
-    model: &str,
-    reasoning_effort: &str,
-    conventions: &ProjectConventions,
-    super_events_selected: bool,
-    portrait_enabled: bool,
-) -> Result<Vec<u8>, AppError> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|error| AppError::Source(format!("AGENTS template is not UTF-8: {error}")))?;
-    let prefix = identity
-        .primary_namespace
-        .as_deref()
-        .or(identity.script_prefix.as_deref())
-        .unwrap_or(&identity.project_id);
-    let install = crate::paths::game_install();
-    let mut adapted = text
-        .replace("[MOD_NAME]", &identity.display_name)
-        .replace("[MOD_PREFIX]", prefix)
-        .replace("[HOI4_GAME_DIR]", &install.game_dir)
-        .replace("[STEAM_WORKSHOP_DIR]", &install.workshop_dir);
-    adapted = strip_agents_placeholder_guide(&adapted);
-    adapted = String::from_utf8(adapt_optional_portrait_section(
-        adapted.as_bytes(),
-        portrait_enabled,
-    )?)
-    .map_err(|error| {
-        AppError::Source(format!("adapted portrait guidance is not UTF-8: {error}"))
-    })?;
-    if adapted.contains("[MOD_") || adapted.contains("{{PROJECT_") || adapted.contains("<PROJECT_")
-    {
-        return Err(AppError::Source(
-            "AGENTS template contains unresolved project placeholders".into(),
-        ));
-    }
-    let _ = (provider, model, reasoning_effort);
-    const SUPER_EVENTS_START: &str = "<!-- HOI4_MOD_SETUP:SUPER_EVENTS:START -->";
-    const SUPER_EVENTS_END: &str = "<!-- HOI4_MOD_SETUP:SUPER_EVENTS:END -->";
-    match (
-        adapted.find(SUPER_EVENTS_START),
-        adapted.find(SUPER_EVENTS_END),
-    ) {
-        (Some(start), Some(end)) if start < end => {
-            let block_end = end + SUPER_EVENTS_END.len();
-            if super_events_selected {
-                adapted.replace_range(end..block_end, "");
-                adapted.replace_range(start..start + SUPER_EVENTS_START.len(), "");
-            } else {
-                adapted.replace_range(start..block_end, "");
-            }
-        }
-        (None, None)
-            if super_events_selected
-                && !adapted.contains("HOI4_MOD_SETUP:COMPONENT:workflow.super_events") =>
-        {
-            adapted.push_str(
-                "\n## Optional Super Events workflow\n\n- Use `hoi4-super-events` for the complete installed runtime and presentation contract. Use the Super Events sections added to `hoi4-feature-planning`, `hoi4-events`, `hoi4-feature-assets`, `hoi4-text-audio-research`, and `hoi4-subagents` for their normal ownership boundaries. Keep registration, caller, text, quote, response, image, optional or explicitly required audio, provenance, documentation, cleanup, and the acceptance scenario aligned.\n- Spawn `hoi4_super_event_quote_researcher`, `hoi4_super_event_audio_researcher`, or `hoi4_super_event_art_researcher` without inherited conversation context, and only when its narrow handoff is needed.\n",
-            );
-        }
-        (None, None) => {}
-        _ => {
-            return Err(AppError::Source(
-                "AGENTS template has an incomplete Super Events section marker".into(),
-            ));
-        }
-    }
-    let convention_rows = [
-        ("Agent guidance profile", &conventions.agents_profile),
-        (
-            "Localisation convention",
-            &conventions.localisation_convention,
-        ),
-        (
-            "Documentation convention",
-            &conventions.documentation_convention,
-        ),
-    ]
-    .into_iter()
-    .filter(|(_, value)| !value.is_empty())
-    .map(|(label, value)| format!("- {label}: `{}`", escape_markdown_code_span(value)))
-    .collect::<Vec<_>>();
-    if !convention_rows.is_empty() {
-        adapted.push_str("\n## Confirmed project conventions\n\n");
-        adapted.push_str(&convention_rows.join("\n"));
-        adapted.push('\n');
-    }
-    Ok(adapted.into_bytes())
-}
-
-fn strip_agents_placeholder_guide(text: &str) -> String {
-    let heading = Regex::new(r"(?m)^## (?:Placeholder Guide|How to use this template)[\t ]*\r?$")
-        .expect("static placeholder-guide heading regex");
-    let next_heading = Regex::new(r"(?m)^## [^\r\n]+").expect("static Markdown heading regex");
-    let mut stripped = text.to_string();
-    while let Some(section) = heading.find(&stripped) {
-        let section_end = next_heading
-            .find(&stripped[section.end()..])
-            .map(|next| section.end() + next.start())
-            .unwrap_or(stripped.len());
-        stripped.replace_range(section.start()..section_end, "");
-    }
-    stripped
-}
-
-fn super_events_prefix(identity: &ProjectIdentity) -> Result<&str, AppError> {
-    let prefix = identity
-        .script_prefix
-        .as_deref()
-        .or(identity.primary_namespace.as_deref())
-        .ok_or_else(|| {
-            AppError::InvalidInput(
-                "a confirmed script prefix or primary namespace is required for Super Events"
-                    .into(),
-            )
-        })?;
-    let valid_prefix =
-        Regex::new(r"^[a-z_][a-z0-9_]{0,63}$").expect("static HOI4 identifier regex");
-    if !valid_prefix.is_match(prefix) {
-        return Err(AppError::InvalidInput(
-            "the Super Events namespace contains unsupported characters".into(),
-        ));
-    }
-    Ok(prefix)
-}
-
-fn adapt_super_events_source(
-    bytes: &[u8],
-    identity: &ProjectIdentity,
-) -> Result<Vec<u8>, AppError> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|error| AppError::Source(format!("Super Events source is not UTF-8: {error}")))?;
-    let prefix = super_events_prefix(identity)?;
-    let escaped_name = identity
-        .display_name
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"");
-    let adapted = text
-        .replace("[MOD_PREFIX]", prefix)
-        .replace("[MOD_NAME]", &escaped_name);
-    if adapted.contains("[MOD_") {
-        return Err(AppError::Source(
-            "Super Events source contains unresolved project placeholders".into(),
-        ));
-    }
-    Ok(adapted.into_bytes())
-}
-
-fn is_super_events_runtime_component(component_id: &str) -> bool {
-    matches!(
-        component_id,
-        "workflow.super_events.runtime.interface"
-            | "workflow.super_events.runtime.common"
-            | "workflow.super_events.runtime.events"
-            | "workflow.super_events.runtime.localisation"
-    )
-}
-
-fn adapt_super_events_destination(
-    component_id: &str,
-    destination: &str,
-    identity: &ProjectIdentity,
-) -> Result<String, AppError> {
-    if !is_super_events_runtime_component(component_id) {
-        return Ok(destination.to_string());
-    }
-    let normalized = destination.replace('\\', "/");
-    let Some((parent, filename)) = normalized.rsplit_once('/') else {
-        return Ok(normalized);
-    };
-    let Some(suffix) = filename.strip_prefix("hoi4ms_") else {
-        return Ok(normalized);
-    };
-    let prefix = super_events_prefix(identity)?;
-    Ok(format!("{parent}/{prefix}_{suffix}"))
 }
 
 fn portrait_pipeline_from_state(state: &Value) -> Result<PortraitPipelineConfig, AppError> {
@@ -5843,113 +5400,6 @@ fn portrait_pipeline_from_state(state: &Value) -> Result<PortraitPipelineConfig,
     })
 }
 
-fn adapt_portrait_config_source(
-    bytes: &[u8],
-    portrait: &PortraitPipelineConfig,
-) -> Result<Vec<u8>, AppError> {
-    let text = std::str::from_utf8(bytes).map_err(|error| {
-        AppError::Source(format!(
-            "portrait provider configuration is not UTF-8: {error}"
-        ))
-    })?;
-    let mut config = text.parse::<toml::Value>().map_err(|error| {
-        AppError::Source(format!(
-            "portrait provider configuration is not valid TOML: {error}"
-        ))
-    })?;
-    let keep_cloud_mcp = portrait.enabled && portrait.provider == "cloud";
-    if !keep_cloud_mcp {
-        if let Some(root) = config.as_table_mut() {
-            root.remove("mcp_servers");
-        }
-    }
-    let table = config
-        .get_mut("portrait_pipeline")
-        .and_then(toml::Value::as_table_mut)
-        .ok_or_else(|| {
-            AppError::Source("portrait provider configuration is missing its table".into())
-        })?;
-    table.insert("enabled".into(), toml::Value::Boolean(portrait.enabled));
-    table.insert(
-        "provider".into(),
-        toml::Value::String(portrait.provider.clone()),
-    );
-    table.insert(
-        "provider_status".into(),
-        toml::Value::String(portrait.provider_status.clone()),
-    );
-    table.insert(
-        "workflow_repository".into(),
-        toml::Value::String(portrait.workflow_repository.clone()),
-    );
-    table.insert(
-        "workflow_branch".into(),
-        toml::Value::String(portrait.workflow_branch.clone()),
-    );
-    table.insert(
-        "workflow_commit".into(),
-        toml::Value::String(portrait.workflow_commit.clone()),
-    );
-    table.insert(
-        "preferred_workflow".into(),
-        toml::Value::String(portrait.preferred_workflow.clone()),
-    );
-    if portrait.enabled && portrait.provider != "disabled" {
-        table.insert(
-            "provider_skill".into(),
-            toml::Value::String(format!("hoi4-comfyui-{}", portrait.provider)),
-        );
-    } else {
-        table.remove("provider_skill");
-    }
-    table.remove("local_comfyui_root");
-    table.remove("local_server_url");
-    table.remove("runpod_url");
-    table.remove("runpod_workspace");
-    if keep_cloud_mcp {
-        table.insert(
-            "mcp_server".into(),
-            toml::Value::String("comfy_cloud_portraits".into()),
-        );
-    } else {
-        table.remove("mcp_server");
-    }
-    match portrait.provider.as_str() {
-        "local" => {
-            table.insert(
-                "local_comfyui_root".into(),
-                toml::Value::String(portrait.local_comfyui_root.clone()),
-            );
-            table.insert(
-                "local_server_url".into(),
-                toml::Value::String(portrait.local_server_url.clone()),
-            );
-        }
-        "runpod" => {
-            table.insert(
-                "runpod_url".into(),
-                toml::Value::String(portrait.runpod_url.clone()),
-            );
-            table.insert(
-                "runpod_workspace".into(),
-                toml::Value::String(portrait.runpod_workspace.clone()),
-            );
-        }
-        _ => {}
-    }
-    let rendered = toml::to_string_pretty(&config).map_err(|error| {
-        AppError::Source(format!(
-            "adapted portrait provider configuration could not be written: {error}"
-        ))
-    })?;
-    rendered.parse::<toml::Value>().map_err(|error| {
-        AppError::Source(format!(
-            "adapted portrait provider configuration is invalid: {error}"
-        ))
-    })?;
-    Ok(rendered.into_bytes())
-}
-
 #[allow(clippy::too_many_arguments)]
 fn adapt_selected_source(
     component_id: &str,
@@ -5957,91 +5407,38 @@ fn adapt_selected_source(
     bytes: &[u8],
     identity: &ProjectIdentity,
     conventions: &ProjectConventions,
-    ai_provider: &str,
-    ai_model: &str,
-    ai_reasoning_effort: &str,
+    _ai_provider: &str,
+    _ai_model: &str,
+    _ai_reasoning_effort: &str,
     super_events_selected: bool,
     mcp_selected: bool,
     three_d_selected: bool,
     portrait: &PortraitPipelineConfig,
     selected_components: &[String],
 ) -> Result<Vec<u8>, AppError> {
-    let conditional = adapt_optional_super_events_skill(bytes, super_events_selected)?;
-    let conditional = adapt_optional_portrait_section(&conditional, portrait.enabled)?;
-    let adapted = adapt_component_specific_source(
+    let folders = desktop_game_folders();
+    hoi4_setup_core::adapt::adapt_selected_source(
         component_id,
         destination,
-        &conditional,
-        identity,
-        conventions,
-        ai_provider,
-        ai_model,
-        ai_reasoning_effort,
-        super_events_selected,
-        mcp_selected,
-        three_d_selected,
-        portrait,
-    )?;
-    adapt_component_blocks(adapted, selected_components)
-}
-
-const COMPONENT_BLOCK_PREFIX: &str = "<!-- HOI4_MOD_SETUP:COMPONENT:";
-
-/// Keep or remove `<!-- HOI4_MOD_SETUP:COMPONENT:<id>:START -->` ...
-/// `<!-- HOI4_MOD_SETUP:COMPONENT:<id>:END -->` blocks depending on whether
-/// the named component is installed. The source package can therefore gate
-/// guidance for any optional workflow without an app release.
-fn adapt_component_blocks(
-    bytes: Vec<u8>,
-    selected_components: &[String],
-) -> Result<Vec<u8>, AppError> {
-    if !bytes
-        .windows(COMPONENT_BLOCK_PREFIX.len())
-        .any(|window| window == COMPONENT_BLOCK_PREFIX.as_bytes())
-    {
-        return Ok(bytes);
-    }
-    let Ok(text) = String::from_utf8(bytes.clone()) else {
-        return Ok(bytes);
-    };
-    let marker = Regex::new(
-        r"(?m)^[ \t]*<!-- HOI4_MOD_SETUP:COMPONENT:([a-z0-9][a-z0-9._-]{0,127}):(START|END) -->[ \t]*\r?\n?",
+        bytes,
+        &AdaptContext {
+            identity,
+            conventions,
+            folders: &folders,
+            super_events_selected,
+            portrait,
+            selected_components,
+        },
+        &|codex| {
+            adapt_codex_config_for_selection(
+                codex,
+                mcp_selected,
+                three_d_selected,
+                super_events_selected,
+                portrait,
+            )
+        },
     )
-    .expect("static component block regex");
-    let mut output = String::with_capacity(text.len());
-    let mut cursor = 0usize;
-    let mut open: Option<(String, bool)> = None;
-    for captures in marker.captures_iter(&text) {
-        let whole = captures.get(0).expect("regex match");
-        let component = captures[1].to_string();
-        let start = &captures[2] == "START";
-        match (&open, start) {
-            (None, true) => {
-                output.push_str(&text[cursor..whole.start()]);
-                let keep = selected_components.iter().any(|id| id == &component);
-                open = Some((component, keep));
-            }
-            (Some((open_component, keep)), false) if *open_component == component => {
-                if *keep {
-                    output.push_str(&text[cursor..whole.start()]);
-                }
-                open = None;
-            }
-            _ => {
-                return Err(AppError::Source(format!(
-                    "a source file has an unbalanced optional block for {component}"
-                )))
-            }
-        }
-        cursor = whole.end();
-    }
-    if let Some((component, _)) = open {
-        return Err(AppError::Source(format!(
-            "a source file has an unterminated optional block for {component}"
-        )));
-    }
-    output.push_str(&text[cursor..]);
-    Ok(output.into_bytes())
 }
 
 fn image_generation_provider_guidance(
@@ -6315,14 +5712,7 @@ fn image_server_route(provider: &Value, _project_root: &Path) -> Option<serde_js
 }
 
 fn image_client_config_path(environment: &str) -> Option<&'static str> {
-    match environment {
-        coding_environment::CLAUDE_CODE => Some(".mcp.json"),
-        coding_environment::CODEX => Some(".codex/config.toml"),
-        coding_environment::CURSOR => Some(".cursor/mcp.json"),
-        coding_environment::QODER => Some(".qoder/mcp.json"),
-        coding_environment::OPENCODE => Some("opencode.json"),
-        _ => None,
-    }
+    coding_environment::image_and_live_config_path(environment)
 }
 
 fn image_client_config_ownership(
@@ -6346,10 +5736,9 @@ fn image_client_config_source_destinations(
         .components
         .iter()
         .filter(|component| {
-            component
-                .coding_environment
-                .as_ref()
-                .is_some_and(|environment| selected.iter().any(|selected| selected == environment))
+            selected
+                .iter()
+                .any(|environment| coding_environment::serves_environment(component, environment))
                 && component
                     .platforms
                     .iter()
@@ -6360,7 +5749,10 @@ fn image_client_config_source_destinations(
 }
 
 fn image_client_config_default(environment: &str) -> &'static [u8] {
-    if environment == coding_environment::CODEX {
+    let toml = coding_environment::native_client(environment)
+        .and_then(|client| client.mcp)
+        .is_some_and(|mcp| mcp.format.is_toml());
+    if toml {
         b""
     } else {
         b"{}"
@@ -6421,33 +5813,44 @@ fn merge_existing_image_client_config(
             )))
         }
     };
-    let normalized = destination.replace('\\', "/").to_ascii_lowercase();
-    if normalized == ".codex/config.toml" {
+    if coding_environment::config_format_for_path(destination)
+        .is_some_and(crate::native_mcp::McpFormat::is_toml)
+    {
         let incoming_text = std::str::from_utf8(incoming).map_err(|error| {
-            AppError::Source(format!("Codex configuration is not UTF-8: {error}"))
+            AppError::Source(format!(
+                "coding client TOML configuration is not UTF-8: {error}"
+            ))
         })?;
         let local_text = std::str::from_utf8(&local_bytes).map_err(|error| {
-            AppError::Source(format!("Codex configuration is not UTF-8: {error}"))
+            AppError::Source(format!(
+                "coding client TOML configuration is not UTF-8: {error}"
+            ))
         })?;
         let mut incoming_value = incoming_text.parse::<toml::Value>().map_err(|error| {
-            AppError::Source(format!("Codex configuration is not valid TOML: {error}"))
+            AppError::Source(format!(
+                "coding client TOML configuration is not valid TOML: {error}"
+            ))
         })?;
         let local_value = local_text.parse::<toml::Value>().map_err(|error| {
-            AppError::Source(format!("Codex configuration is not valid TOML: {error}"))
+            AppError::Source(format!(
+                "coding client TOML configuration is not valid TOML: {error}"
+            ))
         })?;
         let (Some(incoming_table), Some(local_table)) = (
             incoming_value.as_table_mut(),
             local_value.as_table().cloned(),
         ) else {
             return Err(AppError::Source(
-                "Codex configuration is not a TOML table".into(),
+                "coding client TOML configuration is not a TOML table".into(),
             ));
         };
         merge_toml_tables_preserving_local(incoming_table, local_table);
         return toml::to_string_pretty(&incoming_value)
             .map(|value| value.into_bytes())
             .map_err(|error| {
-                AppError::Source(format!("Codex configuration could not be merged: {error}"))
+                AppError::Source(format!(
+                    "coding client TOML configuration could not be merged: {error}"
+                ))
             });
     }
     let mut incoming_value: Value = serde_json::from_slice(incoming).map_err(|error| {
@@ -6455,11 +5858,13 @@ fn merge_existing_image_client_config(
             "coding client configuration is not valid JSON: {error}"
         ))
     })?;
-    let local_value: Value = serde_json::from_slice(&local_bytes).map_err(|error| {
-        AppError::Source(format!(
-            "existing coding client configuration is not valid JSON: {error}"
-        ))
-    })?;
+    // Local client files may use JSONC comments and trailing commas.
+    let local_value: Value =
+        crate::native_mcp::parse_json_lenient(&local_bytes).map_err(|error| {
+            AppError::Source(format!(
+                "existing coding client configuration is not valid JSON: {error}"
+            ))
+        })?;
     let (Some(incoming_object), Some(local_object)) = (
         incoming_value.as_object_mut(),
         local_value.as_object().cloned(),
@@ -6750,14 +6155,8 @@ fn adapt_image_generation_client_config_for_platform(
         project_root,
     )?;
     let normalized = destination.replace('\\', "/").to_ascii_lowercase();
-    let environment = match normalized.as_str() {
-        ".mcp.json" => Some(coding_environment::CLAUDE_CODE),
-        ".cursor/mcp.json" => Some(coding_environment::CURSOR),
-        ".qoder/mcp.json" => Some(coding_environment::QODER),
-        "opencode.json" => Some(coding_environment::OPENCODE),
-        ".codex/config.toml" => Some(coding_environment::CODEX),
-        _ => None,
-    };
+    let route = coding_environment::mcp_route_for_path(destination);
+    let environment = route.map(|(client, _)| client.id);
     let disabled = LiveTestingSelection {
         provider: "none".into(),
         ..Default::default()
@@ -6771,8 +6170,8 @@ fn adapt_image_generation_client_config_for_platform(
     } else {
         live_selection
     };
-    let image_bytes =
-        if matches!(platform, Platform::Windows | Platform::Linux) && environment.is_some() {
+    let image_bytes = match route {
+        Some(_) if matches!(platform, Platform::Windows | Platform::Linux) => {
             let target = crate::mcp::manifest_target_for_platform(manifest, platform).ok();
             if platform == Platform::Windows && target.is_none() {
                 image_bytes
@@ -6783,9 +6182,14 @@ fn adapt_image_generation_client_config_for_platform(
                     .transpose()?;
                 retarget_native_mcp_config(&image_bytes, destination, launch.as_ref())?
             }
-        } else {
-            image_bytes
-        };
+        }
+        // A settings file installed on every platform never keeps a route to
+        // a tools package that does not exist here.
+        Some((_, mcp)) if mcp.shared_file => {
+            retarget_native_mcp_config(&image_bytes, destination, None)?
+        }
+        _ => image_bytes,
+    };
     let adapted =
         crate::live_testing::adapt_config(&image_bytes, destination, live_selection, platform)?;
     // Historical packages without provider adaptation must remain reproducible
@@ -6809,30 +6213,20 @@ fn adapt_image_only_client_config(
     coding_environments: &CodingEnvironmentSelection,
     project_root: &Path,
 ) -> Result<Vec<u8>, AppError> {
-    let normalized = destination.replace('\\', "/").to_ascii_lowercase();
-    let environment = if normalized == ".mcp.json" {
-        Some(coding_environment::CLAUDE_CODE)
-    } else if normalized == ".cursor/mcp.json" {
-        Some(coding_environment::CURSOR)
-    } else if normalized == ".qoder/mcp.json" {
-        Some(coding_environment::QODER)
-    } else if normalized == "opencode.json" {
-        Some(coding_environment::OPENCODE)
-    } else if normalized == ".codex/config.toml" {
-        Some(coding_environment::CODEX)
-    } else {
-        None
-    };
-    let Some(environment) = environment.filter(|environment| {
-        coding_environment::selected_environment_ids(coding_environments)
-            .iter()
-            .any(|selected| selected == environment)
-    }) else {
+    let Some((environment, mcp_format)) = coding_environment::mcp_route_for_path(destination)
+        .filter(|(client, _)| client.image_and_live_routes)
+        .map(|(client, route)| (client.id, route.format))
+        .filter(|(environment, _)| {
+            coding_environment::selected_environment_ids(coding_environments)
+                .iter()
+                .any(|selected| selected == environment)
+        })
+    else {
         return Ok(bytes.to_vec());
     };
     let providers = image_generation_provider_rows(manifest, selection)?;
     let managed_server_ids = managed_image_server_ids(manifest);
-    if environment == coding_environment::CODEX {
+    if mcp_format.is_toml() {
         let text = std::str::from_utf8(bytes).map_err(|error| {
             AppError::Source(format!("Codex configuration is not UTF-8: {error}"))
         })?;
@@ -6883,7 +6277,11 @@ fn adapt_image_only_client_config(
             fields.insert("command".into(), toml::Value::String(command.into()));
             fields.insert("args".into(), toml::Value::Array(args));
             fields.insert("cwd".into(), toml::Value::String(".".into()));
-            fields.insert("enabled".into(), toml::Value::Boolean(true));
+            // `enabled` is a Codex key; Grok Build documents only the launch
+            // and timeout fields for a project server.
+            if environment == coding_environment::CODEX {
+                fields.insert("enabled".into(), toml::Value::Boolean(true));
+            }
             mcp.insert(format!("hoi4_image_{id}"), toml::Value::Table(fields));
         }
         if mcp.is_empty() {
@@ -6897,7 +6295,7 @@ fn adapt_image_only_client_config(
                 ))
             });
     }
-    let mut config: Value = serde_json::from_slice(bytes).map_err(|error| {
+    let mut config: Value = crate::native_mcp::parse_json_lenient(bytes).map_err(|error| {
         AppError::Source(format!(
             "coding client MCP configuration is not valid JSON: {error}"
         ))
@@ -6905,11 +6303,7 @@ fn adapt_image_only_client_config(
     let root = config.as_object_mut().ok_or_else(|| {
         AppError::Source("coding client MCP settings are not a JSON object".into())
     })?;
-    let key = if environment == coding_environment::OPENCODE {
-        "mcp"
-    } else {
-        "mcpServers"
-    };
+    let key = mcp_format.servers_key();
     let routes = root
         .entry(key)
         .or_insert_with(|| Value::Object(serde_json::Map::new()))
@@ -6936,7 +6330,18 @@ fn adapt_image_only_client_config(
             continue;
         };
         let server_id = format!("hoi4_image_{id}");
-        if environment == coding_environment::OPENCODE {
+        if mcp_format == crate::native_mcp::McpFormat::VscodeServers {
+            // VS Code resolves the relative adapter path from the workspace.
+            routes.insert(
+                server_id,
+                serde_json::json!({
+                    "type": "stdio",
+                    "command": route["command"],
+                    "args": route["args"],
+                    "cwd": "${workspaceFolder}",
+                }),
+            );
+        } else if mcp_format == crate::native_mcp::McpFormat::LocalCommandArray {
             let mut command = vec![route["command"].clone()];
             command.extend(route["args"].as_array().cloned().unwrap_or_default());
             routes.insert(
@@ -6963,52 +6368,31 @@ fn adapt_image_only_client_config(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn adapt_component_specific_source(
-    component_id: &str,
-    destination: &str,
+fn adapt_agents_for_selection(
     bytes: &[u8],
     identity: &ProjectIdentity,
+    _provider: &str,
+    _model: &str,
+    _reasoning_effort: &str,
     conventions: &ProjectConventions,
-    ai_provider: &str,
-    ai_model: &str,
-    ai_reasoning_effort: &str,
     super_events_selected: bool,
-    mcp_selected: bool,
-    three_d_selected: bool,
-    portrait: &PortraitPipelineConfig,
+    portrait_enabled: bool,
 ) -> Result<Vec<u8>, AppError> {
-    if component_id == "core.agents" || component_id == "core.claude.instructions" {
-        adapt_agents_for_selection(
-            bytes,
-            identity,
-            ai_provider,
-            ai_model,
-            ai_reasoning_effort,
-            conventions,
-            super_events_selected,
-            portrait.enabled,
-        )
-    } else if component_id == "codex.config" {
-        adapt_codex_config_for_selection(
-            bytes,
-            mcp_selected,
-            three_d_selected,
-            super_events_selected,
-            portrait,
-        )
-    } else if destination
-        .replace('\\', "/")
-        .to_ascii_lowercase()
-        .starts_with(".codex/agents/")
-        && destination.to_ascii_lowercase().ends_with(".toml")
-    {
-        adapt_subagent_for_spawn(bytes)
-    } else if component_id == "workflow.portraits.config" {
-        adapt_portrait_config_source(bytes, portrait)
-    } else if is_super_events_runtime_component(component_id) {
-        adapt_super_events_source(bytes, identity)
-    } else {
-        Ok(bytes.to_vec())
+    hoi4_setup_core::adapt::adapt_agents_for_selection(
+        bytes,
+        identity,
+        &desktop_game_folders(),
+        conventions,
+        super_events_selected,
+        portrait_enabled,
+    )
+}
+
+fn desktop_game_folders() -> GameFolders {
+    let install = crate::paths::game_install();
+    GameFolders {
+        game_dir: install.game_dir.clone(),
+        workshop_dir: install.workshop_dir.clone(),
     }
 }
 
@@ -7357,33 +6741,14 @@ fn ai_optimization_profile(provider: &str) -> String {
         .unwrap_or_else(crate::models::default_ai_optimization_profile)
 }
 
-fn flatten_for_chat_from_state(state: &Value) -> bool {
-    state
-        .get("flattenForChat")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
 fn project_readme(
     identity: &ProjectIdentity,
     description: &str,
-    provider: &str,
-    model: &str,
-    reasoning_effort: &str,
+    _provider: &str,
+    _model: &str,
+    _reasoning_effort: &str,
 ) -> Result<String, AppError> {
-    if description.len() > 32 * 1024 || description.contains('\0') {
-        return Err(AppError::InvalidInput(
-            "project description exceeds the bounded README input limit".into(),
-        ));
-    }
-    let _ = (provider, model, reasoning_effort);
-    Ok(format!(
-        "# {}\n\n{}\n\n## Local development\n\nThis project was prepared by HOI4 Mod Setup for provider-neutral agentic development. The AI used during setup does not select or restrict the development client used later.\n\n- Project ID: `{}`\n- Supported game version: `{}`\n- Workshop identity: none assigned\n",
-        identity.display_name,
-        description.trim(),
-        identity.project_id,
-        identity.supported_game_version,
-    ))
+    hoi4_setup_core::project_files::project_readme(identity, description)
 }
 
 fn codex_analysis_from_state(
@@ -7581,7 +6946,6 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             ai_credential_reference(&ai_provider)
         },
     })?;
-    let flatten_chat_sources = flatten_for_chat_from_state(state);
     let git_setup = git_setup_from_state(state, &root)?;
     let request = source_request_from_state(state)?;
     let client = HttpSourceClient::new()?;
@@ -7829,6 +7193,26 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     // review operation for each one; an existing descriptor is not evidence
     // that the other two routes are valid.
     let mut generated = render_generated_artifacts(&identity)?;
+    if let Some(thumbnail) = crate::context::thumbnail_from_state(state)? {
+        if let Some(artifact) = generated
+            .iter_mut()
+            .find(|artifact| artifact.component_id == "project.thumbnail")
+        {
+            artifact.content = "Thumbnail rendered from an image the user chose.".into();
+            artifact.expected_sha256 = sha256_bytes(&thumbnail);
+            artifact.bytes = Some(thumbnail);
+        }
+    }
+    for file in crate::context::copies_from_state(state)? {
+        generated.push(GeneratedArtifact {
+            component_id: file.component_id.into(),
+            destination: file.destination,
+            content: "Context file the user added during setup.".into(),
+            expected_sha256: sha256_bytes(&file.bytes),
+            external: false,
+            bytes: Some(file.bytes),
+        });
+    }
     if let Some(image_config) =
         image_generation_config_artifact(&resolution.manifest, &image_generation)?
     {
@@ -7856,28 +7240,6 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         let readme = project_readme(
             &identity,
             &description,
-            &ai_provider,
-            &ai_model_from_state(state),
-            &ai_reasoning_effort_from_state(state),
-        )?;
-        generated.push(GeneratedArtifact {
-            component_id: "project.readme".into(),
-            destination: "README.md".into(),
-            expected_sha256: sha256_bytes(readme.as_bytes()),
-            content: readme,
-            external: false,
-            bytes: None,
-        });
-    }
-    if flatten_chat_sources
-        && !generated
-            .iter()
-            .any(|artifact| artifact.destination == "README.md")
-        && !root.join("README.md").is_file()
-    {
-        let readme = project_readme(
-            &identity,
-            &string_field(state, "description").unwrap_or_default(),
             &ai_provider,
             &ai_model_from_state(state),
             &ai_reasoning_effort_from_state(state),
@@ -7968,10 +7330,6 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         external: false,
         bytes: None,
     });
-    if flatten_chat_sources {
-        let flatten_artifacts = crate::flatten::build_artifacts(&prepared, &generated, &root)?;
-        generated.extend(flatten_artifacts);
-    }
     for (generated_index, artifact) in generated.iter().enumerate() {
         let destination_path = if artifact.external {
             validate_external_destination(&artifact.destination)?
@@ -8128,14 +7486,6 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         };
         optional_workflows.insert(component.id.clone(), selected_state);
     }
-    optional_workflows.insert(
-        "codex.chat_flatten".into(),
-        if flatten_chat_sources {
-            "selected_pending".into()
-        } else {
-            "not_selected".into()
-        },
-    );
     let mut plan = InstallationPlan {
         schema_version: crate::migrations::CURRENT_PLAN_SCHEMA.into(),
         plan_id: Uuid::new_v4(),
@@ -8156,7 +7506,9 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         ai_endpoint: ai_endpoint_from_state(state),
         primary_coding_environment: coding_environment_selection.primary.clone(),
         additional_coding_environments: coding_environment_selection.additional.clone(),
-        flatten_chat_sources,
+        // The ChatGPT packager is an optional `.tools` script the user runs;
+        // setup never prepares a ChatGPT folder for a new project.
+        flatten_chat_sources: false,
         codex_analysis: Some(codex_analysis),
         selected_components: selected,
         wiki_required_pages: resolution.manifest.wiki.required_pages.clone(),
@@ -8208,17 +7560,6 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     };
     crate::transaction::bind_plan_external_parents(&mut plan)?;
     ensure_mcp_package_replaceable(&plan)?;
-    if plan.flatten_chat_sources {
-        let mut prepared_plan = PreparedPlan {
-            plan,
-            prepared_files: prepared,
-            merge_contexts: HashMap::new(),
-            canonical_root: root,
-            approved: false,
-        };
-        refresh_flattened_outputs(&mut prepared_plan)?;
-        return Ok((prepared_plan.plan, prepared_plan.prepared_files));
-    }
     Ok((plan, prepared))
 }
 
@@ -9007,16 +8348,10 @@ fn maintenance_conflicts(
         .collect()
 }
 
+/// Native client MCP files are merged with the project's local content so
+/// user-owned servers and settings survive install, update, and repair.
 fn is_image_generation_client_config_path(path: &str) -> bool {
-    matches!(
-        path.replace('\\', "/").to_ascii_lowercase().as_str(),
-        ".mcp.json"
-            | ".codex/config.toml"
-            | ".cursor/mcp.json"
-            | ".qoder/mcp.json"
-            | "opencode.json"
-            | ".opencode/mcp.json"
-    )
+    coding_environment::is_native_mcp_config_path(path)
 }
 
 #[tauri::command(async)]
@@ -9532,6 +8867,7 @@ fn build_maintenance_plan_blocking(
                     generated_bytes: None,
                     executable: selection.executable,
                     platform: Some(selection.platform),
+                    installer_created: false,
                 })
             })
             .collect::<Result<Vec<_>, AppError>>()?;
@@ -9831,12 +9167,9 @@ fn build_maintenance_plan_blocking(
                             "codex.config",
                         ]
                         .contains(&component.id.as_str())
-                            || component
-                                .coding_environment
-                                .as_deref()
-                                .is_some_and(|environment| {
-                                    selected_environments.iter().any(|id| id == environment)
-                                })
+                            || selected_environments.iter().any(|environment| {
+                                coding_environment::serves_environment(component, environment)
+                            })
                     })
                     .map(|component| component.id.clone())
                     .collect::<Vec<_>>();
@@ -10114,6 +9447,16 @@ fn build_maintenance_plan_blocking(
     let mut download_ledger = Vec::new();
     let mut merge_contexts = HashMap::new();
     for operation in &mut operations {
+        // A deselected client's MCP file loses only the installer's routes.
+        // Its bytes come from the unchanged live file, not from the source.
+        if operation.resolution.as_deref() == Some(crate::transaction::MCP_ROUTE_REMOVAL) {
+            prepared.push(crate::transaction::prepare_mcp_route_removal(
+                &root,
+                operation,
+                &crate::transaction::installer_mcp_server_ids(&lock),
+            )?);
+            continue;
+        }
         if operation.action == OperationAction::DeleteManaged
             || operation.source_sha256.is_none()
             || (mode == "remove" && operation.action == OperationAction::Skip)
@@ -11220,12 +10563,29 @@ fn open_in_coding_environment(
             ),
         });
     }
-    Ok(OpenInCodexResult {
-        opened: false,
-        message: format!(
+    // Other clients are never launched: their executables have no verified
+    // identity here. The message names the client and its documented command.
+    let message = match coding_environment::native_client(&environment) {
+        Some(client) => match client.open_command {
+            Some(command) => format!(
+                "Open a terminal in {} and run {command} to start {}.",
+                root.display(),
+                client.display_name
+            ),
+            None => format!(
+                "Open this folder in {}: {}",
+                client.display_name,
+                root.display()
+            ),
+        },
+        None => format!(
             "Open this folder in your coding environment: {}",
             root.display()
         ),
+    };
+    Ok(OpenInCodexResult {
+        opened: false,
+        message,
     })
 }
 
@@ -11409,8 +10769,18 @@ mod tests {
     }
 
     fn image_generation_test_manifest() -> RemoteManifest {
-        let environments =
-            serde_json::json!(["claude_code", "codex", "cursor", "qoder", "opencode"]);
+        let environments = serde_json::json!([
+            "claude_code",
+            "codex",
+            "cursor",
+            "qoder",
+            "opencode",
+            "gemini_cli",
+            "antigravity",
+            "grok_build",
+            "github_copilot",
+            "qwen_code"
+        ]);
         let route = serde_json::json!({
             "kind": "stdio_adapter", "auth_method": "api_key_vault", "server_id": "hoi4_image_openai_api",
             "url": null, "component_id": "imagegen.runtime", "runtime_entry": ".tools/image_generation/runtime/server.py",
@@ -12329,6 +11699,65 @@ mod tests {
         assert!(adapted["mcp"]["hoi4_image_openai_api"]["command"].is_array());
         assert_eq!(adapted["mcp"]["hoi4_image_openai_api"]["type"], "local");
         assert_eq!(adapted["mcp"]["hoi4_image_openai_api"]["enabled"], true);
+
+        let none = LiveTestingSelection {
+            provider: "none".into(),
+            ..Default::default()
+        };
+        let adapt_for = |environment: &str, destination: &str, bytes: &[u8]| {
+            adapt_image_generation_client_config(
+                bytes,
+                destination,
+                &manifest,
+                &selection,
+                &CodingEnvironmentSelection {
+                    primary: environment.into(),
+                    additional: vec![],
+                },
+                Path::new("C:/mods/example"),
+                &none,
+            )
+            .unwrap()
+        };
+        let gemini: Value = serde_json::from_slice(&adapt_for(
+            "gemini_cli",
+            ".gemini/settings.json",
+            br#"{"context":{"fileName":["GEMINI.md"]},"mcpServers":{"hoi4_image_old_provider":{"command":"old"}}}"#,
+        ))
+        .unwrap();
+        assert_eq!(gemini["context"]["fileName"][0], "GEMINI.md");
+        assert_eq!(gemini["mcpServers"]["hoi4_image_openai_api"]["cwd"], ".");
+        assert!(gemini["mcpServers"]
+            .get("hoi4_image_old_provider")
+            .is_none());
+        let vscode: Value = serde_json::from_slice(&adapt_for(
+            "github_copilot",
+            ".vscode/mcp.json",
+            b"{\n  // user comment\n  \"servers\": {\"user\": {\"type\": \"stdio\", \"command\": \"keep\"}},\n}",
+        ))
+        .unwrap();
+        assert_eq!(vscode["servers"]["user"]["command"], "keep");
+        let route = &vscode["servers"]["hoi4_image_openai_api"];
+        assert_eq!(route["type"], "stdio");
+        assert_eq!(route["cwd"], "${workspaceFolder}");
+        let grok: toml::Value = std::str::from_utf8(&adapt_for(
+            "grok_build",
+            ".grok/config.toml",
+            b"[mcp_servers.hoi4_image_old_provider]\ncommand = \"old\"\n",
+        ))
+        .unwrap()
+        .parse()
+        .unwrap();
+        let route = &grok["mcp_servers"]["hoi4_image_openai_api"];
+        assert_eq!(route["cwd"].as_str(), Some("."));
+        assert!(route.get("enabled").is_none(), "enabled is a Codex key");
+        assert!(grok["mcp_servers"].get("hoi4_image_old_provider").is_none());
+        // Kiro documents no working directory, so its image routes are never
+        // adapted. (Linux may still re-render the file for the shared route.)
+        let kiro = br#"{"mcpServers":{"hoi4_image_old_provider":{"command":"old"}}}"#;
+        let kiro_adapted: Value =
+            serde_json::from_slice(&adapt_for("kiro", ".kiro/settings/mcp.json", kiro)).unwrap();
+        assert_eq!(kiro_adapted, serde_json::from_slice::<Value>(kiro).unwrap());
         assert_eq!(adapted["mcp"]["hoi4_image_openai_api"]["cwd"], ".");
         assert_eq!(adapted["mcp"]["other"]["command"][0], "existing");
         assert!(adapted["mcp"].get("hoi4_image_old_provider").is_none());
@@ -12577,6 +12006,7 @@ mod tests {
                 generated_bytes: None,
                 executable: false,
                 platform: Some(ManifestPlatform::All),
+                installer_created: false,
             },
             LockedFile {
                 path: generated_path.into(),
@@ -12596,6 +12026,7 @@ mod tests {
                 generated_bytes: None,
                 executable: false,
                 platform: Some(ManifestPlatform::All),
+                installer_created: false,
             },
         ];
         let operations =
@@ -13435,17 +12866,15 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
     #[test]
     fn native_mcp_retargeting_preserves_custom_routes_and_source_environment_for_every_client() {
         let launch = ("/usr/bin/node".to_string(), vec!["/home/example/.local/share/hoi4-mod-setup/npm/lib/node_modules/hoi4-agent-tools/dist/bin/stdio.js".to_string()]);
-        for path in [
-            ".mcp.json",
-            ".cursor/mcp.json",
-            ".qoder/mcp.json",
-            "opencode.json",
-        ] {
-            let key = if path == "opencode.json" {
-                "mcp"
-            } else {
-                "mcpServers"
-            };
+        let json_routes = coding_environment::NATIVE_CLIENTS
+            .iter()
+            .filter_map(|client| client.mcp)
+            .filter(|mcp| !mcp.format.is_toml())
+            .collect::<Vec<_>>();
+        assert!(json_routes.len() >= 10);
+        for mcp in json_routes {
+            let path = mcp.path;
+            let key = mcp.format.servers_key();
             let bytes = serde_json::to_vec(&serde_json::json!({(key):{"hoi4_agent_tools":{"command":"hoi4-agent-tools.cmd","args":["old"],"env":{"HOI4_AGENT_STDIO_IDLE_EXIT_MINUTES":"30"}},"custom":{"command":"keep-me"}}})).unwrap();
             let value: Value = serde_json::from_slice(
                 &retarget_native_mcp_config(&bytes, path, Some(&launch)).unwrap(),
@@ -13456,7 +12885,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
                 value[key]["hoi4_agent_tools"]["env"]["HOI4_AGENT_STDIO_IDLE_EXIT_MINUTES"],
                 "30"
             );
-            if key == "mcp" {
+            if mcp.format == crate::native_mcp::McpFormat::LocalCommandArray {
                 assert_eq!(
                     value[key]["hoi4_agent_tools"]["command"],
                     serde_json::json!([launch.0, launch.1[0]])
@@ -13494,6 +12923,23 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
         assert_eq!(
             removed["mcp_servers"]["custom"]["command"].as_str(),
             Some("keep-me")
+        );
+        // Grok Build shares the TOML route shape; an unregistered or legacy
+        // path is never rewritten.
+        let grok: toml::Value = String::from_utf8(
+            retarget_native_mcp_config(source, ".grok/config.toml", Some(&launch)).unwrap(),
+        )
+        .unwrap()
+        .parse()
+        .unwrap();
+        assert_eq!(
+            grok["mcp_servers"]["hoi4_agent_tools"]["command"].as_str(),
+            Some(launch.0.as_str())
+        );
+        let legacy = br#"{"mcpServers":{"hoi4_agent_tools":{"command":["hoi4-agent-tools.cmd"]}}}"#;
+        assert_eq!(
+            retarget_native_mcp_config(legacy, ".opencode/mcp.json", Some(&launch)).unwrap(),
+            legacy.to_vec()
         );
     }
 
@@ -14615,6 +14061,55 @@ developer_instructions = "Work on the named files."
     }
 
     #[test]
+    fn user_added_documents_are_bound_by_the_context_store_not_the_scan_approval() {
+        let _state_guard = test_state_guard();
+        let _context_guard = crate::context::test_guard();
+        let folder = tempfile::tempdir().unwrap();
+        let notes = folder.path().join("pitch.md");
+        std::fs::write(
+            &notes,
+            format!("# Pitch {}\nA divided Europe.\n", Uuid::new_v4()),
+        )
+        .unwrap();
+        let (documents, refused) = crate::context::add_documents(&[notes]);
+        assert!(refused.is_empty(), "{refused:?}");
+        let document = documents[0].clone();
+        let context_evidence = ApprovedEvidence {
+            reference: document.reference.clone(),
+            path: document.evidence_path.clone(),
+            excerpt: document.excerpt.clone(),
+            excerpt_sha256: document.excerpt_sha256.clone(),
+            confidence: None,
+        };
+        let request =
+            |evidence: Vec<ApprovedEvidence>, purpose: Option<&str>| CodexAnalysisRequest {
+                mode: "new_project_identity".into(),
+                brief: "A divided Europe.".into(),
+                evidence,
+                constraints: serde_json::json!({}),
+                analysis_purpose: purpose.map(str::to_owned),
+                project_root: None,
+                scan_id: None,
+            };
+        // A new mod has no scan: a bound document alone is accepted.
+        validate_codex_evidence_approval(&request(vec![context_evidence.clone()], None)).unwrap();
+        let mut tampered = context_evidence.clone();
+        tampered.excerpt_sha256 = sha256_bytes(b"other text");
+        assert!(validate_codex_evidence_approval(&request(vec![tampered], None)).is_err());
+        let mut renamed = context_evidence.clone();
+        renamed.path = "@context/99-other.md".into();
+        assert!(validate_codex_evidence_approval(&request(vec![renamed], None)).is_err());
+        // Maintenance still needs approved scan evidence.
+        assert!(validate_codex_evidence_approval(&request(
+            vec![context_evidence.clone()],
+            Some("maintenance_reanalysis")
+        ))
+        .is_err());
+        crate::context::forget(&document.id).unwrap();
+        assert!(validate_codex_evidence_approval(&request(vec![context_evidence], None)).is_err());
+    }
+
+    #[test]
     fn renderer_cannot_authorize_an_arbitrary_scan_excerpt() {
         let _state_guard = test_state_guard();
         let project = tempfile::tempdir().unwrap();
@@ -14755,10 +14250,14 @@ developer_instructions = "Work on the named files."
             .findings
             .iter()
             .map(|finding| {
-                let excerpt = match &finding.value {
-                    Value::String(text) => text.clone(),
-                    value => serde_json::to_string(value).unwrap(),
-                };
+                let excerpt =
+                    finding
+                        .model_excerpt
+                        .clone()
+                        .unwrap_or_else(|| match &finding.value {
+                            Value::String(text) => text.clone(),
+                            value => serde_json::to_string(value).unwrap(),
+                        });
                 ApprovedEvidence {
                     reference: finding.id.clone(),
                     path: finding.evidence[0].path.clone(),

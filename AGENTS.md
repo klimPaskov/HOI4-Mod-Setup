@@ -74,6 +74,17 @@ Examples are not allowed to override schemas or security rules. Current implemen
 
 The planned architecture is a Tauri desktop shell with a Rust core and a TypeScript React interface.
 
+Accepted 2026-10-18 (`docs/38_web_edition_and_improvement_plan.md`): a web
+edition served from this repository's GitHub Pages site at `/app/` shares the
+React interface and a portable Rust core compiled to WebAssembly. It imports a
+dropped folder read-only and exports a ZIP (an overlay of new and changed files
+by default for existing mods, a full copy on request). API keys there stay in
+memory with a visible warning. A clearly labelled deterministic-only setup path
+is allowed when no setup assistant is available. Account sign-in routes, MCP
+bootstrap and health checks, Git, and in-place transactions stay desktop-only.
+Portable logic lives in the core crate and reaches files, HTTP, time, and
+randomness only through adapter traits.
+
 The Rust side owns:
 
 - filesystem access
@@ -188,10 +199,10 @@ The provider, model, and reasoning effort selected on the first screen are the
 **setup assistant**. They do not select, install, recommend, or restrict the AI
 client used later for Agentic HOI4 Modding. Generated `AGENTS.md` and README
 content must remain provider-neutral. Development-client integrations such as
-`codex.config`, Open in Codex, flattened ChatGPT sources, and provider-neutral
+`codex.config`, Open in Codex, the optional ChatGPT packager, and provider-neutral
 MCP tooling are selected or enabled independently of the setup assistant.
 
-Every semantic turn uses approved inputs and the current `codex-analysis` output schema. The runtime validator is authoritative even when a provider advertises native structured output. The core replaces the model-supplied analysis ID with its own UUID, accepts empty evidence references for genuinely inferred proposals, rejects unknown references, and keeps the scan/hash/session approval binding. Codex turns use a dedicated App Server thread and restricted read-only sandbox. Provider adapters never write files or approve transactions. The selected setup profile shapes semantic proposals for names, IDs, namespaces, descriptions, tags, folder profiles, and component recommendations. It may help adapt project-specific guidance, but it must not insert the setup provider, model, reasoning effort, or provider-specific development convention into the generated project. Deterministic Rust validates and renders the final provider-neutral bytes after user confirmation.
+Every semantic turn uses approved inputs and the current `codex-analysis` output schema. The runtime validator is authoritative even when a provider advertises native structured output. The core replaces the model-supplied analysis ID with its own UUID, accepts empty evidence references for genuinely inferred proposals, rejects unknown references, and keeps the scan/hash/session approval binding. Documents the user picks while describing the mod reach the provider only as redacted `@context/` evidence bound by the session context store; images never reach a provider (see `docs/37_setup_context_attachments.md`). Codex turns use a dedicated App Server thread and restricted read-only sandbox. Provider adapters never write files or approve transactions. The selected setup profile shapes semantic proposals for names, IDs, namespaces, descriptions, tags, folder profiles, and component recommendations. It may help adapt project-specific guidance, but it must not insert the setup provider, model, reasoning effort, or provider-specific development convention into the generated project. Deterministic Rust validates and renders the final provider-neutral bytes after user confirmation.
 
 No AI provider can write project files during analysis, approve a transaction, resolve conflicts automatically, or pass readiness checks. Missing authentication/configuration or usage availability blocks new planning. Recovery, rollback, backup inspection, and managed removal remain locally available while signed out or disconnected.
 
@@ -211,8 +222,18 @@ Resolve complete native packages from manifest components tagged with
 canonical adapted `CLAUDE.md`, `.claude/skills/`, and `.claude/agents/`, the
 adapted `AGENTS.md` projection, `.tools/sync/`, shared documentation, and
 selected workflows. The Claude instruction, skill, and Markdown-subagent files
-are the source package; Codex, Cursor, Qoder, and OpenCode files are generated
-projections and must pass source-side drift checks.
+are the source package; every other client's instructions, agents, and skill
+copies are generated projections and must pass source-side drift checks.
+
+Manifest format 6 declares each client's MCP support: a `project` file the
+installer manages, a `manual` route in settings the client owns, or `none`.
+Offer a format 6 client only when its project route matches an adapter in
+`crates/hoi4-setup-core/src/coding_environment.rs`, or when its route is manual or absent.
+Never write a client's user, IDE, or cloud settings. A component may serve
+several clients through `shared_coding_environments`, so one installed copy
+never duplicates a destination. Format 5 and older manifests offer only the
+five clients they shipped. The catalog, evidence, and unsupported routes are
+in `docs/36_coding_environment_catalog.md`.
 
 Persist primary and additional IDs in project state, plans, locks, and journals.
 Existing-project scans preserve a valid recorded selection, including a prior
@@ -244,6 +265,12 @@ Low confidence is a visible state. Do not turn a guess into a detected fact. Lab
 Use `hoi4-mod-setup-project-scanner` for scanner changes.
 
 ## 7. Transaction contract
+
+The web edition never mutates a project in place: the dropped folder is the
+backup and the exported ZIP is the reviewed result. It keeps exact-revision
+resolution, verification, merge and conflict review, ownership, and the lock
+written inside the ZIP. Every in-place desktop mutation follows the contract
+below.
 
 Every project mutation uses this ordered transaction:
 
@@ -344,12 +371,11 @@ The startup updater always surfaces a newer signed app version, downloads and
 verifies it, replaces the current installation, and restarts. A failed update
 leaves the running version usable and exposes retry.
 
-Manage Existing Project exposes ChatGPT source packaging when the scan finds an
-`AGENTS.md`, flattened skill, or subagent source; an installation lock is not
-required. Rust discovers the bounded root files, flattened skills, subagents,
-and optional root Markdown files; package output goes to a validated external
-folder, defaults to Downloads, is written atomically without overwriting, and
-never changes the project.
+The app does not package ChatGPT project sources. The packager is the optional
+`runtime.chatgpt_sources` manifest component, a `.tools` script installed only
+when the user checks it on Components and run only by the user; no plan
+prepares a `chatgpt_project_sources/` folder. See
+`docs/33_chatgpt_source_packaging.md`.
 
 ## 11. UI rules
 

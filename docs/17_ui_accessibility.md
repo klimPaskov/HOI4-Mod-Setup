@@ -292,13 +292,4 @@ title-bar status. Start the signed update automatically; announce the version
 being installed without blocking the wizard. On failure, keep one keyboard-
 accessible **Retry update** action. Keep current and offline checks silent.
 
-The existing-project **Package ChatGPT project sources** action appears in the
-scan results and maintenance view when the scan finds an `AGENTS.md`, flattened
-skill, or subagent source; it does not
-require the three core Agentic components or an installation lock. Its page has
-one download-folder field, a native folder picker, and one scrollable checkbox
-list. Detected files are checked and disabled; optional root Markdown files are
-unchecked by default. The page exposes the package path and included-file
-result after the atomic export, keeps long paths readable at 200 percent
-scaling, and supports keyboard focus and screen-reader labels for every
-checkbox and action.
+Superseded (2026-10-18): the app no longer packages ChatGPT sources or prepares a flattened folder. The packager is the optional `runtime.chatgpt_sources` manifest component, a `.tools` script the user checks on Components and runs. See `docs/33_chatgpt_source_packaging.md`.

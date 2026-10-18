@@ -35,7 +35,7 @@ const requiredAppTokens = [
 ];
 
 const requiredPhaseLabels = ["Project", "Review", "Components", "Integrations", "Git", "Install", "Ready", "Overview", "Update", "Conflicts", "Recovery"];
-const requiredScreens = ["welcome", "description", "identity", "scan", "findings", "environments", "image-generation", "live-testing", "components", "workflows", "mesh", "mcp", "git", "dry-run", "install", "ready", "update", "chat-sources", "conflict", "recovery"];
+const requiredScreens = ["welcome", "description", "identity", "scan", "findings", "environments", "image-generation", "live-testing", "components", "workflows", "mesh", "mcp", "git", "dry-run", "install", "ready", "update", "conflict", "recovery"];
 const optionalWorkflowTitles = [
   "3D models workflow",
   "Super Events workflow",
@@ -43,7 +43,7 @@ const optionalWorkflowTitles = [
 ];
 const requiredCssTokens = [":focus-visible", "prefers-reduced-motion", "@media (min-width: 1920px)", "@media (max-width: 560px)", "overflow: auto", ".visually-hidden", ".button.primary:disabled", ".toggle-row > span:last-child", ".path-preview", "overflow-wrap: anywhere", "min-width: 0", ".provider-panel", ".provider-help", ".coding-environment-options", ".coding-environment-option:has(input:focus-visible)", ".image-provider-card", ".image-provider-choice"];
 const requiredTypeTokens = ["conflictChoice?: ConflictChoice", "recoveryChoice: RecoveryChoice", "interface InstallationPlan", "interface TransactionJournal"];
-const requiredTauriTokens = ["interface TauriCommandMap", "isTauriRuntime", '"codex_account_read"', '"codex_login_start"', '"codex_login_cancel"', '"open_codex_login_url"', '"codex_analyze"', '"confirm_codex_analysis"', '"pick_project_folder"', '"pick_launcher_folder"', '"scan_project"', '"cancel_scan"', '"scan-progress"', '"preview_source_manifest"', '"preview_installation_conflict"', '"build_installation_plan"', '"build_maintenance_plan"', '"store_image_generation_credential"', '"image_generation_credential_status"', '"remove_image_generation_credential"', '"approve_installation"', '"resolve_installation_conflict"', '"apply_installation"', '"rollback_installation"', '"open_in_codex"', '"pick_chat_sources_folder"', '"preview_chat_sources"', '"package_chat_sources"', "Promise<InstallationPlan | null>", "Promise<TransactionJournal | null>"];
+const requiredTauriTokens = ["interface TauriCommandMap", "isTauriRuntime", '"codex_account_read"', '"codex_login_start"', '"codex_login_cancel"', '"open_codex_login_url"', '"codex_analyze"', '"confirm_codex_analysis"', '"pick_project_folder"', '"pick_launcher_folder"', '"scan_project"', '"cancel_scan"', '"scan-progress"', '"preview_source_manifest"', '"preview_installation_conflict"', '"build_installation_plan"', '"build_maintenance_plan"', '"store_image_generation_credential"', '"image_generation_credential_status"', '"remove_image_generation_credential"', '"approve_installation"', '"resolve_installation_conflict"', '"apply_installation"', '"rollback_installation"', '"open_in_codex"', "Promise<InstallationPlan | null>", "Promise<TransactionJournal | null>"];
 
 for (const token of requiredAppTokens) if (!app.includes(token)) throw new Error(`missing UI accessibility hook: ${token}`);
 for (const label of requiredPhaseLabels) if (!app.includes(`label: "${label}"`)) throw new Error(`missing phase label: ${label}`);

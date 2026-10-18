@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildMaintenancePlan, buildMaintenancePlanResult, cancelCodexLogin, cancelScan, confirmCodexAnalysis, evaluateReadiness, inspectLocalPortraitProvider, installLocalPortraitWorkflows, openExternalUrlResult, packageChatSources, pickChatSourcesFolder, previewChatSources, previewDescriptors, readMeshyCredential, runAiAnalysis, runCodexAnalysis, scanProject } from "./tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildMaintenancePlan, buildMaintenancePlanResult, cancelCodexLogin, cancelScan, confirmCodexAnalysis, evaluateReadiness, forgetContextAttachment, inspectLocalPortraitProvider, installLocalPortraitWorkflows, openExternalUrlResult, pickContextDocuments, pickContextImages, previewDescriptors, readMeshyCredential, runAiAnalysis, runCodexAnalysis, scanProject } from "./tauri";
 import type { AiAnalysisRequest, CodexAnalysisRequest, ScanProgress, WizardState } from "../types";
 
 const { invoke, listen, unlisten } = vi.hoisted(() => ({
@@ -92,22 +92,6 @@ describe("typed scanner bridge", () => {
     expect(result.error).toBeUndefined();
     expect(invoke).toHaveBeenCalledWith("open_external_url", {
       url: "https://github.com/klimPaskov/Agentic-HOI4-Modding",
-    });
-  });
-
-  it("uses typed commands for ChatGPT source preview and packaging", async () => {
-    invoke.mockResolvedValueOnce({ path: "C:/Users/Player/Downloads" }).mockResolvedValueOnce({ eligible: true, files: [] }).mockResolvedValueOnce({ archive_path: "C:/Users/Player/Downloads/example.zip", included_files: [], bytes: 0, sha256: "a".repeat(64) });
-
-    await pickChatSourcesFolder();
-    await previewChatSources("C:/mods/example");
-    await packageChatSources("C:/mods/example", "C:/Users/Player/Downloads", ["AGENTS.md"]);
-
-    expect(invoke).toHaveBeenNthCalledWith(1, "pick_chat_sources_folder", {});
-    expect(invoke).toHaveBeenNthCalledWith(2, "preview_chat_sources", { projectRoot: "C:/mods/example" });
-    expect(invoke).toHaveBeenNthCalledWith(3, "package_chat_sources", {
-      projectRoot: "C:/mods/example",
-      destinationDirectory: "C:/Users/Player/Downloads",
-      selectedFileIds: ["AGENTS.md"],
     });
   });
 
@@ -342,5 +326,61 @@ describe("typed scanner bridge", () => {
     await buildMaintenancePlanResult("update", "C:/mods/example", undefined, [], undefined, "claude_code", [], undefined, imageGeneration, liveTesting);
     expect(invoke).toHaveBeenCalledWith("build_maintenance_plan", expect.objectContaining({ liveTesting }));
     expect(invoke).toHaveBeenCalledWith("build_maintenance_plan", expect.objectContaining({ imageGeneration }));
+  });
+
+  it("adds context documents and images through the native pickers", async () => {
+    const document = { id: "doc-1", name: "pitch.md", size: 120, reference: "context.doc-1", evidence_path: "@context/01-pitch.md", excerpt: "A divided Europe.", excerpt_sha256: "a".repeat(64), truncated: false, redacted: false, copyable: true };
+    const image = { id: "img-1", name: "cover.png", size: 2048, media_type: "image/png", data_url: "data:image/png;base64,AAAA" };
+    invoke.mockResolvedValueOnce({ added: [document], refused: ["notes.exe: unsupported file type"], cancelled: false });
+    invoke.mockResolvedValueOnce({ added: [image], refused: [], cancelled: false });
+
+    const documents = await pickContextDocuments();
+    const images = await pickContextImages();
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "pick_context_documents", {});
+    expect(invoke).toHaveBeenNthCalledWith(2, "pick_context_images", {});
+    expect(documents.value?.added).toEqual([document]);
+    expect(documents.value?.refused).toEqual(["notes.exe: unsupported file type"]);
+    expect(images.value?.added).toEqual([image]);
+  });
+
+  it("reports a cancelled or failed context pick without values", async () => {
+    invoke.mockResolvedValueOnce({ added: [], refused: [], cancelled: true });
+    invoke.mockRejectedValueOnce("selected file is not a local path");
+
+    expect((await pickContextDocuments()).value?.cancelled).toBe(true);
+    const failed = await pickContextImages();
+    expect(failed.value).toBeNull();
+    expect(failed.error).toBe("selected file is not a local path");
+  });
+
+  it("forgets a context attachment by ID and ignores an empty ID", async () => {
+    invoke.mockResolvedValue(undefined);
+
+    await expect(forgetContextAttachment("doc-1")).resolves.toBe(true);
+    await expect(forgetContextAttachment(" ")).resolves.toBe(false);
+
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(invoke).toHaveBeenCalledWith("forget_context_attachment", { id: "doc-1" });
+  });
+
+  it("keeps context previews and excerpts out of the planning state", async () => {
+    invoke.mockResolvedValue(null);
+    const state = {
+      meshKeyDraft: "",
+      imageGenerationCredentialDrafts: {},
+      contextDocuments: [{ id: "doc-1", name: "pitch.md", size: 1, reference: "context.doc-1", evidence_path: "@context/01-pitch.md", excerpt: "private excerpt text", excerpt_sha256: "a".repeat(64), truncated: false, redacted: false, copyable: true, includeInAnalysis: true, keepCopy: true }],
+      contextImages: [{ id: "img-1", name: "cover.png", size: 1, media_type: "image/png", data_url: "data:image/png;base64,ORIGINAL", saveReference: true, referenceData: "UkVGRVJFTkNF" }],
+      contextThumbnail: { attachmentId: "img-1", png: "VEhVTUI=" },
+    } as unknown as WizardState;
+
+    await buildInstallationPlan(state);
+
+    const sent = invoke.mock.calls[0][1] as { state: WizardState };
+    expect(sent.state.contextDocuments?.[0]).toMatchObject({ id: "doc-1", keepCopy: true, excerpt: "" });
+    expect(sent.state.contextImages?.[0]).toMatchObject({ id: "img-1", saveReference: true, referenceData: "UkVGRVJFTkNF", data_url: "" });
+    expect(sent.state.contextThumbnail).toEqual({ attachmentId: "img-1", png: "VEhVTUI=" });
+    expect(JSON.stringify(invoke.mock.calls)).not.toContain("ORIGINAL");
+    expect(JSON.stringify(invoke.mock.calls)).not.toContain("private excerpt text");
   });
 });

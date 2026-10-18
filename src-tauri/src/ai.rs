@@ -17,16 +17,15 @@ use crate::credentials::{validate_ai_provider_credential_for, CredentialStore};
 use crate::models::{AiModelOption, AiProviderProfile, CredentialReference};
 use crate::security::redact_secrets;
 use crate::AppError;
+use hoi4_setup_core::analysis::{extract_structured_output, ANTHROPIC_VERSION};
 use reqwest::blocking::Client;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE};
-use serde_json::{json, Value};
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT};
+use serde_json::Value;
 use std::io::Read;
 use std::time::Duration;
 
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ENDPOINT_LENGTH: usize = 2048;
-const ANTHROPIC_VERSION: &str = "2023-06-01";
-const ANALYSIS_SCHEMA: &str = include_str!("../../docs/schemas/codex-analysis.schema.json");
 
 #[derive(Debug, Clone)]
 pub struct AiProviderConfig {
@@ -701,86 +700,35 @@ fn provider_request_payload(
     prompt: &str,
     secret: Option<&str>,
 ) -> Result<(HeaderMap, Value), AppError> {
-    let mut headers = HeaderMap::new();
-    headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    let system_prompt = format!(
-        "Return only one JSON object matching this exact schema. Do not disclose account data, hidden reasoning, credentials, or filesystem content.\n\noutput_schema={ANALYSIS_SCHEMA}"
-    );
     let supports_effort = matches!(provider, "deepseek" | "gemini" | "grok")
         || (provider == "claude" && supported_efforts(provider, model).len() > 1);
-    let mut schema: Value = serde_json::from_str(ANALYSIS_SCHEMA)?;
-    schema.as_object_mut().unwrap().remove("$schema");
-    schema.as_object_mut().unwrap().remove("$id");
-    let body = if protocol == "anthropic_messages" {
-        if let Some(secret) = secret {
-            headers.insert(
-                "x-api-key",
-                HeaderValue::from_str(secret).map_err(|_| {
-                    AppError::Credential("provider credential contains invalid header bytes".into())
-                })?,
-            );
-        }
+    let request = hoi4_setup_core::analysis::provider_request(
+        provider,
+        protocol,
+        endpoint,
+        model,
+        reasoning_effort,
+        prompt,
+        supports_effort,
+    )?;
+    let mut headers = HeaderMap::new();
+    for (name, value) in request.headers {
         headers.insert(
-            "anthropic-version",
-            HeaderValue::from_static(ANTHROPIC_VERSION),
+            name,
+            HeaderValue::from_str(&value)
+                .map_err(|_| AppError::Protocol("provider header is invalid".into()))?,
         );
-        let mut body = json!({
-            "model": model,
-            "max_tokens": 8192,
-            "system": system_prompt,
-            "messages": [{"role": "user", "content": prompt}],
-            "output_config": {"format": {"type": "json_schema", "schema": schema}}
-        });
-        if supports_effort {
-            body["output_config"]["effort"] = json!(reasoning_effort);
-        }
-        body
-    } else {
-        if let Some(secret) = secret {
-            let value = format!("Bearer {secret}");
-            headers.insert(
-                "authorization",
-                HeaderValue::from_str(&value).map_err(|_| {
-                    AppError::Credential("provider credential contains invalid header bytes".into())
-                })?,
-            );
-        }
-        let mut body = if protocol == "openai_responses" {
-            json!({
-                "model": model,
-                "instructions": system_prompt,
-                "input": [{"role": "user", "content": prompt}],
-                "store": false,
-                "text": {"format": {"type": "json_schema", "name": "project_analysis", "strict": true, "schema": schema}}
-            })
-        } else {
-            json!({
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ]
-            })
-        };
-        if provider == "gemini" {
-            body["response_format"] = json!({"type": "json_schema", "json_schema": {
-                "name": "project_analysis", "strict": true, "schema": schema
-            }});
-        }
-        if supports_effort {
-            if protocol == "openai_responses" {
-                body["reasoning"] = json!({"effort": reasoning_effort});
-            } else {
-                body["reasoning_effort"] = json!(reasoning_effort);
-            }
-        }
-        if protocol == "openai_compatible" && endpoint.contains("api.deepseek.com") {
-            body["thinking"] = json!({"type": "enabled"});
-        }
-        body
-    };
-    Ok((headers, body))
+    }
+    if let Some(secret) = secret {
+        let (name, value) = hoi4_setup_core::analysis::credential_header(protocol, secret);
+        headers.insert(
+            name,
+            HeaderValue::from_str(&value).map_err(|_| {
+                AppError::Credential("provider credential contains invalid header bytes".into())
+            })?,
+        );
+    }
+    Ok((headers, request.body))
 }
 
 fn request_provider(
@@ -857,100 +805,11 @@ fn request_provider(
     extract_structured_output(&envelope)
 }
 
-fn extract_structured_output(envelope: &Value) -> Result<Value, AppError> {
-    if envelope.get("schema_version").is_some() {
-        return Ok(envelope.clone());
-    }
-    if envelope.get("stop_reason").and_then(Value::as_str) == Some("max_tokens")
-        || envelope
-            .pointer("/choices/0/finish_reason")
-            .and_then(Value::as_str)
-            == Some("length")
-        || envelope.get("status").and_then(Value::as_str) == Some("incomplete")
-    {
-        return Err(AppError::Protocol("provider output was truncated".into()));
-    }
-    if envelope
-        .pointer("/choices/0/message/refusal")
-        .is_some_and(|value| !value.is_null())
-        || envelope
-            .pointer("/choices/0/finish_reason")
-            .and_then(Value::as_str)
-            == Some("content_filter")
-        || envelope.get("stop_reason").and_then(Value::as_str) == Some("refusal")
-        || envelope
-            .get("output")
-            .and_then(Value::as_array)
-            .is_some_and(|output| {
-                output
-                    .iter()
-                    .filter_map(|item| item.get("content").and_then(Value::as_array))
-                    .flatten()
-                    .any(|block| block.get("type").and_then(Value::as_str) == Some("refusal"))
-            })
-    {
-        return Err(AppError::Protocol(
-            "provider declined the analysis request".into(),
-        ));
-    }
-    if let Some(content) = envelope
-        .pointer("/choices/0/message/content")
-        .and_then(Value::as_str)
-    {
-        return parse_json_text(content);
-    }
-    if let Some(blocks) = envelope.get("content").and_then(Value::as_array) {
-        let text = blocks
-            .iter()
-            .filter(|block| {
-                block
-                    .get("type")
-                    .and_then(Value::as_str)
-                    .is_none_or(|kind| kind == "text")
-            })
-            .filter_map(|block| block.get("text").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join("");
-        if !text.is_empty() {
-            return parse_json_text(&text);
-        }
-    }
-    if let Some(output) = envelope.get("output").and_then(Value::as_array) {
-        let text = output
-            .iter()
-            .filter(|item| item.get("type").and_then(Value::as_str) == Some("message"))
-            .filter_map(|item| item.get("content").and_then(Value::as_array))
-            .flatten()
-            .filter(|block| block.get("type").and_then(Value::as_str) == Some("output_text"))
-            .filter_map(|block| block.get("text").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join("");
-        if !text.is_empty() {
-            return parse_json_text(&text);
-        }
-    }
-    Err(AppError::Serialization(
-        "AI provider returned no structured analysis object".into(),
-    ))
-}
-
-fn parse_json_text(text: &str) -> Result<Value, AppError> {
-    let trimmed = text.trim();
-    let without_fence = trimmed
-        .strip_prefix("```json")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .and_then(|value| value.strip_suffix("```"))
-        .map(str::trim)
-        .unwrap_or(trimmed);
-    serde_json::from_str(without_fence).map_err(|_| {
-        AppError::Serialization("AI provider returned text that is not valid JSON".into())
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::credentials::MemoryCredentialStore;
+    use hoi4_setup_core::analysis::ANALYSIS_OUTPUT_SCHEMA as ANALYSIS_SCHEMA;
     use serde_json::json;
 
     #[test]

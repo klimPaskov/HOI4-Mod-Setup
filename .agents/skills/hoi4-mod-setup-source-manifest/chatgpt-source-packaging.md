@@ -1,11 +1,12 @@
 # Installed source-packaging tool
 
-The Agentic repository owns the all-platform `runtime.agent_sync` shared-tools
-component. Both core profiles and coding environments include it. Alongside its
-existing synchronizers, selectively install only its declared `.tools/README.md`, Python script, and Windows batch
-launcher, using generated Git-blob evidence. Never embed a second app-owned copy
-or hand-maintain hashes. This tool uses ordinary managed-file conflict handling,
-staging, rollback, and update behavior; export is invoked separately by the user.
+The Agentic repository owns the optional, all-platform `runtime.chatgpt_sources`
+component: the Python script and Windows batch launcher under `.tools/`, with
+generated Git-blob evidence. No profile selects it; the user checks it on
+Components. The shared `runtime.agent_sync` component no longer carries it.
+Never embed a second app-owned copy or hand-maintain hashes. This tool uses
+ordinary managed-file conflict handling, staging, rollback, and update
+behavior; export is invoked separately by the user and never by the app.
 
 Run the source repository's `scripts/test_chatgpt_sources_package.py` through
 unittest discovery to verify manifest-selected installation and tiny-project

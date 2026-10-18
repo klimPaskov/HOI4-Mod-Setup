@@ -12,22 +12,10 @@ key-configured bit, and `workflow.super_events` state. It does not treat a
 guessed file list as an
 installation record.
 
-If the scan finds an `AGENTS.md`, flattened skill, or subagent source, also show
-**Package ChatGPT project sources**. This is an export action, not an update or
-repair transaction, and does not require an installation lock. The page
-defaults to the validated Downloads directory and reads the project files
-only.
 
 ## ChatGPT source package
 
-The preview includes `AGENTS.md`, `README.md`, every direct
-`.agents/skills/<skill>/SKILL.md` flattened to `<skill>.md`, and every direct
-`.codex/agents/*.toml`, selected by default. Immediate root Markdown files
-other than the two required files are shown as optional unchecked entries.
-The user may choose another existing external directory. Packaging revalidates
-the project and selection, rejects links, traversal, collisions, oversized or
-secret-shaped files, refuses overwrite, and atomically writes a new ZIP. It
-does not create a project journal, backup, lock update, or project mutation.
+Superseded (2026-10-18): the app no longer packages ChatGPT sources or prepares a flattened folder. The packager is the optional `runtime.chatgpt_sources` manifest component, a `.tools` script the user checks on Components and runs. See `docs/33_chatgpt_source_packaging.md`.
 
 ## Update
 

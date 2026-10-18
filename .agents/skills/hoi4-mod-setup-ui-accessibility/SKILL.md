@@ -92,6 +92,15 @@ render the exact manifest-declared dependencies, platform routes, destination,
 and declared file count for each component. Keep hashes and full source paths
 in the dry-run evidence instead of expanding the default component rows.
 
+Coding-environment rows show a text cue, not color, for clients whose MCP setup
+the installer cannot do ("MCP is set up in the client", "No MCP support").
+Clients that this app version or platform cannot install stay behind a
+`Not available (n)` disclosure with their reason and are never selectable.
+Ready adds one to-do line per selected manual-MCP client with its reviewed
+guide. Maintenance keeps a recorded client that the chosen source version does
+not offer and shows an `Installed but not in this source version` notice
+instead of hiding or dropping it.
+
 Conflict review is the exception. It may show a three-way comparison and more controls because comparison is the primary task.
 
 ## Interaction rules
@@ -232,18 +241,11 @@ Conflict review is the exception. It may show a three-way comparison and more co
   actionable error without losing focus. Logout clears session-scoped account,
   analysis, and approved-evidence state even when the remote logout request
   fails; keep local recovery/removal available.
-- The Components option `Prepare a flattened ChatGPT project-sources folder` is a native keyboard-accessible checkbox shown independently of the setup assistant. Present it with the same visual structure as the other component choices: title, concise contents, file count, and an expandable per-file size list. Source-declared sizes may appear immediately; generated-file and exact total sizes appear after the plan is prepared. Install review is read-only, there is no additional-files control, and the no-automatic-upload Chat recommendation appears on Ready.
+- The app offers no ChatGPT packaging or flattening UI; the optional `runtime.chatgpt_sources` component is an ordinary Components row. See `chatgpt-source-packaging.md`.
 - A manifest-load failure is an announced blocking callout with a direct Retry
   action. Suppress duplicate retries, expose the pending state with
   `aria-busy`, and return focus to the successful status message; a repeated
   failure retains the Retry action.
-- Existing managed projects expose **Package ChatGPT project sources** from
-  maintenance when the scan finds an AGENTS.md, flattened skill, or subagent;
-  no installation lock is required. The page defaults to Downloads, shows
-  detected AGENTS/README/flattened skills/subagents checked and disabled, and
-  shows immediate root Markdown as optional unchecked entries. Keep the folder
-  picker and checkbox list keyboard-accessible, readable at 200 percent, and
-  concise.
 - Public wizard screenshots use the sanitized development-only states in `src/documentation-fixtures.ts`. Capture the named `?screenshot=` routes at 1280 by 960 from the top of the page; never use a real account, credential, project path, or private mod as documentation evidence.
 - Keep each status symbol and its label in one inline row. Do not let generic child selectors turn the `Status` component into a grid or stack the symbol above the text.
 - The new-project description screen asks for the mod name and brief. The identity screen opens with generated project ID, prefix, namespace, tags, and starter folders; advanced metadata and external paths remain the only secondary/manual controls.
