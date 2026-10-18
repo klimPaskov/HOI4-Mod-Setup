@@ -4629,16 +4629,20 @@ fn image_generation_selection_from_state(
     let environments_selected = coding_environment::selected_environment_ids(environments);
     for id in &selected {
         let provider = find(id).expect("provider verified above");
-        let supported = provider
-            .get("supported_coding_environments")
-            .and_then(Value::as_array)
-            .is_some_and(|values| {
-                values.iter().filter_map(Value::as_str).any(|environment| {
-                    environments_selected
-                        .iter()
-                        .any(|selected| selected == environment)
-                })
-            });
+        // A manual provider registers nothing in any client, so it is
+        // available whichever coding clients are selected.
+        let manual = provider.pointer("/route/kind").and_then(Value::as_str) == Some("manual");
+        let supported = manual
+            || provider
+                .get("supported_coding_environments")
+                .and_then(Value::as_array)
+                .is_some_and(|values| {
+                    values.iter().filter_map(Value::as_str).any(|environment| {
+                        environments_selected
+                            .iter()
+                            .any(|selected| selected == environment)
+                    })
+                });
         if !supported {
             return Err(AppError::InvalidInput(format!(
                 "{} does not support a selected coding client",
@@ -6330,7 +6334,10 @@ fn image_client_config_source_destinations(
 }
 
 fn image_client_config_default(environment: &str) -> &'static [u8] {
-    if environment == coding_environment::CODEX {
+    let toml = coding_environment::native_client(environment)
+        .and_then(|client| client.mcp)
+        .is_some_and(|mcp| mcp.format.is_toml());
+    if toml {
         b""
     } else {
         b"{}"
@@ -6791,19 +6798,20 @@ fn adapt_image_only_client_config(
     coding_environments: &CodingEnvironmentSelection,
     project_root: &Path,
 ) -> Result<Vec<u8>, AppError> {
-    let environment = coding_environment::mcp_route_for_path(destination)
+    let Some((environment, mcp_format)) = coding_environment::mcp_route_for_path(destination)
         .filter(|(client, _)| client.image_and_live_routes)
-        .map(|(client, _)| client.id);
-    let Some(environment) = environment.filter(|environment| {
-        coding_environment::selected_environment_ids(coding_environments)
-            .iter()
-            .any(|selected| selected == environment)
-    }) else {
+        .map(|(client, route)| (client.id, route.format))
+        .filter(|(environment, _)| {
+            coding_environment::selected_environment_ids(coding_environments)
+                .iter()
+                .any(|selected| selected == environment)
+        })
+    else {
         return Ok(bytes.to_vec());
     };
     let providers = image_generation_provider_rows(manifest, selection)?;
     let managed_server_ids = managed_image_server_ids(manifest);
-    if environment == coding_environment::CODEX {
+    if mcp_format.is_toml() {
         let text = std::str::from_utf8(bytes).map_err(|error| {
             AppError::Source(format!("Codex configuration is not UTF-8: {error}"))
         })?;
@@ -6854,7 +6862,11 @@ fn adapt_image_only_client_config(
             fields.insert("command".into(), toml::Value::String(command.into()));
             fields.insert("args".into(), toml::Value::Array(args));
             fields.insert("cwd".into(), toml::Value::String(".".into()));
-            fields.insert("enabled".into(), toml::Value::Boolean(true));
+            // `enabled` is a Codex key; Grok Build documents only the launch
+            // and timeout fields for a project server.
+            if environment == coding_environment::CODEX {
+                fields.insert("enabled".into(), toml::Value::Boolean(true));
+            }
             mcp.insert(format!("hoi4_image_{id}"), toml::Value::Table(fields));
         }
         if mcp.is_empty() {
@@ -6868,7 +6880,7 @@ fn adapt_image_only_client_config(
                 ))
             });
     }
-    let mut config: Value = serde_json::from_slice(bytes).map_err(|error| {
+    let mut config: Value = crate::native_mcp::parse_json_lenient(bytes).map_err(|error| {
         AppError::Source(format!(
             "coding client MCP configuration is not valid JSON: {error}"
         ))
@@ -6876,11 +6888,7 @@ fn adapt_image_only_client_config(
     let root = config.as_object_mut().ok_or_else(|| {
         AppError::Source("coding client MCP settings are not a JSON object".into())
     })?;
-    let key = if environment == coding_environment::OPENCODE {
-        "mcp"
-    } else {
-        "mcpServers"
-    };
+    let key = mcp_format.servers_key();
     let routes = root
         .entry(key)
         .or_insert_with(|| Value::Object(serde_json::Map::new()))
@@ -6907,7 +6915,18 @@ fn adapt_image_only_client_config(
             continue;
         };
         let server_id = format!("hoi4_image_{id}");
-        if environment == coding_environment::OPENCODE {
+        if mcp_format == crate::native_mcp::McpFormat::VscodeServers {
+            // VS Code resolves the relative adapter path from the workspace.
+            routes.insert(
+                server_id,
+                serde_json::json!({
+                    "type": "stdio",
+                    "command": route["command"],
+                    "args": route["args"],
+                    "cwd": "${workspaceFolder}",
+                }),
+            );
+        } else if mcp_format == crate::native_mcp::McpFormat::LocalCommandArray {
             let mut command = vec![route["command"].clone()];
             command.extend(route["args"].as_array().cloned().unwrap_or_default());
             routes.insert(
@@ -10077,11 +10096,13 @@ fn build_maintenance_plan_blocking(
     let mut download_ledger = Vec::new();
     let mut merge_contexts = HashMap::new();
     for operation in &mut operations {
-        // A deselected client's MCP file loses only the shared route. Its
-        // bytes come from the unchanged live file, not from the source.
+        // A deselected client's MCP file loses only the installer's routes.
+        // Its bytes come from the unchanged live file, not from the source.
         if operation.resolution.as_deref() == Some(crate::transaction::MCP_ROUTE_REMOVAL) {
             prepared.push(crate::transaction::prepare_mcp_route_removal(
-                &root, operation,
+                &root,
+                operation,
+                &crate::transaction::installer_mcp_server_ids(&lock),
             )?);
             continue;
         }
@@ -11397,8 +11418,18 @@ mod tests {
     }
 
     fn image_generation_test_manifest() -> RemoteManifest {
-        let environments =
-            serde_json::json!(["claude_code", "codex", "cursor", "qoder", "opencode"]);
+        let environments = serde_json::json!([
+            "claude_code",
+            "codex",
+            "cursor",
+            "qoder",
+            "opencode",
+            "gemini_cli",
+            "antigravity",
+            "grok_build",
+            "github_copilot",
+            "qwen_code"
+        ]);
         let route = serde_json::json!({
             "kind": "stdio_adapter", "auth_method": "api_key_vault", "server_id": "hoi4_image_openai_api",
             "url": null, "component_id": "imagegen.runtime", "runtime_entry": ".tools/image_generation/runtime/server.py",
@@ -12317,6 +12348,65 @@ mod tests {
         assert!(adapted["mcp"]["hoi4_image_openai_api"]["command"].is_array());
         assert_eq!(adapted["mcp"]["hoi4_image_openai_api"]["type"], "local");
         assert_eq!(adapted["mcp"]["hoi4_image_openai_api"]["enabled"], true);
+
+        let none = LiveTestingSelection {
+            provider: "none".into(),
+            ..Default::default()
+        };
+        let adapt_for = |environment: &str, destination: &str, bytes: &[u8]| {
+            adapt_image_generation_client_config(
+                bytes,
+                destination,
+                &manifest,
+                &selection,
+                &CodingEnvironmentSelection {
+                    primary: environment.into(),
+                    additional: vec![],
+                },
+                Path::new("C:/mods/example"),
+                &none,
+            )
+            .unwrap()
+        };
+        let gemini: Value = serde_json::from_slice(&adapt_for(
+            "gemini_cli",
+            ".gemini/settings.json",
+            br#"{"context":{"fileName":["GEMINI.md"]},"mcpServers":{"hoi4_image_old_provider":{"command":"old"}}}"#,
+        ))
+        .unwrap();
+        assert_eq!(gemini["context"]["fileName"][0], "GEMINI.md");
+        assert_eq!(gemini["mcpServers"]["hoi4_image_openai_api"]["cwd"], ".");
+        assert!(gemini["mcpServers"]
+            .get("hoi4_image_old_provider")
+            .is_none());
+        let vscode: Value = serde_json::from_slice(&adapt_for(
+            "github_copilot",
+            ".vscode/mcp.json",
+            b"{\n  // user comment\n  \"servers\": {\"user\": {\"type\": \"stdio\", \"command\": \"keep\"}},\n}",
+        ))
+        .unwrap();
+        assert_eq!(vscode["servers"]["user"]["command"], "keep");
+        let route = &vscode["servers"]["hoi4_image_openai_api"];
+        assert_eq!(route["type"], "stdio");
+        assert_eq!(route["cwd"], "${workspaceFolder}");
+        let grok: toml::Value = std::str::from_utf8(&adapt_for(
+            "grok_build",
+            ".grok/config.toml",
+            b"[mcp_servers.hoi4_image_old_provider]\ncommand = \"old\"\n",
+        ))
+        .unwrap()
+        .parse()
+        .unwrap();
+        let route = &grok["mcp_servers"]["hoi4_image_openai_api"];
+        assert_eq!(route["cwd"].as_str(), Some("."));
+        assert!(route.get("enabled").is_none(), "enabled is a Codex key");
+        assert!(grok["mcp_servers"].get("hoi4_image_old_provider").is_none());
+        // Kiro documents no working directory, so its file is never adapted.
+        let kiro = br#"{"mcpServers":{"hoi4_image_old_provider":{"command":"old"}}}"#;
+        assert_eq!(
+            adapt_for("kiro", ".kiro/settings/mcp.json", kiro),
+            kiro.to_vec()
+        );
         assert_eq!(adapted["mcp"]["hoi4_image_openai_api"]["cwd"], ".");
         assert_eq!(adapted["mcp"]["other"]["command"][0], "existing");
         assert!(adapted["mcp"].get("hoi4_image_old_provider").is_none());

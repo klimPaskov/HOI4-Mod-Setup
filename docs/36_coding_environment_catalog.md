@@ -166,14 +166,17 @@ The pre-implementation draft of this document contained errors that the
 
 ## Known limitations
 
+- Kiro and Kilo Code receive no image-generation or live-testing routes, and
+  manual-MCP and no-MCP clients receive none either; their image work uses a
+  manual provider.
 - A file of a deselected client that the user changed and kept is released
   from management: it stays on disk untouched and no longer counts as a local
   modification.
 - A deselected client's MCP file that the installer merged with content the
   user already had keeps the setup's own non-route keys (for example a
-  `context` setting) when the shared route is removed: the lock records the
-  merged result, not a byte-exact base. Only the `hoi4_agent_tools` route is
-  removed.
+  `context` setting) when the installer's routes are removed: the lock
+  records the merged result, not a byte-exact base. Only the installer's own
+  routes are removed.
 - A file of a deselected client that the installer created before the lock
   recorded creation evidence (locks written before 2026-10-17) is never
   deleted: it keeps its empty server table and leaves management.
@@ -201,8 +204,11 @@ The pre-implementation draft of this document contained errors that the
   and keys are preserved.
 - When a client is deselected, removed, or dropped by a newer manifest, its
   unchanged merged MCP file goes through a reviewed reverse merge:
-  `native_mcp::retarget(format, bytes, None)` removes only the shared route
-  (`mcp_route_removal`). The file is deleted instead only when the lock
+  `native_mcp::remove_servers` removes only the installer's own routes
+  (`mcp_route_removal`): `hoi4_agent_tools` plus the image-generation
+  (`hoi4_image_<provider>`) and live-testing routes the lock records for the
+  selected providers (`transaction::installer_mcp_server_ids`). A user server
+  that merely shares the image prefix is kept. The file is deleted instead only when the lock
   records that the installer created it (`installer_created`) and nothing but
   an empty server table would remain. A file without the route is released
   untouched (`mcp_route_release`). Either way the file leaves the lock, and a
@@ -211,8 +217,14 @@ The pre-implementation draft of this document contained errors that the
   management.
 - Readiness applies the legacy OpenCode check only while the legacy
   component still owns its locked `.opencode/mcp.json`.
-- Image-generation and live-testing routes are adapted only for the five
-  original clients until the source provider tables declare the others.
+- Image-generation and live-testing routes are adapted for every client whose
+  project MCP file accepts a working directory: the original five plus Gemini
+  CLI, Antigravity, Grok Build, GitHub Copilot (VS Code, with
+  `${workspaceFolder}`), and Qwen Code. Kiro and Kilo Code document no `cwd`
+  for project servers, so their relative adapters could not run and they
+  receive only the HOI4 Agent Tools route. Grok Build routes omit Codex's
+  `enabled` key. A provider applies only when the source table lists the
+  client; manual providers (None, Midjourney) work with every client.
 
 ## Evidence
 

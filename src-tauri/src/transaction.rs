@@ -8657,9 +8657,9 @@ fn prune_emptied_directories(root: &RootedDir, plan: &InstallationPlan) {
     }
 }
 
-/// Resolution of a reviewed operation that removes only the shared
-/// `hoi4_agent_tools` route from a native client MCP file the installer
-/// merged, keeping every other server and key.
+/// Resolution of a reviewed operation that removes only the installer's own
+/// routes (see [`installer_mcp_server_ids`]) from a native client MCP file the
+/// installer merged, keeping every other server and key.
 pub const MCP_ROUTE_REMOVAL: &str = "mcp_route_removal";
 /// Resolution of an unchanged native client MCP file that has no shared route
 /// left to remove: nothing is written and the file leaves management.
@@ -8685,6 +8685,34 @@ fn removal_reverses_mcp_route(component_id: &str) -> bool {
         || component_id.starts_with("mcp.hoi4_live"))
 }
 
+/// The server entries the installer itself registers in client MCP files for
+/// this installation: the shared HOI4 Agent Tools route plus the recorded
+/// image-generation and live-testing routes. A user server that merely shares
+/// a prefix is never included.
+pub fn installer_mcp_server_ids(lock: &InstallationLock) -> Vec<String> {
+    let mut ids = vec![crate::native_mcp::SERVER_ID.to_string()];
+    if let Some(image) = &lock.image_generation {
+        for provider in std::iter::once(&image.primary_provider).chain(&image.additional_providers)
+        {
+            if provider != "none" {
+                ids.push(format!("hoi4_image_{provider}"));
+            }
+        }
+    }
+    let live = lock
+        .live_testing
+        .clone()
+        .unwrap_or_else(|| crate::live_testing::legacy_selection(&lock.components));
+    match live.provider.as_str() {
+        "clausewitz_mcp" => ids.push("clausewitz_linux".into()),
+        "hoi4_live_tools" => ids.push("hoi4-live".into()),
+        _ => {}
+    }
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
 fn read_native_mcp_file(project_root: &Path, path: &str) -> Result<Vec<u8>, AppError> {
     crate::flatten::read_bounded_regular_file_no_follow_under_root(
         project_root,
@@ -8701,6 +8729,7 @@ fn reverse_mcp_route(
     project_root: &Path,
     file: &LockedFile,
     current_sha256: Option<&str>,
+    server_ids: &[String],
 ) -> Result<Option<McpRouteReversal>, AppError> {
     if file.external
         || file.preserved_local
@@ -8719,11 +8748,11 @@ fn reverse_mcp_route(
     if sha256_bytes(&bytes) != file.installed_sha256 {
         return Ok(None);
     }
-    let Ok(declared) = crate::native_mcp::declares_route(format, &bytes) else {
+    let Ok(declared) = crate::native_mcp::declares_any(format, &bytes, server_ids) else {
         return Ok(None);
     };
     let remainder = if declared {
-        match crate::native_mcp::retarget(format, &bytes, None) {
+        match crate::native_mcp::remove_servers(format, &bytes, server_ids) {
             Ok(remainder) => remainder,
             Err(_) => return Ok(None),
         }
@@ -8785,6 +8814,7 @@ fn mcp_route_reversal_operation(
 pub fn prepare_mcp_route_removal(
     project_root: &Path,
     operation: &PlanOperation,
+    server_ids: &[String],
 ) -> Result<PreparedFile, AppError> {
     let changed = || {
         AppError::Transaction(format!(
@@ -8808,7 +8838,7 @@ pub fn prepare_mcp_route_removal(
     if operation.local_sha256.as_deref() != Some(sha256_bytes(&bytes).as_str()) {
         return Err(changed());
     }
-    let result = crate::native_mcp::retarget(format, &bytes, None)?;
+    let result = crate::native_mcp::remove_servers(format, &bytes, server_ids)?;
     let expected_sha256 = sha256_bytes(&result);
     if operation.result_sha256.as_deref() != Some(expected_sha256.as_str()) {
         return Err(changed());
@@ -8845,6 +8875,7 @@ pub fn managed_removal_operations(
     lock: &InstallationLock,
     project_root: &Path,
 ) -> Result<Vec<PlanOperation>, AppError> {
+    let server_ids = installer_mcp_server_ids(lock);
     let mut operations = Vec::new();
     for file in &lock.files {
         let destination = locked_file_destination(project_root, file)?;
@@ -8859,7 +8890,7 @@ pub fn managed_removal_operations(
         );
         if removal_reverses_mcp_route(&file.component_id) {
             if let (Some(reversal), Some(local)) = (
-                reverse_mcp_route(project_root, file, current.as_deref())?,
+                reverse_mcp_route(project_root, file, current.as_deref(), &server_ids)?,
                 current.clone(),
             ) {
                 operations.push(mcp_route_reversal_operation(
@@ -9053,6 +9084,7 @@ pub fn update_operations(
             })
         })
         .collect::<Result<_, AppError>>()?;
+    let server_ids = installer_mcp_server_ids(current_lock);
     for (index, file) in current_lock.files.iter().enumerate() {
         if incoming_files
             .iter()
@@ -9070,7 +9102,7 @@ pub fn update_operations(
         // file the installer merged loses only the shared route, whichever
         // component recorded it.
         if let (Some(reversal), Some(local)) = (
-            reverse_mcp_route(project_root, file, local_sha256.as_deref())?,
+            reverse_mcp_route(project_root, file, local_sha256.as_deref(), &server_ids)?,
             local_sha256.clone(),
         ) {
             operations.push(mcp_route_reversal_operation(
@@ -9813,6 +9845,98 @@ mod tests {
     }
 
     #[test]
+    fn deselected_client_mcp_file_loses_the_recorded_image_and_live_routes_too() {
+        let project = tempdir().unwrap();
+        let root = project.path();
+        let path = ".gemini/settings.json";
+        let mut lock = example_lock_without_files();
+        lock.image_generation = Some(ImageGenerationSelection {
+            primary_provider: "gptimage".into(),
+            additional_providers: vec!["fal_ai".into()],
+            route_settings: Default::default(),
+            credential_references: Default::default(),
+            installed_package_tree_sha256: None,
+            installed_package_lock_sha256: None,
+        });
+        lock.live_testing = Some(LiveTestingSelection {
+            provider: "clausewitz_mcp".into(),
+            linux_ready: true,
+            wsl_distribution: String::new(),
+            ssh_host: String::new(),
+        });
+        let ids = installer_mcp_server_ids(&lock);
+        assert_eq!(
+            ids,
+            [
+                "clausewitz_linux",
+                "hoi4_agent_tools",
+                "hoi4_image_fal_ai",
+                "hoi4_image_gptimage"
+            ]
+        );
+        let revision = lock.source.revision.clone();
+        let installed = serde_json::to_vec_pretty(&serde_json::json!({
+            "theme": "kept",
+            "mcpServers": {
+                "hoi4_agent_tools": {"command": "hoi4-agent-tools", "args": []},
+                "hoi4_image_gptimage": {"command": "node", "args": [], "cwd": "."},
+                "hoi4_image_fal_ai": {"command": "python", "args": [], "cwd": "."},
+                "clausewitz_linux": {"command": "wsl.exe", "args": [], "cwd": "."},
+                "hoi4_image_custom": {"command": "user-tool"}
+            }
+        }))
+        .unwrap();
+        write_project_file(root, path, &installed);
+        lock.files = vec![mcp_locked_file(
+            path,
+            "runtime.gemini_cli.mcp",
+            &installed,
+            true,
+            &revision,
+        )];
+        for update in [false, true] {
+            let operations = if update {
+                update_operations(&lock, &[], root).unwrap()
+            } else {
+                managed_removal_operations(&lock, root).unwrap()
+            };
+            assert_eq!(operations.len(), 1);
+            assert_eq!(operations[0].resolution.as_deref(), Some(MCP_ROUTE_REMOVAL));
+            let prepared = prepare_mcp_route_removal(root, &operations[0], &ids).unwrap();
+            let remainder: serde_json::Value = serde_json::from_slice(&prepared.bytes).unwrap();
+            // A user server that only shares the image prefix is kept.
+            assert_eq!(
+                remainder,
+                serde_json::json!({"theme": "kept", "mcpServers": {"hoi4_image_custom": {"command": "user-tool"}}})
+            );
+            assert_eq!(
+                operations[0].result_sha256.as_deref(),
+                Some(prepared.expected_sha256.as_str())
+            );
+            // Reviewing with only the shared route reproduces other bytes, so it is refused.
+            assert!(prepare_mcp_route_removal(root, &operations[0], &ids[1..2]).is_err());
+        }
+        // Without the user's server, an installer-created file is deleted.
+        let only_installer = serde_json::to_vec_pretty(&serde_json::json!({
+            "mcpServers": {
+                "hoi4_agent_tools": {"command": "hoi4-agent-tools", "args": []},
+                "hoi4_image_gptimage": {"command": "node", "args": [], "cwd": "."}
+            }
+        }))
+        .unwrap();
+        write_project_file(root, path, &only_installer);
+        lock.files = vec![mcp_locked_file(
+            path,
+            "runtime.gemini_cli.mcp",
+            &only_installer,
+            true,
+            &revision,
+        )];
+        let operations = managed_removal_operations(&lock, root).unwrap();
+        assert_eq!(operations[0].action, OperationAction::DeleteManaged);
+    }
+
+    #[test]
     fn removal_and_update_reverse_only_the_shared_route_in_every_mcp_format() {
         use crate::native_mcp::{declares_route, is_empty, retarget};
         for (path, component, format) in MCP_ROUTE_FIXTURES {
@@ -9846,7 +9970,12 @@ mod tests {
                     .source_path
                     .as_deref()
                     .is_some_and(|source| source.starts_with("generated:")));
-                let prepared = prepare_mcp_route_removal(root, operation).unwrap();
+                let prepared = prepare_mcp_route_removal(
+                    root,
+                    operation,
+                    &[crate::native_mcp::SERVER_ID.into()],
+                )
+                .unwrap();
                 assert_eq!(
                     Some(&prepared.expected_sha256),
                     operation.result_sha256.as_ref()
@@ -9875,7 +10004,12 @@ mod tests {
                 );
                 write_project_file(root, path, b"{}");
                 assert!(
-                    prepare_mcp_route_removal(root, operation).is_err(),
+                    prepare_mcp_route_removal(
+                        root,
+                        operation,
+                        &[crate::native_mcp::SERVER_ID.into()]
+                    )
+                    .is_err(),
                     "{path}"
                 );
 
@@ -9904,7 +10038,12 @@ mod tests {
                         );
                     } else {
                         assert_eq!(operation.action, OperationAction::Replace, "{path}");
-                        let prepared = prepare_mcp_route_removal(root, &operation).unwrap();
+                        let prepared = prepare_mcp_route_removal(
+                            root,
+                            &operation,
+                            &[crate::native_mcp::SERVER_ID.into()],
+                        )
+                        .unwrap();
                         assert!(is_empty(format, &prepared.bytes).unwrap(), "{path}");
                     }
                 }
@@ -10062,7 +10201,11 @@ mod tests {
             .find(|operation| operation.destination == ".opencode/mcp.json")
             .unwrap();
         assert_eq!(route.resolution.as_deref(), Some(MCP_ROUTE_REMOVAL));
-        let prepared = vec![prepare_mcp_route_removal(root, route).unwrap()];
+        let prepared =
+            vec![
+                prepare_mcp_route_removal(root, route, &[crate::native_mcp::SERVER_ID.into()])
+                    .unwrap(),
+            ];
         let journal = new_journal(&plan, &plan.project_id, root);
         let directory = RootedDir::open_read(root).unwrap();
         let lock = build_lock(
@@ -10309,7 +10452,12 @@ description: Example skill.
         assert_eq!(update.operations.len(), 1);
         let prepared = if user_content {
             assert_eq!(update.operations[0].action, OperationAction::Replace);
-            vec![prepare_mcp_route_removal(project_root, &update.operations[0]).unwrap()]
+            vec![prepare_mcp_route_removal(
+                project_root,
+                &update.operations[0],
+                &installer_mcp_server_ids(&installed_lock),
+            )
+            .unwrap()]
         } else {
             assert_eq!(update.operations[0].action, OperationAction::DeleteManaged);
             vec![]

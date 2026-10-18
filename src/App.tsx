@@ -2989,6 +2989,8 @@ function providerAvailableForSelection(id: string, state: WizardState): boolean 
   const provider = state.manifestPreview?.image_generation?.providers.find((candidate) => candidate.id === id);
   if (!provider) return id === "none" || (!isTauriRuntime() && ["gptimage", "midjourney_manual"].includes(id));
   if (provider.route.requires_primary_coding_environment && provider.route.requires_primary_coding_environment !== state.primaryCodingEnvironment) return false;
+  // A manual provider registers nothing, so every coding client can use it.
+  if (provider.route.kind === "manual") return true;
   const selected = [state.primaryCodingEnvironment, ...state.additionalCodingEnvironments];
   return selected.some((environment) => provider.supported_coding_environments.includes(environment));
 }
@@ -3075,6 +3077,7 @@ export function ImageGenerationSetup({ state, update }: { state: WizardState; up
   const selectedIds = [...new Set([selection.primary_provider, ...selection.additional_providers])];
   const compatible = (provider: ImageGenerationProviderDefinition) => {
     if (provider.route.requires_primary_coding_environment && provider.route.requires_primary_coding_environment !== state.primaryCodingEnvironment) return false;
+    if (provider.route.kind === "manual") return true;
     const environments = [state.primaryCodingEnvironment, ...state.additionalCodingEnvironments].filter(Boolean);
     return environments.length === 0 || environments.some((environment) => provider.supported_coding_environments.includes(environment));
   };

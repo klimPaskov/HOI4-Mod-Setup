@@ -229,6 +229,55 @@ pub fn declares_route(format: McpFormat, bytes: &[u8]) -> Result<bool, AppError>
         .is_some())
 }
 
+/// Whether a native configuration declares any of the given server entries.
+pub fn declares_any(format: McpFormat, bytes: &[u8], ids: &[String]) -> Result<bool, AppError> {
+    Ok(json_view(format, bytes)?
+        .get(format.servers_key())
+        .and_then(Value::as_object)
+        .is_some_and(|servers| ids.iter().any(|id| servers.contains_key(id))))
+}
+
+/// Remove exactly the given server entries, keeping every other server, key,
+/// and value. The output uses the same rendering as [`retarget`].
+pub fn remove_servers(
+    format: McpFormat,
+    bytes: &[u8],
+    ids: &[String],
+) -> Result<Vec<u8>, AppError> {
+    if bytes.len() > MAX_CONFIG_BYTES {
+        return Err(AppError::Source(
+            "client MCP configuration is too large".into(),
+        ));
+    }
+    if format.is_toml() {
+        let mut config: toml::Value = std::str::from_utf8(bytes)
+            .map_err(|_| AppError::Source("client MCP configuration is not UTF-8".into()))?
+            .parse()
+            .map_err(|error: toml::de::Error| AppError::Source(error.to_string()))?;
+        if let Some(servers) = config
+            .get_mut(format.servers_key())
+            .and_then(toml::Value::as_table_mut)
+        {
+            for id in ids {
+                servers.remove(id);
+            }
+        }
+        return toml::to_string_pretty(&config)
+            .map(String::into_bytes)
+            .map_err(|error| AppError::Source(error.to_string()));
+    }
+    let mut config: Value = parse_json_lenient(bytes)?;
+    if let Some(servers) = config
+        .get_mut(format.servers_key())
+        .and_then(Value::as_object_mut)
+    {
+        for id in ids {
+            servers.remove(id);
+        }
+    }
+    serde_json::to_vec_pretty(&config).map_err(AppError::from)
+}
+
 /// Whether a native configuration holds nothing but an empty server table,
 /// so deleting the file loses no setting.
 pub fn is_empty(format: McpFormat, bytes: &[u8]) -> Result<bool, AppError> {
@@ -308,6 +357,45 @@ pub fn retarget(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remove_servers_drops_only_the_named_entries_in_every_format() {
+        let ids = vec![SERVER_ID.to_string(), "hoi4_image_gptimage".to_string()];
+        let toml_bytes = b"model = 'kept'
+[mcp_servers.custom]
+command = 'other'
+[mcp_servers.hoi4_agent_tools]
+command = 'x'
+[mcp_servers.hoi4_image_gptimage]
+command = 'y'
+";
+        assert!(declares_any(McpFormat::TomlMcpServers, toml_bytes, &ids).unwrap());
+        let kept = remove_servers(McpFormat::TomlMcpServers, toml_bytes, &ids).unwrap();
+        let kept: toml::Value = std::str::from_utf8(&kept).unwrap().parse().unwrap();
+        assert_eq!(kept["model"].as_str(), Some("kept"));
+        let servers = kept["mcp_servers"].as_table().unwrap();
+        assert_eq!(servers.keys().collect::<Vec<_>>(), ["custom"]);
+        for (format, key) in [
+            (McpFormat::JsonMcpServers, "mcpServers"),
+            (McpFormat::VscodeServers, "servers"),
+            (McpFormat::LocalCommandArray, "mcp"),
+        ] {
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "kept": 1,
+                key: {"hoi4_agent_tools": {}, "hoi4_image_gptimage": {}, "hoi4_image_custom": {"command": "keep"}}
+            }))
+            .unwrap();
+            let result: Value =
+                serde_json::from_slice(&remove_servers(format, &bytes, &ids).unwrap()).unwrap();
+            assert_eq!(result["kept"], 1, "{format:?}");
+            assert_eq!(
+                result[key].as_object().unwrap().keys().collect::<Vec<_>>(),
+                ["hoi4_image_custom"],
+                "{format:?}"
+            );
+            assert!(!declares_any(format, &serde_json::to_vec(&result).unwrap(), &ids).unwrap());
+        }
+    }
     use serde_json::json;
 
     const ALL: [McpFormat; 4] = [

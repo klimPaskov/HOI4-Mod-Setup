@@ -71,8 +71,9 @@ pub struct NativeClient {
     /// Official documentation for a manual MCP setup step.
     pub documentation_url: Option<&'static str>,
     /// Whether image-generation and live-testing routes are adapted into the
-    /// client's MCP file. Newer clients receive the HOI4 Agent Tools route
-    /// only until the source provider tables declare them.
+    /// client's MCP file. Those adapters run relative scripts, so only a
+    /// client whose project servers accept a working directory qualifies,
+    /// and a provider applies only when its table lists the client.
     pub image_and_live_routes: bool,
     /// Whether readiness requires the shared MCP route in `mcp`. Codex checks
     /// its route through the dedicated Codex readiness detection.
@@ -279,7 +280,7 @@ pub const NATIVE_CLIENTS: &[NativeClient] = &[
         )),
         legacy_mcp: None,
         documentation_url: Some("https://geminicli.com/docs/tools/mcp-server/"),
-        image_and_live_routes: false,
+        image_and_live_routes: true,
         readiness_checks_mcp: true,
         layout: &[
             Layout::Text("GEMINI.md"),
@@ -304,7 +305,7 @@ pub const NATIVE_CLIENTS: &[NativeClient] = &[
         )),
         legacy_mcp: None,
         documentation_url: Some("https://antigravity.google/docs/mcp"),
-        image_and_live_routes: false,
+        image_and_live_routes: true,
         readiness_checks_mcp: true,
         layout: &[
             Layout::Text("AGENTS.md"),
@@ -332,7 +333,7 @@ pub const NATIVE_CLIENTS: &[NativeClient] = &[
         )),
         legacy_mcp: None,
         documentation_url: Some("https://docs.x.ai/build/features/mcp-servers"),
-        image_and_live_routes: false,
+        image_and_live_routes: true,
         readiness_checks_mcp: true,
         layout: &[Layout::Text("AGENTS.md"), Layout::Skills(".grok/skills")],
         markers: &[".grok/"],
@@ -354,7 +355,7 @@ pub const NATIVE_CLIENTS: &[NativeClient] = &[
         documentation_url: Some(
             "https://code.visualstudio.com/docs/copilot/customization/mcp-servers",
         ),
-        image_and_live_routes: false,
+        image_and_live_routes: true,
         readiness_checks_mcp: true,
         layout: &[
             Layout::Text("AGENTS.md"),
@@ -437,7 +438,7 @@ pub const NATIVE_CLIENTS: &[NativeClient] = &[
         )),
         legacy_mcp: None,
         documentation_url: Some("https://qwenlm.github.io/qwen-code-docs/en/users/features/mcp/"),
-        image_and_live_routes: false,
+        image_and_live_routes: true,
         readiness_checks_mcp: true,
         layout: &[
             Layout::Text("AGENTS.md"),
@@ -1290,7 +1291,14 @@ mod tests {
             Some(McpFormat::TomlMcpServers)
         );
         assert_eq!(image_and_live_config_path(OPENCODE), Some("opencode.json"));
-        assert_eq!(image_and_live_config_path("gemini_cli"), None);
+        assert_eq!(
+            image_and_live_config_path("gemini_cli"),
+            Some(".gemini/settings.json")
+        );
+        // Kiro and Kilo Code document no working directory for project
+        // servers, so relative image and live adapters cannot run there.
+        assert_eq!(image_and_live_config_path("kiro"), None);
+        assert_eq!(image_and_live_config_path("kilo_code"), None);
     }
 
     fn format_six(mut manifest: RemoteManifest) -> RemoteManifest {
@@ -1465,6 +1473,32 @@ mod tests {
             None,
         )
         .expect("the generated format 6 candidate validates")
+    }
+
+    #[test]
+    fn generated_format_six_provider_tables_list_exactly_the_route_capable_clients() {
+        let manifest = format_six_candidate();
+        let route_clients = NATIVE_CLIENTS
+            .iter()
+            .filter(|client| client.image_and_live_routes)
+            .map(|client| client.id)
+            .collect::<HashSet<_>>();
+        for table in [&manifest.image_generation, &manifest.live_testing] {
+            let providers = table.as_ref().unwrap()["providers"].as_array().unwrap();
+            for provider in providers {
+                let kind = provider["route"]["kind"].as_str().unwrap();
+                if matches!(kind, "manual" | "native") {
+                    continue;
+                }
+                let listed = provider["supported_coding_environments"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|id| id.as_str().unwrap())
+                    .collect::<HashSet<_>>();
+                assert_eq!(listed, route_clients, "{}", provider["id"]);
+            }
+        }
     }
 
     #[test]

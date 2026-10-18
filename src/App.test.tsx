@@ -259,6 +259,14 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByRole("radio", { name: /ChatGPT subscription \(GPTImage\)/ })).not.toBeChecked();
   });
 
+  it("keeps manual image providers usable with clients the provider table does not list", () => {
+    window.history.replaceState({}, "", "/?screenshot=image-generation");
+    const fixture = { ...documentationFixture(readyState()), primaryCodingEnvironment: "aider", additionalCodingEnvironments: [] as string[] };
+    render(<ImageGenerationSetup state={fixture} update={vi.fn()} />);
+    expect(screen.getByRole("radio", { name: /^None — I will make art myself/ })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: /ChatGPT subscription \(GPTImage\)/ })).toBeDisabled();
+  });
+
   it("selects the manifest image components when the provider route changes", () => {
     window.history.replaceState({}, "", "/?screenshot=image-generation");
     const fixture = documentationFixture(readyState());

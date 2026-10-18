@@ -60,7 +60,9 @@ When maintenance deselects a client, a file of that client the user changed
 and chose to keep is released: it stays on disk untouched and leaves the lock
 and its recorded local modifications, so readiness is not held in review for a
 file no selected client uses. Unchanged files are removed as before, and an
-unchanged merged MCP file loses only the shared route.
+unchanged merged MCP file loses only the installer's own routes
+(`installer_mcp_server_ids`: the shared route plus the recorded image and
+live-testing routes); planning and staging must use the same ID set.
 
 Lock reconciliation retires a predecessor coding-client component with no
 remaining files or non-delete operations. An Update also retires any other
@@ -563,6 +565,9 @@ predecessor-lock evidence, backup/staging/apply boundaries, readiness gate,
 rollback record, maintenance path, and fault scenarios agree; optional
 external actions never turn into implicit core success.
 
-Image and live-testing provider changes are reviewed transaction inputs. Remove only unchanged managed registrations for deselected providers or clients, preserve unrelated and user-modified routes, and regenerate provider guidance with exactly one complete marker pair. Incomplete optional runtime outcomes stay incomplete in the lock and readiness report; registration is not gameplay verification.
+Image and live-testing routes are adapted by MCP format for registry clients
+marked `image_and_live_routes` (their project servers accept a working
+directory); a manual provider registers nothing and is available with every
+client. Image and live-testing provider changes are reviewed transaction inputs. Remove only unchanged managed registrations for deselected providers or clients, preserve unrelated and user-modified routes, and regenerate provider guidance with exactly one complete marker pair. Incomplete optional runtime outcomes stay incomplete in the lock and readiness report; registration is not gameplay verification.
 
 Large adapted asset skills keep a short provider section and read the generated `.tools/image_generation/selected-provider.md` from the project root. Maintain that reference through the same reviewed artifact, backup and removal flow; selected routes must never push a root SKILL.md over the package byte ceiling.

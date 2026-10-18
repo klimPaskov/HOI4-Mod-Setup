@@ -294,6 +294,15 @@ async function clientPackagesFlow() {
     assert.equal(route.command, claudeRoute.command, path);
     assert.deepEqual(route.args ?? [], claudeRoute.args ?? [], path);
   }
+  // Clients whose project servers accept a working directory get the same
+  // image routes as Claude Code; Kiro documents none and gets only the shared route.
+  const imageRoutes = Object.keys((await readProjectJson(".mcp.json")).mcpServers).filter((id) => id.startsWith("hoi4_image_")).sort();
+  for (const path of [".gemini/settings.json", ".agents/mcp_config.json", ".qwen/settings.json"]) {
+    assert.deepEqual(Object.keys((await readProjectJson(path)).mcpServers).filter((id) => id.startsWith("hoi4_image_")).sort(), imageRoutes, path);
+  }
+  for (const id of imageRoutes) assert.equal((await readProjectJson(".vscode/mcp.json")).servers[id]?.cwd, "${workspaceFolder}", id);
+  assert.ok(!Object.keys((await readProjectJson(kiroMcp)).mcpServers).some((id) => id.startsWith("hoi4_image_")), "Kiro receives no image route");
+  result.clientImageRoutes = imageRoutes;
   const kiroMerged = await readProjectJson(kiroMcp);
   assert.deepEqual(kiroMerged.mcpServers.user_server, kiroUser.mcpServers.user_server, "the merge keeps the user's Kiro server");
   assert.deepEqual(kiroMerged.kept_setting, kiroUser.kept_setting);
