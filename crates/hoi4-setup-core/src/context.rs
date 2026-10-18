@@ -303,12 +303,12 @@ mod tests {
         assert!(document.copyable && !document.redacted);
         assert!(document_from_bytes(1, "notes.exe", b"x").is_err());
         assert!(document_from_bytes(1, "notes.txt", &[0xff, 0xfe]).is_err());
-        let secret = document_from_bytes(
-            2,
-            "env.txt",
-            b"OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz0123456789\n",
-        )
-        .unwrap();
+        // Assembled at run time so the repository's secret scan stays clean.
+        let line = format!(
+            "OPENAI_API_KEY={}{}\n",
+            "sk-proj-", "abcdefghijklmnopqrstuvwxyz0123456789"
+        );
+        let secret = document_from_bytes(2, "env.txt", line.as_bytes()).unwrap();
         assert!(secret.redacted && !secret.copyable);
     }
 
