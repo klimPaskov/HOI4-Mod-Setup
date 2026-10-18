@@ -289,6 +289,11 @@ a newer bootstrap.
   exact manifest revision without adding per-model application enums or schema
   migrations; Rust dependency expansion and route validation remain the final
   authority.
+- Image-generation and live-testing provider `supported_coding_environments`
+  are client-ID patterns in format 6, never a fixed enum. The source lists
+  only clients whose project MCP file accepts a working directory
+  (`MCP_ROUTE_CLIENTS`), and the format 6 candidate fixture test requires
+  that list to equal the registry's `image_and_live_routes` clients.
 - Coding-client packages are also manifest data. Components tagged with
   `coding_environment` form the complete closure for exactly one primary and
   any additional environment selected by the user. Keep environment packages
