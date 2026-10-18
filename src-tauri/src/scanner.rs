@@ -2,6 +2,7 @@ use crate::models::*;
 use crate::security::{is_link_metadata, path_has_link_component, sha256_bytes};
 use crate::AppError;
 use chrono::Utc;
+pub(crate) use hoi4_setup_core::profile::sensitive_scan_path;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -1772,49 +1773,6 @@ fn safe_scan_display_path(path: &str) -> String {
     } else {
         format!("<oversized path:{}>", &sha256_bytes(path.as_bytes())[..12])
     }
-}
-
-pub(crate) fn sensitive_scan_path(relative: &str) -> bool {
-    let normalized = normalized_scan_path(relative);
-    let segments = normalized.split('/').collect::<Vec<_>>();
-    if segments.iter().any(|segment| {
-        matches!(
-            *segment,
-            ".git"
-                | "auth"
-                | "credential"
-                | "credentials"
-                | "secret"
-                | "secrets"
-                | "token"
-                | "tokens"
-        )
-    }) {
-        return true;
-    }
-    let name = segments.last().copied().unwrap_or_default();
-    let stem = name.split('.').next().unwrap_or_default();
-    if matches!(
-        stem,
-        "password"
-            | "passwords"
-            | "api-key"
-            | "api_key"
-            | "apikey"
-            | "credentials"
-            | "secret"
-            | "secrets"
-            | "private-key"
-            | "private_key"
-    ) {
-        return true;
-    }
-    name == ".env"
-        || name.starts_with(".env.")
-        || name.ends_with(".pem")
-        || name.ends_with(".key")
-        || name.ends_with(".p12")
-        || name.ends_with(".pfx")
 }
 
 fn is_unrelated_scan_directory(name: &str) -> bool {

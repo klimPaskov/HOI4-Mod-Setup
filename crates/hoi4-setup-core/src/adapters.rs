@@ -31,6 +31,8 @@ pub trait ProjectFs {
     fn list(&self, directory: &str) -> Result<Vec<FsEntry>, AppError>;
     /// The bytes of a regular file, refused when larger than `limit`.
     fn read(&self, path: &str, limit: u64) -> Result<Vec<u8>, AppError>;
+    /// At most the first `max` bytes of a regular file, and its full size.
+    fn read_prefix(&self, path: &str, max: usize) -> Result<(Vec<u8>, u64), AppError>;
 }
 
 /// HTTP GET of an approved source URL, refused when the body exceeds `limit`.

@@ -121,6 +121,15 @@ impl ProjectFs for MemoryFs {
         }
         Ok(bytes.clone())
     }
+
+    fn read_prefix(&self, path: &str, max: usize) -> Result<(Vec<u8>, u64), AppError> {
+        let path = normalize_relative_path(path)?;
+        let bytes = self
+            .files
+            .get(&path)
+            .ok_or_else(|| AppError::Scan(format!("file not found: {path}")))?;
+        Ok((bytes[..bytes.len().min(max)].to_vec(), bytes.len() as u64))
+    }
 }
 
 #[cfg(test)]

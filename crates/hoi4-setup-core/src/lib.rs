@@ -7,6 +7,7 @@
 
 pub mod adapters;
 pub mod coding_environment;
+pub mod descriptors;
 pub mod error;
 pub mod live_testing;
 pub mod manifest;
@@ -15,6 +16,7 @@ pub mod memory_fs;
 pub mod merge;
 pub mod models;
 pub mod native_mcp;
+pub mod profile;
 pub mod schemas;
 pub mod text;
 

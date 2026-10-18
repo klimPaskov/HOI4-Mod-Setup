@@ -1672,6 +1672,7 @@ dependencies = [
  "getrandom 0.3.4",
  "hex",
  "jsonschema",
+ "png 0.17.16",
  "regex",
  "serde",
  "serde_json",
