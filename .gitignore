@@ -61,3 +61,8 @@ __pycache__/
 *.tmp
 *.swp
 *~
+
+# Web edition build outputs
+dist-web/
+web/public/core/
+web/public/icon.png

@@ -8,6 +8,8 @@
   "packageManager": "pnpm@11.9.0",
   "scripts": {
     "dev": "vite",
+    "web:dev": "node scripts/build_web.mjs --core && vite --config vite.web.config.ts",
+    "web:build": "node scripts/build_web.mjs",
     "build": "tsc --noEmit && vite build",
     "lint": "node scripts/lint_frontend.mjs",
     "typecheck": "tsc --noEmit",

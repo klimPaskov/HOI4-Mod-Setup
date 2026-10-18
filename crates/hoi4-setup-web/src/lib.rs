@@ -259,10 +259,28 @@ impl Source {
         to_json(&self.missing_paths())
     }
 
-    /// Adapt every verified file to the confirmed project and compare the
-    /// result with the dropped folder (`project` is absent for a new mod).
-    pub fn export(&self, request_json: &str, project: Option<Project>) -> Result<Export, JsError> {
-        prepare_export(self, request_json, project).map_err(js)
+    /// Adapt every verified file for a new mod.
+    #[wasm_bindgen(js_name = exportNew)]
+    pub fn export_new(&self, request_json: &str) -> Result<Export, JsError> {
+        prepare_export(self, request_json, None).map_err(js)
+    }
+
+    /// Adapt every verified file and compare the result with the dropped
+    /// folder. The folder is copied, so the scan can be reused.
+    #[wasm_bindgen(js_name = exportExisting)]
+    pub fn export_existing(
+        &self,
+        request_json: &str,
+        project: &Project,
+    ) -> Result<Export, JsError> {
+        prepare_export(
+            self,
+            request_json,
+            Some(Project {
+                fs: project.fs.clone(),
+            }),
+        )
+        .map_err(js)
     }
 }
 
@@ -296,10 +314,34 @@ impl Source {
 
     fn preview_json(&self, platform_name: &str) -> Result<String, AppError> {
         let platform = platform_of(platform_name)?;
+        // File inventories stay in the core; the page needs only a summary.
+        let components = self
+            .manifest
+            .components
+            .iter()
+            .map(|component| {
+                json!({
+                    "id": component.id,
+                    "display_name": component.display_name,
+                    "description": component.description,
+                    "category": component.category,
+                    "coding_environment": component.coding_environment,
+                    "optional": component.optional,
+                    "platforms": component.platforms,
+                    "dependencies": component.dependencies,
+                    "file_count": component.expected_files.len(),
+                    "total_size": component
+                        .expected_files
+                        .iter()
+                        .filter_map(|file| file.size)
+                        .sum::<u64>(),
+                })
+            })
+            .collect::<Vec<_>>();
         Ok(serde_json::to_string(&json!({
             "schema_version": self.manifest.schema_version,
             "revision": self.revision,
-            "components": self.manifest.components,
+            "components": components,
             "profiles": self.manifest.profiles,
             "coding_environments": definitions_for_platform(&self.manifest, platform),
             "unavailable_coding_environments": unavailable_definitions(&self.manifest, platform),
