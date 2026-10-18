@@ -1,6 +1,9 @@
 //! App-owned credential boundary for the exact supported Meshy MCP runtime.
 
-use crate::mcp::{materialize_verified_package_tree, verify_materialized_package_tree};
+use crate::mcp::{
+    materialize_verified_package_tree, verify_materialized_package_tree, PrivateTreeLayout,
+    VerifiedPackageTree,
+};
 use crate::security::{safe_join, sha256_file};
 use crate::AppError;
 use serde_json::Value;
@@ -14,6 +17,20 @@ const RUNTIME_TREE_SHA256: &str =
 const RUNTIME_FILE_COUNT: u64 = 3952;
 const RUNTIME_ENTRY: &str = "@meshy-ai/meshy-mcp-server/dist/index.js";
 const MAX_NODE_BYTES: u64 = 128 * 1024 * 1024;
+/// Runtime-read variables pinned for the reviewed 0.6.2 runtime. It runs in
+/// the project folder (downloads default to `<cwd>/meshy_output`) and calls
+/// `dotenv.config()`, which adds a project `.env` to the environment but never
+/// overrides a variable that already exists. Without these pins, project
+/// content could switch the key-bearing server to its HTTP listener, route
+/// authenticated requests through a proxy (`proxy-from-env` honors
+/// `NO_PROXY=*` before any proxy variable), or disable TLS verification.
+/// `MESHY_API_HOST` is read before `dotenv` runs and is pinned defensively.
+pub(crate) const PINNED_RUNTIME_ENVIRONMENT: [(&str, &str); 4] = [
+    ("TRANSPORT", "stdio"),
+    ("MESHY_API_HOST", "https://api.meshy.ai"),
+    ("NO_PROXY", "*"),
+    ("NODE_TLS_REJECT_UNAUTHORIZED", "1"),
+];
 
 fn cli_requested(args: &[String]) -> bool {
     args.len() == 2 && args[1] == CLI_MARKER
@@ -62,20 +79,17 @@ fn copy_private_node(node: &Path, private_root: &Path) -> Result<PathBuf, AppErr
     Ok(private_node)
 }
 
-fn launch() -> Result<i32, AppError> {
-    if crate::models::Platform::current() != crate::models::Platform::Windows {
-        return Err(AppError::UnsupportedPlatform(
-            "the verified Meshy runtime is currently Windows-only".into(),
-        ));
-    }
-    let key = std::env::var("MESHY_API_KEY")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| AppError::Credential("MESHY_API_KEY is missing".into()))?;
-    std::env::remove_var("MESHY_API_KEY");
-
-    let tree = materialize_verified_package_tree(&installed_runtime_root()?)?;
-    if tree.sha256 != RUNTIME_TREE_SHA256 || tree.file_count != RUNTIME_FILE_COUNT {
+/// Copy the installed runtime into a private directory named `node_modules`,
+/// because the reviewed tree is the hoisted npm dependency directory and its
+/// entry package imports sibling packages such as `dotenv` by bare specifier.
+/// The private copy must match the reviewed tree identity and package.
+fn materialize_reviewed_runtime(
+    runtime_root: &Path,
+    tree_sha256: &str,
+    file_count: u64,
+) -> Result<VerifiedPackageTree, AppError> {
+    let tree = materialize_verified_package_tree(runtime_root, PrivateTreeLayout::NodeModules)?;
+    if tree.sha256 != tree_sha256 || tree.file_count != file_count {
         return Err(AppError::Credential(
             "the installed Meshy runtime does not match the reviewed lock".into(),
         ));
@@ -89,6 +103,26 @@ fn launch() -> Result<i32, AppError> {
             "the private Meshy package identity is invalid".into(),
         ));
     }
+    Ok(tree)
+}
+
+fn launch() -> Result<i32, AppError> {
+    if crate::models::Platform::current() != crate::models::Platform::Windows {
+        return Err(AppError::UnsupportedPlatform(
+            "the verified Meshy runtime is currently Windows-only".into(),
+        ));
+    }
+    let key = std::env::var("MESHY_API_KEY")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AppError::Credential("MESHY_API_KEY is missing".into()))?;
+    std::env::remove_var("MESHY_API_KEY");
+
+    let tree = materialize_reviewed_runtime(
+        &installed_runtime_root()?,
+        RUNTIME_TREE_SHA256,
+        RUNTIME_FILE_COUNT,
+    )?;
     let node = crate::process::find_path_executable(&["node.exe", "node"])?;
     let private_root = tree
         .root
@@ -104,6 +138,7 @@ fn launch() -> Result<i32, AppError> {
         &[entry.display().to_string()],
         "MESHY_API_KEY",
         &key,
+        &PINNED_RUNTIME_ENVIRONMENT,
     );
     drop(key);
     result
@@ -137,6 +172,94 @@ mod tests {
             CLI_MARKER.into(),
             "project-script.py".into()
         ]));
+    }
+
+    fn write_meshy_runtime_fixture(root: &Path) {
+        crate::mcp::write_hoisted_dependency_fixture(root);
+        let package = root.join("@meshy-ai/meshy-mcp-server");
+        std::fs::create_dir_all(package.join("dist")).unwrap();
+        std::fs::write(
+            package.join("package.json"),
+            format!(r#"{{"name":"{PACKAGE_NAME}","version":"{PACKAGE_VERSION}","type":"module"}}"#),
+        )
+        .unwrap();
+        std::fs::write(
+            package.join("dist/index.js"),
+            "import value from \"sibling-dep\";
+process.stdout.write(value);
+",
+        )
+        .unwrap();
+    }
+
+    fn fixture_identity(root: &Path) -> (String, u64) {
+        let tree = materialize_verified_package_tree(root, PrivateTreeLayout::Package).unwrap();
+        (tree.sha256.clone(), tree.file_count)
+    }
+
+    #[test]
+    fn reviewed_runtime_entry_resolves_hoisted_dependencies_under_real_node() {
+        let runtime = tempfile::tempdir().unwrap();
+        write_meshy_runtime_fixture(runtime.path());
+        let (sha256, count) = fixture_identity(runtime.path());
+        let tree = materialize_reviewed_runtime(runtime.path(), &sha256, count).unwrap();
+        assert_eq!(tree.root.file_name().unwrap(), "node_modules");
+        // The private Node copy lands beside the verified tree, so the
+        // pre-spawn rehash still covers exactly the reviewed runtime.
+        let source = tempfile::tempdir().unwrap();
+        std::fs::write(source.path().join("node.exe"), b"node bytes").unwrap();
+        let private_node =
+            copy_node_bytes(&source.path().join("node.exe"), tree.root.parent().unwrap()).unwrap();
+        assert!(!private_node.starts_with(&tree.root));
+        verify_materialized_package_tree(&tree).unwrap();
+        let output = crate::mcp::run_fixture_entry(&safe_join(&tree.root, RUNTIME_ENTRY).unwrap());
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, crate::mcp::HOISTED_FIXTURE_OUTPUT.as_bytes());
+    }
+
+    #[test]
+    fn runtime_with_a_different_tree_identity_is_rejected() {
+        let runtime = tempfile::tempdir().unwrap();
+        write_meshy_runtime_fixture(runtime.path());
+        let (sha256, count) = fixture_identity(runtime.path());
+        let blocked = |sha: &str, files: u64| {
+            materialize_reviewed_runtime(runtime.path(), sha, files)
+                .err()
+                .unwrap()
+                .to_string()
+        };
+        assert!(blocked(&"0".repeat(64), count).contains("reviewed lock"));
+        assert!(blocked(&sha256, count + 1).contains("reviewed lock"));
+        std::fs::write(
+            runtime.path().join("dotenv.js"),
+            b"extra
+",
+        )
+        .unwrap();
+        assert!(blocked(&sha256, count).contains("reviewed lock"));
+    }
+
+    #[test]
+    fn runtime_with_a_different_package_identity_is_rejected() {
+        let runtime = tempfile::tempdir().unwrap();
+        write_meshy_runtime_fixture(runtime.path());
+        std::fs::write(
+            runtime
+                .path()
+                .join("@meshy-ai/meshy-mcp-server/package.json"),
+            format!(r#"{{"name":"{PACKAGE_NAME}","version":"0.4.0","type":"module"}}"#),
+        )
+        .unwrap();
+        let (sha256, count) = fixture_identity(runtime.path());
+        assert!(materialize_reviewed_runtime(runtime.path(), &sha256, count)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("package identity"));
     }
 
     #[test]

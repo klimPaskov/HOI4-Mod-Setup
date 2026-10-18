@@ -1055,18 +1055,30 @@ fn macos_signature_matches_publisher(expected_publisher: &str, details: &str) ->
 /// Relay stdio to one already-private, hash-bound credential-bearing runtime.
 /// This is intentionally narrower than ProcessSpec: it exists for an MCP
 /// server whose JSONL stream belongs to Codex rather than the desktop UI.
-pub(crate) fn run_private_credential_stdio_proxy(
+/// Build a credential-bearing child with a cleared environment: the reviewed
+/// non-secret variables, the scoped credential, and the caller's pinned
+/// runtime values. Pinned values exist before the child starts, so a runtime
+/// that loads a working-directory `.env` without override cannot replace them.
+fn private_credential_command(
     executable: &Path,
     expected_sha256: &str,
     args: &[String],
     environment_name: &str,
     environment_value: &str,
-) -> Result<i32, AppError> {
+    pinned_environment: &[(&str, &str)],
+) -> Result<Command, AppError> {
+    let invalid_pin = pinned_environment.iter().any(|(name, value)| {
+        validate_env_name(name).is_err()
+            || name.eq_ignore_ascii_case(environment_name)
+            || value.is_empty()
+            || value.contains('\0')
+    });
     if !executable.is_absolute()
         || environment_name != "MESHY_API_KEY"
         || environment_value.trim().is_empty()
         || args.is_empty()
         || args.iter().any(|value| value.contains('\0'))
+        || invalid_pin
         || crate::security::sha256_file(executable)? != expected_sha256
     {
         return Err(AppError::Process(
@@ -1077,11 +1089,34 @@ pub(crate) fn run_private_credential_stdio_proxy(
     command
         .args(args)
         .env_clear()
-        .env(environment_name, environment_value)
+        .env(environment_name, environment_value);
+    add_safe_environment(&mut command);
+    for (name, value) in pinned_environment {
+        command.env(name, value);
+    }
+    Ok(command)
+}
+
+pub(crate) fn run_private_credential_stdio_proxy(
+    executable: &Path,
+    expected_sha256: &str,
+    args: &[String],
+    environment_name: &str,
+    environment_value: &str,
+    pinned_environment: &[(&str, &str)],
+) -> Result<i32, AppError> {
+    let mut command = private_credential_command(
+        executable,
+        expected_sha256,
+        args,
+        environment_name,
+        environment_value,
+        pinned_environment,
+    )?;
+    command
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-    add_safe_environment(&mut command);
     configure_child_no_console_window(&mut command);
     configure_child_process_group(&mut command);
     if crate::security::sha256_file(executable)? != expected_sha256 {
@@ -1228,6 +1263,109 @@ mod tests {
             }
         }
     }
+    /// Mirrors dotenv 17's non-override `populate`: a key that already exists
+    /// in `process.env` keeps its value.
+    const DOTENV_POPULATE_FIXTURE: &str = r#"const fs = require("node:fs");
+for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/)) {
+  const match = /^([^=]+)=(.*)$/.exec(line);
+  if (match && !Object.prototype.hasOwnProperty.call(process.env, match[1])) {
+    process.env[match[1]] = match[2];
+  }
+}
+const names = ["TRANSPORT", "transport", "MESHY_API_HOST", "NO_PROXY", "no_proxy",
+  "NODE_TLS_REJECT_UNAUTHORIZED", "MESHY_API_KEY", "UNPINNED_PROJECT_VALUE"];
+process.stdout.write(JSON.stringify(Object.fromEntries(names.map((name) => [name, process.env[name] ?? null]))));
+"#;
+
+    fn run_with_project_dotenv(dotenv: &str) -> serde_json::Value {
+        let node = find_path_executable(&["node.exe", "node"]).unwrap();
+        let sha256 = crate::security::sha256_file(&node).unwrap();
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join(".env"), dotenv).unwrap();
+        let script = tempfile::tempdir().unwrap();
+        let entry = script.path().join("entry.cjs");
+        std::fs::write(&entry, DOTENV_POPULATE_FIXTURE).unwrap();
+        let mut command = private_credential_command(
+            &node,
+            &sha256,
+            &[entry.display().to_string()],
+            "MESHY_API_KEY",
+            "app-owned-test-value",
+            &crate::meshy::PINNED_RUNTIME_ENVIRONMENT,
+        )
+        .unwrap();
+        // Production inherits the coding client's project working directory.
+        let output = command
+            .current_dir(project.path())
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    }
+
+    #[test]
+    fn project_dotenv_cannot_replace_pinned_credential_runtime_values() {
+        let observed = run_with_project_dotenv(
+            "TRANSPORT=http\nMESHY_API_HOST=http://127.0.0.1:9\nNO_PROXY=\n\
+             NODE_TLS_REJECT_UNAUTHORIZED=0\nMESHY_API_KEY=project-value\n\
+             UNPINNED_PROJECT_VALUE=loaded\n",
+        );
+        assert_eq!(observed["TRANSPORT"], "stdio");
+        assert_eq!(observed["MESHY_API_HOST"], "https://api.meshy.ai");
+        assert_eq!(observed["NO_PROXY"], "*");
+        assert_eq!(observed["NODE_TLS_REJECT_UNAUTHORIZED"], "1");
+        assert_eq!(observed["MESHY_API_KEY"], "app-owned-test-value");
+        // The fixture genuinely loads the project file.
+        assert_eq!(observed["UNPINNED_PROJECT_VALUE"], "loaded");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn lowercase_project_dotenv_names_cannot_replace_pinned_values_on_windows() {
+        let observed = run_with_project_dotenv("transport=http\nno_proxy=\n");
+        assert_eq!(observed["transport"], "stdio");
+        assert_eq!(observed["no_proxy"], "*");
+    }
+
+    #[test]
+    fn credential_command_rejects_unsafe_pinned_environment() {
+        let node = find_path_executable(&["node.exe", "node"]).unwrap();
+        let sha256 = crate::security::sha256_file(&node).unwrap();
+        let args = ["entry.js".to_string()];
+        for pinned in [
+            [("MESHY_API_KEY", "replacement")],
+            [("meshy_api_key", "replacement")],
+            [("TRANSPORT", "")],
+            [("TRANSPORT", "std\0io")],
+            [("NODE=OPTIONS", "x")],
+            [("", "x")],
+        ] {
+            assert!(private_credential_command(
+                &node,
+                &sha256,
+                &args,
+                "MESHY_API_KEY",
+                "app-owned-test-value",
+                &pinned,
+            )
+            .is_err());
+        }
+        assert!(private_credential_command(
+            &node,
+            &"0".repeat(64),
+            &args,
+            "MESHY_API_KEY",
+            "app-owned-test-value",
+            &crate::meshy::PINNED_RUNTIME_ENVIRONMENT,
+        )
+        .is_err());
+    }
+
     use crate::credentials::{save_meshy_key, MemoryCredentialStore, ScopedSecretEnvironment};
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "hoi4-mod-setup"
-version = "0.6.2"
+version = "0.6.3"
 description = "Safe, evidence-backed setup for agentic Hearts of Iron IV mod projects"
 authors = ["HOI4 Mod Setup contributors"]
 license = "Apache-2.0"
@@ -41,7 +41,9 @@ uuid = { version = "1.17", features = ["serde", "v4"] }
 unicode-normalization = "0.1.24"
 tauri = { version = "2.5", optional = true , features = [] }
 tauri-plugin-dialog = { version = "2.7", optional = true }
-tauri-plugin-updater = { version = "2.10.1", optional = true }
+# Updater payloads are raw signed installers and AppImages, so the archive
+# extraction feature (and its vulnerable zip dependency) is not compiled.
+tauri-plugin-updater = { version = "2.10.1", optional = true, default-features = false, features = ["rustls-tls"] }
 
 [build-dependencies]
 tauri-build = { version = "2.5", features = [] }
