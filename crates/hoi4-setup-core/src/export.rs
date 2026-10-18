@@ -334,6 +334,7 @@ pub fn build_export(request: ExportRequest<'_>) -> Result<Vec<u8>, AppError> {
                     Decision::Replace => "replace",
                 }
                 .into(),
+                result_sha256: None,
             })
             .collect(),
         optional_workflows: inputs.optional_workflows,

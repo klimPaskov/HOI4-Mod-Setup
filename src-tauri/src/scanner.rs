@@ -651,6 +651,25 @@ where
             total_bytes += profile.stats.bytes_read;
             profile_stats = Some(profile.stats);
             findings.extend(profile.findings);
+            // Values the files decide are offered as Detected, and the
+            // analysis keeps them instead of the assistant's guesses.
+            let detected = hoi4_setup_core::proposals::detect(&findings);
+            if !detected.is_empty() {
+                findings.push(finding(
+                    "profile.detected",
+                    "structure",
+                    "detected_values",
+                    json!(detected),
+                    "accepted",
+                    evidence(
+                        "deterministic_detection",
+                        "@scan/profile/detected",
+                        1.0,
+                        Some("Values decided by the project files: descriptor fields, the dominant namespace, localisation headers, content folders, and documentation."),
+                    ),
+                    None,
+                ));
+            }
         });
 
         if !scan_phase_stopped(
