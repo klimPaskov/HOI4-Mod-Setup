@@ -200,43 +200,10 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
     .collect()
 }
 
-/// The deterministic-only setup path: no setup assistant runs, values come
-/// from the project files and the user's review, and plans, locks, project
-/// state, and readiness record this fixed non-secret provenance.
-pub const DETERMINISTIC_PROVIDER: &str = "none";
-pub const DETERMINISTIC_MODEL: &str = "deterministic";
-pub const DETERMINISTIC_REASONING_EFFORT: &str = "none";
-pub const DETERMINISTIC_OPTIMIZATION_PROFILE: &str = "Deterministic setup";
-
-pub fn is_deterministic(provider: &str) -> bool {
-    provider.trim() == DETERMINISTIC_PROVIDER
-}
-
-/// Reject a deterministic record whose model, effort, profile, or endpoint
-/// differs from the fixed provenance.
-pub fn validate_deterministic_provenance(
-    model: &str,
-    reasoning_effort: &str,
-    optimization_profile: &str,
-    endpoint: Option<&str>,
-) -> Result<(), AppError> {
-    if model != DETERMINISTIC_MODEL
-        || reasoning_effort != DETERMINISTIC_REASONING_EFFORT
-        || optimization_profile != DETERMINISTIC_OPTIMIZATION_PROFILE
-        || endpoint.is_some_and(|endpoint| !endpoint.trim().is_empty())
-    {
-        return Err(AppError::Credential(
-            "a deterministic setup records no model, reasoning effort, or endpoint".into(),
-        ));
-    }
-    Ok(())
-}
-
 /// Non-secret integration and authentication labels persisted in readiness
 /// reports and project state for a provider ID.
 pub fn integration_and_auth_mode(provider: &str) -> (&'static str, &'static str) {
     match provider {
-        DETERMINISTIC_PROVIDER => ("none", "none"),
         "codex" => ("codex_app_server", "chatgpt"),
         crate::claude_code::PROVIDER_ID => {
             (crate::claude_code::ENGINE, crate::claude_code::AUTH_MODE)
@@ -844,38 +811,6 @@ mod tests {
     use crate::credentials::MemoryCredentialStore;
     use hoi4_setup_core::analysis::ANALYSIS_OUTPUT_SCHEMA as ANALYSIS_SCHEMA;
     use serde_json::json;
-
-    #[test]
-    fn deterministic_provenance_is_fixed_and_has_no_integration() {
-        assert!(is_deterministic("none"));
-        assert!(!is_deterministic("codex"));
-        assert!(profile(DETERMINISTIC_PROVIDER).is_none());
-        assert_eq!(integration_and_auth_mode("none"), ("none", "none"));
-        validate_deterministic_provenance("deterministic", "none", "Deterministic setup", None)
-            .unwrap();
-        validate_deterministic_provenance(
-            "deterministic",
-            "none",
-            "Deterministic setup",
-            Some(" "),
-        )
-        .unwrap();
-        for (model, effort, profile, endpoint) in [
-            ("claude-haiku-5-5", "none", "Deterministic setup", None),
-            ("deterministic", "high", "Deterministic setup", None),
-            ("deterministic", "none", "Codex setup analysis", None),
-            (
-                "deterministic",
-                "none",
-                "Deterministic setup",
-                Some("https://example.test"),
-            ),
-        ] {
-            assert!(validate_deterministic_provenance(model, effort, profile, endpoint).is_err());
-        }
-        // The provider routes never accept the deterministic effort.
-        assert!(validate_reasoning_effort("none").is_err());
-    }
 
     #[test]
     fn provider_profiles_include_default_and_custom_routes() {

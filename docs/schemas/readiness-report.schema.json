@@ -15,38 +15,6 @@
     "core_ready",
     "open_in_codex"
   ],
-  "if": {
-    "required": ["codex"],
-    "properties": {
-      "codex": {
-        "required": ["provider"],
-        "properties": { "provider": { "const": "none" } }
-      }
-    }
-  },
-  "then": {
-    "properties": {
-      "codex": {
-        "properties": {
-          "integration": { "const": "none" },
-          "auth_mode": { "const": "none" },
-          "authenticated_during_setup": { "const": false },
-          "analysis_status": { "const": "not_run" }
-        }
-      }
-    }
-  },
-  "else": {
-    "properties": {
-      "codex": {
-        "properties": {
-          "integration": { "not": { "const": "none" } },
-          "auth_mode": { "not": { "const": "none" } },
-          "analysis_status": { "not": { "const": "not_run" } }
-        }
-      }
-    }
-  },
   "properties": {
     "schema_version": {
       "type": "string"
@@ -144,16 +112,16 @@
       ],
       "properties": {
         "provider": {
-          "enum": ["none","codex","claude_account","claude","kimi","glm","deepseek","local","custom","gemini_account","grok_account","gemini","grok"]
+          "enum": ["codex","claude_account","claude","kimi","glm","deepseek","local","custom","gemini_account","grok_account","gemini","grok"]
         },
         "model": {
           "type": "string"
         },
         "integration": {
-          "enum": ["codex_app_server","claude_code_cli","provider_api","provider_cli","none"]
+          "enum": ["codex_app_server","claude_code_cli","provider_api","provider_cli"]
         },
         "auth_mode": {
-          "enum": ["chatgpt","claude_account","api_key","local_endpoint","provider_account","none"]
+          "enum": ["chatgpt","claude_account","api_key","local_endpoint","provider_account"]
         },
         "authenticated_during_setup": {
           "type": "boolean"
@@ -161,8 +129,7 @@
         "analysis_status": {
           "enum": [
             "confirmed",
-            "block",
-            "not_run"
+            "block"
           ]
         },
         "confirmed_field_count": {

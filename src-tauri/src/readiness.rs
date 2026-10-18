@@ -821,60 +821,43 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
     } else {
         "OS credential vault or local endpoint"
     };
-    let deterministic = crate::ai::is_deterministic(ai_provider);
-    if deterministic {
-        // No setup assistant ran: values came from the project files and the
-        // user's review. This is a labelled choice, never a failed check.
-        add_status_check(
-            &mut checks,
-            "analysis.deterministic",
-            "Deterministic setup (no setup assistant)",
-            "analysis",
-            "not_selected",
-            false,
-            "No setup assistant was used. Detected values and your review decided the project details.",
-            ".hoi4-mod-setup/install.lock.json",
-        );
+    add_bool_check(
+        &mut checks,
+        auth_check_id,
+        &auth_label,
+        "ai",
+        authenticated,
+        true,
+        &auth_message,
+        auth_path,
+    );
+    let analysis_check_id = if ai_provider == "codex" {
+        "analysis.chatgpt"
     } else {
-        add_bool_check(
-            &mut checks,
-            auth_check_id,
-            &auth_label,
-            "ai",
-            authenticated,
-            true,
-            &auth_message,
-            auth_path,
-        );
-        let analysis_check_id = if ai_provider == "codex" {
-            "analysis.chatgpt"
-        } else {
-            "analysis.ai"
-        };
-        let analysis_label = if ai_provider == "codex" {
-            "ChatGPT Codex analysis".to_string()
-        } else {
-            format!("{provider_label} semantic analysis")
-        };
-        let analysis_message = if ai_provider == "codex" {
-            "Required schema-constrained Codex proposals were confirmed before planning."
-                .to_string()
-        } else {
-            format!(
-                "Required schema-constrained {provider_label} proposals were confirmed before planning."
-            )
-        };
-        add_bool_check(
-            &mut checks,
-            analysis_check_id,
-            &analysis_label,
-            "analysis",
-            analysis_passed,
-            true,
-            &analysis_message,
-            ".hoi4-mod-setup/install.lock.json",
-        );
-    }
+        "analysis.ai"
+    };
+    let analysis_label = if ai_provider == "codex" {
+        "ChatGPT Codex analysis".to_string()
+    } else {
+        format!("{provider_label} semantic analysis")
+    };
+    let analysis_message = if ai_provider == "codex" {
+        "Required schema-constrained Codex proposals were confirmed before planning.".to_string()
+    } else {
+        format!(
+            "Required schema-constrained {provider_label} proposals were confirmed before planning."
+        )
+    };
+    add_bool_check(
+        &mut checks,
+        analysis_check_id,
+        &analysis_label,
+        "analysis",
+        analysis_passed,
+        true,
+        &analysis_message,
+        ".hoi4-mod-setup/install.lock.json",
+    );
     add_status_check(
         &mut checks,
         "mcp.hoi4",
@@ -999,9 +982,7 @@ pub fn evaluate(input: &ReadinessInput) -> ReadinessReport {
     let enabled = blocking_ids.is_empty();
     let mut notes = input.notes.clone();
     notes.push("Optional workflow status does not block core AI readiness.".into());
-    let persisted_analysis_status = if deterministic {
-        "not_run"
-    } else if analysis_passed {
+    let persisted_analysis_status = if analysis_passed {
         "confirmed"
     } else {
         "block"
@@ -1981,72 +1962,6 @@ mod tests {
             .checks
             .iter()
             .any(|check| check.id.contains("lora") || check.label.contains("ComfyUI")));
-    }
-
-    fn deterministic_input() -> ReadinessInput {
-        ReadinessInput {
-            selected_components: vec!["codex.config".into()],
-            source_verified: true,
-            descriptors_valid: true,
-            launcher_valid: true,
-            thumbnail_valid: true,
-            structure_valid: true,
-            agents_valid: true,
-            skills_valid: true,
-            subagents_valid: true,
-            codex_valid: true,
-            ai_provider: "none".into(),
-            ai_model: "deterministic".into(),
-            ai_authenticated: false,
-            ai_analysis_status: "not_run".into(),
-            ai_confirmed_field_count: 0,
-            mcp_status: "pass".into(),
-            wiki_status: "pass".into(),
-            git_status: "not_selected".into(),
-            environment_status: "pass".into(),
-            hashes_valid: true,
-            conflict_status: "pass".into(),
-            dependency_status: "pass".into(),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn a_deterministic_setup_is_ready_with_a_labelled_nonblocking_check() {
-        let report = evaluate(&deterministic_input());
-        assert!(report.core_ready, "{:?}", report.codex.blocking_check_ids);
-        let check = report
-            .checks
-            .iter()
-            .find(|check| check.id == "analysis.deterministic")
-            .unwrap();
-        assert_eq!(check.status, "not_selected");
-        assert!(!check.blocking);
-        assert!(check.label.contains("no setup assistant"));
-        assert!(!report.checks.iter().any(|check| matches!(
-            check.id.as_str(),
-            "ai.authenticated" | "codex.authenticated" | "analysis.ai" | "analysis.chatgpt"
-        )));
-        assert_eq!(report.codex.provider, "none");
-        assert_eq!(report.codex.integration, "none");
-        assert_eq!(report.codex.auth_mode, "none");
-        assert_eq!(report.codex.analysis_status, "not_run");
-        assert!(!report.codex.authenticated_during_setup);
-    }
-
-    #[test]
-    fn an_assistant_setup_without_analysis_still_blocks_readiness() {
-        let mut input = deterministic_input();
-        input.ai_provider = "deepseek".into();
-        input.ai_model = "deepseek-flash".into();
-        input.ai_analysis_status = "blocked".into();
-        let report = evaluate(&input);
-        assert!(!report.core_ready);
-        assert!(report
-            .codex
-            .blocking_check_ids
-            .iter()
-            .any(|id| id == "analysis.ai"));
     }
 
     #[test]
