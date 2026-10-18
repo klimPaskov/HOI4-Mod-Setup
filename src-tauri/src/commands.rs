@@ -12401,12 +12401,12 @@ mod tests {
         assert_eq!(route["cwd"].as_str(), Some("."));
         assert!(route.get("enabled").is_none(), "enabled is a Codex key");
         assert!(grok["mcp_servers"].get("hoi4_image_old_provider").is_none());
-        // Kiro documents no working directory, so its file is never adapted.
+        // Kiro documents no working directory, so its image routes are never
+        // adapted. (Linux may still re-render the file for the shared route.)
         let kiro = br#"{"mcpServers":{"hoi4_image_old_provider":{"command":"old"}}}"#;
-        assert_eq!(
-            adapt_for("kiro", ".kiro/settings/mcp.json", kiro),
-            kiro.to_vec()
-        );
+        let kiro_adapted: Value =
+            serde_json::from_slice(&adapt_for("kiro", ".kiro/settings/mcp.json", kiro)).unwrap();
+        assert_eq!(kiro_adapted, serde_json::from_slice::<Value>(kiro).unwrap());
         assert_eq!(adapted["mcp"]["hoi4_image_openai_api"]["cwd"], ".");
         assert_eq!(adapted["mcp"]["other"]["command"][0], "existing");
         assert!(adapted["mcp"].get("hoi4_image_old_provider").is_none());
