@@ -427,47 +427,33 @@ where
     let root_identity = scan_path_identity(&root)
         .ok_or_else(|| AppError::Scan("project root identity could not be verified".into()))?;
 
-    let mut observations = Vec::new();
-    let mut link_conflicts = Vec::new();
-    let mut total_bytes = 0_u64;
-    let mut retained_bytes = 0_u64;
-    let mut inventory_path_bytes = 0_u64;
-    let mut directories = 0_usize;
-    let mut sensitive_path_warning_emitted = false;
-    let mut detector_evidence = ScanEvidenceState::default();
-    let mut profile_stats = None;
     let deadline = Instant::now() + options.max_duration;
-    emit_progress(
-        &mut progress,
-        "discovering_files",
-        &root,
-        &root,
-        &observations,
-        directories,
-        total_bytes,
-    );
-    collect_files(
+    emit_progress(&mut progress, "discovering_files", &root, &root, &[], 0, 0);
+    // One walk feeds the setup inventory and the project profile.
+    let no_extra_cancel = || false;
+    let mut walk = ProjectWalk::new(
         &read_root,
         &root,
-        &root,
-        0,
         options,
-        &mut observations,
-        &mut link_conflicts,
-        &mut total_bytes,
-        &mut retained_bytes,
-        &mut inventory_path_bytes,
-        &mut directories,
-        &mut sensitive_path_warning_emitted,
-        &mut detector_evidence,
         root_identity,
         deadline,
+        &no_extra_cancel,
         &mut progress,
-    )?;
+    );
+    walk.run(true);
+    let ProjectWalk {
+        mut observations,
+        mut conflicts,
+        mut total_bytes,
+        directories,
+        detector_evidence,
+        mut profiler,
+        ..
+    } = walk;
+    let mut profile_stats = None;
     observations.sort_by(|left, right| left.relative.cmp(&right.relative));
-    append_case_collision_conflicts(&observations, &mut link_conflicts);
+    append_case_collision_conflicts(&observations, &mut conflicts);
     let mut findings = Vec::new();
-    let mut conflicts = link_conflicts;
     if scan_stopped(options, observations.len()) {
         mark_cancelled(
             &root,
@@ -609,9 +595,16 @@ where
         );
 
         detect_phase!("profiling_project", Path::new("."), {
-            let profile = crate::project_profile::scan(
-                &read_root,
-                &|| scan_stopped(options, observations.len()) || Instant::now() >= deadline,
+            let cancel = || scan_stopped(options, observations.len()) || Instant::now() >= deadline;
+            let profile = profiler.take().unwrap_or_default().analyze(
+                &mut |path| {
+                    read_root.read_prefix_with_check(
+                        path,
+                        crate::project_profile::PREFIX_BYTES,
+                        cancel,
+                    )
+                },
+                &cancel,
                 &mut |stats, path| {
                     progress(ScanProgress {
                         stage: if stats.samples_read == 0 {
@@ -792,6 +785,42 @@ where
     })
 }
 
+/// Profile a tree through the shared walk with the setup inventory off.
+#[cfg(test)]
+pub(crate) fn profile_only(
+    read_root: &crate::flatten::BoundedReadRoot,
+    cancel: &dyn Fn() -> bool,
+    progress: &mut dyn FnMut(&ProfileStats, &str),
+) -> Result<crate::project_profile::ProfileResult, AppError> {
+    let root = read_root.canonical().to_path_buf();
+    let root_identity = scan_path_identity(&root)
+        .ok_or_else(|| AppError::Scan("project root identity could not be verified".into()))?;
+    let options = ScanOptions::default();
+    let mut walk_progress = |event: ScanProgress| {
+        if let Some(stats) = &event.profile_stats {
+            progress(stats, &event.current_path);
+        }
+    };
+    let mut walk = ProjectWalk::new(
+        read_root,
+        &root,
+        &options,
+        root_identity,
+        Instant::now() + options.max_duration,
+        cancel,
+        &mut walk_progress,
+    );
+    walk.run(false);
+    let profiler = walk.profiler.take().unwrap_or_default();
+    profiler.analyze(
+        &mut |path| {
+            read_root.read_prefix_with_check(path, crate::project_profile::PREFIX_BYTES, cancel)
+        },
+        cancel,
+        progress,
+    )
+}
+
 /// Only conflicts that made detector evidence incomplete turn the overall scan
 /// into a partial result. Git inspection is deliberately bounded and advisory:
 /// an incomplete Git status probe remains visible for review, but it does not
@@ -827,22 +856,43 @@ struct DirectoryEnumeration {
     stop: DirectoryEnumerationStop,
 }
 
-fn enumerate_targeted_directory(
-    directory: &crate::flatten::BoundedReadRoot,
-    current_relative: &str,
-    options: &ScanOptions,
-    observations_len: usize,
-    deadline: Instant,
+/// The targeted setup inventory's view of one directory enumeration. The
+/// shared walk offers it every name; it keeps only setup-relevant entries
+/// under its own entry and name-byte budgets.
+struct TargetedNames {
+    enumeration: DirectoryEnumeration,
+    entry_name_bytes: u64,
     max_targeted_entries: usize,
-) -> Result<DirectoryEnumeration, AppError> {
-    let mut result = DirectoryEnumeration {
-        entries: Vec::new(),
-        sensitive_found: false,
-        entry_error: false,
-        stop: DirectoryEnumerationStop::Complete,
-    };
-    let mut entry_name_bytes = 0_u64;
-    directory.visit_directory_names(|entry| {
+}
+
+impl TargetedNames {
+    fn new(max_targeted_entries: usize) -> Self {
+        Self {
+            enumeration: DirectoryEnumeration {
+                entries: Vec::new(),
+                sensitive_found: false,
+                entry_error: false,
+                stop: DirectoryEnumerationStop::Complete,
+            },
+            entry_name_bytes: 0,
+            max_targeted_entries,
+        }
+    }
+
+    /// Accept one enumerated name; `false` once the setup inventory wants no
+    /// more names from this directory.
+    fn accept(
+        &mut self,
+        entry: &Result<OsString, std::io::Error>,
+        current_relative: &str,
+        options: &ScanOptions,
+        observations_len: usize,
+        deadline: Instant,
+    ) -> bool {
+        let result = &mut self.enumeration;
+        if result.stop != DirectoryEnumerationStop::Complete {
+            return false;
+        }
         if scan_stopped(options, observations_len) {
             result.stop = DirectoryEnumerationStop::Cancelled;
             return false;
@@ -880,260 +930,374 @@ fn enumerate_targeted_directory(
         if !targeted_scan_path_candidate(&relative) {
             return true;
         }
-        if result.entries.len() >= max_targeted_entries {
+        if result.entries.len() >= self.max_targeted_entries {
             result.stop = DirectoryEnumerationStop::TargetedEntryLimit;
             return false;
         }
         let name_bytes = name.len() as u64;
-        if entry_name_bytes.saturating_add(name_bytes) > MAX_DIRECTORY_ENTRY_NAME_BYTES {
+        if self.entry_name_bytes.saturating_add(name_bytes) > MAX_DIRECTORY_ENTRY_NAME_BYTES {
             result.stop = DirectoryEnumerationStop::TargetedEntryNameBytesLimit;
             return false;
         }
-        entry_name_bytes = entry_name_bytes.saturating_add(name_bytes);
-        result.entries.push(file_name);
+        self.entry_name_bytes = self.entry_name_bytes.saturating_add(name_bytes);
+        result.entries.push(file_name.clone());
         true
-    })?;
-    result.entries.sort();
-    Ok(result)
+    }
+
+    fn finish(mut self) -> DirectoryEnumeration {
+        self.enumeration.entries.sort();
+        self.enumeration
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn collect_files(
-    read_root: &crate::flatten::BoundedReadRoot,
-    root: &Path,
-    current: &Path,
-    depth: usize,
+#[cfg(test)]
+fn enumerate_targeted_directory(
+    directory: &crate::flatten::BoundedReadRoot,
+    current_relative: &str,
     options: &ScanOptions,
-    observations: &mut Vec<FileObservation>,
-    link_conflicts: &mut Vec<ScanConflict>,
-    total_bytes: &mut u64,
-    retained_bytes: &mut u64,
-    inventory_path_bytes: &mut u64,
-    directories: &mut usize,
-    sensitive_path_warning_emitted: &mut bool,
-    detector_evidence: &mut ScanEvidenceState,
+    observations_len: usize,
+    deadline: Instant,
+    max_targeted_entries: usize,
+) -> Result<DirectoryEnumeration, AppError> {
+    let mut names = TargetedNames::new(max_targeted_entries);
+    directory.visit_directory_names(|entry| {
+        names.accept(
+            &entry,
+            current_relative,
+            options,
+            observations_len,
+            deadline,
+        )
+    })?;
+    Ok(names.finish())
+}
+
+/// One bounded, read-only, link-refusing walk of the project. Each directory
+/// is enumerated once, and its names feed two inventories that keep their own
+/// rules: the targeted setup inventory (setup surfaces only, with the scan's
+/// file, directory, path, byte, conflict, identity-fence, sensitive-path, and
+/// case-collision rules) and the project profile (the whole tree minus its
+/// exclusions, with its own budgets). A directory is entered when either
+/// inventory wants it, and an inventory that stops leaves the other running.
+struct ProjectWalk<'a> {
+    read_root: &'a crate::flatten::BoundedReadRoot,
+    root: &'a Path,
+    options: &'a ScanOptions,
     root_identity: ScanFileIdentity,
     deadline: Instant,
-    progress: &mut impl FnMut(ScanProgress),
-) -> Result<(), AppError> {
-    if conflict_budget_hit(link_conflicts) {
-        return Ok(());
-    }
-    if inventory_limit_hit(link_conflicts) {
-        return Ok(());
-    }
-    if Instant::now() >= deadline {
-        mark_timed_out(root, current, link_conflicts);
-        return Ok(());
-    }
-    if scan_stopped(options, observations.len()) {
-        mark_cancelled(
+    /// An extra stop signal for the profile, beyond the scan's own.
+    profile_cancel: &'a dyn Fn() -> bool,
+    progress: &'a mut dyn FnMut(ScanProgress),
+    observations: Vec<FileObservation>,
+    conflicts: Vec<ScanConflict>,
+    total_bytes: u64,
+    retained_bytes: u64,
+    inventory_path_bytes: u64,
+    directories: usize,
+    sensitive_path_warning_emitted: bool,
+    detector_evidence: ScanEvidenceState,
+    profiler: Option<crate::project_profile::Profiler>,
+    /// A filesystem boundary changed; nothing further is inspected.
+    halted: bool,
+}
+
+/// What the setup inventory does after one of its per-entry checks.
+enum SetupStep {
+    Continue,
+    /// Skip this entry.
+    Skip,
+    /// The setup inventory takes nothing more from this directory.
+    End,
+}
+
+impl<'a> ProjectWalk<'a> {
+    fn new(
+        read_root: &'a crate::flatten::BoundedReadRoot,
+        root: &'a Path,
+        options: &'a ScanOptions,
+        root_identity: ScanFileIdentity,
+        deadline: Instant,
+        profile_cancel: &'a dyn Fn() -> bool,
+        progress: &'a mut dyn FnMut(ScanProgress),
+    ) -> Self {
+        Self {
+            read_root,
             root,
-            link_conflicts,
+            options,
+            root_identity,
+            deadline,
+            profile_cancel,
             progress,
-            observations,
-            *directories,
-            *total_bytes,
-        );
-        return Ok(());
-    }
-    if !scan_path_identity_matches(root, root_identity) {
-        mark_scan_boundary_changed(root, root, link_conflicts);
-        return Ok(());
-    }
-    if depth > options.max_depth.min(MAX_DEPTH) {
-        link_conflicts.push(ScanConflict {
-            id: format!(
-                "scan.depth.{}",
-                &sha256_bytes(relative_path(root, current).as_bytes())[..12]
-            ),
-            path: relative_path(root, current),
-            kind: "other".into(),
-            severity: "warn".into(),
-            details: Some("Maximum scan depth reached; remaining files were not inspected.".into()),
-        });
-        return Ok(());
-    }
-    if path_has_link_component(current) {
-        link_conflicts.push(ScanConflict {
-            id: format!(
-                "scan.directory_link.{}",
-                &sha256_bytes(relative_path(root, current).as_bytes())[..12]
-            ),
-            path: relative_path(root, current),
-            kind: "other".into(),
-            severity: "block".into(),
-            details: Some("A linked directory was not followed during scan.".into()),
-        });
-        return Ok(());
-    }
-    let directory_identity = match fs::symlink_metadata(current) {
-        Ok(metadata) if metadata.is_dir() && !is_link_metadata(&metadata) => {
-            match scan_path_identity(current) {
-                Some(identity) => identity,
-                None => {
-                    mark_scan_boundary_changed(root, current, link_conflicts);
-                    return Ok(());
-                }
-            }
+            observations: Vec::new(),
+            conflicts: Vec::new(),
+            total_bytes: 0,
+            retained_bytes: 0,
+            inventory_path_bytes: 0,
+            directories: 0,
+            sensitive_path_warning_emitted: false,
+            detector_evidence: ScanEvidenceState::default(),
+            profiler: Some(crate::project_profile::Profiler::new()),
+            halted: false,
         }
-        _ => {
-            mark_scan_boundary_changed(root, current, link_conflicts);
-            return Ok(());
-        }
-    };
-    if *directories >= MAX_DIRECTORIES {
-        link_conflicts.push(ScanConflict {
-            id: "scan.directory_limit".into(),
-            path: relative_path(root, current),
-            kind: "other".into(),
-            severity: "warn".into(),
-            details: Some(
-                "Maximum directory budget reached; remaining entries were not inspected.".into(),
-            ),
-        });
-        return Ok(());
-    }
-    *directories += 1;
-    let current_relative = relative_path(root, current);
-    let retained_directory = if current_relative.is_empty() {
-        None
-    } else {
-        match read_root.open_child_directory(&current_relative) {
-            Ok(directory) => Some(directory),
-            Err(_) => {
-                mark_scan_boundary_changed(root, current, link_conflicts);
-                return Ok(());
-            }
-        }
-    };
-    let stable_directory = retained_directory.as_ref().unwrap_or(read_root);
-    let enumeration = match enumerate_targeted_directory(
-        stable_directory,
-        &current_relative,
-        options,
-        observations.len(),
-        deadline,
-        MAX_DIRECTORY_ENTRIES,
-    ) {
-        Ok(enumeration) => enumeration,
-        Err(_) => {
-            // Discard every name observed while the identity fence was open.
-            mark_scan_boundary_changed(root, current, link_conflicts);
-            return Ok(());
-        }
-    };
-    if !scan_path_identity_matches(root, root_identity)
-        || !scan_path_identity_matches(current, directory_identity)
-    {
-        mark_scan_boundary_changed(root, current, link_conflicts);
-        return Ok(());
-    }
-    if enumeration.sensitive_found && !*sensitive_path_warning_emitted {
-        link_conflicts.push(ScanConflict {
-            id: "scan.sensitive.excluded".into(),
-            path: "<credential-shaped project paths>".into(),
-            kind: "secret_excluded".into(),
-            severity: "warn".into(),
-            details: Some(
-                "Credential-shaped project content was excluded from the read-only scan.".into(),
-            ),
-        });
-        *sensitive_path_warning_emitted = true;
-    }
-    if enumeration.entry_error && !conflict_budget_hit(link_conflicts) {
-        link_conflicts.push(ScanConflict {
-            id: format!(
-                "scan.entry_error.{}",
-                &sha256_bytes(current_relative.as_bytes())[..12]
-            ),
-            path: current_relative.clone(),
-            kind: "other".into(),
-            severity: "warn".into(),
-            details: Some("One or more directory entries could not be inspected.".into()),
-        });
-    }
-    match enumeration.stop {
-        DirectoryEnumerationStop::Complete => {}
-        DirectoryEnumerationStop::Cancelled => {
-            mark_cancelled(
-                root,
-                link_conflicts,
-                progress,
-                observations,
-                *directories,
-                *total_bytes,
-            );
-            return Ok(());
-        }
-        DirectoryEnumerationStop::TimedOut => {
-            mark_timed_out(root, current, link_conflicts);
-            return Ok(());
-        }
-        DirectoryEnumerationStop::TargetedEntryLimit => {
-            link_conflicts.push(ScanConflict {
-                id: "scan.directory_entry_limit".into(),
-                path: current_relative.clone(),
-                kind: "other".into(),
-                severity: "warn".into(),
-                details: Some(
-                    "One directory exceeded the bounded targeted-entry inventory; remaining relevant entries were not inspected."
-                        .into(),
-                ),
-            });
-            return Ok(());
-        }
-        DirectoryEnumerationStop::TargetedEntryNameBytesLimit => {
-            link_conflicts.push(ScanConflict {
-                id: "scan.directory_entry_bytes_limit".into(),
-                path: current_relative.clone(),
-                kind: "other".into(),
-                severity: "warn".into(),
-                details: Some(
-                    "One directory exceeded the bounded targeted entry-name inventory; remaining relevant entries were not inspected."
-                        .into(),
-                ),
-            });
-            return Ok(());
-        }
-    }
-    let entries = enumeration.entries;
-    if scan_stopped(options, observations.len()) {
-        mark_cancelled(
-            root,
-            link_conflicts,
-            progress,
-            observations,
-            *directories,
-            *total_bytes,
-        );
-        return Ok(());
-    }
-    if Instant::now() >= deadline {
-        mark_timed_out(root, current, link_conflicts);
-        return Ok(());
     }
 
-    for (entry_index, entry_name) in entries.into_iter().enumerate() {
-        if conflict_budget_hit(link_conflicts) {
-            return Ok(());
+    /// Walk from the project root with the requested inventories.
+    fn run(&mut self, setup: bool) {
+        let root = self.root;
+        let setup = if setup {
+            self.enter_setup(root, 0)
+        } else {
+            None
+        };
+        let profile = self.enter_profile(0);
+        if setup.is_some() || profile {
+            let read_root = self.read_root;
+            self.walk(read_root, root, 0, setup, profile);
         }
-        if inventory_limit_hit(link_conflicts) {
-            return Ok(());
+    }
+
+    fn cancelled(&mut self) {
+        mark_cancelled(
+            self.root,
+            &mut self.conflicts,
+            &mut self.progress,
+            &self.observations,
+            self.directories,
+            self.total_bytes,
+        );
+    }
+
+    fn timed_out(&mut self, current: &Path) {
+        mark_timed_out(self.root, current, &mut self.conflicts);
+    }
+
+    fn boundary_changed(&mut self, current: &Path) {
+        mark_scan_boundary_changed(self.root, current, &mut self.conflicts);
+        self.halted = true;
+    }
+
+    fn profile_stopped(&self) -> bool {
+        self.halted
+            || scan_stopped(self.options, self.observations.len())
+            || Instant::now() >= self.deadline
+            || (self.profile_cancel)()
+    }
+
+    /// The profile's checks before a directory is enumerated.
+    fn enter_profile(&mut self, depth: usize) -> bool {
+        let stop = self.profile_stopped();
+        self.profiler.as_mut().is_some_and(|profiler| {
+            !profiler.should_stop(&|| stop) && profiler.enter_directory(depth)
+        })
+    }
+
+    fn profile_progress(&mut self, path: &str) {
+        let Some(profiler) = &self.profiler else {
+            return;
+        };
+        let stats = profiler.result.stats.clone();
+        (self.progress)(ScanProgress {
+            stage: "indexing_project".into(),
+            current_path: safe_scan_display_path(path),
+            files_scanned: self.observations.len() as u32,
+            directories_scanned: self.directories as u32,
+            bytes_read: self.total_bytes + stats.bytes_read,
+            profile_stats: Some(stats),
+        });
+    }
+
+    /// The setup inventory's checks before a directory is enumerated; `Some`
+    /// carries the directory identity its fence keeps for the directory.
+    fn enter_setup(&mut self, current: &Path, depth: usize) -> Option<ScanFileIdentity> {
+        let root = self.root;
+        if conflict_budget_hit(&mut self.conflicts) || inventory_limit_hit(&self.conflicts) {
+            return None;
         }
-        if Instant::now() >= deadline {
-            mark_timed_out(root, current, link_conflicts);
-            return Ok(());
+        if Instant::now() >= self.deadline {
+            self.timed_out(current);
+            return None;
+        }
+        if scan_stopped(self.options, self.observations.len()) {
+            self.cancelled();
+            return None;
+        }
+        if !scan_path_identity_matches(root, self.root_identity) {
+            self.boundary_changed(root);
+            return None;
+        }
+        if depth > self.options.max_depth.min(MAX_DEPTH) {
+            self.conflicts.push(ScanConflict {
+                id: format!(
+                    "scan.depth.{}",
+                    &sha256_bytes(relative_path(root, current).as_bytes())[..12]
+                ),
+                path: relative_path(root, current),
+                kind: "other".into(),
+                severity: "warn".into(),
+                details: Some(
+                    "Maximum scan depth reached; remaining files were not inspected.".into(),
+                ),
+            });
+            return None;
+        }
+        if path_has_link_component(current) {
+            self.conflicts.push(ScanConflict {
+                id: format!(
+                    "scan.directory_link.{}",
+                    &sha256_bytes(relative_path(root, current).as_bytes())[..12]
+                ),
+                path: relative_path(root, current),
+                kind: "other".into(),
+                severity: "block".into(),
+                details: Some("A linked directory was not followed during scan.".into()),
+            });
+            return None;
+        }
+        let directory_identity = match fs::symlink_metadata(current) {
+            Ok(metadata) if metadata.is_dir() && !is_link_metadata(&metadata) => {
+                match scan_path_identity(current) {
+                    Some(identity) => identity,
+                    None => {
+                        self.boundary_changed(current);
+                        return None;
+                    }
+                }
+            }
+            _ => {
+                self.boundary_changed(current);
+                return None;
+            }
+        };
+        if self.directories >= MAX_DIRECTORIES {
+            self.conflicts.push(ScanConflict {
+                id: "scan.directory_limit".into(),
+                path: relative_path(root, current),
+                kind: "other".into(),
+                severity: "warn".into(),
+                details: Some(
+                    "Maximum directory budget reached; remaining entries were not inspected."
+                        .into(),
+                ),
+            });
+            return None;
+        }
+        self.directories += 1;
+        Some(directory_identity)
+    }
+
+    /// The setup inventory's checks after its enumeration; `None` when it
+    /// takes nothing from this directory.
+    fn finish_setup_enumeration(
+        &mut self,
+        current: &Path,
+        current_relative: &str,
+        directory_identity: ScanFileIdentity,
+        enumeration: DirectoryEnumeration,
+    ) -> Option<Vec<OsString>> {
+        let root = self.root;
+        if !scan_path_identity_matches(root, self.root_identity)
+            || !scan_path_identity_matches(current, directory_identity)
+        {
+            self.boundary_changed(current);
+            return None;
+        }
+        if enumeration.sensitive_found && !self.sensitive_path_warning_emitted {
+            self.conflicts.push(ScanConflict {
+                id: "scan.sensitive.excluded".into(),
+                path: "<credential-shaped project paths>".into(),
+                kind: "secret_excluded".into(),
+                severity: "warn".into(),
+                details: Some(
+                    "Credential-shaped project content was excluded from the read-only scan."
+                        .into(),
+                ),
+            });
+            self.sensitive_path_warning_emitted = true;
+        }
+        if enumeration.entry_error && !conflict_budget_hit(&mut self.conflicts) {
+            self.conflicts.push(ScanConflict {
+                id: format!(
+                    "scan.entry_error.{}",
+                    &sha256_bytes(current_relative.as_bytes())[..12]
+                ),
+                path: current_relative.to_owned(),
+                kind: "other".into(),
+                severity: "warn".into(),
+                details: Some("One or more directory entries could not be inspected.".into()),
+            });
+        }
+        match enumeration.stop {
+            DirectoryEnumerationStop::Complete => {}
+            DirectoryEnumerationStop::Cancelled => {
+                self.cancelled();
+                return None;
+            }
+            DirectoryEnumerationStop::TimedOut => {
+                self.timed_out(current);
+                return None;
+            }
+            DirectoryEnumerationStop::TargetedEntryLimit => {
+                self.conflicts.push(ScanConflict {
+                    id: "scan.directory_entry_limit".into(),
+                    path: current_relative.to_owned(),
+                    kind: "other".into(),
+                    severity: "warn".into(),
+                    details: Some(
+                        "One directory exceeded the bounded targeted-entry inventory; remaining relevant entries were not inspected."
+                            .into(),
+                    ),
+                });
+                return None;
+            }
+            DirectoryEnumerationStop::TargetedEntryNameBytesLimit => {
+                self.conflicts.push(ScanConflict {
+                    id: "scan.directory_entry_bytes_limit".into(),
+                    path: current_relative.to_owned(),
+                    kind: "other".into(),
+                    severity: "warn".into(),
+                    details: Some(
+                        "One directory exceeded the bounded targeted entry-name inventory; remaining relevant entries were not inspected."
+                            .into(),
+                    ),
+                });
+                return None;
+            }
+        }
+        if scan_stopped(self.options, self.observations.len()) {
+            self.cancelled();
+            return None;
+        }
+        if Instant::now() >= self.deadline {
+            self.timed_out(current);
+            return None;
+        }
+        Some(enumeration.entries)
+    }
+
+    /// The setup inventory's checks before each of its entries.
+    fn setup_entry_step(
+        &mut self,
+        current: &Path,
+        directory_identity: ScanFileIdentity,
+        entry_index: usize,
+    ) -> SetupStep {
+        let root = self.root;
+        if conflict_budget_hit(&mut self.conflicts) || inventory_limit_hit(&self.conflicts) {
+            return SetupStep::End;
+        }
+        if Instant::now() >= self.deadline {
+            self.timed_out(current);
+            return SetupStep::End;
         }
         if entry_index % 128 == 0
-            && (!scan_path_identity_matches(root, root_identity)
+            && (!scan_path_identity_matches(root, self.root_identity)
                 || !scan_path_identity_matches(current, directory_identity))
         {
-            mark_scan_boundary_changed(root, current, link_conflicts);
-            return Ok(());
+            self.boundary_changed(current);
+            return SetupStep::End;
         }
-        if observations.len() >= options.max_files.min(MAX_FILES) {
-            link_conflicts.push(ScanConflict {
+        if self.observations.len() >= self.options.max_files.min(MAX_FILES) {
+            self.conflicts.push(ScanConflict {
                 id: "scan.file_limit".into(),
                 path: relative_path(root, current),
                 kind: "other".into(),
@@ -1142,25 +1306,21 @@ fn collect_files(
                     "Scan file limit reached; remaining files were not inspected.".into(),
                 ),
             });
-            return Ok(());
+            return SetupStep::End;
         }
-        if scan_stopped(options, observations.len()) {
-            mark_cancelled(
-                root,
-                link_conflicts,
-                progress,
-                observations,
-                *directories,
-                *total_bytes,
-            );
-            return Ok(());
+        if scan_stopped(self.options, self.observations.len()) {
+            self.cancelled();
+            return SetupStep::End;
         }
-        let path = current.join(entry_name);
-        let relative = relative_path(root, &path);
+        SetupStep::Continue
+    }
+
+    /// The setup inventory's path budgets for one entry.
+    fn setup_path_step(&mut self, relative: &str) -> SetupStep {
         if relative.len() > MAX_RELATIVE_PATH_BYTES
             || relative.split('/').any(|segment| segment.len() > 255)
         {
-            link_conflicts.push(ScanConflict {
+            self.conflicts.push(ScanConflict {
                 id: format!(
                     "scan.path_length.{}",
                     &sha256_bytes(relative.as_bytes())[..12]
@@ -1173,10 +1333,14 @@ fn collect_files(
                         .into(),
                 ),
             });
-            continue;
+            return SetupStep::Skip;
         }
-        if inventory_path_bytes.saturating_add(relative.len() as u64) > MAX_INVENTORY_PATH_BYTES {
-            link_conflicts.push(ScanConflict {
+        if self
+            .inventory_path_bytes
+            .saturating_add(relative.len() as u64)
+            > MAX_INVENTORY_PATH_BYTES
+        {
+            self.conflicts.push(ScanConflict {
                 id: "scan.path_budget".into(),
                 path: "<project tree>".into(),
                 kind: "other".into(),
@@ -1186,206 +1350,394 @@ fn collect_files(
                         .into(),
                 ),
             });
-            return Ok(());
+            return SetupStep::End;
         }
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) => {
-                link_conflicts.push(ScanConflict {
+        SetupStep::Continue
+    }
+
+    fn observe_link(&mut self, relative: String) {
+        // A presence-only client marker is never read, so a linked one (for
+        // example `GEMINI.md` linking to `AGENTS.md`) is reported without
+        // blocking the scan.
+        let presence_only =
+            scan_content_policy(&relative).is_some_and(|policy| policy.presence_only);
+        let prefix = if presence_only {
+            "client.marker_link"
+        } else {
+            "scan.link"
+        };
+        self.conflicts.push(ScanConflict {
+            id: format!("{prefix}.{}", &sha256_bytes(relative.as_bytes())[..12]),
+            path: relative.clone(),
+            kind: "other".into(),
+            severity: if presence_only { "warn" } else { "block" }.into(),
+            details: Some("Symlink or junction was not followed during scan.".into()),
+        });
+        self.inventory_path_bytes = self
+            .inventory_path_bytes
+            .saturating_add(relative.len() as u64);
+        self.observations.push(FileObservation {
+            relative,
+            bytes: Vec::new(),
+            is_symlink: true,
+        });
+    }
+
+    /// Record one regular setup file; `End` when the scan stopped while it
+    /// was read.
+    fn observe_file(
+        &mut self,
+        current: &Path,
+        directory_identity: ScanFileIdentity,
+        path: &Path,
+        relative: String,
+        length: u64,
+    ) -> SetupStep {
+        let root = self.root;
+        let Some(policy) = scan_content_policy(&relative) else {
+            return SetupStep::Continue;
+        };
+        let mut bytes = match policy {
+            policy if policy.presence_only => Vec::new(),
+            policy
+                if length > policy.max_bytes
+                    || self.total_bytes.saturating_add(length) > MAX_TOTAL_BYTES =>
+            {
+                self.conflicts.push(ScanConflict {
                     id: format!(
-                        "scan.metadata_error.{}",
+                        "scan.bytes_limit.{}",
                         &sha256_bytes(relative.as_bytes())[..12]
                     ),
-                    path: relative,
-                    kind: "other".into(),
-                    severity: "warn".into(),
-                    details: Some(format!("File metadata could not be inspected: {error}")),
-                });
-                continue;
-            }
-        };
-        if is_link_metadata(&metadata) {
-            // A presence-only client marker is never read, so a linked one
-            // (for example `GEMINI.md` linking to `AGENTS.md`) is reported
-            // without blocking the scan.
-            let presence_only =
-                scan_content_policy(&relative).is_some_and(|policy| policy.presence_only);
-            let prefix = if presence_only {
-                "client.marker_link"
-            } else {
-                "scan.link"
-            };
-            link_conflicts.push(ScanConflict {
-                id: format!("{prefix}.{}", &sha256_bytes(relative.as_bytes())[..12]),
-                path: relative.clone(),
-                kind: "other".into(),
-                severity: if presence_only { "warn" } else { "block" }.into(),
-                details: Some("Symlink or junction was not followed during scan.".into()),
-            });
-            observations.push(FileObservation {
-                relative,
-                bytes: Vec::new(),
-                is_symlink: true,
-            });
-            *inventory_path_bytes = inventory_path_bytes.saturating_add(
-                observations
-                    .last()
-                    .map_or(0, |file| file.relative.len() as u64),
-            );
-        } else if metadata.is_dir() && targeted_scan_directory(&relative) {
-            collect_files(
-                read_root,
-                root,
-                &path,
-                depth + 1,
-                options,
-                observations,
-                link_conflicts,
-                total_bytes,
-                retained_bytes,
-                inventory_path_bytes,
-                directories,
-                sensitive_path_warning_emitted,
-                detector_evidence,
-                root_identity,
-                deadline,
-                progress,
-            )?;
-        } else if metadata.is_file() {
-            let Some(policy) = scan_content_policy(&relative) else {
-                continue;
-            };
-            let mut bytes = match policy {
-                policy if policy.presence_only => Vec::new(),
-                policy
-                    if metadata.len() > policy.max_bytes
-                        || total_bytes.saturating_add(metadata.len()) > MAX_TOTAL_BYTES =>
-                {
-                    link_conflicts.push(ScanConflict {
-                        id: format!(
-                            "scan.bytes_limit.{}",
-                            &sha256_bytes(relative.as_bytes())[..12]
-                        ),
-                        path: relative.clone(),
-                        kind: "other".into(),
-                        severity: "warn".into(),
-                        details: Some(
-                            "Detector-relevant content was not read because its bounded scan byte limit was reached."
-                                .into(),
-                        ),
-                    });
-                    Vec::new()
-                }
-                policy => {
-                    let remaining_budget = MAX_TOTAL_BYTES.saturating_sub(*total_bytes);
-                    let read = read_root.read_bounded_with_check(
-                        &relative,
-                        policy.max_bytes.min(remaining_budget),
-                        || {
-                            scan_stopped(options, observations.len())
-                                || Instant::now() >= deadline
-                                || !scan_path_identity_matches(root, root_identity)
-                                || !scan_path_identity_matches(current, directory_identity)
-                        },
-                    );
-                    if scan_stopped(options, observations.len()) {
-                        mark_cancelled(
-                            root,
-                            link_conflicts,
-                            progress,
-                            observations,
-                            *directories,
-                            *total_bytes,
-                        );
-                        return Ok(());
-                    }
-                    if Instant::now() >= deadline {
-                        mark_timed_out(root, &path, link_conflicts);
-                        return Ok(());
-                    }
-                    if !scan_path_identity_matches(root, root_identity)
-                        || !scan_path_identity_matches(current, directory_identity)
-                    {
-                        mark_scan_boundary_changed(root, current, link_conflicts);
-                        return Ok(());
-                    }
-                    match read {
-                        Ok(bytes) => bytes,
-                        Err(error) => {
-                            link_conflicts.push(ScanConflict {
-                                id: format!(
-                                    "scan.read_error.{}",
-                                    &sha256_bytes(relative.as_bytes())[..12]
-                                ),
-                                path: relative.clone(),
-                                kind: "other".into(),
-                                severity: "warn".into(),
-                                details: Some(format!("File could not be read: {error}")),
-                            });
-                            Vec::new()
-                        }
-                    }
-                }
-            };
-            if total_bytes.saturating_add(bytes.len() as u64) > MAX_TOTAL_BYTES {
-                link_conflicts.push(ScanConflict {
-                    id: "scan.total_bytes_limit".into(),
                     path: relative.clone(),
                     kind: "other".into(),
                     severity: "warn".into(),
                     details: Some(
-                        "Detector content grew beyond the remaining aggregate scan byte budget."
+                        "Detector-relevant content was not read because its bounded scan byte limit was reached."
+                            .into(),
+                    ),
+                });
+                Vec::new()
+            }
+            policy => {
+                let remaining_budget = MAX_TOTAL_BYTES.saturating_sub(self.total_bytes);
+                let (options, deadline, root_identity) =
+                    (self.options, self.deadline, self.root_identity);
+                let observations_len = self.observations.len();
+                let read = self.read_root.read_bounded_with_check(
+                    &relative,
+                    policy.max_bytes.min(remaining_budget),
+                    || {
+                        scan_stopped(options, observations_len)
+                            || Instant::now() >= deadline
+                            || !scan_path_identity_matches(root, root_identity)
+                            || !scan_path_identity_matches(current, directory_identity)
+                    },
+                );
+                if scan_stopped(self.options, self.observations.len()) {
+                    self.cancelled();
+                    return SetupStep::End;
+                }
+                if Instant::now() >= self.deadline {
+                    self.timed_out(path);
+                    return SetupStep::End;
+                }
+                if !scan_path_identity_matches(root, self.root_identity)
+                    || !scan_path_identity_matches(current, directory_identity)
+                {
+                    self.boundary_changed(current);
+                    return SetupStep::End;
+                }
+                match read {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        self.conflicts.push(ScanConflict {
+                            id: format!(
+                                "scan.read_error.{}",
+                                &sha256_bytes(relative.as_bytes())[..12]
+                            ),
+                            path: relative.clone(),
+                            kind: "other".into(),
+                            severity: "warn".into(),
+                            details: Some(format!("File could not be read: {error}")),
+                        });
+                        Vec::new()
+                    }
+                }
+            }
+        };
+        if self.total_bytes.saturating_add(bytes.len() as u64) > MAX_TOTAL_BYTES {
+            self.conflicts.push(ScanConflict {
+                id: "scan.total_bytes_limit".into(),
+                path: relative.clone(),
+                kind: "other".into(),
+                severity: "warn".into(),
+                details: Some(
+                    "Detector content grew beyond the remaining aggregate scan byte budget.".into(),
+                ),
+            });
+            bytes = Vec::new();
+        } else if !bytes.is_empty() {
+            self.total_bytes = self.total_bytes.saturating_add(bytes.len() as u64);
+        }
+        observe_detector_content(&relative, &bytes, policy, &mut self.detector_evidence);
+        if policy.retain && !bytes.is_empty() {
+            if self.retained_bytes.saturating_add(bytes.len() as u64) > MAX_RETAINED_BYTES {
+                self.conflicts.push(ScanConflict {
+                    id: "scan.retained_text_limit".into(),
+                    path: relative.clone(),
+                    kind: "other".into(),
+                    severity: "warn".into(),
+                    details: Some(
+                        "Required parser content exceeded the bounded in-memory evidence budget."
                             .into(),
                     ),
                 });
                 bytes = Vec::new();
-            } else if !bytes.is_empty() {
-                *total_bytes = total_bytes.saturating_add(bytes.len() as u64);
+            } else {
+                self.retained_bytes = self.retained_bytes.saturating_add(bytes.len() as u64);
             }
-            observe_detector_content(&relative, &bytes, policy, detector_evidence);
-            if policy.retain && !bytes.is_empty() {
-                if retained_bytes.saturating_add(bytes.len() as u64) > MAX_RETAINED_BYTES {
-                    link_conflicts.push(ScanConflict {
-                        id: "scan.retained_text_limit".into(),
-                        path: relative.clone(),
-                        kind: "other".into(),
-                        severity: "warn".into(),
-                        details: Some(
-                            "Required parser content exceeded the bounded in-memory evidence budget."
-                                .into(),
-                        ),
-                    });
-                    bytes = Vec::new();
-                } else {
-                    *retained_bytes = retained_bytes.saturating_add(bytes.len() as u64);
+        } else {
+            bytes = Vec::new();
+        }
+        self.inventory_path_bytes = self
+            .inventory_path_bytes
+            .saturating_add(relative.len() as u64);
+        self.observations.push(FileObservation {
+            relative,
+            bytes,
+            is_symlink: false,
+        });
+        if self.observations.len() == 1 || self.observations.len() % 128 == 0 {
+            emit_progress(
+                &mut self.progress,
+                "discovering_files",
+                path,
+                root,
+                &self.observations,
+                self.directories,
+                self.total_bytes,
+            );
+        }
+        SetupStep::Continue
+    }
+
+    /// Enumerate one directory once and hand its names to the inventories
+    /// that entered it: `setup` carries the setup fence identity, `profile`
+    /// whether the profile entered.
+    fn walk(
+        &mut self,
+        directory: &crate::flatten::BoundedReadRoot,
+        current: &Path,
+        depth: usize,
+        mut setup: Option<ScanFileIdentity>,
+        mut profile: bool,
+    ) {
+        let current_relative = relative_path(self.root, current);
+        let mut targeted = TargetedNames::new(MAX_DIRECTORY_ENTRIES);
+        let mut profile_names = crate::project_profile::ProfileNames::default();
+        let (options, deadline, observations_len) =
+            (self.options, self.deadline, self.observations.len());
+        let profile_stop = {
+            let (halted, cancel) = (self.halted, self.profile_cancel);
+            move || {
+                halted
+                    || scan_stopped(options, observations_len)
+                    || Instant::now() >= deadline
+                    || cancel()
+            }
+        };
+        let profiler = &mut self.profiler;
+        let visited = directory.visit_directory_names(|entry| {
+            let setup_more = setup.is_some()
+                && targeted.accept(
+                    &entry,
+                    &current_relative,
+                    options,
+                    observations_len,
+                    deadline,
+                );
+            let profile_more = profile
+                && profiler.as_mut().is_some_and(|profiler| {
+                    profile_names.accept(profiler, entry.as_deref().map_err(|_| ()), &profile_stop)
+                });
+            setup_more || profile_more
+        });
+        if visited.is_err() {
+            if setup.is_some() {
+                // Discard every name observed while the identity fence was open.
+                self.boundary_changed(current);
+            }
+            if let (true, Some(profiler)) = (profile, self.profiler.as_mut()) {
+                // A folder that vanishes or changes during the walk is
+                // incomplete profile coverage, never a failed scan.
+                profiler.problem("directory_read");
+            }
+            return;
+        }
+        let setup_entries = match setup {
+            Some(identity) => {
+                let entries = self.finish_setup_enumeration(
+                    current,
+                    &current_relative,
+                    identity,
+                    targeted.finish(),
+                );
+                if entries.is_none() {
+                    setup = None;
+                }
+                entries.unwrap_or_default()
+            }
+            None => Vec::new(),
+        };
+        // Both inventories keep their own sorted order; byte order of the
+        // platform name agrees with the profile's UTF-8 order.
+        let mut entries = BTreeMap::<OsString, (bool, bool)>::new();
+        for name in setup_entries {
+            entries.entry(name).or_default().0 = true;
+        }
+        if profile {
+            for name in profile_names.into_sorted() {
+                entries.entry(OsString::from(name)).or_default().1 = true;
+            }
+        }
+        let mut setup_index = 0_usize;
+        let mut collision_keys = BTreeSet::new();
+        for (name, (setup_entry, profile_entry)) in entries {
+            let mut in_setup = false;
+            if let (true, Some(identity)) = (setup_entry, setup) {
+                match self.setup_entry_step(current, identity, setup_index) {
+                    SetupStep::Continue => in_setup = true,
+                    SetupStep::Skip => {}
+                    SetupStep::End => setup = None,
+                }
+                setup_index += 1;
+            }
+            let path = current.join(&name);
+            let relative = relative_path(self.root, &path);
+            if in_setup {
+                match self.setup_path_step(&relative) {
+                    SetupStep::Continue => {}
+                    SetupStep::Skip => in_setup = false,
+                    SetupStep::End => {
+                        in_setup = false;
+                        setup = None;
+                    }
+                }
+            }
+            let mut profile_relative = None;
+            if profile && profile_entry {
+                let stop = self.profile_stopped();
+                if let Some(profiler) = self.profiler.as_mut() {
+                    if profiler.should_stop(&|| stop) {
+                        profile = false;
+                    } else if let Some(text) = name.to_str() {
+                        profile_relative = crate::project_profile::admit(
+                            profiler,
+                            &mut collision_keys,
+                            &current_relative,
+                            text,
+                        );
+                    }
+                }
+            }
+            if !in_setup && profile_relative.is_none() {
+                if setup.is_none() && !profile {
+                    break;
+                }
+                continue;
+            }
+            // Setup entries keep the scan's no-follow path metadata; profile
+            // entries are inspected through the retained directory handle.
+            let metadata = if in_setup {
+                match fs::symlink_metadata(&path) {
+                    Ok(metadata) => Some(metadata),
+                    Err(error) => {
+                        self.conflicts.push(ScanConflict {
+                            id: format!(
+                                "scan.metadata_error.{}",
+                                &sha256_bytes(relative.as_bytes())[..12]
+                            ),
+                            path: relative.clone(),
+                            kind: "other".into(),
+                            severity: "warn".into(),
+                            details: Some(format!("File metadata could not be inspected: {error}")),
+                        });
+                        in_setup = false;
+                        None
+                    }
                 }
             } else {
-                bytes = Vec::new();
+                directory
+                    .with_stable_path(|stable| fs::symlink_metadata(stable.join(&name)))
+                    .ok()
+                    .and_then(Result::ok)
+            };
+            let mut profile_child = false;
+            if let (Some(profile_path), Some(profiler)) =
+                (profile_relative.as_deref(), self.profiler.as_mut())
+            {
+                let text = name.to_str().unwrap_or_default();
+                match crate::project_profile::record_entry(
+                    profiler,
+                    &current_relative,
+                    text,
+                    profile_path,
+                    metadata.as_ref(),
+                ) {
+                    crate::project_profile::ProfileEntry::Skip => {}
+                    crate::project_profile::ProfileEntry::Directory => profile_child = true,
+                    crate::project_profile::ProfileEntry::File(report) => {
+                        if report {
+                            self.profile_progress(profile_path);
+                        }
+                    }
+                    crate::project_profile::ProfileEntry::Stop => profile = false,
+                }
             }
-            observations.push(FileObservation {
-                relative,
-                bytes,
-                is_symlink: false,
-            });
-            *inventory_path_bytes = inventory_path_bytes.saturating_add(
-                observations
-                    .last()
-                    .map_or(0, |file| file.relative.len() as u64),
-            );
-            if observations.len() == 1 || observations.len() % 128 == 0 {
-                emit_progress(
-                    progress,
-                    "discovering_files",
-                    &path,
-                    root,
-                    observations,
-                    *directories,
-                    *total_bytes,
-                );
+            let Some(metadata) = metadata else {
+                continue;
+            };
+            if in_setup && is_link_metadata(&metadata) {
+                self.observe_link(relative);
+            } else if metadata.is_dir() && !is_link_metadata(&metadata) {
+                let setup_child = in_setup && targeted_scan_directory(&relative);
+                if !setup_child && !profile_child {
+                    continue;
+                }
+                let child_setup = if setup_child {
+                    self.enter_setup(&path, depth + 1)
+                } else {
+                    None
+                };
+                if child_setup.is_none() && !profile_child {
+                    continue;
+                }
+                let child = match name.to_str() {
+                    Some(text) => directory.open_child_directory(text).ok(),
+                    None => None,
+                };
+                let Some(child) = child else {
+                    if child_setup.is_some() {
+                        self.boundary_changed(&path);
+                    }
+                    if let (true, Some(profiler)) = (profile_child, self.profiler.as_mut()) {
+                        profiler.problem("directory_read");
+                    }
+                    continue;
+                };
+                let child_profile = profile_child && self.enter_profile(depth + 1);
+                if child_setup.is_some() || child_profile {
+                    self.walk(&child, &path, depth + 1, child_setup, child_profile);
+                }
+            } else if let (true, Some(identity)) = (in_setup && metadata.is_file(), setup) {
+                if let SetupStep::End =
+                    self.observe_file(current, identity, &path, relative, metadata.len())
+                {
+                    setup = None;
+                }
             }
         }
     }
-    Ok(())
 }
 
 fn inventory_limit_hit(conflicts: &[ScanConflict]) -> bool {
@@ -3465,6 +3817,170 @@ mod tests {
                 .all(|evidence| evidence.excerpt_sha256.as_deref() == Some(expected.as_str())));
         }
         assert!(!result.partial);
+    }
+
+    fn shared_walk_project() -> tempfile::TempDir {
+        let directory = tempdir().unwrap();
+        let put = |path: &str, text: &str| {
+            let path = directory.path().join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        };
+        put(
+            "descriptor.mod",
+            "name=\"Shared\"\nsupported_version=\"1.19.*\"\n",
+        );
+        put("README.md", "# Shared walk\nOne enumeration per folder.\n");
+        put("AGENTS.md", "# Agents\n");
+        put("docs/guide.md", "# Guide\nKeep namespaces short.\n");
+        put("docs/notes/style.md", "# Style\n");
+        put(
+            ".claude/skills/example/SKILL.md",
+            "---\nname: example\ndescription: Example\n---\n",
+        );
+        put(
+            "events/shared.txt",
+            "add_namespace = shared\ncountry_event = { id = SHR.1 }\n",
+        );
+        put(
+            "common/national_focus/SHR.txt",
+            "focus_tree = { id = SHR_focus }\n",
+        );
+        put(
+            "localisation/english/shared_l_english.yml",
+            "l_english:\n SHR.1.t:0 \"Title\"\n",
+        );
+        put("node_modules/pkg/index.js", "ignored");
+        put(".env", "API_KEY=never-read");
+        directory
+    }
+
+    #[test]
+    fn one_walk_gives_the_same_profile_as_a_profile_only_walk() {
+        let directory = shared_walk_project();
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+        let alone = crate::project_profile::scan(
+            &crate::flatten::BoundedReadRoot::open(directory.path()).unwrap(),
+            &|| false,
+            &mut |_, _| {},
+        )
+        .unwrap();
+        let shared = result
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.id.starts_with("profile.") && finding.id != "profile.detected"
+            })
+            .map(|finding| (finding.id.clone(), finding.value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let separate = alone
+            .findings
+            .iter()
+            .map(|finding| (finding.id.clone(), finding.value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        assert!(!shared.is_empty());
+        assert_eq!(shared, separate);
+        let stats = result.profile_stats.as_ref().unwrap();
+        assert_eq!(stats.files_indexed, alone.stats.files_indexed);
+        assert_eq!(
+            stats.files_indexed, 8,
+            "dot-folders and excluded entries stay out"
+        );
+        assert_eq!(stats.directories_indexed, alone.stats.directories_indexed);
+        // The setup inventory still sees only setup surfaces.
+        let detected = |id: &str| result.findings.iter().any(|finding| finding.id == id);
+        assert!(detected("descriptor.name"));
+        assert!(detected("skill.inventory"));
+        assert!(!result.partial, "{:?}", result.limits_hit);
+        assert!(result
+            .conflicts
+            .iter()
+            .any(|conflict| conflict.id == "scan.sensitive.excluded"));
+        assert!(!serde_json::to_string(&result)
+            .unwrap()
+            .contains("never-read"));
+    }
+
+    #[test]
+    fn a_setup_inventory_limit_leaves_the_profile_complete() {
+        let directory = shared_walk_project();
+        let options = ScanOptions {
+            max_files: 1,
+            ..ScanOptions::default()
+        };
+        let result = scan_project(directory.path(), &options).unwrap();
+        assert!(result.limits_hit.iter().any(|id| id == "scan.file_limit"));
+        assert!(result.files_scanned <= 1);
+        // The profile keeps its own budgets: every non-excluded file is
+        // indexed below the setup depth and file limits.
+        let stats = result.profile_stats.as_ref().unwrap();
+        assert_eq!(stats.files_indexed, 8);
+        assert!(stats.samples_read > 0);
+    }
+
+    #[test]
+    fn a_setup_depth_limit_does_not_stop_the_profile_from_descending() {
+        let directory = shared_walk_project();
+        let options = ScanOptions {
+            max_depth: 0,
+            ..ScanOptions::default()
+        };
+        let result = scan_project(directory.path(), &options).unwrap();
+        assert!(result
+            .conflicts
+            .iter()
+            .any(|conflict| conflict.id.starts_with("scan.depth.")));
+        assert!(!result
+            .findings
+            .iter()
+            .any(|finding| finding.id == "skill.inventory"
+                && finding.value["count"].as_u64().unwrap_or(0) > 0));
+        assert_eq!(result.profile_stats.as_ref().unwrap().files_indexed, 8);
+    }
+
+    #[test]
+    fn cancellation_during_the_shared_walk_stops_both_inventories() {
+        let directory = shared_walk_project();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let options = ScanOptions {
+            cancel_flag: Some(cancel.clone()),
+            ..ScanOptions::default()
+        };
+        let mut setup_files_at_cancel = None;
+        let result = scan_project_with_progress(directory.path(), &options, |update| {
+            // Cancel once the walk has recorded its first setup file.
+            if update.stage == "discovering_files" && update.files_scanned >= 1 {
+                cancel.store(true, Ordering::SeqCst);
+                setup_files_at_cancel.get_or_insert(update.files_scanned);
+            }
+        })
+        .unwrap();
+        assert!(result.cancelled);
+        assert!(result.limits_hit.iter().any(|id| id == "scan.cancelled"));
+        assert_eq!(Some(result.files_scanned), setup_files_at_cancel);
+        assert!(
+            result.profile_stats.is_none(),
+            "a cancelled walk has no profile"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_folder_in_a_shared_directory_is_refused_by_both_inventories() {
+        let directory = shared_walk_project();
+        let outside = tempdir().unwrap();
+        fs::write(outside.path().join("outside.md"), "# Outside\n").unwrap();
+        std::os::unix::fs::symlink(outside.path(), directory.path().join("docs/linked")).unwrap();
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+        assert!(result
+            .conflicts
+            .iter()
+            .any(|conflict| conflict.id.starts_with("scan.link.") && conflict.severity == "block"));
+        assert!(result
+            .conflicts
+            .iter()
+            .any(|conflict| conflict.id == "scan.profile.linked_entry"));
+        assert!(!serde_json::to_string(&result).unwrap().contains("Outside"));
     }
 
     #[test]

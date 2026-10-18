@@ -1,157 +1,157 @@
-//! The desktop walk for the read-only project profile. Bookkeeping, sample
-//! analysis, and findings come from the shared core profile.
-use crate::flatten::BoundedReadRoot;
-use crate::models::ProfileStats;
-use crate::security::is_link_metadata;
-use crate::AppError;
+//! The profile's side of the desktop project walk. The scanner enumerates
+//! each directory once and hands the names to [`ProfileNames`] and
+//! [`record_entry`]; bookkeeping, sample analysis, and findings come from the
+//! shared core profile.
 pub(crate) use hoi4_setup_core::profile::*;
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
+use std::fs::Metadata;
 
-struct Collector<'a> {
-    profiler: Profiler,
-    cancel: &'a dyn Fn() -> bool,
-    progress: &'a mut dyn FnMut(&ProfileStats, &str),
+/// The names one directory contributes to the profile, collected while the
+/// shared walk enumerates it.
+#[derive(Default)]
+pub(crate) struct ProfileNames {
+    names: Vec<String>,
+    name_bytes: usize,
+    done: bool,
 }
 
-impl Collector<'_> {
-    fn walk(
+impl ProfileNames {
+    /// Accept one enumerated name; `false` once the profile wants no more
+    /// names from this directory.
+    pub(crate) fn accept(
         &mut self,
-        directory: &BoundedReadRoot,
-        parent: &str,
-        depth: usize,
-    ) -> Result<(), AppError> {
-        if self.profiler.should_stop(self.cancel) || !self.profiler.enter_directory(depth) {
-            return Ok(());
+        profiler: &mut Profiler,
+        entry: Result<&OsStr, ()>,
+        stop: &dyn Fn() -> bool,
+    ) -> bool {
+        if self.done {
+            return false;
         }
-        let mut names = Vec::new();
-        let mut name_bytes = 0;
-        let cancel = self.cancel;
-        let profiler = &mut self.profiler;
-        let visited = directory.visit_directory_names(|entry| {
-            if profiler.should_stop(cancel) {
-                return false;
-            }
-            let Ok(name) = entry else {
-                profiler.problem("entry_read");
-                return true;
-            };
-            let Some(name) = name.to_str() else {
-                profiler.problem("name_encoding");
-                return true;
-            };
-            if profiler.exclude(name) {
-                return true;
-            }
-            if name.len() > 255 || name.contains('\\') || name.contains('/') {
-                profiler.problem("name_limit");
-                return true;
-            }
-            name_bytes += name.len();
-            if names.len() >= MAX_ENTRIES || name_bytes > MAX_NAMES_BYTES {
-                profiler.problem("entry_limit");
-                return false;
-            }
-            names.push(name.to_owned());
-            true
-        });
-        if visited.is_err() {
-            // A folder that vanishes or changes during the walk is incomplete
-            // coverage, never a failed scan.
-            self.profiler.problem("directory_read");
-            return Ok(());
+        if profiler.should_stop(stop) {
+            self.done = true;
+            return false;
         }
-        names.sort();
-        let mut collision_keys = BTreeSet::new();
-        for name in names {
-            if self.profiler.should_stop(self.cancel) {
-                break;
-            }
-            let relative = if parent.is_empty() {
-                name.clone()
-            } else {
-                format!("{parent}/{name}")
-            };
-            if relative.len() > 4096 {
-                self.profiler.problem("path_limit");
-                continue;
-            }
-            // Names legal on one platform but outside the portable path rules
-            // (a colon, a trailing dot, a reserved device name) are skipped.
-            let Ok(key) = crate::security::canonical_relative_key(&name) else {
-                self.profiler.problem("name_limit");
-                continue;
-            };
-            if !collision_keys.insert(key) {
-                self.profiler.problem("case_collision");
-                continue;
-            }
-            let Ok(Ok(metadata)) =
-                directory.with_stable_path(|stable| std::fs::symlink_metadata(stable.join(&name)))
-            else {
-                self.profiler.problem("metadata_read");
-                continue;
-            };
-            if is_link_metadata(&metadata) {
-                self.profiler.problem("linked_entry");
-                continue;
-            }
-            if metadata.is_dir() {
-                if parent.is_empty() {
-                    self.profiler.record_root_directory(&name);
-                }
-                match directory.open_child_directory(&name) {
-                    Ok(child) => {
-                        if self.walk(&child, &relative, depth + 1).is_err() {
-                            self.profiler.problem("directory_read");
-                        }
-                    }
-                    Err(_) => {
-                        self.profiler.problem("directory_read");
-                    }
-                }
-            } else if metadata.is_file() {
-                match self.profiler.record_file(&relative, &name, metadata.len()) {
-                    FileRecord::Limit => break,
-                    FileRecord::Recorded(true) => {
-                        (self.progress)(&self.profiler.result.stats, &relative)
-                    }
-                    FileRecord::Recorded(false) => {}
-                }
-            }
+        let Ok(name) = entry else {
+            profiler.problem("entry_read");
+            return true;
+        };
+        let Some(name) = name.to_str() else {
+            profiler.problem("name_encoding");
+            return true;
+        };
+        if profiler.exclude(name) {
+            return true;
         }
-        Ok(())
+        if name.len() > 255 || name.contains('\\') || name.contains('/') {
+            profiler.problem("name_limit");
+            return true;
+        }
+        self.name_bytes += name.len();
+        if self.names.len() >= MAX_ENTRIES || self.name_bytes > MAX_NAMES_BYTES {
+            profiler.problem("entry_limit");
+            self.done = true;
+            return false;
+        }
+        self.names.push(name.to_owned());
+        true
+    }
+
+    pub(crate) fn into_sorted(mut self) -> Vec<String> {
+        self.names.sort();
+        self.names
     }
 }
 
-pub(crate) fn scan(
-    root: &BoundedReadRoot,
-    cancel: &dyn Fn() -> bool,
-    progress: &mut dyn FnMut(&ProfileStats, &str),
-) -> Result<ProfileResult, AppError> {
-    // A fresh, identity-matched descriptor has its own directory-stream offset.
-    let profile_root = BoundedReadRoot::open(root.canonical())?;
-    if !profile_root.same_directory_identity(root) {
-        return Err(AppError::PathSecurity("profile root changed".into()));
-    }
-    let mut collector = Collector {
-        profiler: Profiler::new(),
-        cancel,
-        progress,
+/// The profile-relative path of an accepted name, or `None` when the path
+/// budget, the portable name rules, or a case collision skips it.
+pub(crate) fn admit(
+    profiler: &mut Profiler,
+    collision_keys: &mut BTreeSet<String>,
+    parent: &str,
+    name: &str,
+) -> Option<String> {
+    let relative = if parent.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{parent}/{name}")
     };
-    collector.walk(&profile_root, "", 0)?;
-    let Collector {
-        profiler, progress, ..
-    } = collector;
-    profiler.analyze(
-        &mut |path| profile_root.read_prefix_with_check(path, PREFIX_BYTES, cancel),
-        cancel,
-        progress,
-    )
+    if relative.len() > 4096 {
+        profiler.problem("path_limit");
+        return None;
+    }
+    // Names legal on one platform but outside the portable path rules (a
+    // colon, a trailing dot, a reserved device name) are skipped.
+    let Ok(key) = crate::security::canonical_relative_key(name) else {
+        profiler.problem("name_limit");
+        return None;
+    };
+    if !collision_keys.insert(key) {
+        profiler.problem("case_collision");
+        return None;
+    }
+    Some(relative)
+}
+
+/// What the walk does next with an admitted profile entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProfileEntry {
+    Skip,
+    /// Descend into the directory.
+    Directory,
+    /// A file was counted; report progress when `true`.
+    File(bool),
+    /// The file limit was reached; the profile takes no more entries.
+    Stop,
+}
+
+/// Record one admitted entry from its no-follow metadata. Links are never
+/// followed; unreadable metadata is incomplete coverage, never a failed scan.
+pub(crate) fn record_entry(
+    profiler: &mut Profiler,
+    parent: &str,
+    name: &str,
+    relative: &str,
+    metadata: Option<&Metadata>,
+) -> ProfileEntry {
+    let Some(metadata) = metadata else {
+        profiler.problem("metadata_read");
+        return ProfileEntry::Skip;
+    };
+    if crate::security::is_link_metadata(metadata) {
+        profiler.problem("linked_entry");
+        return ProfileEntry::Skip;
+    }
+    if metadata.is_dir() {
+        if parent.is_empty() {
+            profiler.record_root_directory(name);
+        }
+        return ProfileEntry::Directory;
+    }
+    if !metadata.is_file() {
+        return ProfileEntry::Skip;
+    }
+    match profiler.record_file(relative, name, metadata.len()) {
+        FileRecord::Limit => ProfileEntry::Stop,
+        FileRecord::Recorded(report) => ProfileEntry::File(report),
+    }
+}
+
+/// Profile a tree on its own through the shared walk, with the setup
+/// inventory switched off.
+#[cfg(test)]
+pub(crate) fn scan(
+    root: &crate::flatten::BoundedReadRoot,
+    cancel: &dyn Fn() -> bool,
+    progress: &mut dyn FnMut(&crate::models::ProfileStats, &str),
+) -> Result<ProfileResult, crate::AppError> {
+    crate::scanner::profile_only(root, cancel, progress)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::flatten::BoundedReadRoot;
     use crate::security::{redact_secrets, sha256_bytes};
     use serde_json::Value;
     use std::cell::Cell;
