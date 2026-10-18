@@ -200,27 +200,39 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
     }
     crate::source::validate_commit(&plan.source.resolved_revision)?;
     crate::source::validate_sha256(&plan.source.manifest_sha256)?;
-    let ai_profile = crate::ai::profile(&plan.ai_provider).ok_or_else(|| {
-        AppError::Credential(format!(
-            "plan uses an unsupported AI provider: {}",
-            plan.ai_provider
-        ))
-    })?;
-    if plan.ai_model.trim().is_empty() || plan.ai_model.len() > 256 {
-        return Err(AppError::Credential(
-            "plan AI model must be non-empty and bounded".into(),
-        ));
+    // A deterministic plan records the fixed no-assistant provenance and no
+    // analysis; every other plan names a reviewed provider profile.
+    let deterministic = crate::ai::is_deterministic(&plan.ai_provider);
+    if deterministic {
+        crate::ai::validate_deterministic_provenance(
+            &plan.ai_model,
+            &plan.ai_reasoning_effort,
+            &plan.ai_optimization_profile,
+            plan.ai_endpoint.as_deref(),
+        )?;
+    } else {
+        let ai_profile = crate::ai::profile(&plan.ai_provider).ok_or_else(|| {
+            AppError::Credential(format!(
+                "plan uses an unsupported AI provider: {}",
+                plan.ai_provider
+            ))
+        })?;
+        if plan.ai_model.trim().is_empty() || plan.ai_model.len() > 256 {
+            return Err(AppError::Credential(
+                "plan AI model must be non-empty and bounded".into(),
+            ));
+        }
+        crate::ai::validate_reasoning_effort(&plan.ai_reasoning_effort)?;
+        if plan.ai_optimization_profile != ai_profile.optimization_profile {
+            return Err(AppError::Credential(
+                "plan AI optimization profile does not match the selected provider".into(),
+            ));
+        }
+        crate::ai::validate_endpoint_for_provider(
+            plan.ai_provider.as_str(),
+            plan.ai_endpoint.as_deref(),
+        )?;
     }
-    crate::ai::validate_reasoning_effort(&plan.ai_reasoning_effort)?;
-    if plan.ai_optimization_profile != ai_profile.optimization_profile {
-        return Err(AppError::Credential(
-            "plan AI optimization profile does not match the selected provider".into(),
-        ));
-    }
-    crate::ai::validate_endpoint_for_provider(
-        plan.ai_provider.as_str(),
-        plan.ai_endpoint.as_deref(),
-    )?;
     crate::coding_environment::validate_selection(&CodingEnvironmentSelection {
         primary: plan.primary_coding_environment.clone(),
         additional: plan.additional_coding_environments.clone(),
@@ -243,6 +255,11 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
         })
         && plan.git_setup.is_none();
     if let Some(codex_analysis) = plan.codex_analysis.as_ref() {
+        if deterministic {
+            return Err(AppError::Credential(
+                "a deterministic plan cannot carry a setup-assistant analysis".into(),
+            ));
+        }
         crate::codex::validate_confirmed_record(codex_analysis)?;
         if codex_analysis.provider.as_deref() != Some(plan.ai_provider.as_str())
             || codex_analysis.model.as_deref() != Some(plan.ai_model.as_str())
@@ -262,7 +279,7 @@ pub fn validate_plan(plan: &InstallationPlan) -> Result<(), AppError> {
                 "the confirmed semantic analysis is bound to a different source manifest".into(),
             ));
         }
-    } else if !removing {
+    } else if !removing && !deterministic {
         return Err(AppError::Credential(
             "a confirmed selected-provider analysis is required before apply".into(),
         ));
@@ -5208,7 +5225,7 @@ fn build_transaction_readiness(
                 integration: integration.into(),
                 auth_mode: auth_mode.into(),
                 authenticated_during_setup: plan.codex_analysis.is_some(),
-                analysis_status: if plan.codex_analysis.is_some() { "confirmed" } else { "block" }.into(),
+                analysis_status: if crate::ai::is_deterministic(&plan.ai_provider) { "not_run" } else if plan.codex_analysis.is_some() { "confirmed" } else { "block" }.into(),
                 confirmed_field_count,
                 no_account_metadata_persisted: true,
                 blocking_check_ids: vec![],
@@ -5439,7 +5456,9 @@ fn build_transaction_readiness(
         .codex_analysis
         .as_ref()
         .is_some_and(|record| crate::codex::validate_confirmed_record(record).is_ok());
-    let ai_analysis_status = if plan
+    let ai_analysis_status = if crate::ai::is_deterministic(&ai_provider) {
+        "not_run"
+    } else if plan
         .codex_analysis
         .as_ref()
         .is_some_and(|record| !record.confirmed_fields.is_empty())
@@ -6118,10 +6137,13 @@ fn build_lock(
         // authentication. Preserve a prior non-secret analysis record when
         // one exists so a removal lock remains useful for audit, while the
         // schemas also allow the explicit null state for legacy/partial locks.
-        codex_analysis: plan
-            .codex_analysis
-            .clone()
-            .or_else(|| previous_lock.and_then(|lock| lock.codex_analysis.clone())),
+        // A deterministic plan records that no assistant ran, so it never
+        // inherits an earlier provider record.
+        codex_analysis: plan.codex_analysis.clone().or_else(|| {
+            (!crate::ai::is_deterministic(&plan.ai_provider))
+                .then(|| previous_lock.and_then(|lock| lock.codex_analysis.clone()))
+                .flatten()
+        }),
         wiki_required_pages: plan.wiki_required_pages.clone(),
         wiki_metadata: plan.wiki_metadata.clone(),
         components,
@@ -12439,6 +12461,158 @@ description: Example skill.
                 .contains("reviewed GPTImage cleanup action ran"),
             "unexpected removal error: {error:?}"
         );
+    }
+
+    fn make_deterministic(plan: &mut InstallationPlan) {
+        plan.ai_provider = crate::ai::DETERMINISTIC_PROVIDER.into();
+        plan.ai_model = crate::ai::DETERMINISTIC_MODEL.into();
+        plan.ai_reasoning_effort = crate::ai::DETERMINISTIC_REASONING_EFFORT.into();
+        plan.ai_optimization_profile = crate::ai::DETERMINISTIC_OPTIMIZATION_PROFILE.into();
+        plan.ai_endpoint = None;
+        plan.codex_analysis = None;
+    }
+
+    #[test]
+    fn a_deterministic_plan_validates_without_an_analysis() {
+        let mut plan = plan();
+        make_deterministic(&mut plan);
+        validate_plan(&plan).unwrap();
+    }
+
+    #[test]
+    fn a_deterministic_plan_rejects_an_analysis_or_assistant_provenance() {
+        let mut with_analysis = plan();
+        make_deterministic(&mut with_analysis);
+        with_analysis.codex_analysis = Some(test_codex_analysis());
+        assert!(validate_plan(&with_analysis)
+            .unwrap_err()
+            .to_string()
+            .contains("cannot carry a setup-assistant analysis"));
+        let changes: [fn(&mut InstallationPlan); 4] = [
+            |plan: &mut InstallationPlan| plan.ai_model = "gpt-5.6-luna".into(),
+            |plan: &mut InstallationPlan| plan.ai_reasoning_effort = "xhigh".into(),
+            |plan: &mut InstallationPlan| {
+                plan.ai_optimization_profile = "Codex setup analysis".into()
+            },
+            |plan: &mut InstallationPlan| plan.ai_endpoint = Some("https://example.test/v1".into()),
+        ];
+        for change in changes {
+            let mut plan = plan();
+            make_deterministic(&mut plan);
+            change(&mut plan);
+            assert!(validate_plan(&plan).is_err());
+        }
+    }
+
+    #[test]
+    fn an_assistant_plan_still_requires_its_confirmed_analysis() {
+        let mut plan = plan();
+        plan.codex_analysis = None;
+        assert!(validate_plan(&plan)
+            .unwrap_err()
+            .to_string()
+            .contains("analysis is required before apply"));
+        // "none" is the only provider without a profile that validates.
+        let mut plan = self::plan();
+        plan.ai_provider = "unknown".into();
+        assert!(validate_plan(&plan).is_err());
+    }
+
+    #[test]
+    fn a_deterministic_setup_applies_and_records_that_no_assistant_ran() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let mut plan = ready_plan(project.path());
+        make_deterministic(&mut plan);
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        let (journal, lock) = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(journal.state, "completed");
+        assert_eq!(lock.ai_provider, "none");
+        assert_eq!(lock.ai_model, "deterministic");
+        assert_eq!(lock.ai_reasoning_effort, "none");
+        assert!(lock.codex_analysis.is_none());
+        let written: serde_json::Value = serde_json::from_slice(
+            &fs::read(project.path().join(".hoi4-mod-setup/install.lock.json")).unwrap(),
+        )
+        .unwrap();
+        let reread = crate::migrations::migrate_lock(written).unwrap();
+        assert_eq!(reread.ai_provider, "none");
+        assert!(reread.codex_analysis.is_none());
+        let report: ReadinessReport = serde_json::from_slice(
+            &fs::read(
+                transaction_root(app.path(), plan.plan_id)
+                    .transaction
+                    .join(READINESS_FILE),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(report.core_ready, "{:?}", report.codex.blocking_check_ids);
+        assert_eq!(report.codex.analysis_status, "not_run");
+        assert!(!report.codex.authenticated_during_setup);
+        let deterministic = report
+            .checks
+            .iter()
+            .find(|check| check.id == "analysis.deterministic")
+            .unwrap();
+        assert!(!deterministic.blocking);
+        assert!(!report.checks.iter().any(|check| matches!(
+            check.id.as_str(),
+            "ai.authenticated" | "codex.authenticated" | "analysis.ai" | "analysis.chatgpt"
+        )));
+    }
+
+    #[test]
+    fn a_deterministic_update_never_inherits_an_earlier_analysis() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let plan = ready_plan(project.path());
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        let (_, assisted) = run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(assisted.codex_analysis.is_some());
+        let mut deterministic = plan.clone();
+        make_deterministic(&mut deterministic);
+        let journal = new_journal(&deterministic, &deterministic.project_id, project.path());
+        let project_directory = RootedDir::open_read(project.path()).unwrap();
+        let lock = build_lock(
+            &deterministic,
+            &prepared,
+            &journal,
+            Some(&assisted),
+            project.path(),
+            &project_directory,
+        )
+        .unwrap();
+        assert!(lock.codex_analysis.is_none());
+        assert_eq!(lock.ai_provider, "none");
     }
 
     #[test]

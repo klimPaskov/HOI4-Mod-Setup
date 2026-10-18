@@ -525,6 +525,9 @@ fn require_codex_chatgpt_session() -> Result<(), AppError> {
 
 fn require_ai_session(state: &Value) -> Result<(), AppError> {
     let provider = ai_provider_from_state(state)?;
+    if ai::is_deterministic(&provider) {
+        return Ok(());
+    }
     if provider == "codex" {
         return require_codex_chatgpt_session();
     }
@@ -4281,7 +4284,7 @@ async fn preview_descriptors(state: Value) -> Result<Vec<GeneratedArtifact>, Str
 fn preview_descriptors_blocking(state: Value) -> Result<Vec<GeneratedArtifact>, String> {
     require_ai_session(&state).map_err(provider_analysis_user_error)?;
     let root = project_root_from_state(&state).map_err(provider_analysis_user_error)?;
-    let _ = codex_analysis_from_state(&state, &root).map_err(provider_analysis_user_error)?;
+    let _ = setup_analysis_from_state(&state, &root).map_err(provider_analysis_user_error)?;
     let identity =
         project_identity_from_state(&state, &root).map_err(provider_analysis_user_error)?;
     render_generated_artifacts(&identity).map_err(provider_analysis_user_error)
@@ -6699,7 +6702,7 @@ fn ai_provider_from_state(state: &Value) -> Result<String, AppError> {
             "selected AI provider cannot be empty".into(),
         ));
     }
-    if crate::ai::profile(provider).is_none() {
+    if !ai::is_deterministic(provider) && crate::ai::profile(provider).is_none() {
         return Err(AppError::InvalidInput(format!(
             "unsupported AI provider: {provider}"
         )));
@@ -6707,7 +6710,19 @@ fn ai_provider_from_state(state: &Value) -> Result<String, AppError> {
     Ok(provider.to_string())
 }
 
+/// The deterministic-only route: no setup assistant. Its model, effort, and
+/// endpoint are fixed, whatever the renderer sends.
+fn deterministic_setup_from_state(state: &Value) -> bool {
+    state
+        .get("aiProvider")
+        .and_then(Value::as_str)
+        .is_some_and(ai::is_deterministic)
+}
+
 fn ai_model_from_state(state: &Value) -> String {
+    if deterministic_setup_from_state(state) {
+        return ai::DETERMINISTIC_MODEL.into();
+    }
     state
         .get("aiModel")
         .and_then(Value::as_str)
@@ -6717,6 +6732,9 @@ fn ai_model_from_state(state: &Value) -> String {
 }
 
 fn ai_reasoning_effort_from_state(state: &Value) -> String {
+    if deterministic_setup_from_state(state) {
+        return ai::DETERMINISTIC_REASONING_EFFORT.into();
+    }
     state
         .get("aiReasoningEffort")
         .and_then(Value::as_str)
@@ -6727,6 +6745,9 @@ fn ai_reasoning_effort_from_state(state: &Value) -> String {
 }
 
 fn ai_endpoint_from_state(state: &Value) -> Option<String> {
+    if deterministic_setup_from_state(state) {
+        return None;
+    }
     state
         .get("aiEndpoint")
         .and_then(Value::as_str)
@@ -6736,6 +6757,9 @@ fn ai_endpoint_from_state(state: &Value) -> Option<String> {
 }
 
 fn ai_optimization_profile(provider: &str) -> String {
+    if ai::is_deterministic(provider) {
+        return ai::DETERMINISTIC_OPTIMIZATION_PROFILE.into();
+    }
     ai::profile(provider)
         .map(|profile| profile.optimization_profile)
         .unwrap_or_else(crate::models::default_ai_optimization_profile)
@@ -6822,6 +6846,25 @@ fn codex_analysis_from_state(
     Ok(record)
 }
 
+/// The confirmed analysis a plan carries: required for every setup
+/// assistant, absent on the deterministic route.
+fn setup_analysis_from_state(
+    state: &Value,
+    project_root: &Path,
+) -> Result<Option<CodexAnalysisRecord>, AppError> {
+    if !deterministic_setup_from_state(state) {
+        return codex_analysis_from_state(state, project_root).map(Some);
+    }
+    let present = |value: Option<&Value>| value.is_some_and(|value| !value.is_null());
+    if present(state.get("codexAnalysisRecord")) || present(state.pointer("/codexAnalysis/record"))
+    {
+        return Err(AppError::Credential(
+            "a deterministic setup cannot carry a setup-assistant analysis".into(),
+        ));
+    }
+    Ok(None)
+}
+
 fn same_persisted_codex_record(left: &CodexAnalysisRecord, right: &CodexAnalysisRecord) -> bool {
     let mut left = left.clone();
     let mut right = right.clone();
@@ -6906,7 +6949,14 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     };
     let identity = project_identity_from_state(state, &root)?;
     let conventions = project_conventions_from_state(state)?;
-    let codex_analysis = codex_analysis_from_state(state, &root)?;
+    let codex_analysis = setup_analysis_from_state(state, &root)?;
+    let bound_scan_id = match codex_analysis.as_ref() {
+        Some(record) => record.scan_id,
+        None => state
+            .pointer("/scanContext/scanId")
+            .and_then(Value::as_str)
+            .and_then(|value| Uuid::parse_str(value).ok()),
+    };
     let project_root_identity = if root_exists {
         let approved = codex_approved_evidence().lock().map_err(|_| {
             AppError::Serialization("approved scan evidence store is unavailable".into())
@@ -6915,13 +6965,14 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             .project_root
             .as_ref()
             .is_none_or(|approved_root| !same_project_root(approved_root, &root))
-            || approved.scan_id != codex_analysis.scan_id
+            || bound_scan_id.is_none()
+            || approved.scan_id != bound_scan_id
         {
             return Err(AppError::PathSecurity(
                 "project plan is not bound to the latest scan of this root".into(),
             ));
         }
-        validate_approved_project_root_identity(&root, &approved, codex_analysis.scan_id)?
+        validate_approved_project_root_identity(&root, &approved, bound_scan_id)?
     } else {
         let parent = root.parent().ok_or_else(|| {
             AppError::PathSecurity("new project root has no existing parent".into())
@@ -6935,22 +6986,26 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         .get("meshSelected")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    ai::validate_config(&AiProviderConfig {
-        provider: ai_provider.clone(),
-        model: ai_model.clone(),
-        reasoning_effort: ai_reasoning_effort_from_state(state),
-        endpoint: ai_endpoint_from_state(state).unwrap_or_default(),
-        credential_reference: if ai_provider == "codex" {
-            None
-        } else {
-            ai_credential_reference(&ai_provider)
-        },
-    })?;
+    if !ai::is_deterministic(&ai_provider) {
+        ai::validate_config(&AiProviderConfig {
+            provider: ai_provider.clone(),
+            model: ai_model.clone(),
+            reasoning_effort: ai_reasoning_effort_from_state(state),
+            endpoint: ai_endpoint_from_state(state).unwrap_or_default(),
+            credential_reference: if ai_provider == "codex" {
+                None
+            } else {
+                ai_credential_reference(&ai_provider)
+            },
+        })?;
+    }
     let git_setup = git_setup_from_state(state, &root)?;
     let request = source_request_from_state(state)?;
     let client = HttpSourceClient::new()?;
     let resolution = resolve_source(&client, &request)?;
-    validate_analysis_source_binding(&codex_analysis, &resolution.identity)?;
+    if let Some(codex_analysis) = codex_analysis.as_ref() {
+        validate_analysis_source_binding(codex_analysis, &resolution.identity)?;
+    }
     let (requested, coding_environment_selection) =
         requested_components_for_selection(&resolution.manifest, state, &ai_provider)?;
     let image_generation = image_generation_selection_from_state(
@@ -7266,9 +7321,13 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         validate_credential_reference(reference)?;
     }
     if mode == "new" {
-        let provider_profile = ai::profile(&ai_provider).ok_or_else(|| {
-            AppError::InvalidInput(format!("unsupported AI provider: {ai_provider}"))
-        })?;
+        let deterministic = ai::is_deterministic(&ai_provider);
+        let optimization_profile = ai_optimization_profile(&ai_provider);
+        if !deterministic && ai::profile(&ai_provider).is_none() {
+            return Err(AppError::InvalidInput(format!(
+                "unsupported AI provider: {ai_provider}"
+            )));
+        }
         let (provider_integration, provider_auth_mode) =
             ai::integration_and_auth_mode(&ai_provider);
         let state_content = serde_json::to_string_pretty(&serde_json::json!({
@@ -7287,14 +7346,14 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
                 "provider": ai_provider.clone(),
                 "model": ai_model_from_state(state),
                 "reasoning_effort": ai_reasoning_effort_from_state(state),
-                "optimization_profile": provider_profile.optimization_profile
+                "optimization_profile": optimization_profile
             },
             "codex": {
                 "integration": provider_integration,
                 "auth_mode": provider_auth_mode,
-                "auth_status": if matches!(provider_auth_mode, "chatgpt" | "claude_account" | "provider_account") { "signed_in" } else { "configured" },
-                "analysis_required": true,
-                "analysis_status": "confirmed",
+                "auth_status": if deterministic { "not_required" } else if matches!(provider_auth_mode, "chatgpt" | "claude_account" | "provider_account") { "signed_in" } else { "configured" },
+                "analysis_required": !deterministic,
+                "analysis_status": if deterministic { "not_run" } else { "confirmed" },
                 "account_values_persisted": false
             },
             "coding_environments": {
@@ -7509,7 +7568,7 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         // The ChatGPT packager is an optional `.tools` script the user runs;
         // setup never prepares a ChatGPT folder for a new project.
         flatten_chat_sources: false,
-        codex_analysis: Some(codex_analysis),
+        codex_analysis,
         selected_components: selected,
         wiki_required_pages: resolution.manifest.wiki.required_pages.clone(),
         wiki_metadata: Some(crate::source::wiki_install_metadata(&resolution.manifest)),
@@ -8039,6 +8098,39 @@ fn require_maintenance_reanalysis(
     Ok(())
 }
 
+/// A project set up without an assistant is maintained without one: it
+/// carries no analysis, and Update still needs a current read-only scan of
+/// the installed root so nothing changes uninspected.
+fn require_deterministic_maintenance_scan(
+    mode: &str,
+    analysis_override: Option<&CodexAnalysisRecord>,
+    project_root: &Path,
+) -> Result<(), AppError> {
+    if analysis_override.is_some() {
+        return Err(AppError::Credential(
+            "a project set up without an assistant has no assistant analysis to apply".into(),
+        ));
+    }
+    if mode != "update" {
+        return Ok(());
+    }
+    let approved = codex_approved_evidence()
+        .lock()
+        .map_err(|_| AppError::Process("approved scan evidence store is unavailable".into()))?;
+    if approved
+        .project_root
+        .as_ref()
+        .is_none_or(|root| !same_project_root(root, project_root))
+        || approved.scan_id.is_none()
+    {
+        return Err(AppError::Credential(
+            "update planning requires a current read-only scan of the installed project".into(),
+        ));
+    }
+    validate_approved_project_root_identity(project_root, &approved, approved.scan_id)?;
+    Ok(())
+}
+
 /// Add files for a newly selected optional component to a repair plan. The
 /// predecessor lock remains the source of truth for every already-managed
 /// file; only missing component ownership is introduced here. Existing bytes
@@ -8520,7 +8612,8 @@ fn build_maintenance_plan_blocking(
             "portrait components cannot be added while portrait production is disabled".into(),
         ));
     }
-    if mode != "remove" {
+    let deterministic = ai::is_deterministic(&lock.ai_provider);
+    if mode != "remove" && !deterministic {
         if lock.ai_provider == "codex" {
             require_codex_chatgpt_session()?;
         } else {
@@ -8543,14 +8636,18 @@ fn build_maintenance_plan_blocking(
             }
         }
     }
-    require_maintenance_reanalysis(
-        &mode,
-        analysis_override.as_ref(),
-        &root,
-        lock.ai_endpoint.as_deref(),
-        confirmation_values_sha256.as_deref(),
-    )?;
-    let codex_analysis = if mode == "remove" {
+    if deterministic {
+        require_deterministic_maintenance_scan(&mode, analysis_override.as_ref(), &root)?;
+    } else {
+        require_maintenance_reanalysis(
+            &mode,
+            analysis_override.as_ref(),
+            &root,
+            lock.ai_endpoint.as_deref(),
+            confirmation_values_sha256.as_deref(),
+        )?;
+    }
+    let codex_analysis = if mode == "remove" || deterministic {
         None
     } else {
         let record = analysis_override
@@ -12288,6 +12385,69 @@ mod tests {
             identity.descriptor_tags,
             vec!["Gameplay".to_string(), "Graphics".to_string()]
         );
+    }
+
+    #[test]
+    fn the_deterministic_route_fixes_its_provenance_and_needs_no_session() {
+        let state = serde_json::json!({
+            "aiProvider": "none",
+            "aiModel": "claude-haiku-5-5",
+            "aiReasoningEffort": "high",
+            "aiEndpoint": "https://example.test/v1"
+        });
+        assert_eq!(ai_provider_from_state(&state).unwrap(), "none");
+        assert_eq!(ai_model_from_state(&state), "deterministic");
+        assert_eq!(ai_reasoning_effort_from_state(&state), "none");
+        assert_eq!(ai_endpoint_from_state(&state), None);
+        assert_eq!(ai_optimization_profile("none"), "Deterministic setup");
+        require_ai_session(&state).unwrap();
+        let project = tempfile::tempdir().unwrap();
+        assert!(setup_analysis_from_state(&state, project.path())
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn the_deterministic_route_rejects_an_assistant_analysis() {
+        let project = tempfile::tempdir().unwrap();
+        for state in [
+            serde_json::json!({"aiProvider": "none", "codexAnalysisRecord": {"analysis_id": Uuid::new_v4()}}),
+            serde_json::json!({"aiProvider": "none", "codexAnalysis": {"record": {"analysis_id": Uuid::new_v4()}}}),
+        ] {
+            let error = setup_analysis_from_state(&state, project.path()).unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("cannot carry a setup-assistant analysis"));
+        }
+        // Without the deterministic route the analysis stays required.
+        let error =
+            setup_analysis_from_state(&serde_json::json!({"aiProvider": "codex"}), project.path())
+                .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("must be confirmed before planning"));
+    }
+
+    #[test]
+    fn deterministic_maintenance_needs_no_analysis_but_update_needs_a_current_scan() {
+        let _guard = test_state_guard();
+        let project = tempfile::tempdir().unwrap();
+        assert!(require_deterministic_maintenance_scan("repair", None, project.path()).is_ok());
+        assert!(require_deterministic_maintenance_scan("reinstall", None, project.path()).is_ok());
+        let error =
+            require_deterministic_maintenance_scan("update", None, project.path()).unwrap_err();
+        assert!(error.to_string().contains("current read-only scan"));
+        let record: CodexAnalysisRecord = serde_json::from_value(
+            serde_json::from_str::<Value>(include_str!(
+                "../../docs/examples/installation-lock.example.json"
+            ))
+            .unwrap()["codex_analysis"]
+                .clone(),
+        )
+        .unwrap();
+        let error = require_deterministic_maintenance_scan("repair", Some(&record), project.path())
+            .unwrap_err();
+        assert!(error.to_string().contains("no assistant analysis"));
     }
 
     #[test]

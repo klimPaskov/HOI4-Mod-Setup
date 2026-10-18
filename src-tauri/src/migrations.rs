@@ -371,6 +371,13 @@ pub fn migrate_lock(value: Value) -> Result<InstallationLock, AppError> {
     strip_legacy_core_only_codex_bindings(&mut value);
     bind_legacy_analysis_to_lock_source(&mut value);
     normalize_coding_environments(&mut value)?;
+    if value
+        .get("ai_provider")
+        .and_then(Value::as_str)
+        .is_some_and(crate::ai::is_deterministic)
+    {
+        return migrate_deterministic_lock(value);
+    }
     // Locks written before exact manifest wiki coverage was carried forward
     // remain readable, but readiness must not silently borrow the current
     // bundled manifest for them. An empty marker is intentionally incomplete
@@ -448,6 +455,37 @@ pub fn migrate_lock(value: Value) -> Result<InstallationLock, AppError> {
             "installation lock AI model must be non-empty".into(),
         ));
     }
+    Ok(lock)
+}
+
+/// A deterministic lock records that no setup assistant ran: the fixed
+/// provenance and no analysis record.
+fn migrate_deterministic_lock(mut value: Value) -> Result<InstallationLock, AppError> {
+    if value
+        .get("codex_analysis")
+        .is_some_and(|analysis| !analysis.is_null())
+    {
+        return Err(AppError::InvalidInput(
+            "a deterministic installation lock cannot carry an analysis record".into(),
+        ));
+    }
+    if let Some(object) = value.as_object_mut() {
+        object
+            .entry("wiki_required_pages")
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Some(portrait_pipeline) = object.get("portrait_pipeline") {
+            if !portrait_pipeline.is_null() {
+                validate_portrait_pipeline(portrait_pipeline)?;
+            }
+        }
+    }
+    let lock: InstallationLock = serde_json::from_value(value)?;
+    crate::ai::validate_deterministic_provenance(
+        &lock.ai_model,
+        &lock.ai_reasoning_effort,
+        &lock.ai_optimization_profile,
+        lock.ai_endpoint.as_deref(),
+    )?;
     Ok(lock)
 }
 
@@ -943,6 +981,63 @@ mod tests {
             }]
         }))
         .is_err());
+    }
+
+    fn deterministic_lock_value() -> Value {
+        let mut value: Value = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.insert("ai_provider".into(), json!("none"));
+        object.insert("ai_model".into(), json!("deterministic"));
+        object.insert("ai_reasoning_effort".into(), json!("none"));
+        object.insert(
+            "ai_optimization_profile".into(),
+            json!("Deterministic setup"),
+        );
+        object.insert("ai_endpoint".into(), Value::Null);
+        object.insert("codex_analysis".into(), Value::Null);
+        value
+    }
+
+    #[test]
+    fn a_deterministic_lock_migrates_with_its_fixed_provenance() {
+        let lock = migrate_lock(deterministic_lock_value()).unwrap();
+        assert_eq!(lock.ai_provider, "none");
+        assert_eq!(lock.ai_model, "deterministic");
+        assert_eq!(lock.ai_reasoning_effort, "none");
+        assert_eq!(lock.ai_optimization_profile, "Deterministic setup");
+        assert!(lock.codex_analysis.is_none());
+    }
+
+    #[test]
+    fn a_deterministic_lock_rejects_an_analysis_or_assistant_provenance() {
+        let mut with_analysis = deterministic_lock_value();
+        let analysis: Value = serde_json::from_str::<Value>(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap()["codex_analysis"]
+            .clone();
+        with_analysis["codex_analysis"] = analysis;
+        assert!(migrate_lock(with_analysis).is_err());
+        for (key, value) in [
+            ("ai_model", json!("gpt-5.6-luna")),
+            ("ai_reasoning_effort", json!("xhigh")),
+            ("ai_optimization_profile", json!("Codex setup analysis")),
+            ("ai_endpoint", json!("https://example.test/v1")),
+        ] {
+            let mut lock = deterministic_lock_value();
+            lock[key] = value;
+            assert!(migrate_lock(lock).is_err(), "{key}");
+        }
+        // An assistant lock still rejects the deterministic reasoning effort.
+        let mut assistant: Value = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        assistant["ai_reasoning_effort"] = json!("none");
+        assert!(migrate_lock(assistant).is_err());
     }
 
     #[test]

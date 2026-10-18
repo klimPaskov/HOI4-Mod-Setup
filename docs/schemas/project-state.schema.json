@@ -16,6 +16,51 @@
     "coding_environments",
     "credential_references"
   ],
+  "if": {
+    "required": ["ai"],
+    "properties": {
+      "ai": {
+        "required": ["provider"],
+        "properties": { "provider": { "const": "none" } }
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "ai": {
+        "properties": {
+          "model": { "const": "deterministic" },
+          "reasoning_effort": { "const": "none" },
+          "optimization_profile": { "const": "Deterministic setup" }
+        }
+      },
+      "codex": {
+        "properties": {
+          "integration": { "const": "none" },
+          "auth_mode": { "const": "none" },
+          "auth_status": { "const": "not_required" },
+          "analysis_required": { "const": false },
+          "analysis_status": { "const": "not_run" }
+        }
+      }
+    }
+  },
+  "else": {
+    "properties": {
+      "ai": {
+        "properties": { "reasoning_effort": { "not": { "const": "none" } } }
+      },
+      "codex": {
+        "properties": {
+          "integration": { "not": { "const": "none" } },
+          "auth_mode": { "not": { "const": "none" } },
+          "auth_status": { "not": { "const": "not_required" } },
+          "analysis_required": { "const": true },
+          "analysis_status": { "not": { "const": "not_run" } }
+        }
+      }
+    }
+  },
   "properties": {
     "schema_version": {
       "type": "string"
@@ -115,7 +160,8 @@
             "codex_app_server",
             "claude_code_cli",
             "provider_api",
-            "provider_cli"
+            "provider_cli",
+            "none"
           ]
         },
         "auth_mode": {
@@ -124,7 +170,8 @@
             "claude_account",
             "api_key",
             "local_endpoint",
-            "provider_account"
+            "provider_account",
+            "none"
           ]
         },
         "auth_status": {
@@ -134,11 +181,12 @@
             "signed_in",
             "configured",
             "failed",
-            "usage_limited"
+            "usage_limited",
+            "not_required"
           ]
         },
         "analysis_required": {
-          "const": true
+          "type": "boolean"
         },
         "analysis_status": {
           "enum": [
@@ -146,7 +194,8 @@
             "running",
             "review",
             "confirmed",
-            "blocked"
+            "blocked",
+            "not_run"
           ]
         },
         "last_error": {
@@ -172,6 +221,7 @@
       "properties": {
         "provider": {
           "enum": [
+            "none",
             "codex",
             "claude_account",
             "claude",
@@ -192,6 +242,7 @@
         },
         "reasoning_effort": {
           "enum": [
+            "none",
             "low",
             "medium",
             "high",
