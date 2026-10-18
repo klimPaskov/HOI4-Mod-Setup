@@ -44,9 +44,11 @@ or an optional token held only in memory.
 3. **Scan.** The same Rust scanner and project profile run in the worker
    against that tree and produce the same findings, evidence, and limits as on
    desktop.
-4. **Describe.** Optional setup assistant through a browser-capable API key
-   provider. The key stays in memory for the session and is never stored or
-   exported. Context documents and images work as on desktop.
+4. **Describe.** The setup assistant the user chose on the first step, through
+   a browser-capable API key provider, fills in every value from the brief or
+   the scan; the user reviews and edits. The key stays in memory for the
+   session and is never stored or exported. Context documents and images work
+   as on desktop.
 5. **Resolve and download.** Exact commit resolution and selective,
    SHA-256-verified downloads from GitHub, cached in IndexedDB by hash.
 6. **Review.** The same plan, merge classification, and conflict review, with
@@ -179,9 +181,12 @@ transaction contract and needs an explicit decision.
   drops or picks a folder, scans it in a worker, resolves the source to an
   exact commit, downloads only selected files into an IndexedDB cache keyed by
   SHA-256, reviews each conflict, and exports an overlay or full-copy ZIP with
-  the installation lock. The optional assistant uses reviewed routes that
+  the installation lock. The setup assistant uses reviewed routes that
   allow browser requests (Claude, Gemini, Grok, DeepSeek, GLM) with a
-  memory-only key. The built page has a strict CSP, SRI on every bundle, a
+  memory-only key. Since the owner's 2026-10-18 amendment it is required on the
+  web: the provider, key, and model are chosen on the first step, the
+  assistant fills in the mod's details and preselects its recommended
+  components, and the user only reviews before the ZIP is made. The built page has a strict CSP, SRI on every bundle, a
   network panel, and a published `build-info.json`; CI runs it in Chromium,
   Firefox, and WebKit, and the Pages workflow deploys it at `/app/`.
 - Phase 6: generated text is recorded once in the lock instead of also as a
@@ -224,6 +229,9 @@ Each phase ships on its own and keeps desktop parity.
 
 1. Should the web edition (and desktop) offer a deterministic-only path when no
    setup assistant is available? Recommended: yes, clearly labelled.
+   *Amended by the owner on 2026-10-18 for the web edition:* setup there is
+   never manual. Every web setup uses the chosen assistant, and an export
+   without assistant provenance is refused.
 2. Default export for an existing mod: overlay ZIP (recommended) or full copy.
 3. API keys in the browser: memory-only with a visible warning (recommended),
    or no assistant on the web.

@@ -241,8 +241,12 @@ credential header), and reply extraction (`extract_structured_output`) live in
 `crates/hoi4-setup-core/src/analysis.rs`. `src-tauri/src/codex.rs` re-exports
 them and keeps a wrapper that supplies `Uuid::new_v4()`; the core never
 allocates randomness. Change validation there, once, for every provider and
-for the web edition. The web edition's optional assistant
-(`src/web/assistant.ts`) uses only routes that allow browser requests (Claude
+for the web edition. The web edition's setup assistant is required: the
+first step chooses the provider, key, and model; Continue runs the analysis
+(new mods after the brief, imports right after the scan) and the Details step
+shows every value for review, with "Ask again" keeping the user's own edits.
+The core's `assistant_provenance` refuses an export without a reviewed route.
+The assistant (`src/web/assistant.ts`) uses only routes that allow browser requests (Claude
 with `anthropic-dangerous-direct-browser-access`, Gemini, Grok, DeepSeek,
 GLM), keeps the key in component memory, sends at most one corrective turn,
 and records non-secret provenance with the route address in the lock. Moonshot

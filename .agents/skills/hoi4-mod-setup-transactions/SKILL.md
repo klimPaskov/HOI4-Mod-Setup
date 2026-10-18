@@ -535,8 +535,9 @@ Generated text output is recorded once as `generated_content`;
 reads `generated_content` first. The web edition never applies in place: the
 core `export` module plans create, unchanged, and conflict entries against the
 dropped folder, applies the user's keep or replace decisions, and writes the
-lock (components marked `validation: not_run`) inside the ZIP. A hosted
-assistant's lock entry carries its `ai_endpoint`; `ai_provider: none` has none.
+lock (components marked `validation: not_run`) inside the ZIP. Every web lock
+names the hosted assistant that filled in the details, with its `ai_endpoint`;
+the web core refuses an export without that provenance.
 
 The desktop deterministic-only route uses the same fixed provenance
 (`crate::ai::DETERMINISTIC_*`: model `deterministic`, effort `none`, profile

@@ -52,10 +52,8 @@
 @media (prefers-reduced-motion: reduce) {
   .web-shell * { transition: none !important; animation: none !important; }
 }
-.web-assistant { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
-.web-assistant-body { display: grid; gap: 12px; padding-top: 12px; }
-.web-assistant-body p { margin: 0; }
-.web-assistant-actions { justify-content: space-between; }
+.web-assistant { display: grid; gap: 12px; }
+.web-assistant p { margin: 0; }
 .web-assistant-result { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid #2f4a7a; border-radius: 10px; background: #0f1a2e; font-size: 14px; }
 .web-conventions { display: grid; gap: 6px; margin: 0; }
 .web-conventions div { display: grid; grid-template-columns: minmax(8rem, auto) 1fr; gap: 8px; }

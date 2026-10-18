@@ -1,6 +1,6 @@
-// The optional browser assistant. It sends one structured-output request to
-// a reviewed hosted route that allows browser requests, with the API key the
-// user typed for this tab only. The WebAssembly core builds the request body
+// The browser setup assistant. Every web setup uses one: it sends a
+// structured-output request to a reviewed hosted route that allows browser
+// requests, with the API key the user typed for this tab only. The WebAssembly core builds the request body
 // and validates the reply with the same rules as the desktop app; provider
 // suggestions never become detected facts or files without user review.
 
@@ -33,7 +33,12 @@ export const BROWSER_PROVIDERS: BrowserProvider[] = [
 
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 120_000;
-const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
+export const MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
+
+/** Model IDs to suggest for a provider; any other exact ID may be typed. */
+export function modelChoices(provider: BrowserProvider): string[] {
+  return provider.id === "claude" ? claudeModels.map((item) => item.id) : [provider.defaultModel];
+}
 
 export class AssistantError extends Error {}
 
@@ -118,7 +123,7 @@ export async function runAssistant(core: CoreClient, route: AssistantRoute, apiK
     if ("error" in reply) throw new AssistantError(`The provider's reply was not usable: ${reply.error}`);
     correction = reply.retry;
   }
-  throw new AssistantError("The provider's reply did not match the required format twice. Try again or continue without suggestions.");
+  throw new AssistantError("The provider's reply did not match the required format twice. Try again, or choose another model.");
 }
 
 /** The value of one proposal, when the reply has it. */

@@ -114,7 +114,13 @@ Conflict review is the exception. It may show a three-way comparison and more co
   screen Next would skip. Cover each skip with a unit test and a browser
   Back-and-Next check in `tests/browser/wizard.spec.ts`; a documentation
   scenario may still render a skipped screen directly.
-- The setup-assistant list ends with **No setup assistant (detected values
+- The web edition has no manual path. Its Project step holds the required
+  Setup assistant panel (provider, memory-only API key, model, effort).
+  Continue explains what is missing through its `title` and a polite live
+  region. Imports skip Describe in the step rail, and the Details step marks
+  values `Detected` or `Suggested by <provider>`. Recommended components are
+  preselected once per analysis.
+- The desktop setup-assistant list ends with **No setup assistant (detected values
   only)**. Choosing it shows a short note that nothing is sent to an AI
   provider and hides model, effort, key, and sign-in controls. On Findings it
   replaces the provider input preview and Include/Exclude toggles with an

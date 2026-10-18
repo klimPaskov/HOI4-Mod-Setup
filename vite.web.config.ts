@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 export const WEB_CONNECT_SOURCES = [
   "https://api.github.com",
   "https://raw.githubusercontent.com",
-  // Optional assistant routes; each is contacted only after the user enters
-  // an API key for it.
+  // Setup-assistant routes; only the one the user chooses is contacted, with
+  // the API key they entered.
   "https://api.anthropic.com",
   "https://generativelanguage.googleapis.com",
   "https://api.x.ai",
