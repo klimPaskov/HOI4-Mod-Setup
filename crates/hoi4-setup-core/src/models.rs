@@ -517,7 +517,7 @@ pub struct WikiInstallMetadata {
     pub notes: Vec<String>,
 }
 
-pub(crate) fn default_unknown_status() -> String {
+pub fn default_unknown_status() -> String {
     "unknown".into()
 }
 
@@ -539,19 +539,19 @@ fn default_manifest_origin() -> String {
     "remote".into()
 }
 
-pub(crate) fn default_ai_provider() -> String {
+pub fn default_ai_provider() -> String {
     "codex".into()
 }
 
-pub(crate) fn default_ai_model() -> String {
+pub fn default_ai_model() -> String {
     "gpt-5.6-luna".into()
 }
 
-pub(crate) fn default_ai_reasoning_effort() -> String {
+pub fn default_ai_reasoning_effort() -> String {
     "xhigh".into()
 }
 
-pub(crate) fn default_ai_optimization_profile() -> String {
+pub fn default_ai_optimization_profile() -> String {
     "Codex setup analysis".into()
 }
 
@@ -1405,7 +1405,7 @@ fn default_transaction_kind() -> String {
     "installation".into()
 }
 
-pub(crate) fn default_coding_environment() -> String {
+pub fn default_coding_environment() -> String {
     "codex".into()
 }
 
