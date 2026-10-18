@@ -35,6 +35,16 @@ The stable bounded registry currently contains:
 | Local model | OpenAI-compatible | no hosted credential | user-supplied loopback HTTP endpoint |
 | Custom provider (`custom`) | OpenAI-compatible | user-supplied API key in the OS vault | user-supplied HTTPS endpoint |
 
+**No setup assistant** (`none`) is not a provider profile. It is the clearly
+labelled deterministic-only route. No provider is contacted, and the plan, lock, project
+state, and readiness report record model `deterministic`, effort `none`,
+optimization profile `Deterministic setup`, no endpoint, and no analysis
+record. Values the scan decides fill what they can and the user reviews the
+rest. Readiness reports a non-blocking `analysis.deterministic` check instead
+of the provider sign-in and analysis checks. A `none` plan or lock carrying an
+analysis record is rejected, and an assistant plan without its confirmed
+analysis still fails.
+
 The two `*_account` rows are selectable experimental routes in the current
 setup screen. They are not a release claim that real accounts or every
 platform route has passed validation. They become stable only after the

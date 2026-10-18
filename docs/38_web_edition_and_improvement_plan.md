@@ -184,10 +184,19 @@ transaction contract and needs an explicit decision.
   memory-only key. The built page has a strict CSP, SRI on every bundle, a
   network panel, and a published `build-info.json`; CI runs it in Chromium,
   Firefox, and WebKit, and the Pages workflow deploys it at `/app/`.
-- Phase 6 so far: generated text is recorded once in the lock instead of also
-  as a JSON number array, and core performance budgets cover profiling and ZIP
-  export for small, medium, and large synthetic mods. Single-walk scanning,
-  desktop screen streamlining, and a desktop deterministic-only path remain.
+- Phase 6: generated text is recorded once in the lock instead of also as a
+  JSON number array, and core performance budgets cover profiling and ZIP
+  export for small, medium, and large synthetic mods. The desktop scan now
+  walks the project once: each directory is enumerated a single time and feeds
+  both the setup inventory and the profile, each with its own budgets. (The
+  setup inventory only ever covered setup surfaces, so the old double cost was
+  the root, `docs/`, and client folders, plus a second root handle.) The
+  wizard skips the MCP and credentials review unless a Meshy credential or a
+  Live Tools registration needs review, with Back following the same rule.
+  The desktop offers **No setup assistant (detected values only)**: plans and
+  locks record provider `none`, model `deterministic`, and effort `none`,
+  imported mods are prefilled from detected values, and readiness shows a
+  non-blocking deterministic-setup check.
 
 ## Roadmap
 

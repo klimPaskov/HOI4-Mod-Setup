@@ -8,7 +8,7 @@ Follow these steps to prepare a new or existing mod for AI-assisted development.
 
 2. **Choose your starting point.** On **Start a mod project**, choose **Create new mod** or **Import existing mod**. [Screenshot](screenshots/01-welcome.jpg)
 
-3. **Choose a setup assistant.** Pick any provider offered on the **Provider** screen and connect it using the sign-in, key, or local address shown there. This assistant helps prepare the mod; it does not choose the coding client you use later. [Screenshot](screenshots/10-provider-selection.png)
+3. **Choose a setup assistant.** Pick any provider offered on the **Provider** screen and connect it using the sign-in, key, or local address shown there. This assistant helps prepare the mod; it does not choose the coding client you use later. With no provider, choose **No setup assistant (detected values only)**: values the project files decide are filled in and you review the rest. [Screenshot](screenshots/10-provider-selection.png)
 
 4. **Describe or scan the mod.** For a new mod, fill in **Mod name** and **Description** on **Describe the mod**, then choose **Next**. For an import, use **Browse** beside **Project folder**, let the read-only scan finish, and review **Confirm scan findings** with your selected assistant. [New mod](screenshots/02-description.png) · [Existing mod](screenshots/11-existing-project.png)
 
@@ -24,7 +24,7 @@ Follow these steps to prepare a new or existing mod for AI-assisted development.
 
 9a. **If you selected Live testing**, choose Clausewitz MCP, experimental HOI4 Live Tools, or None in its separate step. Clausewitz MCP by smerss requires native Linux HOI4 1.19.2 and manual Linux game/server setup: WSL on Windows, Linux and SSH on macOS. On Linux it runs directly, with no extra WSL, VM or SSH environment. Follow the [Linux guide](LIVE_TESTING_LINUX.md). Leave readiness unchecked to configure later without registration. A configured route does not establish that live gameplay was verified. HOI4 Live Tools is slower and not fully tested; its public package verifies Windows only and its macOS scaffold is incomplete.
 
-10. **Review integrations and credentials.** Check the selected integrations and credential status, then choose **Next**. Secret values stay outside the mod folder. [Screenshot](screenshots/06-mcp-credentials.png)
+10. **Review integrations and credentials.** This step appears only when the 3D workflow or HOI4 Live Tools is selected. Check the credential status and per-user setup, then choose **Next**. Secret values stay outside the mod folder. [Screenshot](screenshots/06-mcp-credentials.png)
 
 11. **Choose Git setup.** Select **Initialize a Git repository**, **Preserve the existing repository**, or **Skip Git setup**. Leave **Keep this project local** selected unless you want an online action, which asks for separate approval. [Screenshot](screenshots/07-git.png)
 

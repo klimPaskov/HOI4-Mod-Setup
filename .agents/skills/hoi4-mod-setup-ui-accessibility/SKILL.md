@@ -107,6 +107,20 @@ Conflict review is the exception. It may show a three-way comparison and more co
 
 - One primary action per screen.
 - Back remains visible where navigation is reversible.
+- Skip a screen that holds no decision, in both directions. `nextScreen` and
+  `previousScreen` in `src/App.tsx` use the same named predicate (for example
+  `integrationReviewNeeded`: the MCP and credentials review appears only for a
+  selected Meshy workflow or a Live Tools registration), and Back never routes to a
+  screen Next would skip. Cover each skip with a unit test and a browser
+  Back-and-Next check in `tests/browser/wizard.spec.ts`; a documentation
+  scenario may still render a skipped screen directly.
+- The setup-assistant list ends with **No setup assistant (detected values
+  only)**. Choosing it shows a short note that nothing is sent to an AI
+  provider and hides model, effort, key, and sign-in controls. On Findings it
+  replaces the provider input preview and Include/Exclude toggles with an
+  editable **Project details** panel whose detected fields carry a
+  `· Detected` label until the user changes them; Update shows the rescan note
+  instead of the reanalysis action.
 - Destructive actions require clear scope and confirmation.
 - Disabled actions explain the blocking reason in a tooltip or adjacent concise status.
 - The Description primary action uses a visible `Preparing details…` pending
