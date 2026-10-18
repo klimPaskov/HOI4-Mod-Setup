@@ -1,0 +1,3 @@
+add_namespace = ecm_crisis
+add_namespace = ecm_side
+country_event = { id = ecm_side.1 }

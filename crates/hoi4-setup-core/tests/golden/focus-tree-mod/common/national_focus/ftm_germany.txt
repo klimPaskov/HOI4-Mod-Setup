@@ -1,0 +1,4 @@
+focus_tree = {
+	id = ftm_germany_focus
+	focus = { id = ftm_rearm }
+}

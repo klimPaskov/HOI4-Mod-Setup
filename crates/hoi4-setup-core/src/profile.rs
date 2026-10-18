@@ -355,6 +355,24 @@ pub fn sensitive_scan_path(relative: &str) -> bool {
         || name.ends_with(".pfx")
 }
 
+/// How informative a sample category is for setup review; lower comes first.
+pub fn group_priority(name: &str) -> u8 {
+    match name {
+        "common/national_focus" => 0,
+        "events/root" => 1,
+        "documentation/root" => 2,
+        "common/decisions" | "decisions/root" => 3,
+        "common/on_actions" => 4,
+        "common/ideas" => 5,
+        "history/countries" => 6,
+        "history/states" => 7,
+        name if name.starts_with("localisation/") => 8,
+        name if name.starts_with("documentation/") => 9,
+        "common/scripted_effects" | "common/scripted_triggers" => 10,
+        _ => 11,
+    }
+}
+
 /// Reads a sample: at most the first `PREFIX_BYTES` of a file and its full size.
 pub type SampleReader<'a> = dyn FnMut(&str) -> Result<(Vec<u8>, u64), AppError> + 'a;
 
@@ -517,7 +535,17 @@ impl Profiler {
                     .map(|(round, (_, path))| (round, name.clone(), path.clone()))
             })
             .collect::<Vec<_>>();
-        candidates.sort();
+        // Every round visits the most informative categories first, so the
+        // sample budget is spent on focus trees, events, and localisation
+        // before rarer folders.
+        candidates.sort_by(|left, right| {
+            (left.0, group_priority(&left.1), &left.1, &left.2).cmp(&(
+                right.0,
+                group_priority(&right.1),
+                &right.1,
+                &right.2,
+            ))
+        });
         for (_, group_name, path) in candidates {
             if cancel() {
                 self.result.problems.insert("stopped");
@@ -670,16 +698,11 @@ impl Profiler {
             .map(|(directory, files)| json!({"directory":clean_text(&directory,128),"files":files}))
             .collect::<Vec<_>>();
         let mut categories = self.groups.into_iter().collect::<Vec<_>>();
-        let priority = |name: &str| match name {
-            "common/national_focus" => 0,
-            "events/root" => 1,
-            "history/countries" => 2,
-            "common/ideas" => 3,
-            "common/decisions" => 4,
-            "history/states" => 5,
-            _ => 6,
-        };
-        categories.sort_by(|a, b| priority(&a.0).cmp(&priority(&b.0)).then(a.0.cmp(&b.0)));
+        categories.sort_by(|a, b| {
+            group_priority(&a.0)
+                .cmp(&group_priority(&b.0))
+                .then(a.0.cmp(&b.0))
+        });
         let categories = categories.into_iter().map(|(category, group)| json!({"category":clean_text(&category,128),"files":group.files,"bytes":group.bytes,"sampled":group.sampled})).collect::<Vec<_>>();
         add_finding(
             &mut result,
@@ -872,6 +895,28 @@ mod tests {
         assert!(
             !serialized.contains("secret"),
             "sensitive files are never read"
+        );
+    }
+
+    #[test]
+    fn informative_categories_are_sampled_first() {
+        let mut ordered = vec![
+            "common/units",
+            "localisation/english",
+            "events/root",
+            "common/national_focus",
+            "common/decisions",
+        ];
+        ordered.sort_by_key(|name| (group_priority(name), *name));
+        assert_eq!(
+            ordered,
+            [
+                "common/national_focus",
+                "events/root",
+                "common/decisions",
+                "localisation/english",
+                "common/units"
+            ]
         );
     }
 

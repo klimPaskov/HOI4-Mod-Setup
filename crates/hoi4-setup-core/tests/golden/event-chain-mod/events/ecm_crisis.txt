@@ -1,0 +1,6 @@
+add_namespace = ecm_crisis
+
+country_event = {
+	id = ecm_crisis.1
+	title = ecm_crisis.1.t
+}

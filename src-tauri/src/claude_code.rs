@@ -1310,6 +1310,105 @@ mod tests {
         );
     }
 
+    /// Recorded reply shapes (tests/fixtures/analysis-replays.json) run through
+    /// the real extraction, normalization, and validation. Each fixture states
+    /// whether the first reply is accepted, earns the corrective turn, or is
+    /// discarded, so a change that raises the retry rate fails here.
+    #[test]
+    fn recorded_reply_shapes_have_the_expected_outcome() {
+        let fixtures: Vec<Value> =
+            serde_json::from_str(include_str!("../tests/fixtures/analysis-replays.json")).unwrap();
+        let hash = input_hash();
+        let mut accepted_first_time = 0;
+        for fixture in &fixtures {
+            let name = fixture["name"].as_str().unwrap();
+            let mut value = analysis_value(&hash, "Fits the brief.");
+            for patch in fixture["patches"].as_array().unwrap() {
+                let target = value
+                    .pointer_mut(patch["pointer"].as_str().unwrap())
+                    .unwrap();
+                if patch["remove_last"] == true {
+                    target.as_array_mut().unwrap().pop();
+                } else {
+                    *target = patch["value"].clone();
+                }
+            }
+            let stdout = match fixture["wrap"].as_str().unwrap() {
+                "structured" => serde_json::to_string(&serde_json::json!({
+                    "type": "result", "is_error": false, "result": "", "structured_output": value
+                }))
+                .unwrap(),
+                "fenced_text" => serde_json::to_string(&serde_json::json!({
+                    "type": "result", "is_error": false,
+                    "result": format!("```json\n{}\n```", serde_json::to_string_pretty(&value).unwrap())
+                }))
+                .unwrap(),
+                _ => r#"{"type":"result","is_error":false,"result":"The mod adds a focus tree."}"#
+                    .to_owned(),
+            };
+            let first = ProcessResult {
+                status_code: Some(0),
+                stdout,
+                stderr: String::new(),
+                timed_out: false,
+                stdout_truncated: false,
+                stderr_truncated: false,
+            };
+            let mut replies = vec![
+                first,
+                print_result(analysis_value(&hash, "Fits the brief.")),
+            ]
+            .into_iter();
+            let mut calls = 0;
+            let result = analyze_with_runner(
+                &analysis_request(),
+                "Claude account setup analysis",
+                |_, _| {
+                    calls += 1;
+                    Ok(replies.next().unwrap())
+                },
+            );
+            match fixture["outcome"].as_str().unwrap() {
+                "accepted" => {
+                    let analysis = result
+                        .unwrap_or_else(|error| panic!("{name}: {error}"))
+                        .analysis;
+                    assert_eq!(calls, 1, "{name}");
+                    accepted_first_time += 1;
+                    for (key, expected) in fixture["expect"].as_object().into_iter().flatten() {
+                        let proposal = analysis
+                            .proposals
+                            .iter()
+                            .find(|proposal| serde_json::to_value(&proposal.key).unwrap() == *key)
+                            .unwrap();
+                        assert_eq!(&proposal.value, expected, "{name}: {key}");
+                    }
+                    for proposal in &analysis.proposals {
+                        if let Some(text) = proposal.value.as_str() {
+                            assert!(!text.contains('\n'), "{name}: single-line values");
+                        }
+                    }
+                }
+                "corrective" => {
+                    assert!(result.is_ok(), "{name}: {result:?}");
+                    assert_eq!(calls, 2, "{name}: one corrective turn");
+                }
+                "discarded" => {
+                    assert!(
+                        matches!(result, Err(AppError::UnsafeProviderOutput(_))),
+                        "{name}: {result:?}"
+                    );
+                    assert_eq!(calls, 1, "{name}: never retried");
+                }
+                other => panic!("unknown outcome {other}"),
+            }
+        }
+        assert!(
+            accepted_first_time >= 4,
+            "most recorded shapes pass first time"
+        );
+    }
+
     #[test]
     fn a_reply_without_a_structured_object_gets_the_corrective_turn() {
         let hash = input_hash();
