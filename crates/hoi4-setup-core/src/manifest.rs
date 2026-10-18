@@ -1314,3 +1314,104 @@ pub fn cache_key(source: &SourceIdentity, source_path: &str, sha256: &str) -> St
         sha256
     )
 }
+
+pub fn add_supported_profile_components(
+    manifest: &RemoteManifest,
+    requested: &mut Vec<String>,
+    component_ids: &[String],
+    platform: Platform,
+) -> Result<(), AppError> {
+    for component_id in component_ids {
+        if requested.iter().any(|selected| selected == component_id) {
+            continue;
+        }
+        let mut candidate = requested.clone();
+        candidate.push(component_id.clone());
+        let expanded = expand_components(manifest, &candidate)?;
+        let support = resolve_platform_support(manifest, &expanded, platform)?;
+        if support.iter().any(|item| item.state == "blocked") {
+            continue;
+        }
+        requested.push(component_id.clone());
+    }
+    Ok(())
+}
+
+pub fn default_profile_component_ids(manifest: &RemoteManifest) -> Result<Vec<String>, AppError> {
+    manifest
+        .profiles
+        .iter()
+        .find(|profile| profile.default)
+        .map(|profile| profile.components.clone())
+        .ok_or_else(|| {
+            AppError::Source("the verified source manifest has no default profile".into())
+        })
+}
+
+/// The components a new installation requests before dependency expansion:
+/// the user's choices, the default profile where the platform supports it,
+/// the runtime-neutral shared package, every other required runtime-neutral
+/// component, and the selected coding clients' packages. Both the desktop
+/// plan and the web export start from this list.
+pub fn installation_components(
+    manifest: &RemoteManifest,
+    user_selected: &[String],
+    selection: &CodingEnvironmentSelection,
+    platform: Platform,
+) -> Result<Vec<String>, AppError> {
+    let environment_ids = crate::coding_environment::all_environment_component_ids(manifest);
+    let mut requested = user_selected
+        .iter()
+        .filter(|id| !environment_ids.contains(*id))
+        .cloned()
+        .collect::<Vec<_>>();
+    // Resolve non-optional defaults from the current source manifest so a
+    // newly published runtime guide or core component is included even if a
+    // renderer is stale or omits the newly declared ID.
+    let defaults = default_profile_component_ids(manifest)?;
+    add_supported_profile_components(manifest, &mut requested, &defaults, platform)?;
+    // Runtime-neutral components that are always installed. The manifest
+    // remains authoritative: a source revision that does not declare one
+    // cannot be made complete by inventing a replacement.
+    for shared in [
+        "core.agents",
+        "core.skills",
+        "core.subagents",
+        "runtime.agent_sync",
+        "mcp.hoi4_agent_tools.bootstrap",
+        "mcp.hoi4_agent_tools",
+        "docs.mcp_integration",
+        "wiki.snapshot",
+    ] {
+        if manifest
+            .components
+            .iter()
+            .any(|component| component.id == shared)
+            && !requested.iter().any(|id| id == shared)
+        {
+            requested.push(shared.into());
+        }
+    }
+    for component in &manifest.components {
+        if !component.optional
+            && component.coding_environment.is_none()
+            && component
+                .platforms
+                .iter()
+                .any(|declared| declared.supports(platform))
+            && !requested.iter().any(|id| id == &component.id)
+        {
+            requested.push(component.id.clone());
+        }
+    }
+    let active_component_ids = expand_components(manifest, &requested)?
+        .into_iter()
+        .collect::<HashSet<_>>();
+    for id in crate::coding_environment::component_ids(manifest, selection, &active_component_ids)?
+    {
+        if !requested.iter().any(|selected| selected == &id) {
+            requested.push(id);
+        }
+    }
+    Ok(requested)
+}

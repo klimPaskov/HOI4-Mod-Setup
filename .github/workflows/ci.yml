@@ -156,10 +156,10 @@ jobs:
           rustup default 1.88.0
           rustup component add clippy --toolchain 1.88.0
           rustup target add wasm32-unknown-unknown --toolchain 1.88.0
-      - name: Build the core for the browser
-        run: cargo build -p hoi4-setup-core --target wasm32-unknown-unknown --release
-      - name: Lint the core for the browser
-        run: cargo clippy -p hoi4-setup-core --target wasm32-unknown-unknown -- -D warnings
+      - name: Build the core and web bindings for the browser
+        run: cargo build -p hoi4-setup-core -p hoi4-setup-web --target wasm32-unknown-unknown --release
+      - name: Lint the core and web bindings for the browser
+        run: cargo clippy -p hoi4-setup-core -p hoi4-setup-web --target wasm32-unknown-unknown -- -D warnings
 
   fuzz:
     name: Fuzz target compilation

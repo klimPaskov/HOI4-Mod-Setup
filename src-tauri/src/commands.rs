@@ -46,6 +46,7 @@ use crate::transaction::{
 };
 use crate::AppError;
 use hoi4_setup_core::adapt::*;
+use hoi4_setup_core::manifest::{add_supported_profile_components, default_profile_component_ids};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -4563,65 +4564,12 @@ fn requested_components_for_selection(
     provider: &str,
 ) -> Result<(Vec<String>, CodingEnvironmentSelection), AppError> {
     let selection = coding_environment::selection_from_manifest(manifest, state)?;
-    let environment_ids = coding_environment::all_environment_component_ids(manifest);
-    let mut requested = selected_ids(state, provider)
-        .into_iter()
-        .filter(|id| !environment_ids.contains(id))
-        .collect::<Vec<_>>();
-    // Resolve non-optional defaults from the current source manifest in Rust
-    // so a new published runtime guide or core component is included even if
-    // a renderer is stale or omits the newly declared ID.
-    let defaults = default_profile_component_ids(manifest)?;
-    add_supported_profile_components(manifest, &mut requested, &defaults, Platform::current())?;
-    // These components are runtime-neutral and are always installed.  The
-    // manifest remains authoritative: a source revision that does not declare
-    // one cannot be made complete by the app inventing a replacement.
-    for shared in [
-        "core.agents",
-        "core.skills",
-        "core.subagents",
-        "runtime.agent_sync",
-        // The verified MCP bootstrap is provider-neutral; native client
-        // configurations in every environment point at the same command.
-        "mcp.hoi4_agent_tools.bootstrap",
-        // The verified HOI4 tools package is also provider-neutral.  Its
-        // external health action is shared by every native MCP configuration;
-        // the Codex config projection remains a separate environment package.
-        "mcp.hoi4_agent_tools",
-        "docs.mcp_integration",
-        "wiki.snapshot",
-    ] {
-        if manifest
-            .components
-            .iter()
-            .any(|component| component.id == shared)
-            && !requested.iter().any(|id| id == shared)
-        {
-            requested.push(shared.into());
-        }
-    }
-    // Any other required, runtime-neutral component the source declares (for
-    // example the canonical CLAUDE.md) is installed as well.
-    for component in &manifest.components {
-        if !component.optional
-            && component.coding_environment.is_none()
-            && component
-                .platforms
-                .iter()
-                .any(|platform| platform.supports(Platform::current()))
-            && !requested.iter().any(|id| id == &component.id)
-        {
-            requested.push(component.id.clone());
-        }
-    }
-    let active_component_ids = expand_components(manifest, &requested)?
-        .into_iter()
-        .collect::<std::collections::HashSet<_>>();
-    for id in coding_environment::component_ids(manifest, &selection, &active_component_ids)? {
-        if !requested.iter().any(|selected| selected == &id) {
-            requested.push(id);
-        }
-    }
+    let mut requested = hoi4_setup_core::manifest::installation_components(
+        manifest,
+        &selected_ids(state, provider),
+        &selection,
+        Platform::current(),
+    )?;
     let image_selection = image_generation_selection_from_state(state, manifest, &selection)?;
     for provider in image_generation_provider_rows(manifest, &image_selection)? {
         let component_id = provider
@@ -4912,39 +4860,6 @@ fn apply_image_generation_component_selection(
     requested.sort();
     requested.dedup();
     Ok(())
-}
-
-fn add_supported_profile_components(
-    manifest: &RemoteManifest,
-    requested: &mut Vec<String>,
-    component_ids: &[String],
-    platform: Platform,
-) -> Result<(), AppError> {
-    for component_id in component_ids {
-        if requested.iter().any(|selected| selected == component_id) {
-            continue;
-        }
-        let mut candidate = requested.clone();
-        candidate.push(component_id.clone());
-        let expanded = expand_components(manifest, &candidate)?;
-        let support = crate::source::resolve_platform_support(manifest, &expanded, platform)?;
-        if support.iter().any(|item| item.state == "blocked") {
-            continue;
-        }
-        requested.push(component_id.clone());
-    }
-    Ok(())
-}
-
-fn default_profile_component_ids(manifest: &RemoteManifest) -> Result<Vec<String>, AppError> {
-    manifest
-        .profiles
-        .iter()
-        .find(|profile| profile.default)
-        .map(|profile| profile.components.clone())
-        .ok_or_else(|| {
-            AppError::Source("the verified source manifest has no default profile".into())
-        })
 }
 
 fn newly_defaulted_component_ids(
@@ -5252,144 +5167,27 @@ fn adapt_codex_config_for_selection(
     super_events_selected: bool,
     portrait: &PortraitPipelineConfig,
 ) -> Result<Vec<u8>, AppError> {
-    let bytes = adapt_optional_portrait_section(bytes, portrait.enabled)?;
-    let text = std::str::from_utf8(&bytes)
-        .map_err(|error| AppError::Source(format!("Codex configuration is not UTF-8: {error}")))?;
-    let mut config = text.parse::<toml::Value>().map_err(|error| {
-        AppError::Source(format!("Codex configuration is not valid TOML: {error}"))
-    })?;
-    if let Some(table) = config.as_table_mut() {
-        if !super_events_selected {
-            if let Some(agents) = table.get_mut("agents").and_then(toml::Value::as_table_mut) {
-                agents.retain(|id, _| !id.starts_with("hoi4_super_event_"));
-            }
-        }
-        if three_d_selected {
-            let mcp_servers = table
-                .entry("mcp_servers")
-                .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
-                .as_table_mut()
-                .ok_or_else(|| AppError::Source("Codex mcp_servers is not a TOML table".into()))?;
-            for (id, wrapper, enabled, required, approval) in [
-                ("meshy", "run_meshy_mcp.cmd", true, true, "auto"),
-                (
-                    "blender_hoi4",
-                    "run_blender_hoi4_adapter.cmd",
-                    true,
-                    true,
-                    "auto",
-                ),
-                (
-                    "blender_lab",
-                    "run_blender_lab_mcp.cmd",
-                    false,
-                    false,
-                    "prompt",
-                ),
-            ] {
-                let mut route = toml::map::Map::new();
-                route.insert("enabled".into(), toml::Value::Boolean(enabled));
-                route.insert("required".into(), toml::Value::Boolean(required));
-                if id == "meshy" {
-                    let launcher = std::env::current_exe().map_err(|error| {
-                        AppError::Process(format!(
-                            "the app-owned Meshy launcher path is unavailable: {error}"
-                        ))
-                    })?;
-                    route.insert(
-                        "command".into(),
-                        toml::Value::String(launcher.display().to_string()),
-                    );
-                    route.insert(
-                        "args".into(),
-                        toml::Value::Array(vec![toml::Value::String(
-                            "--run-verified-meshy-mcp".into(),
-                        )]),
-                    );
-                } else {
-                    route.insert("command".into(), toml::Value::String("cmd.exe".into()));
-                    route.insert(
-                        "args".into(),
-                        toml::Value::Array(
-                            [
-                                "/d".to_string(),
-                                "/c".to_string(),
-                                "call".to_string(),
-                                format!(".tools/3d_pipeline/wrappers/{wrapper}"),
-                            ]
-                            .into_iter()
-                            .map(toml::Value::String)
-                            .collect(),
-                        ),
-                    );
-                }
-                route.insert("cwd".into(), toml::Value::String(".".into()));
-                route.insert(
-                    "env_vars".into(),
-                    toml::Value::Array(if id == "meshy" {
-                        vec![toml::Value::String("MESHY_API_KEY".into())]
-                    } else {
-                        Vec::new()
-                    }),
-                );
-                route.insert("startup_timeout_sec".into(), toml::Value::Float(120.0));
-                route.insert("tool_timeout_sec".into(), toml::Value::Float(1800.0));
-                route.insert(
-                    "default_tools_approval_mode".into(),
-                    toml::Value::String(approval.into()),
-                );
-                mcp_servers.insert(id.into(), toml::Value::Table(route));
-            }
-        } else if let Some(mcp_servers) = table
-            .get_mut("mcp_servers")
-            .and_then(toml::Value::as_table_mut)
-        {
-            for id in ["meshy", "blender_hoi4", "blender_lab"] {
-                mcp_servers.remove(id);
-            }
-        }
-        let empty = table
-            .get_mut("mcp_servers")
-            .and_then(toml::Value::as_table_mut)
-            .map(|mcp| {
-                if !mcp_selected {
-                    mcp.remove("hoi4_agent_tools");
-                }
-                mcp.is_empty()
-            })
-            .unwrap_or(false);
-        if empty {
-            table.remove("mcp_servers");
-        }
-        if portrait.provider != "cloud" {
-            let empty = table
-                .get_mut("mcp_servers")
-                .and_then(toml::Value::as_table_mut)
-                .map(|mcp| {
-                    mcp.remove("comfy_cloud_portraits");
-                    mcp.is_empty()
-                })
-                .unwrap_or(false);
-            if empty {
-                table.remove("mcp_servers");
-            }
-            if let Some(portrait_table) = table
-                .get_mut("portrait_pipeline")
-                .and_then(toml::Value::as_table_mut)
-            {
-                portrait_table.remove("mcp_server");
-            }
-        }
-    }
-    let rendered = toml::to_string_pretty(&config).map_err(|error| {
-        AppError::Source(format!(
-            "adapted Codex configuration could not be written: {error}"
-        ))
-    })?;
-    rendered.parse::<toml::Value>().map_err(|error| {
-        AppError::Source(format!("adapted Codex configuration is invalid: {error}"))
-    })?;
-    Ok(rendered.into_bytes())
+    let launcher = if three_d_selected {
+        Some(
+            std::env::current_exe()
+                .map_err(|error| {
+                    AppError::Process(format!(
+                        "the app-owned Meshy launcher path is unavailable: {error}"
+                    ))
+                })?
+                .display()
+                .to_string(),
+        )
+    } else {
+        None
+    };
+    hoi4_setup_core::adapt::adapt_codex_config(
+        bytes,
+        mcp_selected,
+        launcher.as_deref(),
+        super_events_selected,
+        portrait,
+    )
 }
 
 fn project_conventions_from_value(value: Option<&Value>) -> Result<ProjectConventions, AppError> {
@@ -6946,23 +6744,11 @@ fn ai_optimization_profile(provider: &str) -> String {
 fn project_readme(
     identity: &ProjectIdentity,
     description: &str,
-    provider: &str,
-    model: &str,
-    reasoning_effort: &str,
+    _provider: &str,
+    _model: &str,
+    _reasoning_effort: &str,
 ) -> Result<String, AppError> {
-    if description.len() > 32 * 1024 || description.contains('\0') {
-        return Err(AppError::InvalidInput(
-            "project description exceeds the bounded README input limit".into(),
-        ));
-    }
-    let _ = (provider, model, reasoning_effort);
-    Ok(format!(
-        "# {}\n\n{}\n\n## Local development\n\nThis project was prepared by HOI4 Mod Setup for provider-neutral agentic development. The AI used during setup does not select or restrict the development client used later.\n\n- Project ID: `{}`\n- Supported game version: `{}`\n- Workshop identity: none assigned\n",
-        identity.display_name,
-        description.trim(),
-        identity.project_id,
-        identity.supported_game_version,
-    ))
+    hoi4_setup_core::project_files::project_readme(identity, description)
 }
 
 fn codex_analysis_from_state(

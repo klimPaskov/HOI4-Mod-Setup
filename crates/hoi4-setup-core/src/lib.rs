@@ -19,6 +19,7 @@ pub mod merge;
 pub mod models;
 pub mod native_mcp;
 pub mod profile;
+pub mod project_files;
 pub mod proposals;
 pub mod schemas;
 pub mod text;

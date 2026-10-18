@@ -535,3 +535,148 @@ pub fn adapt_component_blocks(
     output.push_str(&text[cursor..]);
     Ok(output.into_bytes())
 }
+
+/// Adapt the Codex configuration to the selection. `meshy_launcher` is the
+/// app-owned launcher for the 3D workflow's Meshy route; without it the 3D
+/// routes are left out, as on hosts that cannot run that workflow.
+pub fn adapt_codex_config(
+    bytes: &[u8],
+    mcp_selected: bool,
+    meshy_launcher: Option<&str>,
+    super_events_selected: bool,
+    portrait: &PortraitPipelineConfig,
+) -> Result<Vec<u8>, AppError> {
+    let bytes = adapt_optional_portrait_section(bytes, portrait.enabled)?;
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|error| AppError::Source(format!("Codex configuration is not UTF-8: {error}")))?;
+    let mut config = text.parse::<toml::Value>().map_err(|error| {
+        AppError::Source(format!("Codex configuration is not valid TOML: {error}"))
+    })?;
+    if let Some(table) = config.as_table_mut() {
+        if !super_events_selected {
+            if let Some(agents) = table.get_mut("agents").and_then(toml::Value::as_table_mut) {
+                agents.retain(|id, _| !id.starts_with("hoi4_super_event_"));
+            }
+        }
+        if let Some(meshy_launcher) = meshy_launcher {
+            let mcp_servers = table
+                .entry("mcp_servers")
+                .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+                .as_table_mut()
+                .ok_or_else(|| AppError::Source("Codex mcp_servers is not a TOML table".into()))?;
+            for (id, wrapper, enabled, required, approval) in [
+                ("meshy", "run_meshy_mcp.cmd", true, true, "auto"),
+                (
+                    "blender_hoi4",
+                    "run_blender_hoi4_adapter.cmd",
+                    true,
+                    true,
+                    "auto",
+                ),
+                (
+                    "blender_lab",
+                    "run_blender_lab_mcp.cmd",
+                    false,
+                    false,
+                    "prompt",
+                ),
+            ] {
+                let mut route = toml::map::Map::new();
+                route.insert("enabled".into(), toml::Value::Boolean(enabled));
+                route.insert("required".into(), toml::Value::Boolean(required));
+                if id == "meshy" {
+                    route.insert(
+                        "command".into(),
+                        toml::Value::String(meshy_launcher.to_owned()),
+                    );
+                    route.insert(
+                        "args".into(),
+                        toml::Value::Array(vec![toml::Value::String(
+                            "--run-verified-meshy-mcp".into(),
+                        )]),
+                    );
+                } else {
+                    route.insert("command".into(), toml::Value::String("cmd.exe".into()));
+                    route.insert(
+                        "args".into(),
+                        toml::Value::Array(
+                            [
+                                "/d".to_string(),
+                                "/c".to_string(),
+                                "call".to_string(),
+                                format!(".tools/3d_pipeline/wrappers/{wrapper}"),
+                            ]
+                            .into_iter()
+                            .map(toml::Value::String)
+                            .collect(),
+                        ),
+                    );
+                }
+                route.insert("cwd".into(), toml::Value::String(".".into()));
+                route.insert(
+                    "env_vars".into(),
+                    toml::Value::Array(if id == "meshy" {
+                        vec![toml::Value::String("MESHY_API_KEY".into())]
+                    } else {
+                        Vec::new()
+                    }),
+                );
+                route.insert("startup_timeout_sec".into(), toml::Value::Float(120.0));
+                route.insert("tool_timeout_sec".into(), toml::Value::Float(1800.0));
+                route.insert(
+                    "default_tools_approval_mode".into(),
+                    toml::Value::String(approval.into()),
+                );
+                mcp_servers.insert(id.into(), toml::Value::Table(route));
+            }
+        } else if let Some(mcp_servers) = table
+            .get_mut("mcp_servers")
+            .and_then(toml::Value::as_table_mut)
+        {
+            for id in ["meshy", "blender_hoi4", "blender_lab"] {
+                mcp_servers.remove(id);
+            }
+        }
+        let empty = table
+            .get_mut("mcp_servers")
+            .and_then(toml::Value::as_table_mut)
+            .map(|mcp| {
+                if !mcp_selected {
+                    mcp.remove("hoi4_agent_tools");
+                }
+                mcp.is_empty()
+            })
+            .unwrap_or(false);
+        if empty {
+            table.remove("mcp_servers");
+        }
+        if portrait.provider != "cloud" {
+            let empty = table
+                .get_mut("mcp_servers")
+                .and_then(toml::Value::as_table_mut)
+                .map(|mcp| {
+                    mcp.remove("comfy_cloud_portraits");
+                    mcp.is_empty()
+                })
+                .unwrap_or(false);
+            if empty {
+                table.remove("mcp_servers");
+            }
+            if let Some(portrait_table) = table
+                .get_mut("portrait_pipeline")
+                .and_then(toml::Value::as_table_mut)
+            {
+                portrait_table.remove("mcp_server");
+            }
+        }
+    }
+    let rendered = toml::to_string_pretty(&config).map_err(|error| {
+        AppError::Source(format!(
+            "adapted Codex configuration could not be written: {error}"
+        ))
+    })?;
+    rendered.parse::<toml::Value>().map_err(|error| {
+        AppError::Source(format!("adapted Codex configuration is invalid: {error}"))
+    })?;
+    Ok(rendered.into_bytes())
+}

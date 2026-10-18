@@ -152,8 +152,12 @@ pub(crate) fn scan(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::security::{redact_secrets, sha256_bytes};
+    use serde_json::Value;
     use std::cell::Cell;
+    use std::collections::BTreeMap;
     use std::fs;
+    use std::path::Path;
 
     fn put(root: &Path, path: &str, bytes: impl AsRef<[u8]>) {
         let path = root.join(path);
