@@ -1360,7 +1360,21 @@ mod tests {
             .iter()
             .filter(|entry| entry.path == "descriptor.mod")
             .all(|entry| entry.action == ExportAction::Unchanged));
-        let archive = export.build_zip(&BTreeMap::new()).unwrap();
+        // Merged client files are reviewed, as on the desktop; the incoming
+        // version keeps the user's own servers, so it can replace them.
+        let decisions = export
+            .entries
+            .iter()
+            .filter(|entry| entry.action == ExportAction::Conflict)
+            .map(|entry| {
+                (
+                    entry.path.clone(),
+                    hoi4_setup_core::export::Decision::Replace,
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert!(decisions.contains_key(".mcp.json"));
+        let archive = export.build_zip(&decisions).unwrap();
         let lock: Value = serde_json::from_slice(
             &read_zip(&archive)
                 .unwrap()
