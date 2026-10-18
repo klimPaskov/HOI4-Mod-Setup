@@ -36,7 +36,7 @@ for (const scenario of DOCUMENTATION_SCENARIOS) {
 
 test("setup can run without a setup assistant, clearly labelled", async ({ page }) => {
   await page.goto("/?screenshot=welcome");
-  await page.getByLabel("AI provider", { exact: true }).selectOption("none");
+  await page.getByLabel("AI provider").selectOption("none");
   await expect(page.getByRole("note", { name: "Setup without an assistant" })).toContainText("Nothing is sent to an AI provider.");
   await expect(page.getByLabel("Model", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
