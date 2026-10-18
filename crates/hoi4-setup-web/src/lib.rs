@@ -121,7 +121,7 @@ fn evidence_from_findings(findings: &[ScanFinding]) -> Vec<ApprovedEvidence> {
     findings
         .iter()
         .filter(|finding| finding.status != "rejected")
-        .map(|finding| {
+        .filter_map(|finding| {
             let excerpt = finding
                 .model_excerpt
                 .clone()
@@ -129,7 +129,12 @@ fn evidence_from_findings(findings: &[ScanFinding]) -> Vec<ApprovedEvidence> {
                     Value::String(text) => text.clone(),
                     other => other.to_string(),
                 });
-            ApprovedEvidence {
+            // A credential-shaped excerpt is left out rather than failing the
+            // whole request.
+            if hoi4_setup_core::text::redact_secrets(&excerpt, &[]) != excerpt {
+                return None;
+            }
+            Some(ApprovedEvidence {
                 reference: finding.id.clone(),
                 path: finding
                     .evidence
@@ -139,7 +144,7 @@ fn evidence_from_findings(findings: &[ScanFinding]) -> Vec<ApprovedEvidence> {
                 excerpt_sha256: hoi4_setup_core::text::sha256_bytes(excerpt.as_bytes()),
                 excerpt,
                 confidence: Some(finding.confidence),
-            }
+            })
         })
         .collect()
 }
@@ -208,6 +213,22 @@ fn scan_project(fs: &MemoryFs) -> Result<(String, Vec<ScanFinding>), AppError> {
         }
     }
     let detected = hoi4_setup_core::proposals::detect(&findings);
+    // Values the files decide reach the assistant as one finding, so the core
+    // keeps them over its guesses, as on the desktop.
+    if !detected.is_empty() {
+        let mut finding = scan_finding(
+            "profile.detected",
+            "detected_values",
+            json!(detected),
+            "Values decided by the project files: descriptor fields, the dominant namespace, localisation headers, content folders, and documentation.",
+        );
+        finding.category = "structure".into();
+        if let Some(evidence) = finding.evidence.first_mut() {
+            evidence.detector = "deterministic_detection".into();
+            evidence.path = "@scan/profile/detected".into();
+        }
+        findings.push(finding);
+    }
     let summary = serde_json::to_string(&json!({
         "findings": findings,
         "detected": detected,
@@ -419,11 +440,11 @@ impl Source {
             primary: request.primary_coding_environment,
             additional: request.additional_coding_environments,
         };
-        // The 3D workflow needs the desktop app's Meshy launcher.
+        // Desktop-only components are never installed from the browser.
         let user_selected = request
             .selected_components
             .into_iter()
-            .filter(|id| id != "workflow.3d")
+            .filter(|id| !DESKTOP_ONLY_COMPONENTS.contains(&id.as_str()))
             .collect::<Vec<_>>();
         let requested =
             installation_components(&self.manifest, &user_selected, &selection, platform)?;
@@ -525,6 +546,10 @@ struct AssistantProvenance {
     endpoint: Option<String>,
     optimization_profile: String,
 }
+
+/// Components that need the desktop app's installer or launcher: the 3D
+/// workflow runs Meshy through the app, and Live Tools installs its MCP server.
+const DESKTOP_ONLY_COMPONENTS: &[&str] = &["workflow.3d", "workflow.live_tools"];
 
 /// Hosted routes the web edition can reach from the browser.
 const WEB_ASSISTANT_PROVIDERS: &[&str] = &["claude", "gemini", "grok", "deepseek", "glm"];
@@ -914,7 +939,8 @@ fn reply_analysis(
     input_sha256: &str,
     analysis_id: &str,
 ) -> Result<CodexAnalysis, AppError> {
-    let request: CodexAnalysisRequest = serde_json::from_str(request_json)?;
+    let request: CodexAnalysisRequest = serde_json::from_str(request_json)
+        .map_err(|_| AppError::InvalidInput("the analysis request is malformed".into()))?;
     let analysis_id = analysis_id
         .parse::<uuid::Uuid>()
         .map_err(|_| AppError::InvalidInput("the analysis ID is not a UUID".into()))?;
@@ -1006,7 +1032,8 @@ mod tests {
         project
             .add_file("events/demo.txt", b"add_namespace = demo\n")
             .unwrap();
-        let scan: Value = serde_json::from_str(&scan_project(&project.fs).unwrap().0).unwrap();
+        let (summary, findings) = scan_project(&project.fs).unwrap();
+        let scan: Value = serde_json::from_str(&summary).unwrap();
         let detected = scan["detected"].as_array().unwrap();
         assert!(detected
             .iter()
@@ -1015,6 +1042,15 @@ mod tests {
             .iter()
             .any(|value| value["key"] == "primary_namespace" && value["value"] == "demo"));
         assert_eq!(scan["descriptor"]["name"], "Demo");
+        // The assistant receives the detected values, so the core keeps them.
+        let evidence = evidence_from_findings(&findings);
+        let decided = evidence
+            .iter()
+            .find(|item| item.reference == "profile.detected")
+            .expect("detected values reach the assistant");
+        let values: Vec<hoi4_setup_core::proposals::DetectedValue> =
+            serde_json::from_str(&decided.excerpt).unwrap();
+        assert!(values.iter().any(|value| value.key == "primary_namespace"));
     }
 
     #[test]

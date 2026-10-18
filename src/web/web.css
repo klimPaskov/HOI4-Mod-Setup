@@ -57,3 +57,7 @@
 .web-assistant-body p { margin: 0; }
 .web-assistant-actions { justify-content: space-between; }
 .web-assistant-result { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid #2f4a7a; border-radius: 10px; background: #0f1a2e; font-size: 14px; }
+.web-conventions { display: grid; gap: 6px; margin: 0; }
+.web-conventions div { display: grid; grid-template-columns: minmax(8rem, auto) 1fr; gap: 8px; }
+.web-conventions dd { margin: 0; overflow-wrap: anywhere; }
+.web-evidence ul { margin-top: 8px; }

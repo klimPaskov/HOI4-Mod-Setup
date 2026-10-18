@@ -991,6 +991,22 @@ pub fn component_ids(
     selection: &CodingEnvironmentSelection,
     active_component_ids: &HashSet<String>,
 ) -> Result<Vec<String>, AppError> {
+    component_ids_for_platform(
+        manifest,
+        selection,
+        active_component_ids,
+        Platform::current(),
+    )
+}
+
+/// [`component_ids`] for a chosen platform. The web edition installs for the
+/// platform the user picks, not the one running the browser.
+pub fn component_ids_for_platform(
+    manifest: &RemoteManifest,
+    selection: &CodingEnvironmentSelection,
+    active_component_ids: &HashSet<String>,
+    platform: Platform,
+) -> Result<Vec<String>, AppError> {
     validate_selection(selection)?;
     let optional_ids = manifest
         .components
@@ -1007,8 +1023,7 @@ pub fn component_ids(
                 .into_iter()
                 .find(|definition| definition.id == environment)
             {
-                if let Some(reason) = unavailable_reason(manifest, &definition, Platform::current())
-                {
+                if let Some(reason) = unavailable_reason(manifest, &definition, platform) {
                     // A selection the user can change is reported as such,
                     // never as a download failure.
                     return Err(AppError::InvalidInput(format!(

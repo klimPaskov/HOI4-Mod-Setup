@@ -1407,8 +1407,12 @@ pub fn installation_components(
     let active_component_ids = expand_components(manifest, &requested)?
         .into_iter()
         .collect::<HashSet<_>>();
-    for id in crate::coding_environment::component_ids(manifest, selection, &active_component_ids)?
-    {
+    for id in crate::coding_environment::component_ids_for_platform(
+        manifest,
+        selection,
+        &active_component_ids,
+        platform,
+    )? {
         if !requested.iter().any(|selected| selected == &id) {
             requested.push(id);
         }

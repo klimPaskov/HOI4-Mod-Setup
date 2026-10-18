@@ -14,7 +14,7 @@ import { folderFromDrop, folderFromInput, readFileBytes } from "./folder";
 import type { FolderSelection } from "./folder";
 import { fetchRaw, MANIFEST_PATH, networkLog, onNetworkLog, resolveSource, SOURCE_NAME, SOURCE_OWNER } from "./github";
 import type { NetworkRecord, ResolvedSource, SourceMode } from "./github";
-import type { Analysis, AnalysisRequest, AssistantProvenance, Decision, ExportEntry, Comparison, Platform, ScanSummary, SourcePreview } from "./protocol";
+import type { Analysis, AnalysisRequest, ApprovedEvidence, AssistantProvenance, Decision, ExportEntry, Comparison, Platform, ScanSummary, SourcePreview } from "./protocol";
 
 type Step = "start" | "describe" | "components" | "review" | "done";
 const STEPS: Array<{ id: Step; label: string }> = [
@@ -24,8 +24,14 @@ const STEPS: Array<{ id: Step; label: string }> = [
   { id: "review", label: "Review" },
   { id: "done", label: "Download" },
 ];
-/** Needs the desktop app's local Meshy launcher. */
-const DESKTOP_ONLY_COMPONENTS = new Set(["workflow.3d"]);
+/** Need a desktop installer or launcher: the 3D workflow runs Meshy through
+ * the app, and Live Tools installs its MCP server. */
+const DESKTOP_ONLY_COMPONENTS = new Set(["workflow.3d", "workflow.live_tools"]);
+/** Chosen through another choice on the desktop (portrait provider, image
+ * provider), which the web edition does not offer. */
+const HIDDEN_COMPONENT_PREFIXES = ["workflow.portraits", "imagegen."];
+/** Shown although another optional component depends on it. */
+const ALWAYS_LISTED = new Set(["workflow.super_events"]);
 const READ_BATCH_BYTES = 32 * 1024 * 1024;
 const PROJECT_ID = /^[a-z][a-z0-9_]{1,63}$/;
 const EXISTING_PROJECT_BRIEF = "Review this existing HOI4 mod using only the approved scan evidence. Keep detected facts unchanged, infer conventions only from that evidence, and do not invent the mod's theme or content.";
@@ -111,6 +117,13 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [provenance, setProvenance] = useState<AssistantProvenance | null>(null);
   const [suggested, setSuggested] = useState<Set<keyof Identity>>(new Set());
+  const [evidencePreview, setEvidencePreview] = useState<ApprovedEvidence[] | null>(null);
+  // Suggestions arrive after a long request; apply them against what the user
+  // has typed by then, not when the request started.
+  const identityRef = useRef(identity);
+  identityRef.current = identity;
+  const editedRef = useRef(edited);
+  editedRef.current = edited;
   const [profileId, setProfileId] = useState<string>("");
   const [optional, setOptional] = useState<Set<string>>(new Set());
   const [primary, setPrimary] = useState("");
@@ -288,6 +301,7 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     if (!preview) await loadSource();
     const registry = await client().call("registry", {});
     const evidence = kind === "existing" ? await client().call("evidence", {}) : [];
+    if (kind === "existing") setEvidencePreview(evidence);
     const name = identity.displayName.trim();
     const request: AnalysisRequest = {
       mode: kind === "existing" ? "existing_project_semantics" : "new_project_identity",
@@ -315,17 +329,22 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
       description: text("project_description"),
       descriptorTags: Array.isArray(tags) ? tags.filter((tag): tag is string => typeof tag === "string" && (HOI4_DESCRIPTOR_TAGS as readonly string[]).includes(tag)) : undefined,
     };
-    // A value the user typed always wins over a suggestion.
+    // A value the user typed, or one the project files decide, always wins
+    // over a suggestion.
+    const detectedKeys = new Set<keyof Identity>(kind === "existing" ? ([
+      ["displayName", "display_name"],
+      ["primaryNamespace", "primary_namespace"],
+      ["scriptPrefix", "script_prefix"],
+      ["descriptorTags", "descriptor_tags"],
+    ] as Array<[keyof Identity, string]>).filter(([, key]) => scan?.detected.some((item) => item.key === key)).map(([field]) => field) : []);
     const applied = new Set<keyof Identity>();
-    setIdentity((current) => {
-      const next = { ...current };
-      for (const [key, value] of Object.entries(values) as Array<[keyof Identity, string | string[] | undefined]>) {
-        if (value === undefined || edited.has(key)) continue;
-        (next as Record<keyof Identity, string | string[]>)[key] = value;
-        applied.add(key);
-      }
-      return next;
-    });
+    const next = { ...identityRef.current };
+    for (const [key, value] of Object.entries(values) as Array<[keyof Identity, string | string[] | undefined]>) {
+      if (value === undefined || editedRef.current.has(key) || detectedKeys.has(key)) continue;
+      (next as Record<keyof Identity, string | string[]>)[key] = value;
+      applied.add(key);
+    }
+    setIdentity(next);
     setSuggested(applied);
     setEdited((current) => new Set([...current, ...applied]));
     setAnalysis(result);
@@ -347,8 +366,29 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   });
 
   const profile = preview?.profiles.find((item) => item.id === profileId);
-  const optionalComponents = useMemo(() => (preview?.components ?? []).filter((component) =>
-    component.optional && !component.coding_environment && !(profile?.components.includes(component.id))), [preview, profile]);
+  const optionalComponents = useMemo(() => {
+    const components = preview?.components ?? [];
+    const optionalIds = new Set(components.filter((component) => component.optional).map((component) => component.id));
+    // Optional components that exist only to support another choice are
+    // installed through that choice, as on the desktop.
+    const dependencyOnly = new Set(components.filter((component) => component.optional).flatMap((component) => component.dependencies).filter((id) => optionalIds.has(id)));
+    return components.filter((component) =>
+      component.optional
+      && !component.coding_environment
+      && !(profile?.components.includes(component.id))
+      && (ALWAYS_LISTED.has(component.id) || !dependencyOnly.has(component.id))
+      && !HIDDEN_COMPONENT_PREFIXES.some((prefix) => component.id.startsWith(prefix)));
+  }, [preview, profile]);
+
+  const conventionSuggestions = useMemo(() => {
+    if (!analysis) return [] as Array<[string, string]>;
+    const labels: Array<[string, string]> = [["agents_profile", "Project instructions"], ["localisation_convention", "Localisation"], ["documentation_convention", "Documentation"], ["folder_profile", "Starter folders"]];
+    return labels.flatMap(([key, label]) => {
+      const value = proposal(analysis, key);
+      const text = Array.isArray(value) ? value.join(", ") : typeof value === "string" ? value : "";
+      return text ? [[label, text] as [string, string]] : [];
+    });
+  }, [analysis]);
 
   const recommended = useMemo(() => new Set((analysis?.component_recommendations ?? []).filter((item) => item.recommendation !== "not_recommended").map((item) => item.component_id)), [analysis]);
 
@@ -526,7 +566,7 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                     </div>
                   </fieldset>
                   <details className="web-assistant">
-                    <summary className="details">Suggest values with an AI provider (optional)</summary>
+                    <summary className="details" onClick={() => { if (kind === "existing" && evidencePreview === null) void client().call("evidence", {}).then(setEvidencePreview, () => setEvidencePreview([])); }}>Suggest values with an AI provider (optional)</summary>
                     <div className="web-assistant-body">
                       <p className="muted">Your API key stays in this tab's memory and is sent only to {new URL(assistantProvider.endpoint).host}. It is forgotten when you close or reload the page. {kind === "existing" ? "The provider sees the scan summary, not your files." : "The provider sees the name and description above."}</p>
                       <div className="form-grid">
@@ -553,6 +593,14 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                           </label>
                         )}
                       </div>
+                      {kind === "existing" && evidencePreview && (
+                        <details className="web-evidence">
+                          <summary className="details">What the provider receives ({evidencePreview.length} scan findings)</summary>
+                          <ul className="web-file-list">
+                            {evidencePreview.map((item) => <li key={item.reference}><span className="mono">{item.reference}</span> <span className="muted">{item.excerpt.length > 160 ? `${item.excerpt.slice(0, 160)}…` : item.excerpt}</span></li>)}
+                          </ul>
+                        </details>
+                      )}
                       <div className="button-row web-assistant-actions">
                         <a className="external-link" href={assistantProvider.keyUrl} target="_blank" rel="noreferrer noopener">Get a key</a>
                         <button type="button" className="button" disabled={busy !== null || !apiKey.trim() || (kind === "new" && !identity.displayName.trim() && !identity.description.trim())} onClick={suggest}>Suggest values</button>
@@ -561,6 +609,11 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                         <div className="web-assistant-result" role="status">
                           <p>{analysis.project_summary}</p>
                           {analysis.warnings.map((warning) => <p key={warning} className="status-review">{warning}</p>)}
+                          {conventionSuggestions.length > 0 && (
+                            <dl className="web-conventions">
+                              {conventionSuggestions.map(([label, value]) => <div key={label}><dt className="field-label">{label}</dt><dd>{value}</dd></div>)}
+                            </dl>
+                          )}
                           <button type="button" className="text-button" onClick={() => { setAnalysis(null); setProvenance(null); setSuggested(new Set()); }}>Discard suggestions</button>
                         </div>
                       )}

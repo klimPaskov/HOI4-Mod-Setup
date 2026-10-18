@@ -49,6 +49,8 @@ function fakeCore(overrides: Partial<{ [Op in Operation]: (args: CoreOperations[
         proposals: [
           { key: "display_name", value: "Iron Dawn", confidence: 0.9, reason: "", evidence_refs: [] },
           { key: "project_id", value: "suggested_id", confidence: 0.9, reason: "", evidence_refs: [] },
+          { key: "primary_namespace", value: "suggested_ns", confidence: 0.9, reason: "", evidence_refs: [] },
+          { key: "localisation_convention", value: "English and German YAML with BOM.", confidence: 0.9, reason: "", evidence_refs: [] },
           { key: "project_description", value: "Balkan nations rise in 1936.", confidence: 0.8, reason: "", evidence_refs: [] },
           { key: "descriptor_tags", value: ["Events", "Not a tag"], confidence: 0.8, reason: "", evidence_refs: [] },
         ],
@@ -146,7 +148,7 @@ describe("web edition", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(await screen.findByRole("button", { name: "Download and review" }));
-    expect(await screen.findByText("README.md")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Compare" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Compare" }));
     expect(await screen.findByText("my text")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Use incoming" }));
@@ -196,6 +198,29 @@ describe("web edition", () => {
     const exported = calls.find((call) => call.op === "export")!.args as CoreOperations["export"]["args"];
     expect(exported.request.assistant).toMatchObject({ provider: "claude", endpoint: "https://api.anthropic.com/v1/messages" });
     expect(JSON.stringify(exported)).not.toContain("sk-ant-test");
+  });
+
+  it("keeps values the folder decides when the assistant suggests others", async () => {
+    stubGitHub();
+    const github = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (url, init) => String(url).startsWith("https://api.anthropic.com/") ? new Response("{}", { status: 200 }) : github(url, init));
+    const { client, calls } = fakeCore({ evidence: () => [{ reference: "profile.detected", path: "@scan/profile/detected", excerpt: "[]", excerpt_sha256: "0".repeat(64), confidence: 1 }] });
+    const { container } = render(<WebApp client={client} />);
+    const file = new File(["name=\"Demo Mod\""], "descriptor.mod");
+    Object.defineProperty(file, "webkitRelativePath", { value: "demo_mod/descriptor.mod" });
+    fireEvent.change(container.querySelector<HTMLInputElement>("input[type=file]")!, { target: { files: [file] } });
+    fireEvent.click((await screen.findAllByRole("button", { name: "Continue" }))[0]);
+
+    fireEvent.click(screen.getByText(/Suggest values with an AI provider/));
+    expect(await screen.findByText(/What the provider receives \(1 scan findings\)/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-ant-test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Suggest values" }));
+    expect(await screen.findByText("A grand strategy overhaul of the Balkans.")).toBeInTheDocument();
+    expect(screen.getByLabelText(/Event namespace/)).toHaveValue("demo");
+    expect(screen.getByText("English and German YAML with BOM.")).toBeInTheDocument();
+    const turn = calls.find((call) => call.op === "assistantTurn")!.args as CoreOperations["assistantTurn"]["args"];
+    expect(turn.request.mode).toBe("existing_project_semantics");
+    expect(turn.request.evidence.map((item) => item.reference)).toEqual(["profile.detected"]);
   });
 
   it("shows a core error and keeps the user on the same step", async () => {

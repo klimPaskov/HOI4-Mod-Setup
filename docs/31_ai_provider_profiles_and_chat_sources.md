@@ -95,10 +95,12 @@ provider response cannot write files, approve a transaction, resolve a
 conflict, or pass readiness by itself.
 
 A completed response that is private/account-shaped, truncated, refused,
-unreadable, interrupted, transport-failed, unauthenticated, or usage-limited
-is discarded without a corrective retry and is mapped to a bounded user-facing
-message. One corrective turn is reserved for a completed response that fails
-deterministic serialization, identifier/value, or path validation. Provider
+has an unreadable response envelope, is interrupted, transport-failed,
+unauthenticated, or usage-limited is discarded without a corrective retry and
+is mapped to a bounded user-facing message. One corrective turn is reserved
+for a completed response that fails deterministic serialization,
+identifier/value, or path validation, including a readable envelope whose
+text is not valid JSON or carries no analysis object. Provider
 output and failure text never enters project state, plans, locks, or logs.
 
 Provider-neutral text filtering rejects setup-provider attribution and internal
