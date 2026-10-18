@@ -9,7 +9,7 @@ Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The us
 
 ## Product rule
 
-Create, Import, Update, and Repair planning require an authenticated, selected AI capability, except on the clearly labelled deterministic-only route (provider `none`, accepted decision 1 in `docs/38_web_edition_and_improvement_plan.md`). That route runs no provider, so `require_ai_session` passes, and `ai_model_from_state`, `ai_reasoning_effort_from_state`, and `ai_endpoint_from_state` return the fixed provenance whatever the renderer sends. `setup_analysis_from_state` returns no record and rejects one that is present. `none` is never a provider profile; `ai::profile("none")` stays `None` and `validate_reasoning_effort` still rejects `none` for provider routes. Codex uses the official local `codex app-server` interface and ChatGPT-managed sign-in. Known hosted providers use checked-in, officially verified model/address defaults plus a provider-keyed OS-vault credential; model and address are editable under Advanced. Local and custom routes require explicit user configuration. Do not silently switch providers or invent a provider route or OAuth flow.
+Create, Import, Update, and Repair planning require an authenticated, selected AI capability. There is no manual or provider-less setup path on desktop or the web (owner decision, 2026-10-18, recorded in `docs/38_web_edition_and_improvement_plan.md`); `none` is not a provider and `ai_provider_from_state` rejects it. Codex uses the official local `codex app-server` interface and ChatGPT-managed sign-in. Known hosted providers use checked-in, officially verified model/address defaults plus a provider-keyed OS-vault credential; model and address are editable under Advanced. Local and custom routes require explicit user configuration. Do not silently switch providers or invent a provider route or OAuth flow.
 
 Dispatch account reads, login start/wait, logout, descriptor preview capability
 checks, and analysis through the desktop blocking-work boundary and bounded
@@ -501,9 +501,6 @@ Cover:
 - no token or account data in logs, state, lock, crash output, or project files
 - deterministic rejection of invalid Codex identifiers
 - recovery access while signed out
-- the deterministic route: fixed provenance regardless of renderer values, no
-  session check, rejection of an attached analysis, and an assistant route
-  still requiring its confirmed analysis
 - provider-profile/model optimization binding and non-Codex credential isolation, including cross-provider reference rejection
 - the shared 14-entry Claude catalog, Haiku 5.5/medium default, legacy
   one-effort Haiku 4.5, bounded exact custom Claude IDs, and no effort assumption

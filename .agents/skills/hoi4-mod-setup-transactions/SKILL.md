@@ -523,10 +523,6 @@ Opaque OS-vault credential references are carried separately from secret values.
 - Update preserves the lock's latest/pinned source mode and filters generated artifact IDs out of manifest component expansion. Descriptor, external launcher, and thumbnail artifacts are planned independently for both new and existing projects.
 - Repair and reinstall do not reconstruct a merged file from a raw source blob without a verified merge base; missing or changed merged files become reverse-merge review entries.
 - Update planning requires a fresh confirmed selected-provider semantic reanalysis record from the current core session. The UI must first complete a bounded read-only scan, show the approved evidence manifest, run the existing-project common-schema turn, and pass only the core-confirmed record into `build_maintenance_plan`. The record is bound to the canonical project root, latest scan ID, evidence-manifest SHA-256, provider, model, reasoning effort, optimization profile, exact source revision, and exact source-manifest SHA-256. Maintenance reanalysis derives its source request from the installed lock. A legacy record may inherit those two source fields only from valid provenance already stored in the same lock; missing or malformed provenance remains blocked. Repair, reinstall, and managed removal may continue from the validated locked analysis according to their authenticated/recovery rules.
-- A deterministic lock (`ai_provider: none`) has no provider session to check
-  and no analysis. `require_deterministic_maintenance_scan` rejects any analysis
-  override, and Update additionally requires a current approved read-only scan
-  of the root. The renderer rescans inline before planning.
 
 ## Lock and rollback evidence
 
@@ -538,17 +534,6 @@ dropped folder, applies the user's keep or replace decisions, and writes the
 lock (components marked `validation: not_run`) inside the ZIP. Every web lock
 names the hosted assistant that filled in the details, with its `ai_endpoint`;
 the web core refuses an export without that provenance.
-
-The desktop deterministic-only route uses the same fixed provenance
-(`crate::ai::DETERMINISTIC_*`: model `deterministic`, effort `none`, profile
-`Deterministic setup`, no endpoint). `validate_plan` and
-`migrations::migrate_lock` accept `none` only with that provenance and no
-analysis record, and an assistant plan still requires its confirmed analysis.
-`build_lock` never lets a deterministic plan inherit a predecessor's analysis.
-Readiness replaces the sign-in and analysis checks with the non-blocking
-`analysis.deterministic` check and records `analysis_status: not_run`. The
-project-state and readiness-report schemas tie `none` to "analysis not required,
-not run".
 
 Read journals through `migrations::migrate_journal`. The journal records action, component, location scope, source path/size, reviewed resolution, source/result/backup hashes, staged and observed live hashes, expected and observed existence, and per-operation intent. Rollback must refuse ambiguous later user work, restore verified backups and lock state, and persist both the parent and child rollback records after the state transition. `rollback_source_path` identifies the parent backup that supplies restored bytes; the child `backup_path` identifies the inverse backup; completed child journals also record the lock state expected before an inverse action.
 

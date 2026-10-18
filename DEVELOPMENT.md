@@ -65,11 +65,6 @@ Read `AGENTS.md` before coding. Then read the repo-local skill that owns the cur
   own exclusions and budgets. Test the profile on its own through
   `project_profile::scan`, which runs the same walk with the setup inventory
   off.
-- The deterministic-only route is AI provider `"none"` (`crate::ai::DETERMINISTIC_*`):
-  no setup assistant runs. Plans, locks, project state, and readiness record
-  model `deterministic`, effort `none`, profile `Deterministic setup`, no
-  endpoint, and no analysis. Imported mods are prefilled from the scan's
-  `profile.detected` finding (`src/identity.ts`).
 
 The exact folder layout should be recorded in AGENTS and the owning skills after the source scaffold is accepted.
 

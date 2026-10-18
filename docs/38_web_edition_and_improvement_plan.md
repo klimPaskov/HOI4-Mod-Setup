@@ -198,10 +198,8 @@ transaction contract and needs an explicit decision.
   the root, `docs/`, and client folders, plus a second root handle.) The
   wizard skips the MCP and credentials review unless a Meshy credential or a
   Live Tools registration needs review, with Back following the same rule.
-  The desktop offers **No setup assistant (detected values only)**: plans and
-  locks record provider `none`, model `deterministic`, and effort `none`,
-  imported mods are prefilled from detected values, and readiness shows a
-  non-blocking deterministic-setup check.
+  A desktop deterministic-only path was built and then removed by the owner's
+  amendment to decision 1: every setup uses an AI provider.
 
 ## Roadmap
 
@@ -229,9 +227,10 @@ Each phase ships on its own and keeps desktop parity.
 
 1. Should the web edition (and desktop) offer a deterministic-only path when no
    setup assistant is available? Recommended: yes, clearly labelled.
-   *Amended by the owner on 2026-10-18 for the web edition:* setup there is
-   never manual. Every web setup uses the chosen assistant, and an export
-   without assistant provenance is refused.
+   *Amended by the owner on 2026-10-18:* setup is never manual, on desktop or
+   on the web. Every setup uses the chosen AI provider, which fills in the
+   details for the user to review; there is no deterministic-only path, and a
+   web export without assistant provenance is refused.
 2. Default export for an existing mod: overlay ZIP (recommended) or full copy.
 3. API keys in the browser: memory-only with a visible warning (recommended),
    or no assistant on the web.

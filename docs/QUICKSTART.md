@@ -8,7 +8,7 @@ Follow these steps to prepare a new or existing mod for AI-assisted development.
 
 2. **Choose your starting point.** On **Start a mod project**, choose **Create new mod** or **Import existing mod**. [Screenshot](screenshots/01-welcome.jpg)
 
-3. **Choose a setup assistant.** Pick any provider offered on the **Provider** screen and connect it using the sign-in, key, or local address shown there. This assistant helps prepare the mod; it does not choose the coding client you use later. With no provider, choose **No setup assistant (detected values only)**: values the project files decide are filled in and you review the rest. [Screenshot](screenshots/10-provider-selection.png)
+3. **Choose a setup assistant.** Pick any provider offered on the **Provider** screen and connect it using the sign-in, key, or local address shown there. This assistant helps prepare the mod; it does not choose the coding client you use later. [Screenshot](screenshots/10-provider-selection.png)
 
 4. **Describe or scan the mod.** For a new mod, fill in **Mod name** and **Description** on **Describe the mod**, then choose **Next**. For an import, use **Browse** beside **Project folder**, let the read-only scan finish, and review **Confirm scan findings** with your selected assistant. [New mod](screenshots/02-description.png) · [Existing mod](screenshots/11-existing-project.png)
 

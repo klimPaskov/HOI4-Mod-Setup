@@ -1,8 +1,8 @@
 //! Values the files decide, so the setup assistant does not have to guess
 //! them: descriptor tags and name, the dominant event namespace, the
 //! localisation convention, the existing content folders, and the
-//! documentation style. They are shown as Detected; an assistant may only
-//! fill the gaps, and a deterministic-only setup uses them directly.
+//! documentation style. They are shown as Detected; the assistant may only
+//! fill the gaps.
 
 use crate::descriptors::HOI4_DESCRIPTOR_TAGS;
 use crate::models::ScanFinding;
@@ -202,8 +202,8 @@ pub fn detect(findings: &[ScanFinding]) -> Vec<DetectedValue> {
     detected
 }
 
-/// A lowercase identifier derived from a display name, for a new mod set up
-/// without an assistant: ASCII letters and digits joined by underscores.
+/// A lowercase identifier derived from a display name: ASCII letters and
+/// digits joined by underscores.
 pub fn identifier_from_name(name: &str) -> String {
     let mut identifier = String::new();
     for character in name.chars() {

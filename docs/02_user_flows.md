@@ -8,7 +8,7 @@
 4. Otherwise show Welcome.
 5. Show the setup assistant, model catalog, and model-supported reasoning-effort selection before semantic planning, with concise copy that this does not choose the later development client. Keep verified hosted defaults selectable when a live refresh fails; keep Local and Custom model names editable.
 6. For Codex, start the local Codex App Server and read account state; for a known hosted provider, fill its verified defaults and validate the vault reference; for local or custom providers, validate the entered address.
-7. Require the selected provider to be configured before Create, Import, Update, or Repair planning. The clearly labelled **No setup assistant (detected values only)** choice needs no provider: values the project files decide fill what they can, the user reviews and completes the rest, and plans and locks record provider `none`, model `deterministic`, and effort `none`.
+7. Require the selected provider to be configured before Create, Import, Update, or Repair planning. There is no setup without a provider.
 8. Display current remote source status without downloading selected components yet.
 9. Choose new or existing project.
 
@@ -213,12 +213,6 @@ observations and bounded samples, but it does not itself propose a project-wide
 namespace, naming convention, localisation policy, or folder profile, and it
 does not justify reading unrelated mod content.
 
-Without a setup assistant, the review shows **Project details** instead: the
-detected values (descriptor name and tags, dominant namespace and prefix,
-localisation and documentation conventions, content folders) are filled in and
-marked **Detected**, every field stays editable, and nothing is sent to a
-provider. The plan is still bound to the latest approved scan of the root.
-
 Every deterministic finding shows value, confidence, evidence path, line or file set, impact, and recommendation. Required setup-assistant suggestions show the approved input manifest, selected provider/model/profile as analysis provenance, linked deterministic evidence, and separate confidence. The user can accept, edit, reject, or defer non-required proposals. Every field required for planning must be confirmed. The resulting project guidance does not identify that setup assistant as the future development client.
 
 ### Existing project instructions
@@ -290,10 +284,6 @@ Update, Repair, import, and rollback retain the same non-secret state.
 11. Approve dry run.
 12. Execute a new transaction.
 13. Refresh lock and rollback record.
-
-A project set up without an assistant (lock provider `none`) skips steps 1, 6,
-and 7: Check for updates runs a fresh read-only scan of the root and plans with
-no analysis record. It never inherits an earlier provider analysis.
 
 Update can add `workflow.super_events` when the target verified manifest
 declares it, even when the existing lock records `not_selected`. The normal

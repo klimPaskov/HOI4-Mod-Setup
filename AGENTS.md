@@ -79,10 +79,9 @@ edition served from this repository's GitHub Pages site at `/app/` shares the
 React interface and a portable Rust core compiled to WebAssembly. It imports a
 dropped folder read-only and exports a ZIP (an overlay of new and changed files
 by default for existing mods, a full copy on request). API keys there stay in
-memory with a visible warning. Every web setup uses the setup assistant chosen
-on its first step; the assistant fills in the details and the user reviews them.
-On desktop, a clearly labelled deterministic-only setup path is allowed when no
-setup assistant is available. Account sign-in routes, MCP
+memory with a visible warning. Every setup, on desktop and on the web, uses the
+setup assistant chosen on its first step; the assistant fills in the details
+and the user reviews them. There is no manual setup path. Account sign-in routes, MCP
 bootstrap and health checks, Git, and in-place transactions stay desktop-only.
 Portable logic lives in the core crate and reaches files, HTTP, time, and
 randomness only through adapter traits.
@@ -206,7 +205,7 @@ MCP tooling are selected or enabled independently of the setup assistant.
 
 Every semantic turn uses approved inputs and the current `codex-analysis` output schema. The runtime validator is authoritative even when a provider advertises native structured output. The core replaces the model-supplied analysis ID with its own UUID, accepts empty evidence references for genuinely inferred proposals, rejects unknown references, and keeps the scan/hash/session approval binding. Documents the user picks while describing the mod reach the provider only as redacted `@context/` evidence bound by the session context store; images never reach a provider (see `docs/37_setup_context_attachments.md`). Codex turns use a dedicated App Server thread and restricted read-only sandbox. Provider adapters never write files or approve transactions. The selected setup profile shapes semantic proposals for names, IDs, namespaces, descriptions, tags, folder profiles, and component recommendations. It may help adapt project-specific guidance, but it must not insert the setup provider, model, reasoning effort, or provider-specific development convention into the generated project. Deterministic Rust validates and renders the final provider-neutral bytes after user confirmation.
 
-No AI provider can write project files during analysis, approve a transaction, resolve conflicts automatically, or pass readiness checks. Missing authentication/configuration or usage availability blocks new planning on an assistant route. The clearly labelled **No setup assistant** route (provider `none`, model `deterministic`, effort `none`) plans from the values the project files decide plus the user's review; it records no analysis, still binds an imported project to its latest approved scan, and never satisfies an assistant route's analysis requirement. Recovery, rollback, backup inspection, and managed removal remain locally available while signed out or disconnected.
+No AI provider can write project files during analysis, approve a transaction, resolve conflicts automatically, or pass readiness checks. Missing authentication/configuration or usage availability blocks new planning. Recovery, rollback, backup inspection, and managed removal remain locally available while signed out or disconnected.
 
 Use `hoi4-mod-setup-codex-integration` for changes to this boundary.
 

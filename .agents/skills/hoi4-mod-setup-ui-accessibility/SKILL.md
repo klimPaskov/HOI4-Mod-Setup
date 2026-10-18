@@ -120,13 +120,6 @@ Conflict review is the exception. It may show a three-way comparison and more co
   region. Imports skip Describe in the step rail, and the Details step marks
   values `Detected` or `Suggested by <provider>`. Recommended components are
   preselected once per analysis.
-- The desktop setup-assistant list ends with **No setup assistant (detected values
-  only)**. Choosing it shows a short note that nothing is sent to an AI
-  provider and hides model, effort, key, and sign-in controls. On Findings it
-  replaces the provider input preview and Include/Exclude toggles with an
-  editable **Project details** panel whose detected fields carry a
-  `· Detected` label until the user changes them; Update shows the rescan note
-  instead of the reanalysis action.
 - Destructive actions require clear scope and confirmation.
 - Disabled actions explain the blocking reason in a tooltip or adjacent concise status.
 - The Description primary action uses a visible `Preparing details…` pending
