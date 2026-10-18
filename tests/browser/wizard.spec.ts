@@ -136,13 +136,22 @@ test("pre-apply recovery presents details and safe choices", async ({ page }) =>
 });
 
 
-test("live testing follows workflows and disabling it advances to integrations", async ({ page }) => {
+test("live testing follows workflows and disabling it advances past it", async ({ page }) => {
   await page.goto("/?screenshot=workflows");
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.locator("#screen-title")).toHaveText("Live testing");
   await page.getByRole("radio", { name: /^None/ }).check();
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.locator("#screen-title")).not.toHaveText("Live testing");
+});
+
+test("the integrations review is skipped in both directions when nothing needs input", async ({ page }) => {
+  await page.goto("/?screenshot=git");
+  await expect(page.locator("#screen-title")).toHaveText("Choose Git setup");
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page.locator("#screen-title")).toHaveText("Optional workflows");
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(page.locator("#screen-title")).toHaveText("Choose Git setup");
 });
 
 for (const platform of ["windows", "macos", "linux"] as const) {
