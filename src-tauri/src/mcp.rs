@@ -7,7 +7,7 @@
 //! variables.
 
 use crate::codex::{JsonlTransport, ProcessJsonlTransport};
-use crate::models::{ExternalAction, Platform, RemoteManifest};
+use crate::models::{ExternalAction, Platform};
 use crate::process::find_path_executable;
 use crate::security::{is_link_metadata, path_has_link_component, safe_join, sha256_file};
 use crate::AppError;
@@ -976,6 +976,7 @@ fn is_loaded_by_another_process(_path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::RemoteManifest;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
