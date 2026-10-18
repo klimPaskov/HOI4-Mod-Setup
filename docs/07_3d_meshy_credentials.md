@@ -89,6 +89,14 @@ binding.
    verifying the exact `OpenJS Foundation` certificate simple name through the
    native Windows verifier, and rechecks both private identities immediately
    before spawn.
+   The child keeps the project working directory, where Meshy writes
+   `meshy_output/`. Meshy 0.6.2 also loads that directory's `.env` without
+   overriding existing variables, so the launcher pins `TRANSPORT=stdio`,
+   `MESHY_API_HOST=https://api.meshy.ai`, `NO_PROXY=*`, and
+   `NODE_TLS_REJECT_UNAUTHORIZED=1`. A project file therefore cannot start
+   the HTTP listener, redirect or proxy authenticated requests, or disable TLS
+   verification. Each runtime bump must re-inventory the variables it reads at
+   runtime.
 7. Redact diagnostics and crash context.
 8. Drop the value after process creation and result handling.
 

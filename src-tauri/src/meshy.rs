@@ -17,6 +17,20 @@ const RUNTIME_TREE_SHA256: &str =
 const RUNTIME_FILE_COUNT: u64 = 3952;
 const RUNTIME_ENTRY: &str = "@meshy-ai/meshy-mcp-server/dist/index.js";
 const MAX_NODE_BYTES: u64 = 128 * 1024 * 1024;
+/// Runtime-read variables pinned for the reviewed 0.6.2 runtime. It runs in
+/// the project folder (downloads default to `<cwd>/meshy_output`) and calls
+/// `dotenv.config()`, which adds a project `.env` to the environment but never
+/// overrides a variable that already exists. Without these pins, project
+/// content could switch the key-bearing server to its HTTP listener, route
+/// authenticated requests through a proxy (`proxy-from-env` honors
+/// `NO_PROXY=*` before any proxy variable), or disable TLS verification.
+/// `MESHY_API_HOST` is read before `dotenv` runs and is pinned defensively.
+pub(crate) const PINNED_RUNTIME_ENVIRONMENT: [(&str, &str); 4] = [
+    ("TRANSPORT", "stdio"),
+    ("MESHY_API_HOST", "https://api.meshy.ai"),
+    ("NO_PROXY", "*"),
+    ("NODE_TLS_REJECT_UNAUTHORIZED", "1"),
+];
 
 fn cli_requested(args: &[String]) -> bool {
     args.len() == 2 && args[1] == CLI_MARKER
@@ -124,6 +138,7 @@ fn launch() -> Result<i32, AppError> {
         &[entry.display().to_string()],
         "MESHY_API_KEY",
         &key,
+        &PINNED_RUNTIME_ENVIRONMENT,
     );
     drop(key);
     result
