@@ -1164,6 +1164,7 @@ dependencies = [
  "chrono",
  "flate2",
  "hex",
+ "hoi4-setup-core",
  "jsonschema",
  "keyring",
  "libc",
@@ -1191,6 +1192,22 @@ version = "0.0.0"
 dependencies = [
  "hoi4-mod-setup",
  "libfuzzer-sys",
+]
+
+[[package]]
+name = "hoi4-setup-core"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "hex",
+ "jsonschema",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.19",
+ "toml 0.8.23",
+ "unicode-normalization",
 ]
 
 [[package]]

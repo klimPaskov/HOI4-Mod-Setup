@@ -144,6 +144,23 @@ jobs:
         if: steps.detect.outputs.present == 'true'
         run: node scripts/run_rust_tests.mjs
 
+  core-wasm:
+    name: Portable core (wasm32)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Configure Rust
+        shell: bash
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+          rustup component add clippy --toolchain 1.88.0
+          rustup target add wasm32-unknown-unknown --toolchain 1.88.0
+      - name: Build the core for the browser
+        run: cargo build -p hoi4-setup-core --target wasm32-unknown-unknown --release
+      - name: Lint the core for the browser
+        run: cargo clippy -p hoi4-setup-core --target wasm32-unknown-unknown -- -D warnings
+
   fuzz:
     name: Fuzz target compilation
     runs-on: ubuntu-latest

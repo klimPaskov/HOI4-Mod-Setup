@@ -154,6 +154,18 @@ transaction contract and needs an explicit decision.
 - Property tests and fuzzing for descriptor, launcher-path, and merge parsing.
 - Performance budgets in CI for small, medium, and Kaiserreich-sized projects.
 
+## Progress
+
+- Phase 1 shipped on 2026-10-18: compile-once JSON Schema validators, a
+  per-revision manifest cache, manifest reuse on the Components screen, and
+  Copy diagnostics.
+- Phase 2 started: `crates/hoi4-setup-core` holds `AppError`, the schema
+  cache, the native MCP formats, the pure path, hashing, and redaction rules,
+  the adapter traits (`ProjectFs`, `SourceClient`, `Clock`, `Entropy`), and
+  `MemoryFs`. CI builds and lints it for `wasm32-unknown-unknown`. Models,
+  descriptors, merge, coding clients, live testing, and the scanner move next,
+  behind the same adapters.
+
 ## Roadmap
 
 Each phase ships on its own and keeps desktop parity.

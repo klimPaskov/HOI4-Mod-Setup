@@ -339,7 +339,7 @@ a newer bootstrap.
 - Adding a client with an existing MCP format needs a source declaration and a
   registry row (path, format, layout, markers, scan folders, documentation
   URL). A manual or absent route needs only the source declaration. A new MCP
-  format needs app code in `src-tauri/src/native_mcp.rs` and therefore an app
+  format needs app code in `crates/hoi4-setup-core/src/native_mcp.rs` and therefore an app
   release. Bumping the manifest major makes older releases refuse the
   canonical manifest, so merge a format bump in the source only together with
   the app release that reads it.

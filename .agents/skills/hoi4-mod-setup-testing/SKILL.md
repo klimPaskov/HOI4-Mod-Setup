@@ -435,7 +435,11 @@ A release is blocked by:
 - launcher scaffold failure on any supported platform
 
 On Windows, activate the MSVC environment with `vcvars64.bat` before
-all-feature Rust gates when using PowerShell. Compile fuzz targets with
+all-feature Rust gates when using PowerShell. The portable core must also build for the browser: CI runs
+`cargo build -p hoi4-setup-core --target wasm32-unknown-unknown` and clippy for
+that target, so core code never calls the filesystem, processes, the network,
+the OS clock, or OS randomness outside `adapters.rs`; test it with `MemoryFs`
+and fake adapters. Compile fuzz targets with
 `cargo check --manifest-path fuzz/Cargo.toml --bins`; run the bounded targets
 from `fuzz/README.md` when parser behavior changes. Use the repository-owned
 scripts for validation and release gates: `pnpm validate`,
