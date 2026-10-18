@@ -14,7 +14,6 @@ export const DOCUMENTATION_SCENARIOS = [
   "dry-run",
   "ready",
   "maintenance",
-  "chat-sources",
   "recovery",
 ] as const;
 

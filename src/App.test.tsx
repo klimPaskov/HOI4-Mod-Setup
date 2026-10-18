@@ -1,9 +1,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { analysisBrief, ChatSources, CodingEnvironments, Components, Conflict, DryRun, Findings, Git, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, UpdateSourceOptions, Welcome, Workflows, buildAnalysisConfirmationValues, detectedChatSourcesAvailable, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
+import App, { analysisBrief, CodingEnvironments, Components, Conflict, DryRun, Findings, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, UpdateSourceOptions, Welcome, Workflows, buildAnalysisConfirmationValues, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
-import type { AiAccountStatus, AiProviderId, ChatSourcesPreview, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
+import type { AiAccountStatus, AiProviderId, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
 vi.mock("./lib/tauri", async () => {
@@ -67,7 +67,7 @@ function readyState(): WizardState {
 }
 
 function welcomeState(account: WizardState["codexAccount"], codexLogin?: WizardState["codexLogin"]): WizardState {
-  return { mode: "new", aiProvider: "codex", aiModel: "gpt-5.6-luna", aiReasoningEffort: "xhigh", aiEndpoint: "", selectedComponents: ["codex.config", "mcp.hoi4_agent_tools", "workflow.3d"], flattenForChat: false, meshSelected: true, codexAccount: account, codexLogin } as unknown as WizardState;
+  return { mode: "new", aiProvider: "codex", aiModel: "gpt-5.6-luna", aiReasoningEffort: "xhigh", aiEndpoint: "", selectedComponents: ["codex.config", "mcp.hoi4_agent_tools", "workflow.3d"], meshSelected: true, codexAccount: account, codexLogin } as unknown as WizardState;
 }
 
 function selectCodexProvider() {
@@ -324,16 +324,6 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(fixture.identity.projectRoot).toContain("C:\\Users\\Player\\");
   });
 
-  it("provides a sanitized ChatGPT source-package screenshot state", () => {
-    window.history.replaceState({}, "", "/?screenshot=chat-sources");
-    const fixture = documentationFixture(readyState());
-
-    expect(fixture.screen).toBe("chat-sources");
-    expect(fixture.chatSourcesAvailable).toBe(true);
-    expect(fixture.chatSourcesPreview?.destinationDirectory).toBe("C:\\Users\\Player\\Downloads");
-    expect(fixture.chatSourcesPreview?.files.some((file) => file.category === "root_markdown" && !file.selectedByDefault)).toBe(true);
-  });
-
   it("provides a sanitized interrupted-installation screenshot state", () => {
     window.history.replaceState({}, "", "/?screenshot=recovery");
     const fixture = documentationFixture(readyState());
@@ -352,18 +342,7 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(documentationFixture(base)).toBe(base);
   });
 
-  it("detects ChatGPT source packaging inputs without an installation lock", () => {
-    expect(detectedChatSourcesAvailable([
-      { id: "skill.inventory", value: JSON.stringify({ count: 1 }) } as ScanFinding,
-    ])).toBe(true);
-    expect(detectedChatSourcesAvailable([
-      { id: "subagent.inventory", value: JSON.stringify({ count: 1 }) } as ScanFinding,
-    ])).toBe(true);
-    expect(detectedChatSourcesAvailable([])).toBe(false);
-  });
-
-  it("offers source packaging from findings for an unmanaged project", () => {
-    const onPackageChatSources = vi.fn().mockResolvedValue(undefined);
+  it("does not offer ChatGPT source packaging from findings or update", () => {
     const finding = {
       id: "skill.inventory",
       label: "Skills",
@@ -380,11 +359,24 @@ describe("HOI4 Mod Setup wizard", () => {
       setFindings={vi.fn()}
       onConfirmAnalysis={vi.fn().mockResolvedValue(undefined)}
       onManageExisting={vi.fn()}
-      onPackageChatSources={onPackageChatSources}
     />);
 
-    fireEvent.click(screen.getByRole("button", { name: /Package ChatGPT project sources/ }));
-    expect(onPackageChatSources).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: /ChatGPT/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/ChatGPT/)).not.toBeInTheDocument();
+    cleanup();
+
+    render(<Update
+      state={readyState()}
+      update={vi.fn()}
+      findings={[]}
+      setFindings={vi.fn()}
+      onMaintenance={vi.fn()}
+      onStartMaintenance={vi.fn()}
+      onReanalyze={vi.fn().mockResolvedValue(true)}
+    />);
+
+    expect(screen.queryByRole("button", { name: /ChatGPT/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/ChatGPT/)).not.toBeInTheDocument();
   });
 
   it("shows blocking core scan conflicts in the review surface", () => {
@@ -409,7 +401,6 @@ describe("HOI4 Mod Setup wizard", () => {
       setFindings={vi.fn()}
       onConfirmAnalysis={vi.fn().mockResolvedValue(undefined)}
       onManageExisting={vi.fn()}
-      onPackageChatSources={vi.fn().mockResolvedValue(undefined)}
     />);
 
     expect(screen.getByText("Blocking conflict · unsafe git configuration")).toBeInTheDocument();
@@ -912,106 +903,10 @@ describe("HOI4 Mod Setup wizard", () => {
     await waitFor(() => expect(openExternalUrlResult).toHaveBeenCalledWith("https://platform.claude.com/settings/keys"));
   });
 
-  it("keeps the optional ChatGPT client package independent of the setup assistant", async () => {
-    const manifest = {
-      schema_version: "1.0.0",
-      manifest_id: "example",
-      source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
-      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
-      components: [],
-    } as unknown as SourceManifestPreview;
-    vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: manifest });
-
-    function ControlledComponents({ provider }: { provider: "codex" | "claude" }) {
-      const [state, setState] = useState({
-        aiProvider: provider,
-        flattenForChat: false,
-        sourceMode: "latest",
-        pinnedRef: "",
-        selectedComponents: [],
-      } as unknown as WizardState);
-      return <Components state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
-    }
-
-    render(<Git state={{ aiProvider: "codex", gitMode: "skip", gitBranch: "main", gitRemoteName: "origin", gitRemoteUrl: "", initialCommit: false } as unknown as WizardState} update={vi.fn()} />);
-    expect(screen.queryByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i })).not.toBeInTheDocument();
-    cleanup();
-
-    const { unmount } = render(<ControlledComponents provider="codex" />);
-    const checkbox = await screen.findByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i });
-    fireEvent.click(checkbox);
-    expect(checkbox).toBeChecked();
-    expect(screen.queryByLabelText(/Additional project files/i)).not.toBeInTheDocument();
-    unmount();
-
-    render(<ControlledComponents provider="claude" />);
-    await screen.findByText("Components loaded.");
-    expect(screen.getByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i })).toBeInTheDocument();
-    expect(screen.getByText(/independent of the setup assistant/i)).toBeInTheDocument();
-  });
-
-  it("shows flattened ChatGPT sources as a sized file package in Components after planning", async () => {
-    const manifest = {
-      schema_version: "1.0.0",
-      manifest_id: "example",
-      source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
-      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
-      components: [],
-    } as unknown as SourceManifestPreview;
-    vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: manifest });
-
-    render(<Components state={{
-      aiProvider: "codex",
-      flattenForChat: true,
-      sourceMode: "latest",
-      pinnedRef: "",
-      selectedComponents: [],
-      plan: {
-        operations: [],
-        conflicts: [],
-        generated_artifacts: [
-          { destination: "chatgpt_project_sources/AGENTS.md", content: "abc" },
-          { destination: "chatgpt_project_sources/README.md", content: "", bytes: [1, 2, 3, 4] },
-        ],
-      },
-    } as unknown as WizardState} update={vi.fn()} />);
-
-    expect(await screen.findByRole("checkbox", { name: /Prepare a flattened ChatGPT project-sources folder/i })).toBeChecked();
-    expect(screen.getByText("2 files · 7 B")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Files in the ChatGPT folder"));
-    expect(screen.getByText("AGENTS.md")).toBeInTheDocument();
-    expect(screen.getByText("README.md")).toBeInTheDocument();
-  });
-
-  it("previews flattened skill and subagent filenames and source sizes in Components", async () => {
-    const manifest = {
-      schema_version: "1.0.0",
-      manifest_id: "example",
-      source: { repository: "klimPaskov/Agentic-HOI4-Modding", mode: "latest", resolved_revision: "a".repeat(40), manifest_sha256: "b".repeat(64), manifest_origin: "remote" },
-      repository: { provider: "github", owner: "klimPaskov", name: "Agentic-HOI4-Modding", default_branch: "main" },
-      components: [
-        { id: "core.skills", display_name: "Skills", category: "skill", optional: false, platforms: ["all"], source: { kind: "tree", path: ".agents/skills" }, destination: { path: ".agents/skills/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [{ path: ".agents/skills/hoi4-events/SKILL.md", size: 120 }], capabilities: [], validation: [], update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true } },
-        { id: "core.subagents", display_name: "Subagents", category: "subagent", optional: false, platforms: ["all"], source: { kind: "tree", path: ".codex/agents" }, destination: { path: ".codex/agents/", ownership: "managed" }, dependencies: [], required_tools: [], environment: [], expected_files: [{ path: ".codex/agents/hoi4_researcher.toml", size: 80 }], capabilities: [], validation: [], update: { strategy: "replace_if_unmodified", remove_obsolete: true, preserve_local_additions: true } },
-      ],
-    } as unknown as SourceManifestPreview;
-    vi.mocked(previewSourceManifestResult).mockResolvedValue({ value: manifest });
-
-    render(<Components state={{ aiProvider: "codex", flattenForChat: true, sourceMode: "latest", pinnedRef: "", selectedComponents: ["core.skills", "core.subagents"] } as unknown as WizardState} update={vi.fn()} />);
-
-    await screen.findByText("Components loaded.");
-    fireEvent.click(screen.getByText("Files in the ChatGPT folder"));
-    expect(screen.getByText("hoi4-events.md")).toBeInTheDocument();
-    expect(screen.getByText("hoi4_researcher.toml")).toBeInTheDocument();
-    expect(screen.getByText("120 B")).toBeInTheDocument();
-    expect(screen.getByText("80 B")).toBeInTheDocument();
-    expect(screen.getAllByText("Size calculated during review")).toHaveLength(2);
-  });
-
   it("invalidates confirmed analysis when the source version changes", async () => {
     const update = vi.fn();
     render(<Components state={{
       aiProvider: "codex",
-      flattenForChat: false,
       sourceMode: "latest",
       pinnedRef: "",
       selectedComponents: ["core.skills"],
@@ -1201,7 +1096,7 @@ describe("HOI4 Mod Setup wizard", () => {
       .mockResolvedValueOnce({ value: null, error: "temporary source failure" })
       .mockResolvedValueOnce({ value: manifest });
 
-    render(<Components state={{ aiProvider: "codex", flattenForChat: false, sourceMode: "latest", pinnedRef: "", selectedComponents: [] } as unknown as WizardState} update={vi.fn()} />);
+    render(<Components state={{ aiProvider: "codex", sourceMode: "latest", pinnedRef: "", selectedComponents: [] } as unknown as WizardState} update={vi.fn()} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Retry loading components" }));
     expect(await screen.findByText("Components loaded.")).toBeInTheDocument();
@@ -1232,7 +1127,7 @@ describe("HOI4 Mod Setup wizard", () => {
     } as unknown as SourceManifestPreview });
 
     function ControlledComponents() {
-      const [state, setState] = useState({ aiProvider: "codex", flattenForChat: false, sourceMode: "latest", pinnedRef: "", selectedComponents: [] } as unknown as WizardState);
+      const [state, setState] = useState({ aiProvider: "codex", sourceMode: "latest", pinnedRef: "", selectedComponents: [] } as unknown as WizardState);
       return <><Components state={state} update={(patch) => setState((value) => ({ ...value, ...patch }))} /><output aria-label="selected components">{state.selectedComponents.join(",")}</output></>;
     }
 
@@ -1255,7 +1150,7 @@ describe("HOI4 Mod Setup wizard", () => {
     } as unknown as SourceManifestPreview });
 
     function ControlledComponents() {
-      const [state, setState] = useState({ aiProvider: "codex", flattenForChat: false, sourceMode: "latest", pinnedRef: "", selectedComponents: [], existingInstallationDetected: true, installedComponentIds: [], maintenanceOptionalSelections: [] } as unknown as WizardState);
+      const [state, setState] = useState({ aiProvider: "codex", sourceMode: "latest", pinnedRef: "", selectedComponents: [], existingInstallationDetected: true, installedComponentIds: [], maintenanceOptionalSelections: [] } as unknown as WizardState);
       return <><Components state={state} update={(patch) => setState((value) => ({ ...value, ...patch }))} /><output aria-label="selected existing components">{state.selectedComponents.join(",")}</output></>;
     }
 
@@ -1522,55 +1417,6 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ primaryCodingEnvironment: "claude_code", additionalCodingEnvironments: ["codex", "cursor", "gemini_cli"] }));
   });
 
-  it("offers ChatGPT source packaging when the scan finds source files", () => {
-    const onPackageChatSources = vi.fn().mockResolvedValue(undefined);
-    render(<Update
-      state={{ ...readyState(), aiProvider: "codex", chatSourcesAvailable: true } as unknown as WizardState}
-      update={vi.fn()}
-      findings={[]}
-      setFindings={vi.fn()}
-      onMaintenance={vi.fn()}
-      onStartMaintenance={vi.fn()}
-      onReanalyze={vi.fn().mockResolvedValue(true)}
-      onPackageChatSources={onPackageChatSources}
-    />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Package ChatGPT project sources/ }));
-    expect(onPackageChatSources).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps required ChatGPT source files selected and root Markdown opt-in", () => {
-    const preview: ChatSourcesPreview = {
-      eligible: true,
-      projectRoot: "C:\\mods\\atlantis_rising",
-      destinationDirectory: "C:\\Users\\Player\\Downloads",
-      archiveName: "atlantis_rising-chatgpt-project-sources.zip",
-      files: [
-        { id: "instructions:AGENTS.md", sourcePath: "AGENTS.md", archivePath: "AGENTS.md", category: "instructions", size: 1024, required: true, selectedByDefault: true },
-        { id: "readme:README.md", sourcePath: "README.md", archivePath: "README.md", category: "readme", size: 512, required: true, selectedByDefault: true },
-        { id: "skill:hoi4-events", sourcePath: ".agents/skills/hoi4-events/SKILL.md", archivePath: "hoi4-events.md", category: "skill", size: 2048, required: true, selectedByDefault: true },
-        { id: "subagent:hoi4_researcher.toml", sourcePath: ".codex/agents/hoi4_researcher.toml", archivePath: "hoi4_researcher.toml", category: "subagent", size: 768, required: true, selectedByDefault: true },
-        { id: "root-markdown:NOTES.md", sourcePath: "NOTES.md", archivePath: "NOTES.md", category: "root_markdown", size: 256, required: false, selectedByDefault: false },
-      ],
-    };
-    const update = vi.fn();
-    const state = { ...readyState(), chatSourcesPreview: preview, chatSourcesDestination: preview.destinationDirectory, chatSourcesSelectedIds: preview.files.filter((file) => file.selectedByDefault).map((file) => file.id) } as unknown as WizardState;
-
-    render(<ChatSources state={state} update={update} onPickFolder={vi.fn().mockResolvedValue(undefined)} />);
-
-    expect(screen.getByLabelText("Download folder")).toHaveValue("C:\\Users\\Player\\Downloads");
-    const checkboxes = screen.getAllByRole("checkbox");
-    expect(checkboxes).toHaveLength(5);
-    expect(checkboxes.slice(0, 4).every((checkbox) => (checkbox as HTMLInputElement).checked && (checkbox as HTMLInputElement).disabled)).toBe(true);
-    const optional = screen.getByText("NOTES.md").closest("label");
-    expect(optional).not.toBeNull();
-    const optionalCheckbox = optional?.querySelector("input");
-    expect(optionalCheckbox).not.toBeNull();
-    expect(optionalCheckbox).not.toBeChecked();
-    fireEvent.click(optionalCheckbox as HTMLInputElement);
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({ chatSourcesSelectedIds: expect.arrayContaining(["root-markdown:NOTES.md"]) }));
-  });
-
   it("uses declarative workflow titles and places Super Events immediately after 3D", async () => {
     await renderAuthenticatedApp();
     fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
@@ -1706,7 +1552,7 @@ describe("HOI4 Mod Setup wizard", () => {
   it("keeps optional ChatGPT source status out of Ready and its details", () => {
     vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Windows NT 10.0");
     const state = readyState();
-    render(<Ready state={{ ...state, flattenForChat: true, readiness: { ...state.readiness!, checks: [...state.readiness!.checks, { id: "codex.chat_flatten", label: "ChatGPT Chat sources", status: "incomplete", blocking: false, message: "Optional source folder needs review" }] } }} update={vi.fn()} onMaintenance={vi.fn()} />);
+    render(<Ready state={{ ...state, readiness: { ...state.readiness!, checks: [...state.readiness!.checks, { id: "codex.chat_flatten", label: "ChatGPT Chat sources", status: "incomplete", blocking: false, message: "Optional source folder needs review" }] } }} update={vi.fn()} onMaintenance={vi.fn()} />);
     fireEvent.click(screen.getByText("Readiness details"));
     expect(screen.queryByText(/ChatGPT.*sources/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /ChatGPT/i })).not.toBeInTheDocument();
@@ -2606,7 +2452,6 @@ describe("HOI4 Mod Setup wizard", () => {
       aiProvider: "codex",
       gitBranch: "main",
       gitOnlineAction: "none",
-      flattenForChat: false,
       plan: {
         operations: [],
         conflicts: [],
@@ -2625,26 +2470,11 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByText("Check the 3D workflow")).toBeInTheDocument();
   });
 
-  it("keeps ChatGPT sources as a minor setup check for any assistant", () => {
-    render(<DryRun state={{
-      aiProvider: "deepseek",
-      gitBranch: "main",
-      gitOnlineAction: "none",
-      flattenForChat: true,
-      plan: { operations: [], conflicts: [], external_actions: [], generated_artifacts: [] },
-    } as unknown as WizardState} update={vi.fn()} />);
-
-    expect(screen.getByText("ChatGPT source files")).toBeInTheDocument();
-    expect(screen.queryByText("ChatGPT project files")).not.toBeInTheDocument();
-    expect(screen.getByText("Prepare changes to calculate")).toBeInTheDocument();
-  });
-
   it("shows the real file plan only when the user opens it", () => {
     render(<DryRun state={{
       aiProvider: "codex",
       gitBranch: "main",
       gitOnlineAction: "none",
-      flattenForChat: false,
       plan: {
         operations: [
           { id: "agents", action: "create", destination: "AGENTS.md" },

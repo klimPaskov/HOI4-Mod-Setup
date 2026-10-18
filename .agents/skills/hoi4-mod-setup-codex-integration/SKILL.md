@@ -323,11 +323,10 @@ evidence approval. Do not relax the generic absolute-path or `.git` rejection.
 
 ## Optional ChatGPT sources
 
-Source flattening remains independent of the setup assistant and non-blocking.
-Show it as a minor install check; do not promote source status or a planning
-recommendation on Ready or completion. The manifest installs the reusable
-`.tools/package_chatgpt_project_sources.py` and Windows launcher for later
-user-invoked export. See `docs/33_chatgpt_source_packaging.md` and the UI/source
+The app does not package or flatten ChatGPT sources. The optional
+`runtime.chatgpt_sources` manifest component installs
+`.tools/package_chatgpt_project_sources.py` and its Windows launcher only when
+the user checks it, for later user-invoked export. See `docs/33_chatgpt_source_packaging.md` and the UI/source
 skill supplements for the presentation and packaging boundaries. This export
 uses no provider login, model, or credentials.
 

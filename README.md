@@ -118,9 +118,9 @@ The final dependency and file plan is always checked by the app core.
 choose a specific commit or release. Updates bring in published components and
 keep your optional workflow choices.
 
-**Prepare a flattened ChatGPT project-sources folder** creates a separate folder
-with project guidance, README, skills, and subagents for use in ChatGPT. It does
-not include the offline wiki. Review its files and sizes before installation.
+**ChatGPT project-sources packager** is an optional component. Check it to add
+`.tools/package_chatgpt_project_sources.py`, a script you run yourself to export
+project files for a ChatGPT project.
 
 ### Add optional workflows
 
@@ -182,9 +182,9 @@ The Ready screen shows the project and tool checks. **Open in your primary
 client** starts that client in the mod folder when it is available. Optional
 workflows show their own setup status.
 
-For ChatGPT, use the prepared project-source files to start planning. The app
-does not upload them. Installed projects also include
-`.tools/package_chatgpt_project_sources.py` and a Windows `.bat` launcher.
+For ChatGPT, check the optional packager component during setup. It adds
+`.tools/package_chatgpt_project_sources.py` and a Windows `.bat` launcher; the
+app never runs them or uploads anything.
 Run `python .tools/package_chatgpt_project_sources.py` to export a folder and
 `all-project-sources.zip` to Downloads. Use `--dry-run`, `--include`, `--exclude`,
 or `--config` to adjust the selection, and a new `--output` folder for each
@@ -206,13 +206,6 @@ verified manifest. **Repair installation** keeps the installed revision.
 **Remove components** removes unchanged files installed by the app and the
 folders left empty. Edited setup files are shown for review; your mod content
 stays in place.
-
-When the scan finds project instructions, flattened skills, or subagents,
-**Package ChatGPT project sources** creates a ZIP in an external folder,
-defaulting to Downloads. Detected instructions, README, skills, and subagents
-stay selected; other root Markdown files are optional.
-
-![Package ChatGPT project sources](docs/screenshots/13-chat-sources.png)
 
 The app checks for updates when it opens and installs a newer signed version
 automatically. If an update fails, you can keep using the app and retry.

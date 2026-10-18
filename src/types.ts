@@ -17,8 +17,7 @@ export type ScreenId =
   | "ready"
   | "update"
   | "conflict"
-  | "recovery"
-  | "chat-sources";
+  | "recovery";
 
 export type PhaseId = "project" | "review" | "components" | "integrations" | "git" | "install" | "ready";
 
@@ -135,32 +134,6 @@ export interface AppUpdateStatus {
   currentVersion: string;
   availableVersion?: string | null;
   available: boolean;
-}
-
-export interface ChatSourceFile {
-  id: string;
-  sourcePath: string;
-  archivePath: string;
-  category: "instructions" | "readme" | "skill" | "subagent" | "root_markdown" | string;
-  size: number;
-  required: boolean;
-  selectedByDefault: boolean;
-}
-
-export interface ChatSourcesPreview {
-  eligible: boolean;
-  message?: string | null;
-  projectRoot: string;
-  destinationDirectory: string;
-  archiveName: string;
-  files: ChatSourceFile[];
-}
-
-export interface ChatSourcesPackageResult {
-  archivePath: string;
-  includedFiles: string[];
-  bytes: number;
-  sha256: string;
 }
 
 export type ConflictChoice = "keep" | "replace" | "merge" | "rename" | "skip";
@@ -786,7 +759,6 @@ export interface WizardState {
   meshKeyDraft: string;
   meshKeyStatus: "missing" | "present" | "verified" | "unsupported";
   meshCredentialReference?: CredentialReference;
-  flattenForChat: boolean;
   gitMode: "initialize" | "preserve" | "skip";
   gitBranch: string;
   initialCommit: boolean;
@@ -806,11 +778,6 @@ export interface WizardState {
   existingInstallationDetected?: boolean;
   installedComponentIds?: string[];
   maintenanceOptionalSelections?: string[];
-  chatSourcesAvailable?: boolean;
-  chatSourcesPreview?: ChatSourcesPreview;
-  chatSourcesDestination?: string;
-  chatSourcesSelectedIds?: string[];
-  chatSourcesResult?: ChatSourcesPackageResult;
   installedWorkflow3dState?: WorkflowState;
   installedSuperEventsState?: WorkflowState;
   installedPortraitState?: WorkflowState;

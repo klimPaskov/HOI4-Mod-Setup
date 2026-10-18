@@ -21,8 +21,8 @@ use crate::merge::{
 };
 use crate::models::{CredentialReference, *};
 use crate::paths::{
-    application_data_root, hoi4_user_mod_directory, validate_export_directory,
-    validate_project_root, validate_project_root_or_destination,
+    application_data_root, hoi4_user_mod_directory, validate_project_root,
+    validate_project_root_or_destination,
 };
 use crate::readiness::ReadinessInput;
 use crate::safe_fs::RootedDir;
@@ -955,12 +955,9 @@ pub fn run() {
             confirm_codex_analysis,
             pick_project_folder,
             pick_launcher_folder,
-            pick_chat_sources_folder,
             suggest_project_paths,
             scan_project,
             cancel_scan,
-            preview_chat_sources,
-            package_chat_sources,
             store_meshy_credential,
             meshy_credential_status,
             remove_meshy_credential,
@@ -2356,67 +2353,6 @@ async fn pick_launcher_folder(app: tauri::AppHandle) -> Result<FolderSelection, 
         error: None,
         cancelled: false,
     })
-}
-
-#[tauri::command(async)]
-async fn pick_chat_sources_folder(app: tauri::AppHandle) -> Result<FolderSelection, String> {
-    use tauri_plugin_dialog::DialogExt;
-
-    let Some(selected) = app
-        .dialog()
-        .file()
-        .set_title("Choose a folder for the ChatGPT source package")
-        .blocking_pick_folder()
-    else {
-        return Ok(FolderSelection {
-            path: None,
-            launcher_descriptor_path: None,
-            error: None,
-            cancelled: true,
-        });
-    };
-    let path = selected
-        .into_path()
-        .map_err(|error| format!("selected folder is not a local path: {error}"))?;
-    let canonical = validate_export_directory(&path).map_err(command_error)?;
-    Ok(FolderSelection {
-        path: Some(crate::paths::user_facing_path(&canonical)),
-        launcher_descriptor_path: None,
-        error: None,
-        cancelled: false,
-    })
-}
-
-#[tauri::command(async)]
-async fn preview_chat_sources(
-    project_root: String,
-) -> Result<crate::chat_sources::ChatSourcesPreview, String> {
-    run_blocking_command("chat-sources-preview", move || {
-        let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
-        let destination = crate::paths::downloads_directory()
-            .map(|path| crate::paths::user_facing_path(&path))
-            .unwrap_or_default();
-        let project_id = crate::chat_sources::project_id_from_root(&root).map_err(command_error)?;
-        crate::chat_sources::preview(&root, &project_id, destination).map_err(command_error)
-    })
-    .await
-}
-
-#[tauri::command(async)]
-async fn package_chat_sources(
-    project_root: String,
-    destination_directory: String,
-    selected_file_ids: Vec<String>,
-) -> Result<crate::chat_sources::ChatSourcesPackageResult, String> {
-    run_blocking_command("chat-sources-package", move || {
-        let root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
-        let destination =
-            validate_export_directory(Path::new(&destination_directory)).map_err(command_error)?;
-        let project_id = crate::chat_sources::project_id_from_root(&root).map_err(command_error)?;
-        crate::chat_sources::package(&root, &project_id, &destination, &selected_file_ids)
-            .map_err(command_error)
-    })
-    .await
 }
 
 #[tauri::command(async)]
@@ -7355,13 +7291,6 @@ fn ai_optimization_profile(provider: &str) -> String {
         .unwrap_or_else(crate::models::default_ai_optimization_profile)
 }
 
-fn flatten_for_chat_from_state(state: &Value) -> bool {
-    state
-        .get("flattenForChat")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
 fn project_readme(
     identity: &ProjectIdentity,
     description: &str,
@@ -7579,7 +7508,6 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             ai_credential_reference(&ai_provider)
         },
     })?;
-    let flatten_chat_sources = flatten_for_chat_from_state(state);
     let git_setup = git_setup_from_state(state, &root)?;
     let request = source_request_from_state(state)?;
     let client = HttpSourceClient::new()?;
@@ -7867,28 +7795,6 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
             bytes: None,
         });
     }
-    if flatten_chat_sources
-        && !generated
-            .iter()
-            .any(|artifact| artifact.destination == "README.md")
-        && !root.join("README.md").is_file()
-    {
-        let readme = project_readme(
-            &identity,
-            &string_field(state, "description").unwrap_or_default(),
-            &ai_provider,
-            &ai_model_from_state(state),
-            &ai_reasoning_effort_from_state(state),
-        )?;
-        generated.push(GeneratedArtifact {
-            component_id: "project.readme".into(),
-            destination: "README.md".into(),
-            expected_sha256: sha256_bytes(readme.as_bytes()),
-            content: readme,
-            external: false,
-            bytes: None,
-        });
-    }
     let mut credential_references = if mesh_selected {
         current_meshy_credential_reference()?
             .into_iter()
@@ -7966,10 +7872,6 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         external: false,
         bytes: None,
     });
-    if flatten_chat_sources {
-        let flatten_artifacts = crate::flatten::build_artifacts(&prepared, &generated, &root)?;
-        generated.extend(flatten_artifacts);
-    }
     for (generated_index, artifact) in generated.iter().enumerate() {
         let destination_path = if artifact.external {
             validate_external_destination(&artifact.destination)?
@@ -8126,14 +8028,6 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         };
         optional_workflows.insert(component.id.clone(), selected_state);
     }
-    optional_workflows.insert(
-        "codex.chat_flatten".into(),
-        if flatten_chat_sources {
-            "selected_pending".into()
-        } else {
-            "not_selected".into()
-        },
-    );
     let mut plan = InstallationPlan {
         schema_version: crate::migrations::CURRENT_PLAN_SCHEMA.into(),
         plan_id: Uuid::new_v4(),
@@ -8154,7 +8048,9 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         ai_endpoint: ai_endpoint_from_state(state),
         primary_coding_environment: coding_environment_selection.primary.clone(),
         additional_coding_environments: coding_environment_selection.additional.clone(),
-        flatten_chat_sources,
+        // The ChatGPT packager is an optional `.tools` script the user runs;
+        // setup never prepares a ChatGPT folder for a new project.
+        flatten_chat_sources: false,
         codex_analysis: Some(codex_analysis),
         selected_components: selected,
         wiki_required_pages: resolution.manifest.wiki.required_pages.clone(),
@@ -8206,17 +8102,6 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     };
     crate::transaction::bind_plan_external_parents(&mut plan)?;
     ensure_mcp_package_replaceable(&plan)?;
-    if plan.flatten_chat_sources {
-        let mut prepared_plan = PreparedPlan {
-            plan,
-            prepared_files: prepared,
-            merge_contexts: HashMap::new(),
-            canonical_root: root,
-            approved: false,
-        };
-        refresh_flattened_outputs(&mut prepared_plan)?;
-        return Ok((prepared_plan.plan, prepared_plan.prepared_files));
-    }
     Ok((plan, prepared))
 }
 

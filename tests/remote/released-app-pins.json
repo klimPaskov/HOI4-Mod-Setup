@@ -26,7 +26,7 @@
     }
   },
   "clientPackages": {
-    "sourceRevision": "26da96b55e41b6d1c7e7e7e7e92da0e874d8c48f",
+    "sourceRevision": "f208530f5c47d07bc2b1ebb519fbb12ce0ee5b4f",
     "note": "Format 6 coding-client packages in klimPaskov/Agentic-HOI4-Modding pull request 26."
   }
 }

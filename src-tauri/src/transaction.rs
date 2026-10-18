@@ -3491,7 +3491,13 @@ fn validate_managed_bytes(
         let declared_path = descriptor.fields.get("path").ok_or_else(|| {
             AppError::Transaction("launcher descriptor validation failed: path is missing".into())
         })?;
-        if !crate::descriptors::launcher_path_matches_project_root(declared_path, project_root)? {
+        // The app renders the exact absolute form, so its own output is
+        // never read against the user folder.
+        if !crate::descriptors::launcher_path_matches_project_root(
+            declared_path,
+            project_root,
+            None,
+        )? {
             return Err(AppError::Transaction(
                 "launcher descriptor path does not match the selected project root".into(),
             ));

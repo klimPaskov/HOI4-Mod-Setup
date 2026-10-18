@@ -242,44 +242,7 @@ official references, and unresolved live-test gate.
 
 ## Flattened ChatGPT export
 
-The Components screen shows this optional development-client checkbox
-regardless of which setup assistant is selected:
-
-> Prepare a flattened ChatGPT project-sources folder
-
-It appears alongside the other choices under **Choose what to install**. The
-row shows the file count and an expandable list of flattened filenames and
-sizes. Source-declared sizes can appear before planning; generated-file sizes
-and the exact total appear after the plan is prepared. The Install review shows
-the selected package as read-only. When selected, the core stages a
-`<mod_project>/chatgpt_project_sources/` folder containing:
-
-- the adapted project `AGENTS.md`;
-- the created or existing project `README.md`;
-- every selected canonical `.claude/skills/<skill>/SKILL.md` as `<skill>.md`
-  (the legacy `.agents/skills/` root is supported); and
-- every selected canonical `.claude/agents/*.md` subagent file
-  (legacy Codex TOMLs are supported).
-
-The canonical trees and selected client projections remain intact. Duplicate
-projections do not enter the flattened package. The
-offline wiki, wiki media, descriptors, configuration, and workflow assets are
-not copied into this folder and do not count against its flattening limits. The
-flattened folder is generated through the same plan, conflict, backup,
-staging, validation, apply, readiness, journal, and rollback contract. Rust
-rejects links, secret-shaped content, case-insensitive
-destination collisions, and bounded file or aggregate-size violations. A
-modified existing flattened file is never replaced silently.
-If conflict review keeps a selected local skill or subagent, the flattened view
-uses those reviewed local bytes. Unrelated project skills and subagents are not
-enumerated or copied.
-
-The final screen recommends:
-
-> After setup, start planning using ChatGPT "Chat".
-
-This is only a recommendation. Version 1 does not upload the folder, open a
-ChatGPT conversation, or start planning automatically.
+Superseded (2026-10-18): the app no longer packages ChatGPT sources or prepares a flattened folder. The packager is the optional `runtime.chatgpt_sources` manifest component, a `.tools` script the user checks on Components and runs. See `docs/33_chatgpt_source_packaging.md`.
 
 ## Existing-project ChatGPT source package
 

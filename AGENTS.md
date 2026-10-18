@@ -188,7 +188,7 @@ The provider, model, and reasoning effort selected on the first screen are the
 **setup assistant**. They do not select, install, recommend, or restrict the AI
 client used later for Agentic HOI4 Modding. Generated `AGENTS.md` and README
 content must remain provider-neutral. Development-client integrations such as
-`codex.config`, Open in Codex, flattened ChatGPT sources, and provider-neutral
+`codex.config`, Open in Codex, the optional ChatGPT packager, and provider-neutral
 MCP tooling are selected or enabled independently of the setup assistant.
 
 Every semantic turn uses approved inputs and the current `codex-analysis` output schema. The runtime validator is authoritative even when a provider advertises native structured output. The core replaces the model-supplied analysis ID with its own UUID, accepts empty evidence references for genuinely inferred proposals, rejects unknown references, and keeps the scan/hash/session approval binding. Codex turns use a dedicated App Server thread and restricted read-only sandbox. Provider adapters never write files or approve transactions. The selected setup profile shapes semantic proposals for names, IDs, namespaces, descriptions, tags, folder profiles, and component recommendations. It may help adapt project-specific guidance, but it must not insert the setup provider, model, reasoning effort, or provider-specific development convention into the generated project. Deterministic Rust validates and renders the final provider-neutral bytes after user confirmation.
@@ -354,12 +354,11 @@ The startup updater always surfaces a newer signed app version, downloads and
 verifies it, replaces the current installation, and restarts. A failed update
 leaves the running version usable and exposes retry.
 
-Manage Existing Project exposes ChatGPT source packaging when the scan finds an
-`AGENTS.md`, flattened skill, or subagent source; an installation lock is not
-required. Rust discovers the bounded root files, flattened skills, subagents,
-and optional root Markdown files; package output goes to a validated external
-folder, defaults to Downloads, is written atomically without overwriting, and
-never changes the project.
+The app does not package ChatGPT project sources. The packager is the optional
+`runtime.chatgpt_sources` manifest component, a `.tools` script installed only
+when the user checks it on Components and run only by the user; no plan
+prepares a `chatgpt_project_sources/` folder. See
+`docs/33_chatgpt_source_packaging.md`.
 
 ## 11. UI rules
 

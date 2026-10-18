@@ -5,7 +5,6 @@
 
 pub mod account_cli;
 pub mod ai;
-pub mod chat_sources;
 pub mod claude_code;
 pub mod codex;
 pub mod coding_environment;

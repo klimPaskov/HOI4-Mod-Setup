@@ -154,16 +154,7 @@ Run the 12-stage transaction. Verify the launcher descriptor resolves to the pro
 
 ### Optional flattened Chat sources
 
-Regardless of the setup assistant, show the optional checkbox on Components under
-**Choose what to install**: **Prepare a flattened ChatGPT project-sources
-folder**. Show its filenames and available sizes there. Review its generated
-`chatgpt_project_sources/` operations. Canonical
-`.claude/skills/<skill>/SKILL.md` files become `<skill>.md`; canonical
-`.claude/agents/*.md`, selected legacy subagents, adapted `AGENTS.md`, and
-created or existing `README.md` are included. Reject links, collisions,
-secret-shaped content, and oversized files before staging.
-After setup, recommend starting planning using ChatGPT “Chat”. Do not upload,
-open a conversation, or start planning automatically.
+Superseded (2026-10-18): the app no longer packages ChatGPT sources or prepares a flattened folder. The packager is the optional `runtime.chatgpt_sources` manifest component, a `.tools` script the user checks on Components and runs. See `docs/33_chatgpt_source_packaging.md`.
 
 ## Existing project flow
 
@@ -296,16 +287,7 @@ dependency, conflict, selective-download, and rollback rules still apply.
 
 ## Existing-project ChatGPT source export
 
-1. Open **Manage an existing project** and select a project whose scan finds an
-   `AGENTS.md`, flattened skill, or subagent source. A complete installation
-   lock is not required.
-2. Choose **Package ChatGPT project sources**.
-3. Review the validated external download folder, which defaults to Downloads.
-4. Keep the detected root instructions, README, flattened skills, and
-   subagents selected; optionally enable root Markdown files.
-5. Choose **Package sources**. Rust creates a new ZIP atomically outside the
-   project and reports its path and included files. No project transaction or
-   project file mutation occurs.
+Superseded (2026-10-18): the app no longer packages ChatGPT sources or prepares a flattened folder. The packager is the optional `runtime.chatgpt_sources` manifest component, a `.tools` script the user checks on Components and runs. See `docs/33_chatgpt_source_packaging.md`.
 
 ## Repair flow
 

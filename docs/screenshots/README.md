@@ -29,7 +29,7 @@ opens or focuses the shared desktop. GitHub Pages copies these same images.
 For manual inspection with `pnpm dev` running, open `http://localhost:1420/?screenshot=<name>` where
 `<name>` is one of `welcome`, `provider`, `existing`, `description`, `identity`,
 `components`, `workflows`, `mcp`, `git`, `dry-run`, `ready`, `maintenance`,
-`chat-sources`, `recovery`, `environments`, `image-generation`, or `live-testing`.
+`recovery`, `environments`, `image-generation`, or `live-testing`.
 Capture the complete 1280 by 960 application viewport from the top of the page.
 
 Before saving, wait for the expected screen heading and controls to be visible;

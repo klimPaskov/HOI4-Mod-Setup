@@ -11,6 +11,10 @@ HOI4 Mod Setup follows semantic versioning.
 - Register image-generation and live-testing routes for Gemini CLI, Antigravity, Grok Build, GitHub Copilot (VS Code), and Qwen Code when the source lists them, and let manual image providers work with every coding client. Deselecting a client also removes the recorded image and live-testing routes from its unchanged MCP file.
 - Keep a recorded client that the chosen source version does not offer, and explain the refusal instead of reporting a download failure.
 - Report a newer manifest format as needing an app update before schema validation, and apply format 5 live-testing rules to later formats.
+- Stop setup analysis from failing on meaningless formatting: line breaks, over-long convention text, identifier case, tag spelling, and folder separators are normalized before the strict rules, a reply without a structured object gets the corrective turn, retry hints name the exact rule, and the internal reason is logged to the diagnostics file.
+- Accept relative `mod/<name>`, trailing-separator, and single-backslash `path=` values in an existing launcher file, and explain a real mismatch with the declared and selected folders instead of a "scan error".
+- Remove ChatGPT source packaging from the app: no export screen, Review or Update callout, or flattened-folder option. The packager is the optional `runtime.chatgpt_sources` component, a `.tools` script the user checks and runs. Installs that already recorded a ChatGPT folder keep it until a later migration.
+- Keep the MCP and credentials review to one readable column instead of stretching across wide windows.
 - Build the updater without its archive feature, removing the vulnerable `zip` crate (RUSTSEC-2026-0367, -0368, -0369); release payloads are raw signed installers.
 
 Coding clients are never started by setup; client sign-in and in-client behavior beyond reading the documented files are not tested.

@@ -1844,15 +1844,10 @@ pub(crate) fn launcher_descriptor_matches_project(project_root: &Path, bytes: &[
     };
     parse_descriptor(bytes).ok().is_some_and(|descriptor| {
         descriptor.fields.get("name") == Some(&project_name)
-            && descriptor
-                .fields
-                .get("path")
-                .is_some_and(|path| path_matches_project(path, project_root))
+            && descriptor.fields.get("path").is_some_and(|path| {
+                crate::descriptors::launcher_registers_project_root(bytes, path, project_root)
+            })
     })
-}
-
-fn path_matches_project(value: &str, project_root: &Path) -> bool {
-    crate::descriptors::launcher_path_matches_project_root(value, project_root).unwrap_or(false)
 }
 
 pub fn check_project_files(

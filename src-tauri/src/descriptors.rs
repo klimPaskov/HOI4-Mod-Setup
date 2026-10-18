@@ -422,6 +422,32 @@ pub(crate) fn launcher_path_matches_project_root(
     Ok(!relative_root.is_empty() && same(declared, &relative_root))
 }
 
+/// Whether a user's launcher descriptor registers the project: its parsed or
+/// raw `path=` value matches the root, reading a relative value against the
+/// HOI4 user folder (the parent of the folder that holds the project). Every
+/// read-side check uses this so discovery, approval, scan evidence, and
+/// readiness agree.
+pub(crate) fn launcher_registers_project_root(
+    bytes: &[u8],
+    declared: &str,
+    project_root: &Path,
+) -> bool {
+    let canonical = crate::paths::validate_project_root_or_destination(project_root)
+        .ok()
+        .map(|root| root.0);
+    let user_directory = canonical
+        .as_deref()
+        .and_then(Path::parent)
+        .and_then(Path::parent);
+    let raw = raw_quoted_field(bytes, "path");
+    [Some(declared), raw.as_deref()]
+        .into_iter()
+        .flatten()
+        .any(|value| {
+            launcher_path_matches_project_root(value, project_root, user_directory).unwrap_or(false)
+        })
+}
+
 /// The raw text between the quotes of a top-level `key="..."` line, without
 /// escape processing. A launcher descriptor written by hand may use single
 /// backslashes, which the escape-aware parser would drop.
@@ -737,7 +763,7 @@ mod tests {
         std::fs::create_dir(&target).unwrap();
         symlink(&target, &linked).unwrap();
 
-        assert!(launcher_path_matches_project_root("/unused", &linked).is_err());
+        assert!(launcher_path_matches_project_root("/unused", &linked, None).is_err());
     }
 
     #[cfg(target_os = "windows")]

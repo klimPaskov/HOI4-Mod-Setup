@@ -236,15 +236,7 @@ fn discover_launcher_descriptor_bound_with_check(
         // A hand-written value may use single backslashes, which the
         // escape-aware parser drops, so the raw quoted text is tried too.
         let raw = crate::descriptors::raw_quoted_field(&bytes, "path");
-        let user_directory = parent.parent();
-        let registers_root = [Some(declared.as_str()), raw.as_deref()]
-            .into_iter()
-            .flatten()
-            .any(|value| {
-                crate::descriptors::launcher_path_matches_project_root(value, &root, user_directory)
-                    .unwrap_or(false)
-            });
-        if registers_root {
+        if crate::descriptors::launcher_registers_project_root(&bytes, declared, &root) {
             matches.push((exact_name, path));
         } else if exact_name {
             // Show the text as written unless it uses escaped separators.
@@ -1903,7 +1895,7 @@ fn bind_discovered_launcher_descriptor(
     )?;
     let descriptor = crate::descriptors::parse_descriptor(&bytes)?;
     if !descriptor.fields.get("path").is_some_and(|declared| {
-        crate::descriptors::launcher_path_matches_project_root(declared, root).unwrap_or(false)
+        crate::descriptors::launcher_registers_project_root(&bytes, declared, root)
     }) {
         return Err(AppError::PathSecurity(
             "approved launcher descriptor no longer registers the selected project".into(),
@@ -2029,8 +2021,11 @@ fn detect_descriptors(
             Ok(parsed)
                 if parsed.fields.contains_key("name")
                     && parsed.fields.get("path").is_some_and(|declared| {
-                        crate::descriptors::launcher_path_matches_project_root(declared, root)
-                            .unwrap_or(false)
+                        crate::descriptors::launcher_registers_project_root(
+                            &approved_external.bytes,
+                            declared,
+                            root,
+                        )
                     }) => {}
             _ => conflicts.push(ScanConflict {
                 id: "conflict.launcher.malformed".into(),
