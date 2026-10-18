@@ -280,7 +280,10 @@ replacing existing bytes, and a redacted assignment at the end of a message.
   installed HOI4 Mod Setup executable with only the fixed Meshy CLI marker;
   project wrappers, project launchers, and PATH Python must never receive the
   key. Each credential-bearing start rejects links and tree drift, copies and
-  re-hashes the verified runtime, copies Node before exact simple-name
+  re-hashes the verified runtime into a private directory named exactly
+  `node_modules` (the reviewed tree is the hoisted dependency directory, and
+  Node resolves sibling packages by bare specifier only from that name), keeps
+  the private Node copy beside rather than inside that tree, copies Node before exact simple-name
   publisher verification through the native Windows verifier, rechecks the
   private Node hash immediately before spawn, clears Node influence variables,
   and passes the key only to that exact private Node entry.

@@ -82,8 +82,10 @@ binding.
 5. For normal Meshy MCP use, Codex invokes the absolute installed HOI4 Mod
    Setup executable with only `--run-verified-meshy-mcp`; no project wrapper,
    project Python file, or PATH Python process receives the key.
-6. The app-owned launcher no-follow captures the exact 3,916-file locked
-   runtime, materializes and re-hashes a private copy, copies Node before
+6. The app-owned launcher no-follow captures the exact 3,952-file locked
+   runtime, materializes and re-hashes a private copy under a directory named
+   `node_modules` so the entry package resolves its hoisted dependencies, such
+   as `dotenv`, by bare specifier, copies Node beside that tree before
    verifying the exact `OpenJS Foundation` certificate simple name through the
    native Windows verifier, and rechecks both private identities immediately
    before spawn.
