@@ -1211,6 +1211,8 @@ mod tests {
             // Configuration files must parse; other files are plain text.
             let bytes: &[u8] = if file.destination.ends_with(".json") {
                 b"{}"
+            } else if file.destination.starts_with(".codex/agents/") {
+                b"developer_instructions = \"Placeholder subagent.\""
             } else {
                 b"# placeholder"
             };
