@@ -156,9 +156,12 @@ async function commonSetup() {
   await at("Optional workflows");
   await expect(page.getByRole("switch", { name: /^HOI4 Live Tools/ })).toBeVisible();
   await next();
-  await expect(heading()).toHaveText(/^(Live testing|MCP and credentials)$/);
+  await expect(heading()).toHaveText(/^(Live testing|MCP and credentials|Choose Git setup)$/);
   if (await heading().innerText() === "Live testing") { await page.getByRole("radio", { name: /^None / }).check(); await next(); }
-  await at("MCP and credentials"); await record("integrations"); await next();
+  // The integrations review appears only when a Meshy key or a Live Tools
+  // registration needs it; otherwise the wizard goes straight to Git.
+  await expect(heading()).toHaveText(/^(MCP and credentials|Choose Git setup)$/);
+  if (await heading().innerText() === "MCP and credentials") { await record("integrations"); await next(); }
   await at("Choose Git setup");
   await page.getByRole("radio", { name: /^Skip Git setup/ }).check();
   await next();
