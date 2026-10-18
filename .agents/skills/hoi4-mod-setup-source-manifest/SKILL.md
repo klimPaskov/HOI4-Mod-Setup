@@ -294,6 +294,12 @@ a newer bootstrap.
   only clients whose project MCP file accepts a working directory
   (`MCP_ROUTE_CLIENTS`), and the format 6 candidate fixture test requires
   that list to equal the registry's `image_and_live_routes` clients.
+- Pin app fixtures and remote acceptance only to a source commit whose
+  manifest `generated_for_revision` is its parent and which changes nothing but
+  the manifest. Source validation compares evidence with the generated
+  revision, so a later commit that edits an installed file still passes there
+  but fails the app's download hash check. Take the regenerated manifest from
+  that commit's `hoi4-mod-setup-manifest-preview` artifact.
 - Coding-client packages are also manifest data. Components tagged with
   `coding_environment` form the complete closure for exactly one primary and
   any additional environment selected by the user. Keep environment packages
