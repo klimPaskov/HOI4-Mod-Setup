@@ -341,20 +341,42 @@ fn verify_optional_npm_lock_integrity(
     Ok(())
 }
 
+/// Name of the private directory that receives a verified copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PrivateTreeLayout {
+    /// One package whose dependencies are nested inside its own tree.
+    Package,
+    /// A hoisted dependency directory. Node resolves bare specifiers only
+    /// from directories named `node_modules`, so sibling packages stay
+    /// resolvable only under that exact name.
+    NodeModules,
+}
+
+impl PrivateTreeLayout {
+    fn directory_name(self) -> &'static str {
+        match self {
+            Self::Package => "package",
+            Self::NodeModules => "node_modules",
+        }
+    }
+}
+
 pub(crate) fn materialize_verified_package_tree(
     root: &Path,
+    layout: PrivateTreeLayout,
 ) -> Result<VerifiedPackageTree, AppError> {
-    materialize_verified_package_tree_with_links(root, &BTreeMap::new())
+    materialize_verified_package_tree_with_links(root, &BTreeMap::new(), layout)
 }
 
 fn materialize_verified_package_tree_with_links(
     root: &Path,
     symlinks: &BTreeMap<String, String>,
+    layout: PrivateTreeLayout,
 ) -> Result<VerifiedPackageTree, AppError> {
     let files = read_installed_package_tree_with_links(root, symlinks)?;
     let (sha256, file_count) = package_tree_identity(&files);
     let temporary = tempfile::tempdir()?;
-    let private_root = temporary.path().join("package");
+    let private_root = temporary.path().join(layout.directory_name());
     std::fs::create_dir(&private_root)?;
     for (relative, bytes) in &files {
         let destination = safe_join(&private_root, relative)?;
@@ -389,6 +411,58 @@ fn materialize_verified_package_tree_with_links(
         file_count,
         symlinks: symlinks.clone(),
     })
+}
+
+#[cfg(test)]
+pub(crate) const HOISTED_FIXTURE_ENTRY: &str = "@fixture/entry/dist/index.js";
+#[cfg(test)]
+pub(crate) const HOISTED_FIXTURE_OUTPUT: &str = "resolved sibling dependency";
+
+/// Write a synthetic npm-style hoisted tree: an ES module entry package that
+/// imports a sibling dependency by bare specifier, as Meshy imports dotenv.
+#[cfg(test)]
+pub(crate) fn write_hoisted_dependency_fixture(root: &Path) {
+    let files: [(&str, String); 4] = [
+        (
+            "@fixture/entry/package.json",
+            r#"{"name":"@fixture/entry","version":"1.0.0","type":"module"}"#.into(),
+        ),
+        (
+            HOISTED_FIXTURE_ENTRY,
+            "import value from \"sibling-dep\";\nprocess.stdout.write(value);\n".into(),
+        ),
+        (
+            "sibling-dep/package.json",
+            r#"{"name":"sibling-dep","version":"1.0.0","type":"module","main":"index.js"}"#.into(),
+        ),
+        (
+            "sibling-dep/index.js",
+            format!("export default {HOISTED_FIXTURE_OUTPUT:?};\n"),
+        ),
+    ];
+    for (relative, contents) in files {
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
+}
+
+/// Run a fixture entry under the real PATH Node with a cleared environment
+/// and a working directory outside the materialized tree.
+#[cfg(test)]
+pub(crate) fn run_fixture_entry(entry: &Path) -> std::process::Output {
+    let node = find_path_executable(&["node.exe", "node"]).unwrap();
+    let neutral = tempfile::tempdir().unwrap();
+    let mut command = std::process::Command::new(node);
+    command
+        .arg(entry)
+        .current_dir(neutral.path())
+        .env_clear()
+        .stdin(std::process::Stdio::null());
+    if let Some(system_root) = std::env::var_os("SystemRoot") {
+        command.env("SystemRoot", system_root);
+    }
+    command.output().unwrap()
 }
 
 pub(crate) fn verify_materialized_package_tree(tree: &VerifiedPackageTree) -> Result<(), AppError> {
@@ -798,8 +872,11 @@ pub fn initialize_health(
             "the installed MCP package does not match the reviewed package identity".into(),
         ));
     }
-    let verified_tree =
-        materialize_verified_package_tree_with_links(&package_root, &target.package_symlinks)?;
+    let verified_tree = materialize_verified_package_tree_with_links(
+        &package_root,
+        &target.package_symlinks,
+        PrivateTreeLayout::Package,
+    )?;
     if verified_tree.sha256 != target.package_tree_sha256
         || verified_tree.file_count != target.package_file_count
     {
@@ -1311,8 +1388,12 @@ mod tests {
         std::os::unix::fs::symlink(target, directory.path().join(relative)).unwrap();
         assert!(read_installed_package_tree(directory.path()).is_err());
         let declared = [(relative.into(), target.into())].into_iter().collect();
-        let tree =
-            materialize_verified_package_tree_with_links(directory.path(), &declared).unwrap();
+        let tree = materialize_verified_package_tree_with_links(
+            directory.path(),
+            &declared,
+            PrivateTreeLayout::Package,
+        )
+        .unwrap();
         assert_eq!(tree.file_count, 2);
         verify_materialized_package_tree(&tree).unwrap();
         std::fs::remove_file(tree.root.join(relative)).unwrap();
@@ -1546,7 +1627,8 @@ mod tests {
         std::fs::create_dir_all(package.path().join("dist")).unwrap();
         let source = package.path().join("dist/index.js");
         std::fs::write(&source, b"export const value = 1;\n").unwrap();
-        let verified = materialize_verified_package_tree(package.path()).unwrap();
+        let verified =
+            materialize_verified_package_tree(package.path(), PrivateTreeLayout::Package).unwrap();
         std::fs::write(&source, b"export const value = 2;\n").unwrap();
         assert_eq!(
             std::fs::read(verified.root.join("dist/index.js")).unwrap(),
@@ -1559,8 +1641,78 @@ mod tests {
         let package = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(package.path().join("dist")).unwrap();
         std::fs::write(package.path().join("dist/index.js"), b"reviewed\n").unwrap();
-        let verified = materialize_verified_package_tree(package.path()).unwrap();
+        let verified =
+            materialize_verified_package_tree(package.path(), PrivateTreeLayout::Package).unwrap();
         std::fs::write(verified.root.join("dist/index.js"), b"tampered\n").unwrap();
+        assert!(verify_materialized_package_tree(&verified)
+            .unwrap_err()
+            .to_string()
+            .contains("changed before execution"));
+    }
+
+    #[test]
+    fn hoisted_dependency_tree_resolves_sibling_packages_under_real_node() {
+        let installed = tempfile::tempdir().unwrap();
+        write_hoisted_dependency_fixture(installed.path());
+        let verified =
+            materialize_verified_package_tree(installed.path(), PrivateTreeLayout::NodeModules)
+                .unwrap();
+        assert_eq!(verified.root.file_name().unwrap(), "node_modules");
+        assert_eq!(
+            verified.sha256,
+            package_tree_sha256(installed.path()).unwrap()
+        );
+        verify_materialized_package_tree(&verified).unwrap();
+        let output = run_fixture_entry(&safe_join(&verified.root, HOISTED_FIXTURE_ENTRY).unwrap());
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, HOISTED_FIXTURE_OUTPUT.as_bytes());
+    }
+
+    #[test]
+    fn hoisted_dependency_tree_is_unresolvable_under_a_package_directory() {
+        // The pre-0.6.3 Meshy route copied a hoisted tree into `package/`,
+        // where Node never looks up bare specifiers.
+        let installed = tempfile::tempdir().unwrap();
+        write_hoisted_dependency_fixture(installed.path());
+        let verified =
+            materialize_verified_package_tree(installed.path(), PrivateTreeLayout::Package)
+                .unwrap();
+        let output = run_fixture_entry(&safe_join(&verified.root, HOISTED_FIXTURE_ENTRY).unwrap());
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("ERR_MODULE_NOT_FOUND"));
+    }
+
+    #[test]
+    fn package_injected_into_private_node_modules_is_rejected_before_spawn() {
+        let installed = tempfile::tempdir().unwrap();
+        write_hoisted_dependency_fixture(installed.path());
+        let verified =
+            materialize_verified_package_tree(installed.path(), PrivateTreeLayout::NodeModules)
+                .unwrap();
+        std::fs::create_dir_all(verified.root.join("injected")).unwrap();
+        std::fs::write(verified.root.join("injected/index.js"), b"export {};\n").unwrap();
+        assert!(verify_materialized_package_tree(&verified)
+            .unwrap_err()
+            .to_string()
+            .contains("changed before execution"));
+    }
+
+    #[test]
+    fn replaced_private_dependency_is_rejected_before_spawn() {
+        let installed = tempfile::tempdir().unwrap();
+        write_hoisted_dependency_fixture(installed.path());
+        let verified =
+            materialize_verified_package_tree(installed.path(), PrivateTreeLayout::NodeModules)
+                .unwrap();
+        std::fs::write(
+            verified.root.join("sibling-dep/index.js"),
+            b"export default \"tampered\";\n",
+        )
+        .unwrap();
         assert!(verify_materialized_package_tree(&verified)
             .unwrap_err()
             .to_string()

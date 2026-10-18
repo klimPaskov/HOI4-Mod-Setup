@@ -280,10 +280,19 @@ replacing existing bytes, and a redacted assignment at the end of a message.
   installed HOI4 Mod Setup executable with only the fixed Meshy CLI marker;
   project wrappers, project launchers, and PATH Python must never receive the
   key. Each credential-bearing start rejects links and tree drift, copies and
-  re-hashes the verified runtime, copies Node before exact simple-name
+  re-hashes the verified runtime into a private directory named exactly
+  `node_modules` (the reviewed tree is the hoisted dependency directory, and
+  Node resolves sibling packages by bare specifier only from that name), keeps
+  the private Node copy beside rather than inside that tree, copies Node before exact simple-name
   publisher verification through the native Windows verifier, rechecks the
   private Node hash immediately before spawn, clears Node influence variables,
-  and passes the key only to that exact private Node entry.
+  and passes the key only to that exact private Node entry. The child keeps
+  the project working directory (downloads default to `meshy_output/`), and
+  Meshy 0.6.2 loads that directory's `.env` through non-override `dotenv`, so
+  the launcher pins every runtime-read value project content could abuse
+  (`TRANSPORT`, `MESHY_API_HOST`, `NO_PROXY=*`, `NODE_TLS_REJECT_UNAUTHORIZED`).
+  Re-inventory runtime-read environment variables for every reviewed runtime
+  bump and extend the pinned set before accepting a new lock.
 - A 3D health result is cached only as `ready` or `incomplete`, keyed by the canonical project root and a fingerprint of the locked workflow revision, manifest hash, and installed workflow file hashes. The cache stores no credential, command output, or provider response; a lock or Meshy-vault change or process restart invalidates the result and requires a new explicit health run.
 
 ## Source and update trust
