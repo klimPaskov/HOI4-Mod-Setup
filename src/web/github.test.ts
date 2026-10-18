@@ -13,6 +13,8 @@ describe("web source resolution", () => {
   it("reads raw files only at an exact commit and encodes each segment", () => {
     expect(rawUrl(COMMIT, "docs/a b#c.md")).toBe(`https://raw.githubusercontent.com/klimPaskov/Agentic-HOI4-Modding/${COMMIT}/docs/a%20b%23c.md`);
     expect(() => rawUrl("main", "README.md")).toThrow(/exact commit/);
+    // A lock in a dropped folder cannot point the page at another repository.
+    expect(() => rawUrl(COMMIT, "../../other/repo/main/x")).toThrow(/inside the source repository/);
   });
 
   it("resolves latest to the default branch head before downloading", async () => {

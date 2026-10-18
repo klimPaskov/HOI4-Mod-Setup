@@ -47,17 +47,15 @@ pub struct PortraitChoice {
 
 /// An HTTPS address without credentials, query, or fragment.
 pub fn is_plain_https_url(value: &str) -> bool {
-    let Some(rest) = value.strip_prefix("https://") else {
+    let Ok(url) = url::Url::parse(value) else {
         return false;
     };
-    let authority = rest.split('/').next().unwrap_or_default();
-    !authority.is_empty()
-        && !authority.contains('@')
-        && !value.contains('?')
-        && !value.contains('#')
-        && !value
-            .chars()
-            .any(|character| character.is_whitespace() || character.is_control())
+    url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.host_str().is_some()
+        && url.query().is_none()
+        && url.fragment().is_none()
 }
 
 fn bounded(value: Option<&str>, label: &str) -> Result<String, AppError> {

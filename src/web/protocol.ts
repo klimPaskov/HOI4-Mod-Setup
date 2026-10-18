@@ -34,10 +34,12 @@ export interface ExistingSetup {
   primary_coding_environment?: string;
   additional_coding_environments?: string[];
   components?: string[];
-  portrait_pipeline?: { enabled: boolean; provider: string; local_comfyui_root?: string; local_server_url?: string; runpod_url?: string; runpod_workspace?: string } | null;
+  portrait_pipeline?: { enabled: boolean; provider: string; preferred_workflow?: string; local_comfyui_root?: string; local_server_url?: string; runpod_url?: string; runpod_workspace?: string } | null;
   image_generation?: ImageChoice | null;
   live_testing?: LiveTestingChoice | null;
   file_count?: number;
+  /** Why only the desktop app can update, repair, or change this setup. */
+  desktop_only?: string | null;
 }
 
 export interface ScanSummary {
@@ -126,6 +128,7 @@ export interface LiveTestingChoice {
 
 export interface PortraitChoice {
   provider: "disabled" | "cloud" | "local" | "runpod";
+  preferredWorkflow?: string;
   localComfyuiRoot?: string;
   localServerUrl?: string;
   runpodUrl?: string;

@@ -902,39 +902,13 @@ pub fn validate_image_generation_selection(
 
 /// An http(s) address on this computer, without credentials.
 pub fn is_loopback_http_url(value: &str) -> bool {
-    let Some((scheme, rest)) = value.split_once("://") else {
+    let Ok(parsed) = url::Url::parse(value) else {
         return false;
     };
-    if !matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https") {
-        return false;
-    }
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    if authority.contains('@') {
-        return false;
-    }
-    let host = if let Some(bracketed) = authority.strip_prefix('[') {
-        match bracketed.split_once(']') {
-            Some((host, port))
-                if port.is_empty()
-                    || port.strip_prefix(':').is_some_and(|port| {
-                        !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit())
-                    }) =>
-            {
-                host
-            }
-            _ => return false,
-        }
-    } else {
-        let (host, port) = authority.split_once(':').unwrap_or((authority, ""));
-        if authority.contains(':')
-            && (port.is_empty() || !port.bytes().all(|byte| byte.is_ascii_digit()))
-        {
-            return false;
-        }
-        host
-    };
-    matches!(
-        host.to_ascii_lowercase().as_str(),
-        "localhost" | "127.0.0.1" | "::1"
-    )
+    matches!(parsed.scheme(), "http" | "https")
+        && parsed
+            .host_str()
+            .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1"))
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
 }

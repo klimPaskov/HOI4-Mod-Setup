@@ -367,6 +367,18 @@ describe("web edition", () => {
     expect(calls.some((call) => call.op === "select")).toBe(false);
   });
 
+  it("leaves setups with desktop-only workflows to the desktop app, except removal", async () => {
+    stubGitHub();
+    const { client } = fakeCore({ scan: () => ({ ...scanWithSetup(), existing_setup: { ...existingSetup, desktop_only: "This setup uses the 3D models workflow, which only the desktop app can maintain." } }) });
+    const { container } = render(<WebApp client={client} />);
+    pickFolder(container);
+    await screen.findByRole("heading", { name: "Existing setup found" });
+    expect(screen.getByText(/only the desktop app can maintain/)).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^Update/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /^Set up again/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /Remove the setup/ })).toBeChecked();
+  });
+
   it("previews a three-way merge before it can be chosen", async () => {
     stubGitHub();
     const { client, calls } = fakeCore({

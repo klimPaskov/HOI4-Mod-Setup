@@ -35,16 +35,21 @@ export default function MaintenancePanel({ setup, choice, onChoose }: Props) {
       </p>
       <div className="web-radio-group" role="radiogroup" aria-label="What to do with the setup">
         <label className="radio-row">
-          <input type="radio" name="maintenance" checked={choice === null} onChange={() => onChoose(null)} />
+          <input type="radio" name="maintenance" disabled={Boolean(setup.desktop_only)} checked={choice === null} onChange={() => onChoose(null)} />
           <span><strong>Set up again</strong><span className="muted"> — ask the assistant again and review every file.</span></span>
         </label>
-        {CHOICES.map((item) => (
-          <label key={item.value} className="radio-row">
-            <input type="radio" name="maintenance" checked={choice === item.value} onChange={() => onChoose(item.value)} />
-            <span><strong>{item.label}</strong><span className="muted"> — {item.detail}</span></span>
-          </label>
-        ))}
+        {CHOICES.map((item) => {
+          // A setup with desktop-only workflows can only be removed here.
+          const blocked = Boolean(setup.desktop_only) && item.value !== "remove";
+          return (
+            <label key={item.value} className={`radio-row${blocked ? " web-disabled-choice" : ""}`}>
+              <input type="radio" name="maintenance" disabled={blocked} checked={choice === item.value} onChange={() => onChoose(item.value)} />
+              <span><strong>{item.label}</strong><span className="muted"> — {item.detail}</span></span>
+            </label>
+          );
+        })}
       </div>
+      {setup.desktop_only && <p className="status-review"><span className="status-symbol" aria-hidden="true">!</span> {setup.desktop_only}</p>}
     </section>
   );
 }

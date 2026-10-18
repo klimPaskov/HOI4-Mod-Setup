@@ -43,6 +43,14 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
+/// The lock's identifier rule for a script prefix or namespace.
+fn regex_lite_identifier(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    matches!(bytes.next(), Some(b'a'..=b'z' | b'_'))
+        && value.len() <= 64
+        && bytes.all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'_'))
+}
+
 /// Where the image runtime reads the selected providers' settings.
 const IMAGE_CONFIG_PATH: &str = ".hoi4-setup/image_generation.json";
 
@@ -124,7 +132,8 @@ pub(crate) fn assistant_provenance(
         || !assistant.endpoint.as_deref().is_some_and(|endpoint| {
             valid_text(endpoint)
                 && if assistant.provider == "local" {
-                    hoi4_setup_core::image_generation::is_loopback_http_url(endpoint)
+                    endpoint.starts_with("http://127.0.0.1:")
+                        || endpoint.starts_with("http://localhost:")
                 } else {
                     endpoint.starts_with("https://")
                 }
@@ -177,6 +186,7 @@ struct ConventionsInput {
 
 /// Everything needed to adapt one source file, owned so a merge base can be
 /// adapted the same way later.
+#[derive(Clone)]
 pub(crate) struct Pipeline {
     identity: ProjectIdentity,
     conventions: ProjectConventions,
@@ -281,8 +291,14 @@ fn maintenance_identity(lock: &InstallationLock, project: &Project) -> ProjectId
         supported_game_version: "*".into(),
         project_root: PathBuf::from(format!("mod/{}", lock.project_id)),
         default_branch: "main".into(),
-        script_prefix: lock.script_prefix.clone(),
-        primary_namespace: lock.primary_namespace.clone(),
+        script_prefix: lock
+            .script_prefix
+            .clone()
+            .or_else(|| project.descriptor_field("script_prefix")),
+        primary_namespace: lock
+            .primary_namespace
+            .clone()
+            .or_else(|| project.descriptor_field("namespace")),
         descriptor_tags: Vec::new(),
         launcher_descriptor_path: None,
     }
@@ -413,6 +429,40 @@ pub(crate) fn prepare(
             "this folder has no setup to maintain".into(),
         ));
     }
+    if let Some(reason) = lock.as_ref().and_then(desktop_only_reason) {
+        return Err(AppError::InvalidInput(reason.into()));
+    }
+    // The web edition never saves keys, but keeps the references a desktop
+    // install recorded for providers that stay selected.
+    let mut chosen = chosen;
+    if let Some(recorded) = lock
+        .as_ref()
+        .and_then(|lock| lock.image_generation.as_ref())
+    {
+        let selected = std::iter::once(chosen.image.primary_provider.clone())
+            .chain(chosen.image.additional_providers.iter().cloned())
+            .collect::<Vec<_>>();
+        chosen.image.credential_references = recorded
+            .credential_references
+            .iter()
+            .filter(|(key, _)| {
+                key.split_once('.')
+                    .is_some_and(|(provider, _)| selected.iter().any(|id| id == provider))
+            })
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        if selected.iter().any(|id| id == &recorded.primary_provider)
+            || recorded
+                .additional_providers
+                .iter()
+                .any(|id| selected.contains(id))
+        {
+            chosen.image.installed_package_tree_sha256 =
+                recorded.installed_package_tree_sha256.clone();
+            chosen.image.installed_package_lock_sha256 =
+                recorded.installed_package_lock_sha256.clone();
+        }
+    }
     let (identity, conventions, provenance) = match (maintenance, lock.as_ref(), project.as_ref()) {
         (Some(_), Some(lock), Some(project)) => (
             maintenance_identity(lock, project),
@@ -424,6 +474,17 @@ pub(crate) fn prepare(
                 .identity
                 .ok_or_else(|| AppError::InvalidInput("the project identity is missing".into()))?;
             validate_project_id(&input.project_id)?;
+            let identifier = regex_lite_identifier;
+            for (value, label) in [
+                (&input.script_prefix, "script prefix"),
+                (&input.primary_namespace, "event namespace"),
+            ] {
+                if value.as_deref().is_some_and(|value| !identifier(value)) {
+                    return Err(AppError::InvalidInput(format!(
+                        "the {label} must use lowercase letters, digits, and underscores and start with a letter or underscore"
+                    )));
+                }
+            }
             let identity = ProjectIdentity {
                 display_name: input.display_name,
                 project_root: PathBuf::from(format!("mod/{}", input.project_id)),
@@ -492,7 +553,18 @@ pub(crate) fn prepare(
     }
     let identity = &pipeline.identity;
     match (maintenance, lock.as_ref()) {
-        (Some(_), Some(lock)) => incoming.extend(generated_from_lock(lock)),
+        (Some(_), Some(lock)) => {
+            // The project state follows the current choices; everything else
+            // comes back exactly as it was written.
+            incoming.extend(generated_from_lock(lock).into_iter().map(|mut file| {
+                if file.component_id == "project.state" {
+                    file.bytes = refreshed_state(&file.bytes, &chosen);
+                    file.source_sha256 = sha256_bytes(&file.bytes);
+                    file.source_size = file.bytes.len() as u64;
+                }
+                file
+            }))
+        }
         _ => {
             let provenance = provenance.as_ref().expect("a setup has provenance");
             incoming.push(generated(
@@ -638,11 +710,18 @@ pub(crate) fn prepare(
                 destination,
                 &format!("image_generation.client_config.{environment}"),
                 bytes,
-                if existing.is_some() {
-                    Ownership::Merged
-                } else {
-                    Ownership::Generated
-                },
+                lock.as_ref()
+                    .and_then(|lock| {
+                        lock.files
+                            .iter()
+                            .find(|file| !file.external && file.path == destination)
+                            .map(|file| file.ownership)
+                    })
+                    .unwrap_or(if existing.is_some() {
+                        Ownership::Merged
+                    } else {
+                        Ownership::Generated
+                    }),
             ));
         }
     }
@@ -654,11 +733,12 @@ pub(crate) fn prepare(
     let mut base_sources = BTreeMap::new();
     if let Some(lock) = lock.as_ref() {
         for entry in entries.iter().filter(|entry| entry.mergeable) {
-            if let Some(locked) = lock
-                .files
-                .iter()
-                .find(|file| !file.external && file.path == entry.path)
-            {
+            if let Some(locked) = lock.files.iter().find(|file| {
+                !file.external
+                    && file.path == entry.path
+                    && hoi4_setup_core::text::normalize_relative_path(&file.source_path).is_ok()
+                    && hoi4_setup_core::manifest::validate_commit(&file.source_revision).is_ok()
+            }) {
                 base_sources.insert(
                     entry.path.clone(),
                     BaseSource {
@@ -750,7 +830,10 @@ pub(crate) fn prepare(
         wiki_required_pages: source.manifest.wiki.required_pages.clone(),
         wiki_metadata: wiki_install_metadata(&source.manifest),
         components,
-        optional_workflows: BTreeMap::new(),
+        optional_workflows: lock
+            .as_ref()
+            .map(|lock| lock.optional_workflows.clone())
+            .unwrap_or_default(),
         portrait_pipeline: Some(chosen.portrait.clone()),
         image_generation: source
             .manifest
@@ -767,6 +850,13 @@ pub(crate) fn prepare(
         root_folder: identity.project_id.clone(),
         root_files,
         lock: lock_inputs,
+        base_pipeline: lock.as_ref().map(|lock| Pipeline {
+            identity: pipeline.identity.clone(),
+            conventions: pipeline.conventions.clone(),
+            folders: pipeline.folders.clone(),
+            chosen: chosen_from_lock(lock, chosen.platform),
+            manifest: source.manifest.clone(),
+        }),
         pipeline: Some(pipeline),
         base_sources,
         bases: BTreeMap::new(),
@@ -782,6 +872,83 @@ fn removable(file: &LockedFile) -> bool {
     !file.component_id.starts_with("project.")
         && file.component_id != "git.ignore"
         && file.ownership != Ownership::Merged
+        && !file.preserved_local
+}
+
+/// Workflows only the desktop app can rebuild; their setups are maintained
+/// there, so a web run never drops them.
+pub(crate) fn desktop_only_reason(lock: &InstallationLock) -> Option<&'static str> {
+    if lock
+        .components
+        .iter()
+        .any(|component| component.id == "workflow.3d")
+    {
+        return Some("This setup uses the 3D models workflow, which only the desktop app can maintain. Update, repair, or change it there.");
+    }
+    if lock
+        .components
+        .iter()
+        .any(|component| component.id == "workflow.live_tools")
+        || lock
+            .live_testing
+            .as_ref()
+            .is_some_and(|live| live.provider == "hoi4_live_tools")
+    {
+        return Some("This setup uses HOI4 Live Tools, which only the desktop app can maintain. Update, repair, or change it there.");
+    }
+    None
+}
+
+/// The project state recorded for a new mod, with the current choices.
+fn refreshed_state(bytes: &[u8], chosen: &Chosen) -> Vec<u8> {
+    let Ok(mut state) = serde_json::from_slice::<Value>(bytes) else {
+        return bytes.to_vec();
+    };
+    let Some(object) = state.as_object_mut() else {
+        return bytes.to_vec();
+    };
+    object.insert(
+        "coding_environments".into(),
+        json!({ "primary": chosen.clients.primary, "additional": chosen.clients.additional }),
+    );
+    object.insert("portrait_pipeline".into(), json!(chosen.portrait));
+    object.insert("image_generation".into(), json!(chosen.image));
+    object.insert("live_testing".into(), json!(chosen.live));
+    serde_json::to_string_pretty(&state)
+        .map(String::into_bytes)
+        .unwrap_or_else(|_| bytes.to_vec())
+}
+
+/// The choices recorded in a lock, so a merge base is adapted the way the
+/// installed file was.
+fn chosen_from_lock(lock: &InstallationLock, platform: Platform) -> Chosen {
+    Chosen {
+        clients: CodingEnvironmentSelection {
+            primary: lock.primary_coding_environment.clone(),
+            additional: lock.additional_coding_environments.clone(),
+        },
+        platform,
+        image: lock
+            .image_generation
+            .clone()
+            .unwrap_or(ImageGenerationSelection {
+                primary_provider: "none".into(),
+                ..Default::default()
+            }),
+        live: lock.live_testing.clone().unwrap_or(LiveTestingSelection {
+            provider: "none".into(),
+            ..Default::default()
+        }),
+        portrait: lock.portrait_pipeline.clone().unwrap_or_else(|| {
+            hoi4_setup_core::portrait::portrait_config(None)
+                .expect("the disabled portrait settings are valid")
+        }),
+        components: lock
+            .components
+            .iter()
+            .map(|component| component.id.clone())
+            .collect(),
+    }
 }
 
 /// Managed removal: every unchanged managed file goes, the user's own and
@@ -841,6 +1008,7 @@ pub(crate) fn prepare_removal(project: &Project, request_json: &str) -> Result<E
         root_files: Vec::new(),
         lock: lock_inputs,
         pipeline: None,
+        base_pipeline: None,
         base_sources: BTreeMap::new(),
         bases: BTreeMap::new(),
         merged: BTreeMap::new(),
@@ -1210,5 +1378,85 @@ mod tests {
             .unwrap()
             .iter()
             .all(|entry| entry.path != LOCK_PATH));
+    }
+
+    /// Install a new mod, then load the exported folder as a dropped project,
+    /// after `edit` changes its lock.
+    fn installed_project(edit: impl Fn(&mut Value)) -> Project {
+        let source = source_with(selection());
+        let export = prepare(&source, &setup_request().to_string(), None).unwrap();
+        let archive = export.build_zip(&BTreeMap::new()).unwrap();
+        let mut project = Project::new();
+        for entry in read_zip(&archive).unwrap() {
+            if let Some(path) = entry.path.strip_prefix("iron_dawn/") {
+                let bytes = if path == LOCK_PATH {
+                    let mut lock: Value = serde_json::from_slice(&entry.bytes).unwrap();
+                    edit(&mut lock);
+                    serde_json::to_vec(&lock).unwrap()
+                } else {
+                    entry.bytes
+                };
+                project.add_file(path, &bytes).unwrap();
+            }
+        }
+        project.scan().unwrap();
+        project
+    }
+
+    #[test]
+    fn setups_with_desktop_only_workflows_are_left_to_the_desktop() {
+        let project = installed_project(|lock| {
+            lock["components"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"id": "workflow.3d", "version": null, "state": "installed"}));
+        });
+        let source = source_with(selection());
+        let request = json!({ "maintenance": "update", "installedAt": "2026-10-20T00:00:00Z" });
+        let error = prepare(&source, &request.to_string(), Some(project.snapshot()))
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("desktop app"));
+        // Removal rebuilds nothing, so it stays available.
+        assert!(prepare_removal(&project, "{}").is_ok());
+    }
+
+    #[test]
+    fn maintenance_keeps_key_references_and_refreshes_project_state() {
+        let reference = "credential://image/openai_api/api_key";
+        let project = installed_project(|lock| {
+            lock["image_generation"]["credential_references"] =
+                json!({ "openai_api.api_key": reference });
+        });
+        let mut changed = selection();
+        changed["additionalCodingEnvironments"] = json!(["codex"]);
+        let source = source_with(changed);
+        let request = json!({ "maintenance": "change", "installedAt": "2026-10-20T00:00:00Z" });
+        let export = prepare(&source, &request.to_string(), Some(project.snapshot())).unwrap();
+        let config = export
+            .incoming
+            .iter()
+            .find(|file| file.path == IMAGE_CONFIG_PATH)
+            .unwrap();
+        assert!(String::from_utf8_lossy(&config.bytes).contains(reference));
+        assert_eq!(
+            export
+                .lock
+                .image_generation
+                .as_ref()
+                .unwrap()
+                .credential_references["openai_api.api_key"],
+            reference
+        );
+        let state: Value = serde_json::from_slice(
+            &export
+                .incoming
+                .iter()
+                .find(|file| file.path == STATE_PATH)
+                .unwrap()
+                .bytes,
+        )
+        .unwrap();
+        assert_eq!(state["coding_environments"]["additional"], json!(["codex"]));
     }
 }

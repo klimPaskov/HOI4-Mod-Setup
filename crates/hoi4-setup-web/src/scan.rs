@@ -44,12 +44,17 @@ impl Project {
 
     /// The descriptor's `name`, when the folder has a readable descriptor.
     pub(crate) fn descriptor_name(&self) -> Option<String> {
+        self.descriptor_field("name")
+    }
+
+    /// One field of the folder's descriptor, cleaned for display.
+    pub(crate) fn descriptor_field(&self, field: &str) -> Option<String> {
         let bytes = self.fs.read("descriptor.mod", 1024 * 1024).ok()?;
         let parsed = parse_descriptor(&bytes).ok()?;
         parsed
             .fields
-            .get("name")
-            .map(|name| hoi4_setup_core::profile::clean_text(name, 256))
+            .get(field)
+            .map(|value| hoi4_setup_core::profile::clean_text(value, 256))
     }
 }
 
@@ -186,6 +191,7 @@ fn read_existing_setup(fs: &MemoryFs) -> (Option<InstallationLock>, Value) {
                 })),
                 "live_testing": lock.live_testing,
                 "file_count": lock.files.len(),
+                "desktop_only": crate::build::desktop_only_reason(&lock),
             });
             (Some(lock), summary)
         }

@@ -44,6 +44,8 @@ const HIDDEN_COMPONENT_PREFIXES = ["workflow.portraits", "imagegen.", "workflow.
 const ALWAYS_LISTED = new Set(["workflow.super_events"]);
 const READ_BATCH_BYTES = 32 * 1024 * 1024;
 const PROJECT_ID = /^[a-z][a-z0-9_]{1,63}$/;
+/** The lock's rule for a script prefix or namespace. */
+const IDENTIFIER = /^[a-z_][a-z0-9_]{0,63}$/;
 const MAX_ATTACHMENTS = 12;
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const EXISTING_PROJECT_BRIEF = "Review this existing HOI4 mod using only the approved scan evidence. Keep detected facts unchanged, infer conventions only from that evidence, and do not invent the mod's theme or content.";
@@ -264,7 +266,7 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     });
     setEdited(new Set());
     setExcluded(new Set());
-    setMaintenance(result.existing_setup?.valid ? "update" : null);
+    setMaintenance(result.existing_setup?.valid ? (result.existing_setup.desktop_only ? "remove" : "update") : null);
     resetAnalysis();
   }), [client, run]);
 
@@ -401,6 +403,8 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   const identityProblem = useMemo(() => {
     if (!identity.displayName.trim()) return "Enter the mod name.";
     if (!PROJECT_ID.test(identity.projectId)) return "The mod ID must start with a lowercase letter and use only lowercase letters, digits, and underscores.";
+    if (identity.scriptPrefix.trim() && !IDENTIFIER.test(identity.scriptPrefix.trim())) return "The script prefix must use lowercase letters, digits, and underscores, starting with a letter or underscore.";
+    if (identity.primaryNamespace.trim() && !IDENTIFIER.test(identity.primaryNamespace.trim())) return "The event namespace must use lowercase letters, digits, and underscores, starting with a letter or underscore.";
     return null;
   }, [identity]);
 
@@ -513,21 +517,24 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     setOptional(new Set(optionalComponentsFor(current, profile).map((component) => component.id).filter((id) => installed.includes(id))));
     const clients = current.coding_environments.map((environment) => environment.id);
     const recordedPrimary = existingSetup.primary_coding_environment ?? "";
-    setPrimary(clients.includes(recordedPrimary) ? recordedPrimary : current.coding_environments.find((environment) => environment.default_primary)?.id ?? clients[0] ?? "");
-    setAdditional(new Set((existingSetup.additional_coding_environments ?? []).filter((id) => clients.includes(id) && id !== recordedPrimary)));
+    const primaryId = clients.includes(recordedPrimary) ? recordedPrimary : current.coding_environments.find((environment) => environment.default_primary)?.id ?? clients[0] ?? "";
+    const additionalIds = (existingSetup.additional_coding_environments ?? []).filter((id) => clients.includes(id) && id !== primaryId);
+    setPrimary(primaryId);
+    setAdditional(new Set(additionalIds));
     setImageChoice(existingSetup.image_generation ? { primary_provider: existingSetup.image_generation.primary_provider, additional_providers: existingSetup.image_generation.additional_providers ?? [], route_settings: existingSetup.image_generation.route_settings ?? {} } : defaultImageChoice(current));
     const recordedPortrait = existingSetup.portrait_pipeline;
-    setPortrait(recordedPortrait?.enabled ? { provider: recordedPortrait.provider as PortraitChoice["provider"], localComfyuiRoot: recordedPortrait.local_comfyui_root, localServerUrl: recordedPortrait.local_server_url, runpodUrl: recordedPortrait.runpod_url, runpodWorkspace: recordedPortrait.runpod_workspace } : NO_PORTRAITS);
+    const portraitChoice: PortraitChoice = recordedPortrait?.enabled ? { provider: recordedPortrait.provider as PortraitChoice["provider"], preferredWorkflow: recordedPortrait.preferred_workflow, localComfyuiRoot: recordedPortrait.local_comfyui_root, localServerUrl: recordedPortrait.local_server_url, runpodUrl: recordedPortrait.runpod_url, runpodWorkspace: recordedPortrait.runpod_workspace } : NO_PORTRAITS;
+    setPortrait(portraitChoice);
     const recordedLive = existingSetup.live_testing;
     setLive(recordedLive && recordedLive.provider === "clausewitz_mcp" ? recordedLive : NO_LIVE_TESTING);
     if (choice === "repair") {
       await prepareWith(current, {
         profileComponents: profile?.components ?? [],
         optionalIds: optionalComponentsFor(current, profile).map((component) => component.id).filter((id) => installed.includes(id)),
-        primaryId: clients.includes(recordedPrimary) ? recordedPrimary : clients[0] ?? "",
-        additionalIds: (existingSetup.additional_coding_environments ?? []).filter((id) => clients.includes(id) && id !== recordedPrimary),
+        primaryId,
+        additionalIds,
         image: existingSetup.image_generation ? { primary_provider: existingSetup.image_generation.primary_provider, additional_providers: existingSetup.image_generation.additional_providers ?? [], route_settings: existingSetup.image_generation.route_settings ?? {} } : defaultImageChoice(current),
-        portraitChoice: recordedPortrait?.enabled ? { provider: recordedPortrait.provider as PortraitChoice["provider"], localComfyuiRoot: recordedPortrait.local_comfyui_root, localServerUrl: recordedPortrait.local_server_url, runpodUrl: recordedPortrait.runpod_url, runpodWorkspace: recordedPortrait.runpod_workspace } : NO_PORTRAITS,
+        portraitChoice,
         liveChoice: recordedLive && recordedLive.provider === "clausewitz_mcp" ? recordedLive : NO_LIVE_TESTING,
         mode: "repair",
       });

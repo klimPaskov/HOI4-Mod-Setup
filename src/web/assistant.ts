@@ -38,7 +38,8 @@ export const BROWSER_PROVIDERS: BrowserProvider[] = [
 export function isLoopbackEndpoint(value: string): boolean {
   try {
     const url = new URL(value);
-    return ["http:", "https:"].includes(url.protocol) && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && !url.username && !url.password && !url.search && !url.hash;
+    // Only the origins the page's Content Security Policy allows.
+    return url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname) && url.port !== "" && !url.username && !url.password && !url.search && !url.hash;
   } catch {
     return false;
   }

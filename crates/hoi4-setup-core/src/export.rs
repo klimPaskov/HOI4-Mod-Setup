@@ -236,11 +236,16 @@ fn plan(
         let incoming_sha256 = sha256_bytes(&file.bytes);
         let local_sha256 = local_sha256(local, path)?;
         let locked = locked_files.get(path);
+        // A file the user kept as their own, or one with their edits merged
+        // in, is theirs: it is reviewed, never updated or restored silently.
+        let users_own = locked
+            .is_some_and(|locked| locked.preserved_local || locked.ownership == Ownership::Merged);
         let action = match (&local_sha256, locked) {
+            (None, Some(_)) if users_own => ExportAction::Conflict,
             (None, Some(_)) => ExportAction::Restore,
             (None, None) => ExportAction::Create,
             (Some(local), _) if *local == incoming_sha256 => ExportAction::Unchanged,
-            (Some(local), Some(locked)) if *local == locked.installed_sha256 => {
+            (Some(local), Some(locked)) if *local == locked.installed_sha256 && !users_own => {
                 ExportAction::Update
             }
             (Some(_), Some(locked)) if locked.installed_sha256 == incoming_sha256 => {
@@ -249,6 +254,7 @@ fn plan(
             (Some(_), _) => ExportAction::Conflict,
         };
         let mergeable = action == ExportAction::Conflict
+            && local_sha256.is_some()
             && locked.is_some_and(|locked| {
                 locked.ownership != Ownership::Merged
                     && !locked.preserved_local
@@ -273,7 +279,10 @@ fn plan(
         let Some(local_sha256) = local_sha256(local, path)? else {
             continue;
         };
-        let action = if local_sha256 == locked.installed_sha256 && removable(locked) {
+        let action = if local_sha256 == locked.installed_sha256
+            && !locked.preserved_local
+            && removable(locked)
+        {
             ExportAction::Remove
         } else {
             ExportAction::Release
@@ -591,15 +600,18 @@ pub fn build_export(request: ExportRequest<'_>) -> Result<Vec<u8>, AppError> {
                         summary.merged.push(&entry.path);
                     }
                     Decision::Keep => {
-                        let local = read_local(&entry.path)?;
-                        locked.push(locked_file(
-                            file,
-                            &entry.path,
-                            &revision,
-                            &local,
-                            true,
-                            file.ownership,
-                        ));
+                        // Keeping a file the user deleted leaves it out.
+                        if entry.local_sha256.is_some() {
+                            let local = read_local(&entry.path)?;
+                            locked.push(locked_file(
+                                file,
+                                &entry.path,
+                                &revision,
+                                &local,
+                                true,
+                                file.ownership,
+                            ));
+                        }
                         summary.kept.push(&entry.path);
                     }
                     Decision::Skip => {
@@ -1271,6 +1283,98 @@ mod tests {
         assert_eq!(
             renamed_path("LICENSE", &|_| false).unwrap(),
             "LICENSE.incoming"
+        );
+    }
+
+    #[test]
+    fn kept_and_merged_files_are_reviewed_and_never_removed() {
+        let mut fs = MemoryFs::new();
+        fs.add_file("AGENTS.md", b"my rules".to_vec()).unwrap();
+        fs.add_file("skills/merged.md", b"merged v1".to_vec())
+            .unwrap();
+        fs.add_file("skills/kept-old.md", b"mine".to_vec()).unwrap();
+        let mut kept = installed("AGENTS.md", "core.agents", b"my rules", Ownership::Managed);
+        kept.preserved_local = true;
+        let merged = installed(
+            "skills/merged.md",
+            "core.skills",
+            b"merged v1",
+            Ownership::Merged,
+        );
+        let mut kept_old = installed(
+            "skills/kept-old.md",
+            "core.skills",
+            b"mine",
+            Ownership::Managed,
+        );
+        kept_old.preserved_local = true;
+        let mut kept_missing = installed(
+            "skills/gone.md",
+            "core.skills",
+            b"mine too",
+            Ownership::Managed,
+        );
+        kept_missing.preserved_local = true;
+        let lock = installed_lock(vec![kept, merged, kept_old, kept_missing]);
+        let files = vec![
+            managed("AGENTS.md", b"rules v2"),
+            managed("skills/merged.md", b"merged v2"),
+            managed("skills/gone.md", b"gone v2"),
+        ];
+        let entries = plan_maintenance(&files, &fs, &lock, &|_| true).unwrap();
+        let action = |path: &str| entries.iter().find(|entry| entry.path == path).unwrap();
+        assert_eq!(
+            action("AGENTS.md").action,
+            ExportAction::Conflict,
+            "a kept file is reviewed"
+        );
+        assert_eq!(
+            action("skills/merged.md").action,
+            ExportAction::Conflict,
+            "merged edits are reviewed"
+        );
+        assert!(
+            !action("skills/merged.md").mergeable,
+            "a merged file has no rebuildable base"
+        );
+        assert_eq!(
+            action("skills/gone.md").action,
+            ExportAction::Conflict,
+            "a kept file is not restored silently"
+        );
+        assert_eq!(
+            action("skills/kept-old.md").action,
+            ExportAction::Release,
+            "a kept file is never removed"
+        );
+
+        let decisions = BTreeMap::from([
+            ("AGENTS.md".to_owned(), Decision::Keep),
+            ("skills/merged.md".to_owned(), Decision::Keep),
+            ("skills/gone.md".to_owned(), Decision::Keep),
+        ]);
+        let merged_results = BTreeMap::new();
+        let archive = build_export(request(
+            &files,
+            &entries,
+            &decisions,
+            &merged_results,
+            Some(&fs),
+            ExportLayout::Overlay,
+        ))
+        .unwrap();
+        assert!(zip_file(&archive, "skills/gone.md").is_none());
+        let lock = validate_lock(&zip_file(&archive, LOCK_PATH).unwrap());
+        let paths = lock["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|file| file["path"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            paths,
+            ["AGENTS.md", "skills/merged.md"],
+            "a deleted kept file leaves the lock"
         );
     }
 

@@ -81,6 +81,8 @@ pub struct Export {
     pub(crate) root_files: Vec<ZipEntry>,
     pub(crate) lock: LockInputs,
     pub(crate) pipeline: Option<Pipeline>,
+    /// Adapts merge bases with the choices the lock recorded.
+    pub(crate) base_pipeline: Option<Pipeline>,
     pub(crate) base_sources: BTreeMap<String, BaseSource>,
     pub(crate) bases: BTreeMap<String, Vec<u8>>,
     pub(crate) merged: BTreeMap<String, Vec<u8>>,
@@ -122,7 +124,7 @@ impl Export {
             )));
         }
         let pipeline = self
-            .pipeline
+            .base_pipeline
             .as_ref()
             .ok_or_else(|| AppError::InvalidInput("this export cannot merge".into()))?;
         let adapted = pipeline.adapt(&source.component_id, path, bytes, None)?;
