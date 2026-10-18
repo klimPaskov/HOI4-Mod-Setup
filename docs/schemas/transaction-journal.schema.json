@@ -136,13 +136,15 @@
       }
     },
     "primary_coding_environment": {
-      "enum": ["codex", "claude_code", "cursor", "qoder", "opencode"]
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
     },
     "additional_coding_environments": {
       "type": "array",
       "uniqueItems": true,
       "items": {
-        "enum": ["codex", "claude_code", "cursor", "qoder", "opencode"]
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]{0,63}$"
       }
     },
     "state": {

@@ -355,6 +355,9 @@ pub fn sensitive_scan_path(relative: &str) -> bool {
         || name.ends_with(".pfx")
 }
 
+/// Reads a sample: at most the first `PREFIX_BYTES` of a file and its full size.
+pub type SampleReader<'a> = dyn FnMut(&str) -> Result<(Vec<u8>, u64), AppError> + 'a;
+
 /// The outcome of recording one regular file during a walk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileRecord {
@@ -487,7 +490,7 @@ impl Profiler {
     /// full size) and build the profile findings.
     pub fn analyze(
         mut self,
-        read: &mut dyn FnMut(&str) -> Result<(Vec<u8>, u64), AppError>,
+        read: &mut SampleReader<'_>,
         cancel: &dyn Fn() -> bool,
         progress: &mut dyn FnMut(&ProfileStats, &str),
     ) -> Result<ProfileResult, AppError> {
