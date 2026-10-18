@@ -162,7 +162,7 @@ export interface CoreOperations {
   openSource: { args: { manifest: ArrayBuffer; revision: string; mode: string; requestedRef: string | null }; result: null };
   preview: { args: { platform: Platform }; result: SourcePreview };
   select: { args: { request: SelectionRequest }; result: SelectionResult };
-  download: { args: { revision: string }; result: number };
+  download: { args: { revision: string; expected: Record<string, string> }; result: number };
   export: { args: { request: ExportRequest; existing: boolean }; result: ExportEntry[] };
   compare: { args: { path: string }; result: Comparison };
   zip: { args: { decisions: Record<string, Decision> }; result: ArrayBuffer };

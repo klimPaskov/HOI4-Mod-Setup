@@ -5840,6 +5840,11 @@ fn build_lock(
                     }
                     LocalState::Modified | LocalState::Unknown => false,
                 };
+                let generated_text = if generated {
+                    String::from_utf8(prepared.bytes.clone()).ok()
+                } else {
+                    None
+                };
                 let locked_file = LockedFile {
                     path: operation.destination.clone(),
                     location_scope: Some(if operation.external {
@@ -5866,12 +5871,10 @@ fn build_lock(
                     // Repair reproduces generated files from this recorded
                     // content, and an update replans them as replacements of
                     // a `generated:` source, so keep it for either action.
-                    generated_content: if generated {
-                        String::from_utf8(prepared.bytes.clone()).ok()
-                    } else {
-                        None
-                    },
-                    generated_bytes: generated.then_some(prepared.bytes.clone()),
+                    // Text is recorded once; only binary output keeps bytes.
+                    generated_content: generated_text.clone(),
+                    generated_bytes: (generated && generated_text.is_none())
+                        .then(|| prepared.bytes.clone()),
                     executable: operation.executable,
                     platform: operation.platform.or(Some(ManifestPlatform::All)),
                     installer_created,
@@ -9469,7 +9472,14 @@ mod tests {
             .find(|file| file.path == "README.md")
             .unwrap();
         assert_eq!(locked.generated_content.as_deref(), Some("# Project\n"));
-        assert_eq!(locked.generated_bytes.as_deref(), Some(&readme[..]));
+        assert_eq!(
+            locked.generated_content.as_deref().map(str::as_bytes),
+            Some(&readme[..])
+        );
+        assert!(
+            locked.generated_bytes.is_none(),
+            "text output is recorded once, not also as a byte array"
+        );
     }
 
     #[test]

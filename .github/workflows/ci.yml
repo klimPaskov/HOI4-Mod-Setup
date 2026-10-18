@@ -188,6 +188,16 @@ jobs:
         run: pnpm web:build
       - name: Check the built page
         run: node scripts/check_web_build.mjs
+      - name: Install browser engines
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - name: Test the web edition in Chromium, Firefox, and WebKit
+        run: pnpm test:web
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: web-edition-test-results
+          path: test-results
+          retention-days: 7
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: web-edition

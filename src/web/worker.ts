@@ -3,6 +3,7 @@
 // from GitHub at the exact commit, and builds the ZIP. Keeping this off the
 // page thread keeps the interface responsive on large mods.
 
+import { cachedFile, storeFile } from "./cache";
 import { rawUrl } from "./github";
 import type { CoreOperations, Operation, Request, WorkerMessage } from "./protocol";
 
@@ -78,7 +79,7 @@ async function fetchFile(revision: string, path: string): Promise<Uint8Array> {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-async function download(revision: string): Promise<number> {
+async function download(revision: string, expected: Record<string, string>): Promise<number> {
   if (!source) throw new Error("Choose the setup source first.");
   const missing = JSON.parse(source.missing()) as string[];
   let done = 0;
@@ -86,8 +87,21 @@ async function download(revision: string): Promise<number> {
   const worker = async () => {
     while (next < missing.length) {
       const path = missing[next++];
-      const bytes = await fetchFile(revision, path);
-      source!.accept(path, bytes);
+      const cached = await cachedFile(expected[path]);
+      let accepted = false;
+      if (cached) {
+        try {
+          source!.accept(path, cached);
+          accepted = true;
+        } catch {
+          // A damaged cache entry is replaced by a fresh download.
+        }
+      }
+      if (!accepted) {
+        const bytes = await fetchFile(revision, path);
+        source!.accept(path, bytes);
+        await storeFile(expected[path], bytes);
+      }
       done += 1;
       post({ kind: "progress", done, total: missing.length, path });
     }
@@ -127,8 +141,10 @@ async function handle<Op extends Operation>(op: Op, args: CoreOperations[Op]["ar
     case "select":
       if (!source) throw new Error("Choose the setup source first.");
       return { result: JSON.parse(source.select(JSON.stringify((args as CoreOperations["select"]["args"]).request))) };
-    case "download":
-      return { result: await download((args as CoreOperations["download"]["args"]).revision) };
+    case "download": {
+      const { revision, expected } = args as CoreOperations["download"]["args"];
+      return { result: await download(revision, expected) };
+    }
     case "export": {
       if (!source) throw new Error("Choose the setup source first.");
       const { request, existing } = args as CoreOperations["export"]["args"];

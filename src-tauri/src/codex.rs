@@ -957,7 +957,7 @@ impl Drop for AnalysisWorkingDirectory {
 
 /// Validate a provider reply and give it an identifier the model cannot
 /// choose.
-pub(crate) fn validate_analysis_output(
+pub fn validate_analysis_output(
     value: Value,
     request: &CodexAnalysisRequest,
     input_sha256: &str,

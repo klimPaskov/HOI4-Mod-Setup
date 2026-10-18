@@ -43,7 +43,7 @@ export function recordRequest(url: string, status: number | "failed"): void {
 
 export class RateLimitError extends Error {
   constructor() {
-    super("GitHub's limit for anonymous requests from this network is used up. Wait about an hour, or add a GitHub token for this session.");
+    super("GitHub's limit for anonymous requests from this network is used up. Wait up to an hour and try again.");
   }
 }
 

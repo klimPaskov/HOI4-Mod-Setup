@@ -10,6 +10,7 @@
     "dev": "vite",
     "web:dev": "node scripts/build_web.mjs --core && vite --config vite.web.config.ts",
     "web:build": "node scripts/build_web.mjs",
+    "test:web": "playwright test --config playwright.web.config.ts",
     "build": "tsc --noEmit && vite build",
     "lint": "node scripts/lint_frontend.mjs",
     "typecheck": "tsc --noEmit",

@@ -360,7 +360,8 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     const stop = client().onProgress((done, total) => setBusy({ label: "Downloading verified files", done, total }));
     try {
       setBusy({ label: "Downloading verified files", done: 0, total: new Set(selection.files.map((file) => file.source_path)).size });
-      await client().call("download", { revision: source!.revision });
+      const expected = Object.fromEntries(selection.files.filter((file) => file.expected_sha256).map((file) => [file.source_path, file.expected_sha256 as string]));
+      await client().call("download", { revision: source!.revision, expected });
     } finally {
       stop();
     }

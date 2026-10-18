@@ -172,6 +172,10 @@ fn locked_file(
     preserved_local: bool,
 ) -> LockedFile {
     let generated = file.generated() && !preserved_local;
+    // Text is recorded once; only binary output keeps bytes.
+    let generated_text = generated
+        .then(|| String::from_utf8(installed.to_vec()).ok())
+        .flatten();
     LockedFile {
         path: file.path.clone(),
         location_scope: Some("project".into()),
@@ -186,10 +190,8 @@ fn locked_file(
         ownership: file.ownership,
         preserved_local,
         external: false,
-        generated_content: generated
-            .then(|| String::from_utf8(installed.to_vec()).ok())
-            .flatten(),
-        generated_bytes: None,
+        generated_content: generated_text.clone(),
+        generated_bytes: (generated && generated_text.is_none()).then(|| installed.to_vec()),
         executable: file.executable,
         platform: Some(ManifestPlatform::All),
         installer_created: !preserved_local && !file.generated(),

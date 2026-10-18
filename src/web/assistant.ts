@@ -7,7 +7,7 @@
 import claudeModels from "../claude-models.json";
 import { recordRequest } from "./github";
 import type { CoreClient } from "./core-client";
-import type { Analysis, AnalysisRequest, AssistantProvenance, AssistantRoute } from "./protocol";
+import type { Analysis, AnalysisRequest, AssistantProvenance, AssistantReply, AssistantRoute, AssistantTurn } from "./protocol";
 
 export interface BrowserProvider {
   id: string;
@@ -111,9 +111,9 @@ export async function runAssistant(core: CoreClient, route: AssistantRoute, apiK
   if (!key || /\s/.test(key)) throw new AssistantError("Enter the API key.");
   let correction: string | null = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const turn = await core.call("assistantTurn", { request, route, correction });
+    const turn: AssistantTurn = await core.call("assistantTurn", { request, route, correction });
     const envelope = await send(route, key, turn.headers, turn.body);
-    const reply = await core.call("assistantReply", { envelope, request, inputSha256: turn.inputSha256, analysisId: crypto.randomUUID() });
+    const reply: AssistantReply = await core.call("assistantReply", { envelope, request, inputSha256: turn.inputSha256, analysisId: crypto.randomUUID() });
     if ("analysis" in reply) return reply.analysis;
     if ("error" in reply) throw new AssistantError(`The provider's reply was not usable: ${reply.error}`);
     correction = reply.retry;

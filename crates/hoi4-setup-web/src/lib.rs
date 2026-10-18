@@ -1006,7 +1006,7 @@ mod tests {
         project
             .add_file("events/demo.txt", b"add_namespace = demo\n")
             .unwrap();
-        let scan: Value = serde_json::from_str(&scan_project(&project.fs).unwrap()).unwrap();
+        let scan: Value = serde_json::from_str(&scan_project(&project.fs).unwrap().0).unwrap();
         let detected = scan["detected"].as_array().unwrap();
         assert!(detected
             .iter()
