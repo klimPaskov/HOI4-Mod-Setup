@@ -3538,17 +3538,8 @@ fn validate_managed_bytes(
             None
         };
         if let Some(schema) = schema {
-            let schema_value =
-                serde_json::from_str::<serde_json::Value>(schema).map_err(|error| {
-                    AppError::Transaction(format!(
-                        "checked-in JSON Schema is invalid for {destination}: {error}"
-                    ))
-                })?;
-            let validator = jsonschema::draft202012::new(&schema_value).map_err(|error| {
-                AppError::Transaction(format!(
-                    "checked-in JSON Schema cannot be compiled for {destination}: {error}"
-                ))
-            })?;
+            let validator = crate::schemas::validator(schema)
+                .map_err(|error| AppError::Transaction(format!("{error} ({destination})")))?;
             validator.validate(&value).map_err(|error| {
                 AppError::Transaction(format!(
                     "schema validation failed for {destination} at {}: {error}",

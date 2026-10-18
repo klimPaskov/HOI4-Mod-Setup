@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, forgetContextAttachment, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, pickContextDocuments, pickContextImages, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, readDiagnostics, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, forgetContextAttachment, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, pickContextDocuments, pickContextImages, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
 import { base64ByteLength, base64DataUrl, renderCoverPng, renderReferenceJpeg } from "./lib/images";
 import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, ContextDocumentState, ContextImageState, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, McpSupport, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
@@ -1862,7 +1862,7 @@ function ScreenFrame({ screen, copy, state, canAdvance, pending, semanticProgres
       {children}
     </div>
     <footer className="footer-bar">
-      <span className="footer-note" role={state.transactionError ? "alert" : undefined}>{footerNote(screen, state)}</span>
+      <span className="footer-note" role={state.transactionError ? "alert" : undefined}>{footerNote(screen, state)}{showDiagnosticsCopy(state) && <CopyDiagnosticsButton />}</span>
       <div className="footer-actions">
         {screen === "ready" && !state.finished && !state.removalSummary && <button className="button secondary" onClick={() => onMaintenance("update")}>Update and repair</button>}
         {screen === "dry-run" && (!state.plan || unresolvedConflicts) && <button className="button secondary" onClick={() => void onPrepareConflicts()} disabled={preparingPlan} aria-busy={preparingPlan || undefined}>{preparingPlan ? "Preparing changes…" : state.plan ? "Resolve conflicts" : "Prepare changes"}</button>}
@@ -1924,6 +1924,26 @@ function PlanPreparationProgress({ startedAt, now }: { startedAt?: number; now: 
     <Progress value={progress.percent} label="Preparing changes" valueText={`${progress.percent}% complete. Estimated time: ${progress.remaining}`} />
     <div className="plan-preparation-meta" aria-hidden="true"><span>{progress.percent}%</span><span>Estimated time: {progress.remaining}</span></div>
   </section>;
+}
+
+/** A failure message, as opposed to progress or guidance text. */
+export function showDiagnosticsCopy(state: WizardState): boolean {
+  return Boolean(state.transactionError && isTauriRuntime() && /could not|did not|unavailable|failed|stopped|try again|try the/i.test(state.transactionError));
+}
+
+export function CopyDiagnosticsButton() {
+  const [status, setStatus] = useState("");
+  const copy = async () => {
+    const text = await readDiagnostics();
+    if (!text) { setStatus("Diagnostics are unavailable."); return; }
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus("Diagnostics copied.");
+    } catch {
+      setStatus("Copying was blocked; the diagnostics file is listed in the message.");
+    }
+  };
+  return <> <button type="button" className="text-button" onClick={() => void copy()}>Copy diagnostics</button><span className="visually-hidden" role="status">{status}</span>{status && <span aria-hidden="true" className="muted"> {status}</span>}</>;
 }
 
 function footerNote(screen: ScreenId, state: WizardState): string {
@@ -3329,7 +3349,7 @@ export function Components({ state, update }: { state: WizardState; update: (pat
     if (!manifestRetrying) setManifestFailed(false);
     setManifestMessage("Loading setup components…");
     const returningFromRetry = manifestRetrying;
-    void previewSourceManifestResult(state.sourceMode, state.pinnedRef).then((response) => {
+    const apply = (response: { value: SourceManifestPreview | null; error?: string }) => {
       if (!active) return;
       const result = response.value;
       if (!result) {
@@ -3374,7 +3394,11 @@ export function Components({ state, update }: { state: WizardState; update: (pat
       setManifestRetrying(false);
       update({ manifestPreview: result, components: rows, selectedComponents });
       if (returningFromRetry) window.setTimeout(() => manifestStatusRef.current?.focus(), 0);
-    });
+    };
+    // Every source change clears the stored manifest, so one in state belongs
+    // to the current source; reuse it instead of fetching it again.
+    if (state.manifestPreview && !returningFromRetry) apply({ value: state.manifestPreview });
+    else void previewSourceManifestResult(state.sourceMode, state.pinnedRef).then(apply);
     return () => { active = false; };
   }, [state.sourceMode, state.pinnedRef, manifestRequest]);
 

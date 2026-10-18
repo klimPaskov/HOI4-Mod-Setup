@@ -956,6 +956,7 @@ pub fn run() {
             pick_project_folder,
             pick_launcher_folder,
             suggest_project_paths,
+            read_diagnostics,
             pick_context_documents,
             pick_context_images,
             forget_context_attachment,
@@ -2474,6 +2475,22 @@ async fn pick_context_images(
         })
     })
     .await
+}
+
+/// The recent diagnostics log, with the app version, for the user to copy.
+#[tauri::command(async)]
+fn read_diagnostics(app: tauri::AppHandle) -> Result<String, String> {
+    let recent = crate::paths::recent_diagnostics(32 * 1024);
+    Ok(format!(
+        "HOI4 Mod Setup {} on {}\n{}",
+        app.package_info().version,
+        Platform::current().display_name(),
+        if recent.trim().is_empty() {
+            "No diagnostics have been recorded."
+        } else {
+            recent.as_str()
+        }
+    ))
 }
 
 #[tauri::command(async)]

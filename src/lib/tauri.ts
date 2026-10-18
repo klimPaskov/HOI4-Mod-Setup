@@ -101,6 +101,7 @@ interface TauriCommandMap {
   pick_context_documents: { args: Record<string, never>; result: ContextPick<ContextDocument> };
   pick_context_images: { args: Record<string, never>; result: ContextPick<ContextImage> };
   forget_context_attachment: { args: { id: string }; result: void };
+  read_diagnostics: { args: Record<string, never>; result: string };
   preview_source_manifest: { args: { sourceMode: WizardState["sourceMode"]; pinnedRef: string }; result: SourceManifestPreview };
   store_meshy_credential: { args: { value: string }; result: CredentialReference };
   meshy_credential_status: { args: Record<string, never>; result: CredentialReference | null };
@@ -369,6 +370,11 @@ export async function pickContextImages(): Promise<CommandResult<ContextPick<Con
 export async function forgetContextAttachment(id: string): Promise<boolean> {
   if (!id.trim()) return false;
   return (await invokeCommandResult("forget_context_attachment", { id })).error === undefined;
+}
+
+/** Recent redacted diagnostics for the user to copy into a report. */
+export async function readDiagnostics(): Promise<string | null> {
+  return invokeCommand("read_diagnostics", {});
 }
 
 export async function suggestProjectPaths(projectId: string): Promise<SuggestedProjectPaths | null> {

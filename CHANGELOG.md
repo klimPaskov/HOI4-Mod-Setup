@@ -15,6 +15,8 @@ HOI4 Mod Setup follows semantic versioning.
 - Accept relative `mod/<name>`, trailing-separator, and single-backslash `path=` values in an existing launcher file, and explain a real mismatch with the declared and selected folders instead of a "scan error".
 - Remove ChatGPT source packaging from the app: no export screen, Review or Update callout, or flattened-folder option. The packager is the optional `runtime.chatgpt_sources` component, a `.tools` script the user checks and runs. Installs that already recorded a ChatGPT folder keep it until a later migration.
 - Optionally add documents and images while describing a new mod or reviewing an existing one. Documents inform the setup assistant as redacted context and can be copied to `docs/reference/`; an image can become the thumbnail, and images can be saved to `docs/visual_direction/`.
+- Prepare plans faster: JSON Schemas are compiled once per run, a commit's manifest is downloaded and validated once even when Latest, a pin, and maintenance resolve to it, and the Components screen reuses the manifest it already has.
+- Add **Copy diagnostics** next to failure messages, copying the recent redacted diagnostics log for a report.
 - Keep the MCP and credentials review to one readable column instead of stretching across wide windows.
 - Build the updater without its archive feature, removing the vulnerable `zip` crate (RUSTSEC-2026-0367, -0368, -0369); release payloads are raw signed installers.
 

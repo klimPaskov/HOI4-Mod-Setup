@@ -506,6 +506,26 @@ fn append_diagnostic(directory: &Path, context: &str, detail: &str) {
     }
 }
 
+/// The most recent part of the diagnostics log, for the user to copy into a
+/// report. Lines are redacted when written and redacted again here.
+pub fn recent_diagnostics(max_bytes: usize) -> String {
+    let Some(path) = diagnostics_log_path() else {
+        return String::new();
+    };
+    let Ok(bytes) = fs::read(&path) else {
+        return String::new();
+    };
+    let start = bytes.len().saturating_sub(max_bytes);
+    let text = String::from_utf8_lossy(&bytes[start..]);
+    // Drop a partial first line when the tail starts mid-line.
+    let text = if start > 0 {
+        text.split_once('\n').map(|(_, rest)| rest).unwrap_or("")
+    } else {
+        &text
+    };
+    crate::security::redact_secrets(text, &[])
+}
+
 /// The diagnostics log location shown to users.
 pub fn diagnostics_log_path() -> Option<PathBuf> {
     application_data_root()

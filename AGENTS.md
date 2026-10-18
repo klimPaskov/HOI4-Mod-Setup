@@ -74,6 +74,17 @@ Examples are not allowed to override schemas or security rules. Current implemen
 
 The planned architecture is a Tauri desktop shell with a Rust core and a TypeScript React interface.
 
+Accepted 2026-10-18 (`docs/38_web_edition_and_improvement_plan.md`): a web
+edition served from this repository's GitHub Pages site at `/app/` shares the
+React interface and a portable Rust core compiled to WebAssembly. It imports a
+dropped folder read-only and exports a ZIP (an overlay of new and changed files
+by default for existing mods, a full copy on request). API keys there stay in
+memory with a visible warning. A clearly labelled deterministic-only setup path
+is allowed when no setup assistant is available. Account sign-in routes, MCP
+bootstrap and health checks, Git, and in-place transactions stay desktop-only.
+Portable logic lives in the core crate and reaches files, HTTP, time, and
+randomness only through adapter traits.
+
 The Rust side owns:
 
 - filesystem access
@@ -254,6 +265,12 @@ Low confidence is a visible state. Do not turn a guess into a detected fact. Lab
 Use `hoi4-mod-setup-project-scanner` for scanner changes.
 
 ## 7. Transaction contract
+
+The web edition never mutates a project in place: the dropped folder is the
+backup and the exported ZIP is the reviewed result. It keeps exact-revision
+resolution, verification, merge and conflict review, ownership, and the lock
+written inside the ZIP. Every in-place desktop mutation follows the contract
+below.
 
 Every project mutation uses this ordered transaction:
 

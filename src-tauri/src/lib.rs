@@ -29,6 +29,7 @@ mod project_profile;
 pub mod readiness;
 mod safe_fs;
 pub mod scanner;
+pub mod schemas;
 pub mod security;
 pub mod source;
 pub mod transaction;

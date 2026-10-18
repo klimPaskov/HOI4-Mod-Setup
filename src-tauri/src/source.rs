@@ -1076,9 +1076,12 @@ fn resolve_source_uncached(
     request: &SourceRequest,
 ) -> Result<SourceResolution, AppError> {
     let (revision, branch, canonical_release) = client.resolve_commit(request)?;
-    let remote_manifest_bytes = client.fetch_manifest(&revision)?;
-    let (manifest_bytes, manifest, manifest_origin) =
-        select_manifest_for_revision(&remote_manifest_bytes, &revision)?;
+    let (manifest_bytes, manifest, manifest_origin) = if client.local_repository.is_some() {
+        let remote_manifest_bytes = client.fetch_manifest(&revision)?;
+        select_manifest_for_revision(&remote_manifest_bytes, &revision)?
+    } else {
+        manifest_for_revision(&revision, || client.fetch_manifest(&revision))?
+    };
     match request.mode {
         SourceMode::Latest
             if !manifest.update_policy.latest.resolve_default_branch
@@ -1120,6 +1123,38 @@ fn resolve_source_uncached(
     })
 }
 
+/// The verified manifest of an exact commit. Commit-addressed content never
+/// changes, so a manifest is downloaded, parsed, and schema-validated once per
+/// revision even when Latest, a pin, and maintenance resolve to the same
+/// commit under different requests. A few recent revisions are kept.
+fn manifest_for_revision(
+    revision: &str,
+    fetch: impl FnOnce() -> Result<Vec<u8>, AppError>,
+) -> Result<(Vec<u8>, RemoteManifest, &'static str), AppError> {
+    type Entry = (String, Vec<u8>, RemoteManifest);
+    static MANIFESTS: OnceLock<Mutex<Vec<Entry>>> = OnceLock::new();
+    const KEPT: usize = 4;
+    let manifests = MANIFESTS.get_or_init(Default::default);
+    let unavailable = || AppError::Source("source cache is unavailable".into());
+    if let Some((_, bytes, manifest)) = manifests
+        .lock()
+        .map_err(|_| unavailable())?
+        .iter()
+        .find(|(known, _, _)| known == revision)
+    {
+        return Ok((bytes.clone(), manifest.clone(), "remote"));
+    }
+    let remote_manifest_bytes = fetch()?;
+    let selected = select_manifest_for_revision(&remote_manifest_bytes, revision)?;
+    let mut manifests = manifests.lock().map_err(|_| unavailable())?;
+    manifests.retain(|(known, _, _)| known != revision);
+    if manifests.len() >= KEPT {
+        manifests.remove(0);
+    }
+    manifests.push((revision.to_owned(), selected.0.clone(), selected.1.clone()));
+    Ok(selected)
+}
+
 fn select_manifest_for_revision(
     remote_manifest_bytes: &[u8],
     revision: &str,
@@ -1157,48 +1192,19 @@ pub fn parse_manifest(bytes: &[u8], revision: Option<&str>) -> Result<RemoteMani
 }
 
 fn validate_manifest_schema(value: &Value) -> Result<(), AppError> {
-    static SCHEMA: OnceLock<Value> = OnceLock::new();
-    static SCHEMA_V4: OnceLock<Value> = OnceLock::new();
-    static SCHEMA_V5: OnceLock<Value> = OnceLock::new();
-    static SCHEMA_V6: OnceLock<Value> = OnceLock::new();
     let major = value
         .get("schema_version")
         .and_then(Value::as_str)
         .and_then(|version| version.split('.').next())
         .and_then(|version| version.parse::<u64>().ok());
-    let schema = if major == Some(6) {
-        SCHEMA_V6.get_or_init(|| {
-            serde_json::from_str(include_str!(
-                "../../docs/schemas/remote-manifest.v6.schema.json"
-            ))
-            .expect("checked-in v6 remote manifest schema must be valid JSON")
-        })
-    } else if major == Some(5) {
-        SCHEMA_V5.get_or_init(|| {
-            serde_json::from_str(include_str!(
-                "../../docs/schemas/remote-manifest.v5.schema.json"
-            ))
-            .expect("checked-in v5 remote manifest schema must be valid JSON")
-        })
-    } else if major == Some(4) {
-        SCHEMA_V4.get_or_init(|| {
-            serde_json::from_str(include_str!(
-                "../../docs/schemas/remote-manifest.v4.schema.json"
-            ))
-            .expect("checked-in v4 remote manifest schema must be valid JSON")
-        })
-    } else {
-        SCHEMA.get_or_init(|| {
-            serde_json::from_str(include_str!(
-                "../../docs/schemas/remote-manifest.schema.json"
-            ))
-            .expect("checked-in remote manifest schema must be valid JSON")
-        })
+    let schema = match major {
+        Some(6) => include_str!("../../docs/schemas/remote-manifest.v6.schema.json"),
+        Some(5) => include_str!("../../docs/schemas/remote-manifest.v5.schema.json"),
+        Some(4) => include_str!("../../docs/schemas/remote-manifest.v4.schema.json"),
+        _ => include_str!("../../docs/schemas/remote-manifest.schema.json"),
     };
-    let validator = jsonschema::draft202012::new(schema).map_err(|error| {
-        AppError::Source(format!(
-            "checked-in remote manifest schema cannot be compiled: {error}"
-        ))
+    let validator = crate::schemas::validator(schema).map_err(|error| {
+        AppError::Source(format!("remote manifest schema is unavailable: {error}"))
     })?;
     validator.validate(value).map_err(|error| {
         AppError::Source(format!(
@@ -2407,6 +2413,34 @@ pub fn cache_key(source: &SourceIdentity, source_path: &str, sha256: &str) -> St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_revision_manifest_is_fetched_and_validated_once() {
+        let bytes = include_bytes!("../../docs/fixtures/format6-candidate-manifest.json").to_vec();
+        let revision = "1234567890abcdef1234567890abcdef12345678";
+        let mut fetches = 0;
+        for _ in 0..3 {
+            let (cached, manifest, origin) = manifest_for_revision(revision, || {
+                fetches += 1;
+                Ok(bytes.clone())
+            })
+            .unwrap();
+            assert_eq!(cached, bytes);
+            assert_eq!(manifest.schema_version, "6.0.0");
+            assert_eq!(origin, "remote");
+        }
+        assert_eq!(fetches, 1);
+        // A failed fetch is never cached.
+        let other = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
+        assert!(manifest_for_revision(other, || Err(AppError::Source("offline".into()))).is_err());
+        let mut retried = false;
+        manifest_for_revision(other, || {
+            retried = true;
+            Ok(bytes.clone())
+        })
+        .unwrap();
+        assert!(retried);
+    }
 
     #[test]
     fn latest_local_source_resolves_a_branch_with_a_slash() {

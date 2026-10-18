@@ -1379,15 +1379,10 @@ pub(crate) fn validate_analysis_output(
     // Validate every returned value before discarding model-owned metadata or
     // interpreting schema errors. Never echo a provider value in diagnostics.
     reject_sensitive_output_value(&value)?;
-    static SCHEMA: OnceLock<Value> = OnceLock::new();
-    let schema = SCHEMA.get_or_init(|| {
-        serde_json::from_str(include_str!(
-            "../../docs/schemas/codex-analysis.schema.json"
-        ))
-        .expect("the checked-in analysis schema must be valid JSON")
-    });
-    let validator = jsonschema::draft202012::new(schema)
-        .map_err(|_| AppError::Protocol("the analysis schema could not be loaded".into()))?;
+    let validator = crate::schemas::validator(include_str!(
+        "../../docs/schemas/codex-analysis.schema.json"
+    ))
+    .map_err(|_| AppError::Protocol("the analysis schema could not be loaded".into()))?;
     validator.validate(&value).map_err(|error| {
         AppError::Serialization(format!(
             "analysis output failed the type or limit rule at {}",

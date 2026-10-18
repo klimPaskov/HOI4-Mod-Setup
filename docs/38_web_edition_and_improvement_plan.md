@@ -1,9 +1,8 @@
 # Web edition and improvement plan
 
-Status: **Proposed** (2026-10-18). This plan needs the decisions listed at the
-end before any part of it changes an accepted requirement. Until then the
-desktop contract in `AGENTS.md` and the numbered design documents stays
-authoritative.
+Status: **Accepted** (2026-10-18). The five decisions at the end were accepted
+as recommended. Phases land in order; until a phase ships, the desktop contract
+in `AGENTS.md` and the numbered design documents describe current behavior.
 
 ## Goals
 
@@ -177,7 +176,7 @@ Each phase ships on its own and keeps desktop parity.
 6. **Polish.** Lock compaction migration, single-walk scanning, screen
    streamlining, performance budgets. Exit: budgets enforced in CI.
 
-## Decisions needed
+## Decisions (accepted 2026-10-18)
 
 1. Should the web edition (and desktop) offer a deterministic-only path when no
    setup assistant is available? Recommended: yes, clearly labelled.
