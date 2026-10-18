@@ -3317,6 +3317,9 @@ fn detect_managed_installation(
             "present": true,
             "valid": true,
             "project_id": lock.project_id,
+            // Set up without an assistant: maintenance rescans instead of
+            // asking for a provider reanalysis.
+            "deterministic_setup": crate::ai::is_deterministic(&lock.ai_provider),
             "primary_coding_environment": lock.primary_coding_environment,
             "additional_coding_environments": lock.additional_coding_environments,
             "component_ids": component_ids,

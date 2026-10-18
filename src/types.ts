@@ -23,7 +23,8 @@ export type PhaseId = "project" | "review" | "components" | "integrations" | "gi
 
 export type SourceMode = "latest" | "pinned_commit" | "pinned_release";
 
-export type AiProviderId = "claude_account" | "codex" | "gemini_account" | "grok_account" | "claude" | "gemini" | "grok" | "kimi" | "glm" | "deepseek" | "local" | "custom";
+/** `none` is the deterministic-only route: no setup assistant runs. */
+export type AiProviderId = "claude_account" | "codex" | "gemini_account" | "grok_account" | "claude" | "gemini" | "grok" | "kimi" | "glm" | "deepseek" | "local" | "custom" | "none";
 
 /** Built-in environment ids; a source manifest may declare more. */
 export type CodingEnvironmentId = "claude_code" | "codex" | "cursor" | "qoder" | "opencode" | (string & {});
@@ -810,6 +811,8 @@ export interface WizardState {
   maintenanceCodexAnalysisRecord?: CodexAnalysisRecord;
   maintenanceEvidenceReady?: boolean;
   existingInstallationDetected?: boolean;
+  /** The installed setup ran without a setup assistant. */
+  installedDeterministicSetup?: boolean;
   installedComponentIds?: string[];
   maintenanceOptionalSelections?: string[];
   installedWorkflow3dState?: WorkflowState;
