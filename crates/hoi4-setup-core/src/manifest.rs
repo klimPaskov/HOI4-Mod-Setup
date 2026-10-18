@@ -8,7 +8,7 @@ use crate::AppError;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 pub const SOURCE_REPOSITORY: &str = "https://github.com/klimPaskov/Agentic-HOI4-Modding";
 pub const SOURCE_OWNER: &str = "klimPaskov";

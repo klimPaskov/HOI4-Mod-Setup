@@ -14,7 +14,7 @@ use crate::AppError;
 pub use hoi4_setup_core::mcp_target::{
     contained_link_target, manifest_target, manifest_target_for_platform, required_parameter,
     validate_bare_command_name, validate_package_identity, VerifiedMcpTarget, COMPONENT_ID,
-    HEALTH_RULE_ID, LIVE_TOOLS_COMPONENT_ID, MAX_TOOL_COUNT,
+    HEALTH_RULE_ID, LIVE_TOOLS_COMPONENT_ID, MAX_TOOL_COUNT, MAX_TOOL_NAME_BYTES,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -119,7 +119,6 @@ impl<T: JsonlTransport> Drop for McpProtocol<T> {
 /// antivirus scanning may hold for many seconds.
 const MCP_HEALTH_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_SERVER_FIELD_BYTES: usize = 256;
-const MAX_TOOL_NAME_BYTES: usize = 256;
 const MAX_PACKAGE_FILE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_PACKAGE_TREE_BYTES: u64 = 512 * 1024 * 1024;
 

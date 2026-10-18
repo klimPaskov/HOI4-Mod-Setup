@@ -15,6 +15,7 @@ pub const HEALTH_RULE_ID: &str = "mcp.hoi4.health";
 pub const LIVE_TOOLS_COMPONENT_ID: &str = "workflow.live_tools";
 
 pub const MAX_TOOL_COUNT: usize = 4096;
+pub const MAX_TOOL_NAME_BYTES: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedMcpTarget {
