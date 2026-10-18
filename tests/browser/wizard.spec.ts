@@ -34,12 +34,12 @@ for (const scenario of DOCUMENTATION_SCENARIOS) {
   });
 }
 
-test("setup can run without a setup assistant, clearly labelled", async ({ page }) => {
+test("every setup uses an AI provider; there is no manual setup choice", async ({ page }) => {
   await page.goto("/?screenshot=welcome");
-  await page.getByLabel("AI provider").selectOption("none");
-  await expect(page.getByRole("note", { name: "Setup without an assistant" })).toContainText("Nothing is sent to an AI provider.");
-  await expect(page.getByLabel("Model", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
+  const providers = page.getByLabel("AI provider").locator("option");
+  await expect(providers.first()).toBeAttached();
+  await expect(page.getByLabel("AI provider").locator('option[value="none"]')).toHaveCount(0);
+  await expect(providers.filter({ hasText: /no setup assistant/i })).toHaveCount(0);
 });
 
 test("existing-project management remains available while signed out", async ({ page }) => {

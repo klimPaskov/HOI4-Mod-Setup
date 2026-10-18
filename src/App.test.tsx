@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { CopyDiagnosticsButton, DetectedValuesReview, deterministicSetup, analysisBrief, CodingEnvironments, Components, ContextAttachments, contextEvidence, Conflict, DryRun, Findings, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, UpdateSourceOptions, Welcome, Workflows, buildAnalysisConfirmationValues, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, integrationReviewNeeded, maintenanceReviewScreen, nextScreen, previousScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
+import App, { CopyDiagnosticsButton, analysisBrief, CodingEnvironments, Components, ContextAttachments, contextEvidence, Conflict, DryRun, Findings, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, UpdateSourceOptions, Welcome, Workflows, buildAnalysisConfirmationValues, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, integrationReviewNeeded, maintenanceReviewScreen, nextScreen, previousScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, forgetContextAttachment, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickContextDocuments, pickContextImages, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult, readDiagnostics } from "./lib/tauri";
 import type { AiAccountStatus, AiProviderId, CodexAnalysisResult, ContextDocument, ContextImage, FolderSelection, InstallationPlan, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { renderCoverPng, renderReferenceJpeg } from "./lib/images";
@@ -436,98 +436,6 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(estimatePlanPreparationProgress(startedAt, startedAt)).toEqual({ percent: 4, remaining: "About 30 seconds remaining" });
     expect(estimatePlanPreparationProgress(startedAt, startedAt + 15_000)).toEqual({ percent: 50, remaining: "About 15 seconds remaining" });
     expect(estimatePlanPreparationProgress(startedAt, startedAt + 60_000).percent).toBe(96);
-  });
-
-  describe("setup without an assistant", () => {
-    const detectedFinding = {
-      id: "profile.detected",
-      label: "Detected values",
-      value: JSON.stringify([
-        { key: "display_name", value: "Iron Dawn", reason: "The name field of descriptor.mod." },
-        { key: "descriptor_tags", value: ["Events"], reason: "The tags field of descriptor.mod." },
-        { key: "primary_namespace", value: "iron", reason: "The most common event namespace." },
-      ]),
-      confidence: 1,
-      status: "accepted",
-      evidence: "Values decided by the project files.",
-    } as ScanFinding;
-    const deterministicState = (): WizardState => ({
-      ...readyState(),
-      mode: "existing",
-      aiProvider: "none",
-      aiModel: "deterministic",
-      identity: { ...readyState().identity, displayName: "Iron Dawn", projectId: "iron_dawn", scriptPrefix: "iron", primaryNamespace: "iron", descriptorTags: ["Events"] },
-      description: "",
-      codexAnalysis: undefined,
-      codexAnalysisRecord: undefined,
-    } as WizardState);
-
-    it("is a clearly labelled choice that needs no account and hides model settings", () => {
-      function ControlledWelcome() {
-        const [state, setState] = useState(welcomeState({ available: false, authenticated: false, auth_mode: "none", usage_limited: false }));
-        return <Welcome state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} />;
-      }
-      render(<ControlledWelcome />);
-      const option = screen.getByRole("option", { name: "No setup assistant (detected values only)" });
-      expect(option).toHaveValue("none");
-      fireEvent.change(screen.getByLabelText("AI provider"), { target: { value: "none" } });
-      const note = screen.getByRole("note", { name: "Setup without an assistant" });
-      expect(note).toHaveTextContent("Nothing is sent to an AI provider.");
-      expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
-      expect(screen.queryByLabelText("Reasoning effort")).not.toBeInTheDocument();
-      expect(screen.queryByLabelText(/API key/)).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /Sign in/ })).not.toBeInTheDocument();
-      expect(deterministicSetup({ aiProvider: "none" })).toBe(true);
-      expect(deterministicSetup({ aiProvider: "claude_account" })).toBe(false);
-    });
-
-    it("reviews an imported mod with detected values marked and every field editable", () => {
-      const updateIdentity = vi.fn();
-      render(<Findings
-        state={deterministicState()}
-        update={vi.fn()}
-        updateIdentity={updateIdentity}
-        updateDescription={vi.fn()}
-        findings={[detectedFinding]}
-        selected={detectedFinding.id}
-        setSelected={vi.fn()}
-        setFindings={vi.fn()}
-        onConfirmAnalysis={vi.fn().mockResolvedValue(undefined)}
-        onManageExisting={vi.fn()}
-      />);
-      expect(screen.getByRole("heading", { name: "Project details" })).toBeInTheDocument();
-      expect(screen.getByLabelText("Mod name · Detected")).toHaveValue("Iron Dawn");
-      expect(screen.getByLabelText("Primary namespace · Detected")).toHaveValue("iron");
-      expect(screen.getByLabelText("Project ID")).toHaveValue("iron_dawn");
-      expect(screen.getByText("Descriptor tags · Detected")).toBeInTheDocument();
-      fireEvent.change(screen.getByLabelText("Project ID"), { target: { value: "iron_dawn_mod" } });
-      expect(updateIdentity).toHaveBeenCalledWith({ projectId: "iron_dawn_mod" });
-      // Nothing here is sent to a provider, so the provider input controls are gone.
-      expect(screen.queryByText(/input preview/)).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /Exclude from/ })).not.toBeInTheDocument();
-      expect(screen.getByText("Why these values · 3")).toBeInTheDocument();
-    });
-
-    it("drops the Detected mark once the user changes a detected value", () => {
-      const state = deterministicState();
-      render(<DetectedValuesReview state={{ ...state, identity: { ...state.identity, primaryNamespace: "dawn" } }} findings={[detectedFinding]} />);
-      expect(screen.getByLabelText("Primary namespace")).toHaveValue("dawn");
-      expect(screen.queryByLabelText("Primary namespace · Detected")).not.toBeInTheDocument();
-    });
-
-    it("updates a project set up without an assistant from a fresh scan instead of a reanalysis", () => {
-      render(<Update
-        state={{ ...deterministicState(), installedDeterministicSetup: true } as WizardState}
-        update={vi.fn()}
-        findings={[]}
-        setFindings={vi.fn()}
-        onMaintenance={vi.fn()}
-        onStartMaintenance={vi.fn()}
-        onReanalyze={vi.fn().mockResolvedValue(true)}
-      />);
-      expect(screen.getByText(/set up without a setup assistant/)).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /reanalysis|Scan the project/ })).not.toBeInTheDocument();
-    });
   });
 
   it("lets the returned update reanalysis be confirmed from the Update screen", async () => {
