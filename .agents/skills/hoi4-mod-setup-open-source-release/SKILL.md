@@ -43,6 +43,12 @@ Use focused branches and Conventional Commit messages. Rebase personal branches 
 
 ## CI rules
 
+- `Publish project page` (`pages.yml`) builds the web edition with the
+  wasm-bindgen CLI version from `Cargo.lock`, checks it, and deploys it at
+  `/app/` beside `site/index.html`. The page's `build-info.json` lists the
+  SHA-256 of each deployed file, which must match the CI `web-edition`
+  artifact for the same commit.
+
 - `Released app E2E` is a read-only, remote-only acceptance workflow for an
   immutable published Windows installer. It has no signing/publication secrets,
   uses clean installer-registration preflight, pins artifact bytes and official

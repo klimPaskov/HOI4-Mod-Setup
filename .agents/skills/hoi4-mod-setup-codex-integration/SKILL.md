@@ -235,6 +235,19 @@ to the deterministic official HOI4 Workshop-category allowlist.
 
 Use the scanner and validators for paths, hashes, descriptors, PNGs, encodings, Git state, identifier syntax, collisions, manifest checks, and file ownership.
 
+Request validation, the prompt, `validate_analysis_output`, the corrective
+prompt, the hosted-provider request body (`provider_request`, without the
+credential header), and reply extraction (`extract_structured_output`) live in
+`crates/hoi4-setup-core/src/analysis.rs`. `src-tauri/src/codex.rs` re-exports
+them and keeps a wrapper that supplies `Uuid::new_v4()`; the core never
+allocates randomness. Change validation there, once, for every provider and
+for the web edition. The web edition's optional assistant
+(`src/web/assistant.ts`) uses only routes that allow browser requests (Claude
+with `anthropic-dangerous-direct-browser-access`, Gemini, Grok, DeepSeek,
+GLM), keeps the key in component memory, sends at most one corrective turn,
+and records non-secret provenance with the route address in the lock. Moonshot
+blocks browser requests, so Kimi stays desktop-only.
+
 User-picked context documents (`src-tauri/src/context.rs`) are evidence with a
 reserved `@context/<n>-<name>` path and `context-<n>` reference. Bind them by
 reference, path, and excerpt hash to the session context store, never to the

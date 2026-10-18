@@ -526,6 +526,14 @@ Opaque OS-vault credential references are carried separately from secret values.
 
 ## Lock and rollback evidence
 
+Generated text output is recorded once as `generated_content`;
+`generated_bytes` is written only for binary output that is not UTF-8. Repair
+reads `generated_content` first. The web edition never applies in place: the
+core `export` module plans create, unchanged, and conflict entries against the
+dropped folder, applies the user's keep or replace decisions, and writes the
+lock (components marked `validation: not_run`) inside the ZIP. A hosted
+assistant's lock entry carries its `ai_endpoint`; `ai_provider: none` has none.
+
 Read journals through `migrations::migrate_journal`. The journal records action, component, location scope, source path/size, reviewed resolution, source/result/backup hashes, staged and observed live hashes, expected and observed existence, and per-operation intent. Rollback must refuse ambiguous later user work, restore verified backups and lock state, and persist both the parent and child rollback records after the state transition. `rollback_source_path` identifies the parent backup that supplies restored bytes; the child `backup_path` identifies the inverse backup; completed child journals also record the lock state expected before an inverse action.
 
 ## Fault testing

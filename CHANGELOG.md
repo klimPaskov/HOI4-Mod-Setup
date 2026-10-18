@@ -18,6 +18,9 @@ HOI4 Mod Setup follows semantic versioning.
 - Prepare plans faster: JSON Schemas are compiled once per run, a commit's manifest is downloaded and validated once even when Latest, a pin, and maintenance resolve to it, and the Components screen reuses the manifest it already has.
 - Add **Copy diagnostics** next to failure messages, copying the recent redacted diagnostics log for a report.
 - Keep the MCP and credentials review to one readable column instead of stretching across wide windows.
+- Mark values the project files decide (descriptor tags, dominant namespace and prefix, localisation and documentation conventions, folder profile) as Detected and keep them over assistant guesses, and sample focus trees, events, decisions, on_actions, and localisation first.
+- Add the web edition at `klimpaskov.github.io/HOI4-Mod-Setup/app/`: drop a mod folder or start a new mod, review each conflicting file, and download a ZIP with the installation lock. Files stay in the browser, source files are verified against the manifest hashes, and optional suggestions from Claude, Gemini, Grok, DeepSeek, or GLM use a key kept only in the tab's memory.
+- Record generated text once in the installation lock instead of also as a byte array.
 
 Coding clients are never started by setup; client sign-in and in-client behavior beyond reading the documented files are not tested.
 

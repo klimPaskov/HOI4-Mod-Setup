@@ -10,7 +10,7 @@ import { renderCoverPng } from "../lib/images";
 import { startCoreWorker } from "./core-client";
 import type { CoreClient } from "./core-client";
 import { BROWSER_PROVIDERS, proposal, provenanceFor, routeFor, runAssistant } from "./assistant";
-import { folderFromDrop, folderFromInput } from "./folder";
+import { folderFromDrop, folderFromInput, readFileBytes } from "./folder";
 import type { FolderSelection } from "./folder";
 import { fetchRaw, MANIFEST_PATH, networkLog, onNetworkLog, resolveSource, SOURCE_NAME, SOURCE_OWNER } from "./github";
 import type { NetworkRecord, ResolvedSource, SourceMode } from "./github";
@@ -166,7 +166,7 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
       batchBytes = 0;
     };
     for (const entry of selection.files) {
-      const buffer = await entry.file.arrayBuffer();
+      const buffer = await readFileBytes(entry.file);
       batch.push({ path: entry.path, buffer });
       batchBytes += buffer.byteLength;
       read += 1;

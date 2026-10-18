@@ -305,3 +305,25 @@ contract and permits its authorized Node installation to happen after planning.
 The app never executes the wrapper: private package-tree health still runs only
 the independently verified Node executable and source-bound JavaScript entry.
 Client registration changes use the ordinary review and conflict checks.
+
+## Web edition
+
+The web edition (`docs/38_web_edition_and_improvement_plan.md`) runs the same
+core in a browser tab and never mutates a project in place.
+
+- The dropped folder stays in the tab. The worker reads it into memory with the
+  desktop scan's bounds; skipped folders (`.git`, `node_modules`, virtual
+  environments) are never read.
+- The built page has a Content Security Policy with `default-src 'none'`,
+  `script-src 'self' 'wasm-unsafe-eval'`, no inline script, and a
+  `connect-src` limited to the GitHub API, `raw.githubusercontent.com`, and
+  the reviewed assistant hosts. Every bundled script and stylesheet carries
+  SRI, and `build-info.json` publishes each deployed file's SHA-256.
+- Source files are downloaded only at an exact commit and accepted only after
+  the core's size and SHA-256 check. The IndexedDB cache is keyed by that hash
+  and every cached file is checked again before use.
+- An assistant API key is held only in the open tab's memory, sent only in
+  the selected provider's request header, and never written to storage, the
+  worker, the lock, or the ZIP. The provider receives the scan findings the
+  desktop would show it, never file contents beyond those excerpts.
+- The **Network** panel lists every request the page made.

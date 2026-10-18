@@ -439,7 +439,13 @@ all-feature Rust gates when using PowerShell. The portable core must also build 
 `cargo build -p hoi4-setup-core --target wasm32-unknown-unknown` and clippy for
 that target, so core code never calls the filesystem, processes, the network,
 the OS clock, or OS randomness outside `adapters.rs`; test it with `MemoryFs`
-and fake adapters. Compile fuzz targets with
+and fake adapters. `crates/hoi4-setup-core/tests/golden_projects.rs` pins
+the values golden mods decide, and `tests/performance_budgets.rs` bounds
+profiling and ZIP export for small, medium, and large synthetic mods. The web
+edition has unit tests under `src/web/*.test.ts(x)` with a fake core client,
+and the CI `Web edition` job builds it (`pnpm web:build`), checks it
+(`scripts/check_web_build.mjs`), and runs `pnpm test:web` in Chromium,
+Firefox, and WebKit with GitHub's REST API answered locally. Compile fuzz targets with
 `cargo check --manifest-path fuzz/Cargo.toml --bins`; run the bounded targets
 from `fuzz/README.md` when parser behavior changes. Use the repository-owned
 scripts for validation and release gates: `pnpm validate`,

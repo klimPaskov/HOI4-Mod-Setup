@@ -27,7 +27,13 @@ function directoryEntry(name: string, children: FakeEntry[]): FakeEntry {
     createReader: () => {
       let read = false;
       // Browsers return entries in batches; the last call returns none.
-      return { readEntries: (success) => { success(read ? [] : children); read = true; } };
+      return {
+        readEntries: (success) => {
+          const batch = read ? [] : children;
+          read = true;
+          success(batch);
+        },
+      };
     },
   };
 }

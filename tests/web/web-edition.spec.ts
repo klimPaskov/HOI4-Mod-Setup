@@ -80,3 +80,19 @@ test("an existing mod folder is scanned in the browser", async ({ page, browserN
   await expect(page.getByLabel("Mod name")).toHaveValue("Event Chain Mod");
   expect(errors).toEqual([]);
 });
+
+test("the setup can start from the keyboard and moves focus to each new step", async ({ page, browserName }) => {
+  test.skip(browserName === "webkit", "WebKit skips buttons when tabbing unless the platform setting is on.");
+  const errors = await prepare(page);
+  const newMod = page.getByRole("button", { name: /New mod/ });
+  for (let presses = 0; presses < 12 && !(await newMod.evaluate((element) => element === document.activeElement)); presses += 1) {
+    await page.keyboard.press("Tab");
+  }
+  await expect(newMod).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: "Describe the mod" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("Iron Dawn");
+  await expect(page.getByLabel("Mod name")).toHaveValue("Iron Dawn");
+  expect(errors).toEqual([]);
+});

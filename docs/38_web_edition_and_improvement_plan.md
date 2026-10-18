@@ -166,8 +166,28 @@ transaction contract and needs an explicit decision.
 - The core also holds the models, merge rules, manifest parsing and validation
   (dependency expansion, platform support, file selection, download
   verification), the coding-client registry, live-testing routes, and the
-  reviewed MCP target. Descriptors, the scanner, and plan building move next,
-  behind the same adapters.
+  reviewed MCP target. Descriptors, the project profile, source adaptation,
+  deterministic proposals, analysis validation, and the provider request and
+  reply rules followed, so the desktop and the browser apply the same checks.
+- Phase 3: values the files decide (descriptor tags, dominant namespace and
+  prefix, localisation and documentation conventions, folder profile) are
+  `Detected` and override assistant guesses; samples prefer focus trees,
+  events, decisions, on_actions, and localisation. Golden mods under
+  `crates/hoi4-setup-core/tests/golden/` and recorded reply shapes in
+  `src-tauri/tests/fixtures/analysis-replays.json` guard the result.
+- Phases 4 and 5: the web edition (`src/web/`, `crates/hoi4-setup-web`)
+  drops or picks a folder, scans it in a worker, resolves the source to an
+  exact commit, downloads only selected files into an IndexedDB cache keyed by
+  SHA-256, reviews each conflict, and exports an overlay or full-copy ZIP with
+  the installation lock. The optional assistant uses reviewed routes that
+  allow browser requests (Claude, Gemini, Grok, DeepSeek, GLM) with a
+  memory-only key. The built page has a strict CSP, SRI on every bundle, a
+  network panel, and a published `build-info.json`; CI runs it in Chromium,
+  Firefox, and WebKit, and the Pages workflow deploys it at `/app/`.
+- Phase 6 so far: generated text is recorded once in the lock instead of also
+  as a JSON number array, and core performance budgets cover profiling and ZIP
+  export for small, medium, and large synthetic mods. Single-walk scanning,
+  desktop screen streamlining, and a desktop deterministic-only path remain.
 
 ## Roadmap
 

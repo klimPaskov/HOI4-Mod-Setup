@@ -335,7 +335,27 @@ and machine-local values are redacted from documentation overviews and
 model-visible excerpts, while prefix hashes remain hashes of only the sampled
 bytes.
 
+## Web edition
+
+- Unit tests in `src/web/*.test.ts(x)` drive the page against a fake core
+  client: new and existing mods, per-conflict decisions, core errors, the
+  assistant's header handling, one corrective turn, and no key in core calls.
+- `crates/hoi4-setup-web` tests verify downloads, export from the candidate
+  manifest fixture, and assistant replies (retry, truncation, unreadable).
+- The CI `Web edition` job builds the page, runs `scripts/check_web_build.mjs`
+  (CSP, SRI, connect hosts, size budgets), and runs `pnpm test:web` in
+  Chromium, Firefox, and WebKit. GitHub's REST API is answered locally; source
+  files come from `raw.githubusercontent.com` at the pinned fixture commit and
+  pass the core's hash check. Chromium also downloads the ZIP and scans a
+  golden mod folder.
+
 ## Performance
+
+`crates/hoi4-setup-core/tests/performance_budgets.rs` enforces time budgets
+for profiling 120, 6,000, and 40,000-file synthetic mods and for writing and
+reading a 6,000-entry ZIP, so the shared core cannot regress unnoticed on
+either host. `scripts/check_web_build.mjs` bounds the WebAssembly core and the
+page's scripts.
 
 Test targeted setup inventories containing 500, 20,000, and 150,000 approved
 agentic files separately from project-profile fixtures approaching the 500,000

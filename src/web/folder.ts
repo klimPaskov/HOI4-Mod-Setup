@@ -41,6 +41,17 @@ function accept(selection: FolderSelection, path: string, file: File): void {
   if (selection.files.length > MAX_FILES || selection.totalBytes > MAX_TOTAL_BYTES) throw new FolderTooLargeError();
 }
 
+/** The bytes of one chosen file. */
+export function readFileBytes(file: File): Promise<ArrayBuffer> {
+  if (typeof file.arrayBuffer === "function") return file.arrayBuffer();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as ArrayBuffer);
+    reader.onerror = () => reject(new Error(`${file.name} could not be read.`));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 /** Files chosen with `<input type="file" webkitdirectory>`. */
 export function folderFromInput(list: FileList | File[]): FolderSelection {
   const files = Array.from(list);

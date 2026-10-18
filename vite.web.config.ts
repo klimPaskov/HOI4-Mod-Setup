@@ -46,9 +46,10 @@ function contentSecurityPolicy(): Plugin {
 
 const root = fileURLToPath(new URL("./web", import.meta.url));
 
-export default defineConfig(({ command }) => ({
+// The dev server runs at the root; a build and its preview use the Pages path.
+export default defineConfig(({ command, isPreview }) => ({
   root,
-  base: command === "build" ? process.env.WEB_BASE ?? "/HOI4-Mod-Setup/app/" : "/",
+  base: command === "build" || isPreview ? process.env.WEB_BASE ?? "/HOI4-Mod-Setup/app/" : "/",
   plugins: [react(), contentSecurityPolicy()],
   publicDir: fileURLToPath(new URL("./web/public", import.meta.url)),
   server: {

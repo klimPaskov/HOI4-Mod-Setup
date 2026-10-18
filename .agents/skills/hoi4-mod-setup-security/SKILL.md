@@ -31,6 +31,15 @@ The application handles:
 
 Treat every boundary as hostile until validated.
 
+The web edition adds a browser boundary. The built page carries a CSP with
+`default-src 'none'`, `script-src 'self' 'wasm-unsafe-eval'`, and a
+`connect-src` limited to GitHub and the reviewed assistant hosts in
+`vite.web.config.ts`; `scripts/check_web_build.mjs` rejects any other host,
+inline script, or bundle without SRI. Dropped files never leave the tab. A
+provider key lives only in React state for the open tab, goes only in the
+provider's header, and never reaches the worker, the lock, or a log. The
+assistant sees only the scan findings returned by `Project.analysisEvidence`.
+
 ## Credentials
 
 Store secrets in Windows Credential Manager, macOS Keychain, or Linux Secret Service. Store only an opaque reference in application state.
