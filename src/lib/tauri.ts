@@ -1,5 +1,5 @@
 import { findingDisplayValue, findingLabel } from "../findings";
-import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, CodexAccountStatus, CodexAnalysisConfirmationValues, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, CodingEnvironmentId, ConflictPreview, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, UpdateSourceSelection, WizardState, WorkflowHealthResult } from "../types";
+import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, CodexAccountStatus, CodexAnalysisConfirmationValues, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, CodingEnvironmentId, ConflictPreview, ContextDocument, ContextImage, ContextPick, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, UpdateSourceSelection, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
   id: string;
@@ -98,6 +98,9 @@ interface TauriCommandMap {
   pick_project_folder: { args: Record<string, never>; result: FolderSelection };
   pick_launcher_folder: { args: Record<string, never>; result: FolderSelection };
   suggest_project_paths: { args: { projectId: string }; result: SuggestedProjectPaths };
+  pick_context_documents: { args: Record<string, never>; result: ContextPick<ContextDocument> };
+  pick_context_images: { args: Record<string, never>; result: ContextPick<ContextImage> };
+  forget_context_attachment: { args: { id: string }; result: void };
   preview_source_manifest: { args: { sourceMode: WizardState["sourceMode"]; pinnedRef: string }; result: SourceManifestPreview };
   store_meshy_credential: { args: { value: string }; result: CredentialReference };
   meshy_credential_status: { args: Record<string, never>; result: CredentialReference | null };
@@ -355,6 +358,19 @@ export async function pickLauncherFolder(): Promise<FolderSelection | null> {
   return invokeCommand("pick_launcher_folder", {});
 }
 
+export async function pickContextDocuments(): Promise<CommandResult<ContextPick<ContextDocument>>> {
+  return invokeCommandResult("pick_context_documents", {});
+}
+
+export async function pickContextImages(): Promise<CommandResult<ContextPick<ContextImage>>> {
+  return invokeCommandResult("pick_context_images", {});
+}
+
+export async function forgetContextAttachment(id: string): Promise<boolean> {
+  if (!id.trim()) return false;
+  return (await invokeCommandResult("forget_context_attachment", { id })).error === undefined;
+}
+
 export async function suggestProjectPaths(projectId: string): Promise<SuggestedProjectPaths | null> {
   return invokeCommand("suggest_project_paths", { projectId });
 }
@@ -528,7 +544,12 @@ function stateForCore(state: WizardState): WizardState {
   // Meshy input is a password draft. Keep the field for the typed command
   // shape, but never serialize its value across the renderer/core boundary.
   const { imageGenerationCredentialDrafts: _discardedDrafts, ...safeState } = state;
-  return { ...safeState, meshKeyDraft: "", imageGenerationCredentialDrafts: {} };
+  const core: WizardState = { ...safeState, meshKeyDraft: "", imageGenerationCredentialDrafts: {} };
+  // The core reads only attachment IDs, copy choices, and rendered copies; it
+  // already holds the picked bytes. Keep previews and excerpts out of planning.
+  if (state.contextImages) core.contextImages = state.contextImages.map((image) => ({ ...image, data_url: "" }));
+  if (state.contextDocuments) core.contextDocuments = state.contextDocuments.map((document) => ({ ...document, excerpt: "" }));
+  return core;
 }
 
 export async function approveInstallation(planId: string): Promise<boolean> {

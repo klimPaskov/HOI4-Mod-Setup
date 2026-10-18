@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, evaluateReadiness, findInterruptedTransaction, forgetContextAttachment, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, pickContextDocuments, pickContextImages, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
-import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, McpSupport, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
+import { base64ByteLength, base64DataUrl, renderCoverPng, renderReferenceJpeg } from "./lib/images";
+import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, ContextDocumentState, ContextImageState, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, McpSupport, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
 import claudeModels from "./claude-models.json";
 import { AccountProviderAccess } from "./AccountProviderAccess";
@@ -188,6 +189,37 @@ export function analysisBrief(mode: "new_project_identity" | "existing_project_s
   return mode === "existing_project_semantics" ? EXISTING_PROJECT_REVIEW_BRIEF : description;
 }
 
+/** Analysis evidence for the context documents the user keeps as context.
+ * The core binds these by its context store; they are never part of the scan
+ * evidence approval. */
+export function contextEvidence(state: Pick<WizardState, "contextDocuments">): CodexAnalysisRequest["evidence"] {
+  return (state.contextDocuments ?? []).filter((document) => document.includeInAnalysis).map((document) => ({
+    reference: document.reference,
+    path: document.evidence_path,
+    excerpt: document.excerpt,
+    excerpt_sha256: document.excerpt_sha256,
+    confidence: null,
+  }));
+}
+
+function includedContextDocumentIds(state: Pick<WizardState, "contextDocuments">): string[] {
+  return (state.contextDocuments ?? []).filter((document) => document.includeInAnalysis).map((document) => document.id);
+}
+
+function sameIdSet(left: string[], right: string[]): boolean {
+  return [...left].sort().join("\n") === [...right].sort().join("\n");
+}
+
+function countLabel(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/** Forget every attachment and return the patch that clears context state. */
+function clearedContext(state: WizardState): Partial<WizardState> {
+  for (const attachment of [...(state.contextDocuments ?? []), ...(state.contextImages ?? [])]) void forgetContextAttachment(attachment.id);
+  return { contextDocuments: [], contextImages: [], contextThumbnail: undefined, contextAnalysisDocumentIds: undefined };
+}
+
 // Scan findings that carry machine-local routes. They restore settings in the
 // UI but never become setup-assistant input; the core rejects them as well.
 const LOCAL_ONLY_FINDING_IDS = new Set(["installation.portrait_routes"]);
@@ -355,6 +387,10 @@ export const initialState: WizardState = {
   conventions: DEFAULT_SEMANTIC_CONVENTIONS,
   semanticProposalOverrides: [],
   semanticComponentRecommendations: undefined,
+  contextDocuments: [],
+  contextImages: [],
+  contextThumbnail: undefined,
+  contextAnalysisDocumentIds: undefined,
   draftSaved: true,
 };
 
@@ -1046,10 +1082,12 @@ export default function App() {
       }
     }
     setSemanticProgressStage("analyzing");
+    // Documents the user added are bound by the core's context store, not by
+    // the scan approval above, so they follow the approved scan evidence.
     const request: CodexAnalysisRequest = {
       mode,
       brief: analysisBrief(mode, state.description),
-      evidence: mode === "existing_project_semantics" ? evidence : [],
+      evidence: [...(mode === "existing_project_semantics" ? evidence : []), ...contextEvidence(state)],
       constraints: {
         project_id_pattern: "^[a-z][a-z0-9_]{1,63}$",
         source: { mode: state.sourceMode, selected_ref: state.sourceMode === "latest" ? undefined : state.pinnedRef },
@@ -1116,6 +1154,7 @@ export default function App() {
         documentation_convention: semanticProposalIsOverridden(current, "documentation_convention") ? current.conventions?.documentation_convention ?? DEFAULT_SEMANTIC_CONVENTIONS.documentation_convention : typeof documentationConvention === "string" ? documentationConvention : current.conventions?.documentation_convention ?? DEFAULT_SEMANTIC_CONVENTIONS.documentation_convention,
       },
       semanticComponentRecommendations: result.analysis.component_recommendations,
+      contextAnalysisDocumentIds: includedContextDocumentIds(state),
       transactionError: undefined,
       draftSaved: true,
     }));
@@ -1239,7 +1278,7 @@ export default function App() {
     const request: CodexAnalysisRequest = {
       mode: "existing_project_semantics",
       brief: "Review the installed HOI4 project for semantic changes before a workflow update. Preserve deterministic facts, identify convention or instruction changes, and propose only reviewable values. Do not write files or approve operations.",
-      evidence,
+      evidence: [...evidence, ...contextEvidence(state)],
       constraints: {
         analysis_purpose: "maintenance_reanalysis",
         update_source: { mode: state.sourceMode, selected_ref: state.sourceMode === "latest" ? undefined : state.pinnedRef },
@@ -1276,6 +1315,7 @@ export default function App() {
       conventions: conventionsFromAnalysis(result.analysis, state.conventions, new Set(state.semanticProposalOverrides ?? [])),
       semanticComponentRecommendations: result.analysis.component_recommendations,
       maintenanceCodexAnalysisRecord: result.record,
+      contextAnalysisDocumentIds: includedContextDocumentIds(state),
       transactionError: `Review and confirm the ${providerLabel} reanalysis before creating the update plan.`,
       screen: "update",
     });
@@ -2086,7 +2126,7 @@ function canAdvanceFromScreen(
 function renderScreen(state: WizardState, update: (patch: Partial<WizardState>) => void, updateIdentity: (patch: Partial<ProjectIdentity>) => void, updateDescription: (description: string) => void, findings: ScanFinding[], selectedFinding: string, setSelectedFinding: (id: string) => void, setFindings: Dispatch<SetStateAction<ScanFinding[]>>, scanComplete: boolean, scanError: string | undefined, scanProgress: ScanProgress, scanPartial: boolean, scanLimitsHit: string[], scanRequestId: string | undefined, scanCancellationRequested: boolean, onCancelScan: () => Promise<void>, onMaintenance: (screen: "update" | "conflict" | "recovery") => void, startMaintenance: (mode: "update" | "repair" | "reinstall" | "remove") => void, onReanalyze: () => Promise<boolean>, chooseConflict: (choice: ConflictChoice) => void | Promise<void>, onPickProjectFolder: () => Promise<FolderSelection | null>, onPickLauncherFolder: () => Promise<FolderSelection | null>, onConfirmAnalysis: () => Promise<void>, recoveryPending: boolean, maintenancePending: boolean) {
   switch (state.screen) {
     case "welcome": return <Welcome state={state} update={update} />;
-    case "description": return <Description state={state} updateDescription={updateDescription} updateIdentity={updateIdentity} />;
+    case "description": return <Description state={state} update={update} updateDescription={updateDescription} updateIdentity={updateIdentity} />;
     case "identity": return <Identity state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onPickProjectFolder={onPickProjectFolder} onPickLauncherFolder={onPickLauncherFolder} onConfirmAnalysis={onConfirmAnalysis} />;
     case "scan": return <Scan state={state} complete={scanComplete} error={scanError} progress={scanProgress} partial={scanPartial} limitsHit={scanLimitsHit} canCancel={Boolean(scanRequestId)} cancellationRequested={scanCancellationRequested} onCancel={onCancelScan} />;
     case "findings": return <Findings state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} findings={findings} selected={selectedFinding} setSelected={setSelectedFinding} setFindings={setFindings} onConfirmAnalysis={onConfirmAnalysis} onManageExisting={() => onMaintenance("update")} />;
@@ -2390,6 +2430,7 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
   const chooseMode = (mode: "new" | "existing") => {
     if (state.mode === mode) return;
     update({
+      ...clearedContext(state),
       mode,
       recoveryEntry: false,
       identity: { ...DEFAULT_IDENTITY },
@@ -2426,7 +2467,7 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
     <div className="button-row"><button type="button" className="button secondary" onClick={() => void connectProvider()} disabled={!state.aiModel.trim() || !state.aiEndpoint.trim() || (profile?.requires_credential === true && !aiKeyDraft.trim() && !state.aiAccount?.authenticated)}>{state.aiAccount?.authenticated ? `Check ${selectedLabel}` : `Connect ${selectedLabel}`}</button>{state.aiAccount?.authenticated && profile?.requires_credential && <button type="button" className="text-button" onClick={() => void removeProviderCredential()}>Disconnect</button>}</div>
     {state.aiAccount && <p className="callout" role="status">{providerStatus}</p>}
   </>}</div></section>
-  <section><div className="section-label">Already have a project?</div><div className="panel recent-list"><p className="muted">Inspect its files or manage setup if this app has installed it.</p><button type="button" className="text-button" onClick={() => update({ screen: "identity", mode: "existing", recoveryEntry: false, identity: { ...DEFAULT_IDENTITY }, transaction: undefined, transactionError: undefined })}>Manage an existing project</button></div></section></div>;
+  <section><div className="section-label">Already have a project?</div><div className="panel recent-list"><p className="muted">Inspect its files or manage setup if this app has installed it.</p><button type="button" className="text-button" onClick={() => update({ ...clearedContext(state), screen: "identity", mode: "existing", recoveryEntry: false, identity: { ...DEFAULT_IDENTITY }, transaction: undefined, transactionError: undefined })}>Manage an existing project</button></div></section></div>;
 }
 
 function SemanticInputManifest({ state, analysis }: { state: WizardState; analysis?: WizardState["codexAnalysis"] }) {
@@ -2438,13 +2479,217 @@ function SemanticInputManifest({ state, analysis }: { state: WizardState; analys
       <div><strong>Brief</strong><span>{state.description || "No description entered"}</span></div>
       <div><strong>Source</strong><span>{source}</span></div>
       <div><strong>Constraints</strong><span>Project ID must match <code>{"^[a-z][a-z0-9_]{1,63}$"}</code>.</span></div>
-      <div><strong>Evidence</strong><span>{analysis?.mode === "existing_project_semantics" ? "Approved scan findings only" : "No project files supplied for a new project"}</span></div>
+      <div><strong>Evidence</strong><span>{analysis?.mode === "existing_project_semantics" ? "Approved scan findings only" : contextEvidence(state).length ? `${countLabel(contextEvidence(state).length, "added document")} only` : "No project files supplied for a new project"}</span></div>
     </div>
   </details>;
 }
 
-function Description({ state, updateDescription, updateIdentity }: { state: WizardState; updateDescription: (description: string) => void; updateIdentity: (patch: Partial<ProjectIdentity>) => void }) {
-  return <div className="stack narrow"><section className="panel form-panel"><Field label="Mod name" value={state.identity.displayName} onChange={(value) => updateIdentity({ displayName: value })} /><label className="field"><span className="field-label">Description</span><textarea className="brief-input" aria-label="Mod description" value={state.description} onChange={(event) => updateDescription(event.target.value)} /></label><p className="muted">The project ID, script prefix, namespace, tags, and initial folders are filled from these two fields. You can edit any generated value on the next screen.</p></section><SemanticInputManifest state={state} analysis={state.codexAnalysis} /><div className="chips"><span>Natural-language brief</span><span>Generated identity</span><span>Editable structure</span></div></div>;
+function Description({ state, update, updateDescription, updateIdentity }: { state: WizardState; update: (patch: Partial<WizardState>) => void; updateDescription: (description: string) => void; updateIdentity: (patch: Partial<ProjectIdentity>) => void }) {
+  return <div className="stack narrow"><section className="panel form-panel"><Field label="Mod name" value={state.identity.displayName} onChange={(value) => updateIdentity({ displayName: value })} /><label className="field"><span className="field-label">Description</span><textarea className="brief-input" aria-label="Mod description" value={state.description} onChange={(event) => updateDescription(event.target.value)} /></label><p className="muted">The project ID, script prefix, namespace, tags, and initial folders are filled from these two fields. You can edit any generated value on the next screen.</p></section><ContextAttachments state={state} update={update} resetAnalysisOnChange /><SemanticInputManifest state={state} analysis={state.codexAnalysis} /><div className="chips"><span>Natural-language brief</span><span>Generated identity</span><span>Editable structure</span></div></div>;
+}
+
+const CONTEXT_THUMBNAIL_SIZE = 600;
+const CONTEXT_REFERENCE_MAX_EDGE = 1600;
+const CONTEXT_REFERENCE_MAX_BYTES = 1024 * 1024;
+const CONTEXT_COPY_LIMIT_BYTES = 4 * 1024 * 1024;
+
+function contextPickOutcome(added: number, noun: string, refused: string[]): string | undefined {
+  const parts: string[] = [];
+  if (added) parts.push(`Added ${countLabel(added, noun)}.`);
+  if (refused.length) parts.push(`Not added: ${refused.join("; ")}.`);
+  return parts.length ? parts.join(" ") : undefined;
+}
+
+/** Optional documents and images that add context to setup. Documents can be
+ * sent to the setup assistant and copied into the project; images can become
+ * the thumbnail or saved visual references. */
+export function ContextAttachments({ state, update, resetAnalysisOnChange = false }: { state: WizardState; update: (patch: Partial<WizardState>) => void; resetAnalysisOnChange?: boolean }) {
+  const uid = useId();
+  const documents = state.contextDocuments ?? [];
+  const images = state.contextImages ?? [];
+  const thumbnail = state.contextThumbnail;
+  const thumbnailImage = thumbnail ? images.find((image) => image.id === thumbnail.attachmentId) : undefined;
+  const [open, setOpen] = useState(documents.length + images.length > 0);
+  const [message, setMessage] = useState<string>();
+  const [picking, setPicking] = useState<"documents" | "images">();
+  const [rendering, setRendering] = useState<string[]>([]);
+  const latest = useRef(state);
+  latest.current = state;
+  const thumbnailRequest = useRef<string | undefined>(undefined);
+  const addDocumentsButton = useRef<HTMLButtonElement>(null);
+  const addImagesButton = useRef<HTMLButtonElement>(null);
+  const summary = [documents.length ? countLabel(documents.length, "document") : "", images.length ? countLabel(images.length, "image") : ""].filter(Boolean).join(" · ");
+  const contextChangedSinceAnalysis = !resetAnalysisOnChange && Boolean(state.codexAnalysis) && !sameIdSet(state.contextAnalysisDocumentIds ?? [], includedContextDocumentIds(state));
+  const copyBytes = documents.filter((document) => document.keepCopy && document.copyable).reduce((total, document) => total + document.size, 0)
+    + images.filter((image) => image.saveReference && image.referenceData).reduce((total, image) => total + base64ByteLength(image.referenceData ?? ""), 0);
+
+  // Every context edit invalidates a prepared plan. On the description screen
+  // a changed document set also discards the analysis, like a changed brief.
+  const commit = (patch: Partial<WizardState>) => {
+    const current = latest.current;
+    const nextDocuments = patch.contextDocuments ?? current.contextDocuments ?? [];
+    const analysisInputChanged = !sameIdSet(includedContextDocumentIds(current), includedContextDocumentIds({ contextDocuments: nextDocuments }));
+    const resetAnalysis = resetAnalysisOnChange && analysisInputChanged && Boolean(current.codexAnalysis || current.codexAnalysisRecord);
+    const next: Partial<WizardState> = { ...patch, plan: undefined, ...(resetAnalysis ? { codexAnalysis: undefined, codexAnalysisRecord: undefined, contextAnalysisDocumentIds: undefined } : {}) };
+    latest.current = { ...current, ...next };
+    update(next);
+  };
+  const markRendering = (id: string, active: boolean) => setRendering((current) => active ? [...current, id] : current.filter((item) => item !== id));
+  const setDocument = (id: string, patch: Partial<ContextDocumentState>) => commit({ contextDocuments: (latest.current.contextDocuments ?? []).map((document) => document.id === id ? { ...document, ...patch } : document) });
+  const patchImage = (id: string, patch: Partial<ContextImageState>) => {
+    const current = latest.current.contextImages ?? [];
+    if (!current.some((image) => image.id === id)) return;
+    commit({ contextImages: current.map((image) => image.id === id ? { ...image, ...patch } : image) });
+  };
+  const renderReference = async (image: ContextImageState): Promise<string | undefined> => {
+    markRendering(image.id, true);
+    try {
+      return await renderReferenceJpeg(image.data_url, CONTEXT_REFERENCE_MAX_EDGE, CONTEXT_REFERENCE_MAX_BYTES);
+    } catch {
+      setMessage(`${image.name} could not be prepared as a visual reference.`);
+      return undefined;
+    } finally {
+      markRendering(image.id, false);
+    }
+  };
+  const addDocuments = async () => {
+    if (picking) return;
+    setPicking("documents");
+    setMessage(undefined);
+    try {
+      const result = await pickContextDocuments();
+      if (!result.value) {
+        setMessage(result.error ? `Documents could not be added: ${result.error}` : "Documents could not be added.");
+        return;
+      }
+      if (result.value.cancelled) return;
+      const current = latest.current.contextDocuments ?? [];
+      const fresh = result.value.added.filter((document) => !current.some((known) => known.id === document.id)).map((document): ContextDocumentState => ({ ...document, includeInAnalysis: true, keepCopy: false }));
+      if (fresh.length) commit({ contextDocuments: [...current, ...fresh] });
+      setMessage(contextPickOutcome(fresh.length, "document", result.value.refused));
+    } finally {
+      setPicking(undefined);
+    }
+  };
+  const addImages = async () => {
+    if (picking) return;
+    setPicking("images");
+    setMessage(undefined);
+    let fresh: ContextImageState[] = [];
+    try {
+      const result = await pickContextImages();
+      if (!result.value) {
+        setMessage(result.error ? `Images could not be added: ${result.error}` : "Images could not be added.");
+        return;
+      }
+      if (result.value.cancelled) return;
+      const current = latest.current.contextImages ?? [];
+      fresh = result.value.added.filter((image) => !current.some((known) => known.id === image.id)).map((image): ContextImageState => ({ ...image, saveReference: true }));
+      if (fresh.length) commit({ contextImages: [...current, ...fresh] });
+      setMessage(contextPickOutcome(fresh.length, "image", result.value.refused));
+    } finally {
+      setPicking(undefined);
+    }
+    // New images are saved as visual references by default; one that cannot
+    // be rendered is left unchecked instead of failing the plan later.
+    for (const image of fresh) {
+      const referenceData = await renderReference(image);
+      const target = (latest.current.contextImages ?? []).find((candidate) => candidate.id === image.id);
+      if (!target || !target.saveReference || target.referenceData) continue;
+      patchImage(image.id, referenceData ? { referenceData } : { saveReference: false });
+    }
+  };
+  const setSaveReference = async (image: ContextImageState, checked: boolean) => {
+    if (rendering.includes(image.id)) return;
+    if (!checked) {
+      patchImage(image.id, { saveReference: false, referenceData: undefined });
+      return;
+    }
+    const referenceData = await renderReference(image);
+    if (referenceData) patchImage(image.id, { saveReference: true, referenceData });
+  };
+  const chooseThumbnail = async (image?: ContextImageState) => {
+    thumbnailRequest.current = image?.id;
+    if (!image) {
+      commit({ contextThumbnail: undefined });
+      return;
+    }
+    const renderingId = `thumbnail:${image.id}`;
+    markRendering(renderingId, true);
+    try {
+      const png = await renderCoverPng(image.data_url, CONTEXT_THUMBNAIL_SIZE);
+      if (thumbnailRequest.current !== image.id || !(latest.current.contextImages ?? []).some((candidate) => candidate.id === image.id)) return;
+      commit({ contextThumbnail: { attachmentId: image.id, png } });
+    } catch {
+      setMessage(`${image.name} could not be used as the thumbnail.`);
+    } finally {
+      markRendering(renderingId, false);
+    }
+  };
+  const removeDocument = async (document: ContextDocumentState) => {
+    await forgetContextAttachment(document.id);
+    commit({ contextDocuments: (latest.current.contextDocuments ?? []).filter((candidate) => candidate.id !== document.id) });
+    setMessage(`Removed ${document.name}.`);
+    addDocumentsButton.current?.focus();
+  };
+  const removeImage = async (image: ContextImageState) => {
+    await forgetContextAttachment(image.id);
+    const current = latest.current;
+    if (thumbnailRequest.current === image.id) thumbnailRequest.current = undefined;
+    commit({
+      contextImages: (current.contextImages ?? []).filter((candidate) => candidate.id !== image.id),
+      ...(current.contextThumbnail?.attachmentId === image.id ? { contextThumbnail: undefined } : {}),
+    });
+    setMessage(`Removed ${image.name}.`);
+    addImagesButton.current?.focus();
+  };
+  const reviewAgain = () => update({ codexAnalysis: undefined, codexAnalysisRecord: undefined, semanticComponentRecommendations: undefined, contextAnalysisDocumentIds: undefined, plan: undefined, transactionError: undefined });
+
+  return <details className="panel context-attachments" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary>Add context (optional){summary && <span className="context-summary"> · {summary}</span>}</summary>
+    <div className="context-body">
+      <p className="muted context-intro">Documents help the setup assistant understand the mod. Images can become the thumbnail or visual references.</p>
+      {contextChangedSinceAnalysis && <div className="callout review context-note"><span>Context changed — run the review again to use it.</span><button type="button" className="text-button" onClick={reviewAgain}>Review again</button></div>}
+      <section className="context-section" aria-labelledby={`${uid}-documents`}>
+        <div className="context-section-heading"><h3 id={`${uid}-documents`}>Documents</h3><button ref={addDocumentsButton} type="button" className="button" aria-busy={picking === "documents" || undefined} onClick={() => void addDocuments()}>{picking === "documents" ? "Adding documents…" : "Add documents…"}</button></div>
+        {documents.length > 0 && <ul className="context-list">{documents.map((document) => {
+          const nameId = `${uid}-${document.id}-name`;
+          const copyReasonId = `${uid}-${document.id}-copy`;
+          return <li className="context-document" key={document.id}>
+            <div className="context-name"><strong id={nameId}>{document.name}</strong><small>{formatScanBytes(document.size)}{document.truncated ? " · Shortened" : ""}{document.redacted ? " · Some lines hidden" : ""}</small></div>
+            <label className="context-check"><input type="checkbox" checked={document.includeInAnalysis} aria-describedby={nameId} onChange={(event) => setDocument(document.id, { includeInAnalysis: event.target.checked })} /><span>Use as context</span></label>
+            <label className="context-check"><input type="checkbox" checked={document.copyable && document.keepCopy} disabled={!document.copyable} aria-describedby={document.copyable ? nameId : `${nameId} ${copyReasonId}`} onChange={(event) => setDocument(document.id, { keepCopy: event.target.checked })} /><span>Keep a copy in docs/reference</span></label>
+            {!document.copyable && <small className="context-reason" id={copyReasonId}>{document.redacted ? "Not copied because some lines were hidden." : "Too large to copy (over 256 KB)."}</small>}
+            <button type="button" className="text-button" aria-label={`Remove ${document.name}`} onClick={() => void removeDocument(document)}>Remove</button>
+          </li>;
+        })}</ul>}
+      </section>
+      <section className="context-section" aria-labelledby={`${uid}-images`}>
+        <div className="context-section-heading"><h3 id={`${uid}-images`}>Images</h3><button ref={addImagesButton} type="button" className="button" aria-busy={picking === "images" || undefined} onClick={() => void addImages()}>{picking === "images" ? "Adding images…" : "Add images…"}</button></div>
+        {images.length > 0 && <>
+          <div className="context-thumbnail-row">
+            {thumbnail && <img className="context-thumbnail-result" src={base64DataUrl(thumbnail.png, "image/png")} alt={`Thumbnail preview${thumbnailImage ? ` from ${thumbnailImage.name}` : ""}`} width={120} height={120} />}
+            <div className="context-thumbnail-copy">
+              <label className="context-check"><input type="radio" name={`${uid}-thumbnail`} checked={!thumbnail} onChange={() => void chooseThumbnail(undefined)} /><span>No thumbnail from images</span></label>
+              {thumbnail && state.mode === "existing" && <small className="muted">You can keep or replace the current thumbnail when reviewing changes.</small>}
+            </div>
+          </div>
+          <ul className="context-image-grid">{images.map((image) => {
+            const nameId = `${uid}-${image.id}-name`;
+            return <li className="context-image" key={image.id}>
+              <img src={image.data_url} alt={image.name} />
+              <div className="context-name"><strong id={nameId}>{image.name}</strong><small>{formatScanBytes(image.size)}</small></div>
+              <label className="context-check"><input type="radio" name={`${uid}-thumbnail`} checked={thumbnail?.attachmentId === image.id} aria-describedby={nameId} aria-busy={rendering.includes(`thumbnail:${image.id}`) || undefined} onChange={() => void chooseThumbnail(image)} /><span>Use as thumbnail</span></label>
+              <label className="context-check"><input type="checkbox" checked={image.saveReference} aria-describedby={nameId} aria-busy={rendering.includes(image.id) || undefined} onChange={(event) => void setSaveReference(image, event.target.checked)} /><span>Save as visual reference</span></label>
+              <button type="button" className="text-button" aria-label={`Remove ${image.name}`} onClick={() => void removeImage(image)}>Remove</button>
+            </li>;
+          })}</ul>
+        </>}
+      </section>
+      {copyBytes > CONTEXT_COPY_LIMIT_BYTES && <p className="callout review">Saved copies are larger than 4 MB together. Keep fewer copies.</p>}
+      <p className="muted context-message" role="status" aria-live="polite">{message}</p>
+    </div>
+  </details>;
 }
 
 const PROPOSAL_LABELS: Record<string, string> = {
@@ -2692,10 +2937,12 @@ function GeneratedFilesPreview({ state, ready, pending, selected, message, onPre
   const files = [
     { componentId: "project.descriptor", name: "descriptor.mod", detail: "Inside the project" },
     { componentId: "project.launcher_descriptor", name: `${state.identity.projectId || "project"}.mod`, detail: "HOI4 launcher file" },
-    { componentId: "project.thumbnail", name: "thumbnail.png", detail: "Replaceable placeholder" },
+    { componentId: "project.thumbnail", name: "thumbnail.png", detail: state.contextThumbnail ? "From your chosen image" : "Replaceable placeholder" },
   ];
-  const imageUrl = selected?.bytes?.length ? pngDataUrl(selected.bytes) : undefined;
-  return <section className="panel generated-files-panel"><PanelTitle title="Generated files" />{files.map((file) => <div className="list-row" key={file.componentId}><div><strong>{file.name}</strong><span>{file.detail}</span></div><button type="button" className="text-button" disabled={!ready || pending} title={!ready ? "Confirm the generated details and project location first." : undefined} aria-expanded={selected?.component_id === file.componentId} onClick={() => void onPreview(file.componentId)}>{pending ? "Preparing…" : "Preview"}</button></div>)}{!ready && <p className="muted" role="status">Confirm the generated details and project location to enable previews.</p>}{message && <p className="muted" role="status">{message}</p>}{selected && <div className="artifact-preview" aria-live="polite"><div className="artifact-preview-heading"><strong>{selected.destination}</strong><button type="button" className="text-button" onClick={() => void onPreview(selected.component_id)}>Refresh</button></div>{imageUrl ? <><div className="thumbnail-preview"><img src={imageUrl} alt="Generated thumbnail placeholder preview" /></div><p className="muted">{selected.content}</p></> : <pre className="report-preview">{selected.content}</pre>}</div>}</section>;
+  // The core preview renders the placeholder; the plan uses the chosen image.
+  const chosenThumbnail = selected?.component_id === "project.thumbnail" && state.contextThumbnail ? base64DataUrl(state.contextThumbnail.png, "image/png") : undefined;
+  const imageUrl = chosenThumbnail ?? (selected?.bytes?.length ? pngDataUrl(selected.bytes) : undefined);
+  return <section className="panel generated-files-panel"><PanelTitle title="Generated files" />{files.map((file) => <div className="list-row" key={file.componentId}><div><strong>{file.name}</strong><span>{file.detail}</span></div><button type="button" className="text-button" disabled={!ready || pending} title={!ready ? "Confirm the generated details and project location first." : undefined} aria-expanded={selected?.component_id === file.componentId} onClick={() => void onPreview(file.componentId)}>{pending ? "Preparing…" : "Preview"}</button></div>)}{!ready && <p className="muted" role="status">Confirm the generated details and project location to enable previews.</p>}{message && <p className="muted" role="status">{message}</p>}{selected && <div className="artifact-preview" aria-live="polite"><div className="artifact-preview-heading"><strong>{selected.destination}</strong><button type="button" className="text-button" onClick={() => void onPreview(selected.component_id)}>Refresh</button></div>{imageUrl ? <><div className="thumbnail-preview"><img src={imageUrl} alt={chosenThumbnail ? "Thumbnail preview from your chosen image" : "Generated thumbnail placeholder preview"} /></div><p className="muted">{chosenThumbnail ? "Rendered from the image you chose." : selected.content}</p></> : <pre className="report-preview">{selected.content}</pre>}</div>}</section>;
 }
 
 function pngDataUrl(bytes: number[]): string {
@@ -2750,7 +2997,7 @@ export function Scan({ state, complete, error, progress, partial, limitsHit, can
 export function Findings({ state, update, updateIdentity, updateDescription, findings, selected, setSelected, setFindings, onConfirmAnalysis, onManageExisting }: { state: WizardState; update?: (patch: Partial<WizardState>) => void; updateIdentity?: (patch: Partial<ProjectIdentity>) => void; updateDescription?: (description: string, preserveAnalysis?: boolean) => void; findings: ScanFinding[]; selected: string; setSelected: (id: string) => void; setFindings: Dispatch<SetStateAction<ScanFinding[]>>; onConfirmAnalysis: () => Promise<void>; onManageExisting: () => void }) {
   const active = findings.find((finding) => finding.id === selected) ?? findings[0];
   const managed = managedInstallationDetails(findings);
-  return <div className="stack"><details><summary>{aiProviderLabel(state.aiProvider, state.aiProfiles)} input preview</summary><div className="manifest-details">{modelVisibleFindings(findings).map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small></div>)}</div></details>{managed.present && managed.valid && <section className="callout info existing-setup-callout"><div><strong>Existing setup found</strong><p>This project already has a managed setup. You can repair it now or add the 3D workflow later without starting over.</p></div><button type="button" className="button secondary" onClick={onManageExisting}>Repair or add workflows</button></section>}{state.codexAnalysis && <CodexReview state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onConfirmAnalysis={onConfirmAnalysis} />}<div className="two-column"><section className="panel"><PanelTitle title="Project facts" />{findings.length ? <div>{findings.map((finding) => <button type="button" key={finding.id} className={`finding-row ${finding.status === "needs_review" ? "review" : ""}`} aria-pressed={finding.id === active?.id} onClick={() => setSelected(finding.id)}><span className={`state-icon ${finding.status === "needs_review" ? "review" : "pass"}`}>{finding.status === "needs_review" ? "!" : "✓"}</span><span><strong>{finding.label}</strong><small>{finding.status === "edited" ? finding.value : finding.displayValue ?? finding.value}</small></span><span className="text-button">{finding.status === "needs_review" ? "Review" : "Edit"}</span></button>)}</div> : <p className="muted">No scan findings are available in this runtime. The desktop scanner must return evidence before values can be accepted.</p>}</section><section className="panel selected-finding"><PanelTitle title="Selected finding" />{active ? <div className="selected-body">{active.id.startsWith("profile.") || active.id === "descriptor.metadata" ? <><strong>{active.label}</strong><p>{active.displayValue}</p><details><summary>Observed facts and sample evidence</summary><pre className="profile-evidence">{formatFindingDetails(active.value)}</pre></details></> : <><label className="field-label" htmlFor="finding-value">Editable project value: {active.label}</label><input id="finding-value" className="text-input focused" value={active.value} onChange={(event) => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, value: event.target.value, status: "edited" } : finding))} /></>}<span className="confidence">{Math.round(active.confidence * 100)}% confidence</span><button type="button" className="text-button" aria-pressed={active.status !== "rejected"} onClick={() => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, status: finding.status === "rejected" ? "accepted" : "rejected" } : finding))}>{active.status === "rejected" ? `Include in ${aiProviderLabel(state.aiProvider, state.aiProfiles)} input` : `Exclude from ${aiProviderLabel(state.aiProvider, state.aiProfiles) } input`}</button><div className="evidence-block"><span>Evidence</span><p>{active.evidence}</p></div><details><summary>Show matching files</summary><p className="muted">Full evidence and hashes stay behind progressive disclosure.</p></details></div> : <p className="muted">Select a finding after the bounded scan returns.</p>}</section></div></div>;
+  return <div className="stack"><details><summary>{aiProviderLabel(state.aiProvider, state.aiProfiles)} input preview</summary><div className="manifest-details">{modelVisibleFindings(findings).map((finding) => <div key={finding.id}><strong>{finding.id}</strong><span>{finding.evidencePath ?? "approved finding reference"}</span><small>{finding.evidenceExcerpt ?? finding.value}</small></div>)}</div></details>{managed.present && managed.valid && <section className="callout info existing-setup-callout"><div><strong>Existing setup found</strong><p>This project already has a managed setup. You can repair it now or add the 3D workflow later without starting over.</p></div><button type="button" className="button secondary" onClick={onManageExisting}>Repair or add workflows</button></section>}{state.codexAnalysis && <CodexReview state={state} update={update} updateIdentity={updateIdentity} updateDescription={updateDescription} onConfirmAnalysis={onConfirmAnalysis} />}{update && <ContextAttachments state={state} update={update} />}<div className="two-column"><section className="panel"><PanelTitle title="Project facts" />{findings.length ? <div>{findings.map((finding) => <button type="button" key={finding.id} className={`finding-row ${finding.status === "needs_review" ? "review" : ""}`} aria-pressed={finding.id === active?.id} onClick={() => setSelected(finding.id)}><span className={`state-icon ${finding.status === "needs_review" ? "review" : "pass"}`}>{finding.status === "needs_review" ? "!" : "✓"}</span><span><strong>{finding.label}</strong><small>{finding.status === "edited" ? finding.value : finding.displayValue ?? finding.value}</small></span><span className="text-button">{finding.status === "needs_review" ? "Review" : "Edit"}</span></button>)}</div> : <p className="muted">No scan findings are available in this runtime. The desktop scanner must return evidence before values can be accepted.</p>}</section><section className="panel selected-finding"><PanelTitle title="Selected finding" />{active ? <div className="selected-body">{active.id.startsWith("profile.") || active.id === "descriptor.metadata" ? <><strong>{active.label}</strong><p>{active.displayValue}</p><details><summary>Observed facts and sample evidence</summary><pre className="profile-evidence">{formatFindingDetails(active.value)}</pre></details></> : <><label className="field-label" htmlFor="finding-value">Editable project value: {active.label}</label><input id="finding-value" className="text-input focused" value={active.value} onChange={(event) => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, value: event.target.value, status: "edited" } : finding))} /></>}<span className="confidence">{Math.round(active.confidence * 100)}% confidence</span><button type="button" className="text-button" aria-pressed={active.status !== "rejected"} onClick={() => setFindings((current) => current.map((finding) => finding.id === active.id ? { ...finding, status: finding.status === "rejected" ? "accepted" : "rejected" } : finding))}>{active.status === "rejected" ? `Include in ${aiProviderLabel(state.aiProvider, state.aiProfiles)} input` : `Exclude from ${aiProviderLabel(state.aiProvider, state.aiProfiles) } input`}</button><div className="evidence-block"><span>Evidence</span><p>{active.evidence}</p></div><details><summary>Show matching files</summary><p className="muted">Full evidence and hashes stay behind progressive disclosure.</p></details></div> : <p className="muted">Select a finding after the bounded scan returns.</p>}</section></div></div>;
 }
 
 function formatFindingDetails(raw: string): string {

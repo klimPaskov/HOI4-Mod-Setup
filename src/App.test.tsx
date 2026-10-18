@@ -1,14 +1,21 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { analysisBrief, CodingEnvironments, Components, Conflict, DryRun, Findings, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, UpdateSourceOptions, Welcome, Workflows, buildAnalysisConfirmationValues, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
-import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
-import type { AiAccountStatus, AiProviderId, CodexAnalysisResult, FolderSelection, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
+import App, { analysisBrief, CodingEnvironments, Components, ContextAttachments, contextEvidence, Conflict, DryRun, Findings, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, UpdateSourceOptions, Welcome, Workflows, buildAnalysisConfirmationValues, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
+import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, forgetContextAttachment, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickContextDocuments, pickContextImages, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
+import type { AiAccountStatus, AiProviderId, CodexAnalysisResult, ContextDocument, ContextImage, FolderSelection, InstallationPlan, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
+import { renderCoverPng, renderReferenceJpeg } from "./lib/images";
 import { documentationFixture, isDocumentationScreenshot } from "./documentation-fixtures";
 
 vi.mock("./lib/tauri", async () => {
   const actual = await vi.importActual<typeof import("./lib/tauri")>("./lib/tauri");
-  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), approveScanEvidence: vi.fn(), buildInstallationPlanResult: vi.fn(), buildMaintenancePlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), findInterruptedTransaction: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewInstallationConflict: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), scanProject: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
+  return { ...actual, applyInstallationResult: vi.fn(), approveInstallation: vi.fn(), approveScanEvidence: vi.fn(), buildInstallationPlanResult: vi.fn(), buildMaintenancePlanResult: vi.fn(), cancelClaudeLogin: vi.fn(), cancelCodexLogin: vi.fn(), checkForAppUpdate: vi.fn(), confirmCodexAnalysis: vi.fn(), findInterruptedTransaction: vi.fn(), forgetContextAttachment: vi.fn(), installAppUpdate: vi.fn(), logoutClaudeResult: vi.fn(), logoutCodexResult: vi.fn(), openCodexLoginUrlResult: vi.fn(), openExternalUrlResult: vi.fn(), openInCodex: vi.fn(), openInCodingEnvironment: vi.fn(), pickContextDocuments: vi.fn(), pickContextImages: vi.fn(), pickProjectFolder: vi.fn(), previewDescriptorsResult: vi.fn(), previewInstallationConflict: vi.fn(), previewSourceManifestResult: vi.fn(), readAiAccount: vi.fn(), readAiModels: vi.fn(), readCodexAccount: vi.fn(), readTransactionJournal: vi.fn(), removeImageGenerationCredential: vi.fn(), rollbackInstallationResult: vi.fn(), runCodexAnalysisResult: vi.fn(), scanProject: vi.fn(), startClaudeLogin: vi.fn(), startCodexLogin: vi.fn(), storeImageGenerationCredential: vi.fn(), suggestProjectPaths: vi.fn(), waitForClaudeLoginResult: vi.fn(), waitForCodexLoginResult: vi.fn() };
+});
+
+// jsdom has no canvas; the context image rendering is exercised in images.test.ts.
+vi.mock("./lib/images", async () => {
+  const actual = await vi.importActual<typeof import("./lib/images")>("./lib/images");
+  return { ...actual, renderCoverPng: vi.fn(), renderReferenceJpeg: vi.fn() };
 });
 
 afterEach(() => {
@@ -2827,5 +2834,184 @@ describe("live testing selection", () => {
     render(<Ready state={state} update={vi.fn()} onMaintenance={vi.fn()} />);
     expect(screen.getByText("To-do", { exact: true })).toBeInTheDocument();
     expect(screen.queryByText("Configured", { exact: true })).not.toBeInTheDocument();
+  });
+});
+
+function contextDocument(id: string, name: string, overrides: Partial<ContextDocument> = {}): ContextDocument {
+  const index = id.replace(/\D/g, "");
+  return { id, name, size: 2048, reference: `context-${index}`, evidence_path: `@context/${index}-${name}`, excerpt: `Notes from ${name}`, excerpt_sha256: index.repeat(64).slice(0, 64), truncated: false, redacted: false, copyable: true, ...overrides };
+}
+
+function contextImage(id: string, name: string): ContextImage {
+  const mediaType = name.endsWith(".png") ? "image/png" : "image/jpeg";
+  return { id, name, size: 4096, media_type: mediaType, data_url: `data:${mediaType};base64,${id}` };
+}
+
+let observedContextState: WizardState | undefined;
+
+function ControlledContext({ initial, resetAnalysisOnChange = false }: { initial: WizardState; resetAnalysisOnChange?: boolean }) {
+  const [state, setState] = useState<WizardState>(initial);
+  observedContextState = state;
+  return <ContextAttachments state={state} update={(patch) => setState((current) => ({ ...current, ...patch }))} resetAnalysisOnChange={resetAnalysisOnChange} />;
+}
+
+function openContextDisclosure() {
+  const summary = screen.getByText("Add context (optional)");
+  const details = summary.closest("details") as HTMLDetailsElement;
+  if (!details.open) fireEvent.click(summary);
+  if (!details.open) details.open = true;
+}
+
+describe("optional setup context", () => {
+  beforeEach(() => {
+    observedContextState = undefined;
+    vi.mocked(forgetContextAttachment).mockResolvedValue(true);
+    vi.mocked(renderReferenceJpeg).mockResolvedValue("UkVGRVJFTkNF");
+    vi.mocked(renderCoverPng).mockResolvedValue("VEhVTUI=");
+  });
+
+  it("adds documents with context on and copies off, explains uncopyable files, and removes them", async () => {
+    vi.mocked(pickContextDocuments).mockResolvedValue({ value: { added: [contextDocument("doc-1", "pitch.md"), contextDocument("doc-2", "notes.md", { copyable: false, truncated: true, redacted: true })], refused: [], cancelled: false } });
+    render(<ControlledContext initial={{ ...initialState, plan: { plan_id: "stale-plan" } as unknown as InstallationPlan }} />);
+    openContextDisclosure();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add documents…" }));
+    const pitch = (await screen.findByText("pitch.md")).closest("li") as HTMLElement;
+    expect(within(pitch).getByRole("checkbox", { name: "Use as context" })).toBeChecked();
+    expect(within(pitch).getByRole("checkbox", { name: "Keep a copy in docs/reference" })).not.toBeChecked();
+    expect(within(pitch).getByRole("checkbox", { name: "Keep a copy in docs/reference" })).toBeEnabled();
+    const notes = screen.getByText("notes.md").closest("li") as HTMLElement;
+    expect(within(notes).getByRole("checkbox", { name: "Keep a copy in docs/reference" })).toBeDisabled();
+    expect(within(notes).getByText(/Shortened/)).toBeInTheDocument();
+    expect(within(notes).getByText(/Some lines hidden/)).toBeInTheDocument();
+    expect(within(notes).getByText("Not copied because some lines were hidden.")).toBeInTheDocument();
+    expect(screen.getByText("· 2 documents")).toBeInTheDocument();
+    expect(observedContextState?.plan).toBeUndefined();
+    expect(observedContextState?.contextDocuments?.map((document) => [document.id, document.includeInAnalysis, document.keepCopy])).toEqual([["doc-1", true, false], ["doc-2", true, false]]);
+
+    fireEvent.click(within(pitch).getByRole("checkbox", { name: "Keep a copy in docs/reference" }));
+    expect(observedContextState?.contextDocuments?.[0].keepCopy).toBe(true);
+
+    fireEvent.click(within(pitch).getByRole("button", { name: "Remove pitch.md" }));
+    await waitFor(() => expect(screen.queryByText("pitch.md")).not.toBeInTheDocument());
+    expect(forgetContextAttachment).toHaveBeenCalledWith("doc-1");
+    expect(observedContextState?.contextDocuments?.map((document) => document.id)).toEqual(["doc-2"]);
+    expect(screen.getByRole("button", { name: "Add documents…" })).toHaveFocus();
+  });
+
+  it("renders the chosen thumbnail and toggles visual references", async () => {
+    vi.mocked(pickContextImages).mockResolvedValue({ value: { added: [contextImage("img-1", "cover.png"), contextImage("img-2", "flag.jpg")], refused: [], cancelled: false } });
+    render(<ControlledContext initial={{ ...initialState }} />);
+    openContextDisclosure();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add images…" }));
+    const cover = (await screen.findByRole("img", { name: "cover.png" })).closest("li") as HTMLElement;
+    const flag = screen.getByRole("img", { name: "flag.jpg" }).closest("li") as HTMLElement;
+    await waitFor(() => expect(observedContextState?.contextImages?.map((image) => image.referenceData)).toEqual(["UkVGRVJFTkNF", "UkVGRVJFTkNF"]));
+    expect(renderReferenceJpeg).toHaveBeenCalledWith("data:image/png;base64,img-1", 1600, 1024 * 1024);
+    expect(within(cover).getByRole("checkbox", { name: "Save as visual reference" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "No thumbnail from images" })).toBeChecked();
+
+    fireEvent.click(within(cover).getByRole("radio", { name: "Use as thumbnail" }));
+    await waitFor(() => expect(observedContextState?.contextThumbnail).toEqual({ attachmentId: "img-1", png: "VEhVTUI=" }));
+    expect(renderCoverPng).toHaveBeenCalledWith("data:image/png;base64,img-1", 600);
+    expect(within(cover).getByRole("radio", { name: "Use as thumbnail" })).toBeChecked();
+    expect(screen.getByRole("img", { name: "Thumbnail preview from cover.png" })).toHaveAttribute("src", "data:image/png;base64,VEhVTUI=");
+
+    fireEvent.click(within(cover).getByRole("checkbox", { name: "Save as visual reference" }));
+    await waitFor(() => expect(observedContextState?.contextImages?.[0].saveReference).toBe(false));
+    expect(observedContextState?.contextImages?.[0].referenceData).toBeUndefined();
+
+    vi.mocked(renderReferenceJpeg).mockResolvedValueOnce("U0VDT05E");
+    fireEvent.click(within(cover).getByRole("checkbox", { name: "Save as visual reference" }));
+    await waitFor(() => expect(observedContextState?.contextImages?.[0]).toMatchObject({ saveReference: true, referenceData: "U0VDT05E" }));
+
+    fireEvent.click(screen.getByRole("radio", { name: "No thumbnail from images" }));
+    expect(observedContextState?.contextThumbnail).toBeUndefined();
+
+    vi.mocked(renderCoverPng).mockRejectedValueOnce(new Error("no canvas"));
+    fireEvent.click(within(flag).getByRole("radio", { name: "Use as thumbnail" }));
+    expect(await screen.findByText("flag.jpg could not be used as the thumbnail.")).toHaveAttribute("role", "status");
+    expect(observedContextState?.contextThumbnail).toBeUndefined();
+  });
+
+  it("drops the thumbnail when its image is removed", async () => {
+    const image = { ...contextImage("img-4", "cover.png"), saveReference: true, referenceData: "UkVG" };
+    render(<ControlledContext initial={{ ...initialState, contextImages: [image], contextThumbnail: { attachmentId: "img-4", png: "VEhVTUI=" } }} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove cover.png" }));
+    await waitFor(() => expect(observedContextState?.contextImages).toEqual([]));
+    expect(forgetContextAttachment).toHaveBeenCalledWith("img-4");
+    expect(observedContextState?.contextThumbnail).toBeUndefined();
+  });
+
+  it("sends only the documents kept as context, after any scan evidence", () => {
+    const documents = [
+      { ...contextDocument("doc-1", "pitch.md"), includeInAnalysis: true, keepCopy: false },
+      { ...contextDocument("doc-2", "old-notes.md"), includeInAnalysis: false, keepCopy: true },
+    ];
+
+    expect(contextEvidence({ contextDocuments: documents })).toEqual([{ reference: "context-1", path: "@context/1-pitch.md", excerpt: "Notes from pitch.md", excerpt_sha256: "1".repeat(64), confidence: null }]);
+    expect(contextEvidence({})).toEqual([]);
+  });
+
+  it("includes the kept documents in the new-mod analysis request", async () => {
+    enableTauriRuntime();
+    vi.mocked(pickContextDocuments).mockResolvedValue({ value: { added: [contextDocument("doc-1", "pitch.md"), contextDocument("doc-2", "old-notes.md")], refused: [], cancelled: false } });
+
+    await renderAuthenticatedApp();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    openContextDisclosure();
+    fireEvent.click(screen.getByRole("button", { name: "Add documents…" }));
+    const oldNotes = (await screen.findByText("old-notes.md")).closest("li") as HTMLElement;
+    fireEvent.click(within(oldNotes).getByRole("checkbox", { name: "Use as context" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    await waitFor(() => expect(runCodexAnalysisResult).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(runCodexAnalysisResult).mock.calls[0][0].evidence).toEqual([{ reference: "context-1", path: "@context/1-pitch.md", excerpt: "Notes from pitch.md", excerpt_sha256: "1".repeat(64), confidence: null }]);
+    expect(approveScanEvidence).not.toHaveBeenCalled();
+  });
+
+  it("announces refused files, failed picks, and keeps cancelled picks silent", async () => {
+    vi.mocked(pickContextDocuments)
+      .mockResolvedValueOnce({ value: { added: [contextDocument("doc-3", "brief.md")], refused: ["tool.exe: this file type cannot be added as a document"], cancelled: false } })
+      .mockResolvedValueOnce({ value: { added: [], refused: [], cancelled: true } })
+      .mockResolvedValueOnce({ value: null, error: "The packaged desktop bridge is unavailable." });
+    render(<ControlledContext initial={{ ...initialState }} />);
+    openContextDisclosure();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add documents…" }));
+    const status = await screen.findByText(/Not added: tool\.exe: this file type cannot be added as a document/);
+    expect(status).toHaveAttribute("role", "status");
+    expect(status).toHaveTextContent("Added 1 document.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add documents…" }));
+    await waitFor(() => expect(pickContextDocuments).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add documents…" })).not.toHaveAttribute("aria-busy"));
+    expect(observedContextState?.contextDocuments?.map((document) => document.id)).toEqual(["doc-3"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add documents…" }));
+    expect(await screen.findByText("Documents could not be added: The packaged desktop bridge is unavailable.")).toHaveAttribute("role", "status");
+  });
+
+  it("discards a description analysis only when the documents sent as context change", () => {
+    const record = { analysis_id: "semantic-analysis", confirmed_fields: [] } as unknown as WizardState["codexAnalysisRecord"];
+    render(<ControlledContext resetAnalysisOnChange initial={{ ...initialState, codexAnalysis: semanticAnalysisFixture() as unknown as WizardState["codexAnalysis"], codexAnalysisRecord: record, contextDocuments: [{ ...contextDocument("doc-1", "pitch.md"), includeInAnalysis: true, keepCopy: false }] }} />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Keep a copy in docs/reference" }));
+    expect(observedContextState?.codexAnalysis).toBeDefined();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Use as context" }));
+    expect(observedContextState?.codexAnalysis).toBeUndefined();
+    expect(observedContextState?.codexAnalysisRecord).toBeUndefined();
+  });
+
+  it("offers a fresh review when the documents change after an existing-mod review", () => {
+    const update = vi.fn();
+    const state = { ...initialState, mode: "existing", codexAnalysis: semanticAnalysisFixture() as unknown as WizardState["codexAnalysis"], contextAnalysisDocumentIds: [], contextDocuments: [{ ...contextDocument("doc-1", "pitch.md"), includeInAnalysis: true, keepCopy: false }] } as WizardState;
+    render(<ContextAttachments state={state} update={update} />);
+
+    expect(screen.getByText("Context changed — run the review again to use it.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review again" }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ codexAnalysis: undefined, codexAnalysisRecord: undefined, plan: undefined }));
   });
 });

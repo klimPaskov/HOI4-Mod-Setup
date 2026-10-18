@@ -543,6 +543,40 @@ export interface FolderSelection {
   cancelled: boolean;
 }
 
+/** A text document the user added as setup context. The core keeps the bytes;
+ * the interface only holds the bounded excerpt it may send for analysis. */
+export interface ContextDocument {
+  id: string;
+  name: string;
+  size: number;
+  reference: string;
+  evidence_path: string;
+  excerpt: string;
+  excerpt_sha256: string;
+  truncated: boolean;
+  redacted: boolean;
+  copyable: boolean;
+}
+
+/** An image the user added for the thumbnail or visual direction. `data_url`
+ * is for preview and rendering only. */
+export interface ContextImage {
+  id: string;
+  name: string;
+  size: number;
+  media_type: string;
+  data_url: string;
+}
+
+export interface ContextPick<T> {
+  added: T[];
+  refused: string[];
+  cancelled: boolean;
+}
+
+export type ContextDocumentState = ContextDocument & { includeInAnalysis: boolean; keepCopy: boolean };
+export type ContextImageState = ContextImage & { saveReference: boolean; referenceData?: string };
+
 export interface SuggestedProjectPaths {
   mod_directory: string;
   project_root: string;
@@ -796,5 +830,13 @@ export interface WizardState {
   semanticProposalOverrides?: SemanticProposalKey[];
   semanticComponentRecommendations?: ComponentRecommendation[];
   manifestPreview?: SourceManifestPreview;
+  /** Documents the user added as optional setup context. */
+  contextDocuments?: ContextDocumentState[];
+  /** Images the user added for the thumbnail or visual references. */
+  contextImages?: ContextImageState[];
+  /** A 600 by 600 PNG (base64) rendered from one of the context images. */
+  contextThumbnail?: { attachmentId: string; png: string };
+  /** Context document IDs sent with the current analysis. */
+  contextAnalysisDocumentIds?: string[];
   draftSaved: boolean;
 }
