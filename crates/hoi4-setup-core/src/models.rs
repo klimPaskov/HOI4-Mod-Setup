@@ -996,7 +996,7 @@ pub struct InstallationPlan {
     #[serde(default)]
     pub download_ledger: Vec<DownloadedFile>,
     #[serde(default)]
-    pub git_setup: Option<crate::git::GitSetup>,
+    pub git_setup: Option<GitSetup>,
     #[serde(default)]
     pub credential_references: Vec<CredentialReference>,
     #[serde(default)]
@@ -1600,4 +1600,25 @@ pub struct CodexAnalysisRecord {
     pub source_revision: Option<String>,
     #[serde(default)]
     pub source_manifest_sha256: Option<String>,
+}
+
+/// The Git choice recorded in a plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitMode {
+    Initialize,
+    Preserve,
+    Skip,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitSetup {
+    pub mode: GitMode,
+    pub branch: String,
+    pub initial_commit: bool,
+    #[serde(default)]
+    pub remote_name: Option<String>,
+    #[serde(default)]
+    pub remote_url: Option<String>,
+    pub push_approved: bool,
 }

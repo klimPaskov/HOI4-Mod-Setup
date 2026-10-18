@@ -1679,6 +1679,7 @@ dependencies = [
  "thiserror 2.0.19",
  "toml 0.8.2",
  "unicode-normalization",
+ "uuid",
 ]
 
 [[package]]

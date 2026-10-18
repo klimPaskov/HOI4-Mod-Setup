@@ -8,6 +8,8 @@
 pub mod adapters;
 pub mod error;
 pub mod memory_fs;
+pub mod merge;
+pub mod models;
 pub mod native_mcp;
 pub mod schemas;
 pub mod text;

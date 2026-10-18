@@ -1,4 +1,5 @@
 use crate::models::Platform;
+pub use crate::models::{GitMode, GitSetup};
 use crate::process::{find_path_executable, ProcessResult, ProcessSpec};
 use crate::security::{
     atomic_write_json, is_link_metadata, normalize_relative_path, path_has_link_component,
@@ -12,26 +13,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GitMode {
-    Initialize,
-    Preserve,
-    Skip,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitSetup {
-    pub mode: GitMode,
-    pub branch: String,
-    pub initial_commit: bool,
-    #[serde(default)]
-    pub remote_name: Option<String>,
-    #[serde(default)]
-    pub remote_url: Option<String>,
-    pub push_approved: bool,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitPlan {
