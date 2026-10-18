@@ -58,7 +58,7 @@ Detect only with evidence:
 - possible install conflicts
 
 Detect native coding environments only inside the selected root, from the
-markers in the `NATIVE_CLIENTS` registry (`src-tauri/src/coding_environment.rs`).
+markers in the `NATIVE_CLIENTS` registry (`crates/hoi4-setup-core/src/coding_environment.rs`).
 Claude Code (`CLAUDE.md`, `.claude/`, and `.mcp.json`) is the canonical package;
 Codex is detected only by `.codex/config.toml`, because generated TOML agents
 are installed for every selection. The registry's `scan_directories` are the

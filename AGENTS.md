@@ -228,7 +228,7 @@ copies are generated projections and must pass source-side drift checks.
 Manifest format 6 declares each client's MCP support: a `project` file the
 installer manages, a `manual` route in settings the client owns, or `none`.
 Offer a format 6 client only when its project route matches an adapter in
-`src-tauri/src/coding_environment.rs`, or when its route is manual or absent.
+`crates/hoi4-setup-core/src/coding_environment.rs`, or when its route is manual or absent.
 Never write a client's user, IDE, or cloud settings. A component may serve
 several clients through `shared_coding_environments`, so one installed copy
 never duplicates a destination. Format 5 and older manifests offer only the

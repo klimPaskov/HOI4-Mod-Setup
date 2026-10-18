@@ -43,7 +43,9 @@ Read `AGENTS.md` before coding. Then read the repo-local skill that owns the cur
 - `crates/hoi4-setup-core` is the portable core shared with the web edition. It
   builds for `wasm32-unknown-unknown` and reaches files, HTTP, time, and
   randomness only through the traits in `adapters.rs`; `MemoryFs` holds a
-  dropped folder or a fake project. The desktop crate re-exports moved modules
+  dropped folder or a fake project. It holds the models, manifest rules,
+  merge rules, coding-client registry, live-testing routes, MCP formats and
+  target, and the pure path and redaction rules. The desktop crate re-exports moved modules
   at their old `crate::` paths. CI builds and lints it with
   `cargo build -p hoi4-setup-core --target wasm32-unknown-unknown`.
 

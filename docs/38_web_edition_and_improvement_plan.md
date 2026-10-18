@@ -162,8 +162,11 @@ transaction contract and needs an explicit decision.
 - Phase 2 started: `crates/hoi4-setup-core` holds `AppError`, the schema
   cache, the native MCP formats, the pure path, hashing, and redaction rules,
   the adapter traits (`ProjectFs`, `SourceClient`, `Clock`, `Entropy`), and
-  `MemoryFs`. CI builds and lints it for `wasm32-unknown-unknown`. Models,
-  descriptors, merge, coding clients, live testing, and the scanner move next,
+  `MemoryFs`. CI builds and lints it for `wasm32-unknown-unknown`.
+- The core also holds the models, merge rules, manifest parsing and validation
+  (dependency expansion, platform support, file selection, download
+  verification), the coding-client registry, live-testing routes, and the
+  reviewed MCP target. Descriptors, the scanner, and plan building move next,
   behind the same adapters.
 
 ## Roadmap

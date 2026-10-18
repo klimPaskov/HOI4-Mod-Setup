@@ -717,7 +717,7 @@ mod selection_tests {
     use super::*;
     fn manifest() -> RemoteManifest {
         let mut manifest: RemoteManifest = serde_json::from_slice(include_bytes!(
-            "../../docs/source-manifest/hoi4-mod-setup.manifest.json"
+            "../../../docs/source-manifest/hoi4-mod-setup.manifest.json"
         ))
         .unwrap();
         if !manifest

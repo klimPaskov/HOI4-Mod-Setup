@@ -6,7 +6,11 @@
 //! randomness directly; hosts supply those through the traits in [`adapters`].
 
 pub mod adapters;
+pub mod coding_environment;
 pub mod error;
+pub mod live_testing;
+pub mod manifest;
+pub mod mcp_target;
 pub mod memory_fs;
 pub mod merge;
 pub mod models;

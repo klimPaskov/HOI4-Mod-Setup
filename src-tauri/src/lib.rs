@@ -7,7 +7,7 @@ pub mod account_cli;
 pub mod ai;
 pub mod claude_code;
 pub mod codex;
-pub mod coding_environment;
+pub use hoi4_setup_core::coding_environment;
 pub mod context;
 pub mod credentials;
 pub mod descriptors;
@@ -46,4 +46,4 @@ pub fn run_desktop() {
 #[cfg(feature = "desktop")]
 mod commands;
 
-pub mod live_testing;
+pub use hoi4_setup_core::live_testing;

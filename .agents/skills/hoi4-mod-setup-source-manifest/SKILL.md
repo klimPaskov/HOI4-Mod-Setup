@@ -322,7 +322,7 @@ a newer bootstrap.
   `toml_mcp_servers`). `validate_environment_mcp_declarations` rejects a route
   whose component belongs to another client or does not install that path.
   The app offers a format 6 client only when the `NATIVE_CLIENTS` registry in
-  `src-tauri/src/coding_environment.rs` has a matching path and format, or when
+  `crates/hoi4-setup-core/src/coding_environment.rs` has a matching path and format, or when
   the route is manual or absent; anything else is listed as unavailable with
   a reason, and `component_ids` refuses it with an `InvalidInput` message that
   the UI shows unchanged. Format 5 and older manifests offer only the five

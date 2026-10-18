@@ -1,6 +1,6 @@
-use crate::models::{ComponentDefinition, SourceKind};
 use crate::safe_fs::RootedDir;
 use crate::AppError;
+pub use hoi4_setup_core::manifest::validate_manifest_destinations;
 pub use hoi4_setup_core::text::{
     canonical_relative_key, contains_credential_shaped_content, is_reserved_windows_name,
     normalize_relative_path, persistable_json_bytes, redact_secrets, reject_secret_like_keys,
@@ -158,38 +158,6 @@ pub fn reject_link_components(root: &Path, relative: &str) -> Result<(), AppErro
                     current.display()
                 )));
             }
-        }
-    }
-    Ok(())
-}
-
-pub fn validate_manifest_destinations(components: &[ComponentDefinition]) -> Result<(), AppError> {
-    let mut owners: std::collections::HashMap<String, Vec<&ComponentDefinition>> =
-        std::collections::HashMap::new();
-    for component in components {
-        let key = canonical_relative_key(&component.destination.path)?;
-        owners.entry(key).or_default().push(component);
-    }
-    for (key, components) in owners {
-        // Multiple tree components may contribute disjoint files to one
-        // managed directory. Concrete selected destinations are still
-        // canonicalized and rejected unconditionally by select_component_files.
-        let shared_tree_root = components
-            .iter()
-            .all(|component| component.source.kind == SourceKind::Tree);
-        let structured_merge = components
-            .iter()
-            .all(|component| component.destination.ownership == crate::models::Ownership::Merged);
-        if components.len() > 1
-            && !shared_tree_root
-            && !structured_merge
-            && components.iter().any(|component| {
-                component.destination.ownership != crate::models::Ownership::Merged
-            })
-        {
-            return Err(AppError::PathSecurity(format!(
-                "duplicate destination: {key}"
-            )));
         }
     }
     Ok(())

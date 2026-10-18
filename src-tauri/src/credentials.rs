@@ -1,10 +1,10 @@
 use crate::models::{CredentialReference, Platform};
 use crate::security::{redact_secrets, validate_env_name};
 use crate::AppError;
+pub use hoi4_setup_core::manifest::MESHY_ENVIRONMENT_NAME;
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
-pub const MESHY_ENVIRONMENT_NAME: &str = "MESHY_API_KEY";
 pub const AI_PROVIDER_ENVIRONMENT_NAME: &str = "AI_PROVIDER_API_KEY";
 pub const IMAGE_GENERATION_ENVIRONMENT_NAME: &str = "IMAGE_GENERATION_API_KEY";
 const MAX_SECRET_INPUT_BYTES: usize = 64 * 1024;
