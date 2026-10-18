@@ -8,6 +8,7 @@ pub mod ai;
 pub mod claude_code;
 pub mod codex;
 pub mod coding_environment;
+pub mod context;
 pub mod credentials;
 pub mod descriptors;
 pub mod flatten;

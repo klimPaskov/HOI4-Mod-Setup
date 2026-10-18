@@ -20,6 +20,14 @@
 
 Untrusted input. Parsers must be bounded. Project files cannot define commands.
 
+### User-picked context files
+
+Untrusted input read only after an explicit native-dialog pick. Reads are
+bounded and link-safe; documents become redacted excerpts bound by hash in a
+session store, and images never reach a provider. Interface-rendered image
+bytes are validated as PNG or JPEG within size bounds before staging. See
+`docs/37_setup_context_attachments.md`.
+
 ### Remote manifest
 
 Trusted only after exact revision resolution, schema validation, integrity checks, and policy validation. It can request only supported declarative actions.

@@ -439,13 +439,13 @@ pub(crate) fn launcher_registers_project_root(
         .as_deref()
         .and_then(Path::parent)
         .and_then(Path::parent);
-    let raw = raw_quoted_field(bytes, "path");
-    [Some(declared), raw.as_deref()]
-        .into_iter()
-        .flatten()
-        .any(|value| {
-            launcher_path_matches_project_root(value, project_root, user_directory).unwrap_or(false)
-        })
+    let matches = |value: &str| {
+        launcher_path_matches_project_root(value, project_root, user_directory).unwrap_or(false)
+    };
+    if matches(declared) {
+        return true;
+    }
+    raw_quoted_field(bytes, "path").is_some_and(|raw| matches(&raw))
 }
 
 /// The raw text between the quotes of a top-level `key="..."` line, without

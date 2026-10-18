@@ -956,6 +956,9 @@ pub fn run() {
             pick_project_folder,
             pick_launcher_folder,
             suggest_project_paths,
+            pick_context_documents,
+            pick_context_images,
+            forget_context_attachment,
             scan_project,
             cancel_scan,
             store_meshy_credential,
@@ -1995,14 +1998,45 @@ fn validate_codex_evidence_approval(request: &CodexAnalysisRequest) -> Result<()
         }
         validate_approved_project_root_identity(&requested_root, &approved, request.scan_id)?;
     }
-    let requested_evidence_sha256 = crate::codex::evidence_manifest_sha256(&request.evidence)?;
+    // Documents the user added are bound by the context store; the scan
+    // approval covers only scan evidence.
+    let (context, scan): (Vec<_>, Vec<_>) = request
+        .evidence
+        .iter()
+        .cloned()
+        .partition(|evidence| crate::context::is_context_evidence_path(&evidence.path));
+    for evidence in &context {
+        crate::context::validate_context_evidence(
+            &evidence.reference,
+            &evidence.path,
+            &evidence.excerpt_sha256,
+        )?;
+    }
+    let mut references = BTreeSet::new();
+    for evidence in &context {
+        if !references.insert(evidence.reference.as_str()) {
+            return Err(AppError::InvalidInput(
+                "Codex evidence references must be unique".into(),
+            ));
+        }
+    }
+    if scan.is_empty() {
+        if request.analysis_purpose.as_deref() == Some("maintenance_reanalysis") {
+            return Err(AppError::Credential(
+                "maintenance analysis requires approved read-only evidence".into(),
+            ));
+        }
+        if request.analysis_purpose.as_deref() != Some("existing_project_import") {
+            return Ok(());
+        }
+    }
+    let requested_evidence_sha256 = crate::codex::evidence_manifest_sha256(&scan)?;
     if approved.evidence_sha256.as_deref() != Some(requested_evidence_sha256.as_str()) {
         return Err(AppError::Credential(
             "Codex evidence must be explicitly approved after the latest read-only scan".into(),
         ));
     }
-    let mut references = BTreeSet::new();
-    for evidence in &request.evidence {
+    for evidence in &scan {
         if !references.insert(evidence.reference.as_str()) {
             return Err(AppError::InvalidInput(
                 "Codex evidence references must be unique".into(),
@@ -2353,6 +2387,98 @@ async fn pick_launcher_folder(app: tauri::AppHandle) -> Result<FolderSelection, 
         error: None,
         cancelled: false,
     })
+}
+
+/// Result of adding context files the user picked.
+#[derive(Debug, Clone, serde::Serialize)]
+struct ContextPick<T> {
+    added: Vec<T>,
+    refused: Vec<String>,
+    cancelled: bool,
+}
+
+fn picked_paths(
+    selected: Option<Vec<tauri_plugin_dialog::FilePath>>,
+) -> Result<Option<Vec<PathBuf>>, String> {
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    selected
+        .into_iter()
+        .map(|file| {
+            file.into_path()
+                .map_err(|error| format!("selected file is not a local path: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+/// Add documents that describe the mod. Reading happens only for files the
+/// user picks in the native dialog.
+#[tauri::command(async)]
+async fn pick_context_documents(
+    app: tauri::AppHandle,
+) -> Result<ContextPick<crate::context::ContextDocument>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let selected = app
+        .dialog()
+        .file()
+        .set_title("Add documents that describe the mod")
+        .add_filter("Documents and scripts", crate::context::DOCUMENT_EXTENSIONS)
+        .blocking_pick_files();
+    let Some(paths) = picked_paths(selected)? else {
+        return Ok(ContextPick {
+            added: Vec::new(),
+            refused: Vec::new(),
+            cancelled: true,
+        });
+    };
+    run_blocking_command("context-documents", move || {
+        let (added, refused) = crate::context::add_documents(&paths);
+        Ok(ContextPick {
+            added,
+            refused,
+            cancelled: false,
+        })
+    })
+    .await
+}
+
+/// Add images for the thumbnail or visual direction.
+#[tauri::command(async)]
+async fn pick_context_images(
+    app: tauri::AppHandle,
+) -> Result<ContextPick<crate::context::ContextImage>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let selected = app
+        .dialog()
+        .file()
+        .set_title("Add images for the thumbnail or visual direction")
+        .add_filter("Images", crate::context::IMAGE_EXTENSIONS)
+        .blocking_pick_files();
+    let Some(paths) = picked_paths(selected)? else {
+        return Ok(ContextPick {
+            added: Vec::new(),
+            refused: Vec::new(),
+            cancelled: true,
+        });
+    };
+    run_blocking_command("context-images", move || {
+        let (added, refused) = crate::context::add_images(&paths);
+        Ok(ContextPick {
+            added,
+            refused,
+            cancelled: false,
+        })
+    })
+    .await
+}
+
+#[tauri::command(async)]
+fn forget_context_attachment(id: String) -> Result<(), String> {
+    crate::context::forget(&id).map_err(command_error)
 }
 
 #[tauri::command(async)]
@@ -7755,6 +7881,26 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     // review operation for each one; an existing descriptor is not evidence
     // that the other two routes are valid.
     let mut generated = render_generated_artifacts(&identity)?;
+    if let Some(thumbnail) = crate::context::thumbnail_from_state(state)? {
+        if let Some(artifact) = generated
+            .iter_mut()
+            .find(|artifact| artifact.component_id == "project.thumbnail")
+        {
+            artifact.content = "Thumbnail rendered from an image the user chose.".into();
+            artifact.expected_sha256 = sha256_bytes(&thumbnail);
+            artifact.bytes = Some(thumbnail);
+        }
+    }
+    for file in crate::context::copies_from_state(state)? {
+        generated.push(GeneratedArtifact {
+            component_id: file.component_id.into(),
+            destination: file.destination,
+            content: "Context file the user added during setup.".into(),
+            expected_sha256: sha256_bytes(&file.bytes),
+            external: false,
+            bytes: Some(file.bytes),
+        });
+    }
     if let Some(image_config) =
         image_generation_config_artifact(&resolution.manifest, &image_generation)?
     {
@@ -14600,6 +14746,55 @@ developer_instructions = "Work on the named files."
         assert!(approve_launcher_descriptor_for_scan(&project, None)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn user_added_documents_are_bound_by_the_context_store_not_the_scan_approval() {
+        let _state_guard = test_state_guard();
+        let _context_guard = crate::context::test_guard();
+        let folder = tempfile::tempdir().unwrap();
+        let notes = folder.path().join("pitch.md");
+        std::fs::write(
+            &notes,
+            format!("# Pitch {}\nA divided Europe.\n", Uuid::new_v4()),
+        )
+        .unwrap();
+        let (documents, refused) = crate::context::add_documents(&[notes]);
+        assert!(refused.is_empty(), "{refused:?}");
+        let document = documents[0].clone();
+        let context_evidence = ApprovedEvidence {
+            reference: document.reference.clone(),
+            path: document.evidence_path.clone(),
+            excerpt: document.excerpt.clone(),
+            excerpt_sha256: document.excerpt_sha256.clone(),
+            confidence: None,
+        };
+        let request =
+            |evidence: Vec<ApprovedEvidence>, purpose: Option<&str>| CodexAnalysisRequest {
+                mode: "new_project_identity".into(),
+                brief: "A divided Europe.".into(),
+                evidence,
+                constraints: serde_json::json!({}),
+                analysis_purpose: purpose.map(str::to_owned),
+                project_root: None,
+                scan_id: None,
+            };
+        // A new mod has no scan: a bound document alone is accepted.
+        validate_codex_evidence_approval(&request(vec![context_evidence.clone()], None)).unwrap();
+        let mut tampered = context_evidence.clone();
+        tampered.excerpt_sha256 = sha256_bytes(b"other text");
+        assert!(validate_codex_evidence_approval(&request(vec![tampered], None)).is_err());
+        let mut renamed = context_evidence.clone();
+        renamed.path = "@context/99-other.md".into();
+        assert!(validate_codex_evidence_approval(&request(vec![renamed], None)).is_err());
+        // Maintenance still needs approved scan evidence.
+        assert!(validate_codex_evidence_approval(&request(
+            vec![context_evidence.clone()],
+            Some("maintenance_reanalysis")
+        ))
+        .is_err());
+        crate::context::forget(&document.id).unwrap();
+        assert!(validate_codex_evidence_approval(&request(vec![context_evidence], None)).is_err());
     }
 
     #[test]

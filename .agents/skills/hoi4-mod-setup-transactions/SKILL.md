@@ -119,6 +119,13 @@ versions from reviewed target actions. File rollback follows prior existence,
 including missing merged files later chosen for replacement; independent
 removal batches use destination-derived IDs rather than restarting a counter.
 
+User context copies (`project.context_reference` documents and
+`project.visual_direction` images) and a user-chosen thumbnail are ordinary
+generated artifacts built by `context::copies_from_state` and
+`context::thumbnail_from_state`. They must come from attachments bound in the
+session store; their bytes are recorded in the lock, so copies stay within
+4 MiB together.
+
 Every operation needs:
 
 - stable operation ID

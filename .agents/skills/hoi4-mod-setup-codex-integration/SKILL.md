@@ -235,6 +235,12 @@ to the deterministic official HOI4 Workshop-category allowlist.
 
 Use the scanner and validators for paths, hashes, descriptors, PNGs, encodings, Git state, identifier syntax, collisions, manifest checks, and file ownership.
 
+User-picked context documents (`src-tauri/src/context.rs`) are evidence with a
+reserved `@context/<n>-<name>` path and `context-<n>` reference. Bind them by
+reference, path, and excerpt hash to the session context store, never to the
+scan approval; maintenance still requires approved scan evidence. Images never
+reach a provider. See `docs/37_setup_context_attachments.md`.
+
 Every analysis turn must:
 
 - use a dedicated setup thread
@@ -428,6 +434,13 @@ response with a serialization error, one corrective turn is sent with
 `corrective_analysis_prompt` (the validator's bounded reason plus the input
 hash; Codex reuses the same thread). Validation is never relaxed, other error
 categories are not retried, and the record binds only the accepted response.
+Before the strict rules, `normalize_proposal_formatting` repairs formatting
+with no meaning (line breaks in single-line values, over-long convention text
+shortened at a word, identifier case and separators, tag spelling and
+duplicates, folder separators). Claude Code replies without a structured
+object, including its `error_max_structured_output_retries` give-up, earn the
+corrective turn; other `error_*` subtypes are run failures. Analysis failures
+write their bounded internal reason to the diagnostics log.
 Private/account-shaped, truncated, refused, unreadable, transport,
 authentication, and usage-limit failures are discarded without a corrective
 turn. The runtime schema and deterministic validator remain authoritative even
