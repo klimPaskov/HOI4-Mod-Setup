@@ -4,6 +4,16 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+## 0.6.3 - 2026-10-18
+
+- Fix the app-owned Meshy MCP launcher (`--run-verified-meshy-mcp`), which failed every start with Meshy 0.6.2 because its private runtime copy hid the hoisted dependencies (`dotenv`, `axios`, `express`, `zod`, and the MCP SDK) from Node. The verified copy is now materialized under a private `node_modules` directory; the tree hash and file count, package identity, pre-spawn rehash, Node publisher verification, cleared environment, and process ownership checks are unchanged.
+
+This patch changes only the Meshy launch route. HOI4 Agent Tools and other MCP
+routes keep their existing private package layout. No schema, lock, or
+credential-store change is included. The fix is covered by fixture tests under
+real Node; a credential-bearing Meshy start and paid Meshy generation are not
+part of automated CI.
+
 ## 0.6.2 - 2026-10-15
 
 - Make Latest the default for new setups and existing-project Update, while keeping exact commit and release pinning available.
