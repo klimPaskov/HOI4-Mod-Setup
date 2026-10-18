@@ -607,6 +607,21 @@ pub fn extract_analysis_output(stdout: &str) -> Result<Value, AppError> {
     if envelope.get("is_error").and_then(Value::as_bool) == Some(true) {
         return Err(classify_result_error(result_text));
     }
+    match envelope.get("subtype").and_then(Value::as_str) {
+        // Claude Code's own schema check rejected every reply it drafted; a
+        // corrective turn may still succeed.
+        Some("error_max_structured_output_retries") => {
+            return Err(AppError::Serialization(
+                "the reply did not produce a JSON object matching the schema".into(),
+            ))
+        }
+        Some(subtype) if subtype.starts_with("error_") => {
+            return Err(AppError::Process(
+                "Claude Code could not complete the analysis".into(),
+            ))
+        }
+        _ => {}
+    }
     if let Some(structured) = envelope
         .get("structured_output")
         .filter(|value| value.is_object())
@@ -624,7 +639,9 @@ pub fn extract_analysis_output(stdout: &str) -> Result<Value, AppError> {
         .ok()
         .filter(Value::is_object)
         .ok_or_else(|| {
-            AppError::Serialization("Claude Code returned no structured analysis object".into())
+            AppError::Serialization(
+                "the reply was not a single JSON object matching the schema".into(),
+            )
         })
 }
 
@@ -727,8 +744,9 @@ fn with_sign_in_recheck<T>(
 /// Analysis loop with an injectable process runner. Output is parsed raw and
 /// validated before anything is redacted, so credential-shaped content is
 /// rejected rather than masked. Only a rejected or schema-less response from a
-/// completed run earns the single corrective turn; timeouts, truncation,
-/// unreadable envelopes, and sign-in or usage failures are never retried.
+/// completed run (including Claude Code's own structured-output give-up)
+/// earns the single corrective turn; timeouts, truncation, unreadable
+/// envelopes, and sign-in or usage failures are never retried.
 pub(crate) fn analyze_with_runner(
     request: &AiAnalysisRequest,
     optimization_profile: &str,
@@ -758,13 +776,15 @@ pub(crate) fn analyze_with_runner(
                 "Claude Code exited without a result".into(),
             ));
         }
-        let response = extract_analysis_output(&result.stdout)?;
-        match validate_analysis_output(
-            response,
-            &request.analysis,
-            &input_sha256,
-            &request.analysis.evidence,
-        ) {
+        let validated = extract_analysis_output(&result.stdout).and_then(|response| {
+            validate_analysis_output(
+                response,
+                &request.analysis,
+                &input_sha256,
+                &request.analysis.evidence,
+            )
+        });
+        match validated {
             Ok(analysis) => break analysis,
             Err(error) => match crate::codex::correctable_output_error(&error) {
                 Some(reason) if attempt < crate::codex::ANALYSIS_ATTEMPTS => {
@@ -1288,6 +1308,55 @@ mod tests {
             result.record.output_sha256,
             crate::security::sha256_bytes(&serde_json::to_vec(&result.analysis).unwrap())
         );
+    }
+
+    #[test]
+    fn a_reply_without_a_structured_object_gets_the_corrective_turn() {
+        let hash = input_hash();
+        let valid = analysis_value(&hash, "Fits the brief.");
+        let raw = |stdout: &str| ProcessResult {
+            status_code: Some(0),
+            stdout: stdout.into(),
+            stderr: String::new(),
+            timed_out: false,
+            stdout_truncated: false,
+            stderr_truncated: false,
+        };
+        for first in [
+            raw(r#"{"type":"result","is_error":false,"result":"Here is the analysis."}"#),
+            raw(
+                r#"{"type":"result","subtype":"error_max_structured_output_retries","is_error":false}"#,
+            ),
+        ] {
+            let mut prompts = Vec::new();
+            let mut responses = vec![first, print_result(valid.clone())].into_iter();
+            let result = analyze_with_runner(
+                &analysis_request(),
+                "Claude account setup analysis",
+                |prompt, _| {
+                    prompts.push(String::from_utf8(prompt.to_vec()).unwrap());
+                    Ok(responses.next().unwrap())
+                },
+            );
+            assert!(result.is_ok(), "{result:?}");
+            assert_eq!(prompts.len(), 2);
+            assert!(prompts[1].contains("JSON object matching the schema"));
+        }
+        // Other error subtypes are run failures, never retried.
+        let mut calls = 0;
+        let error = analyze_with_runner(
+            &analysis_request(),
+            "Claude account setup analysis",
+            |_, _| {
+                calls += 1;
+                Ok(raw(
+                    r#"{"type":"result","subtype":"error_during_execution","is_error":false}"#,
+                ))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(calls, 1);
+        assert!(matches!(error, AppError::Process(_)), "{error:?}");
     }
 
     #[test]

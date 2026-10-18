@@ -233,11 +233,26 @@ fn discover_launcher_descriptor_bound_with_check(
                 .map(|name| name.to_string_lossy().to_ascii_lowercase() == expected)
                 .unwrap_or(false)
         });
-        if crate::descriptors::launcher_path_matches_project_root(declared, &root).unwrap_or(false)
-        {
+        // A hand-written value may use single backslashes, which the
+        // escape-aware parser drops, so the raw quoted text is tried too.
+        let raw = crate::descriptors::raw_quoted_field(&bytes, "path");
+        let user_directory = parent.parent();
+        let registers_root = [Some(declared.as_str()), raw.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|value| {
+                crate::descriptors::launcher_path_matches_project_root(value, &root, user_directory)
+                    .unwrap_or(false)
+            });
+        if registers_root {
             matches.push((exact_name, path));
         } else if exact_name {
-            canonical_mismatch = Some(path);
+            // Show the text as written unless it uses escaped separators.
+            let shown = match raw {
+                Some(raw) if !raw.contains("\\\\") => raw,
+                _ => declared.clone(),
+            };
+            canonical_mismatch = Some((path, shown));
         }
     }
     parent_handle.with_stable_path(|_| ()).map_err(|_| {
@@ -257,10 +272,19 @@ fn discover_launcher_descriptor_bound_with_check(
             "multiple launcher descriptors register this project: {paths}"
         )));
     }
-    if let Some(path) = canonical_mismatch {
+    if let Some((path, declared)) = canonical_mismatch {
+        let declared = declared
+            .chars()
+            .filter(|character| !character.is_control())
+            .take(260)
+            .collect::<String>();
+        let file = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
         return Err(AppError::Scan(format!(
-            "the expected launcher descriptor points to a different project: {}",
-            crate::paths::user_facing_path(&path)
+            "{file} tells the HOI4 launcher to load this mod from \"{declared}\", not from the selected folder {}. Choose the folder {file} names, or continue without the launcher file.",
+            crate::paths::user_facing_path(&root)
         )));
     }
     Ok(matches
@@ -3288,10 +3312,33 @@ mod tests {
         )
         .unwrap();
 
-        let error = discover_launcher_descriptor(&project).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("expected launcher descriptor points to a different project"));
+        let error = discover_launcher_descriptor(&project)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("example.mod tells the HOI4 launcher to load this mod from"),
+            "{error}"
+        );
+        assert!(error.contains(&other.display().to_string()), "{error}");
+        assert!(
+            error.contains("continue without the launcher file"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn launcher_discovery_accepts_the_relative_user_folder_form() {
+        let user = tempdir().unwrap();
+        let mods = user.path().join("mod");
+        let project = mods.join("example");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            mods.join("example.mod"),
+            "name=\"Example\"\npath=\"mod/example\"\n",
+        )
+        .unwrap();
+        let found = discover_launcher_descriptor(&project).unwrap().unwrap();
+        assert!(found.ends_with("example.mod"), "{found:?}");
     }
 
     #[test]

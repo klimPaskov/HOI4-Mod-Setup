@@ -364,18 +364,77 @@ fn launcher_path_text(project_root: &Path) -> String {
 /// root representation used by the renderer. Windows filesystem APIs retain
 /// a verbatim `\\?\` prefix internally, but that implementation detail is not
 /// valid user-facing launcher content.
+///
+/// The comparison is text only; the declared path is never opened. Surrounding
+/// spaces and trailing separators are ignored, and a relative value such as
+/// `mod/atlantis` is read against `user_directory` (the HOI4 user folder that
+/// holds the `mod` folder), as the launcher does. `..`, stream, and verbatim
+/// forms never match.
 pub(crate) fn launcher_path_matches_project_root(
     declared_path: &str,
     project_root: &Path,
+    user_directory: Option<&Path>,
 ) -> Result<bool, AppError> {
     let canonical_root = crate::paths::validate_project_root_or_destination(project_root)?.0;
-    let expected = launcher_path_text(&canonical_root);
-    Ok(if cfg!(target_os = "windows") {
-        declared_path
-            .replace('\\', "/")
-            .eq_ignore_ascii_case(&expected)
-    } else {
-        declared_path == expected
+    let windows = cfg!(target_os = "windows");
+    let normalize = |text: &str| {
+        let text = if windows {
+            text.replace('\\', "/")
+        } else {
+            text.to_owned()
+        };
+        let trimmed = text.trim();
+        let without_trailing = trimmed.trim_end_matches('/');
+        if without_trailing.is_empty() {
+            trimmed.to_owned()
+        } else {
+            without_trailing.to_owned()
+        }
+    };
+    let same = |left: &str, right: &str| {
+        if windows {
+            left.to_lowercase() == right.to_lowercase()
+        } else {
+            left == right
+        }
+    };
+    let declared = normalize(declared_path);
+    if same(&declared, &normalize(&launcher_path_text(&canonical_root))) {
+        return Ok(true);
+    }
+    let absolute =
+        declared.starts_with('/') || (windows && declared.as_bytes().get(1) == Some(&b':'));
+    if absolute {
+        return Ok(false);
+    }
+    let Some(user_directory) = user_directory else {
+        return Ok(false);
+    };
+    let Ok(relative_root) = canonical_root.strip_prefix(user_directory) else {
+        return Ok(false);
+    };
+    let relative_root = relative_root
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+    let declared = declared.strip_prefix("./").unwrap_or(&declared);
+    Ok(!relative_root.is_empty() && same(declared, &relative_root))
+}
+
+/// The raw text between the quotes of a top-level `key="..."` line, without
+/// escape processing. A launcher descriptor written by hand may use single
+/// backslashes, which the escape-aware parser would drop.
+pub(crate) fn raw_quoted_field(bytes: &[u8], key: &str) -> Option<String> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    text.lines().find_map(|line| {
+        let (name, value) = line.split_once('=')?;
+        if !name.trim().eq_ignore_ascii_case(key) {
+            return None;
+        }
+        let value = value.trim().strip_prefix('"')?;
+        let end = value.rfind('"')?;
+        Some(value[..end].to_owned())
     })
 }
 
@@ -574,11 +633,20 @@ mod tests {
             .0;
         let declared = user_facing_path(&canonical).replace('\\', "/");
 
-        assert!(launcher_path_matches_project_root(&declared, &project_root).unwrap());
-        assert!(
-            !launcher_path_matches_project_root(&format!("{declared}_other"), &project_root)
-                .unwrap()
-        );
+        assert!(launcher_path_matches_project_root(&declared, &project_root, None).unwrap());
+        assert!(!launcher_path_matches_project_root(
+            &format!("{declared}_other"),
+            &project_root,
+            None
+        )
+        .unwrap());
+        // Spaces and a trailing separator do not change the folder.
+        for equivalent in [format!("{declared}/"), format!(" {declared} ")] {
+            assert!(
+                launcher_path_matches_project_root(&equivalent, &project_root, None).unwrap(),
+                "{equivalent}"
+            );
+        }
         let sibling = parent.path().join("atlantis_sibling");
         let sibling_declared = user_facing_path(
             &crate::paths::validate_project_root_or_destination(&sibling)
@@ -586,24 +654,52 @@ mod tests {
                 .0,
         )
         .replace('\\', "/");
-        assert!(!launcher_path_matches_project_root(&sibling_declared, &project_root).unwrap());
+        assert!(
+            !launcher_path_matches_project_root(&sibling_declared, &project_root, None).unwrap()
+        );
         for mismatched in [
-            format!("{declared}/"),
             format!("{declared}/../atlantis_rising"),
             format!("{declared}:stream"),
             format!("//?/{declared}"),
         ] {
-            assert!(!launcher_path_matches_project_root(&mismatched, &project_root).unwrap());
+            assert!(!launcher_path_matches_project_root(&mismatched, &project_root, None).unwrap());
         }
         let different_case = declared.to_ascii_uppercase();
         assert_eq!(
-            launcher_path_matches_project_root(&different_case, &project_root).unwrap(),
+            launcher_path_matches_project_root(&different_case, &project_root, None).unwrap(),
             cfg!(target_os = "windows")
         );
         let mixed_separators = declared.replace('/', "\\");
         assert_eq!(
-            launcher_path_matches_project_root(&mixed_separators, &project_root).unwrap(),
+            launcher_path_matches_project_root(&mixed_separators, &project_root, None).unwrap(),
             cfg!(target_os = "windows")
+        );
+    }
+
+    #[test]
+    fn relative_launcher_paths_resolve_against_the_hoi4_user_folder() {
+        let user = tempfile::tempdir().unwrap();
+        let user = crate::paths::validate_project_root_or_destination(user.path())
+            .unwrap()
+            .0;
+        std::fs::create_dir_all(user.join("mod").join("atlantis")).unwrap();
+        let project_root = user.join("mod").join("atlantis");
+        for declared in ["mod/atlantis", "./mod/atlantis/", " mod/atlantis "] {
+            assert!(
+                launcher_path_matches_project_root(declared, &project_root, Some(&user)).unwrap(),
+                "{declared}"
+            );
+            assert!(!launcher_path_matches_project_root(declared, &project_root, None).unwrap());
+        }
+        for declared in ["mod/other", "atlantis", "mod/../mod/atlantis", ""] {
+            assert!(
+                !launcher_path_matches_project_root(declared, &project_root, Some(&user)).unwrap(),
+                "{declared}"
+            );
+        }
+        assert_eq!(
+            raw_quoted_field(b"name=\"A\"\npath=\"C:\\Users\\a\\mod\\x\"\n", "path").as_deref(),
+            Some("C:\\Users\\a\\mod\\x")
         );
     }
 
@@ -621,11 +717,13 @@ mod tests {
         let declared = parsed.fields.get("path").unwrap();
 
         assert!(declared.contains("atlantis\\rising"));
-        assert!(launcher_path_matches_project_root(declared, &project_root).unwrap());
-        assert!(
-            !launcher_path_matches_project_root(&declared.replace('\\', "/"), &project_root)
-                .unwrap()
-        );
+        assert!(launcher_path_matches_project_root(declared, &project_root, None).unwrap());
+        assert!(!launcher_path_matches_project_root(
+            &declared.replace('\\', "/"),
+            &project_root,
+            None
+        )
+        .unwrap());
     }
 
     #[cfg(unix)]

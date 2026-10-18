@@ -1841,6 +1841,9 @@ fn ai_analyze_blocking(mut request: AiAnalysisRequest) -> Result<CodexAnalysisRe
         &request,
     )
     .map_err(|error| {
+        // The internal reason is bounded and never carries model content; it
+        // is what a user can share when every attempt is rejected.
+        crate::paths::record_diagnostic("analysis", &error.to_string());
         if request.provider == crate::claude_code::PROVIDER_ID {
             claude_user_error(error)
         } else {
@@ -2308,7 +2311,12 @@ async fn pick_project_folder(app: tauri::AppHandle) -> Result<FolderSelection, S
             Ok(FolderSelection {
                 path: Some(crate::paths::user_facing_path(&canonical)),
                 launcher_descriptor_path,
-                error: discovery.err().map(|error| error.to_string()),
+                // Discovery explains itself; the internal error category
+                // prefix would only make a review item read like a crash.
+                error: discovery.err().map(|error| match error {
+                    AppError::Scan(message) => message,
+                    other => other.to_string(),
+                }),
                 cancelled: false,
             })
         }

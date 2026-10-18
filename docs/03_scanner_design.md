@@ -34,6 +34,14 @@ different root are explicit discovery conflicts, never silently selected. A
 candidate count beyond the 512-file bound is also an explicit review state,
 not a truncated successful discovery.
 
+Normalization is text only. Surrounding spaces and trailing separators are
+ignored; Windows compares separators and letter case loosely. A relative value
+such as `mod/<name>` is read against the HOI4 user folder that holds the
+`mod` folder, as the launcher reads it. The raw quoted text is also compared,
+so a hand-written value with single backslashes is not mangled by escape
+processing. `..`, stream, and verbatim forms never match. A mismatch names the
+descriptor, the folder it declares, and the selected folder in plain words.
+
 The accepted launcher finding retains its real absolute path in the displayed
 value, but identifies its semantic evidence as
 `@approved-launcher/descriptor.mod`. This is a reserved summary reference,
