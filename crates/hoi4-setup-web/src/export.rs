@@ -170,6 +170,14 @@ impl Export {
         &self,
         decisions: &BTreeMap<String, Decision>,
     ) -> Result<Vec<u8>, AppError> {
+        self.build_zip_with(decisions, self.layout)
+    }
+
+    pub(crate) fn build_zip_with(
+        &self,
+        decisions: &BTreeMap<String, Decision>,
+        layout: ExportLayout,
+    ) -> Result<Vec<u8>, AppError> {
         build_export(ExportRequest {
             incoming: &self.incoming,
             entries: &self.entries,
@@ -179,7 +187,7 @@ impl Export {
                 .local
                 .as_ref()
                 .map(|project| &project.fs as &dyn ProjectFs),
-            layout: self.layout,
+            layout,
             root_folder: &self.root_folder,
             root_files: self.root_files.clone(),
             lock: self.lock.clone(),
@@ -294,10 +302,17 @@ impl Export {
     }
 
     /// The ZIP. `decisions_json` maps each conflicting path to `keep`,
-    /// `replace`, `merge`, `rename`, or `skip`.
-    pub fn zip(&self, decisions_json: &str) -> Result<Vec<u8>, JsError> {
+    /// `replace`, `merge`, `rename`, or `skip`; `layout` is `overlay` or
+    /// `full_copy` and defaults to the export's layout.
+    pub fn zip(&self, decisions_json: &str, layout: Option<String>) -> Result<Vec<u8>, JsError> {
         let decisions: BTreeMap<String, Decision> = serde_json::from_str(decisions_json)
             .map_err(|error| JsError::new(&error.to_string()))?;
-        self.build_zip(&decisions).map_err(js)
+        let layout = match layout.as_deref() {
+            None => self.layout,
+            Some("overlay") => ExportLayout::Overlay,
+            Some("full_copy") => ExportLayout::FullCopy,
+            Some(_) => return Err(JsError::new("choose an overlay or a full copy")),
+        };
+        self.build_zip_with(&decisions, layout).map_err(js)
     }
 }

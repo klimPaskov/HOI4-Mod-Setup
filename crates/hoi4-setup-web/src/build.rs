@@ -877,7 +877,7 @@ fn readiness_checks(
         )),
     }
     match file("thumbnail.png").map(|bytes| validate_thumbnail_png(&bytes)) {
-        Some(Ok(())) => checks.push(Check::pass(
+        Some(Ok(_)) => checks.push(Check::pass(
             "thumbnail",
             "Thumbnail",
             "thumbnail.png is a valid launcher image.".into(),

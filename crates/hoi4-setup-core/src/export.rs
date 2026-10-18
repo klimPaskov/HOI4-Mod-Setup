@@ -1211,11 +1211,12 @@ mod tests {
         ]);
         let entries = plan_maintenance(&[], &fs, &lock, &|_| true).unwrap();
         let none = BTreeMap::new();
+        let merged = BTreeMap::new();
         let mut removal = request(
             &[],
             &entries,
             &none,
-            &none,
+            &merged,
             Some(&fs),
             ExportLayout::FullCopy,
         );

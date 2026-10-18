@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import WebApp from "./WebApp";
 import { createCoreClient } from "./core-client";
 import type { CoreClient } from "./core-client";
-import type { CoreOperations, Operation, WorkerMessage } from "./protocol";
+import type { CoreOperations, ExistingSetup, Operation, SourcePreview, WorkerMessage } from "./protocol";
 
 const COMMIT = "0b124ad9d3121fda5eb3cc5ff365f74a28db0f8f";
 
@@ -22,10 +22,45 @@ const preview: CoreOperations["preview"]["result"] = {
   unavailable_coding_environments: [],
 };
 
+/** A preview with the Integrations catalogs of manifest format 6. */
+const integrationsPreview: SourcePreview = {
+  ...preview,
+  components: [
+    ...preview.components,
+    { id: "workflow.portraits.core", display_name: "Portrait contract", description: null, category: "workflow", optional: true, coding_environment: null, platforms: ["all"], dependencies: [], file_count: 1, total_size: 1 },
+  ],
+  image_generation: {
+    default_provider: "none",
+    providers: [
+      { id: "none", display_name: "No image provider", route_kind: "manual", supported_coding_environments: ["claude_code", "codex"] },
+      { id: "openai_api", display_name: "OpenAI Images", route_kind: "stdio_adapter", auth_method: "api_key_vault", supported_models: ["gpt-image-2"], supported_coding_environments: ["claude_code", "codex"], requirements: ["An OpenAI API key saved in the operating-system credential store."] },
+      { id: "codex_native", display_name: "Codex image generation", route_kind: "native", requires_primary_coding_environment: "codex", supported_coding_environments: ["codex"] },
+    ],
+  },
+  live_testing: { providers: [{ id: "clausewitz_mcp", display_name: "Clausewitz MCP", description: "Direct state reads from native Linux HOI4.", requirements: ["Linux native HOI4 1.19.2 only"] }] },
+};
+
+const existingSetup: ExistingSetup = {
+  valid: true,
+  project_id: "demo_mod",
+  installed_at: "2026-10-01T00:00:00Z",
+  updated_at: null,
+  source: { mode: "pinned_commit", revision: COMMIT, requested_ref: COMMIT },
+  primary_coding_environment: "codex",
+  additional_coding_environments: ["claude_code"],
+  components: ["core", "workflow.super_events"],
+  image_generation: null,
+  live_testing: null,
+  portrait_pipeline: null,
+  file_count: 42,
+};
+
+type Answers = { [Op in Operation]: (args: CoreOperations[Op]["args"]) => CoreOperations[Op]["result"] };
+
 /** A fake core that answers like the WebAssembly worker. */
-function fakeCore(overrides: Partial<{ [Op in Operation]: (args: CoreOperations[Op]["args"]) => CoreOperations[Op]["result"] }> = {}) {
+function fakeCore(overrides: Partial<Answers> = {}) {
   const calls: Array<{ op: Operation; args: unknown }> = [];
-  const answers: { [Op in Operation]: (args: CoreOperations[Op]["args"]) => CoreOperations[Op]["result"] } = {
+  const answers: Answers = {
     reset: () => null,
     addFiles: (args: CoreOperations["addFiles"]["args"]) => args.files.length,
     scan: () => ({ findings: [], detected: [{ key: "primary_namespace", value: "demo", reason: "events" }], descriptor: { name: "Demo Mod" }, stats: { files_indexed: 2, directories_indexed: 1, samples_read: 2, bytes_read: 10, excluded_entries: 0, coverage: "complete" }, issues: [] }),
@@ -37,10 +72,22 @@ function fakeCore(overrides: Partial<{ [Op in Operation]: (args: CoreOperations[
       { path: "AGENTS.md", component_id: "core", action: "create", incoming_sha256: "a".repeat(64), local_sha256: null, size: 1 },
       { path: "README.md", component_id: "project.readme", action: "conflict", incoming_sha256: "b".repeat(64), local_sha256: "c".repeat(64), size: 2 },
     ],
+    exportRemoval: () => [
+      { path: ".claude/skills/demo/SKILL.md", component_id: "core.skills", action: "remove", incoming_sha256: "a".repeat(64), local_sha256: "a".repeat(64), size: 1 },
+      { path: "AGENTS.md", component_id: "core.agents", action: "release", incoming_sha256: "a".repeat(64), local_sha256: "b".repeat(64), size: 1 },
+    ],
     compare: (args: CoreOperations["compare"]["args"]) => ({ path: args.path, incoming: "incoming text", local: "my text", binary: false }),
+    fetchBases: () => ({ loaded: [], failed: [] }),
+    merge: () => "merged text",
+    readiness: () => [
+      { id: "descriptor", label: "Descriptor", state: "pass", detail: "descriptor.mod names the mod for the launcher." },
+      { id: "mcp.hoi4_agent_tools", label: "HOI4 Agent Tools", state: "action", detail: "Install the tools once." },
+    ],
+    launcher: () => "name=\"Demo Mod\"\npath=\"mod/demo_mod\"\n",
     zip: () => new ArrayBuffer(4),
     evidence: () => [],
     registry: () => ({ source_revision: COMMIT, manifest_sha256: "d".repeat(64), component_ids: ["workflow.super_events"] }),
+    contextDocument: (args: CoreOperations["contextDocument"]["args"]) => ({ id: `doc-${args.number}`, name: args.name, size: 12, reference: `context-${args.number}`, evidence_path: `@context/${args.number}-${args.name.toLowerCase()}`, excerpt: "Lore notes.", excerpt_sha256: "f".repeat(64), truncated: false, redacted: false, copyable: true }),
     assistantTurn: () => ({ inputSha256: "e".repeat(64), headers: [["content-type", "application/json"]], body: { model: "claude-haiku-5-5" } }),
     assistantReply: () => ({
       analysis: {
@@ -93,6 +140,11 @@ function stubGitHub(provider: (init: RequestInit) => Response = () => new Respon
   return providerCalls;
 }
 
+function stubDownloads() {
+  vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:zip"), revokeObjectURL: vi.fn() }));
+  return vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+}
+
 /** Fill in the setup assistant on the Project step. */
 function chooseAssistant(key = "sk-ant-test") {
   fireEvent.change(screen.getByLabelText("API key"), { target: { value: key } });
@@ -114,6 +166,10 @@ function pickFolder(container: HTMLElement) {
   const file = new File(["name=\"Demo Mod\""], "descriptor.mod");
   Object.defineProperty(file, "webkitRelativePath", { value: "demo_mod/descriptor.mod" });
   fireEvent.change(container.querySelector<HTMLInputElement>("input[type=file]")!, { target: { files: [file] } });
+}
+
+function scanWithSetup(): CoreOperations["scan"]["result"] {
+  return { findings: [], detected: [], descriptor: { name: "Demo Mod" }, stats: null, issues: [], existing_setup: existingSetup };
 }
 
 afterEach(() => {
@@ -142,9 +198,7 @@ describe("web edition", () => {
 
   it("prepares a new mod with the assistant and downloads a ZIP without uploading files", async () => {
     const providerCalls = stubGitHub();
-    const createObjectURL = vi.fn(() => "blob:zip");
-    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));
-    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const click = stubDownloads();
     const { client, calls } = fakeCore();
     render(<WebApp client={client} />);
     await describeNewMod();
@@ -185,6 +239,9 @@ describe("web edition", () => {
     expect(click).toHaveBeenCalled();
     const zip = calls.find((call) => call.op === "zip")!.args as CoreOperations["zip"]["args"];
     expect(zip.decisions).toEqual({ "README.md": "keep" });
+    // The checks the desktop's Ready screen would show.
+    expect(screen.getByText("HOI4 Agent Tools")).toBeInTheDocument();
+    expect(screen.getAllByText("To do").length).toBeGreaterThan(0);
     const hosts = (vi.mocked(fetch).mock.calls as unknown as Array<[string]>).map(([url]) => new URL(url).host);
     expect(new Set(hosts)).toEqual(new Set(["api.github.com", "raw.githubusercontent.com", "api.anthropic.com"]));
     expect(JSON.stringify(calls)).not.toContain("sk-ant-test");
@@ -228,12 +285,156 @@ describe("web edition", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Use incoming" }));
     fireEvent.click(screen.getByRole("radio", { name: /A full copy/ }));
 
-    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:zip"), revokeObjectURL: vi.fn() }));
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    stubDownloads();
     fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
     await screen.findByRole("heading", { name: "Your ZIP is ready" });
     expect(calls.find((call) => call.op === "export")!.args).toMatchObject({ existing: true, request: { identity: { projectId: "demo_mod" } } });
-    expect(calls.find((call) => call.op === "zip")!.args).toEqual({ decisions: { "README.md": "replace" } });
+    expect(calls.find((call) => call.op === "zip")!.args).toEqual({ decisions: { "README.md": "replace" }, layout: "full_copy" });
+    // An existing mod can get its launcher file.
+    fireEvent.click(screen.getByRole("button", { name: "Download launcher file" }));
+    await waitFor(() => expect(calls.some((call) => call.op === "launcher")).toBe(true));
+    expect(calls.find((call) => call.op === "launcher")!.args).toEqual({ folder: "demo_mod" });
+  });
+
+  it("leaves out excluded findings and sends included documents as context", async () => {
+    stubGitHub();
+    const { client, calls } = fakeCore({
+      scan: () => ({ findings: [{ id: "profile.structure", key: "project_structure", value: "Events and decisions", status: "accepted" }, { id: "descriptor.name", key: "mod_name", value: "Demo Mod", status: "accepted" }], detected: [], descriptor: { name: "Demo Mod" }, stats: null, issues: [] }),
+      evidence: (args) => [{ reference: "descriptor.name", path: "descriptor.mod", excerpt: "Demo Mod", excerpt_sha256: "0".repeat(64), confidence: 1 }].filter((item) => !(args.excluded ?? []).includes(item.reference)),
+    });
+    const { container } = render(<WebApp client={client} />);
+    pickFolder(container);
+    await screen.findByText("demo_mod");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Mod name/ }));
+    const documents = container.querySelector<HTMLInputElement>("input[accept*='.md']")!;
+    fireEvent.change(documents, { target: { files: [new File(["Lore notes."], "Lore.md")] } });
+    expect(await screen.findByText("Lore.md")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Keep a copy/ }));
+    chooseAssistant();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Review the details" });
+    const evidence = calls.find((call) => call.op === "evidence")!.args as CoreOperations["evidence"]["args"];
+    expect(evidence.excluded).toEqual(["descriptor.name"]);
+    const turn = calls.find((call) => call.op === "assistantTurn")!.args as CoreOperations["assistantTurn"]["args"];
+    expect(turn.request.evidence.map((item) => item.reference)).toEqual(["context-1"]);
+    expect(turn.request.evidence[0].path).toBe("@context/1-lore.md");
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download and review" }));
+    await screen.findByRole("heading", { name: "Review the changes" });
+    const exported = calls.find((call) => call.op === "export")!.args as CoreOperations["export"]["args"];
+    expect(exported.request.contextDocuments).toEqual([{ name: "Lore.md", data: btoa("Lore notes.") }]);
+  });
+
+  it("repairs an existing setup without the assistant, using the recorded choices", async () => {
+    stubGitHub();
+    const { client, calls } = fakeCore({ scan: scanWithSetup });
+    const { container } = render(<WebApp client={client} />);
+    pickFolder(container);
+    expect(await screen.findByRole("heading", { name: "Existing setup found" })).toBeInTheDocument();
+    // Maintenance keeps the recorded identity and needs no API key.
+    expect(screen.queryByLabelText("API key")).toBeNull();
+    expect(screen.getByRole("radio", { name: /^Update/ })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: /^Repair/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("heading", { name: "Review the changes" })).toBeInTheDocument();
+    const select = calls.find((call) => call.op === "select")!.args as CoreOperations["select"]["args"];
+    expect(select.request).toMatchObject({ primaryCodingEnvironment: "codex", additionalCodingEnvironments: ["claude_code"] });
+    expect(select.request.selectedComponents).toContain("workflow.super_events");
+    const exported = calls.find((call) => call.op === "export")!.args as CoreOperations["export"]["args"];
+    expect(exported.request.maintenance).toBe("repair");
+    expect(exported.request.identity).toBeUndefined();
+    const opened = calls.find((call) => call.op === "openSource")!.args as CoreOperations["openSource"]["args"];
+    expect(opened).toMatchObject({ revision: COMMIT, mode: "pinned_commit" });
+    expect(calls.some((call) => call.op === "assistantTurn")).toBe(false);
+  });
+
+  it("removes a setup by listing untouched files for deletion", async () => {
+    stubGitHub();
+    const { client, calls } = fakeCore({ scan: scanWithSetup });
+    const { container } = render(<WebApp client={client} />);
+    pickFolder(container);
+    await screen.findByRole("heading", { name: "Existing setup found" });
+    fireEvent.click(screen.getByRole("radio", { name: /Remove the setup/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("heading", { name: "Review the changes" })).toBeInTheDocument();
+    expect(screen.getByText(/To delete \(1\)/)).toBeInTheDocument();
+    expect(screen.getByText(/No longer managed \(1\)/)).toBeInTheDocument();
+    stubDownloads();
+    fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
+    await screen.findByRole("heading", { name: "Your ZIP is ready" });
+    expect(calls.some((call) => call.op === "exportRemoval")).toBe(true);
+    expect(calls.some((call) => call.op === "select")).toBe(false);
+  });
+
+  it("previews a three-way merge before it can be chosen", async () => {
+    stubGitHub();
+    const { client, calls } = fakeCore({
+      scan: scanWithSetup,
+      export: () => [{ path: "CLAUDE.md", component_id: "core.claude.instructions", action: "conflict", incoming_sha256: "b".repeat(64), local_sha256: "c".repeat(64), size: 2, mergeable: true }],
+      compare: (args) => ({ path: args.path, incoming: "incoming text", local: "my text", base: "base text", merged: "merged text", binary: false }),
+    });
+    const { container } = render(<WebApp client={client} />);
+    pickFolder(container);
+    await screen.findByRole("heading", { name: "Existing setup found" });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("heading", { name: "Choose components" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Primary")).toHaveValue("codex");
+    fireEvent.click(screen.getByRole("button", { name: "Download and review" }));
+    await screen.findByRole("heading", { name: "Review the changes" });
+    expect(calls.some((call) => call.op === "fetchBases")).toBe(true);
+    expect(screen.getByRole("radio", { name: "Merge" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Preview merge" }));
+    expect(await screen.findByText("merged text")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Merge" }));
+    stubDownloads();
+    fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
+    await screen.findByRole("heading", { name: "Your ZIP is ready" });
+    expect(calls.find((call) => call.op === "zip")!.args).toMatchObject({ decisions: { "CLAUDE.md": "merge" } });
+    const exported = calls.find((call) => call.op === "export")!.args as CoreOperations["export"]["args"];
+    expect(exported.request.maintenance).toBe("update");
+  });
+
+  it("chooses image, portrait, and live-testing integrations", async () => {
+    stubGitHub();
+    const { client, calls } = fakeCore({ preview: () => integrationsPreview });
+    render(<WebApp client={client} />);
+    await describeNewMod();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Choose components" });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("heading", { name: "Choose integrations" })).toBeInTheDocument();
+    // A provider for another primary client is not offered.
+    expect(within(screen.getByLabelText("Main image provider")).queryByText("Codex image generation")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Main image provider"), { target: { value: "openai_api" } });
+    expect(screen.getByText(/A browser cannot save it there/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "gpt-image-2" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Comfy Cloud" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Clausewitz MCP" }));
+    expect(screen.getByRole("radio", { name: /HOI4 Live Tools/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /compatible Linux game/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Download and review" }));
+    await screen.findByRole("heading", { name: "Review the changes" });
+    const select = calls.find((call) => call.op === "select")!.args as CoreOperations["select"]["args"];
+    expect(select.request.imageGeneration).toEqual({ primary_provider: "openai_api", additional_providers: [], route_settings: { openai_api: { model: "gpt-image-2" } } });
+    expect(select.request.portrait).toMatchObject({ provider: "cloud" });
+    expect(select.request.liveTesting).toMatchObject({ provider: "clausewitz_mcp", linux_ready: true });
+  });
+
+  it("refuses an unsafe local image server address before downloading", async () => {
+    stubGitHub();
+    const comfy: SourcePreview = { ...integrationsPreview, image_generation: { default_provider: "none", providers: [{ id: "none", display_name: "No image provider", route_kind: "manual" }, { id: "comfyui_local", display_name: "ComfyUI", route_kind: "stdio_adapter", api_protocol: "comfyui", auth_method: "local", supported_coding_environments: ["claude_code"] }] } };
+    const { client, calls } = fakeCore({ preview: () => comfy });
+    render(<WebApp client={client} />);
+    await describeNewMod();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Choose components" });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Choose integrations" });
+    fireEvent.change(screen.getByLabelText("Main image provider"), { target: { value: "comfyui_local" } });
+    fireEvent.change(screen.getByLabelText("Local server address"), { target: { value: "http://192.168.1.4:8188" } });
+    expect(screen.getByRole("button", { name: "Download and review" })).toBeDisabled();
+    expect(calls.some((call) => call.op === "select")).toBe(false);
   });
 
   it("asks again without overriding what the user changed", async () => {

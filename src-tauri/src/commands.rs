@@ -4115,17 +4115,6 @@ fn mcp_client_launch(
     }
 }
 
-fn retarget_native_mcp_config(
-    bytes: &[u8],
-    destination: &str,
-    launch: Option<&(String, Vec<String>)>,
-) -> Result<Vec<u8>, AppError> {
-    let Some((_, route)) = coding_environment::mcp_route_for_path(destination) else {
-        return Ok(bytes.to_vec());
-    };
-    crate::native_mcp::retarget(route.format, bytes, launch)
-}
-
 #[tauri::command(async)]
 async fn run_mcp_health_check(project_root: String) -> Result<WorkflowHealthResult, String> {
     run_blocking_command("mcp-health-check", move || {
@@ -5324,10 +5313,6 @@ fn image_generation_config_artifact(
             bytes: None,
         }),
     )
-}
-
-fn image_server_route(provider: &Value, _project_root: &Path) -> Option<serde_json::Value> {
-    image_server_route_for(provider, cfg!(windows))
 }
 
 fn image_client_config_path(environment: &str) -> Option<&'static str> {
@@ -12139,7 +12124,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
             let key = mcp.format.servers_key();
             let bytes = serde_json::to_vec(&serde_json::json!({(key):{"hoi4_agent_tools":{"command":"hoi4-agent-tools.cmd","args":["old"],"env":{"HOI4_AGENT_STDIO_IDLE_EXIT_MINUTES":"30"}},"custom":{"command":"keep-me"}}})).unwrap();
             let value: Value = serde_json::from_slice(
-                &retarget_native_mcp_config(&bytes, path, Some(&launch)).unwrap(),
+                &retarget_client_config(&bytes, path, Some(&launch)).unwrap(),
             )
             .unwrap();
             assert_eq!(value[key]["custom"]["command"], "keep-me");
@@ -12162,7 +12147,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
         }
         let source = b"[mcp_servers.hoi4_agent_tools]\ncommand = 'hoi4-agent-tools.cmd'\nenv = { HOI4_AGENT_STDIO_IDLE_EXIT_MINUTES = '30' }\n[mcp_servers.custom]\ncommand = 'keep-me'\n";
         let value: toml::Value = String::from_utf8(
-            retarget_native_mcp_config(source, ".codex/config.toml", Some(&launch)).unwrap(),
+            retarget_client_config(source, ".codex/config.toml", Some(&launch)).unwrap(),
         )
         .unwrap()
         .parse()
@@ -12175,12 +12160,11 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
             value["mcp_servers"]["custom"]["command"].as_str(),
             Some("keep-me")
         );
-        let removed: toml::Value = String::from_utf8(
-            retarget_native_mcp_config(source, ".codex/config.toml", None).unwrap(),
-        )
-        .unwrap()
-        .parse()
-        .unwrap();
+        let removed: toml::Value =
+            String::from_utf8(retarget_client_config(source, ".codex/config.toml", None).unwrap())
+                .unwrap()
+                .parse()
+                .unwrap();
         assert!(removed["mcp_servers"].get("hoi4_agent_tools").is_none());
         assert_eq!(
             removed["mcp_servers"]["custom"]["command"].as_str(),
@@ -12189,7 +12173,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
         // Grok Build shares the TOML route shape; an unregistered or legacy
         // path is never rewritten.
         let grok: toml::Value = String::from_utf8(
-            retarget_native_mcp_config(source, ".grok/config.toml", Some(&launch)).unwrap(),
+            retarget_client_config(source, ".grok/config.toml", Some(&launch)).unwrap(),
         )
         .unwrap()
         .parse()
@@ -12200,7 +12184,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
         );
         let legacy = br#"{"mcpServers":{"hoi4_agent_tools":{"command":["hoi4-agent-tools.cmd"]}}}"#;
         assert_eq!(
-            retarget_native_mcp_config(legacy, ".opencode/mcp.json", Some(&launch)).unwrap(),
+            retarget_client_config(legacy, ".opencode/mcp.json", Some(&launch)).unwrap(),
             legacy.to_vec()
         );
     }
@@ -12242,7 +12226,7 @@ config_file = "agents/hoi4_super_event_art_researcher.toml"
             } else {
                 serde_json::to_vec(&serde_json::json!({"mcpServers":{"hoi4_agent_tools":{"command":"hoi4-agent-tools.cmd","args":[]}}})).unwrap()
             };
-            let adapted = retarget_native_mcp_config(&source, destination, Some(&launch)).unwrap();
+            let adapted = retarget_client_config(&source, destination, Some(&launch)).unwrap();
             assert_eq!(
                 crate::mcp::client_registration(&adapted, destination).unwrap(),
                 Some(launch.clone()),

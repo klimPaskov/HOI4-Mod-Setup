@@ -11,14 +11,20 @@ interface WasmProject {
   addFile(path: string, bytes: Uint8Array): void;
   fileCount(): number;
   scan(): string;
-  analysisEvidence(): string;
+  analysisEvidence(excluded?: string): string;
+  exportRemoval(request: string): WasmExport;
   free(): void;
 }
 
 interface WasmExport {
   entries(): string;
   compare(path: string): string;
-  zip(decisions: string): Uint8Array;
+  mergeBases(): string;
+  addBase(path: string, bytes: Uint8Array): void;
+  merge(path: string): string;
+  readiness(): string;
+  launcherFile(folder: string): string;
+  zip(decisions: string, layout?: string): Uint8Array;
   free(): void;
 }
 
@@ -39,6 +45,7 @@ interface WasmModule {
   Source: new (manifest: Uint8Array, revision: string, mode: string, requestedRef?: string) => WasmSource;
   analysisTurn(request: string, route: string, correction?: string): string;
   readAnalysisReply(envelope: string, request: string, inputSha256: string, analysisId: string): string;
+  contextDocument(number: number, name: string, bytes: Uint8Array): string;
 }
 
 const scope = self as unknown as {
@@ -77,6 +84,25 @@ async function fetchFile(revision: string, path: string): Promise<Uint8Array> {
   post({ kind: "network", url, status: response.status, at: new Date().toISOString() });
   if (!response.ok) throw new Error(`Downloading ${path} failed with ${response.status}.`);
   return new Uint8Array(await response.arrayBuffer());
+}
+
+/** Installed versions of changed files, fetched at their locked revision and
+ * checked by the core against the lock's hash before a merge can use them. */
+async function fetchBases(target: WasmExport): Promise<{ loaded: string[]; failed: Array<{ path: string; reason: string }> }> {
+  const bases = JSON.parse(target.mergeBases()) as Array<{ path: string; revision: string; source_path: string; sha256: string }>;
+  const loaded: string[] = [];
+  const failed: Array<{ path: string; reason: string }> = [];
+  for (const base of bases) {
+    try {
+      const bytes = (await cachedFile(base.sha256)) ?? await fetchFile(base.revision, base.source_path);
+      target.addBase(base.path, bytes);
+      await storeFile(base.sha256, bytes);
+      loaded.push(base.path);
+    } catch (error) {
+      failed.push({ path: base.path, reason: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { loaded, failed };
 }
 
 async function download(revision: string, expected: Record<string, string>): Promise<number> {
@@ -162,13 +188,40 @@ async function handle<Op extends Operation>(op: Op, args: CoreOperations[Op]["ar
       return { result: JSON.parse(exported.compare((args as CoreOperations["compare"]["args"]).path)) };
     case "zip": {
       if (!exported) throw new Error("Review the changes first.");
-      const bytes = exported.zip(JSON.stringify((args as CoreOperations["zip"]["args"]).decisions));
+      const { decisions, layout } = args as CoreOperations["zip"]["args"];
+      const bytes = exported.zip(JSON.stringify(decisions), layout);
       const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
       return { result: buffer, transfer: [buffer] };
     }
-    case "evidence":
+    case "evidence": {
       if (!project) throw new Error("Drop a mod folder first.");
-      return { result: JSON.parse(project.analysisEvidence()) };
+      const { excluded } = args as CoreOperations["evidence"]["args"];
+      return { result: JSON.parse(project.analysisEvidence(excluded && excluded.length > 0 ? JSON.stringify(excluded) : undefined)) };
+    }
+    case "exportRemoval": {
+      if (!project) throw new Error("Drop a mod folder first.");
+      const { layout } = args as CoreOperations["exportRemoval"]["args"];
+      exported?.free();
+      exported = project.exportRemoval(JSON.stringify({ layout }));
+      return { result: JSON.parse(exported.entries()) };
+    }
+    case "fetchBases": {
+      if (!exported) throw new Error("Review the changes first.");
+      return { result: await fetchBases(exported) };
+    }
+    case "merge":
+      if (!exported) throw new Error("Review the changes first.");
+      return { result: exported.merge((args as CoreOperations["merge"]["args"]).path) };
+    case "readiness":
+      if (!exported) throw new Error("Review the changes first.");
+      return { result: JSON.parse(exported.readiness()) };
+    case "launcher":
+      if (!exported) throw new Error("Review the changes first.");
+      return { result: exported.launcherFile((args as CoreOperations["launcher"]["args"]).folder) };
+    case "contextDocument": {
+      const { number, name, buffer } = args as CoreOperations["contextDocument"]["args"];
+      return { result: JSON.parse(module.contextDocument(number, name, new Uint8Array(buffer))) };
+    }
     case "registry":
       if (!source) throw new Error("Choose the setup source first.");
       return { result: JSON.parse(source.componentRegistry()) };

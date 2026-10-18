@@ -115,6 +115,11 @@ test("a new mod downloads verified files and produces a ZIP", async ({ page, bro
   const errors = await prepare(page);
   await newModDetails(page);
   await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByRole("heading", { name: "Choose components" })).toBeVisible({ timeout: 60_000 });
+  await page.getByRole("button", { name: "Continue" }).click();
+  // Format 6 sources offer image, portrait, and live-testing integrations.
+  await expect(page.getByRole("heading", { name: "Choose integrations" })).toBeVisible();
+  await page.getByLabel("Main image provider").selectOption("none");
   await page.getByRole("button", { name: "Download and review" }).click({ timeout: 60_000 });
   await expect(page.getByRole("heading", { name: "Review the changes" })).toBeVisible({ timeout: 180_000 });
   const download = page.waitForEvent("download");
@@ -122,10 +127,13 @@ test("a new mod downloads verified files and produces a ZIP", async ({ page, bro
   const file = await (await download).path();
   const zip = readFileSync(file);
   expect(zip.subarray(0, 4).toString("binary")).toBe("PK\u0003\u0004");
-  for (const name of ["iron_dawn.mod", "iron_dawn/descriptor.mod", "iron_dawn/thumbnail.png", "iron_dawn/.hoi4-mod-setup/install.lock.json", "iron_dawn/AGENTS.md"]) {
+  for (const name of ["iron_dawn.mod", "iron_dawn/descriptor.mod", "iron_dawn/thumbnail.png", "iron_dawn/.hoi4-mod-setup/install.lock.json", "iron_dawn/.hoi4-mod-setup/state.json", "iron_dawn/AGENTS.md"]) {
     expect(zip.includes(Buffer.from(name)), name).toBe(true);
   }
   await expect(page.getByRole("heading", { name: "Your ZIP is ready" })).toBeVisible();
+  // The checks the desktop's Ready screen shows, computed by the core.
+  await expect(page.getByRole("heading", { name: "Checks" })).toBeVisible();
+  await expect(page.getByText("descriptor.mod names the mod for the launcher.")).toBeVisible();
   const hosts = (page as Page & { hosts?: Set<string> }).hosts!;
   const external = [...hosts].filter((host) => !host.startsWith("127.0.0.1"));
   expect(new Set(external)).toEqual(new Set(["api.github.com", "raw.githubusercontent.com", "api.anthropic.com"]));
