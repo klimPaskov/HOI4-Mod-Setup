@@ -75,4 +75,21 @@ describe("browser assistant", () => {
     expect(provenanceFor(routeFor(glm, glm.defaultModel, "high"))).toEqual({ provider: "glm", model: glm.defaultModel, reasoningEffort: "none", endpoint: glm.endpoint, optimizationProfile: "GLM setup analysis" });
     expect(() => routeFor(glm, "model with spaces", "high")).toThrow(/model ID/);
   });
+
+  it("talks to a local model on this computer without a key", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const local = BROWSER_PROVIDERS.find((item) => item.id === "local")!;
+    expect(() => routeFor(local, "qwen3", "none", "http://192.168.1.10:11434/v1/chat/completions")).toThrow(/address on this computer/);
+    expect(() => routeFor(local, "qwen3", "none", "https://ollama.example/v1")).toThrow(/address on this computer/);
+    // A hosted route cannot be pointed anywhere else.
+    expect(() => routeFor(BROWSER_PROVIDERS[0], "claude-haiku-5-5", "medium", "https://evil.example/v1")).toThrow();
+    const route = routeFor(local, "qwen3", "none", "http://127.0.0.1:11434/v1/chat/completions");
+    const { client } = core([{ analysis }]);
+    await runAssistant(client, route, "", request);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://127.0.0.1:11434/v1/chat/completions");
+    expect((init.headers as Headers).has("authorization")).toBe(false);
+    expect(provenanceFor(route)).toMatchObject({ provider: "local", endpoint: "http://127.0.0.1:11434/v1/chat/completions" });
+  });
 });

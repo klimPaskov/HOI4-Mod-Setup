@@ -21,6 +21,8 @@ HOI4 Mod Setup follows semantic versioning.
 - Mark values the project files decide (descriptor tags, dominant namespace and prefix, localisation and documentation conventions, folder profile) as Detected and keep them over assistant guesses, and sample focus trees, events, decisions, on_actions, and localisation first.
 - Add the web edition at `klimpaskov.github.io/HOI4-Mod-Setup/app/`: drop a mod folder or start a new mod, review each conflicting file, and download a ZIP with the installation lock. Files stay in the browser, source files are verified against the manifest hashes, and optional suggestions from Claude, Gemini, Grok, DeepSeek, or GLM use a key kept only in the tab's memory.
 - Record generated text once in the installation lock instead of also as a byte array.
+- Bring the web edition close to the desktop app: context documents and images, a choice of the findings the assistant reads, image providers, portraits, and live testing, update, repair, change, and removal of an existing setup, merge previews and rename for changed files, readiness checks, a launcher file for existing mods, and a local model as the setup assistant.
+- Record the raw source hash in installation locks written by the web edition, so the desktop app can maintain them.
 
 Coding clients are never started by setup; client sign-in and in-client behavior beyond reading the documented files are not tested.
 

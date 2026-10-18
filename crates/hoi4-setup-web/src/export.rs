@@ -166,6 +166,7 @@ impl Export {
         Ok(merged)
     }
 
+    #[cfg(test)]
     pub(crate) fn build_zip(
         &self,
         decisions: &BTreeMap<String, Decision>,

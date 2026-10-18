@@ -94,3 +94,5 @@
 @media (max-width: 760px) {
   .web-compare-grid.three { grid-template-columns: 1fr; }
 }
+.web-error-row { max-width: 920px; margin: 20px auto 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.web-error-row .web-error { margin: 0; }

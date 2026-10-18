@@ -47,11 +47,18 @@ Read `AGENTS.md` before coding. Then read the repo-local skill that owns the cur
   merge rules, coding-client registry, live-testing routes, MCP formats and
   target, descriptors, the project profile, source adaptation, deterministic
   proposals, analysis validation with the hosted-provider request and reply
-  rules, export planning, and the ZIP writer. The desktop crate re-exports
+  rules, image-generation guidance and client routes (`image_generation.rs`),
+  context-attachment rules (`context.rs`), portrait settings (`portrait.rs`),
+  export and maintenance planning, and the ZIP writer. The desktop crate re-exports
   moved modules at their old `crate::` paths. CI builds and lints it with
   `cargo build -p hoi4-setup-core --target wasm32-unknown-unknown`.
 - `crates/hoi4-setup-web` is the WebAssembly binding for the web edition
-  (`Project`, `Source`, `Export`, `analysisTurn`, `readAnalysisReply`). The
+  (`Project` with scan, evidence, and managed removal; `Source` with preview
+  and selection; `Export` with review, merge bases and previews, readiness,
+  the launcher file, and the ZIP; `analysisTurn`, `readAnalysisReply`, and
+  `contextDocument`). Its modules mirror the desktop plan builder: `build.rs`
+  adapts each verified file with the shared pipeline and adds the generated
+  project files. The
   page lives in `src/web/` and `web/index.html`; a module worker
   (`src/web/worker.ts`) runs the core, downloads selected files, and builds the
   ZIP. `vite.web.config.ts` adds the Content Security Policy to the built page,

@@ -14,6 +14,9 @@ export const WEB_CONNECT_SOURCES = [
   "https://api.x.ai",
   "https://api.deepseek.com",
   "https://open.bigmodel.cn",
+  // A local model server the user runs, on this computer only.
+  "http://127.0.0.1:*",
+  "http://localhost:*",
 ];
 
 export const WEB_CONTENT_SECURITY_POLICY = [

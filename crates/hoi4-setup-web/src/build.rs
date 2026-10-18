@@ -94,8 +94,9 @@ pub(crate) struct AssistantProvenance {
     optimization_profile: String,
 }
 
-/// Hosted routes the web edition can reach from the browser.
-const WEB_ASSISTANT_PROVIDERS: &[&str] = &["claude", "gemini", "grok", "deepseek", "glm"];
+/// Hosted routes the web edition can reach from the browser, plus a local
+/// model server on this computer.
+const WEB_ASSISTANT_PROVIDERS: &[&str] = &["claude", "gemini", "grok", "deepseek", "glm", "local"];
 
 pub(crate) fn assistant_provenance(
     assistant: Option<AssistantProvenance>,
@@ -120,10 +121,14 @@ pub(crate) fn assistant_provenance(
             assistant.reasoning_effort.as_str(),
             "none" | "low" | "medium" | "high" | "xhigh" | "max"
         )
-        || !assistant
-            .endpoint
-            .as_deref()
-            .is_some_and(|endpoint| endpoint.starts_with("https://") && valid_text(endpoint))
+        || !assistant.endpoint.as_deref().is_some_and(|endpoint| {
+            valid_text(endpoint)
+                && if assistant.provider == "local" {
+                    hoi4_setup_core::image_generation::is_loopback_http_url(endpoint)
+                } else {
+                    endpoint.starts_with("https://")
+                }
+        })
     {
         return Err(AppError::InvalidInput(
             "the assistant provenance is not a reviewed browser route".into(),
@@ -354,7 +359,7 @@ fn state_document(
         },
         "codex": {
             "integration": "provider_api",
-            "auth_mode": "api_key",
+            "auth_mode": if assistant.provider == "local" { "local_endpoint" } else { "api_key" },
             "auth_status": "configured",
             "analysis_required": true,
             "analysis_status": "confirmed",
@@ -1144,6 +1149,15 @@ mod tests {
         let mut request = setup_request();
         request["assistant"]["provider"] = json!("kimi");
         assert!(prepare(&source, &request.to_string(), None).is_err());
+        // A local model must be on this computer; a hosted one must use HTTPS.
+        let mut request = setup_request();
+        request["assistant"]["provider"] = json!("local");
+        request["assistant"]["endpoint"] = json!("https://models.example/v1");
+        assert!(prepare(&source, &request.to_string(), None).is_err());
+        request["assistant"]["endpoint"] = json!("http://127.0.0.1:11434/v1/chat/completions");
+        request["assistant"]["reasoningEffort"] = json!("none");
+        let export = prepare(&source, &request.to_string(), None).unwrap();
+        assert_eq!(export.lock.ai_provider, "local");
     }
 
     #[test]

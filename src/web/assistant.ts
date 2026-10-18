@@ -19,6 +19,8 @@ export interface BrowserProvider {
   defaultEffort: string;
   optimizationProfile: string;
   keyUrl: string;
+  /** A model server on this computer: an editable loopback address, no key. */
+  local?: boolean;
 }
 
 /** Providers whose APIs accept requests from a web page. Routes match the
@@ -29,7 +31,18 @@ export const BROWSER_PROVIDERS: BrowserProvider[] = [
   { id: "grok", label: "Grok API key", protocol: "openai_responses", endpoint: "https://api.x.ai/v1/responses", defaultModel: "grok-4.7", efforts: ["low", "medium", "high"], defaultEffort: "high", optimizationProfile: "Grok setup analysis", keyUrl: "https://console.x.ai" },
   { id: "deepseek", label: "DeepSeek", protocol: "openai_compatible", endpoint: "https://api.deepseek.com/chat/completions", defaultModel: "deepseek-flash", efforts: ["low", "high", "max"], defaultEffort: "high", optimizationProfile: "DeepSeek setup analysis", keyUrl: "https://platform.deepseek.com/api_keys" },
   { id: "glm", label: "GLM", protocol: "openai_compatible", endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions", defaultModel: "glm-5.2", efforts: [], defaultEffort: "none", optimizationProfile: "GLM setup analysis", keyUrl: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys" },
+  { id: "local", label: "Local model", protocol: "openai_compatible", endpoint: "http://127.0.0.1:11434/v1/chat/completions", defaultModel: "", efforts: [], defaultEffort: "none", optimizationProfile: "Local setup analysis", keyUrl: "https://github.com/ollama/ollama/blob/main/docs/openai.md", local: true },
 ];
+
+/** An OpenAI-compatible endpoint on this computer, without credentials. */
+export function isLoopbackEndpoint(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) && !url.username && !url.password && !url.search && !url.hash;
+  } catch {
+    return false;
+  }
+}
 
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -50,12 +63,13 @@ function supportsEffort(provider: BrowserProvider, model: string): boolean {
   return provider.efforts.length > 0;
 }
 
-export function routeFor(provider: BrowserProvider, model: string, effort: string): AssistantRoute {
+export function routeFor(provider: BrowserProvider, model: string, effort: string, endpoint: string = provider.endpoint): AssistantRoute {
   if (!MODEL_PATTERN.test(model)) throw new AssistantError("Enter a model ID without spaces.");
+  if (provider.local ? !isLoopbackEndpoint(endpoint) : endpoint !== provider.endpoint) throw new AssistantError("A local model must use an address on this computer, such as http://127.0.0.1:11434/v1/chat/completions.");
   return {
     provider: provider.id,
     protocol: provider.protocol,
-    endpoint: provider.endpoint,
+    endpoint,
     model,
     reasoningEffort: effort,
     supportsEffort: supportsEffort(provider, model),
@@ -79,7 +93,7 @@ async function send(route: AssistantRoute, apiKey: string, headers: Array<[strin
     requestHeaders.set("x-api-key", apiKey);
     // Anthropic serves browser requests only when the page opts in.
     requestHeaders.set("anthropic-dangerous-direct-browser-access", "true");
-  } else {
+  } else if (apiKey) {
     requestHeaders.set("authorization", `Bearer ${apiKey}`);
   }
   const controller = new AbortController();
@@ -97,7 +111,9 @@ async function send(route: AssistantRoute, apiKey: string, headers: Array<[strin
     });
   } catch {
     recordRequest(route.endpoint, "failed");
-    throw new AssistantError("The provider could not be reached. Check your connection and try again.");
+    throw new AssistantError(route.provider === "local"
+      ? "The local model could not be reached. Start its server and allow this page's address (for Ollama, set OLLAMA_ORIGINS); your browser may also ask to allow local network access."
+      : "The provider could not be reached. Check your connection and try again.");
   } finally {
     clearTimeout(timer);
   }
@@ -113,7 +129,8 @@ async function send(route: AssistantRoute, apiKey: string, headers: Array<[strin
 /** One analysis with at most one corrective turn, like the desktop app. */
 export async function runAssistant(core: CoreClient, route: AssistantRoute, apiKey: string, request: AnalysisRequest): Promise<Analysis> {
   const key = apiKey.trim();
-  if (!key || /\s/.test(key)) throw new AssistantError("Enter the API key.");
+  // A local model needs no key; a hosted route always does.
+  if ((!key && route.provider !== "local") || /\s/.test(key)) throw new AssistantError("Enter the API key.");
   let correction: string | null = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const turn: AssistantTurn = await core.call("assistantTurn", { request, route, correction });

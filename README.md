@@ -43,10 +43,18 @@ provider sees only your description or a scan summary, and the page downloads
 only the selected modding files from GitHub at one exact commit and checks each
 against its published SHA-256 hash.
 
+It covers most of the desktop app: documents and images as optional context,
+coding clients, components, image providers, the portrait workflow, Clausewitz
+MCP live testing, a review of every changed file with keep, replace, merge,
+rename, or skip, and the same readiness checks. A folder that already has a
+setup can be updated, repaired, changed, or have its setup removed. A local
+model on your computer can also be the setup assistant.
+
 The web edition does not change files in place, so it has no backup or undo
 step; unpack the ZIP over a copy or a Git checkout of your mod. Account
-sign-in for Claude and Codex, MCP and image-provider setup, Git, and the 3D
-models workflow need the desktop app.
+sign-in for Claude and Codex, installing and checking the HOI4 Agent Tools
+server, saving image-provider keys in your credential store, Git, HOI4 Live
+Tools, and the 3D models workflow need the desktop app.
 
 On Windows, run the downloaded setup file. On Mac, open the disk image and
 move HOI4 Mod Setup to Applications. Community Windows builds are signed by
