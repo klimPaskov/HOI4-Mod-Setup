@@ -1542,7 +1542,8 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(superEventsWorkflow).toHaveAttribute("aria-checked", "true");
     expect(screen.queryByText(/LoRA/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
-    expect(screen.getByRole("heading", { name: "MCP and credentials" })).toBeInTheDocument();
+    // Nothing here needs an integration review, so Git follows directly.
+    expect(screen.getByRole("heading", { name: "Choose Git setup" })).toBeInTheDocument();
   });
 
   it("reveals the portrait workflow resource minimum when enabled", () => {
@@ -2593,7 +2594,7 @@ describe("HOI4 Mod Setup wizard", () => {
     await renderAuthenticatedApp();
     fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-    for (let index = 0; index < 8; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     expect(screen.getByText("Unresolved conflicts")).toBeInTheDocument();
     expect(screen.getByText("Plan unavailable")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /start installation/i })).toBeDisabled();
@@ -2682,7 +2683,7 @@ describe("HOI4 Mod Setup wizard", () => {
     await renderAuthenticatedApp();
     fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-    for (let index = 0; index < 8; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
 
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     expect(screen.getByRole("button", { name: "Preparing changes…" })).toBeDisabled();
@@ -2704,7 +2705,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\cold_war_curtain" } });
-    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 6; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
 
@@ -2765,7 +2766,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\active" } });
-    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 6; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
 
@@ -2807,7 +2808,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\failing" } });
-    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 6; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: /start installation/i }));
