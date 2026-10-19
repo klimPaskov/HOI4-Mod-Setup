@@ -526,6 +526,16 @@ Opaque OS-vault credential references are carried separately from secret values.
 
 ## Lock and rollback evidence
 
+The core export planner (`crates/hoi4-setup-core/src/export.rs`) mirrors
+maintenance for the web edition: with a lock, unchanged managed files
+`update` or `restore`, a changed file with no newer version stays
+(`modified`), changed files are `conflict`s with keep, replace, merge, rename,
+or skip, and files no longer selected are `remove`d only when unchanged and
+not merged or project files, else `release`d. Merge bases are the source at
+the file's locked revision, checked against the lock's `source_sha256` and
+adapted by the same pipeline. `IncomingFile` carries the raw source hash, so
+web-written locks match the desktop's. Managed removal writes no lock.
+
 Generated text output is recorded once as `generated_content`;
 `generated_bytes` is written only for binary output that is not UTF-8. Repair
 reads `generated_content` first. The web edition never applies in place: the

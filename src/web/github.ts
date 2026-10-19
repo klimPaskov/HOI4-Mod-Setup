@@ -54,6 +54,8 @@ function apiUrl(path: string): string {
 /** Raw file URL at an exact commit; each path segment is encoded. */
 export function rawUrl(revision: string, path: string): string {
   if (!COMMIT.test(revision)) throw new Error("A source file can only be read at an exact commit.");
+  // Paths stay inside the source repository.
+  if (path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) throw new Error("A source path must stay inside the source repository.");
   const encoded = path.split("/").map((segment) => encodeURIComponent(segment)).join("/");
   return `https://raw.githubusercontent.com/${SOURCE_OWNER}/${SOURCE_NAME}/${revision}/${encoded}`;
 }

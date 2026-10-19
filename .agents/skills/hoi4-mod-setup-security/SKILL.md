@@ -38,7 +38,10 @@ The web edition adds a browser boundary. The built page carries a CSP with
 inline script, or bundle without SRI. Dropped files never leave the tab. A
 provider key lives only in React state for the open tab, goes only in the
 provider's header, and never reaches the worker, the lock, or a log. The
-assistant sees only the scan findings returned by `Project.analysisEvidence`.
+assistant sees only the scan findings returned by `Project.analysisEvidence`,
+minus any the user leaves out, and context documents as redacted excerpts.
+The CSP allows plain HTTP only to `127.0.0.1` and `localhost`, for a local
+model the user runs; hosted route addresses are fixed.
 
 ## Credentials
 

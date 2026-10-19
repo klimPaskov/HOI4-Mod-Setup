@@ -200,6 +200,20 @@ transaction contract and needs an explicit decision.
   Live Tools registration needs review, with Back following the same rule.
   A desktop deterministic-only path was built and then removed by the owner's
   amendment to decision 1: every setup uses an AI provider.
+- Desktop parity for the web edition (owner request, 2026-10-19): the image
+  generation guidance, provider settings, and client routes, the context
+  rules, and the portrait settings moved into the core. The web edition adds
+  documents and images as context, a choice of the scan findings the
+  assistant reads, an Integrations step (image providers with model settings,
+  portraits, Clausewitz MCP live testing), update, repair, change, and managed
+  removal of an existing setup from its lock, keep, replace, merge, rename,
+  and skip for each changed file with a reviewed three-way merge against the
+  installed version, the readiness checks, a launcher file, a local model as
+  the setup assistant, and Copy details for errors. Web-written locks record
+  the raw source hash as the desktop does, and new mods get the project state
+  file. Desktop-only remain: account sign-in, installing and checking MCP
+  servers, saving keys in the credential store, Git, HOI4 Live Tools, and the
+  3D models workflow.
 
 ## Roadmap
 

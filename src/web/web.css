@@ -59,3 +59,40 @@
 .web-conventions div { display: grid; grid-template-columns: minmax(8rem, auto) 1fr; gap: 8px; }
 .web-conventions dd { margin: 0; overflow-wrap: anywhere; }
 .web-evidence ul { margin-top: 8px; }
+
+/* Parity screens: integrations, context, findings, review, checks. */
+.web-radio-group { display: grid; gap: 2px; margin: 4px 0 12px; }
+.web-disabled-choice { opacity: .7; }
+.web-provider-detail { display: grid; gap: 8px; margin: 4px 0 12px; }
+.web-provider-detail p { margin: 0; }
+.web-requirements { margin: 0; padding-left: 20px; display: grid; gap: 4px; color: var(--muted-strong); font-size: 14px; }
+.web-needs { margin: 0; font-size: 14px; }
+.web-provider-settings { margin: 12px 0 0; padding: 12px 0 0; border: 0; border-top: 1px solid var(--line); }
+.web-context { padding: 0; }
+.web-context-summary { display: block; padding: 14px 18px; }
+.web-context-body { display: grid; gap: 12px; padding: 0 18px 16px; }
+.web-context-body p { margin: 0; }
+.web-context-actions { justify-content: flex-start; }
+.web-refused { margin: 0; padding-left: 20px; font-size: 14px; }
+.web-attachments { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.web-attachment { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.web-attachment-preview { border-radius: 6px; object-fit: cover; }
+.web-inline { display: inline-flex; align-items: center; gap: 6px; min-height: 0; padding: 0; border: 0; }
+.web-findings { margin-top: 4px; }
+.web-findings p { margin: 8px 0; }
+.web-finding-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; max-height: 320px; overflow: auto; }
+.web-finding { min-height: 0; padding: 6px 0; gap: 4px 12px; font-size: 14px; }
+.web-finding-value, .web-finding-path { min-width: 0; overflow-wrap: anywhere; font-size: 12px; }
+.web-compare-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.web-merge-error { flex-basis: 100%; margin: 4px 0 0; font-size: 13px; }
+.web-group-note { margin: 6px 0; font-size: 13px; }
+.web-unavailable { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
+.web-checks { margin: 0; padding: 0 18px 12px; list-style: none; display: grid; }
+.web-check { align-items: flex-start; min-height: 0; padding: 10px 0; }
+.web-check-state { min-width: 5.5rem; justify-content: flex-start; }
+.web-check-detail { display: block; margin-top: 2px; font-size: 13px; }
+@media (max-width: 760px) {
+  .web-compare-grid.three { grid-template-columns: 1fr; }
+}
+.web-error-row { max-width: 920px; margin: 20px auto 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.web-error-row .web-error { margin: 0; }

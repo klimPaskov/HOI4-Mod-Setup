@@ -60,6 +60,13 @@ All selected MCP actions use the incoming manifest, including Live Tools without
 Agent Tools. Record reviewed package versions in the resulting lock; never
 resolve an independent registry `latest` or silently change the source on repair.
 
+Image-generation guidance, provider configuration, and client MCP routes are
+built in `crates/hoi4-setup-core/src/image_generation.rs` for both hosts; the
+desktop passes its machine launch paths through `ClientLaunch`, the web edition
+the package's own command (`portable_client_launch`). The web edition fetches
+only manifest-declared files at the exact revision, plus, for a merge, the
+locked source of a changed file, verified by the core before use.
+
 ## Hard rules
 
 - Never clone the complete source repository through the application.

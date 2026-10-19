@@ -443,7 +443,9 @@ and fake adapters. `crates/hoi4-setup-core/tests/golden_projects.rs` pins
 the values golden mods decide, and `tests/performance_budgets.rs` bounds
 profiling and ZIP export for small, medium, and large synthetic mods. The web
 edition has unit tests under `src/web/*.test.ts(x)` with a fake core client,
-and the CI `Web edition` job builds it (`pnpm web:build`), checks it
+and Rust tests in `crates/hoi4-setup-web/src/*.rs` cover selection,
+maintenance, removal, and the state and lock schemas. The CI `Web edition`
+job builds it (`pnpm web:build`), checks it
 (`scripts/check_web_build.mjs`), and runs `pnpm test:web` in Chromium,
 Firefox, and WebKit with GitHub's REST API answered locally. Compile fuzz targets with
 `cargo check --manifest-path fuzz/Cargo.toml --bins`; run the bounded targets

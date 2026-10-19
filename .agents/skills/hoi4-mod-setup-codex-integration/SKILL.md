@@ -250,7 +250,12 @@ The assistant (`src/web/assistant.ts`) uses only routes that allow browser reque
 with `anthropic-dangerous-direct-browser-access`, Gemini, Grok, DeepSeek,
 GLM), keeps the key in component memory, sends at most one corrective turn,
 and records non-secret provenance with the route address in the lock. Moonshot
-blocks browser requests, so Kimi stays desktop-only.
+blocks browser requests, so Kimi stays desktop-only. A local model is the one
+keyless browser route: its address must be loopback (`routeFor` and
+`assistant_provenance` both check), and its lock entry records the endpoint.
+User documents reach a browser provider only as the core's
+`hoi4_setup_core::context::document_from_bytes` excerpt under `@context/`, and
+the user can leave out any scan finding before a request.
 
 User-picked context documents (`src-tauri/src/context.rs`) are evidence with a
 reserved `@context/<n>-<name>` path and `context-<n>` reference. Bind them by

@@ -18,9 +18,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const PORTRAIT_REPOSITORY: &str = "https://github.com/klimPaskov/comfyui-hoi4-portraits";
-pub const PORTRAIT_BRANCH: &str = "codex/portrait-pipeline";
-pub const PORTRAIT_COMMIT: &str = "b47222a77f2f6454704530865aa1441fad48bdd3";
+pub use hoi4_setup_core::portrait::{PORTRAIT_BRANCH, PORTRAIT_COMMIT, PORTRAIT_REPOSITORY};
 
 const WORKFLOW_FILES: [(&str, &str); 2] = [
     (

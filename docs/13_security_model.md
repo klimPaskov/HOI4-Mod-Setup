@@ -327,3 +327,10 @@ core in a browser tab and never mutates a project in place.
   worker, the lock, or the ZIP. The provider receives the scan findings the
   desktop would show it, never file contents beyond those excerpts.
 - The **Network** panel lists every request the page made.
+- A local model assistant may only use an `http(s)://127.0.0.1`,
+  `localhost`, or `[::1]` address; the CSP allows those origins and no other
+  plain-HTTP host. A hosted route's address cannot be changed.
+- Documents added as context reach a provider only as the core's redacted
+  `@context/` excerpt; images never reach a provider. Maintenance fetches an
+  installed file's source at its locked revision only to rebuild a merge base,
+  and the core checks it against the lock's hash before use.

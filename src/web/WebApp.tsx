@@ -6,35 +6,48 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, DragEvent, ReactNode, RefObject } from "react";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "../identity";
-import { renderCoverPng } from "../lib/images";
+import { renderCoverPng, renderReferenceJpeg } from "../lib/images";
 import { startCoreWorker } from "./core-client";
 import type { CoreClient } from "./core-client";
-import { BROWSER_PROVIDERS, MODEL_PATTERN, modelChoices, proposal, provenanceFor, routeFor, runAssistant } from "./assistant";
+import { BROWSER_PROVIDERS, isLoopbackEndpoint, MODEL_PATTERN, modelChoices, proposal, provenanceFor, routeFor, runAssistant } from "./assistant";
 import { folderFromDrop, folderFromInput, readFileBytes } from "./folder";
 import type { FolderSelection } from "./folder";
 import { fetchRaw, MANIFEST_PATH, networkLog, onNetworkLog, resolveSource, SOURCE_NAME, SOURCE_OWNER } from "./github";
 import type { NetworkRecord, ResolvedSource, SourceMode } from "./github";
-import type { Analysis, AnalysisRequest, ApprovedEvidence, AssistantProvenance, Decision, ExportEntry, Comparison, Platform, ScanSummary, SourcePreview } from "./protocol";
+import { availableImageProviders, defaultImageChoice, isLoopbackUrl, liveTestingProblem, NO_LIVE_TESTING, NO_PORTRAITS, normalizeImageChoice, portraitProblem } from "./integrations";
+import ContextPanel from "./parts/ContextPanel";
+import type { ContextDocumentEntry, ContextImageEntry } from "./parts/ContextPanel";
+import FindingsPanel from "./parts/FindingsPanel";
+import MaintenancePanel from "./parts/MaintenancePanel";
+import type { MaintenanceChoice } from "./parts/MaintenancePanel";
+import DoneStep from "./steps/DoneStep";
+import IntegrationsStep from "./steps/IntegrationsStep";
+import ReviewStep from "./steps/ReviewStep";
+import type { Analysis, AnalysisRequest, ApprovedEvidence, AssistantProvenance, Comparison, Decision, ExportEntry, ExportRequest, ImageChoice, LiveTestingChoice, Platform, PortraitChoice, ReadinessCheck, ScanSummary, SourcePreview } from "./protocol";
 
-type Step = "start" | "describe" | "details" | "components" | "review" | "done";
-const STEPS: Array<{ id: Step; label: string }> = [
-  { id: "start", label: "Project" },
-  { id: "describe", label: "Describe" },
-  { id: "details", label: "Details" },
-  { id: "components", label: "Components" },
-  { id: "review", label: "Review" },
-  { id: "done", label: "Download" },
-];
+type Step = "start" | "describe" | "details" | "components" | "integrations" | "review" | "done";
+const STEP_LABELS: Record<Step, string> = {
+  start: "Project",
+  describe: "Describe",
+  details: "Details",
+  components: "Components",
+  integrations: "Integrations",
+  review: "Review",
+  done: "Download",
+};
 /** Need a desktop installer or launcher: the 3D workflow runs Meshy through
  * the app, and Live Tools installs its MCP server. */
 const DESKTOP_ONLY_COMPONENTS = new Set(["workflow.3d", "workflow.live_tools"]);
-/** Chosen through another choice on the desktop (portrait provider, image
- * provider), which the web edition does not offer. */
-const HIDDEN_COMPONENT_PREFIXES = ["workflow.portraits", "imagegen."];
+/** Chosen on the Integrations step, not as separate components. */
+const HIDDEN_COMPONENT_PREFIXES = ["workflow.portraits", "imagegen.", "workflow.live_testing"];
 /** Shown although another optional component depends on it. */
 const ALWAYS_LISTED = new Set(["workflow.super_events"]);
 const READ_BATCH_BYTES = 32 * 1024 * 1024;
 const PROJECT_ID = /^[a-z][a-z0-9_]{1,63}$/;
+/** The lock's rule for a script prefix or namespace. */
+const IDENTIFIER = /^[a-z_][a-z0-9_]{0,63}$/;
+const MAX_ATTACHMENTS = 12;
+const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const EXISTING_PROJECT_BRIEF = "Review this existing HOI4 mod using only the approved scan evidence. Keep detected facts unchanged, infer conventions only from that evidence, and do not invent the mod's theme or content.";
 
 interface Identity {
@@ -70,19 +83,31 @@ function detectedList(scan: ScanSummary | null, key: string): string[] | undefin
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function saveBlob(bytes: ArrayBuffer, name: string): void {
-  const url = URL.createObjectURL(new Blob([bytes], { type: "application/zip" }));
+function saveBlob(bytes: ArrayBuffer | string, name: string, type = "application/zip"): void {
+  const url = URL.createObjectURL(new Blob([bytes], { type }));
   const link = document.createElement("a");
   link.href = url;
   link.download = name;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function toBase64(bytes: ArrayBuffer): string {
+  const view = new Uint8Array(bytes);
+  let text = "";
+  for (let index = 0; index < view.length; index += 0x8000) {
+    text += String.fromCharCode(...view.subarray(index, index + 0x8000));
+  }
+  return btoa(text);
+}
+
+function readDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("The image could not be read."));
+    reader.readAsDataURL(file);
+  });
 }
 
 export default function WebApp({ client: providedClient }: { client?: CoreClient }) {
@@ -104,6 +129,8 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   const [sourceMode, setSourceMode] = useState<SourceMode>("latest");
   const [sourceRef, setSourceRef] = useState("");
   const [source, setSource] = useState<ResolvedSource | null>(null);
+  // The revision the worker opened, read synchronously when downloading.
+  const resolvedSource = useRef<ResolvedSource | null>(null);
   const [preview, setPreview] = useState<SourcePreview | null>(null);
   const [platform, setPlatform] = useState<Platform>(guessPlatform);
   const [identity, setIdentity] = useState<Identity>({ displayName: "", projectId: "", description: "", author: "", primaryNamespace: "", scriptPrefix: "", descriptorTags: [] });
@@ -113,6 +140,7 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   const assistantProvider = BROWSER_PROVIDERS.find((item) => item.id === assistantId) ?? BROWSER_PROVIDERS[0];
   const [assistantModel, setAssistantModel] = useState(BROWSER_PROVIDERS[0].defaultModel);
   const [assistantEffort, setAssistantEffort] = useState(BROWSER_PROVIDERS[0].defaultEffort);
+  const [assistantEndpoint, setAssistantEndpoint] = useState(BROWSER_PROVIDERS[0].endpoint);
   // The key lives only in this component's memory and is never stored.
   const [apiKey, setApiKey] = useState("");
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
@@ -129,13 +157,26 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   suggestedRef.current = suggested;
   // A new mod's brief, kept apart from the description the assistant writes.
   const [brief, setBrief] = useState("");
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const [documents, setDocuments] = useState<ContextDocumentEntry[]>([]);
+  const [images, setImages] = useState<ContextImageEntry[]>([]);
+  const [refused, setRefused] = useState<string[]>([]);
+  const attachmentCounter = useRef(0);
   const [profileId, setProfileId] = useState<string>("");
   const [optional, setOptional] = useState<Set<string>>(new Set());
   const [primary, setPrimary] = useState("");
   const [additional, setAdditional] = useState<Set<string>>(new Set());
+  const [imageChoice, setImageChoice] = useState<ImageChoice | null>(null);
+  const [portrait, setPortrait] = useState<PortraitChoice>(NO_PORTRAITS);
+  const [live, setLive] = useState<LiveTestingChoice>(NO_LIVE_TESTING);
+  const [maintenance, setMaintenance] = useState<MaintenanceChoice | null>(null);
   const [entries, setEntries] = useState<ExportEntry[] | null>(null);
   const [decisions, setDecisions] = useState<Record<string, Decision>>({});
   const [comparison, setComparison] = useState<Comparison | null>(null);
+  const [merged, setMerged] = useState<Record<string, string>>({});
+  const [mergeErrors, setMergeErrors] = useState<Record<string, string>>({});
+  const [basesReady, setBasesReady] = useState(false);
+  const [readiness, setReadiness] = useState<ReadinessCheck[]>([]);
   const [layout, setLayout] = useState<"overlay" | "full_copy">("overlay");
   const [network, setNetwork] = useState<NetworkRecord[]>(networkLog);
   const [dragging, setDragging] = useState(false);
@@ -144,6 +185,8 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
 
   useEffect(() => onNetworkLog(setNetwork), []);
   useEffect(() => headingRef.current?.focus(), [step]);
+
+  const existingSetup = scan?.existing_setup?.valid ? scan.existing_setup : null;
 
   const run = useCallback(async (label: string, task: () => Promise<void>) => {
     setError(null);
@@ -157,20 +200,29 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     }
   }, []);
 
-  const loadSource = useCallback(async (): Promise<SourcePreview> => {
-    const resolved = await resolveSource(sourceMode, sourceRef);
+  /** Resolve the source to an exact commit and read its manifest. */
+  const loadSource = useCallback(async (mode: SourceMode = sourceMode, reference: string = sourceRef): Promise<SourcePreview> => {
+    const resolved = await resolveSource(mode, reference);
     const manifest = await fetchRaw(resolved.revision, MANIFEST_PATH);
     const buffer = manifest.buffer.slice(manifest.byteOffset, manifest.byteOffset + manifest.byteLength) as ArrayBuffer;
     await client().call("openSource", { manifest: buffer, revision: resolved.revision, mode: resolved.mode, requestedRef: resolved.requestedRef }, [buffer]);
     const next = await client().call("preview", { platform });
+    resolvedSource.current = resolved;
     setSource(resolved);
     setPreview(next);
     const defaultProfile = next.profiles.find((profile) => profile.default) ?? next.profiles[0];
     setProfileId((current) => current || defaultProfile?.id || "");
     const defaultClient = next.coding_environments.find((environment) => environment.default_primary) ?? next.coding_environments[0];
     setPrimary((current) => (current && next.coding_environments.some((environment) => environment.id === current) ? current : defaultClient?.id ?? ""));
+    setImageChoice((current) => current ?? defaultImageChoice(next));
     return next;
   }, [client, platform, sourceMode, sourceRef]);
+
+  const resetAnalysis = () => {
+    setAnalysis(null);
+    setProvenance(null);
+    setSuggested(new Set());
+  };
 
   const importFolder = useCallback((selection: FolderSelection) => run("Reading the folder", async () => {
     if (selection.files.length === 0) throw new Error("The folder is empty.");
@@ -213,9 +265,9 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
       descriptorTags: detectedList(result, "descriptor_tags") ?? defaults.descriptorTags,
     });
     setEdited(new Set());
-    setAnalysis(null);
-    setProvenance(null);
-    setSuggested(new Set());
+    setExcluded(new Set());
+    setMaintenance(result.existing_setup?.valid ? (result.existing_setup.desktop_only ? "remove" : "update") : null);
+    resetAnalysis();
   }), [client, run]);
 
   const onDrop = useCallback(async (event: DragEvent<HTMLElement>) => {
@@ -239,21 +291,16 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     event.target.value = "";
   }, [importFolder]);
 
-  const forgetAnalysis = () => {
-    setAnalysis(null);
-    setProvenance(null);
-    setSuggested(new Set());
-  };
-
   const chooseNew = () => {
     if (kind === "new") return;
     setKind("new");
     setFolder(null);
     setScan(null);
+    setMaintenance(null);
     setIdentity({ displayName: "", projectId: "", description: "", author: "", primaryNamespace: "", scriptPrefix: "", descriptorTags: [] });
     setEdited(new Set());
     setBrief("");
-    forgetAnalysis();
+    resetAnalysis();
   };
 
   const updateIdentity = (key: keyof Identity, value: string | string[]) => {
@@ -281,17 +328,67 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     event.target.value = "";
     if (!file) return;
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error("The image could not be read."));
-        reader.readAsDataURL(file);
-      });
-      setThumbnail(await renderCoverPng(dataUrl, 512));
+      setThumbnail(await renderCoverPng(await readDataUrl(file), 512));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
+
+  const addDocuments = (files: File[]) => run("Reading documents", async () => {
+    const added: ContextDocumentEntry[] = [];
+    const problems: string[] = [];
+    for (const file of files) {
+      if (documents.length + added.length >= MAX_ATTACHMENTS) {
+        problems.push(`${file.name}: at most ${MAX_ATTACHMENTS} documents can be added`);
+        continue;
+      }
+      try {
+        const buffer = await readFileBytes(file);
+        attachmentCounter.current += 1;
+        const document = await client().call("contextDocument", { number: attachmentCounter.current, name: file.name, buffer: buffer.slice(0) }, []);
+        added.push({ document, data: toBase64(buffer), include: true, keepCopy: false });
+      } catch (cause) {
+        problems.push(`${file.name}: ${cause instanceof Error ? cause.message : String(cause)}`);
+      }
+    }
+    setDocuments((current) => [...current, ...added]);
+    setRefused(problems);
+    resetAnalysis();
+  });
+
+  const addImages = (files: File[]) => run("Reading images", async () => {
+    const added: ContextImageEntry[] = [];
+    const problems: string[] = [];
+    for (const file of files) {
+      if (images.length + added.length >= MAX_ATTACHMENTS) {
+        problems.push(`${file.name}: at most ${MAX_ATTACHMENTS} images can be added`);
+        continue;
+      }
+      if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > MAX_IMAGE_BYTES) {
+        problems.push(`${file.name}: only PNG, JPEG, or WebP images up to 12 MB can be added`);
+        continue;
+      }
+      try {
+        const dataUrl = await readDataUrl(file);
+        let reference: string | null = null;
+        try {
+          reference = await renderReferenceJpeg(dataUrl, 1600, 1024 * 1024);
+        } catch {
+          reference = null;
+        }
+        attachmentCounter.current += 1;
+        added.push({ id: `img-${attachmentCounter.current}`, name: file.name, dataUrl, reference, keep: false });
+      } catch (cause) {
+        problems.push(`${file.name}: ${cause instanceof Error ? cause.message : String(cause)}`);
+      }
+    }
+    setImages((current) => [...current, ...added]);
+    setRefused(problems);
+  });
+
+  const takeThumbnail = (image: ContextImageEntry) => run("Making the thumbnail", async () => {
+    setThumbnail(await renderCoverPng(image.dataUrl, 512));
+  });
 
   const assistantName = provenance ? (BROWSER_PROVIDERS.find((item) => item.id === provenance.provider)?.label ?? provenance.provider).replace(/ API key$/, "") : "";
   // An existing mod's folder name is its ID when it is a valid one.
@@ -306,6 +403,8 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   const identityProblem = useMemo(() => {
     if (!identity.displayName.trim()) return "Enter the mod name.";
     if (!PROJECT_ID.test(identity.projectId)) return "The mod ID must start with a lowercase letter and use only lowercase letters, digits, and underscores.";
+    if (identity.scriptPrefix.trim() && !IDENTIFIER.test(identity.scriptPrefix.trim())) return "The script prefix must use lowercase letters, digits, and underscores, starting with a letter or underscore.";
+    if (identity.primaryNamespace.trim() && !IDENTIFIER.test(identity.primaryNamespace.trim())) return "The event namespace must use lowercase letters, digits, and underscores, starting with a letter or underscore.";
     return null;
   }, [identity]);
 
@@ -314,25 +413,37 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     setAssistantId(next.id);
     setAssistantModel(next.defaultModel);
     setAssistantEffort(next.defaultEffort);
+    setAssistantEndpoint(next.endpoint);
     setApiKey("");
-    forgetAnalysis();
+    resetAnalysis();
   };
   const assistantLabel = assistantProvider.label.replace(/ API key$/, "");
-  const assistantProblem = !apiKey.trim() ? `Enter your ${assistantLabel} API key.` : !MODEL_PATTERN.test(assistantModel.trim()) ? "Enter a model ID without spaces." : null;
-  const startProblem = assistantProblem ?? (kind === null ? "Choose a new mod or an existing mod folder." : kind === "existing" && !scan ? "Choose the mod folder." : null);
+  const assistantProblem = assistantProvider.local
+    ? !isLoopbackEndpoint(assistantEndpoint.trim()) ? "Enter the local model's address on this computer." : !MODEL_PATTERN.test(assistantModel.trim()) ? "Enter the local model's ID." : null
+    : !apiKey.trim() ? `Enter your ${assistantLabel} API key.` : !MODEL_PATTERN.test(assistantModel.trim()) ? "Enter a model ID without spaces." : null;
+  const usesAssistant = !(kind === "existing" && existingSetup && maintenance);
+  const startProblem = kind === null ? "Choose a new mod or an existing mod folder." : kind === "existing" && !scan ? "Choose the mod folder." : usesAssistant ? assistantProblem : null;
   const briefProblem = !identity.displayName.trim() ? "Enter the mod name." : !brief.trim() ? "Describe the mod in a sentence or two." : null;
+
+  const contextEvidence = (): ApprovedEvidence[] => documents.filter((entry) => entry.include).map(({ document }) => ({
+    reference: document.reference,
+    path: document.evidence_path,
+    excerpt: document.excerpt,
+    excerpt_sha256: document.excerpt_sha256,
+    confidence: null,
+  }));
 
   /** Ask the assistant for every value, then show them for review. */
   const analyze = () => run(`Asking ${assistantLabel}`, async () => {
     if (!preview) await loadSource();
     const registry = await client().call("registry", {});
-    const evidence = kind === "existing" ? await client().call("evidence", {}) : [];
-    if (kind === "existing") setEvidencePreview(evidence);
+    const scanEvidence = kind === "existing" ? await client().call("evidence", { excluded: [...excluded] }) : [];
+    if (kind === "existing") setEvidencePreview(scanEvidence);
     const name = identity.displayName.trim();
     const request: AnalysisRequest = {
       mode: kind === "existing" ? "existing_project_semantics" : "new_project_identity",
       brief: kind === "existing" ? EXISTING_PROJECT_BRIEF : brief.trim(),
-      evidence,
+      evidence: [...scanEvidence, ...contextEvidence()],
       constraints: {
         project_id_pattern: "^[a-z][a-z0-9_]{1,63}$",
         source: { mode: sourceMode, selected_ref: sourceMode === "latest" ? undefined : sourceRef.trim() },
@@ -340,7 +451,8 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
         ...(kind === "new" && name ? { requested_mod_name: name } : {}),
       },
     };
-    const route = routeFor(assistantProvider, assistantModel.trim(), assistantEffort);
+    if (kind === "existing" && request.evidence.length === 0) throw new Error(`Include at least one scan finding or document for ${assistantLabel} to read.`);
+    const route = routeFor(assistantProvider, assistantModel.trim(), assistantEffort, assistantProvider.local ? assistantEndpoint.trim() : assistantProvider.endpoint);
     const result = await runAssistant(client(), route, apiKey, request);
     const text = (key: string) => {
       const value = proposal(result, key);
@@ -380,6 +492,57 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     setStep("details");
   });
 
+  const profileFor = (current: SourcePreview, components: string[]) =>
+    // The richest profile whose components the setup has, else the default.
+    [...current.profiles].sort((left, right) => right.components.length - left.components.length).find((profile) => profile.components.every((id) => components.includes(id)))
+    ?? current.profiles.find((profile) => profile.default) ?? current.profiles[0];
+
+  /** Start a maintenance run with the setup's recorded choices. */
+  const startMaintenance = (choice: MaintenanceChoice) => run(choice === "remove" ? "Listing the setup files" : "Reading the setup source", async () => {
+    if (!existingSetup) throw new Error("This folder has no setup to maintain.");
+    if (choice === "remove") {
+      const result = await client().call("exportRemoval", { layout });
+      setEntries(result);
+      setDecisions({});
+      setReadiness(await client().call("readiness", {}));
+      setStep("review");
+      return;
+    }
+    const revision = existingSetup.source?.revision ?? "";
+    // Update follows the chosen source; repair and change keep the installed revision.
+    const current = choice === "update" ? await loadSource() : await loadSource("pinned_commit", revision);
+    const installed = existingSetup.components ?? [];
+    const profile = profileFor(current, installed);
+    setProfileId(profile?.id ?? "");
+    setOptional(new Set(optionalComponentsFor(current, profile).map((component) => component.id).filter((id) => installed.includes(id))));
+    const clients = current.coding_environments.map((environment) => environment.id);
+    const recordedPrimary = existingSetup.primary_coding_environment ?? "";
+    const primaryId = clients.includes(recordedPrimary) ? recordedPrimary : current.coding_environments.find((environment) => environment.default_primary)?.id ?? clients[0] ?? "";
+    const additionalIds = (existingSetup.additional_coding_environments ?? []).filter((id) => clients.includes(id) && id !== primaryId);
+    setPrimary(primaryId);
+    setAdditional(new Set(additionalIds));
+    setImageChoice(existingSetup.image_generation ? { primary_provider: existingSetup.image_generation.primary_provider, additional_providers: existingSetup.image_generation.additional_providers ?? [], route_settings: existingSetup.image_generation.route_settings ?? {} } : defaultImageChoice(current));
+    const recordedPortrait = existingSetup.portrait_pipeline;
+    const portraitChoice: PortraitChoice = recordedPortrait?.enabled ? { provider: recordedPortrait.provider as PortraitChoice["provider"], preferredWorkflow: recordedPortrait.preferred_workflow, localComfyuiRoot: recordedPortrait.local_comfyui_root, localServerUrl: recordedPortrait.local_server_url, runpodUrl: recordedPortrait.runpod_url, runpodWorkspace: recordedPortrait.runpod_workspace } : NO_PORTRAITS;
+    setPortrait(portraitChoice);
+    const recordedLive = existingSetup.live_testing;
+    setLive(recordedLive && recordedLive.provider === "clausewitz_mcp" ? recordedLive : NO_LIVE_TESTING);
+    if (choice === "repair") {
+      await prepareWith(current, {
+        profileComponents: profile?.components ?? [],
+        optionalIds: optionalComponentsFor(current, profile).map((component) => component.id).filter((id) => installed.includes(id)),
+        primaryId,
+        additionalIds,
+        image: existingSetup.image_generation ? { primary_provider: existingSetup.image_generation.primary_provider, additional_providers: existingSetup.image_generation.additional_providers ?? [], route_settings: existingSetup.image_generation.route_settings ?? {} } : defaultImageChoice(current),
+        portraitChoice,
+        liveChoice: recordedLive && recordedLive.provider === "clausewitz_mcp" ? recordedLive : NO_LIVE_TESTING,
+        mode: "repair",
+      });
+      return;
+    }
+    setStep("components");
+  });
+
   const goToComponents = () => run("Reading the setup source", async () => {
     if (!analysis || !provenance) throw new Error(`Ask ${assistantLabel} for the project details first.`);
     const current = preview ?? await loadSource();
@@ -405,6 +568,13 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
 
   const profile = preview?.profiles.find((item) => item.id === profileId);
   const optionalComponents = useMemo(() => optionalComponentsFor(preview, profile), [preview, profile]);
+  const clients = useMemo(() => [primary, ...additional].filter(Boolean), [primary, additional]);
+  const imageProviders = useMemo(() => availableImageProviders(preview, clients, primary), [preview, clients, primary]);
+  const effectiveImage = useMemo(() => normalizeImageChoice(imageChoice ?? defaultImageChoice(preview), imageProviders), [imageChoice, imageProviders, preview]);
+  const portraitsAvailable = Boolean(preview?.components.some((component) => component.id === "workflow.portraits.core"));
+  const liveProviders = preview?.live_testing?.providers ?? [];
+  const hasIntegrations = imageProviders.length > 0 || portraitsAvailable || liveProviders.some((provider) => provider.id === "clausewitz_mcp");
+  const integrationsProblem = liveTestingProblem(live, platform) ?? portraitProblem(portrait) ?? (Object.entries(effectiveImage.route_settings).some(([, settings]) => settings.server_url && !isLoopbackUrl(settings.server_url)) ? "A local image server must use a loopback address such as http://127.0.0.1:8188." : null);
 
   const conventionSuggestions = useMemo(() => {
     if (!analysis) return [] as Array<[string, string]>;
@@ -418,23 +588,47 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
 
   const recommended = useMemo(() => new Set((analysis?.component_recommendations ?? []).filter((item) => item.recommendation !== "not_recommended").map((item) => item.component_id)), [analysis]);
 
-  const prepare = () => run("Downloading verified files", async () => {
-    const selected = [...(profile?.components ?? []), ...optional].filter((id) => !DESKTOP_ONLY_COMPONENTS.has(id));
+  interface Plan {
+    profileComponents: string[];
+    optionalIds: string[];
+    primaryId: string;
+    additionalIds: string[];
+    image: ImageChoice;
+    portraitChoice: PortraitChoice;
+    liveChoice: LiveTestingChoice;
+    mode: "setup" | MaintenanceChoice;
+  }
+
+  /** Select, download and verify, adapt, and compare: the reviewed result. */
+  const prepareWith = async (current: SourcePreview, plan: Plan) => {
+    const selected = [...plan.profileComponents, ...plan.optionalIds].filter((id) => !DESKTOP_ONLY_COMPONENTS.has(id));
+    const hasImageCatalog = Boolean(current.image_generation);
     const selection = await client().call("select", {
-      request: { selectedComponents: selected, primaryCodingEnvironment: primary, additionalCodingEnvironments: [...additional], platform },
+      request: {
+        selectedComponents: selected,
+        primaryCodingEnvironment: plan.primaryId,
+        additionalCodingEnvironments: plan.additionalIds,
+        platform,
+        ...(hasImageCatalog ? { imageGeneration: plan.image } : {}),
+        liveTesting: plan.liveChoice,
+        portrait: plan.portraitChoice,
+      },
     });
     const stop = client().onProgress((done, total) => setBusy({ label: "Downloading verified files", done, total }));
     try {
       setBusy({ label: "Downloading verified files", done: 0, total: new Set(selection.files.map((file) => file.source_path)).size });
       const expected = Object.fromEntries(selection.files.filter((file) => file.expected_sha256).map((file) => [file.source_path, file.expected_sha256 as string]));
-      await client().call("download", { revision: source!.revision, expected });
+      const resolved = resolvedSource.current;
+      if (!resolved) throw new Error("Choose the setup source first.");
+      await client().call("download", { revision: resolved.revision, expected });
     } finally {
       stop();
     }
     setBusy({ label: "Comparing", done: 0, total: 0 });
-    const result = await client().call("export", {
-      existing: kind === "existing",
-      request: {
+    const maintaining = plan.mode !== "setup";
+    const request: ExportRequest = maintaining
+      ? { maintenance: plan.mode as "update" | "repair" | "change", layout, installedAt: new Date().toISOString() }
+      : {
         identity: {
           displayName: identity.displayName.trim(),
           projectId: identity.projectId,
@@ -453,33 +647,90 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
         installedAt: new Date().toISOString(),
         thumbnailPng: thumbnail,
         assistant: provenance,
-      },
-    });
+        contextDocuments: documents.filter((entry) => entry.keepCopy).map((entry) => ({ name: entry.document.name, data: entry.data })),
+        contextImages: images.filter((image) => image.keep && image.reference).map((image) => ({ name: image.name, data: image.reference as string })),
+      };
+    const result = await client().call("export", { existing: kind === "existing", request });
     setEntries(result);
     setDecisions(Object.fromEntries(result.filter((entry) => entry.action === "conflict").map((entry) => [entry.path, "keep" as Decision])));
     setComparison(null);
+    setMerged({});
+    setMergeErrors({});
+    setBasesReady(false);
+    setReadiness(await client().call("readiness", {}));
+    if (result.some((entry) => entry.mergeable)) {
+      setBusy({ label: "Fetching the installed versions for merging", done: 0, total: 0 });
+      const bases = await client().call("fetchBases", {});
+      setMergeErrors(Object.fromEntries(bases.failed.map((item) => [item.path, `Merging is unavailable: ${item.reason}`])));
+      setBasesReady(true);
+    }
     setStep("review");
+  };
+
+  const prepare = () => run("Downloading verified files", async () => {
+    const current = preview ?? await loadSource();
+    await prepareWith(current, {
+      profileComponents: profile?.components ?? [],
+      optionalIds: [...optional],
+      primaryId: primary,
+      additionalIds: [...additional],
+      image: effectiveImage,
+      portraitChoice: portrait,
+      liveChoice: live,
+      mode: kind === "existing" && existingSetup && maintenance ? maintenance : "setup",
+    });
   });
 
   const compare = (path: string) => run("Opening the comparison", async () => {
     setComparison(await client().call("compare", { path }));
   });
 
+  const previewMerge = (path: string) => run("Merging", async () => {
+    try {
+      const text = await client().call("merge", { path });
+      setMerged((current) => ({ ...current, [path]: text }));
+      setMergeErrors((current) => {
+        const next = { ...current };
+        delete next[path];
+        return next;
+      });
+      setComparison(await client().call("compare", { path }));
+    } catch (cause) {
+      setMergeErrors((current) => ({ ...current, [path]: `The files cannot be merged automatically: ${cause instanceof Error ? cause.message : String(cause)}` }));
+    }
+  });
+
   const download = () => run("Building the ZIP", async () => {
-    const bytes = await client().call("zip", { decisions });
-    const suffix = kind === "existing" ? (layout === "overlay" ? "-setup" : "-with-setup") : "";
-    saveBlob(bytes, `${identity.projectId}${suffix}.zip`);
+    const bytes = await client().call("zip", { decisions, layout });
+    const name = identity.projectId || existingSetup?.project_id || folder?.name || "mod";
+    const suffix = kind === "existing" ? (maintenance === "remove" ? "-without-setup" : layout === "overlay" ? "-setup" : "-with-setup") : "";
+    saveBlob(bytes, `${name}${suffix}.zip`);
     setStep("done");
   });
 
-  const counts = useMemo(() => ({
-    create: entries?.filter((entry) => entry.action === "create").length ?? 0,
-    unchanged: entries?.filter((entry) => entry.action === "unchanged").length ?? 0,
-    conflict: entries?.filter((entry) => entry.action === "conflict").length ?? 0,
-  }), [entries]);
-  // An existing mod is described by its folder, so it has no Describe step.
-  const steps = kind === "existing" ? STEPS.filter((item) => item.id !== "describe") : STEPS;
-  const stepIndex = steps.findIndex((item) => item.id === step);
+  const downloadLauncher = () => run("Writing the launcher file", async () => {
+    if (!folder) return;
+    const text = await client().call("launcher", { folder: folder.name });
+    saveBlob(text, `${existingSetup?.project_id ?? identity.projectId}.mod`, "text/plain");
+  });
+
+  const removal = kind === "existing" && maintenance === "remove";
+  const maintaining = kind === "existing" && Boolean(existingSetup) && maintenance !== null;
+  const steps: Step[] = maintaining
+    ? maintenance === "update" || maintenance === "change"
+      ? ["start", "components", ...(hasIntegrations ? ["integrations" as Step] : []), "review", "done"]
+      : ["start", "review", "done"]
+    : kind === "existing"
+      ? ["start", "details", "components", ...(hasIntegrations ? ["integrations" as Step] : []), "review", "done"]
+      : ["start", "describe", "details", "components", ...(hasIntegrations ? ["integrations" as Step] : []), "review", "done"];
+  const stepIndex = steps.indexOf(step);
+  const previous = stepIndex > 0 ? steps[stepIndex - 1] : null;
+
+  const startContinue = () => {
+    if (maintaining && maintenance) startMaintenance(maintenance);
+    else if (kind === "existing") analyze();
+    else setStep("describe");
+  };
 
   return (
     <div className="app-shell web-shell">
@@ -494,9 +745,9 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
           <div className="rail-label">Setup</div>
           <ol className="web-steps">
             {steps.map((item, index) => (
-              <li key={item.id} className={`phase-item${index === stepIndex ? " active" : ""}${index < stepIndex ? " complete" : ""}`} aria-current={index === stepIndex ? "step" : undefined}>
+              <li key={item} className={`phase-item${index === stepIndex ? " active" : ""}${index < stepIndex ? " complete" : ""}`} aria-current={index === stepIndex ? "step" : undefined}>
                 <span className="phase-number" aria-hidden="true">{index < stepIndex ? "✓" : index + 1}</span>
-                {item.label}
+                {STEP_LABELS[item]}
               </li>
             ))}
           </ol>
@@ -542,56 +793,66 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                       </ul>
                     )}
                     {scan.issues.length > 0 && <p className="web-panel-text status-review">{scan.issues.join(" ")}</p>}
+                    {usesAssistant && <div className="web-panel-text"><FindingsPanel findings={scan.findings} excluded={excluded} onToggle={(id, include) => { setExcluded((current) => { const next = new Set(current); if (include) next.delete(id); else next.add(id); return next; }); resetAnalysis(); }} assistantName={assistantLabel} /></div>}
                   </section>
                 )}
-                <section className="panel form-panel web-assistant" aria-labelledby="assistant-title">
-                  <h2 id="assistant-title" className="panel-title">Setup assistant</h2>
-                  <p className="muted">It fills in the mod's details and recommends components; you review everything before the ZIP is made. Your API key stays in this tab's memory, is sent only to {new URL(assistantProvider.endpoint).host}, and is forgotten when you close or reload the page.</p>
-                  <div className="form-grid">
-                    <label className="field">
-                      <span className="field-label">AI provider</span>
-                      <select className="text-input" value={assistantId} onChange={(event) => chooseAssistant(event.target.value)}>
-                        {BROWSER_PROVIDERS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-                      </select>
-                    </label>
-                    <label className="field">
-                      <span className="field-label">API key</span>
-                      <input className="text-input mono" type="password" autoComplete="off" spellCheck={false} value={apiKey} onChange={(event) => { setApiKey(event.target.value); forgetAnalysis(); }} />
-                    </label>
-                    <label className="field">
-                      <span className="field-label">Model</span>
-                      <input className="text-input mono" list="assistant-models" value={assistantModel} onChange={(event) => { setAssistantModel(event.target.value); forgetAnalysis(); }} />
-                      <datalist id="assistant-models">{modelChoices(assistantProvider).map((model) => <option key={model} value={model} />)}</datalist>
-                    </label>
-                    {assistantProvider.efforts.length > 1 && (
+                {scan?.existing_setup && <MaintenancePanel setup={scan.existing_setup} choice={existingSetup ? maintenance : null} onChoose={(choice) => { setMaintenance(choice); resetAnalysis(); }} />}
+                {maintaining && maintenance === "update" && <UpdateSource mode={sourceMode} reference={sourceRef} onMode={(mode) => { setSourceMode(mode); setPreview(null); }} onReference={(value) => { setSourceRef(value); setPreview(null); }} />}
+                {usesAssistant && (
+                  <section className="panel form-panel web-assistant" aria-labelledby="assistant-title">
+                    <h2 id="assistant-title" className="panel-title">Setup assistant</h2>
+                    <p className="muted">{assistantProvider.local
+                      ? "It fills in the mod's details and recommends components; you review everything before the ZIP is made. Requests go only to the model server on this computer."
+                      : `It fills in the mod's details and recommends components; you review everything before the ZIP is made. Your API key stays in this tab's memory, is sent only to ${new URL(assistantProvider.endpoint).host}, and is forgotten when you close or reload the page.`}</p>
+                    <div className="form-grid">
                       <label className="field">
-                        <span className="field-label">Reasoning effort</span>
-                        <select className="text-input" value={assistantEffort} onChange={(event) => { setAssistantEffort(event.target.value); forgetAnalysis(); }}>
-                          {assistantProvider.efforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+                        <span className="field-label">AI provider</span>
+                        <select className="text-input" value={assistantId} onChange={(event) => chooseAssistant(event.target.value)}>
+                          {BROWSER_PROVIDERS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
                         </select>
                       </label>
-                    )}
-                  </div>
-                  <a className="external-link" href={assistantProvider.keyUrl} target="_blank" rel="noreferrer noopener">Get a {assistantLabel} API key</a>
-                </section>
-                <details className="web-source">
-                  <summary className="details">Setup source</summary>
-                  <fieldset className="update-source-options">
-                    <legend className="field-label">Agentic HOI4 Modding version</legend>
-                    {(["latest", "pinned_commit", "pinned_release"] as SourceMode[]).map((mode) => (
-                      <label key={mode} className="radio-row">
-                        <input type="radio" name="source" checked={sourceMode === mode} onChange={() => { setSourceMode(mode); setPreview(null); }} />
-                        {mode === "latest" ? "Latest commit on the default branch" : mode === "pinned_commit" ? "A specific commit" : "A release"}
-                      </label>
-                    ))}
-                    {sourceMode !== "latest" && (
+                      {assistantProvider.local ? (
+                        <label className="field">
+                          <span className="field-label">Server address</span>
+                          <input className="text-input mono" value={assistantEndpoint} onChange={(event) => { setAssistantEndpoint(event.target.value); resetAnalysis(); }} />
+                        </label>
+                      ) : (
+                        <label className="field">
+                          <span className="field-label">API key</span>
+                          <input className="text-input mono" type="password" autoComplete="off" spellCheck={false} value={apiKey} onChange={(event) => { setApiKey(event.target.value); resetAnalysis(); }} />
+                        </label>
+                      )}
                       <label className="field">
-                        <span className="field-label">{sourceMode === "pinned_commit" ? "Commit ID" : "Release tag"}</span>
-                        <input className="text-input mono" value={sourceRef} onChange={(event) => { setSourceRef(event.target.value); setPreview(null); }} />
+                        <span className="field-label">Model</span>
+                        <input className="text-input mono" list="assistant-models" value={assistantModel} onChange={(event) => { setAssistantModel(event.target.value); resetAnalysis(); }} />
+                        <datalist id="assistant-models">{modelChoices(assistantProvider).map((model) => <option key={model} value={model} />)}</datalist>
                       </label>
-                    )}
-                  </fieldset>
-                </details>
+                      {assistantProvider.efforts.length > 1 && (
+                        <label className="field">
+                          <span className="field-label">Reasoning effort</span>
+                          <select className="text-input" value={assistantEffort} onChange={(event) => { setAssistantEffort(event.target.value); resetAnalysis(); }}>
+                            {assistantProvider.efforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+                          </select>
+                        </label>
+                      )}
+                    </div>
+                    <a className="external-link" href={assistantProvider.keyUrl} target="_blank" rel="noreferrer noopener">{assistantProvider.local ? "Local model setup" : `Get a ${assistantLabel} API key`}</a>
+                  </section>
+                )}
+                {kind === "existing" && usesAssistant && scan && (
+                  <ContextPanel documents={documents} images={images} refused={refused} onAddDocuments={addDocuments} onAddImages={addImages}
+                    onDocument={(id, change) => { setDocuments((current) => current.map((entry) => entry.document.id === id ? { ...entry, ...change } : entry)); if ("include" in change) resetAnalysis(); }}
+                    onImage={(id, change) => setImages((current) => current.map((image) => image.id === id ? { ...image, ...change } : image))}
+                    onRemoveDocument={(id) => { setDocuments((current) => current.filter((entry) => entry.document.id !== id)); resetAnalysis(); }}
+                    onRemoveImage={(id) => setImages((current) => current.filter((image) => image.id !== id))}
+                    onThumbnail={takeThumbnail} assistantName={assistantLabel} disabled={busy !== null} />
+                )}
+                {!maintaining && (
+                  <details className="web-source">
+                    <summary className="details">Setup source</summary>
+                    <SourceOptions mode={sourceMode} reference={sourceRef} onMode={(mode) => { setSourceMode(mode); setPreview(null); }} onReference={(value) => { setSourceRef(value); setPreview(null); }} />
+                  </details>
+                )}
               </Screen>
             )}
 
@@ -601,9 +862,15 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                   <TextField label="Mod name" value={identity.displayName} onChange={(value) => updateIdentity("displayName", value)} />
                   <label className="field">
                     <span className="field-label">What the mod is about</span>
-                    <textarea className="brief-input web-brief" value={brief} onChange={(event) => { setBrief(event.target.value); forgetAnalysis(); }} />
+                    <textarea className="brief-input web-brief" value={brief} onChange={(event) => { setBrief(event.target.value); resetAnalysis(); }} />
                   </label>
                 </div>
+                <ContextPanel documents={documents} images={images} refused={refused} onAddDocuments={addDocuments} onAddImages={addImages}
+                  onDocument={(id, change) => { setDocuments((current) => current.map((entry) => entry.document.id === id ? { ...entry, ...change } : entry)); if ("include" in change) resetAnalysis(); }}
+                  onImage={(id, change) => setImages((current) => current.map((image) => image.id === id ? { ...image, ...change } : image))}
+                  onRemoveDocument={(id) => { setDocuments((current) => current.filter((entry) => entry.document.id !== id)); resetAnalysis(); }}
+                  onRemoveImage={(id) => setImages((current) => current.filter((image) => image.id !== id))}
+                  onThumbnail={takeThumbnail} assistantName={assistantLabel} disabled={busy !== null} />
               </Screen>
             )}
 
@@ -699,6 +966,11 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                           {environment.display_name}
                         </label>
                       ))}
+                      {preview.unavailable_coding_environments.length > 0 && (
+                        <ul className="web-unavailable">
+                          {preview.unavailable_coding_environments.map((environment) => <li key={environment.id} className="muted">{environment.display_name}: {environment.reason}</li>)}
+                        </ul>
+                      )}
                     </details>
                     <label className="field web-field">
                       <span className="field-label">Your computer</span>
@@ -713,69 +985,21 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
               </Screen>
             )}
 
+            {step === "integrations" && preview && (
+              <Screen title="Choose integrations" sentence="Image generation, portraits, and live testing. Each one is optional." headingRef={headingRef}>
+                <IntegrationsStep providers={imageProviders} image={effectiveImage} onImage={setImageChoice} portraitsAvailable={portraitsAvailable} portrait={portrait} onPortrait={setPortrait} liveProviders={liveProviders} live={live} onLive={setLive} platform={platform} />
+              </Screen>
+            )}
+
             {step === "review" && entries && (
-              <Screen title="Review the changes" sentence={counts.conflict > 0 ? "Some files in your folder differ from the incoming version. Choose what to keep." : undefined} headingRef={headingRef}>
-                <section className="panel">
-                  <ul className="web-counts">
-                    <li><strong>{counts.create}</strong> new</li>
-                    {kind === "existing" && <li><strong>{counts.unchanged}</strong> already up to date</li>}
-                    {counts.conflict > 0 && <li><strong>{counts.conflict}</strong> need a decision</li>}
-                  </ul>
-                  {entries.filter((entry) => entry.action === "conflict").map((entry) => (
-                    <div key={entry.path} className="change-row web-conflict">
-                      <span className="mono web-path">{entry.path}</span>
-                      <fieldset className="web-decision">
-                        <legend className="visually-hidden">{entry.path}</legend>
-                        <label><input type="radio" name={`decision-${entry.path}`} checked={decisions[entry.path] === "keep"} onChange={() => setDecisions((current) => ({ ...current, [entry.path]: "keep" }))} /> Keep mine</label>
-                        <label><input type="radio" name={`decision-${entry.path}`} checked={decisions[entry.path] === "replace"} onChange={() => setDecisions((current) => ({ ...current, [entry.path]: "replace" }))} /> Use incoming</label>
-                        <button type="button" className="text-button" onClick={() => compare(entry.path)}>Compare</button>
-                      </fieldset>
-                    </div>
-                  ))}
-                  {comparison && <ComparisonView comparison={comparison} onClose={() => setComparison(null)} />}
-                  <details className="manifest-details">
-                    <summary className="details">All files</summary>
-                    <ul className="web-file-list">
-                      {entries.map((entry) => <li key={entry.path}><span className="mono">{entry.path}</span> <span className="muted">{entry.action} · {formatBytes(entry.size)}</span></li>)}
-                    </ul>
-                  </details>
-                </section>
-                {kind === "existing" && (
-                  <fieldset className="panel update-source-options">
-                    <legend className="field-label">ZIP contents</legend>
-                    <label className="radio-row"><input type="radio" name="layout" checked={layout === "overlay"} onChange={() => setLayout("overlay")} /> Only new and changed files, to copy over your folder</label>
-                    <label className="radio-row"><input type="radio" name="layout" checked={layout === "full_copy"} onChange={() => setLayout("full_copy")} /> A full copy of the mod with the setup included</label>
-                  </fieldset>
-                )}
+              <Screen title="Review the changes" sentence={entries.some((entry) => entry.action === "conflict") ? "Some files in your folder differ from the incoming version. Choose what to keep." : undefined} headingRef={headingRef}>
+                <ReviewStep entries={entries} decisions={decisions} onDecision={(path, decision) => setDecisions((current) => ({ ...current, [path]: decision }))} merged={merged} mergeErrors={mergeErrors} basesReady={basesReady} onMerge={previewMerge} onCompare={compare} comparison={comparison} onCloseComparison={() => setComparison(null)} existing={kind === "existing"} removal={removal} layout={layout} onLayout={setLayout} busy={busy !== null} />
               </Screen>
             )}
 
             {step === "done" && (
               <Screen title="Your ZIP is ready" headingRef={headingRef}>
-                <section className="panel form-panel web-done">
-                  {kind === "new" ? (
-                    <ol>
-                      <li>Unpack the ZIP into <span className="mono">Documents/Paradox Interactive/Hearts of Iron IV/mod/</span>.</li>
-                      <li>It contains the <span className="mono">{identity.projectId}</span> folder and <span className="mono">{identity.projectId}.mod</span>; keep both there.</li>
-                      <li>Open the folder in your coding client.</li>
-                    </ol>
-                  ) : layout === "overlay" ? (
-                    <ol>
-                      <li>Back up your mod folder.</li>
-                      <li>Unpack the ZIP over it. <span className="mono">HOI4_MOD_SETUP_CHANGES.md</span> lists every file.</li>
-                      <li>Open the folder in your coding client.</li>
-                    </ol>
-                  ) : (
-                    <ol>
-                      <li>Unpack the ZIP next to your mod folder and compare before replacing it.</li>
-                      <li>Open the folder in your coding client.</li>
-                    </ol>
-                  )}
-                  <p className="muted">The installation lock in <span className="mono">.hoi4-mod-setup/</span> records the exact source commit and every file hash, so the desktop app can update or repair this setup later.</p>
-                  <div className="button-row">
-                    <button type="button" className="button" onClick={download}>Download again</button>
-                  </div>
-                </section>
+                <DoneStep kind={kind === "new" ? "new" : "existing"} removal={removal} layout={layout} projectId={identity.projectId || existingSetup?.project_id || ""} folderName={kind === "existing" ? folder?.name ?? null : null} checks={readiness} onDownloadAgain={download} onLauncher={kind === "existing" && !removal ? downloadLauncher : null} />
               </Screen>
             )}
 
@@ -785,21 +1009,29 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                 <progress max={busy.total || undefined} value={busy.total ? busy.done : undefined} />
               </div>
             )}
-            {error && <p className="web-error status-block" role="alert"><span className="status-symbol" aria-hidden="true">!</span> {error}</p>}
+            {error && (
+              <div className="web-error-row">
+                <p className="web-error status-block" role="alert"><span className="status-symbol" aria-hidden="true">!</span> {error}</p>
+                <CopyDetails error={error} step={STEP_LABELS[step]} revision={source?.revision ?? null} network={network} />
+              </div>
+            )}
           </div>
           <footer className="footer-bar">
             <span className="footer-note">Source: <a className="external-link" href={`https://github.com/${SOURCE_OWNER}/${SOURCE_NAME}`}>{SOURCE_OWNER}/{SOURCE_NAME}</a>{source ? <> at <span className="mono">{source.revision.slice(0, 12)}</span></> : null}</span>
             <div className="footer-actions">
-              {step !== "start" && step !== "done" && <button type="button" className="button" disabled={busy !== null} onClick={() => setStep(steps[stepIndex - 1].id)}>Back</button>}
-              {step === "start" && <button type="button" className="button primary" disabled={busy !== null || startProblem !== null} title={startProblem ?? undefined} onClick={() => (kind === "existing" ? analyze() : setStep("describe"))}>Continue</button>}
+              {previous && step !== "done" && <button type="button" className="button" disabled={busy !== null} onClick={() => setStep(previous)}>Back</button>}
+              {step === "start" && <button type="button" className="button primary" disabled={busy !== null || startProblem !== null} title={startProblem ?? undefined} onClick={startContinue}>Continue</button>}
               {step === "describe" && <button type="button" className="button primary" disabled={busy !== null || briefProblem !== null} title={briefProblem ?? undefined} onClick={analyze}>Continue</button>}
               {step === "details" && <button type="button" className="button primary" disabled={busy !== null || identityProblem !== null} title={identityProblem ?? undefined} onClick={goToComponents}>Continue</button>}
-              {step === "components" && <button type="button" className="button primary" disabled={busy !== null || !primary} onClick={prepare}>Download and review</button>}
+              {step === "components" && (hasIntegrations
+                ? <button type="button" className="button primary" disabled={busy !== null || !primary} onClick={() => setStep("integrations")}>Continue</button>
+                : <button type="button" className="button primary" disabled={busy !== null || !primary} onClick={prepare}>Download and review</button>)}
+              {step === "integrations" && <button type="button" className="button primary" disabled={busy !== null || integrationsProblem !== null} title={integrationsProblem ?? undefined} onClick={prepare}>Download and review</button>}
               {step === "review" && <button type="button" className="button primary" disabled={busy !== null} onClick={download}>Download ZIP</button>}
               {step === "done" && <button type="button" className="button" onClick={() => { setStep("start"); setEntries(null); }}>Prepare another mod</button>}
             </div>
           </footer>
-          {(step === "start" ? startProblem : step === "describe" ? briefProblem : step === "details" ? identityProblem : null) && <p className="visually-hidden" aria-live="polite">{step === "start" ? startProblem : step === "describe" ? briefProblem : identityProblem}</p>}
+          {(step === "start" ? startProblem : step === "describe" ? briefProblem : step === "details" ? identityProblem : step === "integrations" ? integrationsProblem : null) && <p className="visually-hidden" aria-live="polite">{step === "start" ? startProblem : step === "describe" ? briefProblem : step === "details" ? identityProblem : integrationsProblem}</p>}
         </main>
       </div>
     </div>
@@ -819,6 +1051,35 @@ function optionalComponentsFor(preview: SourcePreview | null, profile: SourcePre
     && !(profile?.components.includes(component.id))
     && (ALWAYS_LISTED.has(component.id) || !dependencyOnly.has(component.id))
     && !HIDDEN_COMPONENT_PREFIXES.some((prefix) => component.id.startsWith(prefix)));
+}
+
+function SourceOptions({ mode, reference, onMode, onReference }: { mode: SourceMode; reference: string; onMode: (mode: SourceMode) => void; onReference: (value: string) => void }) {
+  return (
+    <fieldset className="update-source-options">
+      <legend className="field-label">Agentic HOI4 Modding version</legend>
+      {(["latest", "pinned_commit", "pinned_release"] as SourceMode[]).map((value) => (
+        <label key={value} className="radio-row">
+          <input type="radio" name="source" checked={mode === value} onChange={() => onMode(value)} />
+          {value === "latest" ? "Latest commit on the default branch" : value === "pinned_commit" ? "A specific commit" : "A release"}
+        </label>
+      ))}
+      {mode !== "latest" && (
+        <label className="field">
+          <span className="field-label">{mode === "pinned_commit" ? "Commit ID" : "Release tag"}</span>
+          <input className="text-input mono" value={reference} onChange={(event) => onReference(event.target.value)} />
+        </label>
+      )}
+    </fieldset>
+  );
+}
+
+function UpdateSource(props: { mode: SourceMode; reference: string; onMode: (mode: SourceMode) => void; onReference: (value: string) => void }) {
+  return (
+    <details className="panel web-source">
+      <summary className="details">Update to</summary>
+      <SourceOptions {...props} />
+    </details>
+  );
 }
 
 function Screen({ title, sentence, children, headingRef }: { title: string; sentence?: string; children: ReactNode; headingRef: RefObject<HTMLHeadingElement | null> }) {
@@ -844,21 +1105,30 @@ function TextField({ label, value, onChange, mono, badge }: { label: string; val
   );
 }
 
-function ComparisonView({ comparison, onClose }: { comparison: Comparison; onClose: () => void }) {
-  return (
-    <section className="web-compare" aria-label={`Comparison of ${comparison.path}`}>
-      <div className="proposal-heading">
-        <strong className="mono">{comparison.path}</strong>
-        <button type="button" className="text-button" onClick={onClose}>Close</button>
-      </div>
-      {comparison.binary ? <p className="muted">This file is binary and cannot be shown.</p> : (
-        <div className="web-compare-grid">
-          <div><div className="field-label">Yours</div><pre>{comparison.local ?? ""}</pre></div>
-          <div><div className="field-label">Incoming</div><pre>{comparison.incoming ?? ""}</pre></div>
-        </div>
-      )}
-    </section>
-  );
+/** Copy what went wrong for a report: the message, the step, the source
+ * revision, and recent request addresses. Never a key or file contents. */
+function CopyDetails({ error, step, revision, network }: { error: string; step: string; revision: string | null; network: NetworkRecord[] }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    const lines = [
+      `HOI4 Mod Setup web edition`,
+      `Step: ${step}`,
+      `Source revision: ${revision ?? "not resolved"}`,
+      `Error: ${error}`,
+      "Recent requests:",
+      ...network.slice(-15).map((record) => {
+        const url = new URL(record.url);
+        return `  ${record.status} ${url.host}${url.pathname}`;
+      }),
+    ];
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return <button type="button" className="text-button" onClick={copy}>{copied ? "Copied" : "Copy details"}</button>;
 }
 
 function NetworkPanel({ records }: { records: NetworkRecord[] }) {

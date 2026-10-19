@@ -16,7 +16,7 @@ else {
   const directives = Object.fromEntries(csp.split(";").map((part) => part.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
   if (directives["default-src"]?.join(" ") !== "'none'") problems.push("default-src must be 'none'");
   if (directives["script-src"]?.some((value) => value === "'unsafe-inline'" || value === "'unsafe-eval'" || value.startsWith("http"))) problems.push("script-src allows inline, eval, or remote code");
-  const allowedHosts = new Set(["'self'", "https://api.github.com", "https://raw.githubusercontent.com", "https://api.anthropic.com", "https://api.openai.com", "https://generativelanguage.googleapis.com", "https://api.x.ai", "https://api.deepseek.com", "https://open.bigmodel.cn"]);
+  const allowedHosts = new Set(["'self'", "https://api.github.com", "https://raw.githubusercontent.com", "https://api.anthropic.com", "https://api.openai.com", "https://generativelanguage.googleapis.com", "https://api.x.ai", "https://api.deepseek.com", "https://open.bigmodel.cn", "http://127.0.0.1:*", "http://localhost:*"]);
   for (const host of directives["connect-src"] ?? []) {
     if (!allowedHosts.has(host)) problems.push(`connect-src allows an unreviewed host: ${host}`);
   }

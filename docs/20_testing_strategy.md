@@ -348,6 +348,11 @@ bytes.
   files come from `raw.githubusercontent.com` at the pinned fixture commit and
   pass the core's hash check. Chromium also downloads the ZIP and scans a
   golden mod folder.
+- `crates/hoi4-setup-web` tests cover image, portrait, and live-testing
+  selection, the project state and lock schemas, maintenance of an exported
+  setup with a changed client set, managed removal, and refused provenance.
+  `src/web/WebApp.test.tsx` drives context documents, excluded findings,
+  repair and removal, merge previews, integrations, and refused addresses.
 
 ## Performance
 
