@@ -17,6 +17,7 @@ pub mod git;
 mod linux_trust;
 pub mod local_source;
 pub mod mcp;
+pub mod openrouter;
 pub use hoi4_setup_core::merge;
 pub mod meshy;
 pub mod migrations;

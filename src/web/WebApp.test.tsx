@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WebApp from "./WebApp";
+import { BROWSER_PROVIDERS, FREE_PROVIDER } from "./assistant";
 import { createCoreClient } from "./core-client";
 import type { CoreClient } from "./core-client";
 import type { CoreOperations, ExistingSetup, Operation, SourcePreview, WorkerMessage } from "./protocol";
@@ -147,6 +148,7 @@ function stubDownloads() {
 
 /** Fill in the setup assistant on the Project step. */
 function chooseAssistant(key = "sk-ant-test") {
+  fireEvent.change(screen.getByLabelText("AI provider"), { target: { value: "claude" } });
   fireEvent.change(screen.getByLabelText("API key"), { target: { value: key } });
 }
 
@@ -186,14 +188,64 @@ describe("web edition", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: /New mod/ }));
     expect(screen.getByRole("button", { name: /New mod/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("AI provider")).toHaveValue(BROWSER_PROVIDERS[0].id);
+    if (FREE_PROVIDER) {
+      // The free route needs no account or key.
+      expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+      expect(screen.queryByLabelText("API key")).toBeNull();
+    } else {
+      expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Continue" })).toHaveAttribute("title", "Sign in with OpenRouter or enter an API key.");
+      expect(screen.getByRole("button", { name: "Sign in with OpenRouter" })).toBeInTheDocument();
+    }
+    fireEvent.change(screen.getByLabelText("AI provider"), { target: { value: "claude" } });
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Continue" })).toHaveAttribute("title", "Enter your Claude API key.");
-    expect(screen.getByLabelText("AI provider")).toHaveValue("claude");
     expect(screen.getByLabelText("Model")).toHaveValue("claude-haiku-5-5");
     chooseAssistant();
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
     fireEvent.change(screen.getByLabelText("Model"), { target: { value: "bad model" } });
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+  });
+
+  it("expands a rough brief with the magic wand and can undo it", async () => {
+    const providerCalls = stubGitHub(() => new Response('{"content":[]}', { status: 200 }));
+    const { client, calls } = fakeCore({
+      descriptionTurn: () => ({ headers: [["content-type", "application/json"]], body: { model: "claude-haiku-5-5" } }),
+      descriptionReply: () => ({ description: "A thorough Balkans mod set in 1936." }),
+    });
+    render(<WebApp client={client} />);
+    fireEvent.click(screen.getByRole("button", { name: /New mod/ }));
+    chooseAssistant();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByRole("heading", { name: "Describe the mod" })).toBeInTheDocument();
+    const brief = screen.getByLabelText("What the mod is about");
+    expect(screen.getByRole("button", { name: "Expand description" })).toBeDisabled();
+    fireEvent.change(brief, { target: { value: "balkans 1936" } });
+    fireEvent.click(screen.getByRole("button", { name: "Expand description" }));
+    await waitFor(() => expect(brief).toHaveValue("A thorough Balkans mod set in 1936."));
+    expect(screen.getByText(/Suggested by Claude/)).toBeInTheDocument();
+    expect(providerCalls).toHaveLength(1);
+    expect(calls.find((call) => call.op === "descriptionTurn")?.args).toMatchObject({ note: "balkans 1936" });
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(brief).toHaveValue("balkans 1936");
+  });
+
+  it("keeps the brief when the wand's draft is refused", async () => {
+    stubGitHub(() => new Response('{"content":[]}', { status: 200 }));
+    const { client } = fakeCore({
+      descriptionTurn: () => ({ headers: [], body: {} }),
+      descriptionReply: () => ({ error: "The draft attributes text to an AI tool" }),
+    });
+    render(<WebApp client={client} />);
+    fireEvent.click(screen.getByRole("button", { name: /New mod/ }));
+    chooseAssistant();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    const brief = screen.getByLabelText("What the mod is about");
+    fireEvent.change(brief, { target: { value: "balkans 1936" } });
+    fireEvent.click(screen.getByRole("button", { name: "Expand description" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("not usable");
+    expect(brief).toHaveValue("balkans 1936");
   });
 
   it("prepares a new mod with the assistant and downloads a ZIP without uploading files", async () => {

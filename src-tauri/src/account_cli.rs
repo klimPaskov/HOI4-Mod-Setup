@@ -1735,31 +1735,55 @@ pub fn account_status(provider: &str, model: &str) -> AiAccountStatus {
 }
 
 pub fn analyze(request: &AiAnalysisRequest) -> Result<CodexAnalysisResult, AppError> {
+    run_account_turn(&request.provider, |runner| {
+        analyze_with_runner(request, runner)
+    })
+}
+
+/// The magic wand on the description step through the provider's own CLI, in
+/// the same isolated home and supervision as the analysis.
+pub fn draft_description(
+    provider: &str,
+    model: &str,
+    reasoning_effort: &str,
+    note: &str,
+) -> Result<String, AppError> {
+    run_account_turn(provider, |runner| {
+        draft_with_runner(provider, model, reasoning_effort, note, runner)
+    })
+}
+
+type AccountRunner<'a> = dyn FnMut(&[u8], Vec<String>) -> Result<ProcessResult, AppError> + 'a;
+
+fn run_account_turn<T>(
+    provider: &str,
+    turn: impl FnOnce(&mut AccountRunner<'_>) -> Result<T, AppError>,
+) -> Result<T, AppError> {
     supported_host(std::env::consts::OS)?;
-    provider_name(&request.provider)?;
+    provider_name(provider)?;
     let _analysis_guard = ANALYSIS_LOCK
         .get_or_init(Default::default)
         .lock()
         .map_err(|_| AppError::Process("account analysis is unavailable".into()))?;
     let generation = SESSION_GENERATION.load(Ordering::SeqCst);
-    if active_login(&request.provider)?.is_some() {
+    if active_login(provider)?.is_some() {
         return Err(AppError::Credential(
             "Finish the pending provider connection before analysis".into(),
         ));
     }
-    let _access = HomeAccess::acquire(&provider_root(&request.provider)?, "account.lock")?;
-    let runtime = runtime(&request.provider)?;
-    isolation_preflight(&runtime, &request.provider)?;
-    let root = provider_root(&request.provider)?;
-    let result = analyze_with_runner(request, |prompt, args| {
+    let _access = HomeAccess::acquire(&provider_root(provider)?, "account.lock")?;
+    let runtime = runtime(provider)?;
+    isolation_preflight(&runtime, provider)?;
+    let root = provider_root(provider)?;
+    let mut runner = |prompt: &[u8], args: Vec<String>| {
         let mut stopped = || SESSION_GENERATION.load(Ordering::SeqCst) != generation;
-        let mut complete_args = base_arguments(&request.provider, &root);
+        let mut complete_args = base_arguments(provider, &root);
         complete_args.extend(args);
         // Grok's --single requires a command-line prompt. Its official
         // --prompt-file route keeps approved input out of process previews;
         // the private file is removed as soon as the supervised run ends.
         let mut prompt_file = None;
-        if request.provider == GROK {
+        if provider == GROK {
             let file = ApprovedPromptFile::create(&root.join("home/inflight"), prompt)?;
             complete_args.extend([
                 "--prompt-file".into(),
@@ -1769,9 +1793,9 @@ pub fn analyze(request: &AiAnalysisRequest) -> Result<CodexAnalysisResult, AppEr
         }
         let result = run(
             &runtime,
-            &request.provider,
+            provider,
             complete_args,
-            (request.provider == GEMINI).then_some(prompt),
+            (provider == GEMINI).then_some(prompt),
             300,
             Some(&mut stopped),
         );
@@ -1779,13 +1803,58 @@ pub fn analyze(request: &AiAnalysisRequest) -> Result<CodexAnalysisResult, AppEr
             file.close()?;
         }
         result
-    })?;
+    };
+    let result = turn(&mut runner)?;
     if SESSION_GENERATION.load(Ordering::SeqCst) != generation {
         return Err(AppError::Credential(
             "account session changed during analysis".into(),
         ));
     }
     Ok(result)
+}
+
+/// One draft turn with an injectable runner. A rejected draft is not
+/// retried; the user can choose the wand again.
+pub(crate) fn draft_with_runner(
+    provider: &str,
+    model: &str,
+    reasoning_effort: &str,
+    note: &str,
+    mut runner: impl FnMut(&[u8], Vec<String>) -> Result<ProcessResult, AppError>,
+) -> Result<String, AppError> {
+    provider_name(provider)?;
+    crate::claude_code::validate_model(model)?;
+    crate::ai::validate_reasoning_effort(reasoning_effort)?;
+    let system = hoi4_setup_core::description::description_system_prompt();
+    let prompt = format!(
+        "{system}\n\n{}",
+        hoi4_setup_core::description::description_prompt(note)?
+    );
+    let mut args = vec![
+        "--model".into(),
+        model.to_owned(),
+        "--output-format".into(),
+        "json".into(),
+    ];
+    if provider == GEMINI {
+        args.extend([
+            "--prompt".into(),
+            "Follow the complete setup request supplied on standard input.".into(),
+        ]);
+    } else {
+        args.extend([
+            "--verbatim".into(),
+            "--reasoning-effort".into(),
+            reasoning_effort.to_owned(),
+            "--json-schema".into(),
+            serde_json::to_string(&hoi4_setup_core::description::draft_schema())?,
+            "--system-prompt-override".into(),
+            format!("You are a bounded setup assistant. {system}"),
+        ]);
+    }
+    let result = runner(prompt.as_bytes(), args)?;
+    let envelope = completed_envelope(provider, &result)?;
+    hoi4_setup_core::description::validate_description_draft(extract_output(provider, &envelope)?)
 }
 
 struct ApprovedPromptFile {
@@ -2836,6 +2905,61 @@ mod tests {
         } else {
             output(value)
         }
+    }
+
+    #[test]
+    fn description_drafts_use_the_draft_schema_once_for_each_provider() {
+        for provider in [GEMINI, GROK] {
+            let mut calls = 0;
+            let draft = draft_with_runner(
+                provider,
+                default_model(provider),
+                "high",
+                "cold war mod",
+                |prompt, args| {
+                    calls += 1;
+                    let prompt = std::str::from_utf8(prompt).unwrap();
+                    assert!(prompt.contains("cold war mod"));
+                    assert!(prompt.contains("\"description\""));
+                    assert!(args.iter().any(|arg| arg == default_model(provider)));
+                    if provider == GROK {
+                        let schema = args.iter().position(|arg| arg == "--json-schema").unwrap();
+                        assert!(args[schema + 1].contains("description"));
+                    }
+                    Ok(envelope(
+                        provider,
+                        json!({"description": "A Cold War mod."}),
+                    ))
+                },
+            )
+            .unwrap();
+            assert_eq!(draft, "A Cold War mod.");
+            assert_eq!(calls, 1);
+            let mut calls = 0;
+            assert!(draft_with_runner(
+                provider,
+                default_model(provider),
+                "high",
+                "a mod",
+                |_, _| {
+                    calls += 1;
+                    Ok(envelope(
+                        provider,
+                        json!({"description": "Generated by Gemini."}),
+                    ))
+                }
+            )
+            .is_err());
+            assert_eq!(calls, 1);
+        }
+        assert!(draft_with_runner(
+            "claude_account",
+            "claude-haiku-5-5",
+            "high",
+            "a mod",
+            |_, _| unreachable!()
+        )
+        .is_err());
     }
 
     #[test]

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://klimpaskov.github.io/hoi4-mod-setup/schemas/description-draft.schema.json",
+  "title": "Mod Description Draft",
+  "description": "The setup assistant's fuller version of a rough mod description. The user reviews it before it replaces their text.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["description"],
+  "properties": {
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2400
+    }
+  }
+}

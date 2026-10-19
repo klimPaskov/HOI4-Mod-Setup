@@ -112,7 +112,7 @@
       ],
       "properties": {
         "provider": {
-          "enum": ["codex","claude_account","claude","kimi","glm","deepseek","local","custom","gemini_account","grok_account","gemini","grok"]
+          "enum": ["codex","claude_account","claude","kimi","glm","deepseek","openrouter","free","local","custom","gemini_account","grok_account","gemini","grok"]
         },
         "model": {
           "type": "string"
@@ -121,7 +121,7 @@
           "enum": ["codex_app_server","claude_code_cli","provider_api","provider_cli"]
         },
         "auth_mode": {
-          "enum": ["chatgpt","claude_account","api_key","local_endpoint","provider_account"]
+          "enum": ["chatgpt","claude_account","api_key","local_endpoint","shared_free","provider_account"]
         },
         "authenticated_during_setup": {
           "type": "boolean"

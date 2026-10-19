@@ -64,6 +64,9 @@ jobs:
       - name: Test frontend
         if: steps.detect.outputs.present == 'true'
         run: pnpm test
+      - name: Test free assistant relay
+        if: steps.detect.outputs.present == 'true'
+        run: pnpm test:relay
       - name: Test release updater assets
         if: steps.detect.outputs.present == 'true'
         run: pnpm test:release-assets

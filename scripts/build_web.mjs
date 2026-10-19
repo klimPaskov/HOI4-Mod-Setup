@@ -59,9 +59,12 @@ function digest(algorithm, bytes, encoding) {
   return createHash(algorithm).update(bytes).digest(encoding);
 }
 
-/** Pin every bundled script and stylesheet the page loads by hash. */
+/** Pin every bundled script and stylesheet each page loads by hash. */
 function addSubresourceIntegrity(dist) {
-  const indexPath = join(dist, "index.html");
+  for (const page of ["index.html", "openrouter-callback.html"]) pinPage(dist, join(dist, page));
+}
+
+function pinPage(dist, indexPath) {
   const base = process.env.WEB_BASE ?? "/HOI4-Mod-Setup/app/";
   const html = readFileSync(indexPath, "utf8").replace(/<(script|link)\b([^>]*?)\s(src|href)="([^"]+)"([^>]*)>/g, (tag, name, before, attribute, url, after) => {
     if (!url.startsWith(base) || /integrity=/.test(tag) || url.endsWith(".png")) return tag;

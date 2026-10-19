@@ -1,0 +1,21 @@
+# The free setup assistant relay. Deploy with the "Deploy free assistant relay"
+# workflow; see relay/README.md. The OpenRouter key is a Worker secret and is
+# never written here.
+name = "hoi4-mod-setup-free"
+main = "worker.mjs"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[vars]
+# Keep in step with src/free-assistant.json.
+MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+ALLOWED_ORIGINS = "https://klimpaskov.github.io"
+
+# A few requests a minute from each address; one setup needs one to three.
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "4041"
+
+  [ratelimits.simple]
+  limit = 6
+  period = 60

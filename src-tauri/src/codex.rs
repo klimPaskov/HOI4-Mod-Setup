@@ -576,6 +576,89 @@ impl<T: JsonlTransport> AppServerProtocol<T> {
         Ok(CodexAnalysisResult { analysis, record })
     }
 
+    /// The magic wand on the description step: one turn in a dedicated
+    /// read-only thread that returns a fuller description of the user's note.
+    /// A rejected draft is not retried.
+    pub fn draft_description(
+        &mut self,
+        note: &str,
+        model: &str,
+        reasoning_effort: &str,
+    ) -> Result<String, AppError> {
+        crate::ai::validate_reasoning_effort(reasoning_effort)?;
+        if model.trim().is_empty() || model.len() > 256 || model.chars().any(char::is_control) {
+            return Err(AppError::InvalidInput("Codex model is invalid".into()));
+        }
+        let prompt = format!(
+            "{}\n\n{}",
+            hoi4_setup_core::description::description_system_prompt(),
+            hoi4_setup_core::description::description_prompt(note)?
+        );
+        let account = self.account_read(false)?;
+        if let Some(error) = account.error.as_deref() {
+            return Err(AppError::Credential(error.into()));
+        }
+        if !account.authenticated || account.auth_mode != "chatgpt" {
+            return Err(AppError::Credential(
+                "ChatGPT sign-in through Codex is required before drafting".into(),
+            ));
+        }
+        if account.usage_limited {
+            return Err(AppError::Credential(
+                "Codex usage is currently limited; retry after the account becomes available"
+                    .into(),
+            ));
+        }
+        let directory = AnalysisWorkingDirectory::create()?;
+        let thread = self.request(
+            "thread/start",
+            json!({
+                "approvalPolicy": "never",
+                "sandbox": "read-only",
+                "cwd": directory.path_string()?,
+                "model": model
+            }),
+        )?;
+        let thread_id = thread_id(&thread)?;
+        let turn = self.request(
+            "turn/start",
+            json!({
+                "threadId": thread_id,
+                "input": [{"type": "text", "text": prompt}],
+                "outputSchema": hoi4_setup_core::description::draft_schema(),
+                "sandboxPolicy": read_only_no_project_access(),
+                "approvalPolicy": "never",
+                "model": model,
+                "effort": reasoning_effort
+            }),
+        )?;
+        let turn_id = turn_id_from_start_response(&turn);
+        let messages =
+            self.drain_notifications(Duration::from_secs(120), &thread_id, turn_id.as_deref())?;
+        if let Some(error) = messages
+            .iter()
+            .find_map(|message| completed_turn_error(message, &thread_id, turn_id.as_deref()))
+        {
+            return Err(AppError::Process(format!(
+                "Codex draft turn failed: {error}"
+            )));
+        }
+        if !messages
+            .iter()
+            .any(|message| event_completes_turn(message, &thread_id, turn_id.as_deref()))
+        {
+            return Err(AppError::Process(
+                "Codex timed out before the draft was ready".into(),
+            ));
+        }
+        let output = messages
+            .iter()
+            .rev()
+            .find_map(structured_output)
+            .ok_or_else(|| AppError::Serialization("Codex returned no draft".into()))?;
+        hoi4_setup_core::description::validate_description_draft(output)
+    }
+
     pub fn model_list(&mut self) -> Result<Vec<crate::models::AiModelOption>, AppError> {
         let mut cursor: Option<String> = None;
         let mut result = Vec::new();
@@ -1811,11 +1894,20 @@ pub fn validate_confirmed_record(record: &CodexAnalysisRecord) -> Result<(), App
         && provider == "codex"
         && record.auth_mode == "chatgpt")
         || (record.engine == "provider_api"
-            && matches!(
+            && ((matches!(
                 provider,
-                "claude" | "gemini" | "grok" | "kimi" | "glm" | "deepseek" | "local" | "custom"
-            )
-            && matches!(record.auth_mode.as_str(), "api_key" | "local_endpoint")
+                "claude"
+                    | "gemini"
+                    | "grok"
+                    | "kimi"
+                    | "glm"
+                    | "deepseek"
+                    | "openrouter"
+                    | "local"
+                    | "custom"
+            ) && matches!(record.auth_mode.as_str(), "api_key" | "local_endpoint"))
+                || (provider == hoi4_setup_core::free_assistant::FREE_PROVIDER_ID
+                    && record.auth_mode == hoi4_setup_core::free_assistant::FREE_AUTH_MODE))
             && record
                 .model
                 .as_deref()
@@ -1942,7 +2034,10 @@ pub fn confirm_analysis_record(
             && (record.auth_mode != "chatgpt"
                 || record.provider.as_deref().unwrap_or("codex") != "codex"))
         || (record.engine == "provider_api"
-            && !matches!(record.auth_mode.as_str(), "api_key" | "local_endpoint"))
+            && !matches!(
+                record.auth_mode.as_str(),
+                "api_key" | "local_endpoint" | hoi4_setup_core::free_assistant::FREE_AUTH_MODE
+            ))
         || (record.engine == crate::claude_code::ENGINE
             && (record.auth_mode != crate::claude_code::AUTH_MODE
                 || record.provider.as_deref() != Some(crate::claude_code::PROVIDER_ID)))
@@ -3679,6 +3774,83 @@ mod tests {
             assert_eq!(turn["params"]["effort"], "low");
             assert!(turn["params"].get("reasoningEffort").is_none());
         }
+    }
+
+    #[test]
+    fn description_drafts_use_a_read_only_thread_and_the_draft_schema() {
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming: VecDeque::from([
+                response(
+                    1,
+                    json!({"account": {"type": "chatgpt", "authenticated": true}}),
+                ),
+                response(2, json!({"rateLimits": {"primary": {"usedPercent": 1}}})),
+                response(3, json!({"threadId": "thread-1"})),
+                response(4, json!({"turn": {"id": "turn-1"}})),
+                json!({"method": "item/completed", "params": {"threadId": "thread-1", "turnId": "turn-1", "item": {"type": "agentMessage", "text": "{\"description\":\"A Cold War mod.\"}"}}}),
+                json!({"method": "turn/completed", "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed"}}}),
+            ]),
+            alive: true,
+        };
+        let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
+        let draft = protocol
+            .draft_description("cold war mod", "gpt-5.6-luna", "low")
+            .unwrap();
+        assert_eq!(draft, "A Cold War mod.");
+        let sent = &protocol.transport.sent;
+        let thread = sent
+            .iter()
+            .find(|message| message["method"] == "thread/start")
+            .unwrap();
+        assert_eq!(thread["params"]["sandbox"], "read-only");
+        let turns = sent
+            .iter()
+            .filter(|message| message["method"] == "turn/start")
+            .collect::<Vec<_>>();
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0]["params"]["outputSchema"]["required"],
+            json!(["description"])
+        );
+        assert_eq!(turns[0]["params"]["approvalPolicy"], "never");
+        assert!(turns[0]["params"]["input"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("cold war mod"));
+    }
+
+    #[test]
+    fn a_draft_without_output_is_rejected_without_a_second_turn() {
+        let transport = FakeTransport {
+            sent: Vec::new(),
+            incoming: VecDeque::from([
+                response(
+                    1,
+                    json!({"account": {"type": "chatgpt", "authenticated": true}}),
+                ),
+                response(2, json!({"rateLimits": {"primary": {"usedPercent": 1}}})),
+                response(3, json!({"threadId": "thread-1"})),
+                response(4, json!({"turn": {"id": "turn-1"}})),
+                json!({"method": "turn/completed", "params": {"threadId": "thread-1", "turn": {"id": "turn-1", "status": "completed"}}}),
+            ]),
+            alive: true,
+        };
+        let mut protocol = AppServerProtocol::new(transport);
+        protocol.initialized = true;
+        assert!(protocol
+            .draft_description("a mod", "gpt-5.6-luna", "low")
+            .is_err());
+        assert_eq!(
+            protocol
+                .transport
+                .sent
+                .iter()
+                .filter(|message| message["method"] == "turn/start")
+                .count(),
+            1
+        );
     }
 
     #[test]

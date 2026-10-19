@@ -8,26 +8,30 @@ import { fileURLToPath } from "node:url";
 
 const dist = fileURLToPath(new URL("../dist-web/", import.meta.url));
 const problems = [];
-const html = readFileSync(join(dist, "index.html"), "utf8");
+const freeAssistant = JSON.parse(readFileSync(new URL("../src/free-assistant.json", import.meta.url), "utf8"));
+const relayOrigin = freeAssistant.endpoint ? new URL(freeAssistant.endpoint).origin : null;
+const allowedHosts = new Set(["'self'", "https://api.github.com", "https://raw.githubusercontent.com", "https://api.anthropic.com", "https://api.openai.com", "https://generativelanguage.googleapis.com", "https://api.x.ai", "https://api.deepseek.com", "https://open.bigmodel.cn", "https://openrouter.ai", "http://127.0.0.1:*", "http://localhost:*", ...(relayOrigin ? [relayOrigin] : [])]);
 
-const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(html)?.[1];
-if (!csp) problems.push("index.html has no Content-Security-Policy");
-else {
-  const directives = Object.fromEntries(csp.split(";").map((part) => part.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
-  if (directives["default-src"]?.join(" ") !== "'none'") problems.push("default-src must be 'none'");
-  if (directives["script-src"]?.some((value) => value === "'unsafe-inline'" || value === "'unsafe-eval'" || value.startsWith("http"))) problems.push("script-src allows inline, eval, or remote code");
-  const allowedHosts = new Set(["'self'", "https://api.github.com", "https://raw.githubusercontent.com", "https://api.anthropic.com", "https://api.openai.com", "https://generativelanguage.googleapis.com", "https://api.x.ai", "https://api.deepseek.com", "https://open.bigmodel.cn", "http://127.0.0.1:*", "http://localhost:*"]);
-  for (const host of directives["connect-src"] ?? []) {
-    if (!allowedHosts.has(host)) problems.push(`connect-src allows an unreviewed host: ${host}`);
+// The setup page and the OpenRouter sign-in callback page.
+for (const page of ["index.html", "openrouter-callback.html"]) {
+  const html = readFileSync(join(dist, page), "utf8");
+  const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(html)?.[1];
+  if (!csp) problems.push(`${page} has no Content-Security-Policy`);
+  else {
+    const directives = Object.fromEntries(csp.split(";").map((part) => part.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
+    if (directives["default-src"]?.join(" ") !== "'none'") problems.push(`${page}: default-src must be 'none'`);
+    if (directives["script-src"]?.some((value) => value === "'unsafe-inline'" || value === "'unsafe-eval'" || value.startsWith("http"))) problems.push(`${page}: script-src allows inline, eval, or remote code`);
+    for (const host of directives["connect-src"] ?? []) {
+      if (!allowedHosts.has(host)) problems.push(`${page}: connect-src allows an unreviewed host: ${host}`);
+    }
   }
-}
-
-for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)) {
-  if (!/\ssrc=/.test(match[1])) problems.push("index.html contains an inline script");
-  else if (!/\sintegrity="sha384-/.test(match[1])) problems.push(`script without integrity: ${match[1].trim()}`);
-}
-for (const match of html.matchAll(/<link\b[^>]*rel="(?:stylesheet|modulepreload)"[^>]*>/g)) {
-  if (!/\sintegrity="sha384-/.test(match[0])) problems.push(`stylesheet or preload without integrity: ${match[0]}`);
+  for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)) {
+    if (!/\ssrc=/.test(match[1])) problems.push(`${page} contains an inline script`);
+    else if (!/\sintegrity="sha384-/.test(match[1])) problems.push(`${page}: script without integrity: ${match[1].trim()}`);
+  }
+  for (const match of html.matchAll(/<link\b[^>]*rel="(?:stylesheet|modulepreload)"[^>]*>/g)) {
+    if (!/\sintegrity="sha384-/.test(match[0])) problems.push(`${page}: stylesheet or preload without integrity: ${match[0]}`);
+  }
 }
 
 const wasm = join(dist, "core", "hoi4_setup_web_bg.wasm");

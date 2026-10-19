@@ -46,6 +46,11 @@ interface WasmModule {
   analysisTurn(request: string, route: string, correction?: string): string;
   readAnalysisReply(envelope: string, request: string, inputSha256: string, analysisId: string): string;
   contextDocument(number: number, name: string, bytes: Uint8Array): string;
+  descriptionTurn(route: string, note: string): string;
+  readDescriptionReply(envelope: string): string;
+  openRouterSignIn(callback: string, random: Uint8Array): string;
+  openRouterKeyRequest(code: string, verifier: string): string;
+  openRouterKey(response: string): string;
 }
 
 const scope = self as unknown as {
@@ -233,6 +238,22 @@ async function handle<Op extends Operation>(op: Op, args: CoreOperations[Op]["ar
       const { envelope, request, inputSha256, analysisId } = args as CoreOperations["assistantReply"]["args"];
       return { result: JSON.parse(module.readAnalysisReply(envelope, JSON.stringify(request), inputSha256, analysisId)) };
     }
+    case "descriptionTurn": {
+      const { route, note } = args as CoreOperations["descriptionTurn"]["args"];
+      return { result: JSON.parse(module.descriptionTurn(JSON.stringify(route), note)) };
+    }
+    case "descriptionReply":
+      return { result: JSON.parse(module.readDescriptionReply((args as CoreOperations["descriptionReply"]["args"]).envelope)) };
+    case "openRouterStart": {
+      const { callback } = args as CoreOperations["openRouterStart"]["args"];
+      return { result: JSON.parse(module.openRouterSignIn(callback, crypto.getRandomValues(new Uint8Array(48)))) };
+    }
+    case "openRouterKeyRequest": {
+      const { code, verifier } = args as CoreOperations["openRouterKeyRequest"]["args"];
+      return { result: module.openRouterKeyRequest(code, verifier) };
+    }
+    case "openRouterKey":
+      return { result: module.openRouterKey((args as CoreOperations["openRouterKey"]["args"]).response) };
     default:
       throw new Error(`Unknown operation ${String(op)}.`);
   }

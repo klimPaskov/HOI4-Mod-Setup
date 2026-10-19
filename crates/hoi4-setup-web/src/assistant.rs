@@ -70,6 +70,49 @@ pub(crate) fn assistant_turn(
     }))?)
 }
 
+/// The magic wand's request for a note on the chosen route, without the API
+/// key: `{ "headers": [...], "body": {...} }`.
+#[wasm_bindgen(js_name = descriptionTurn)]
+pub fn description_turn(route_json: &str, note: &str) -> Result<String, JsError> {
+    draft_turn(route_json, note).map_err(js)
+}
+
+pub(crate) fn draft_turn(route_json: &str, note: &str) -> Result<String, AppError> {
+    let route: AssistantRoute = serde_json::from_str(route_json)?;
+    let request = hoi4_setup_core::description::description_request(
+        &route.provider,
+        &route.protocol,
+        &route.endpoint,
+        &route.model,
+        &route.reasoning_effort,
+        note,
+        route.supports_effort,
+    )?;
+    Ok(serde_json::to_string(&json!({
+        "headers": request.headers,
+        "body": request.body,
+    }))?)
+}
+
+/// The draft in a provider's reply: `{ "description": ... }` or
+/// `{ "error": message }`. A rejected draft is not retried.
+#[wasm_bindgen(js_name = readDescriptionReply)]
+pub fn read_description_reply(envelope_json: &str) -> Result<String, JsError> {
+    to_json(&draft_reply(envelope_json))
+}
+
+pub(crate) fn draft_reply(envelope_json: &str) -> Value {
+    let outcome = serde_json::from_str::<Value>(envelope_json)
+        .map_err(|_| AppError::Protocol("the provider returned an unreadable response".into()))
+        .and_then(|envelope| hoi4_setup_core::description::read_description_reply(&envelope));
+    match outcome {
+        Ok(description) => json!({ "description": description }),
+        Err(error) => {
+            json!({ "error": hoi4_setup_core::text::redact_secrets(&error.to_string(), &[]) })
+        }
+    }
+}
+
 /// Validate a provider's reply envelope. The result is `{ "analysis": ... }`,
 /// `{ "retry": reason }` when one corrective turn may fix it, or
 /// `{ "error": message }`. `analysis_id` is a fresh UUID from the page.
@@ -131,6 +174,33 @@ fn reply_analysis(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_wand_sends_only_the_note_and_reads_one_description() {
+        let route = json!({
+            "provider": "openrouter", "protocol": "openai_compatible",
+            "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+            "model": "nvidia/nemotron-3-super-120b-a12b:free", "reasoningEffort": "high",
+            "supportsEffort": false, "optimizationProfile": "OpenRouter setup analysis"
+        })
+        .to_string();
+        let turn: Value =
+            serde_json::from_str(&draft_turn(&route, "balkans 1936 mod").unwrap()).unwrap();
+        assert_eq!(
+            turn["body"]["response_format"]["json_schema"]["name"],
+            "mod_description"
+        );
+        assert!(turn["body"].to_string().contains("balkans 1936 mod"));
+        assert!(draft_turn(&route, "").is_err());
+        let reply = json!({"choices":[{"message":{"content":"{\"description\":\"A Balkans mod.\"}"},"finish_reason":"stop"}]}).to_string();
+        assert_eq!(
+            draft_reply(&reply),
+            json!({"description": "A Balkans mod."})
+        );
+        assert!(draft_reply("not json").get("error").is_some());
+        let attributed = json!({"choices":[{"message":{"content":"{\"description\":\"Written by OpenRouter.\"}"},"finish_reason":"stop"}]}).to_string();
+        assert!(draft_reply(&attributed).get("error").is_some());
+    }
 
     #[test]
     fn an_assistant_turn_sends_the_schema_and_never_trusts_a_bad_reply() {
