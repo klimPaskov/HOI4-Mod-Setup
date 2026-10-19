@@ -215,6 +215,11 @@ details p { margin: 0; padding: 0 16px 16px; line-height: 1.55; }
 .analysis-notes ul { margin: 0; padding: 0 32px 16px; color: var(--muted); font-size: 12px; line-height: 1.55; }
 
 .brief-input { min-height: 275px; width: 100%; resize: vertical; padding: 18px; border: 1px solid #344864; border-radius: 12px; color: #e7edf7; background: #0a111c; font-size: 15px; line-height: 1.55; }
+.description-wand { display: grid; gap: 6px; margin-top: 10px; }
+.description-wand-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.wand-button { display: inline-flex; align-items: center; gap: 8px; }
+.wand-icon { flex: none; }
+.description-wand p { margin: 0; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chips span { padding: 7px 11px; border: 1px solid #30415a; border-radius: 999px; color: #9bacbf; font-size: 12px; }
 .form-panel { padding: 18px; }

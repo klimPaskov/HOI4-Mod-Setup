@@ -124,6 +124,7 @@
             "claude_account",
             "api_key",
             "local_endpoint",
+            "shared_free",
             "provider_account"
           ]
         },
@@ -178,6 +179,8 @@
             "kimi",
             "glm",
             "deepseek",
+            "openrouter",
+            "free",
             "local",
             "custom",
             "gemini_account",

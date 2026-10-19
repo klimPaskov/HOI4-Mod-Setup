@@ -25,6 +25,9 @@ use hoi4_setup_core::export::{
     plan_export, plan_maintenance, ExportAction, ExportLayout, IncomingFile, LockInputs,
     MAX_EXPORT_FILE_BYTES,
 };
+use hoi4_setup_core::free_assistant::{
+    free_assistant, FREE_AUTH_MODE, FREE_PROVIDER_ID, OPENROUTER_ENDPOINT, OPENROUTER_PROVIDER_ID,
+};
 use hoi4_setup_core::image_generation::{
     adapt_image_generation_client_config_with_launch, adapt_image_generation_guidance,
     image_client_config_default, image_client_config_update, image_generation_config_content,
@@ -104,7 +107,16 @@ pub(crate) struct AssistantProvenance {
 
 /// Hosted routes the web edition can reach from the browser, plus a local
 /// model server on this computer.
-const WEB_ASSISTANT_PROVIDERS: &[&str] = &["claude", "gemini", "grok", "deepseek", "glm", "local"];
+const WEB_ASSISTANT_PROVIDERS: &[&str] = &[
+    "free",
+    "openrouter",
+    "claude",
+    "gemini",
+    "grok",
+    "deepseek",
+    "glm",
+    "local",
+];
 
 pub(crate) fn assistant_provenance(
     assistant: Option<AssistantProvenance>,
@@ -134,6 +146,12 @@ pub(crate) fn assistant_provenance(
                 && if assistant.provider == "local" {
                     endpoint.starts_with("http://127.0.0.1:")
                         || endpoint.starts_with("http://localhost:")
+                } else if assistant.provider == FREE_PROVIDER_ID {
+                    free_assistant().is_some_and(|free| {
+                        free.endpoint == endpoint && free.model == assistant.model
+                    })
+                } else if assistant.provider == OPENROUTER_PROVIDER_ID {
+                    endpoint == OPENROUTER_ENDPOINT
                 } else {
                     endpoint.starts_with("https://")
                 }
@@ -375,7 +393,11 @@ fn state_document(
         },
         "codex": {
             "integration": "provider_api",
-            "auth_mode": if assistant.provider == "local" { "local_endpoint" } else { "api_key" },
+            "auth_mode": match assistant.provider.as_str() {
+                "local" => "local_endpoint",
+                FREE_PROVIDER_ID => FREE_AUTH_MODE,
+                _ => "api_key",
+            },
             "auth_status": "configured",
             "analysis_required": true,
             "analysis_status": "confirmed",
@@ -1328,6 +1350,37 @@ mod tests {
         request["assistant"]["reasoningEffort"] = json!("none");
         let export = prepare(&source, &request.to_string(), None).unwrap();
         assert_eq!(export.lock.ai_provider, "local");
+        // OpenRouter keys go only to OpenRouter.
+        let mut request = setup_request();
+        request["assistant"]["provider"] = json!("openrouter");
+        request["assistant"]["model"] = json!("nvidia/nemotron-3-super-120b-a12b:free");
+        request["assistant"]["endpoint"] =
+            json!("https://openrouter.example/api/v1/chat/completions");
+        assert!(prepare(&source, &request.to_string(), None).is_err());
+        request["assistant"]["endpoint"] = json!(OPENROUTER_ENDPOINT);
+        assert_eq!(
+            prepare(&source, &request.to_string(), None)
+                .unwrap()
+                .lock
+                .ai_provider,
+            "openrouter"
+        );
+        // The free route is accepted only on the checked-in relay.
+        let mut request = setup_request();
+        request["assistant"]["provider"] = json!("free");
+        request["assistant"]["endpoint"] = json!("https://relay.example/v1/chat/completions");
+        assert!(prepare(&source, &request.to_string(), None).is_err());
+        if let Some(free) = free_assistant() {
+            request["assistant"]["endpoint"] = json!(free.endpoint);
+            request["assistant"]["model"] = json!(free.model);
+            assert_eq!(
+                prepare(&source, &request.to_string(), None)
+                    .unwrap()
+                    .lock
+                    .ai_provider,
+                "free"
+            );
+        }
     }
 
     #[test]

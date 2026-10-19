@@ -559,6 +559,34 @@ fn claude_output_schema() -> Result<String, AppError> {
 /// project customizations, and session persistence are all disabled; the
 /// prompt travels on standard input rather than the command line.
 pub fn analysis_arguments(model: &str, reasoning_effort: &str) -> Result<Vec<String>, AppError> {
+    print_arguments(
+        model,
+        reasoning_effort,
+        claude_output_schema()?,
+        analysis_system_prompt(),
+    )
+}
+
+/// The print-mode arguments for the description draft: the same isolation
+/// with the draft schema and instructions.
+pub fn draft_arguments(model: &str, reasoning_effort: &str) -> Result<Vec<String>, AppError> {
+    print_arguments(
+        model,
+        reasoning_effort,
+        serde_json::to_string(&hoi4_setup_core::description::draft_schema())?,
+        format!(
+            "You are a bounded setup assistant. {}",
+            hoi4_setup_core::description::description_system_prompt()
+        ),
+    )
+}
+
+fn print_arguments(
+    model: &str,
+    reasoning_effort: &str,
+    schema: String,
+    system_prompt: String,
+) -> Result<Vec<String>, AppError> {
     validate_model(model)?;
     crate::ai::validate_reasoning_effort(reasoning_effort)?;
     let mut args = vec![
@@ -566,7 +594,7 @@ pub fn analysis_arguments(model: &str, reasoning_effort: &str) -> Result<Vec<Str
         "--output-format".into(),
         "json".into(),
         "--json-schema".into(),
-        claude_output_schema()?,
+        schema,
         "--model".into(),
         model.into(),
         "--tools".into(),
@@ -575,7 +603,7 @@ pub fn analysis_arguments(model: &str, reasoning_effort: &str) -> Result<Vec<Str
         "--safe-mode".into(),
         "--no-session-persistence".into(),
         "--system-prompt".into(),
-        analysis_system_prompt(),
+        system_prompt,
     ];
     if model_supports_effort(model) {
         args.push("--effort".into());
@@ -723,6 +751,80 @@ pub fn analyze(
         ));
     }
     Ok(result)
+}
+
+/// The magic wand on the description step, through the user's own Claude
+/// Code in the same isolated print mode as the analysis.
+pub fn draft_description(
+    model: &str,
+    reasoning_effort: &str,
+    note: &str,
+) -> Result<String, AppError> {
+    let generation = session_generation();
+    let executable = ready_executable()?;
+    let summary = read_sign_in()?;
+    if !summary.is_claude_plan() {
+        return Err(AppError::Credential(
+            "sign in to Claude before continuing".into(),
+        ));
+    }
+    let workspace = analysis_workspace()?;
+    let draft = with_sign_in_recheck(
+        || {
+            draft_with_runner(model, reasoning_effort, note, |prompt, args| {
+                run_claude(
+                    &executable.path,
+                    &executable.sha256,
+                    args,
+                    Some(workspace.clone()),
+                    Some(prompt),
+                    MAX_ANALYSIS_BYTES,
+                    ANALYSIS_TIMEOUT_SECONDS,
+                    None,
+                    true,
+                )
+            })
+        },
+        || {
+            session_generation() == generation
+                && read_sign_in().is_ok_and(|summary| summary.is_claude_plan())
+        },
+    )?;
+    if session_generation() != generation {
+        return Err(AppError::Credential(
+            "sign in to Claude before continuing".into(),
+        ));
+    }
+    Ok(draft)
+}
+
+/// One draft turn with an injectable process runner. A rejected draft is not
+/// retried; the user can choose the wand again.
+pub(crate) fn draft_with_runner(
+    model: &str,
+    reasoning_effort: &str,
+    note: &str,
+    run: impl FnOnce(&[u8], Vec<String>) -> Result<ProcessResult, AppError>,
+) -> Result<String, AppError> {
+    let prompt = hoi4_setup_core::description::description_prompt(note)?;
+    let args = draft_arguments(model, reasoning_effort)?;
+    let result = run(prompt.as_bytes(), args)?;
+    if result.timed_out {
+        return Err(AppError::Process("Claude Code timed out".into()));
+    }
+    if result.stdout_truncated {
+        return Err(AppError::Process(
+            "Claude Code response exceeded the bounded response limit".into(),
+        ));
+    }
+    if result.stdout.trim().is_empty() {
+        return Err(AppError::Process(
+            "Claude Code exited without a result".into(),
+        ));
+    }
+    hoi4_setup_core::description::validate_description_draft(extract_analysis_output(
+        &result.stdout,
+    )?)
 }
 
 /// Run the analysis again once when a run reports a sign-in failure while
@@ -1270,6 +1372,59 @@ mod tests {
             stdout_truncated: false,
             stderr_truncated: false,
         }
+    }
+
+    #[test]
+    fn description_drafts_use_the_same_isolation_and_the_draft_schema() {
+        let mut seen = Vec::new();
+        let draft = draft_with_runner(DEFAULT_MODEL, "high", "cold war mod", |prompt, args| {
+            seen = args;
+            assert!(String::from_utf8_lossy(prompt).contains("cold war mod"));
+            Ok(print_result(
+                serde_json::json!({"description": "A Cold War mod."}),
+            ))
+        })
+        .unwrap();
+        assert_eq!(draft, "A Cold War mod.");
+        for flag in [
+            "--print",
+            "--strict-mcp-config",
+            "--safe-mode",
+            "--no-session-persistence",
+        ] {
+            assert!(seen.iter().any(|arg| arg == flag), "missing {flag}");
+        }
+        let tools = seen.iter().position(|arg| arg == "--tools").unwrap();
+        assert_eq!(seen[tools + 1], "");
+        let schema = seen.iter().position(|arg| arg == "--json-schema").unwrap();
+        let parsed: Value = serde_json::from_str(&seen[schema + 1]).unwrap();
+        assert_eq!(parsed["required"], serde_json::json!(["description"]));
+        assert!(parsed.get("$schema").is_none());
+    }
+
+    #[test]
+    fn rejected_or_failed_drafts_are_not_retried() {
+        for result in [
+            print_result(serde_json::json!({"description": "Written by Claude for you."})),
+            print_result(serde_json::json!({"text": "x"})),
+            ProcessResult {
+                timed_out: true,
+                ..print_result(serde_json::json!({}))
+            },
+            ProcessResult {
+                stdout: String::new(),
+                ..print_result(serde_json::json!({}))
+            },
+        ] {
+            let mut calls = 0;
+            let outcome = draft_with_runner(DEFAULT_MODEL, "high", "a mod", |_, _| {
+                calls += 1;
+                Ok(result.clone())
+            });
+            assert!(outcome.is_err());
+            assert_eq!(calls, 1);
+        }
+        assert!(draft_with_runner(DEFAULT_MODEL, "high", "  ", |_, _| unreachable!()).is_err());
     }
 
     fn input_hash() -> String {

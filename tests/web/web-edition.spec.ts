@@ -80,10 +80,16 @@ async function fakeAssistant(page: Page): Promise<void> {
   });
 }
 
+/** Choose the Claude API route the tests mock. */
+async function useClaude(page: Page): Promise<void> {
+  await page.getByLabel("AI provider").selectOption("claude");
+  await page.getByLabel("API key", { exact: true }).fill("sk-ant-test");
+}
+
 /** Choose the assistant, then describe a new mod and let it fill the rest. */
 async function newModDetails(page: Page): Promise<void> {
   await page.getByRole("button", { name: /New mod/ }).click();
-  await page.getByLabel("API key", { exact: true }).fill("sk-ant-test");
+  await useClaude(page);
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByLabel("Mod name").fill("Iron Dawn");
   await page.getByLabel("What the mod is about").fill("Balkan nations rise in 1936 through events and decisions.");
@@ -146,7 +152,7 @@ test("an existing mod folder is scanned in the browser", async ({ page, browserN
   await page.locator("input[type=file]").first().setInputFiles(GOLDEN_MOD);
   await expect(page.getByRole("heading", { name: "event-chain-mod" })).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText("ecm_crisis").first()).toBeVisible();
-  await page.getByLabel("API key", { exact: true }).fill("sk-ant-test");
+  await useClaude(page);
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByRole("heading", { name: "Review the details" })).toBeVisible({ timeout: 60_000 });
   await expect(page.getByLabel(/Mod name/)).toHaveValue("Event Chain Mod");
@@ -163,7 +169,7 @@ test("the setup can start from the keyboard and moves focus to each new step", a
   await expect(newMod).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(newMod).toHaveAttribute("aria-pressed", "true");
-  await page.getByLabel("API key", { exact: true }).fill("sk-ant-test");
+  await useClaude(page);
   await page.getByRole("button", { name: "Continue" }).focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { name: "Describe the mod" })).toBeFocused();

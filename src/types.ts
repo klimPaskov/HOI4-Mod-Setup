@@ -23,7 +23,7 @@ export type PhaseId = "project" | "review" | "components" | "integrations" | "gi
 
 export type SourceMode = "latest" | "pinned_commit" | "pinned_release";
 
-export type AiProviderId = "claude_account" | "codex" | "gemini_account" | "grok_account" | "claude" | "gemini" | "grok" | "kimi" | "glm" | "deepseek" | "local" | "custom";
+export type AiProviderId = "claude_account" | "codex" | "gemini_account" | "grok_account" | "claude" | "gemini" | "grok" | "kimi" | "glm" | "deepseek" | "openrouter" | "free" | "local" | "custom";
 
 /** Built-in environment ids; a source manifest may declare more. */
 export type CodingEnvironmentId = "claude_code" | "codex" | "cursor" | "qoder" | "opencode" | (string & {});

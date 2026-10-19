@@ -270,6 +270,12 @@ Conflict review is the exception. It may show a three-way comparison and more co
 
 On native Linux, the live-testing screen keeps Clausewitz selected, explains that no WSL/VM/SSH environment is needed, hides remote fields, and requires only normal compatible-game/server readiness confirmation. Windows-only providers remain disabled with an honest status.
 
+The description step's **Expand description** button
+(`src/DescriptionWand.tsx`, shared by desktop and web) is disabled until there
+is a note, shows its pending state with `aria-busy`, announces the suggestion
+and its source with `role="status"`, offers Undo until the user edits the
+draft, and reports a refused draft with `role="alert"` while keeping the note.
+
 ## Accessibility
 
 Meet WCAG 2.2 AA.

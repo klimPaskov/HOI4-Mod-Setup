@@ -416,6 +416,18 @@ Update this skill when credential storage, redaction, path containment, archive 
 
 ## AI provider and ChatGPT authentication rules
 
+- The free assistant relay (`relay/worker.mjs`) holds the maintainer's
+  OpenRouter key as a Cloudflare Worker secret set by the manual relay
+  workflow from the `free-assistant` environment. Never commit it, ship it in
+  the app or page, or pass it to the renderer. The relay accepts only the
+  core's request shape, one model, bounded sizes, and rate-limited
+  addresses; keep `relay/worker.node-test.mjs` covering every refusal.
+- OpenRouter PKCE sign-in: the verifier never leaves the process or tab that
+  started it; the desktop callback listens only on `127.0.0.1`, checks
+  `state`, and never echoes the code; the web callback page clears the code
+  from the address bar. The resulting key follows the normal OS-vault or
+  tab-memory rules.
+
 Claude Code owns Claude account sign-in, credential storage, and refresh for
 the default `claude_account` route. The app runs `claude auth login` with
 closed standard input and never offers its own Claude.ai login, reads Claude

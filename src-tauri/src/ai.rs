@@ -18,6 +18,10 @@ use crate::models::{AiModelOption, AiProviderProfile, CredentialReference};
 use crate::security::redact_secrets;
 use crate::AppError;
 use hoi4_setup_core::analysis::{extract_structured_output, ANTHROPIC_VERSION};
+use hoi4_setup_core::free_assistant::{
+    free_assistant, FREE_AUTH_MODE, FREE_PROVIDER_ID, OPENROUTER_DEFAULT_MODEL,
+    OPENROUTER_ENDPOINT, OPENROUTER_PROVIDER_ID,
+};
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT};
 use serde_json::Value;
@@ -36,7 +40,30 @@ pub struct AiProviderConfig {
     pub credential_reference: Option<CredentialReference>,
 }
 
+/// The free assistant's profile once its relay is deployed; it is then the
+/// default for a new setup.
+fn free_profile() -> Option<AiProviderProfile> {
+    let free = free_assistant()?;
+    Some(AiProviderProfile {
+        id: FREE_PROVIDER_ID.into(),
+        display_name: "Free model".into(),
+        protocol: "openai_compatible".into(),
+        requires_credential: false,
+        optimization_profile: "Free setup analysis".into(),
+        default_model: Some(free.model),
+        default_reasoning_effort: Some("high".into()),
+        default_endpoint: Some(free.endpoint),
+        account_url: None,
+    })
+}
+
 pub fn provider_profiles() -> Vec<AiProviderProfile> {
+    let mut profiles: Vec<AiProviderProfile> = free_profile().into_iter().collect();
+    profiles.extend(account_and_hosted_profiles());
+    profiles
+}
+
+fn account_and_hosted_profiles() -> Vec<AiProviderProfile> {
     [
         (
             crate::claude_code::PROVIDER_ID,
@@ -149,6 +176,17 @@ pub fn provider_profiles() -> Vec<AiProviderProfile> {
             Some("https://console.x.ai"),
         ),
         (
+            OPENROUTER_PROVIDER_ID,
+            "OpenRouter",
+            "openai_compatible",
+            true,
+            "OpenRouter setup analysis",
+            Some(OPENROUTER_DEFAULT_MODEL),
+            Some("high"),
+            Some(OPENROUTER_ENDPOINT),
+            Some("https://openrouter.ai/settings/keys"),
+        ),
+        (
             "local",
             "Local model",
             "openai_compatible",
@@ -209,6 +247,7 @@ pub fn integration_and_auth_mode(provider: &str) -> (&'static str, &'static str)
             (crate::claude_code::ENGINE, crate::claude_code::AUTH_MODE)
         }
         "local" => ("provider_api", "local_endpoint"),
+        FREE_PROVIDER_ID => ("provider_api", FREE_AUTH_MODE),
         "gemini_account" | "grok_account" => ("provider_cli", "provider_account"),
         _ => ("provider_api", "api_key"),
     }
@@ -253,6 +292,13 @@ pub fn validate_config(config: &AiProviderConfig) -> Result<AiProviderProfile, A
         return Ok(profile);
     }
     validate_endpoint_for_provider(&config.provider, Some(config.endpoint.as_str()))?;
+    if config.provider == FREE_PROVIDER_ID
+        && profile.default_model.as_deref() != Some(config.model.trim())
+    {
+        return Err(AppError::InvalidInput(
+            "the free assistant runs only its checked-in model".into(),
+        ));
+    }
     if profile.requires_credential && config.credential_reference.is_none() {
         return Err(AppError::Credential(
             "connect the selected AI provider before semantic analysis".into(),
@@ -354,6 +400,11 @@ pub fn validate_endpoint_for_provider(
                 "known provider keys may only be sent to the provider's reviewed HTTPS origin; use the custom provider for another host".into(),
             ));
         }
+        if provider == FREE_PROVIDER_ID && parsed != expected {
+            return Err(AppError::InvalidInput(
+                "the free assistant uses only its checked-in relay address".into(),
+            ));
+        }
     }
     Ok(())
 }
@@ -398,6 +449,8 @@ pub fn account_status<S: CredentialStore>(
         model: config.model.clone(),
         auth_mode: if profile.requires_credential {
             "api_key".into()
+        } else if config.provider == FREE_PROVIDER_ID {
+            FREE_AUTH_MODE.into()
         } else {
             "local_or_user_configured".into()
         },
@@ -421,6 +474,17 @@ pub fn list_models<S: CredentialStore>(
     }
     if crate::account_cli::is_account_provider(&config.provider) {
         return Ok(crate::account_cli::builtin_models(&config.provider));
+    }
+    if config.provider == FREE_PROVIDER_ID {
+        // The relay serves exactly one model and no catalog.
+        let model = profile.default_model.unwrap_or_default();
+        return Ok(vec![AiModelOption {
+            id: model.clone(),
+            is_default: true,
+            display_name: model,
+            default_reasoning_effort: "high".into(),
+            supported_reasoning_efforts: vec!["high".into()],
+        }]);
     }
     let mut url = reqwest::Url::parse(&config.endpoint)
         .map_err(|_| AppError::InvalidInput("AI provider endpoint must be a valid URL".into()))?;
@@ -663,11 +727,7 @@ where
         analysis: analysis.clone(),
         record: crate::models::CodexAnalysisRecord {
             engine: "provider_api".into(),
-            auth_mode: if profile.requires_credential {
-                "api_key".into()
-            } else {
-                "local_endpoint".into()
-            },
+            auth_mode: integration_and_auth_mode(&config.provider).1.into(),
             provider: Some(config.provider.clone()),
             model: Some(config.model.clone()),
             reasoning_effort: Some(config.reasoning_effort.clone()),
@@ -749,6 +809,16 @@ fn request_provider(
         prompt,
         secret,
     )?;
+    extract_structured_output(&post_provider(provider, endpoint, headers, &body)?)
+}
+
+/// Send one request to a reviewed route and return its response envelope.
+fn post_provider(
+    provider: &str,
+    endpoint: &str,
+    headers: HeaderMap,
+    body: &Value,
+) -> Result<Value, AppError> {
     let client = Client::builder()
         .timeout(Duration::from_secs(120))
         .redirect(reqwest::redirect::Policy::none())
@@ -759,7 +829,7 @@ fn request_provider(
     let response = client
         .post(endpoint)
         .headers(headers)
-        .json(&body)
+        .json(body)
         .send()
         .map_err(|error| AppError::Process(format!("AI provider request failed: {error}")))?;
     let status = response.status();
@@ -789,6 +859,13 @@ fn request_provider(
                 "provider usage is limited; retry when available".into(),
             ));
         }
+        if provider == FREE_PROVIDER_ID {
+            // The relay holds the maintainer's key; nothing here is the
+            // user's credential to fix.
+            return Err(AppError::Process(
+                "the free assistant is not available right now; try again later or choose another assistant".into(),
+            ));
+        }
         if matches!(status.as_u16(), 401 | 403) {
             return Err(AppError::Credential(
                 "provider authentication was not accepted".into(),
@@ -799,10 +876,101 @@ fn request_provider(
             status.as_u16()
         )));
     }
-    let envelope: Value = serde_json::from_slice(&bytes).map_err(|_| {
+    serde_json::from_slice(&bytes).map_err(|_| {
         AppError::Protocol("AI provider returned an unreadable response envelope".into())
-    })?;
-    extract_structured_output(&envelope)
+    })
+}
+
+/// The magic wand on the description step: one turn that turns a rough note
+/// into a fuller description. Codex drafts through its App Server session in
+/// the command layer; every other route is handled here.
+pub fn draft_description<S: CredentialStore>(
+    store: &S,
+    config: &AiProviderConfig,
+    note: &str,
+) -> Result<String, AppError> {
+    let profile = validate_config(config)?;
+    if config.provider == "codex" {
+        return Err(AppError::InvalidInput(
+            "Codex drafts through the official App Server".into(),
+        ));
+    }
+    if config.provider == crate::claude_code::PROVIDER_ID {
+        return crate::claude_code::draft_description(
+            &config.model,
+            &config.reasoning_effort,
+            note,
+        );
+    }
+    if crate::account_cli::is_account_provider(&config.provider) {
+        return crate::account_cli::draft_description(
+            &config.provider,
+            &config.model,
+            &config.reasoning_effort,
+            note,
+        );
+    }
+    let secret = if profile.requires_credential {
+        let reference = config.credential_reference.as_ref().ok_or_else(|| {
+            AppError::Credential("provider credential reference is missing".into())
+        })?;
+        Some(store.read(reference)?)
+    } else {
+        None
+    };
+    if secret
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(AppError::Credential(
+            "provider credential store returned an empty value".into(),
+        ));
+    }
+    let (headers, body) = description_payload(&profile.protocol, config, note, secret.as_deref())?;
+    hoi4_setup_core::description::read_description_reply(&post_provider(
+        &config.provider,
+        &config.endpoint,
+        headers,
+        &body,
+    )?)
+}
+
+fn description_payload(
+    protocol: &str,
+    config: &AiProviderConfig,
+    note: &str,
+    secret: Option<&str>,
+) -> Result<(HeaderMap, Value), AppError> {
+    let supports_effort = matches!(config.provider.as_str(), "deepseek" | "gemini" | "grok")
+        || (config.provider == "claude"
+            && supported_efforts(&config.provider, &config.model).len() > 1);
+    let request = hoi4_setup_core::description::description_request(
+        &config.provider,
+        protocol,
+        &config.endpoint,
+        &config.model,
+        &config.reasoning_effort,
+        note,
+        supports_effort,
+    )?;
+    let mut headers = HeaderMap::new();
+    for (name, value) in request.headers {
+        headers.insert(
+            name,
+            HeaderValue::from_str(&value)
+                .map_err(|_| AppError::Protocol("provider header is invalid".into()))?,
+        );
+    }
+    if let Some(secret) = secret {
+        let (name, value) = hoi4_setup_core::analysis::credential_header(protocol, secret);
+        headers.insert(
+            name,
+            HeaderValue::from_str(&value).map_err(|_| {
+                AppError::Credential("provider credential contains invalid header bytes".into())
+            })?,
+        );
+    }
+    Ok((headers, request.body))
 }
 
 #[cfg(test)]
@@ -815,11 +983,17 @@ mod tests {
     #[test]
     fn provider_profiles_include_default_and_custom_routes() {
         let profiles = provider_profiles();
+        // The free assistant leads once its relay is deployed; the Claude
+        // account route is the first account route either way.
+        let skip = usize::from(free_assistant().is_some());
+        if skip == 1 {
+            assert_eq!(profiles[0].id, FREE_PROVIDER_ID);
+        }
         assert_eq!(
-            profiles.first().map(|profile| profile.id.as_str()),
+            profiles.get(skip).map(|profile| profile.id.as_str()),
             Some(crate::claude_code::PROVIDER_ID)
         );
-        let claude_account = profiles.first().unwrap();
+        let claude_account = &profiles[skip];
         assert_eq!(
             claude_account.default_model.as_deref(),
             Some("claude-haiku-5-5")
@@ -1195,5 +1369,119 @@ mod tests {
         })
         .is_err());
         assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn openrouter_keys_stay_on_the_reviewed_origin() {
+        let profile = profile(OPENROUTER_PROVIDER_ID).unwrap();
+        assert!(profile.requires_credential);
+        assert_eq!(
+            profile.default_endpoint.as_deref(),
+            Some(OPENROUTER_ENDPOINT)
+        );
+        assert_eq!(
+            profile.default_model.as_deref(),
+            Some(OPENROUTER_DEFAULT_MODEL)
+        );
+        assert!(
+            validate_endpoint_for_provider(OPENROUTER_PROVIDER_ID, Some(OPENROUTER_ENDPOINT))
+                .is_ok()
+        );
+        assert!(validate_endpoint_for_provider(
+            OPENROUTER_PROVIDER_ID,
+            Some("https://openrouter.ai.attacker.example/api/v1/chat/completions")
+        )
+        .is_err());
+        assert_eq!(
+            integration_and_auth_mode(OPENROUTER_PROVIDER_ID),
+            ("provider_api", "api_key")
+        );
+    }
+
+    #[test]
+    fn the_free_route_exists_only_with_a_deployed_relay() {
+        match free_assistant() {
+            None => {
+                assert!(profile(FREE_PROVIDER_ID).is_none());
+                assert!(validate_endpoint_for_provider(
+                    FREE_PROVIDER_ID,
+                    Some("https://relay.example/v1/chat/completions")
+                )
+                .is_err());
+            }
+            Some(free) => {
+                let profile = profile(FREE_PROVIDER_ID).unwrap();
+                assert!(!profile.requires_credential);
+                assert!(
+                    validate_endpoint_for_provider(FREE_PROVIDER_ID, Some(&free.endpoint)).is_ok()
+                );
+                assert!(validate_endpoint_for_provider(
+                    FREE_PROVIDER_ID,
+                    Some(&format!("{}x", free.endpoint))
+                )
+                .is_err());
+                let config = AiProviderConfig {
+                    provider: FREE_PROVIDER_ID.into(),
+                    model: "anthropic/claude-opus".into(),
+                    reasoning_effort: "high".into(),
+                    endpoint: free.endpoint.clone(),
+                    credential_reference: None,
+                };
+                assert!(validate_config(&config).is_err());
+                let config = AiProviderConfig {
+                    model: free.model.clone(),
+                    ..config
+                };
+                assert!(validate_config(&config).is_ok());
+                let models = list_models(&MemoryCredentialStore::default(), &config).unwrap();
+                assert_eq!(models.len(), 1);
+                assert_eq!(models[0].id, free.model);
+            }
+        }
+        assert_eq!(
+            integration_and_auth_mode(FREE_PROVIDER_ID),
+            ("provider_api", FREE_AUTH_MODE)
+        );
+    }
+
+    #[test]
+    fn description_payloads_carry_the_draft_schema_and_only_the_selected_key() {
+        let config = AiProviderConfig {
+            provider: OPENROUTER_PROVIDER_ID.into(),
+            model: OPENROUTER_DEFAULT_MODEL.into(),
+            reasoning_effort: "high".into(),
+            endpoint: OPENROUTER_ENDPOINT.into(),
+            credential_reference: None,
+        };
+        let key = ["sk", "or", "v1", "payload-test"].join("-");
+        let (headers, body) =
+            description_payload("openai_compatible", &config, "cold war mod", Some(&key)).unwrap();
+        assert_eq!(
+            headers.get("authorization").unwrap(),
+            &format!("Bearer {key}")
+        );
+        assert_eq!(
+            body["response_format"]["json_schema"]["name"],
+            "mod_description"
+        );
+        assert_eq!(body["provider"]["require_parameters"], true);
+        assert!(!body.to_string().contains(&key));
+        assert!(body.get("tools").is_none());
+        let (headers, _) =
+            description_payload("openai_compatible", &config, "cold war mod", None).unwrap();
+        assert!(headers.get("authorization").is_none());
+        assert!(description_payload("openai_compatible", &config, "   ", None).is_err());
+    }
+
+    #[test]
+    fn drafting_with_codex_must_use_the_app_server() {
+        let config = AiProviderConfig {
+            provider: "codex".into(),
+            model: "gpt-5.6-luna".into(),
+            reasoning_effort: "high".into(),
+            endpoint: String::new(),
+            credential_reference: None,
+        };
+        assert!(draft_description(&MemoryCredentialStore::default(), &config, "a mod").is_err());
     }
 }

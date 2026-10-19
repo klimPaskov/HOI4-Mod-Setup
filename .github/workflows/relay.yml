@@ -1,0 +1,45 @@
+name: Deploy free assistant relay
+
+# Manual only. Deploys relay/ to Cloudflare Workers and stores the OpenRouter
+# key as a Worker secret. The key comes from the free-assistant environment's
+# secrets and is never written to the repository, the app, or the log.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: free-assistant-relay
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: free-assistant
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Test the relay
+        run: node --test relay/worker.node-test.mjs
+      - name: Deploy the Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4.146.0 deploy --config relay/wrangler.toml
+      - name: Store the OpenRouter key as a Worker secret
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "Add OPENROUTER_API_KEY to the free-assistant environment first." >&2
+            exit 1
+          fi
+          printf '%s' "$OPENROUTER_API_KEY" | npx --yes wrangler@4.146.0 secret put OPENROUTER_API_KEY --config relay/wrangler.toml

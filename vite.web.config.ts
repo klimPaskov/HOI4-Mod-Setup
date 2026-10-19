@@ -1,7 +1,10 @@
 import { defineConfig } from "vite";
 import type { Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+
+const freeAssistant = JSON.parse(readFileSync(new URL("./src/free-assistant.json", import.meta.url), "utf8")) as { endpoint: string | null };
 
 /** Hosts the web edition may contact. Mod files never leave the page. */
 export const WEB_CONNECT_SOURCES = [
@@ -14,6 +17,10 @@ export const WEB_CONNECT_SOURCES = [
   "https://api.x.ai",
   "https://api.deepseek.com",
   "https://open.bigmodel.cn",
+  // OpenRouter sign-in and requests with the user's own OpenRouter key.
+  "https://openrouter.ai",
+  // The free assistant relay, once it is deployed.
+  ...(freeAssistant.endpoint ? [new URL(freeAssistant.endpoint).origin] : []),
   // A local model server the user runs, on this computer only.
   "http://127.0.0.1:*",
   "http://localhost:*",
@@ -67,5 +74,11 @@ export default defineConfig(({ command, isPreview }) => ({
     emptyOutDir: true,
     target: "es2022",
     sourcemap: false,
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL("./web/index.html", import.meta.url)),
+        "openrouter-callback": fileURLToPath(new URL("./web/openrouter-callback.html", import.meta.url)),
+      },
+    },
   },
 }));

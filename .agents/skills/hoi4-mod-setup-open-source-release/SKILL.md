@@ -134,6 +134,12 @@ assets. Read the configured version from `package.json`, Tauri
 configuration, Cargo metadata/lock, and the tag instead of copying a temporary
 version into a skill.
 
+The **Deploy free assistant relay** workflow (`.github/workflows/relay.yml`)
+is manual only, read-only to the repository, runs in the `free-assistant`
+environment, tests the relay first, and pins `wrangler` to an exact version.
+After a first deploy, set `endpoint` in `src/free-assistant.json`; the web
+build's CSP and `check_web_build.mjs` allow that origin automatically.
+
 ## Release rules
 
 Stable release-note curation includes the configured version's `CHANGELOG.md`

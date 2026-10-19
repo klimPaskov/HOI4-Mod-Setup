@@ -453,7 +453,9 @@ from `fuzz/README.md` when parser behavior changes. Use the repository-owned
 scripts for validation and release gates: `pnpm validate`,
 `pnpm test:workflows`, `pnpm test:a11y`, `pnpm test:e2e`,
 `pnpm release:build`, `pnpm release:verify`, `pnpm desktop:e2e`, and
-`pnpm installer:e2e`; use `pnpm test:release-assets` for the release curation
+`pnpm installer:e2e`; use `pnpm test:relay` for the free assistant relay's
+request, origin, size, rate-limit, and upstream-failure rules; use
+`pnpm test:release-assets` for the release curation
 fixture. The curation test verifies that the platform dependency inventories
 are unioned into internal `release-artifacts/` evidence, while preview
 curation writes the corresponding union under `preview-artifacts/`; workflows

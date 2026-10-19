@@ -68,6 +68,7 @@ FULL_EXPECTED = [
 EXAMPLE_SCHEMA_MAP = {
     "codex-analysis.example.json": "codex-analysis.schema.json",
     "conflict-record.example.json": "conflict-record.schema.json",
+    "description-draft.example.json": "description-draft.schema.json",
     "git-online-record.example.json": "git-online-record.schema.json",
     "installation-lock.example.json": "installation-lock.schema.json",
     "installation-plan.example.json": "installation-plan.schema.json",

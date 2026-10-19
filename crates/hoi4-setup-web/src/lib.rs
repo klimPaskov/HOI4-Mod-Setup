@@ -14,12 +14,14 @@ mod build;
 mod context_files;
 mod export;
 mod scan;
+mod sign_in;
 mod source;
 
-pub use assistant::{analysis_turn, read_analysis_reply};
+pub use assistant::{analysis_turn, description_turn, read_analysis_reply, read_description_reply};
 pub use context_files::context_document;
 pub use export::Export;
 pub use scan::Project;
+pub use sign_in::{open_router_key, open_router_key_request, open_router_sign_in};
 pub use source::Source;
 
 use hoi4_setup_core::models::Platform;

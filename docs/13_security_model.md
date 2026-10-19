@@ -169,6 +169,14 @@ Non-Codex rules:
   reference; and
 - the first provider request is a bounded, schema-validated capability check.
 
+OpenRouter sign-in on the desktop opens openrouter.ai in the system browser
+with an S256 PKCE challenge and a random `state`. A one-time listener on
+`127.0.0.1` (never another interface) accepts only `GET /callback` with the
+matching `state`, answers with a page that never echoes the code, and stops
+after five minutes or on cancel. The code is exchanged once over HTTPS without
+redirects, and the returned key is saved to the OS vault as the `openrouter`
+credential. The free route reads no vault entry and sends no credential.
+
 ## Secrets
 
 Secret values do not enter logs through debug formatting, are not copied automatically, do not enter crash reports, are not stored or hashed, are not shown in previews, and are injected only into the approved request header or the isolated, hash-verified Meshy bootstrap/route. The bootstrap removes the key before every dependency child; Blender, Git, uv, npm setup, and downloaded setup code never receive it. Blender routes declare no Meshy environment. State-bearing renderer calls blank the Meshy password draft before Tauri IPC; planning receives only the vault-backed opaque reference. The optional flattened Chat export rejects secret-shaped paths and content before staging. `workflow.super_events` has no credential or environment requirement and never creates a vault reference; its unselected state must not add Super Events-specific `AGENTS.md` guidance.
@@ -327,6 +335,16 @@ core in a browser tab and never mutates a project in place.
   worker, the lock, or the ZIP. The provider receives the scan findings the
   desktop would show it, never file contents beyond those excerpts.
 - The **Network** panel lists every request the page made.
+- The free assistant sends no user credential. Its relay holds the
+  maintainer's OpenRouter key as a Cloudflare Worker secret; the key is never
+  in the repository, the page, the desktop app, a lock, or a log. The relay
+  forwards only the core's request shape to one model, with size and
+  per-address rate limits, and reports upstream key failures as the free
+  route being unavailable (`relay/README.md`).
+- OpenRouter sign-in uses OAuth PKCE. The verifier stays in the setup tab's
+  memory; the callback page receives only the code and `state`, removes them
+  from the address bar, and hands them back over a same-origin channel. The
+  returned key is treated exactly like a typed one.
 - A local model assistant may only use an `http(s)://127.0.0.1`,
   `localhost`, or `[::1]` address; the CSP allows those origins and no other
   plain-HTTP host. A hosted route's address cannot be changed.

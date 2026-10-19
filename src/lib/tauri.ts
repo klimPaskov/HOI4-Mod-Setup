@@ -73,6 +73,9 @@ interface TauriCommandMap {
   ai_account_read: { args: { provider: string; model: string; reasoningEffort: string; endpoint: string }; result: AiAccountStatus };
   store_ai_provider_credential: { args: { provider: string; value: string }; result: boolean };
   remove_ai_provider_credential: { args: { provider: string }; result: boolean };
+  openrouter_sign_in: { args: Record<string, never>; result: boolean };
+  openrouter_sign_in_cancel: { args: Record<string, never>; result: void };
+  draft_mod_description: { args: { provider: string; model: string; reasoningEffort: string; endpoint: string; note: string }; result: string };
   store_image_generation_credential: { args: { provider: string; field: string; value: string }; result: CredentialReference };
   image_generation_credential_status: { args: { provider: string; field: string }; result: CredentialReference | null };
   remove_image_generation_credential: { args: { provider: string; field: string }; result: boolean };
@@ -228,6 +231,20 @@ export async function storeAiProviderCredential(provider: string, value: string)
 
 export async function removeAiProviderCredential(provider: string): Promise<boolean> {
   return (await invokeCommand("remove_ai_provider_credential", { provider })) === true;
+}
+
+/** Sign in with OpenRouter in the system browser; the key goes to the OS vault. */
+export async function openRouterSignIn(): Promise<CommandResult<boolean>> {
+  return invokeCommandResult("openrouter_sign_in", {});
+}
+
+export async function cancelOpenRouterSignIn(): Promise<void> {
+  await invokeCommandResult("openrouter_sign_in_cancel", {});
+}
+
+/** The magic wand: the selected setup assistant's fuller version of a note. */
+export async function draftModDescription(provider: string, model: string, reasoningEffort: string, endpoint: string, note: string): Promise<CommandResult<string>> {
+  return invokeCommandResult("draft_mod_description", { provider, model, reasoningEffort, endpoint, note });
 }
 
 export async function storeImageGenerationCredential(provider: string, field: string, value: string): Promise<CredentialReference | null> {

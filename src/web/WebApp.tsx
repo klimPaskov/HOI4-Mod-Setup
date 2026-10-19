@@ -9,7 +9,9 @@ import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "../identity";
 import { renderCoverPng, renderReferenceJpeg } from "../lib/images";
 import { startCoreWorker } from "./core-client";
 import type { CoreClient } from "./core-client";
-import { BROWSER_PROVIDERS, isLoopbackEndpoint, MODEL_PATTERN, modelChoices, proposal, provenanceFor, routeFor, runAssistant } from "./assistant";
+import { BROWSER_PROVIDERS, draftDescription, isLoopbackEndpoint, MODEL_PATTERN, modelChoices, proposal, provenanceFor, routeFor, runAssistant } from "./assistant";
+import { signInWithOpenRouter } from "./openrouter";
+import DescriptionWand from "../DescriptionWand";
 import { folderFromDrop, folderFromInput, readFileBytes } from "./folder";
 import type { FolderSelection } from "./folder";
 import { fetchRaw, MANIFEST_PATH, networkLog, onNetworkLog, resolveSource, SOURCE_NAME, SOURCE_OWNER } from "./github";
@@ -143,6 +145,11 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   const [assistantEndpoint, setAssistantEndpoint] = useState(BROWSER_PROVIDERS[0].endpoint);
   // The key lives only in this component's memory and is never stored.
   const [apiKey, setApiKey] = useState("");
+  // OpenRouter sign-in: a pending popup can be cancelled; the returned key is
+  // kept like a typed one.
+  const [signInAbort, setSignInAbort] = useState<AbortController | null>(null);
+  const [signedIn, setSignedIn] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [provenance, setProvenance] = useState<AssistantProvenance | null>(null);
   const [suggested, setSuggested] = useState<Set<keyof Identity>>(new Set());
@@ -415,12 +422,43 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     setAssistantEffort(next.defaultEffort);
     setAssistantEndpoint(next.endpoint);
     setApiKey("");
+    signInAbort?.abort();
+    setSignedIn(false);
+    setSignInError(null);
     resetAnalysis();
   };
+  const signIn = async () => {
+    const controller = new AbortController();
+    setSignInAbort(controller);
+    setSignInError(null);
+    try {
+      const key = await signInWithOpenRouter(client(), controller.signal);
+      if (controller.signal.aborted) return;
+      setApiKey(key);
+      setSignedIn(true);
+      resetAnalysis();
+    } catch (error) {
+      if (!controller.signal.aborted) setSignInError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSignInAbort((current) => current === controller ? null : current);
+    }
+  };
   const assistantLabel = assistantProvider.label.replace(/ API key$/, "");
-  const assistantProblem = assistantProvider.local
+  const assistantProblem = assistantProvider.free
+    ? null
+    : assistantProvider.local
     ? !isLoopbackEndpoint(assistantEndpoint.trim()) ? "Enter the local model's address on this computer." : !MODEL_PATTERN.test(assistantModel.trim()) ? "Enter the local model's ID." : null
-    : !apiKey.trim() ? `Enter your ${assistantLabel} API key.` : !MODEL_PATTERN.test(assistantModel.trim()) ? "Enter a model ID without spaces." : null;
+    : !apiKey.trim() ? (assistantProvider.signIn ? `Sign in with ${assistantLabel} or enter an API key.` : `Enter your ${assistantLabel} API key.`) : !MODEL_PATTERN.test(assistantModel.trim()) ? "Enter a model ID without spaces." : null;
+  /** The magic wand on the describe step. */
+  const draftBrief = async (note: string): Promise<{ value: string | null; error?: string }> => {
+    if (assistantProblem) return { value: null, error: assistantProblem };
+    try {
+      const route = routeFor(assistantProvider, assistantModel.trim(), assistantEffort, assistantProvider.local ? assistantEndpoint.trim() : assistantProvider.endpoint);
+      return { value: await draftDescription(client(), route, apiKey, note) };
+    } catch (error) {
+      return { value: null, error: error instanceof Error ? error.message : String(error) };
+    }
+  };
   const usesAssistant = !(kind === "existing" && existingSetup && maintenance);
   const startProblem = kind === null ? "Choose a new mod or an existing mod folder." : kind === "existing" && !scan ? "Choose the mod folder." : usesAssistant ? assistantProblem : null;
   const briefProblem = !identity.displayName.trim() ? "Enter the mod name." : !brief.trim() ? "Describe the mod in a sentence or two." : null;
@@ -801,7 +839,9 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                 {usesAssistant && (
                   <section className="panel form-panel web-assistant" aria-labelledby="assistant-title">
                     <h2 id="assistant-title" className="panel-title">Setup assistant</h2>
-                    <p className="muted">{assistantProvider.local
+                    <p className="muted">{assistantProvider.free
+                      ? "It fills in the mod's details and recommends components; you review everything before the ZIP is made. No account or key is needed: HOI4 Mod Setup's relay sends the request to a free model on OpenRouter. Free models may keep what you send, and everyone shares one daily limit."
+                      : assistantProvider.local
                       ? "It fills in the mod's details and recommends components; you review everything before the ZIP is made. Requests go only to the model server on this computer."
                       : `It fills in the mod's details and recommends components; you review everything before the ZIP is made. Your API key stays in this tab's memory, is sent only to ${new URL(assistantProvider.endpoint).host}, and is forgotten when you close or reload the page.`}</p>
                     <div className="form-grid">
@@ -811,7 +851,7 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                           {BROWSER_PROVIDERS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
                         </select>
                       </label>
-                      {assistantProvider.local ? (
+                      {assistantProvider.free ? null : assistantProvider.local ? (
                         <label className="field">
                           <span className="field-label">Server address</span>
                           <input className="text-input mono" value={assistantEndpoint} onChange={(event) => { setAssistantEndpoint(event.target.value); resetAnalysis(); }} />
@@ -819,12 +859,12 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                       ) : (
                         <label className="field">
                           <span className="field-label">API key</span>
-                          <input className="text-input mono" type="password" autoComplete="off" spellCheck={false} value={apiKey} onChange={(event) => { setApiKey(event.target.value); resetAnalysis(); }} />
+                          <input className="text-input mono" type="password" autoComplete="off" spellCheck={false} value={apiKey} onChange={(event) => { setApiKey(event.target.value); setSignedIn(false); resetAnalysis(); }} />
                         </label>
                       )}
                       <label className="field">
                         <span className="field-label">Model</span>
-                        <input className="text-input mono" list="assistant-models" value={assistantModel} onChange={(event) => { setAssistantModel(event.target.value); resetAnalysis(); }} />
+                        <input className="text-input mono" list="assistant-models" value={assistantModel} readOnly={assistantProvider.free} onChange={(event) => { setAssistantModel(event.target.value); resetAnalysis(); }} />
                         <datalist id="assistant-models">{modelChoices(assistantProvider).map((model) => <option key={model} value={model} />)}</datalist>
                       </label>
                       {assistantProvider.efforts.length > 1 && (
@@ -836,7 +876,15 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                         </label>
                       )}
                     </div>
-                    <a className="external-link" href={assistantProvider.keyUrl} target="_blank" rel="noreferrer noopener">{assistantProvider.local ? "Local model setup" : `Get a ${assistantLabel} API key`}</a>
+                    {assistantProvider.signIn && (
+                      <div className="button-row web-sign-in">
+                        <button type="button" className="button secondary" onClick={() => void signIn()} disabled={signInAbort !== null}>{signInAbort ? `Waiting for ${assistantLabel}…` : `Sign in with ${assistantLabel}`}</button>
+                        {signInAbort && <button type="button" className="text-button" onClick={() => signInAbort.abort()}>Cancel</button>}
+                      </div>
+                    )}
+                    {signedIn && <p className="status status-pass" role="status">Signed in with {assistantLabel}. The key stays in this tab's memory.</p>}
+                    {signInError && <p className="callout review" role="alert">{signInError}</p>}
+                    {assistantProvider.keyUrl && <a className="external-link" href={assistantProvider.keyUrl} target="_blank" rel="noreferrer noopener">{assistantProvider.local ? "Local model setup" : `Get a ${assistantLabel} API key`}</a>}
                   </section>
                 )}
                 {kind === "existing" && usesAssistant && scan && (
@@ -864,6 +912,7 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                     <span className="field-label">What the mod is about</span>
                     <textarea className="brief-input web-brief" value={brief} onChange={(event) => { setBrief(event.target.value); resetAnalysis(); }} />
                   </label>
+                  <DescriptionWand description={brief} assistantName={assistantLabel} onApply={(value) => { setBrief(value); resetAnalysis(); }} draft={draftBrief} disabled={busy !== null} />
                 </div>
                 <ContextPanel documents={documents} images={images} refused={refused} onAddDocuments={addDocuments} onAddImages={addImages}
                   onDocument={(id, change) => { setDocuments((current) => current.map((entry) => entry.document.id === id ? { ...entry, ...change } : entry)); if ("include" in change) resetAnalysis(); }}

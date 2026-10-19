@@ -46,6 +46,7 @@ use crate::transaction::{
 };
 use crate::AppError;
 use hoi4_setup_core::adapt::*;
+use hoi4_setup_core::free_assistant::OPENROUTER_PROVIDER_ID;
 use hoi4_setup_core::image_generation::*;
 use hoi4_setup_core::manifest::{add_supported_profile_components, default_profile_component_ids};
 use regex::Regex;
@@ -933,6 +934,9 @@ pub fn run() {
             ai_model_list,
             ai_account_read,
             store_ai_provider_credential,
+            openrouter_sign_in,
+            openrouter_sign_in_cancel,
+            draft_mod_description,
             remove_ai_provider_credential,
             store_image_generation_credential,
             image_generation_credential_status,
@@ -1116,6 +1120,105 @@ fn store_ai_provider_credential(provider: String, value: String) -> Result<bool,
         save_ai_provider_key(&OsCredentialStore, provider.trim(), &value).map_err(command_error)?;
     validate_ai_provider_credential_for(&reference, provider.trim()).map_err(command_error)?;
     Ok(true)
+}
+
+fn openrouter_sign_in_cancellation() -> &'static Mutex<Option<Arc<AtomicBool>>> {
+    static CANCELLATION: OnceLock<Mutex<Option<Arc<AtomicBool>>>> = OnceLock::new();
+    CANCELLATION.get_or_init(|| Mutex::new(None))
+}
+
+/// Sign in with OpenRouter in the system browser and keep the returned key in
+/// the OS vault as the OpenRouter credential.
+#[tauri::command(async)]
+async fn openrouter_sign_in() -> Result<bool, String> {
+    run_blocking_command("openrouter-sign-in", || {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        {
+            let mut slot = openrouter_sign_in_cancellation()
+                .lock()
+                .map_err(|_| "OpenRouter sign-in is unavailable".to_string())?;
+            if let Some(previous) = slot.replace(cancelled.clone()) {
+                previous.store(true, Ordering::SeqCst);
+            }
+        }
+        let outcome = (|| {
+            let pending = crate::openrouter::PendingSignIn::start().map_err(command_error)?;
+            open_url_in_system_browser(pending.url.clone())?;
+            let key = pending.finish(&cancelled).map_err(command_error)?;
+            let reference = save_ai_provider_key(&OsCredentialStore, OPENROUTER_PROVIDER_ID, &key)
+                .map_err(command_error)?;
+            validate_ai_provider_credential_for(&reference, OPENROUTER_PROVIDER_ID)
+                .map_err(command_error)?;
+            Ok(true)
+        })();
+        if let Ok(mut slot) = openrouter_sign_in_cancellation().lock() {
+            if slot
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &cancelled))
+            {
+                *slot = None;
+            }
+        }
+        outcome
+    })
+    .await
+}
+
+#[tauri::command(async)]
+fn openrouter_sign_in_cancel() -> Result<(), String> {
+    if let Some(cancelled) = openrouter_sign_in_cancellation()
+        .lock()
+        .map_err(|_| "OpenRouter sign-in is unavailable".to_string())?
+        .take()
+    {
+        cancelled.store(true, Ordering::SeqCst);
+    }
+    Ok(())
+}
+
+/// The magic wand on the description step. The note goes only to the
+/// selected setup assistant; the draft returns to the description field for
+/// the user to review.
+#[tauri::command(async)]
+async fn draft_mod_description(
+    provider: String,
+    model: String,
+    reasoning_effort: String,
+    endpoint: String,
+    note: String,
+) -> Result<String, String> {
+    run_blocking_command("description-draft", move || {
+        if provider == "codex" {
+            return with_codex_session(|session| {
+                session.draft_description(&note, &model, &reasoning_effort)
+            })
+            .map_err(codex_user_error);
+        }
+        let credential_reference = ai_credential_reference(&provider);
+        if let Some(reference) = credential_reference.as_ref() {
+            validate_ai_provider_credential_for(reference, provider.trim())
+                .map_err(provider_analysis_user_error)?;
+        }
+        ai::draft_description(
+            &OsCredentialStore,
+            &AiProviderConfig {
+                provider: provider.clone(),
+                model,
+                reasoning_effort,
+                endpoint,
+                credential_reference,
+            },
+            &note,
+        )
+        .map_err(|error| {
+            if provider == crate::claude_code::PROVIDER_ID {
+                claude_user_error(error)
+            } else {
+                provider_analysis_user_error(error)
+            }
+        })
+    })
+    .await
 }
 
 #[tauri::command(async)]

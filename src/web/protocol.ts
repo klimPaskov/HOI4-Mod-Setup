@@ -299,6 +299,11 @@ export interface CoreOperations {
   contextDocument: { args: { number: number; name: string; buffer: ArrayBuffer }; result: ContextDocument };
   assistantTurn: { args: { request: AnalysisRequest; route: AssistantRoute; correction: string | null }; result: AssistantTurn };
   assistantReply: { args: { envelope: string; request: AnalysisRequest; inputSha256: string; analysisId: string }; result: AssistantReply };
+  descriptionTurn: { args: { route: AssistantRoute; note: string }; result: { headers: Array<[string, string]>; body: unknown } };
+  descriptionReply: { args: { envelope: string }; result: { description: string } | { error: string } };
+  openRouterStart: { args: { callback: string }; result: { url: string; verifier: string; state: string } };
+  openRouterKeyRequest: { args: { code: string; verifier: string }; result: string };
+  openRouterKey: { args: { response: string }; result: string };
 }
 
 export type Operation = keyof CoreOperations;

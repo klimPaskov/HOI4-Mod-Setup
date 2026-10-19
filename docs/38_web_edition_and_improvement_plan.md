@@ -253,6 +253,14 @@ Each phase ships on its own and keeps desktop parity.
 5. Accept that account sign-in routes, MCP bootstrap, Git, and in-place
    transactions stay desktop-only, and record the web ZIP flow as an accepted
    amendment to the transaction contract.
+   *Amended by the owner on 2026-10-19:* the web edition must not depend on
+   pasted API keys. Claude.ai and ChatGPT subscription sign-in remain
+   impossible on a web page (Anthropic does not permit third-party Claude.ai
+   login, and ChatGPT plans have no third-party sign-in), so the web adds
+   two account routes instead: the free assistant through the maintainer's
+   relay, which needs no account and is the default once deployed, and
+   OpenRouter sign-in (OAuth PKCE). API keys and the local model remain
+   available. See `docs/31_ai_provider_profiles_and_chat_sources.md`.
 
 ## Risks
 
