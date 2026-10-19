@@ -107,6 +107,19 @@ Conflict review is the exception. It may show a three-way comparison and more co
 
 - One primary action per screen.
 - Back remains visible where navigation is reversible.
+- Skip a screen that holds no decision, in both directions. `nextScreen` and
+  `previousScreen` in `src/App.tsx` use the same named predicate (for example
+  `integrationReviewNeeded`: the MCP and credentials review appears only for a
+  selected Meshy workflow or a Live Tools registration), and Back never routes to a
+  screen Next would skip. Cover each skip with a unit test and a browser
+  Back-and-Next check in `tests/browser/wizard.spec.ts`; a documentation
+  scenario may still render a skipped screen directly.
+- The web edition has no manual path. Its Project step holds the required
+  Setup assistant panel (provider, memory-only API key, model, effort).
+  Continue explains what is missing through its `title` and a polite live
+  region. Imports skip Describe in the step rail, and the Details step marks
+  values `Detected` or `Suggested by <provider>`. Recommended components are
+  preselected once per analysis.
 - Destructive actions require clear scope and confirmation.
 - Disabled actions explain the blocking reason in a tooltip or adjacent concise status.
 - The Description primary action uses a visible `Preparing details…` pending

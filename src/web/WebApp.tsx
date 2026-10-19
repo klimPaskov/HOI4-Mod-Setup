@@ -9,17 +9,18 @@ import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "../identity";
 import { renderCoverPng } from "../lib/images";
 import { startCoreWorker } from "./core-client";
 import type { CoreClient } from "./core-client";
-import { BROWSER_PROVIDERS, proposal, provenanceFor, routeFor, runAssistant } from "./assistant";
+import { BROWSER_PROVIDERS, MODEL_PATTERN, modelChoices, proposal, provenanceFor, routeFor, runAssistant } from "./assistant";
 import { folderFromDrop, folderFromInput, readFileBytes } from "./folder";
 import type { FolderSelection } from "./folder";
 import { fetchRaw, MANIFEST_PATH, networkLog, onNetworkLog, resolveSource, SOURCE_NAME, SOURCE_OWNER } from "./github";
 import type { NetworkRecord, ResolvedSource, SourceMode } from "./github";
 import type { Analysis, AnalysisRequest, ApprovedEvidence, AssistantProvenance, Decision, ExportEntry, Comparison, Platform, ScanSummary, SourcePreview } from "./protocol";
 
-type Step = "start" | "describe" | "components" | "review" | "done";
+type Step = "start" | "describe" | "details" | "components" | "review" | "done";
 const STEPS: Array<{ id: Step; label: string }> = [
   { id: "start", label: "Project" },
   { id: "describe", label: "Describe" },
+  { id: "details", label: "Details" },
   { id: "components", label: "Components" },
   { id: "review", label: "Review" },
   { id: "done", label: "Download" },
@@ -124,6 +125,10 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   identityRef.current = identity;
   const editedRef = useRef(edited);
   editedRef.current = edited;
+  const suggestedRef = useRef(suggested);
+  suggestedRef.current = suggested;
+  // A new mod's brief, kept apart from the description the assistant writes.
+  const [brief, setBrief] = useState("");
   const [profileId, setProfileId] = useState<string>("");
   const [optional, setOptional] = useState<Set<string>>(new Set());
   const [primary, setPrimary] = useState("");
@@ -135,6 +140,7 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   const [network, setNetwork] = useState<NetworkRecord[]>(networkLog);
   const [dragging, setDragging] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const seededAnalysis = useRef<string | null>(null);
 
   useEffect(() => onNetworkLog(setNetwork), []);
   useEffect(() => headingRef.current?.focus(), [step]);
@@ -207,6 +213,9 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
       descriptorTags: detectedList(result, "descriptor_tags") ?? defaults.descriptorTags,
     });
     setEdited(new Set());
+    setAnalysis(null);
+    setProvenance(null);
+    setSuggested(new Set());
   }), [client, run]);
 
   const onDrop = useCallback(async (event: DragEvent<HTMLElement>) => {
@@ -230,13 +239,21 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     event.target.value = "";
   }, [importFolder]);
 
-  const startNew = () => {
+  const forgetAnalysis = () => {
+    setAnalysis(null);
+    setProvenance(null);
+    setSuggested(new Set());
+  };
+
+  const chooseNew = () => {
+    if (kind === "new") return;
     setKind("new");
     setFolder(null);
     setScan(null);
     setIdentity({ displayName: "", projectId: "", description: "", author: "", primaryNamespace: "", scriptPrefix: "", descriptorTags: [] });
     setEdited(new Set());
-    setStep("describe");
+    setBrief("");
+    forgetAnalysis();
   };
 
   const updateIdentity = (key: keyof Identity, value: string | string[]) => {
@@ -277,7 +294,10 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   };
 
   const assistantName = provenance ? (BROWSER_PROVIDERS.find((item) => item.id === provenance.provider)?.label ?? provenance.provider).replace(/ API key$/, "") : "";
+  // An existing mod's folder name is its ID when it is a valid one.
+  const folderDecidesId = kind === "existing" && folder !== null && PROJECT_ID.test(folder.name);
   const badge = (key: keyof Identity, detectedKey?: string): string | undefined => {
+    if (key === "projectId" && folderDecidesId && !edited.has(key)) return "Detected";
     if (kind === "existing" && detectedKey && !edited.has(key) && detectedString(scan, detectedKey) !== undefined) return "Detected";
     if (suggested.has(key)) return `Suggested by ${assistantName}`;
     return undefined;
@@ -295,9 +315,15 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     setAssistantModel(next.defaultModel);
     setAssistantEffort(next.defaultEffort);
     setApiKey("");
+    forgetAnalysis();
   };
+  const assistantLabel = assistantProvider.label.replace(/ API key$/, "");
+  const assistantProblem = !apiKey.trim() ? `Enter your ${assistantLabel} API key.` : !MODEL_PATTERN.test(assistantModel.trim()) ? "Enter a model ID without spaces." : null;
+  const startProblem = assistantProblem ?? (kind === null ? "Choose a new mod or an existing mod folder." : kind === "existing" && !scan ? "Choose the mod folder." : null);
+  const briefProblem = !identity.displayName.trim() ? "Enter the mod name." : !brief.trim() ? "Describe the mod in a sentence or two." : null;
 
-  const suggest = () => run(`Asking ${assistantProvider.label.replace(/ API key$/, "")}`, async () => {
+  /** Ask the assistant for every value, then show them for review. */
+  const analyze = () => run(`Asking ${assistantLabel}`, async () => {
     if (!preview) await loadSource();
     const registry = await client().call("registry", {});
     const evidence = kind === "existing" ? await client().call("evidence", {}) : [];
@@ -305,7 +331,7 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     const name = identity.displayName.trim();
     const request: AnalysisRequest = {
       mode: kind === "existing" ? "existing_project_semantics" : "new_project_identity",
-      brief: kind === "existing" ? EXISTING_PROJECT_BRIEF : identity.description.trim(),
+      brief: kind === "existing" ? EXISTING_PROJECT_BRIEF : brief.trim(),
       evidence,
       constraints: {
         project_id_pattern: "^[a-z][a-z0-9_]{1,63}$",
@@ -330,17 +356,19 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
       descriptorTags: Array.isArray(tags) ? tags.filter((tag): tag is string => typeof tag === "string" && (HOI4_DESCRIPTOR_TAGS as readonly string[]).includes(tag)) : undefined,
     };
     // A value the user typed, or one the project files decide, always wins
-    // over a suggestion.
+    // over a suggestion; an earlier suggestion is refreshed.
     const detectedKeys = new Set<keyof Identity>(kind === "existing" ? ([
       ["displayName", "display_name"],
       ["primaryNamespace", "primary_namespace"],
       ["scriptPrefix", "script_prefix"],
       ["descriptorTags", "descriptor_tags"],
     ] as Array<[keyof Identity, string]>).filter(([, key]) => scan?.detected.some((item) => item.key === key)).map(([field]) => field) : []);
+    if (folderDecidesId) detectedKeys.add("projectId");
     const applied = new Set<keyof Identity>();
     const next = { ...identityRef.current };
     for (const [key, value] of Object.entries(values) as Array<[keyof Identity, string | string[] | undefined]>) {
-      if (value === undefined || editedRef.current.has(key) || detectedKeys.has(key)) continue;
+      const userEdited = editedRef.current.has(key) && !suggestedRef.current.has(key);
+      if (value === undefined || userEdited || detectedKeys.has(key)) continue;
       (next as Record<keyof Identity, string | string[]>)[key] = value;
       applied.add(key);
     }
@@ -349,10 +377,20 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     setEdited((current) => new Set([...current, ...applied]));
     setAnalysis(result);
     setProvenance(provenanceFor(route));
+    setStep("details");
   });
 
   const goToComponents = () => run("Reading the setup source", async () => {
-    if (!preview) await loadSource();
+    if (!analysis || !provenance) throw new Error(`Ask ${assistantLabel} for the project details first.`);
+    const current = preview ?? await loadSource();
+    // The assistant's recommendations are preselected once per analysis;
+    // later changes are the user's.
+    if (seededAnalysis.current !== analysis.analysis_id) {
+      seededAnalysis.current = analysis.analysis_id;
+      const recommendedIds = new Set(analysis.component_recommendations.filter((item) => item.recommendation !== "not_recommended").map((item) => item.component_id));
+      const currentProfile = current.profiles.find((item) => item.id === profileId) ?? current.profiles.find((item) => item.default) ?? current.profiles[0];
+      setOptional(new Set(optionalComponentsFor(current, currentProfile).filter((component) => recommendedIds.has(component.id) && !DESKTOP_ONLY_COMPONENTS.has(component.id)).map((component) => component.id)));
+    }
     setStep("components");
   });
 
@@ -366,19 +404,7 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   });
 
   const profile = preview?.profiles.find((item) => item.id === profileId);
-  const optionalComponents = useMemo(() => {
-    const components = preview?.components ?? [];
-    const optionalIds = new Set(components.filter((component) => component.optional).map((component) => component.id));
-    // Optional components that exist only to support another choice are
-    // installed through that choice, as on the desktop.
-    const dependencyOnly = new Set(components.filter((component) => component.optional).flatMap((component) => component.dependencies).filter((id) => optionalIds.has(id)));
-    return components.filter((component) =>
-      component.optional
-      && !component.coding_environment
-      && !(profile?.components.includes(component.id))
-      && (ALWAYS_LISTED.has(component.id) || !dependencyOnly.has(component.id))
-      && !HIDDEN_COMPONENT_PREFIXES.some((prefix) => component.id.startsWith(prefix)));
-  }, [preview, profile]);
+  const optionalComponents = useMemo(() => optionalComponentsFor(preview, profile), [preview, profile]);
 
   const conventionSuggestions = useMemo(() => {
     if (!analysis) return [] as Array<[string, string]>;
@@ -451,7 +477,9 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     unchanged: entries?.filter((entry) => entry.action === "unchanged").length ?? 0,
     conflict: entries?.filter((entry) => entry.action === "conflict").length ?? 0,
   }), [entries]);
-  const stepIndex = STEPS.findIndex((item) => item.id === step);
+  // An existing mod is described by its folder, so it has no Describe step.
+  const steps = kind === "existing" ? STEPS.filter((item) => item.id !== "describe") : STEPS;
+  const stepIndex = steps.findIndex((item) => item.id === step);
 
   return (
     <div className="app-shell web-shell">
@@ -465,7 +493,7 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
         <nav className="phase-rail" aria-label="Setup steps">
           <div className="rail-label">Setup</div>
           <ol className="web-steps">
-            {STEPS.map((item, index) => (
+            {steps.map((item, index) => (
               <li key={item.id} className={`phase-item${index === stepIndex ? " active" : ""}${index < stepIndex ? " complete" : ""}`} aria-current={index === stepIndex ? "step" : undefined}>
                 <span className="phase-number" aria-hidden="true">{index < stepIndex ? "✓" : index + 1}</span>
                 {item.label}
@@ -479,13 +507,13 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
             {step === "start" && (
               <Screen title="Prepare a mod in your browser" sentence="Your files stay on this computer. Nothing is uploaded." headingRef={headingRef}>
                 <div className="choice-grid">
-                  <button type="button" className="choice-card" onClick={startNew} disabled={busy !== null}>
+                  <button type="button" className={`choice-card${kind === "new" ? " selected" : ""}`} aria-pressed={kind === "new"} onClick={chooseNew} disabled={busy !== null}>
                     <span className="choice-icon" aria-hidden="true">+</span>
                     <strong className="web-card-title">New mod</strong>
                     <span className="muted">Start an empty mod with both descriptors and a thumbnail.</span>
                   </button>
                   <div
-                    className={`choice-card web-dropzone${dragging ? " dragging" : ""}`}
+                    className={`choice-card web-dropzone${dragging ? " dragging" : ""}${kind === "existing" ? " selected" : ""}`}
                     onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
                     onDragLeave={() => setDragging(false)}
                     onDrop={onDrop}
@@ -514,11 +542,38 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                       </ul>
                     )}
                     {scan.issues.length > 0 && <p className="web-panel-text status-review">{scan.issues.join(" ")}</p>}
-                    <div className="proposal-actions">
-                      <button type="button" className="button primary" onClick={() => setStep("describe")}>Continue</button>
-                    </div>
                   </section>
                 )}
+                <section className="panel form-panel web-assistant" aria-labelledby="assistant-title">
+                  <h2 id="assistant-title" className="panel-title">Setup assistant</h2>
+                  <p className="muted">It fills in the mod's details and recommends components; you review everything before the ZIP is made. Your API key stays in this tab's memory, is sent only to {new URL(assistantProvider.endpoint).host}, and is forgotten when you close or reload the page.</p>
+                  <div className="form-grid">
+                    <label className="field">
+                      <span className="field-label">AI provider</span>
+                      <select className="text-input" value={assistantId} onChange={(event) => chooseAssistant(event.target.value)}>
+                        {BROWSER_PROVIDERS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span className="field-label">API key</span>
+                      <input className="text-input mono" type="password" autoComplete="off" spellCheck={false} value={apiKey} onChange={(event) => { setApiKey(event.target.value); forgetAnalysis(); }} />
+                    </label>
+                    <label className="field">
+                      <span className="field-label">Model</span>
+                      <input className="text-input mono" list="assistant-models" value={assistantModel} onChange={(event) => { setAssistantModel(event.target.value); forgetAnalysis(); }} />
+                      <datalist id="assistant-models">{modelChoices(assistantProvider).map((model) => <option key={model} value={model} />)}</datalist>
+                    </label>
+                    {assistantProvider.efforts.length > 1 && (
+                      <label className="field">
+                        <span className="field-label">Reasoning effort</span>
+                        <select className="text-input" value={assistantEffort} onChange={(event) => { setAssistantEffort(event.target.value); forgetAnalysis(); }}>
+                          {assistantProvider.efforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+                        </select>
+                      </label>
+                    )}
+                  </div>
+                  <a className="external-link" href={assistantProvider.keyUrl} target="_blank" rel="noreferrer noopener">Get a {assistantLabel} API key</a>
+                </section>
                 <details className="web-source">
                   <summary className="details">Setup source</summary>
                   <fieldset className="update-source-options">
@@ -541,7 +596,37 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
             )}
 
             {step === "describe" && (
-              <Screen title="Describe the mod" sentence={kind === "existing" ? "Values found in the folder are filled in. Change anything that is wrong." : undefined} headingRef={headingRef}>
+              <Screen title="Describe the mod" sentence={`${assistantLabel} fills in the ID, namespace, prefix, tags, and starter folders from this.`} headingRef={headingRef}>
+                <div className="panel form-panel">
+                  <TextField label="Mod name" value={identity.displayName} onChange={(value) => updateIdentity("displayName", value)} />
+                  <label className="field">
+                    <span className="field-label">What the mod is about</span>
+                    <textarea className="brief-input web-brief" value={brief} onChange={(event) => { setBrief(event.target.value); forgetAnalysis(); }} />
+                  </label>
+                </div>
+              </Screen>
+            )}
+
+            {step === "details" && analysis && (
+              <Screen title="Review the details" sentence={kind === "existing" ? `Values found in the folder are kept; ${assistantName} filled in the rest. Change anything that is wrong.` : `${assistantName} filled these in. Change anything that is wrong.`} headingRef={headingRef}>
+                <section className="panel web-assistant-result" aria-label={`${assistantName} summary`}>
+                  <p>{analysis.project_summary}</p>
+                  {analysis.warnings.map((warning) => <p key={warning} className="status-review">{warning}</p>)}
+                  {conventionSuggestions.length > 0 && (
+                    <dl className="web-conventions">
+                      {conventionSuggestions.map(([label, value]) => <div key={label}><dt className="field-label">{label}</dt><dd>{value}</dd></div>)}
+                    </dl>
+                  )}
+                  {kind === "existing" && evidencePreview && (
+                    <details className="web-evidence">
+                      <summary className="details">What {assistantName} received ({evidencePreview.length} scan findings)</summary>
+                      <ul className="web-file-list">
+                        {evidencePreview.map((item) => <li key={item.reference}><span className="mono">{item.reference}</span> <span className="muted">{item.excerpt.length > 160 ? `${item.excerpt.slice(0, 160)}…` : item.excerpt}</span></li>)}
+                      </ul>
+                    </details>
+                  )}
+                  <button type="button" className="text-button" disabled={busy !== null} onClick={analyze}>Ask {assistantName} again</button>
+                </section>
                 <div className="panel form-panel">
                   <div className="form-grid">
                     <TextField label="Mod name" value={identity.displayName} onChange={(value) => updateIdentity("displayName", value)} badge={badge("displayName", "display_name")} />
@@ -551,11 +636,11 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                     <TextField label="Author (optional)" value={identity.author} onChange={(value) => updateIdentity("author", value)} />
                   </div>
                   <label className="field">
-                    <span className="field-label">What the mod is about (optional)</span>
+                    <span className="field-label">Description{badge("description") && <span className="status status-info web-detected-label"> · {badge("description")}</span>}</span>
                     <textarea className="brief-input web-brief" value={identity.description} onChange={(event) => updateIdentity("description", event.target.value)} />
                   </label>
                   <fieldset className="tag-picker">
-                    <legend className="field-label">Launcher tags</legend>
+                    <legend className="field-label">Launcher tags{badge("descriptorTags", "descriptor_tags") && <span className="status status-info web-detected-label"> · {badge("descriptorTags", "descriptor_tags")}</span>}</legend>
                     <div className="tag-options">
                       {HOI4_DESCRIPTOR_TAGS.map((tag) => (
                         <label key={tag} className="check-row web-tag">
@@ -565,60 +650,6 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                       ))}
                     </div>
                   </fieldset>
-                  <details className="web-assistant">
-                    <summary className="details" onClick={() => { if (kind === "existing" && evidencePreview === null) void client().call("evidence", {}).then(setEvidencePreview, () => setEvidencePreview([])); }}>Suggest values with an AI provider (optional)</summary>
-                    <div className="web-assistant-body">
-                      <p className="muted">Your API key stays in this tab's memory and is sent only to {new URL(assistantProvider.endpoint).host}. It is forgotten when you close or reload the page. {kind === "existing" ? "The provider sees the scan summary, not your files." : "The provider sees the name and description above."}</p>
-                      <div className="form-grid">
-                        <label className="field">
-                          <span className="field-label">Provider</span>
-                          <select className="text-input" value={assistantId} onChange={(event) => chooseAssistant(event.target.value)}>
-                            {BROWSER_PROVIDERS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-                          </select>
-                        </label>
-                        <label className="field">
-                          <span className="field-label">API key</span>
-                          <input className="text-input mono" type="password" autoComplete="off" spellCheck={false} value={apiKey} onChange={(event) => setApiKey(event.target.value)} />
-                        </label>
-                        <label className="field">
-                          <span className="field-label">Model</span>
-                          <input className="text-input mono" value={assistantModel} onChange={(event) => setAssistantModel(event.target.value)} />
-                        </label>
-                        {assistantProvider.efforts.length > 1 && (
-                          <label className="field">
-                            <span className="field-label">Reasoning effort</span>
-                            <select className="text-input" value={assistantEffort} onChange={(event) => setAssistantEffort(event.target.value)}>
-                              {assistantProvider.efforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
-                            </select>
-                          </label>
-                        )}
-                      </div>
-                      {kind === "existing" && evidencePreview && (
-                        <details className="web-evidence">
-                          <summary className="details">What the provider receives ({evidencePreview.length} scan findings)</summary>
-                          <ul className="web-file-list">
-                            {evidencePreview.map((item) => <li key={item.reference}><span className="mono">{item.reference}</span> <span className="muted">{item.excerpt.length > 160 ? `${item.excerpt.slice(0, 160)}…` : item.excerpt}</span></li>)}
-                          </ul>
-                        </details>
-                      )}
-                      <div className="button-row web-assistant-actions">
-                        <a className="external-link" href={assistantProvider.keyUrl} target="_blank" rel="noreferrer noopener">Get a key</a>
-                        <button type="button" className="button" disabled={busy !== null || !apiKey.trim() || (kind === "new" && !identity.displayName.trim() && !identity.description.trim())} onClick={suggest}>Suggest values</button>
-                      </div>
-                      {analysis && (
-                        <div className="web-assistant-result" role="status">
-                          <p>{analysis.project_summary}</p>
-                          {analysis.warnings.map((warning) => <p key={warning} className="status-review">{warning}</p>)}
-                          {conventionSuggestions.length > 0 && (
-                            <dl className="web-conventions">
-                              {conventionSuggestions.map(([label, value]) => <div key={label}><dt className="field-label">{label}</dt><dd>{value}</dd></div>)}
-                            </dl>
-                          )}
-                          <button type="button" className="text-button" onClick={() => { setAnalysis(null); setProvenance(null); setSuggested(new Set()); }}>Discard suggestions</button>
-                        </div>
-                      )}
-                    </div>
-                  </details>
                   <div className="web-thumbnail">
                     {thumbnail ? <img src={`data:image/png;base64,${thumbnail}`} alt="Thumbnail preview" width={96} height={96} /> : <span className="muted">{kind === "existing" ? "The current thumbnail is kept." : "A placeholder thumbnail is used."}</span>}
                     <label className="button">
@@ -759,18 +790,35 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
           <footer className="footer-bar">
             <span className="footer-note">Source: <a className="external-link" href={`https://github.com/${SOURCE_OWNER}/${SOURCE_NAME}`}>{SOURCE_OWNER}/{SOURCE_NAME}</a>{source ? <> at <span className="mono">{source.revision.slice(0, 12)}</span></> : null}</span>
             <div className="footer-actions">
-              {step !== "start" && step !== "done" && <button type="button" className="button" disabled={busy !== null} onClick={() => setStep(STEPS[stepIndex - 1].id)}>Back</button>}
-              {step === "describe" && <button type="button" className="button primary" disabled={busy !== null || identityProblem !== null} title={identityProblem ?? undefined} onClick={goToComponents}>Continue</button>}
+              {step !== "start" && step !== "done" && <button type="button" className="button" disabled={busy !== null} onClick={() => setStep(steps[stepIndex - 1].id)}>Back</button>}
+              {step === "start" && <button type="button" className="button primary" disabled={busy !== null || startProblem !== null} title={startProblem ?? undefined} onClick={() => (kind === "existing" ? analyze() : setStep("describe"))}>Continue</button>}
+              {step === "describe" && <button type="button" className="button primary" disabled={busy !== null || briefProblem !== null} title={briefProblem ?? undefined} onClick={analyze}>Continue</button>}
+              {step === "details" && <button type="button" className="button primary" disabled={busy !== null || identityProblem !== null} title={identityProblem ?? undefined} onClick={goToComponents}>Continue</button>}
               {step === "components" && <button type="button" className="button primary" disabled={busy !== null || !primary} onClick={prepare}>Download and review</button>}
               {step === "review" && <button type="button" className="button primary" disabled={busy !== null} onClick={download}>Download ZIP</button>}
               {step === "done" && <button type="button" className="button" onClick={() => { setStep("start"); setEntries(null); }}>Prepare another mod</button>}
             </div>
           </footer>
-          {step === "describe" && identityProblem && <p className="visually-hidden" aria-live="polite">{identityProblem}</p>}
+          {(step === "start" ? startProblem : step === "describe" ? briefProblem : step === "details" ? identityProblem : null) && <p className="visually-hidden" aria-live="polite">{step === "start" ? startProblem : step === "describe" ? briefProblem : identityProblem}</p>}
         </main>
       </div>
     </div>
   );
+}
+
+/** Optional components offered beside the chosen workflow profile. */
+function optionalComponentsFor(preview: SourcePreview | null, profile: SourcePreview["profiles"][number] | undefined): SourcePreview["components"] {
+  const components = preview?.components ?? [];
+  const optionalIds = new Set(components.filter((component) => component.optional).map((component) => component.id));
+  // Optional components that exist only to support another choice are
+  // installed through that choice, as on the desktop.
+  const dependencyOnly = new Set(components.filter((component) => component.optional).flatMap((component) => component.dependencies).filter((id) => optionalIds.has(id)));
+  return components.filter((component) =>
+    component.optional
+    && !component.coding_environment
+    && !(profile?.components.includes(component.id))
+    && (ALWAYS_LISTED.has(component.id) || !dependencyOnly.has(component.id))
+    && !HIDDEN_COMPONENT_PREFIXES.some((prefix) => component.id.startsWith(prefix)));
 }
 
 function Screen({ title, sentence, children, headingRef }: { title: string; sentence?: string; children: ReactNode; headingRef: RefObject<HTMLHeadingElement | null> }) {

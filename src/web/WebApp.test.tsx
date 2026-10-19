@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WebApp from "./WebApp";
 import { createCoreClient } from "./core-client";
@@ -78,13 +78,42 @@ function fakeCore(overrides: Partial<{ [Op in Operation]: (args: CoreOperations[
   return { client: createCoreClient(worker) as CoreClient, calls };
 }
 
-function stubGitHub() {
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+function stubGitHub(provider: (init: RequestInit) => Response = () => new Response("{}", { status: 200 })) {
+  const providerCalls: RequestInit[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.startsWith("https://api.anthropic.com/")) {
+      providerCalls.push(init!);
+      return provider(init!);
+    }
     if (url.endsWith("/Agentic-HOI4-Modding")) return new Response(JSON.stringify({ default_branch: "main" }), { status: 200 });
     if (url.includes("/commits/")) return new Response(JSON.stringify({ sha: COMMIT }), { status: 200 });
     if (url.includes("raw.githubusercontent.com")) return new Response("{}", { status: 200 });
     return new Response("not found", { status: 404 });
   }));
+  return providerCalls;
+}
+
+/** Fill in the setup assistant on the Project step. */
+function chooseAssistant(key = "sk-ant-test") {
+  fireEvent.change(screen.getByLabelText("API key"), { target: { value: key } });
+}
+
+/** A new mod through the assistant up to the reviewed details. */
+async function describeNewMod() {
+  fireEvent.click(screen.getByRole("button", { name: /New mod/ }));
+  chooseAssistant();
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  expect(screen.getByRole("heading", { name: "Describe the mod" })).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Mod name"), { target: { value: "Iron Dawn" } });
+  fireEvent.change(screen.getByLabelText("What the mod is about"), { target: { value: "Balkan nations rise in 1936 through events and decisions." } });
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByRole("heading", { name: "Review the details" })).toBeInTheDocument();
+}
+
+function pickFolder(container: HTMLElement) {
+  const file = new File(["name=\"Demo Mod\""], "descriptor.mod");
+  Object.defineProperty(file, "webkitRelativePath", { value: "demo_mod/descriptor.mod" });
+  fireEvent.change(container.querySelector<HTMLInputElement>("input[type=file]")!, { target: { files: [file] } });
 }
 
 afterEach(() => {
@@ -94,31 +123,61 @@ afterEach(() => {
 });
 
 describe("web edition", () => {
-  it("prepares a new mod and downloads a ZIP without any upload", async () => {
+  it("needs a setup assistant before the setup starts", () => {
     stubGitHub();
+    const { client } = fakeCore();
+    render(<WebApp client={client} />);
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /New mod/ }));
+    expect(screen.getByRole("button", { name: /New mod/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Continue" })).toHaveAttribute("title", "Enter your Claude API key.");
+    expect(screen.getByLabelText("AI provider")).toHaveValue("claude");
+    expect(screen.getByLabelText("Model")).toHaveValue("claude-haiku-5-5");
+    chooseAssistant();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("Model"), { target: { value: "bad model" } });
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+  });
+
+  it("prepares a new mod with the assistant and downloads a ZIP without uploading files", async () => {
+    const providerCalls = stubGitHub();
     const createObjectURL = vi.fn(() => "blob:zip");
     vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL: vi.fn() }));
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     const { client, calls } = fakeCore();
     render(<WebApp client={client} />);
+    await describeNewMod();
 
-    fireEvent.click(screen.getByRole("button", { name: /New mod/ }));
-    expect(screen.getByRole("heading", { name: "Describe the mod" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Mod name"), { target: { value: "Iron Dawn" } });
-    expect(screen.getByLabelText("Mod ID")).toHaveValue("iron_dawn");
+    // Every value comes from the assistant; the user only reviews.
+    expect(screen.getByLabelText(/Mod name/)).toHaveValue("Iron Dawn");
+    expect(screen.getByLabelText(/Mod ID/)).toHaveValue("suggested_id");
+    expect(screen.getByLabelText(/Event namespace/)).toHaveValue("suggested_ns");
+    expect(screen.getByLabelText(/^Description/)).toHaveValue("Balkan nations rise in 1936.");
+    expect(screen.getByRole("checkbox", { name: "Events" })).toBeChecked();
+    expect(screen.getByText("A grand strategy overhaul of the Balkans.")).toBeInTheDocument();
+    expect(providerCalls).toHaveLength(1);
+    expect((providerCalls[0].headers as Headers).get("x-api-key")).toBe("sk-ant-test");
+    const turn = calls.find((call) => call.op === "assistantTurn")!.args as CoreOperations["assistantTurn"]["args"];
+    expect(turn.request.brief).toBe("Balkan nations rise in 1936 through events and decisions.");
+    expect(turn.request.constraints).toMatchObject({ requested_mod_name: "Iron Dawn", component_registry: { component_ids: ["workflow.super_events"] } });
+
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-
     expect(await screen.findByRole("heading", { name: "Choose components" })).toBeInTheDocument();
     expect(screen.getByLabelText("Primary")).toHaveValue("claude_code");
+    // The assistant's recommendation is preselected.
+    expect(screen.getByRole("checkbox", { name: /Super Events workflow/ })).toBeChecked();
+    expect(screen.getByText(/Recommended by Claude/)).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: /3D models workflow/ })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Download and review" }));
 
     expect(await screen.findByRole("heading", { name: "Review the changes" })).toBeInTheDocument();
     const exported = calls.find((call) => call.op === "export")!.args as CoreOperations["export"]["args"];
     expect(exported.existing).toBe(false);
-    expect(exported.request.identity).toMatchObject({ displayName: "Iron Dawn", projectId: "iron_dawn" });
+    expect(exported.request.identity).toMatchObject({ displayName: "Iron Dawn", projectId: "suggested_id" });
+    expect(exported.request.assistant).toMatchObject({ provider: "claude", endpoint: "https://api.anthropic.com/v1/messages" });
     const select = calls.find((call) => call.op === "select")!.args as CoreOperations["select"]["args"];
+    expect(select.request.selectedComponents).toContain("workflow.super_events");
     expect(select.request.selectedComponents).not.toContain("workflow.3d");
 
     fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
@@ -127,25 +186,40 @@ describe("web edition", () => {
     const zip = calls.find((call) => call.op === "zip")!.args as CoreOperations["zip"]["args"];
     expect(zip.decisions).toEqual({ "README.md": "keep" });
     const hosts = (vi.mocked(fetch).mock.calls as unknown as Array<[string]>).map(([url]) => new URL(url).host);
-    expect(new Set(hosts)).toEqual(new Set(["api.github.com", "raw.githubusercontent.com"]));
+    expect(new Set(hosts)).toEqual(new Set(["api.github.com", "raw.githubusercontent.com", "api.anthropic.com"]));
+    expect(JSON.stringify(calls)).not.toContain("sk-ant-test");
   });
 
-  it("imports a picked folder, shows detected values, and lets the user choose per conflict", async () => {
+  it("imports a folder, keeps what the folder decides, and lets the user choose per conflict", async () => {
     stubGitHub();
-    const { client, calls } = fakeCore();
+    const { client, calls } = fakeCore({
+      scan: () => ({ findings: [], detected: [{ key: "display_name", value: "Demo Mod", reason: "descriptor" }, { key: "primary_namespace", value: "demo", reason: "events" }], descriptor: { name: "Demo Mod" }, stats: { files_indexed: 2, directories_indexed: 1, samples_read: 2, bytes_read: 10, excluded_entries: 0, coverage: "complete" }, issues: [] }),
+      evidence: () => [{ reference: "profile.detected", path: "@scan/profile/detected", excerpt: "[]", excerpt_sha256: "0".repeat(64), confidence: 1 }],
+    });
     const { container } = render(<WebApp client={client} />);
-    const input = container.querySelector<HTMLInputElement>("input[type=file]")!;
-    const file = new File(["name=\"Demo Mod\""], "descriptor.mod");
-    Object.defineProperty(file, "webkitRelativePath", { value: "demo_mod/descriptor.mod" });
-    fireEvent.change(input, { target: { files: [file] } });
-
+    pickFolder(container);
     expect(await screen.findByText("demo_mod")).toBeInTheDocument();
     expect(screen.getByText(/primary namespace/)).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("button", { name: "Continue" })[0]);
-    expect(screen.getByLabelText("Mod name")).toHaveValue("Demo Mod");
-    expect(screen.getByLabelText(/Event namespace/)).toHaveValue("demo");
-    expect(screen.getByLabelText("Mod ID")).toHaveValue("demo_mod");
+    chooseAssistant();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
+    expect(await screen.findByRole("heading", { name: "Review the details" })).toBeInTheDocument();
+    // An existing mod is described by its folder: the rail has no Describe step.
+    expect(within(screen.getByRole("navigation", { name: "Setup steps" })).queryByText("Describe")).toBeNull();
+    expect(screen.getByLabelText(/Mod name/)).toHaveValue("Demo Mod");
+    expect(screen.getByLabelText(/Event namespace/)).toHaveValue("demo");
+    expect(screen.getByLabelText(/Mod ID/)).toHaveValue("demo_mod");
+    expect(screen.getByLabelText(/^Description/)).toHaveValue("Balkan nations rise in 1936.");
+    expect(screen.getByText("English and German YAML with BOM.")).toBeInTheDocument();
+    expect(screen.getByText(/What Claude received \(1 scan findings\)/)).toBeInTheDocument();
+    const turn = calls.find((call) => call.op === "assistantTurn")!.args as CoreOperations["assistantTurn"]["args"];
+    expect(turn.request.mode).toBe("existing_project_semantics");
+    expect(turn.request.evidence.map((item) => item.reference)).toEqual(["profile.detected"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("heading", { name: "Prepare a mod in your browser" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Review the details" });
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(await screen.findByRole("button", { name: "Download and review" }));
     expect(await screen.findByRole("button", { name: "Compare" })).toBeInTheDocument();
@@ -158,77 +232,43 @@ describe("web edition", () => {
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
     await screen.findByRole("heading", { name: "Your ZIP is ready" });
-    expect(calls.find((call) => call.op === "export")!.args).toMatchObject({ existing: true });
+    expect(calls.find((call) => call.op === "export")!.args).toMatchObject({ existing: true, request: { identity: { projectId: "demo_mod" } } });
     expect(calls.find((call) => call.op === "zip")!.args).toEqual({ decisions: { "README.md": "replace" } });
   });
 
-  it("applies assistant suggestions without overriding what the user typed", async () => {
-    stubGitHub();
-    const providerCalls: Array<{ url: string; init: RequestInit }> = [];
-    const github = vi.mocked(fetch).getMockImplementation()!;
-    vi.mocked(fetch).mockImplementation(async (url, init) => {
-      if (String(url).startsWith("https://api.anthropic.com/")) {
-        providerCalls.push({ url: String(url), init: init! });
-        return new Response("{}", { status: 200 });
-      }
-      return github(url, init);
-    });
-    const { client, calls } = fakeCore();
+  it("asks again without overriding what the user changed", async () => {
+    const providerCalls = stubGitHub();
+    const { client } = fakeCore();
     render(<WebApp client={client} />);
-    fireEvent.click(screen.getByRole("button", { name: /New mod/ }));
-    fireEvent.change(screen.getByLabelText("Mod name"), { target: { value: "Iron Dawn" } });
-    fireEvent.change(screen.getByLabelText("Mod ID"), { target: { value: "my_id" } });
-    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-ant-test" } });
-    fireEvent.click(screen.getByRole("button", { name: "Suggest values" }));
-
-    expect(await screen.findByText("A grand strategy overhaul of the Balkans.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Mod ID")).toHaveValue("my_id");
-    expect(screen.getByLabelText(/What the mod is about/)).toHaveValue("Balkan nations rise in 1936.");
-    expect(screen.getByRole("checkbox", { name: "Events" })).toBeChecked();
-    expect(providerCalls).toHaveLength(1);
-    expect((providerCalls[0].init.headers as Headers).get("x-api-key")).toBe("sk-ant-test");
-    expect(JSON.stringify(calls)).not.toContain("sk-ant-test");
-    const turn = calls.find((call) => call.op === "assistantTurn")!.args as CoreOperations["assistantTurn"]["args"];
-    expect(turn.request.constraints).toMatchObject({ requested_mod_name: "Iron Dawn", component_registry: { component_ids: ["workflow.super_events"] } });
-
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    expect(await screen.findByText(/Recommended by Claude/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Download and review" }));
-    await screen.findByRole("heading", { name: "Review the changes" });
-    const exported = calls.find((call) => call.op === "export")!.args as CoreOperations["export"]["args"];
-    expect(exported.request.assistant).toMatchObject({ provider: "claude", endpoint: "https://api.anthropic.com/v1/messages" });
-    expect(JSON.stringify(exported)).not.toContain("sk-ant-test");
+    await describeNewMod();
+    fireEvent.change(screen.getByLabelText(/Mod ID/), { target: { value: "my_id" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ask Claude again" }));
+    await waitFor(() => expect(providerCalls).toHaveLength(2));
+    await screen.findByRole("heading", { name: "Review the details" });
+    expect(screen.getByLabelText(/Mod ID/)).toHaveValue("my_id");
+    expect(screen.getByLabelText(/Event namespace/)).toHaveValue("suggested_ns");
   });
 
-  it("keeps values the folder decides when the assistant suggests others", async () => {
-    stubGitHub();
-    const github = vi.mocked(fetch).getMockImplementation()!;
-    vi.mocked(fetch).mockImplementation(async (url, init) => String(url).startsWith("https://api.anthropic.com/") ? new Response("{}", { status: 200 }) : github(url, init));
-    const { client, calls } = fakeCore({ evidence: () => [{ reference: "profile.detected", path: "@scan/profile/detected", excerpt: "[]", excerpt_sha256: "0".repeat(64), confidence: 1 }] });
-    const { container } = render(<WebApp client={client} />);
-    const file = new File(["name=\"Demo Mod\""], "descriptor.mod");
-    Object.defineProperty(file, "webkitRelativePath", { value: "demo_mod/descriptor.mod" });
-    fireEvent.change(container.querySelector<HTMLInputElement>("input[type=file]")!, { target: { files: [file] } });
-    fireEvent.click((await screen.findAllByRole("button", { name: "Continue" }))[0]);
-
-    fireEvent.click(screen.getByText(/Suggest values with an AI provider/));
-    expect(await screen.findByText(/What the provider receives \(1 scan findings\)/)).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-ant-test" } });
-    fireEvent.click(screen.getByRole("button", { name: "Suggest values" }));
-    expect(await screen.findByText("A grand strategy overhaul of the Balkans.")).toBeInTheDocument();
-    expect(screen.getByLabelText(/Event namespace/)).toHaveValue("demo");
-    expect(screen.getByText("English and German YAML with BOM.")).toBeInTheDocument();
-    const turn = calls.find((call) => call.op === "assistantTurn")!.args as CoreOperations["assistantTurn"]["args"];
-    expect(turn.request.mode).toBe("existing_project_semantics");
-    expect(turn.request.evidence.map((item) => item.reference)).toEqual(["profile.detected"]);
+  it("keeps the user on the step when the assistant refuses the key", async () => {
+    stubGitHub(() => new Response("{}", { status: 401 }));
+    const { client } = fakeCore();
+    render(<WebApp client={client} />);
+    fireEvent.click(screen.getByRole("button", { name: /New mod/ }));
+    chooseAssistant("wrong-key");
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.change(screen.getByLabelText("Mod name"), { target: { value: "Iron Dawn" } });
+    fireEvent.change(screen.getByLabelText("What the mod is about"), { target: { value: "Balkan nations rise." } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("did not accept the API key");
+    expect(screen.getByRole("heading", { name: "Describe the mod" })).toBeInTheDocument();
+    expect(screen.getByLabelText("What the mod is about")).toHaveValue("Balkan nations rise.");
   });
 
   it("shows a core error and keeps the user on the same step", async () => {
     stubGitHub();
     const { client } = fakeCore({ download: () => { throw new Error("SHA-256 mismatch for AGENTS.md"); } });
     render(<WebApp client={client} />);
-    fireEvent.click(screen.getByRole("button", { name: /New mod/ }));
-    fireEvent.change(screen.getByLabelText("Mod name"), { target: { value: "Iron Dawn" } });
+    await describeNewMod();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(await screen.findByRole("button", { name: "Download and review" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("SHA-256 mismatch");

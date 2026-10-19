@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App, { CopyDiagnosticsButton, analysisBrief, CodingEnvironments, Components, ContextAttachments, contextEvidence, Conflict, DryRun, Findings, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, UpdateSourceOptions, Welcome, Workflows, buildAnalysisConfirmationValues, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, maintenanceReviewScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
+import App, { CopyDiagnosticsButton, analysisBrief, CodingEnvironments, Components, ContextAttachments, contextEvidence, Conflict, DryRun, Findings, Identity, ImageGenerationSetup, LiveTestingSetup, liveTestingSelectionValid, Mcp, Mesh, Ready, Scan, Update, UpdateSourceOptions, Welcome, Workflows, buildAnalysisConfirmationValues, dynamicMaintenanceOptionalComponentIds, estimatePlanPreparationProgress, estimateRemainingTime, estimateSemanticPlanningProgress, imageGenerationComponentIds, initialState, integrationReviewNeeded, maintenanceReviewScreen, nextScreen, previousScreen, manifestComponentSupportsPlatform, normalizeCodingEnvironmentSelection, codingEnvironmentOptions, recoveryProgress } from "./App";
 import { applyInstallationResult, approveInstallation, approveScanEvidence, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, checkForAppUpdate, confirmCodexAnalysis, findInterruptedTransaction, forgetContextAttachment, installAppUpdate, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodingEnvironment, pickContextDocuments, pickContextImages, pickProjectFolder, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readCodexAccount, readTransactionJournal, removeImageGenerationCredential, rollbackInstallationResult, runCodexAnalysisResult, scanProject, startClaudeLogin, startCodexLogin, storeImageGenerationCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult, readDiagnostics } from "./lib/tauri";
 import type { AiAccountStatus, AiProviderId, CodexAnalysisResult, ContextDocument, ContextImage, FolderSelection, InstallationPlan, ScanFinding, ScanProgress, SourceManifestPreview, WizardState } from "./types";
 import { renderCoverPng, renderReferenceJpeg } from "./lib/images";
@@ -1450,7 +1450,8 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(superEventsWorkflow).toHaveAttribute("aria-checked", "true");
     expect(screen.queryByText(/LoRA/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
-    expect(screen.getByRole("heading", { name: "MCP and credentials" })).toBeInTheDocument();
+    // Nothing here needs an integration review, so Git follows directly.
+    expect(screen.getByRole("heading", { name: "Choose Git setup" })).toBeInTheDocument();
   });
 
   it("reveals the portrait workflow resource minimum when enabled", () => {
@@ -1510,6 +1511,50 @@ describe("HOI4 Mod Setup wizard", () => {
       onReanalyze={vi.fn().mockResolvedValue(true)}
     />);
     expect(screen.getByText("Minimum recommended to run this workflow: 16 GB VRAM and 25 GB storage.")).toBeInTheDocument();
+  });
+
+  describe("screens that hold no decision", () => {
+    const meshManifest = { components: [{ id: "workflow.3d", platforms: ["all"], dependencies: [], optional: true }] } as unknown as SourceManifestPreview;
+    const wizard = (patch: Partial<WizardState>): WizardState => ({ ...initialState, selectedComponents: ["core.agents", "mcp.hoi4_agent_tools"], meshSelected: false, ...patch });
+
+    it("goes from Workflows straight to Git, and back, when no integration needs review", () => {
+      const state = wizard({ screen: "workflows" });
+      expect(integrationReviewNeeded(state)).toBe(false);
+      expect(nextScreen(state)).toBe("git");
+      expect(previousScreen({ ...state, screen: "git" })).toBe("workflows");
+    });
+
+    it("keeps Live testing on both sides of the skipped review", () => {
+      const state = wizard({ screen: "live-testing", selectedComponents: ["core.agents", "workflow.live_testing"] });
+      expect(nextScreen(state)).toBe("git");
+      expect(previousScreen({ ...state, screen: "git" })).toBe("live-testing");
+      // Choosing no live-testing provider deselects the workflow; Back still
+      // returns to the screen the user visited.
+      expect(previousScreen({ ...state, screen: "git", selectedComponents: ["core.agents"], liveTestingVisited: true })).toBe("live-testing");
+    });
+
+    it("shows the review for a Meshy credential and returns through it", () => {
+      const state = wizard({ screen: "mesh", meshSelected: true, selectedComponents: ["core.agents", "workflow.3d"], manifestPreview: meshManifest });
+      expect(integrationReviewNeeded(state)).toBe(true);
+      expect(nextScreen(state)).toBe("mcp");
+      expect(nextScreen({ ...state, screen: "mcp" })).toBe("git");
+      expect(previousScreen({ ...state, screen: "git" })).toBe("mcp");
+      expect(previousScreen({ ...state, screen: "mcp" })).toBe("mesh");
+    });
+
+    it("never routes Back to a Meshy screen the platform skipped", () => {
+      const state = wizard({ screen: "git", meshSelected: true, selectedComponents: ["core.agents"], manifestPreview: { components: [] } as unknown as SourceManifestPreview });
+      expect(integrationReviewNeeded(state)).toBe(false);
+      expect(nextScreen({ ...state, screen: "workflows" })).toBe("git");
+      expect(previousScreen(state)).toBe("workflows");
+    });
+
+    it("shows the review when Live Tools needs a per-user registration", () => {
+      const state = wizard({ screen: "live-testing", selectedComponents: ["core.agents", "workflow.live_tools"] });
+      expect(nextScreen(state)).toBe("mcp");
+      expect(previousScreen({ ...state, screen: "git" })).toBe("mcp");
+      expect(previousScreen({ ...state, screen: "mcp" })).toBe("live-testing");
+    });
   });
 
   it("advances from Meshy configuration without changing an existing stored key", () => {
@@ -2457,7 +2502,7 @@ describe("HOI4 Mod Setup wizard", () => {
     await renderAuthenticatedApp();
     fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-    for (let index = 0; index < 8; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     expect(screen.getByText("Unresolved conflicts")).toBeInTheDocument();
     expect(screen.getByText("Plan unavailable")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /start installation/i })).toBeDisabled();
@@ -2546,7 +2591,7 @@ describe("HOI4 Mod Setup wizard", () => {
     await renderAuthenticatedApp();
     fireEvent.click(screen.getByRole("button", { name: /create new mod/i }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-    for (let index = 0; index < 8; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
 
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     expect(screen.getByRole("button", { name: "Preparing changes…" })).toBeDisabled();
@@ -2568,7 +2613,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\cold_war_curtain" } });
-    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 6; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
 
@@ -2629,7 +2674,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\active" } });
-    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 6; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
 
@@ -2671,7 +2716,7 @@ describe("HOI4 Mod Setup wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\\mods\\failing" } });
-    for (let index = 0; index < 7; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
+    for (let index = 0; index < 6; index += 1) fireEvent.click(screen.getByRole("button", { name: /next/i }));
     fireEvent.click(screen.getByRole("button", { name: "Prepare changes" }));
     await waitFor(() => expect(screen.getByRole("button", { name: /start installation/i })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: /start installation/i }));

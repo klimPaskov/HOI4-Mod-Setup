@@ -8,7 +8,7 @@
 4. Otherwise show Welcome.
 5. Show the setup assistant, model catalog, and model-supported reasoning-effort selection before semantic planning, with concise copy that this does not choose the later development client. Keep verified hosted defaults selectable when a live refresh fails; keep Local and Custom model names editable.
 6. For Codex, start the local Codex App Server and read account state; for a known hosted provider, fill its verified defaults and validate the vault reference; for local or custom providers, validate the entered address.
-7. Require the selected provider to be configured before Create, Import, Update, or Repair planning.
+7. Require the selected provider to be configured before Create, Import, Update, or Repair planning. There is no setup without a provider.
 8. Display current remote source status without downloading selected components yet.
 9. Choose new or existing project.
 
@@ -140,7 +140,11 @@ recommendation: 16 GB VRAM and 25 GB storage.
 
 ### MCP, credentials, and Git
 
-Review server requirements, credential storage, external commands, Git mode, ignore rules, branch, optional commit, and optional remote.
+The MCP and credentials review appears only when it holds something to check: a
+selected 3D workflow's Meshy credential or a Live Tools per-user registration.
+Otherwise the wizard goes from the optional workflows straight to Git, and Back
+skips it the same way. Git covers mode, ignore rules, branch, optional commit,
+and optional remote.
 The MCP package and app-owned health check remain available for every setup
 assistant. Codex registration through `codex.config`, opening the selected
 client, and ChatGPT source packaging are development-client integrations

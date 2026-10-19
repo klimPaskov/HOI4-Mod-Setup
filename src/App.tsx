@@ -524,7 +524,30 @@ async function sha256Text(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function nextScreen(state: WizardState): ScreenId {
+function liveTestingSelected(state: WizardState): boolean {
+  return state.selectedComponents.some((id) => id === "workflow.live_testing" || id === "workflow.live_tools");
+}
+
+function meshScreenShown(state: WizardState): boolean {
+  return state.meshSelected && meshWorkflowAvailable(state);
+}
+
+/** The integrations review holds something to check only when a selected
+ * workflow needs a credential (Meshy) or a per-user registration (Live Tools);
+ * otherwise the wizard goes straight to Git. */
+export function integrationReviewNeeded(state: WizardState): boolean {
+  return meshScreenShown(state) || state.selectedComponents.includes("workflow.live_tools");
+}
+
+function afterOptionalWorkflows(state: WizardState): ScreenId {
+  return integrationReviewNeeded(state) ? "mcp" : "git";
+}
+
+function beforeIntegrationReview(state: WizardState): ScreenId {
+  return meshScreenShown(state) ? "mesh" : liveTestingSelected(state) || state.liveTestingVisited ? "live-testing" : "workflows";
+}
+
+export function nextScreen(state: WizardState): ScreenId {
   switch (state.screen) {
     case "welcome": return state.recoveryEntry ? "identity" : state.mode === "new" ? "description" : "identity";
     case "description": return "identity";
@@ -534,9 +557,9 @@ function nextScreen(state: WizardState): ScreenId {
     case "environments": return "image-generation";
     case "image-generation": return "components";
     case "components": return "workflows";
-    case "workflows": return state.selectedComponents.some((id) => id === "workflow.live_testing" || id === "workflow.live_tools") ? "live-testing" : state.meshSelected && meshWorkflowAvailable(state) ? "mesh" : "mcp";
-    case "live-testing": return state.meshSelected && meshWorkflowAvailable(state) ? "mesh" : "mcp";
-    case "mesh": return "mcp";
+    case "workflows": return liveTestingSelected(state) ? "live-testing" : meshScreenShown(state) ? "mesh" : afterOptionalWorkflows(state);
+    case "live-testing": return meshScreenShown(state) ? "mesh" : afterOptionalWorkflows(state);
+    case "mesh": return afterOptionalWorkflows(state);
     case "mcp": return "git";
     case "git": return "dry-run";
     case "dry-run": return "install";
@@ -548,7 +571,7 @@ function nextScreen(state: WizardState): ScreenId {
   }
 }
 
-function previousScreen(state: WizardState): ScreenId {
+export function previousScreen(state: WizardState): ScreenId {
   switch (state.screen) {
     case "description": return "welcome";
     case "identity": return state.recoveryEntry ? "welcome" : state.mode === "existing" ? "welcome" : "description";
@@ -559,9 +582,9 @@ function previousScreen(state: WizardState): ScreenId {
     case "environments": return state.mode === "existing" ? "findings" : "identity";
     case "workflows": return "components";
     case "live-testing": return "workflows";
-    case "mesh": return state.selectedComponents.some((id) => id === "workflow.live_testing" || id === "workflow.live_tools") || state.liveTestingVisited ? "live-testing" : "workflows";
-    case "mcp": return state.meshSelected ? "mesh" : state.selectedComponents.some((id) => id === "workflow.live_testing" || id === "workflow.live_tools") || state.liveTestingVisited ? "live-testing" : "workflows";
-    case "git": return "mcp";
+    case "mesh": return liveTestingSelected(state) || state.liveTestingVisited ? "live-testing" : "workflows";
+    case "mcp": return beforeIntegrationReview(state);
+    case "git": return integrationReviewNeeded(state) ? "mcp" : beforeIntegrationReview(state);
     case "dry-run": return "git";
     case "install": return "dry-run";
     case "ready": return "install";

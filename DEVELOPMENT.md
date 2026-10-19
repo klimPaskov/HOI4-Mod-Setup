@@ -58,6 +58,14 @@ Read `AGENTS.md` before coding. Then read the repo-local skill that owns the cur
   and `scripts/build_web.mjs` pins every bundle with SRI and writes
   `build-info.json` with each file's SHA-256.
 
+- The desktop scan walks the project once (`ProjectWalk` in
+  `src-tauri/src/scanner.rs`). Each directory is enumerated a single time and
+  its names feed the targeted setup inventory and the project profile
+  (`src-tauri/src/project_profile.rs` over the core `Profiler`), each with its
+  own exclusions and budgets. Test the profile on its own through
+  `project_profile::scan`, which runs the same walk with the setup inventory
+  off.
+
 The exact folder layout should be recorded in AGENTS and the owning skills after the source scaffold is accepted.
 
 ## Development commands
@@ -241,7 +249,11 @@ Narrow subagents under `.codex/agents/` can audit source manifests, scans, trans
 
 ## UI development
 
-Use the seven-phase navigation and minimal screen references. Do not turn developer diagnostics into permanent visible panels. Test keyboard behavior, focus order, screen readers, reduced motion, long paths, 200 percent scaling, and platform-specific file pickers.
+Use the seven-phase navigation and minimal screen references. Screens that hold
+no decision are skipped in both directions: `nextScreen` and `previousScreen`
+in `src/App.tsx` share one predicate per screen (for example
+`integrationReviewNeeded` for the MCP and credentials review), and the browser
+flow in `tests/browser/wizard.spec.ts` checks Back and Next together. Do not turn developer diagnostics into permanent visible panels. Test keyboard behavior, focus order, screen readers, reduced motion, long paths, 200 percent scaling, and platform-specific file pickers.
 
 ## Platform work
 

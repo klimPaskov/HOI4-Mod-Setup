@@ -34,6 +34,14 @@ for (const scenario of DOCUMENTATION_SCENARIOS) {
   });
 }
 
+test("every setup uses an AI provider; there is no manual setup choice", async ({ page }) => {
+  await page.goto("/?screenshot=welcome");
+  const providers = page.getByLabel("AI provider").locator("option");
+  await expect(providers.first()).toBeAttached();
+  await expect(page.getByLabel("AI provider").locator('option[value="none"]')).toHaveCount(0);
+  await expect(providers.filter({ hasText: /no setup assistant/i })).toHaveCount(0);
+});
+
 test("existing-project management remains available while signed out", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Manage an existing project", exact: true }).click();
@@ -136,13 +144,22 @@ test("pre-apply recovery presents details and safe choices", async ({ page }) =>
 });
 
 
-test("live testing follows workflows and disabling it advances to integrations", async ({ page }) => {
+test("live testing follows workflows and disabling it advances past it", async ({ page }) => {
   await page.goto("/?screenshot=workflows");
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.locator("#screen-title")).toHaveText("Live testing");
   await page.getByRole("radio", { name: /^None/ }).check();
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.locator("#screen-title")).not.toHaveText("Live testing");
+});
+
+test("the integrations review is skipped in both directions when nothing needs input", async ({ page }) => {
+  await page.goto("/?screenshot=git");
+  await expect(page.locator("#screen-title")).toHaveText("Choose Git setup");
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page.locator("#screen-title")).toHaveText("Optional workflows");
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(page.locator("#screen-title")).toHaveText("Choose Git setup");
 });
 
 for (const platform of ["windows", "macos", "linux"] as const) {

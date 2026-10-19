@@ -57,6 +57,19 @@ Detect only with evidence:
 - absolute paths and machine-local assumptions
 - possible install conflicts
 
+The setup inventory and the profile share one walk (`ProjectWalk` in
+`src-tauri/src/scanner.rs`). Each directory is enumerated once through the
+retained no-follow handle and offered to both. The targeted setup inventory
+(`TargetedNames`) and the profile (`project_profile::ProfileNames`, `admit`,
+`record_entry`) each keep their own exclusions, budgets, and stop state. A
+directory is entered when either one wants it. Keep setup-only checks (identity
+fences, `path_has_link_component`, the directory budget) on setup
+directories, so profile-only folders cost what the profile walk always cost.
+When one inventory reaches a limit, the other continues; cancellation, timeout,
+and a changed boundary stop both. Never add a second tree walk. Test the profile
+alone through `project_profile::scan`, which runs this walk with the setup
+inventory off.
+
 Detect native coding environments only inside the selected root, from the
 markers in the `NATIVE_CLIENTS` registry (`crates/hoi4-setup-core/src/coding_environment.rs`).
 Claude Code (`CLAUDE.md`, `.claude/`, and `.mcp.json`) is the canonical package;
@@ -289,6 +302,10 @@ After deterministic scan completion, send only the approved evidence through the
   unselected `workflow.super_events`
 - malformed, linked, oversized, and unreadable managed-lock states
 - cancellation and timeout
+- shared walk: the profile from a full scan equals a profile-only walk; a
+  setup file or depth limit leaves the profile complete; cancellation in the
+  middle of the walk stops both and yields no profile; a link in a directory both
+  inventories read is refused by both
 - proof that large gameplay/media/root-data/generated-doc trees are excluded
   from the targeted setup inventory and setup-only Git pathspecs, while a
   separate profile records bounded metadata and text-prefix observations;

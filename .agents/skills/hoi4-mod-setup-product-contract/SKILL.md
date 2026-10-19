@@ -32,7 +32,7 @@ Read:
 
 ## Core invariants
 
-- The user selects a setup assistant and model at the start; the Claude account/Claude Code route is the fresh default, and selected-provider authentication plus confirmed schema-valid analysis are required before Create, Import, Update, or Repair planning.
+- The user selects a setup assistant and model at the start; the Claude account/Claude Code route is the fresh default, and selected-provider authentication plus confirmed schema-valid analysis are required before Create, Import, Update, or Repair planning. There is no manual setup path: every desktop and web setup uses the chosen assistant, which fills in the details for the user to review.
 - The setup assistant does not select or restrict the later development client. Provider optimization changes setup-time semantic conventions only; generated AGENTS/README content, installed development integrations, source trust, transaction safety, and readiness remain provider-independent.
 - New projects create both descriptors, a valid replaceable thumbnail, and the selected folder profile.
 - Latest-mode file components are dynamic source data. Compatible changed

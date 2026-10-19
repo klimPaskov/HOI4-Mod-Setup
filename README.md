@@ -34,12 +34,14 @@ On Linux, follow the [Linux install guide](docs/LINUX.md).
 ### Or use it in your browser
 
 The [web edition](https://klimpaskov.github.io/HOI4-Mod-Setup/app/) needs no
-install. Start a new mod or drop your mod folder on the page, review every
-change, and download a ZIP to unpack yourself. Your files stay in the browser
-tab: the page downloads only the selected modding files from GitHub at one
-exact commit and checks each against its published SHA-256 hash. Suggestions
-from Claude, Gemini, Grok, DeepSeek, or GLM are optional; the API key stays
-in the tab's memory and the provider sees only a scan summary.
+install. Choose a setup assistant (Claude, Gemini, Grok, DeepSeek, or GLM with
+your API key), then start a new mod from a short description or drop your mod
+folder on the page. The assistant fills in the mod's details and recommends
+components; you review everything and download a ZIP to unpack yourself. Your
+files stay in the browser tab: the API key stays in the tab's memory, the
+provider sees only your description or a scan summary, and the page downloads
+only the selected modding files from GitHub at one exact commit and checks each
+against its published SHA-256 hash.
 
 The web edition does not change files in place, so it has no backup or undo
 step; unpack the ZIP over a copy or a Git checkout of your mod. Account

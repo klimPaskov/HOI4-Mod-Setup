@@ -107,7 +107,7 @@ provider has write access.
    classified before targeted file, path, and directory-sort budgets are
    charged, so a large gameplay directory cannot hide or truncate relevant
    setup evidence.
-4. **Project profile:** a separate contained metadata walk and deterministic
+4. **Project profile:** a contained metadata inventory and deterministic
    prefix sampler establishes bounded structure, identifier, localisation, and
    documentation observations. It uses independent 500,000-file,
    200,000-directory, 96-category, 256-sample, 32 KiB-prefix, and 8 MiB
@@ -283,6 +283,16 @@ such as `HEAD`, the referenced ref, config, index, refs, objects, and info must
 be link-free; linked descendants and object-alternate declarations are rejected.
 The complete policy is rechecked immediately before and after every child, and
 output is discarded if the metadata route changes.
+
+The setup inventory and the profile share one walk. Each directory is
+enumerated once, through the retained no-follow handle, and its names are
+offered to both: the setup inventory keeps only setup surfaces under its own
+file, directory, depth, path, byte, conflict, identity-fence, sensitive-path,
+and case-collision rules, and the profile keeps everything outside its
+exclusions under its own budgets. A directory is entered when either wants it.
+When one inventory stops at a limit, the other continues. Cancellation,
+timeout, or a changed filesystem boundary stops both, and a stopped scan
+reports no profile.
 
 The project profile has its own 500,000-file, 200,000-directory, depth-64,
 96-category, 256-sample, 32 KiB-prefix, and 8 MiB sampled-byte limits. Its

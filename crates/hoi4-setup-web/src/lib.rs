@@ -557,14 +557,12 @@ const WEB_ASSISTANT_PROVIDERS: &[&str] = &["claude", "gemini", "grok", "deepseek
 fn assistant_provenance(
     assistant: Option<AssistantProvenance>,
 ) -> Result<AssistantProvenance, AppError> {
+    // Every web setup is prepared with a setup assistant, so an export always
+    // names the reviewed route that filled in the details.
     let Some(assistant) = assistant else {
-        return Ok(AssistantProvenance {
-            provider: "none".into(),
-            model: "deterministic".into(),
-            reasoning_effort: "none".into(),
-            endpoint: None,
-            optimization_profile: "Web edition setup".into(),
-        });
+        return Err(AppError::InvalidInput(
+            "ask the setup assistant for the project details before exporting".into(),
+        ));
     };
     let valid_text = |value: &str| {
         !value.trim().is_empty()
@@ -1079,6 +1077,33 @@ mod tests {
             "unverified bytes are refused"
         );
         assert!(source.missing_paths().contains(&first.to_owned()));
+    }
+
+    #[test]
+    fn an_export_requires_a_reviewed_assistant_route() {
+        assert!(assistant_provenance(None).is_err());
+        let route = |provider: &str, endpoint: Option<&str>| AssistantProvenance {
+            provider: provider.into(),
+            model: "claude-haiku-5-5".into(),
+            reasoning_effort: "medium".into(),
+            endpoint: endpoint.map(str::to_owned),
+            optimization_profile: "Claude setup analysis".into(),
+        };
+        let accepted = assistant_provenance(Some(route(
+            "claude",
+            Some("https://api.anthropic.com/v1/messages"),
+        )))
+        .unwrap();
+        assert_eq!(accepted.provider, "claude");
+        assert!(assistant_provenance(Some(route(
+            "none",
+            Some("https://api.anthropic.com/v1/messages")
+        )))
+        .is_err());
+        assert!(
+            assistant_provenance(Some(route("kimi", Some("https://api.moonshot.ai/v1")))).is_err()
+        );
+        assert!(assistant_provenance(Some(route("claude", None))).is_err());
     }
 
     #[test]

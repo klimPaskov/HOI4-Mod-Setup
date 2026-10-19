@@ -24,7 +24,7 @@ Follow these steps to prepare a new or existing mod for AI-assisted development.
 
 9a. **If you selected Live testing**, choose Clausewitz MCP, experimental HOI4 Live Tools, or None in its separate step. Clausewitz MCP by smerss requires native Linux HOI4 1.19.2 and manual Linux game/server setup: WSL on Windows, Linux and SSH on macOS. On Linux it runs directly, with no extra WSL, VM or SSH environment. Follow the [Linux guide](LIVE_TESTING_LINUX.md). Leave readiness unchecked to configure later without registration. A configured route does not establish that live gameplay was verified. HOI4 Live Tools is slower and not fully tested; its public package verifies Windows only and its macOS scaffold is incomplete.
 
-10. **Review integrations and credentials.** Check the selected integrations and credential status, then choose **Next**. Secret values stay outside the mod folder. [Screenshot](screenshots/06-mcp-credentials.png)
+10. **Review integrations and credentials.** This step appears only when the 3D workflow or HOI4 Live Tools is selected. Check the credential status and per-user setup, then choose **Next**. Secret values stay outside the mod folder. [Screenshot](screenshots/06-mcp-credentials.png)
 
 11. **Choose Git setup.** Select **Initialize a Git repository**, **Preserve the existing repository**, or **Skip Git setup**. Leave **Keep this project local** selected unless you want an online action, which asks for separate approval. [Screenshot](screenshots/07-git.png)
 

@@ -79,8 +79,9 @@ edition served from this repository's GitHub Pages site at `/app/` shares the
 React interface and a portable Rust core compiled to WebAssembly. It imports a
 dropped folder read-only and exports a ZIP (an overlay of new and changed files
 by default for existing mods, a full copy on request). API keys there stay in
-memory with a visible warning. A clearly labelled deterministic-only setup path
-is allowed when no setup assistant is available. Account sign-in routes, MCP
+memory with a visible warning. Every setup, on desktop and on the web, uses the
+setup assistant chosen on its first step; the assistant fills in the details
+and the user reviews them. There is no manual setup path. Account sign-in routes, MCP
 bootstrap and health checks, Git, and in-place transactions stay desktop-only.
 Portable logic lives in the core crate and reaches files, HTTP, time, and
 randomness only through adapter traits.
