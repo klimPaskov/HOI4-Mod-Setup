@@ -4,6 +4,9 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Add a free setup assistant that needs no account: the app sends one structured request through the maintainer's relay to a free OpenRouter model, and it becomes the default once the relay is deployed. The maintainer's key stays a relay secret and never ships in the app or the web page.
+- Add OpenRouter as a setup assistant on desktop and web, with **Sign in with OpenRouter** (OAuth PKCE) or a pasted key. A free model is the default choice.
+- Add **Expand description** on the description step: the selected setup assistant turns a rough note into a fuller description you can edit or undo, on every assistant route.
 - Profile existing mods from a bounded, read-only inventory and content samples so semantic review sees real gameplay structure, identifiers, localisation conventions, and documentation, not only the descriptor and README.
 - Read setup manifest format 6, which declares each coding client's MCP support and lets one component serve several clients. Offer GitHub Copilot (VS Code), Gemini CLI, Antigravity, Grok Build, Kilo Code, Kiro, and Qwen Code with project MCP registration, and Cline, Devin Desktop, Augment, Continue, and Aider with project guidance, when the source publishes them.
 - Show clients this version or platform cannot install as unavailable, label manual and absent MCP routes, and list a to-do with the reviewed guide for clients whose MCP servers live in their own settings.

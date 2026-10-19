@@ -4,7 +4,7 @@ This file governs development of the **HOI4 Mod Setup** desktop application. It 
 
 ## 1. Product promise
 
-HOI4 Mod Setup prepares a new or existing Hearts of Iron IV mod for agentic development with a user-selected AI provider. Claude, signed in through the user's own Claude Code with Claude Haiku 5.5, is the default setup assistant. The checked-in Claude catalog keeps the legacy Haiku 4.5 choice and accepts a bounded exact model ID under Advanced.
+HOI4 Mod Setup prepares a new or existing Hearts of Iron IV mod for agentic development with a user-selected AI provider. Once its relay is deployed, the free assistant (one free OpenRouter model through the maintainer's relay, no account) is the default setup assistant; otherwise Claude, signed in through the user's own Claude Code with Claude Haiku 5.5, is the default. The checked-in Claude catalog keeps the legacy Haiku 4.5 choice and accepts a bounded exact model ID under Advanced.
 
 Every implementation must preserve these promises:
 
@@ -81,8 +81,11 @@ dropped folder read-only and exports a ZIP (an overlay of new and changed files
 by default for existing mods, a full copy on request). API keys there stay in
 memory with a visible warning. Every setup, on desktop and on the web, uses the
 setup assistant chosen on its first step; the assistant fills in the details
-and the user reviews them. There is no manual setup path. Account sign-in routes, MCP
-bootstrap and health checks, Git, and in-place transactions stay desktop-only.
+and the user reviews them. There is no manual setup path. Claude.ai, ChatGPT,
+and provider-CLI account sign-in, MCP bootstrap and health checks, Git, and
+in-place transactions stay desktop-only. Accepted 2026-10-19: the web also
+offers the free assistant relay and OpenRouter sign-in (OAuth PKCE), so it
+does not depend on pasted API keys.
 Portable logic lives in the core crate and reaches files, HTTP, time, and
 randomness only through adapter traits.
 
@@ -162,7 +165,9 @@ Use `hoi4-mod-setup-source-manifest` for changes to this surface.
 
 ## 5A. AI provider authentication and Codex App Server
 
-The default setup assistant is the Claude account route (`claude_account`). It runs the user's own installed, unmodified, Anthropic-signed Claude Code: `claude auth login` owns sign-in, `claude auth status --json` supplies a non-identifying summary, and analysis is one isolated print-mode turn with tools, MCP servers, customizations, and session persistence disabled, run in an empty working directory with Claude Haiku 5.5 by default. The checked-in catalog keeps legacy Haiku 4.5 and the Advanced field accepts a bounded exact Claude model ID without requiring an app release. Anthropic does not permit third-party apps to offer Claude.ai login or to collect, store, or intermediate Claude credentials, so never build an app-owned Claude OAuth flow, read Claude Code's credential store, accept a pasted authorization code, or forward `ANTHROPIC_*` credentials to the child. The full boundary is in `docs/31_ai_provider_profiles_and_chat_sources.md`.
+Accepted 2026-10-19: once `src/free-assistant.json` names a deployed relay, the free assistant (`free`) is the default setup assistant on desktop and web. `relay/` holds the maintainer's OpenRouter key as a Cloudflare Worker secret and forwards only the core's structured request to one free model; never ship that key in the app, the page, or the repository. OpenRouter (`openrouter`) is a regular provider with OAuth PKCE sign-in or a pasted key. The description step's wand drafts a fuller description through the selected assistant with the `description-draft` schema and never writes files.
+
+The Claude account route (`claude_account`) is the default until the relay is deployed. It runs the user's own installed, unmodified, Anthropic-signed Claude Code: `claude auth login` owns sign-in, `claude auth status --json` supplies a non-identifying summary, and analysis is one isolated print-mode turn with tools, MCP servers, customizations, and session persistence disabled, run in an empty working directory with Claude Haiku 5.5 by default. The checked-in catalog keeps legacy Haiku 4.5 and the Advanced field accepts a bounded exact Claude model ID without requiring an app release. Anthropic does not permit third-party apps to offer Claude.ai login or to collect, store, or intermediate Claude credentials, so never build an app-owned Claude OAuth flow, read Claude Code's credential store, accept a pasted authorization code, or forward `ANTHROPIC_*` credentials to the child. The full boundary is in `docs/31_ai_provider_profiles_and_chat_sources.md`.
 
 Experimental Gemini and Grok account adapters are separate from the hosted API
 profiles. Their official CLI owns OAuth, token storage, refresh, and logout;

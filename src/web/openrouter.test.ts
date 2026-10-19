@@ -21,8 +21,11 @@ class FakeChannel {
   }
 }
 
+/** What the callback page does: post once, then close its channel. */
 function deliver(message: SignInMessage) {
-  new FakeChannel(SIGN_IN_CHANNEL).postMessage(message);
+  const channel = new FakeChannel(SIGN_IN_CHANNEL);
+  channel.postMessage(message);
+  channel.close();
 }
 
 function core() {

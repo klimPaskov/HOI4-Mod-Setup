@@ -129,7 +129,7 @@ describe("browser assistant", () => {
   });
 
   it("drafts a fuller description with the chosen route and never retries", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{"choices":[]}', { status: 200 }));
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('{"choices":[]}', { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const calls: Array<{ op: Operation; args: unknown }> = [];
     const replies: Array<CoreOperations["descriptionReply"]["result"]> = [{ description: "A fuller Balkans mod." }, { error: "the draft did not match its schema" }];

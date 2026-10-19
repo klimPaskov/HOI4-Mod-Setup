@@ -93,6 +93,7 @@ pnpm tauri dev
 pnpm web:dev
 pnpm web:build
 pnpm test:web
+pnpm test:relay
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
@@ -106,6 +107,9 @@ and serves the page at `http://localhost:1430/`. `pnpm web:build` writes
 and WebKit (`pnpm exec playwright install chromium firefox webkit` first).
 `node scripts/check_web_build.mjs` checks the CSP, SRI, connect hosts, and
 size budgets. The Pages workflow publishes the build at `/app/`.
+
+`pnpm test:relay` tests the free assistant relay in `relay/` with Node's test
+runner; deploying it is the manual workflow described in `relay/README.md`.
 
 `pnpm test:rust` is the stable Rust test entry point. It bounds the default
 test concurrency at four threads so local runs do not exhaust the machine; set

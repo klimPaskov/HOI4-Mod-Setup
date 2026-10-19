@@ -5,7 +5,7 @@ description: Use when implementing or changing provider authentication, model pr
 
 # HOI4 Mod Setup Codex Integration
 
-Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The user selects a setup assistant, model, and model-supported reasoning effort at the start; the Claude account route (`claude_account`, Claude Haiku 5.5 at medium effort) is the default profile and Codex remains first-class. This choice is never the later Agentic HOI4 Modding development-client selection.
+Use this skill for the provider-neutral semantic layer of HOI4 Mod Setup. The user selects a setup assistant, model, and model-supported reasoning effort at the start; the free assistant (`free`) is the default once `src/free-assistant.json` names a deployed relay, otherwise the Claude account route (`claude_account`, Claude Haiku 5.5 at medium effort) is; Codex remains first-class. This choice is never the later Agentic HOI4 Modding development-client selection.
 
 ## Product rule
 
@@ -256,6 +256,33 @@ keyless browser route: its address must be loopback (`routeFor` and
 User documents reach a browser provider only as the core's
 `hoi4_setup_core::context::document_from_bytes` excerpt under `@context/`, and
 the user can leave out any scan finding before a request.
+
+The free route and OpenRouter live in
+`crates/hoi4-setup-core/src/free_assistant.rs`. `free_assistant()` reads the
+relay address and model from `src/free-assistant.json`; with `endpoint: null`
+the `free` profile does not exist on either surface. Its provenance is
+`auth_mode = shared_free` and is valid only for the exact checked-in relay
+address and model; it sends no credential, and relay failures never read as a
+problem with the user's key. Never put the maintainer's OpenRouter key in the
+app, the page, or the repository; it is a Worker secret in `relay/`, and the
+relay's `MODEL` must match the app's model (a relay test checks it).
+`openrouter` uses OAuth PKCE (`authorization_url`, `key_exchange_body`,
+`read_exchanged_key`): `src-tauri/src/openrouter.rs` on desktop with a
+`127.0.0.1` callback and the OS vault, `src/web/openrouter.ts` with a popup,
+`web/openrouter-callback.html`, and tab memory on the web. Requests to OpenRouter
+and the free relay carry the schema as `response_format`; OpenRouter also sets
+`provider.require_parameters`.
+
+The description wand (`crates/hoi4-setup-core/src/description.rs`) is a
+second structured turn with `docs/schemas/description-draft.schema.json`. Its
+only input is the user's redacted note. Every route implements it: the API
+routes in `ai::draft_description`, Claude Code in
+`claude_code::draft_with_runner` (same isolated print mode), Codex in
+`AppServerProtocol::draft_description` (dedicated read-only thread), and the
+account CLIs in `account_cli::draft_with_runner`; the web uses the
+`descriptionTurn` and `descriptionReply` worker operations. A draft is
+validated like analysis text and never retried. `analysis::structured_request`
+builds both turns; change protocol shapes there once.
 
 User-picked context documents (`src-tauri/src/context.rs`) are evidence with a
 reserved `@context/<n>-<name>` path and `context-<n>` reference. Bind them by

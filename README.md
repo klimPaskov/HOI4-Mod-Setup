@@ -34,11 +34,12 @@ On Linux, follow the [Linux install guide](docs/LINUX.md).
 ### Or use it in your browser
 
 The [web edition](https://klimpaskov.github.io/HOI4-Mod-Setup/app/) needs no
-install. Choose a setup assistant (Claude, Gemini, Grok, DeepSeek, or GLM with
-your API key), then start a new mod from a short description or drop your mod
-folder on the page. The assistant fills in the mod's details and recommends
+install. Choose a setup assistant: the free model, which needs no account
+when it is offered, **Sign in with OpenRouter** (free models included), or
+Claude, Gemini, Grok, DeepSeek, or GLM with your API key. Then start a new mod
+from a short description or drop your mod folder on the page. The assistant fills in the mod's details and recommends
 components; you review everything and download a ZIP to unpack yourself. Your
-files stay in the browser tab: the API key stays in the tab's memory, the
+files stay in the browser tab: any key stays in the tab's memory, the
 provider sees only your description or a scan summary, and the page downloads
 only the selected modding files from GitHub at one exact commit and checks each
 against its published SHA-256 hash.
@@ -77,7 +78,15 @@ prepare the mod's details; choose your coding environment separately later.
 
 The setup assistant that plans the mod is separate from the coding client you
 choose later. Select any supported assistant provider and use its account
-sign-in, API key, or local connection. Gemini and Grok API-key profiles use the
+sign-in, API key, or local connection. When the free model is offered, it is
+the default and needs no account: HOI4 Mod Setup sends the request through its
+own relay to a free model on OpenRouter, free models may keep what you send,
+and all users share one daily limit. **OpenRouter** also lets you sign in with
+your own account instead of pasting a key.
+
+While describing a new mod, type a rough idea and choose **Expand
+description**: the setup assistant rewrites it as a fuller description that
+you can edit or undo. Gemini and Grok API-key profiles use the
 app's reviewed provider routes; experimental provider-account routes, when
 shown, keep sign-in inside the provider's own CLI. Choose a model and
 reasoning level when the provider offers them. Claude defaults to Haiku 5.5 at

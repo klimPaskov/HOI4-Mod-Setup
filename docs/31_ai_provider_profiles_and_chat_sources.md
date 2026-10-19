@@ -7,8 +7,13 @@ contract.
 
 ## Provider selection
 
-The first setup screen selects a setup assistant and model. Claude, signed in
-through the user's own Claude Code, is the default, with Claude Haiku 5.5
+The first setup screen selects a setup assistant and model. Once the free
+assistant relay is deployed (`src/free-assistant.json` names it), the free
+route is the default for a new setup on desktop and on the web: no account or
+key, one free OpenRouter model, and a shared daily allowance (see
+[Free assistant and OpenRouter](#free-assistant-and-openrouter)). Until then,
+and whenever the user picks it, Claude, signed in
+through the user's own Claude Code, is the desktop default, with Claude Haiku 5.5
 (`claude-haiku-5-5`) at medium effort as its default model. The checked-in
 catalog contains 14 verified Claude Code choices, including legacy Haiku 4.5;
 the Advanced field also accepts a bounded exact Claude model ID without an app
@@ -22,7 +27,9 @@ The stable bounded registry currently contains:
 
 | Profile | Transport | Credential route | Endpoint rule |
 | --- | --- | --- | --- |
-| Claude (`claude_account`, default) | the user's installed, unmodified Claude Code in isolated print mode | Claude account sign-in owned by Claude Code (`claude auth login`) | no endpoint; Claude Code owns its route |
+| Free model (`free`, default once deployed) | OpenAI-compatible, through the maintainer's relay | none from the user; the relay holds the maintainer's OpenRouter key as a Worker secret | the exact checked-in relay address and model; not editable |
+| OpenRouter (`openrouter`) | OpenAI-compatible | OpenRouter sign-in (OAuth PKCE) or a pasted key; OS vault on desktop, tab memory on the web | `https://openrouter.ai/api/v1/chat/completions`; a free model by default |
+| Claude (`claude_account`) | the user's installed, unmodified Claude Code in isolated print mode | Claude account sign-in owned by Claude Code (`claude auth login`) | no endpoint; Claude Code owns its route |
 | Codex | official local Codex App Server | ChatGPT browser or device-code login owned by Codex | App Server owns its route |
 | Claude API key (`claude`) | Anthropic messages | provider API key in the OS vault | verified default; editable under Advanced |
 | Gemini API key (`gemini`) | Google's OpenAI-compatible API | provider API key in the OS vault | `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`; `gemini-3.8-flash` |
@@ -121,6 +128,78 @@ built-in fallback with its advertised default and supported default effort.
 An explicitly selected model remains selected if unavailable, with a clear
 model-availability message. An outdated client advertising a retired model is
 reported as an update/model issue rather than a sign-in failure.
+
+## Free assistant and OpenRouter
+
+Accepted by the owner on 2026-10-19: a new setup should work without the user
+signing in anywhere, using the maintainer's OpenRouter account.
+
+- The maintainer's key is never shipped. Both the web page and the desktop
+  installer are public, so a key in either would be readable by anyone.
+  `relay/worker.mjs` is a Cloudflare Worker that keeps the key as a Worker
+  secret and forwards one chat request to OpenRouter.
+- The relay accepts only what the core builds: the configured model, one to
+  four system or user messages, and an optional JSON Schema
+  `response_format`. It refuses tools, streaming, other models, and other
+  fields; bounds the body, each message, the schema, and the reply; limits
+  each address to six requests a minute; and accepts browser requests only
+  from `https://klimpaskov.github.io`. The desktop sends no `Origin` and gets
+  the same limits.
+- OpenRouter limits free models per account (20 a minute; 50 a day below 10
+  purchased credits, 1,000 a day above), and every user of the free route
+  shares that. A setup uses one to three requests. Upstream 401 or 403 is
+  reported as "not available right now", never as a problem with the user's
+  credentials; 402 and 429 become "busy or at its limit".
+- The app records the route as `provider = free`, `auth_mode = shared_free`,
+  with the relay's exact model. The core accepts that provenance only for the
+  checked-in relay address and model.
+- `src/free-assistant.json` holds the relay address and model; `endpoint` is
+  `null` until the relay is deployed, and the route is then not offered. The
+  manual **Deploy free assistant relay** workflow deploys it on GitHub's
+  runners from the `free-assistant` environment's secrets (`relay/README.md`).
+  A test keeps the relay's `MODEL` and the app's model in step.
+
+OpenRouter is also a regular provider for a user's own account. Its OAuth
+PKCE flow is the one OpenRouter documents for third-party apps: the app sends
+the user to `https://openrouter.ai/auth` with an S256 challenge and a random
+`state`, and exchanges the returned code at
+`https://openrouter.ai/api/v1/auth/keys` for a key tied to the user's account.
+
+- Desktop: a one-time `127.0.0.1` listener receives the callback, checks
+  `state`, answers the browser, and stores the key in the OS vault as the
+  `openrouter` credential, exactly like a pasted key. Sign-in can be
+  cancelled and times out after five minutes.
+- Web: openrouter.ai opens in a popup; `openrouter-callback.html` (built with
+  the same CSP and SRI as the page) hands the code back over a same-origin
+  `BroadcastChannel` and clears it from the address bar. The PKCE verifier
+  never leaves the setup tab, so the code alone is useless. The key is kept
+  in tab memory only.
+
+Requests to OpenRouter set `provider.require_parameters` so the request is
+routed only to model hosts that honour the output schema.
+
+## Description wand
+
+The description step has an **Expand description** button. The selected setup
+assistant rewrites the user's rough note as a fuller description, in one turn
+bound by `docs/schemas/description-draft.schema.json` (one `description`
+string of at most 2,400 characters).
+
+- Input is only the note (at most 4,000 characters), with credential-shaped
+  text redacted before it is sent. No project files, scan evidence, or
+  context documents are included.
+- Every route supports it: hosted routes with native structured output, the
+  Claude account route in the same isolated print mode as the analysis, Codex
+  in a dedicated read-only App Server thread, and the account CLIs in their
+  isolated homes.
+- The reply passes the same output checks as analysis text: no credential- or
+  account-shaped content and no attribution to an AI tool. A rejected or
+  failed draft is not retried; the note stays unchanged and the reason is
+  shown.
+- The draft replaces the note, is labelled as suggested by the assistant, and
+  can be undone until the user edits it. It is user-reviewed text, not a
+  confirmed fact, and the later analysis treats it like anything the user
+  typed.
 
 ## Claude account route
 
