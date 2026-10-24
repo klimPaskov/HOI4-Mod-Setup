@@ -42,7 +42,9 @@
 //! The service performs no launcher discovery and never reads outside the
 //! workspace root. Plans that write outside the project root are refused.
 
+pub(crate) mod builder;
 pub(crate) mod evidence;
+pub(crate) mod inputs;
 pub(crate) mod plans;
 pub mod runtime;
 
@@ -76,6 +78,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use uuid::Uuid;
 
 pub use crate::credentials::DeniedCredentialStore;
+pub use crate::source::SourceFetcher;
+pub use builder::DefaultPlanBuilder;
 pub use plans::MergeContext;
 pub use runtime::NodeRuntime;
 
@@ -186,9 +190,9 @@ pub struct BuiltPlan {
 
 /// Builds an installation plan from a confirmed analysis and reviewed state.
 ///
-/// The desktop's builder is still inside its command layer. A host
-/// implements this trait, and a later change can move the desktop builder
-/// behind it. The session enforces what a builder cannot be trusted with: the
+/// [`DefaultPlanBuilder`] builds the same plans as the desktop from a
+/// caller-given state root, cache root and Node runtime. A host can implement
+/// this trait instead. The session enforces what a builder cannot be trusted with: the
 /// plan must carry the identity and the confirmed analysis the session
 /// verified, must be unapproved, and must not write outside the project root.
 pub trait PlanBuilder: Send + Sync {
@@ -962,5 +966,9 @@ fn bind_state_project_root(state: &mut Value, root: &Path) {
     }
 }
 
+#[cfg(test)]
+mod builder_tests;
+#[cfg(test)]
+pub(crate) mod fixture;
 #[cfg(test)]
 mod tests;

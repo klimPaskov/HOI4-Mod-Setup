@@ -46,6 +46,48 @@ pub struct DownloadLedger {
     pub cache_keys: Vec<String>,
 }
 
+/// Where a plan builder gets the workflow package: an exact commit, that
+/// commit's manifest, and the manifest-declared files.
+///
+/// [`HttpSourceClient`] is the GitHub implementation. A server or a test can
+/// supply its own. Planning never trusts an implementation for integrity:
+/// [`resolve_source`] parses and validates the manifest it returns, and every
+/// selected file is checked against the manifest's size and SHA-256 before it
+/// is staged, whatever the implementation claims to have verified.
+pub trait SourceFetcher: Send + Sync {
+    /// Resolve a request to an exact commit, the branch it came from (latest
+    /// mode) and the canonical release tag (pinned release mode).
+    fn resolve_commit(
+        &self,
+        request: &SourceRequest,
+    ) -> Result<(String, Option<String>, Option<String>), AppError>;
+
+    /// The raw bytes of the manifest at an exact commit.
+    fn fetch_manifest(&self, revision: &str) -> Result<Vec<u8>, AppError>;
+
+    /// One manifest-declared file at an exact commit. The implementation must
+    /// return bytes that match `expected_sha256` and `expected_size`.
+    fn fetch_verified_file(
+        &self,
+        revision: &str,
+        path: &str,
+        expected_sha256: &str,
+        expected_size: Option<u64>,
+    ) -> Result<Vec<u8>, AppError>;
+
+    /// Warm any cache for many files at once. Failures are ignored: the
+    /// ordered fetch repeats a miss and reports it.
+    fn prefetch_verified_files(&self, _revision: &str, _files: &[(String, String, Option<u64>)]) {}
+
+    /// Whether [`resolve_source`] may keep this source's manifests and
+    /// resolutions in its process-wide memory. Only a source that always
+    /// answers from the public repository can; an injected or local source
+    /// must be asked every time.
+    fn shares_process_cache(&self) -> bool {
+        false
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct HttpSourceClient {
     client: Client,
@@ -62,7 +104,19 @@ impl HttpSourceClient {
         Self::with_cache_root(cache_root()?)
     }
 
+    /// A client for the public repository that keeps its verified blobs under
+    /// `cache_root`. It never consults the developer's local-checkout
+    /// environment variable, so a server's source cannot be redirected by its
+    /// process environment. The directory must already exist.
+    pub fn for_cache_root(cache_root: PathBuf) -> Result<Self, AppError> {
+        Self::build(cache_root, None)
+    }
+
     pub(crate) fn with_cache_root(cache_root: PathBuf) -> Result<Self, AppError> {
+        Self::build(cache_root, crate::local_source::configured_repository())
+    }
+
+    fn build(cache_root: PathBuf, local_repository: Option<PathBuf>) -> Result<Self, AppError> {
         let client = Client::builder()
             .user_agent("HOI4-Mod-Setup/0.1")
             .connect_timeout(Duration::from_secs(15))
@@ -77,7 +131,7 @@ impl HttpSourceClient {
             api_base: "https://api.github.com".to_string(),
             owner: SOURCE_OWNER.to_string(),
             name: SOURCE_NAME.to_string(),
-            local_repository: crate::local_source::configured_repository(),
+            local_repository,
             cache_root,
         })
     }
@@ -737,6 +791,37 @@ impl HttpSourceClient {
     }
 }
 
+impl SourceFetcher for HttpSourceClient {
+    fn resolve_commit(
+        &self,
+        request: &SourceRequest,
+    ) -> Result<(String, Option<String>, Option<String>), AppError> {
+        HttpSourceClient::resolve_commit(self, request)
+    }
+
+    fn fetch_manifest(&self, revision: &str) -> Result<Vec<u8>, AppError> {
+        HttpSourceClient::fetch_manifest(self, revision)
+    }
+
+    fn fetch_verified_file(
+        &self,
+        revision: &str,
+        path: &str,
+        expected_sha256: &str,
+        expected_size: Option<u64>,
+    ) -> Result<Vec<u8>, AppError> {
+        HttpSourceClient::fetch_verified_file(self, revision, path, expected_sha256, expected_size)
+    }
+
+    fn prefetch_verified_files(&self, revision: &str, files: &[(String, String, Option<u64>)]) {
+        HttpSourceClient::prefetch_verified_files(self, revision, files)
+    }
+
+    fn shares_process_cache(&self) -> bool {
+        self.local_repository.is_none()
+    }
+}
+
 #[derive(Debug)]
 struct RefAdvertisement {
     default_branch: Option<String>,
@@ -1017,14 +1102,14 @@ impl ResolutionCache {
     }
 }
 
-pub fn resolve_source(
-    client: &HttpSourceClient,
+pub fn resolve_source<C: SourceFetcher + ?Sized>(
+    client: &C,
     request: &SourceRequest,
 ) -> Result<SourceResolution, AppError> {
     static CACHE: OnceLock<Mutex<ResolutionCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(Default::default);
     let cache_key = serde_json::to_string(request)?;
-    if client.local_repository.is_none() {
+    if client.shares_process_cache() {
         let mut cached = cache
             .lock()
             .map_err(|_| AppError::Source("source cache is unavailable".into()))?;
@@ -1033,7 +1118,7 @@ pub fn resolve_source(
         }
     }
     let resolution = resolve_source_uncached(client, request)?;
-    if client.local_repository.is_none() {
+    if client.shares_process_cache() {
         let mut cached = cache
             .lock()
             .map_err(|_| AppError::Source("source cache is unavailable".into()))?;
@@ -1042,16 +1127,16 @@ pub fn resolve_source(
     Ok(resolution)
 }
 
-fn resolve_source_uncached(
-    client: &HttpSourceClient,
+fn resolve_source_uncached<C: SourceFetcher + ?Sized>(
+    client: &C,
     request: &SourceRequest,
 ) -> Result<SourceResolution, AppError> {
     let (revision, branch, canonical_release) = client.resolve_commit(request)?;
-    let (manifest_bytes, manifest, manifest_origin) = if client.local_repository.is_some() {
+    let (manifest_bytes, manifest, manifest_origin) = if client.shares_process_cache() {
+        manifest_for_revision(&revision, || client.fetch_manifest(&revision))?
+    } else {
         let remote_manifest_bytes = client.fetch_manifest(&revision)?;
         select_manifest_for_revision(&remote_manifest_bytes, &revision)?
-    } else {
-        manifest_for_revision(&revision, || client.fetch_manifest(&revision))?
     };
     match request.mode {
         SourceMode::Latest
