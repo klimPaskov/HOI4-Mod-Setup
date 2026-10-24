@@ -174,6 +174,12 @@ A populated operation record looks like this:
 
 Both fields are optional and are omitted, never written as `null`, when absent. Journals written before quarantine support remain readable, and schema version `1.0.0` journals must not contain them.
 
+## Placement temporary files
+
+New bytes reach a live destination through a synced temporary file in the destination's own directory and an exclusive rename. The temporary is named `.hoi4ms-placing-<transaction id>-<operation id>.tmp`, derived like the quarantine name; the success lock and the rollback lock restore use the same form with the `install-lock-commit` and `install-lock-restore` suffixes, and rollback steps use the rollback transaction ID with a `rollback-` operation prefix.
+A hard stop between the temporary's creation and the rename leaves that file behind, so rollback removes the placement temporaries of its own transaction and of its rollback transaction (project-root operations and the lock) before it restores anything, and a placement replaces a regular file already holding its derived name, so a retry after a stop during rollback is not blocked.
+An entry under that name that is not a regular file is refused. Operations outside the project root keep their temporary beside the external destination and are not searched.
+
 ## Twelve stages
 
 ### 1. Preflight
@@ -440,6 +446,7 @@ Destination-quarantine coverage, all modelled as returned errors rather than pro
 - Rollback backup restore, rollback restore of a forward quarantine, and rollback removal of a created file: before the rename, after the rename, after verification, after placement, and before release, each followed by a retry.
 - Success-lock commit: before the rename, after the rename, after verification, and before release.
 - Rollback lock restore with a predecessor and lock removal after a first install: before the rename, after the rename, after verification, and before release.
+- Hard stop (child process abort) between a placement's synced temporary file and its rename, for a created file, a replaced file, the success lock, and a rollback restore: rollback or a rollback retry leaves no `.hoi4ms-` file and restores the original files exactly. A placement also replaces its own stale temporary and refuses a non-file under the name.
 - Recovery: a quarantine the journal does not name, an operation whose intents were never replayed, unknown bytes under an owned or unowned quarantine name, a forward quarantine beside already-restored bytes, checkpoint replay ordered by sequence, and the classic delete disposition forced on NTFS.
 
-Not covered: process-abort variants of the quarantine boundaries, external-destination quarantines, the remaining managed-delete boundaries, a concurrent edit during a rollback step, real FAT, exFAT, or SMB volumes, and every Unix route. Native disk-full, antivirus, network-loss, timeout, cancellation, and journal-write-failure adapters remain release-gate work and must not be represented as passing until exercised on Windows and macOS.
+Not covered: process-abort variants of the quarantine boundaries, external-destination quarantines and placement temporaries, directories that operations created beside their destinations, the remaining managed-delete boundaries, a concurrent edit during a rollback step, real FAT, exFAT, or SMB volumes, and every Unix route. Native disk-full, antivirus, network-loss, timeout, cancellation, and journal-write-failure adapters remain release-gate work and must not be represented as passing until exercised on Windows and macOS.
