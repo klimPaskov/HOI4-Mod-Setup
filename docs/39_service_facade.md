@@ -83,15 +83,45 @@ service passes it to the plan builder in `PlanRequest::node`. The desktop
 builds its runtime with `NodeRuntime::linux_system()`, which is the previous
 behavior.
 
+## The default plan builder
+
+`service::DefaultPlanBuilder` is the desktop's plan builder, moved out of the
+command layer so a server can run it. `build_plan_with` in
+`service::builder` is the same function the desktop calls, and the helpers that
+read the reviewed state (`service::inputs`) are shared. The builder takes every
+ambient input from a `PlanHost`:
+
+| Input | Desktop host | Service host |
+|---|---|---|
+| Project root, its identity token and the confirmed analysis | Process-wide scan and analysis stores | The `PlanRequest`, which the session already verified |
+| Backups and staging | The user's application-data folder | `<state root>/backups` and `<state root>/staging` |
+| Workflow package | `HttpSourceClient::new()` (user cache, optional local checkout) | A `SourceFetcher`: `DefaultPlanBuilder::new(cache_root)` uses the public repository with verified blobs under `cache_root`; `with_source` takes any other |
+| Node runtime in coding-client MCP configuration | Detected on this machine | `PlanRequest::node` |
+| Game and Workshop folders in project instructions | Detected installation | The placeholders `[HOI4_GAME_DIR]` and `[STEAM_WORKSHOP_DIR]` |
+| Launcher registration for a new project | Required | Refused: it lives outside the project root |
+| 3D workflow, kept context documents and images | Vault, app-owned launcher, attachment store | Refused |
+
+`SourceFetcher` is the seam for the package. Integrity does not depend on it:
+`resolve_source` validates the manifest it returns, and the planner checks every
+selected file against the manifest's size and SHA-256 before it is staged. The
+process-wide manifest and resolution caches are used only by a source that
+reports `shares_process_cache`, which only the public-repository client does.
+`HttpSourceClient::for_cache_root` never consults the developer's local
+checkout variable.
+
+The desktop's plan for the same state is unchanged. Before the move, plans for
+a new project and for an import with each conflict choice were built from an
+offline package and compared with the plans built after it: operations,
+conflicts, generated artifacts, external actions and prepared-file hashes were
+identical apart from per-run directory-identity tokens.
+
 ## Not in this change
 
-- The desktop plan builder (`build_plan` and its helpers in `commands.rs`,
-  about 650 lines plus manifest adaptation) is still in the command layer. It
-  reads the application-data folder for the backup and staging paths and uses
-  a source cache under the user's cache folder. A host currently implements
-  `PlanBuilder` itself. A later change should move the builder behind the same
-  trait, taking the state root, the cache root and the `NodeRuntime`
-  explicitly.
+- A new project cannot be applied through a server yet. The transaction's
+  readiness gate requires a launcher registration for every new project, and
+  the registration is outside the project root. Plans build and can be
+  approved; `apply` stops at readiness. An import applies. Resolving this
+  needs a decision on whether a server-created project is launcher-ready.
 - Context documents and images are refused: their store is process-wide.
 - Plans that write outside the project root (a launcher folder, user-level
   client configuration) are refused.

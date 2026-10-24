@@ -5,6 +5,7 @@ HOI4 Mod Setup follows semantic versioning.
 ## Unreleased
 
 - Add `hoi4_mod_setup::service`, a facade for server hosts: per-session scan, analysis, plan and approval state with no process-wide stores, an injected credential store, an explicit workspace root and state root, a public root-identity function, and a declared Node runtime. Desktop commands call the same gate code. `keyring` is now the default-on `os-keyring` feature, so a server can build without it and without `libdbus`. See `docs/39_service_facade.md`.
+- Move the plan builder behind `service::DefaultPlanBuilder` and a `SourceFetcher` seam so a server builds the same plans as the desktop from a caller-given state root, cache root and Node runtime. The desktop path is unchanged. See `docs/39_service_facade.md`.
 - Add a free setup assistant that needs no account: the app sends one structured request through the maintainer's relay to a free OpenRouter model, and it becomes the default once the relay is deployed. The maintainer's key stays a relay secret and never ships in the app or the web page.
 - Add OpenRouter as a setup assistant on desktop and web, with **Sign in with OpenRouter** (OAuth PKCE) or a pasted key. A free model is the default choice.
 - Add **Expand description** on the description step: the selected setup assistant turns a rough note into a fuller description you can edit or undo, on every assistant route.
