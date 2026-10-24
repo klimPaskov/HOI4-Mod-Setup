@@ -273,6 +273,7 @@ Route every such change through `mutate_live_leaf` in `transaction.rs`:
 - Rollback restores a surviving forward quarantine instead of the backup copy, journals its own step quarantine on the child operation, settles an interrupted step quarantine before retrying, and never deletes a quarantine whose hash differs from both the reviewed precondition and the backup.
 - Recovery probes the derived forward quarantine name even when the journal lacks it (`forward_quarantine_leaf`), moves a quarantine into place beside installed bytes only when it holds the journaled `quarantine_sha256`, and settles a quarantine beside an already-restored destination by hash before marking the operation `rolled_back`.
 - Finish forward apply, finalization resume, and rollback with `sweep_transaction_quarantines`, which settles leftover derived quarantines of the transaction (and its rollback) by hash and keeps, then fails on, bytes or names it cannot match.
+- Place new bytes into the project only through a temporary whose name derives from the transaction and operation (`placement_temp_leaf`, `.hoi4ms-placing-<transaction id>-<operation id>.tmp`; locks use the lock quarantine names), never a random `.hoi4ms-<uuid>.tmp`. A hard stop between its creation and the rename leaves it, and a random name cannot be found by recovery. `rollback_transaction` calls `remove_interrupted_placement_temps` for the forward and rollback transaction IDs before restoring, and `write_atomic_noreplace_from_named` replaces its own stale regular file so a retry is not blocked. Cover any new placement path with the process-abort test (`HOI4_MOD_SETUP_TEST_ABORT_PLACEMENT`).
 - Order checkpoint replay by the monotonic `sequence` on each record against the snapshot's `checkpoint_sequence`, never by wall-clock time; keep the timestamp fallback only for journals and logs written entirely before sequences.
 - Lock quarantines use derived `install-lock-commit` and `install-lock-restore` names with expected hashes from `previous_lock_sha256` and `result_lock_sha256`. Finalization resume and rollback settle them before checking the lock.
 - Once project apply has started, recovery remains rollback-only; do not add resume of a partly applied file set to finish a quarantine.
@@ -602,3 +603,20 @@ directory); a manual provider registers nothing and is available with every
 client. Image and live-testing provider changes are reviewed transaction inputs. Remove only unchanged managed registrations for deselected providers or clients, preserve unrelated and user-modified routes, and regenerate provider guidance with exactly one complete marker pair. Incomplete optional runtime outcomes stay incomplete in the lock and readiness report; registration is not gameplay verification.
 
 Large adapted asset skills keep a short provider section and read the generated `.tools/image_generation/selected-provider.md` from the project root. Maintain that reference through the same reviewed artifact, backup and removal flow; selected routes must never push a root SKILL.md over the package byte ceiling.
+
+## Service facade
+
+`src-tauri/src/service/` serves the same gates to a server host with
+per-session state (`docs/39_service_facade.md`). The gate logic is shared, not
+copied: `service::evidence` (scan evidence, evidence approval, analysis
+confirmation, plan root-identity binding) and `service::plans` (prepared
+plans, conflict decisions, flattened output) take explicit state, and the
+desktop commands call them with their process-wide stores. Change a gate in
+that shared code, never in one caller. A gate change needs a desktop test and a
+`service::tests` test, including the failure path. The facade must keep
+refusing an unconfirmed analysis, a plan whose digest or root identity differs
+from the approved one, a path outside the workspace root, a write outside the
+project root, and any recovery action other than the one the journal permits.
+Keep `cargo check -p hoi4-mod-setup --lib --no-default-features` passing; the
+`os-keyring` feature must not be required by anything outside
+`credentials.rs`.

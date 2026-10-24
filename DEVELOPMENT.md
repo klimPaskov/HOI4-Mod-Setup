@@ -117,6 +117,17 @@ test concurrency at four threads so local runs do not exhaust the machine; set
 bound is needed. The script rejects values outside that range and forwards the
 selected bound to the Rust test runner.
 
+The library also builds and tests without the OS credential vault, for server
+hosts that inject their own `CredentialStore` (`docs/39_service_facade.md`):
+
+```bash
+cargo check -p hoi4-mod-setup --lib --no-default-features
+cargo test -p hoi4-mod-setup --lib --no-default-features service::
+```
+
+On Linux this build needs no `libdbus-1-dev`; CI builds it on a runner without
+that package so a new dependency on it is caught.
+
 For opt-in offline lifecycle/source/scanner acceptance, set
 `HOI4_MOD_SETUP_SOURCE_REPOSITORY` to an explicit absolute committed package
 checkout and run `pnpm test:offline`. Keep its historical Git objects when

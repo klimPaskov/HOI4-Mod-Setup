@@ -11,7 +11,7 @@
 
 use crate::codex::{
     analysis_input_sha256, analysis_prompt_for_provider, validate_analysis_output,
-    AiAnalysisRequest, CodexAnalysisResult,
+    AiAnalysisRequest, CodexAnalysis, CodexAnalysisResult,
 };
 use crate::credentials::{validate_ai_provider_credential_for, CredentialStore};
 use crate::models::{AiModelOption, AiProviderProfile, CredentialReference};
@@ -722,6 +722,55 @@ where
             },
         }
     };
+    analysis_result(config, profile, request, input_sha256, analysis)
+}
+
+/// The prompt and input hash of one analysis turn for a hosted-API profile.
+/// A caller that sends the turn itself uses this prompt, then returns the
+/// provider's structured reply to [`analysis_from_reply`].
+pub fn analysis_turn(
+    config: &AiProviderConfig,
+    request: &AiAnalysisRequest,
+) -> Result<(String, String), AppError> {
+    let profile = validate_config(config)?;
+    let input_sha256 = analysis_input_sha256(&request.analysis)?;
+    let prompt = analysis_prompt_for_provider(
+        &request.analysis,
+        &input_sha256,
+        &profile.optimization_profile,
+    )?;
+    Ok((prompt, input_sha256))
+}
+
+/// Validate a structured reply the caller obtained from the provider itself.
+/// The same deterministic validator as [`analyze`] applies, and the analysis
+/// identifier is assigned here, so a reply cannot choose its own identity or
+/// skip the evidence bindings.
+pub fn analysis_from_reply(
+    config: &AiProviderConfig,
+    request: &AiAnalysisRequest,
+    reply: Value,
+) -> Result<CodexAnalysisResult, AppError> {
+    let profile = validate_config(config)?;
+    let input_sha256 = analysis_input_sha256(&request.analysis)?;
+    let analysis = validate_analysis_output(
+        reply,
+        &request.analysis,
+        &input_sha256,
+        &request.analysis.evidence,
+    )?;
+    analysis_result(config, profile, request, input_sha256, analysis)
+}
+
+/// Build the result for a reply that passed the deterministic validator. The
+/// record's identifier is the one the core assigned, never one the model chose.
+fn analysis_result(
+    config: &AiProviderConfig,
+    profile: AiProviderProfile,
+    request: &AiAnalysisRequest,
+    input_sha256: String,
+    analysis: CodexAnalysis,
+) -> Result<CodexAnalysisResult, AppError> {
     let output_sha256 = crate::security::sha256_bytes(&serde_json::to_vec(&analysis)?);
     Ok(CodexAnalysisResult {
         analysis: analysis.clone(),
