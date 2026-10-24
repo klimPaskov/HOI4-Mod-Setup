@@ -4,6 +4,7 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Fix exact restoration after a process stop during apply: new bytes are placed through a temporary file named for the transaction and operation (and for the lock), so rollback removes the `.hoi4ms-placing-*.tmp` file a hard stop left beside the destination instead of leaving an extra file in the project, and a retry after a stop during rollback replaces its own stale temporary. Directories that an operation created beside its destination and files outside the project root are not yet covered.
 - Add a free setup assistant that needs no account: the app sends one structured request through the maintainer's relay to a free OpenRouter model, and it becomes the default once the relay is deployed. The maintainer's key stays a relay secret and never ships in the app or the web page.
 - Add OpenRouter as a setup assistant on desktop and web, with **Sign in with OpenRouter** (OAuth PKCE) or a pasted key. A free model is the default choice.
 - Add **Expand description** on the description step: the selected setup assistant turns a rough note into a fuller description you can edit or undo, on every assistant route.
