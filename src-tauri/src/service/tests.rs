@@ -195,7 +195,7 @@ impl Fixture {
     }
 }
 
-fn evidence_from(scan: &ScanResult) -> Vec<ApprovedEvidence> {
+pub(super) fn evidence_from(scan: &ScanResult) -> Vec<ApprovedEvidence> {
     let finding = scan
         .findings
         .iter()
@@ -211,7 +211,7 @@ fn evidence_from(scan: &ScanResult) -> Vec<ApprovedEvidence> {
     }]
 }
 
-fn analysis_request(
+pub(super) fn analysis_request(
     root: &Path,
     scan_id: Uuid,
     evidence: Vec<ApprovedEvidence>,
@@ -233,7 +233,7 @@ fn analysis_request(
     }
 }
 
-fn provider_reply(input_sha256: &str) -> Value {
+pub(super) fn provider_reply(input_sha256: &str) -> Value {
     let mut reply: Value = serde_json::from_str(include_str!(
         "../../../docs/examples/codex-analysis.example.json"
     ))
