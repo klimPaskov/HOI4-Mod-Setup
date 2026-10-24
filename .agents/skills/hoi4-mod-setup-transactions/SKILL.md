@@ -597,3 +597,20 @@ directory); a manual provider registers nothing and is available with every
 client. Image and live-testing provider changes are reviewed transaction inputs. Remove only unchanged managed registrations for deselected providers or clients, preserve unrelated and user-modified routes, and regenerate provider guidance with exactly one complete marker pair. Incomplete optional runtime outcomes stay incomplete in the lock and readiness report; registration is not gameplay verification.
 
 Large adapted asset skills keep a short provider section and read the generated `.tools/image_generation/selected-provider.md` from the project root. Maintain that reference through the same reviewed artifact, backup and removal flow; selected routes must never push a root SKILL.md over the package byte ceiling.
+
+## Service facade
+
+`src-tauri/src/service/` serves the same gates to a server host with
+per-session state (`docs/39_service_facade.md`). The gate logic is shared, not
+copied: `service::evidence` (scan evidence, evidence approval, analysis
+confirmation, plan root-identity binding) and `service::plans` (prepared
+plans, conflict decisions, flattened output) take explicit state, and the
+desktop commands call them with their process-wide stores. Change a gate in
+that shared code, never in one caller. A gate change needs a desktop test and a
+`service::tests` test, including the failure path. The facade must keep
+refusing an unconfirmed analysis, a plan whose digest or root identity differs
+from the approved one, a path outside the workspace root, a write outside the
+project root, and any recovery action other than the one the journal permits.
+Keep `cargo check -p hoi4-mod-setup --lib --no-default-features` passing; the
+`os-keyring` feature must not be required by anything outside
+`credentials.rs`.

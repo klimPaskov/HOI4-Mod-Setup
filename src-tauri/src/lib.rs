@@ -32,6 +32,7 @@ mod safe_fs;
 pub mod scanner;
 pub use hoi4_setup_core::schemas;
 pub mod security;
+pub mod service;
 pub mod source;
 pub mod transaction;
 
