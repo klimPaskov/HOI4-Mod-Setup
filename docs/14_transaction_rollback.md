@@ -158,6 +158,7 @@ The lock quarantine names are derived from the transaction ID with the `install-
 The success-lock commit also refuses to write when the live lock no longer matches the journaled predecessor.
 Resume of a `finalizing` journal releases a verified commit quarantine beside the exact committed lock; beside an absent lock it moves the predecessor back and leaves rollback as the recovery route.
 Rollback settles both lock quarantines before it validates the lock precondition.
+The `finalizing` journal is persisted before the lock write advertising rollback only (`resume_allowed: false`), because resume reconciles a durable lock and cannot write one: the lock bytes are not journaled. It advertises resume (`recommended_action: "resume"`) once the lock is committed and verified. Because a process stop can leave either journal on disk, recovery discovery (`find_incomplete_transaction`) and resume check the live lock against the journaled predecessor and result hashes: a lock that is still the predecessor, or absent, offers rollback only; the exact committed lock offers resume; anything else is left for manual review.
 
 A populated operation record looks like this:
 
