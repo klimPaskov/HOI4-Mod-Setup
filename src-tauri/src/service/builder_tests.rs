@@ -42,7 +42,20 @@ fn ready_runner(
     })
 }
 
+/// The Node runtime the tests hand the service. A Linux plan that registers
+/// the MCP package in a coding client launches it with Node, and a real
+/// runtime must be the distro's `/usr/bin/node`, which a CI runner or a
+/// developer machine may not have. This one is never started: only its path
+/// appears in the generated client configuration.
+fn test_node() -> NodeRuntime {
+    NodeRuntime::unverified_for_tests("/opt/hoi4-test/node/bin/node", "/opt/hoi4-test/npm")
+}
+
 fn hosted_with(source: SourceFixture) -> Hosted {
+    hosted_configured(source, Some(test_node()))
+}
+
+fn hosted_configured(source: SourceFixture, node: Option<NodeRuntime>) -> Hosted {
     let container = tempdir().unwrap();
     let base = fs::canonicalize(container.path()).unwrap();
     let workspace = base.join("workspace");
@@ -53,6 +66,10 @@ fn hosted_with(source: SourceFixture) -> Hosted {
     let service = SetupService::new(Arc::new(DeniedCredentialStore))
         .with_plan_builder(Arc::new(DefaultPlanBuilder::with_source(source.clone())))
         .with_post_install_runner(ready_runner);
+    let service = match node {
+        Some(node) => service.with_node_runtime(node),
+        None => service,
+    };
     Hosted {
         _container: container,
         workspace,
@@ -599,4 +616,36 @@ fn the_builder_is_shared_by_sessions_without_sharing_their_plans() {
     assert!(second
         .approve_plan(plan.plan_id, &plan_sha256(&plan).unwrap())
         .is_err());
+}
+
+/// Whether this machine's plans launch the MCP package with Node.
+const LINUX: bool = cfg!(target_os = "linux");
+
+#[test]
+fn a_linux_plan_needs_a_node_runtime_only_once_it_registers_the_mcp_package() {
+    let hosted = hosted_configured(SourceFixture::new(), None);
+    let session = hosted.session();
+
+    // Claude Code and Codex read the MCP package from their configuration, so
+    // on Linux the plan needs Node and says so instead of guessing a path.
+    let mut state = fixture::planning_state("new", &hosted.project(), None, None);
+    analyze_new(&session, &hosted.latest(), &mut state);
+    let result = session.build_plan(&state);
+    if LINUX {
+        let error = result.unwrap_err().to_string();
+        assert!(
+            error.contains("trusted native Node runtime is unavailable"),
+            "{error}"
+        );
+    } else {
+        result.unwrap();
+    }
+
+    // Every coding client in the package registers the MCP package, so on
+    // Linux a plan that reaches adaptation always needs Node. A request the
+    // session refuses earlier never gets that far, so it reports its own
+    // reason, with or without a runtime.
+    let unanalysed = fixture::planning_state("new", &hosted.project(), None, None);
+    let error = session.build_plan(&unanalysed).unwrap_err().to_string();
+    assert!(!error.contains("Node runtime"), "{error}");
 }

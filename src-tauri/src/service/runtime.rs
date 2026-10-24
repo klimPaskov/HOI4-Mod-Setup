@@ -63,6 +63,20 @@ impl NodeRuntime {
         })
     }
 
+    /// A runtime that skips publisher verification, so tests that plan a
+    /// Linux MCP registration need no distro-owned Node on the machine. Only
+    /// compiled for tests: production code cannot reach it.
+    #[cfg(test)]
+    pub(crate) fn unverified_for_tests(
+        executable: impl Into<PathBuf>,
+        npm_prefix: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            executable: executable.into(),
+            npm_prefix: npm_prefix.into(),
+        }
+    }
+
     /// The runtime the desktop uses on Linux: `/usr/bin/node` and the
     /// per-user npm prefix under the XDG data directory.
     pub fn linux_system() -> Result<Self, AppError> {
