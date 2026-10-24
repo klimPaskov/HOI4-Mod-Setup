@@ -1065,6 +1065,86 @@ pub fn provider_request(
     )
 }
 
+/// Keywords that Anthropic's structured output rejects with HTTP 400, for
+/// example `For 'number' type, properties maximum, minimum are not
+/// supported`. See "JSON Schema limitations" in
+/// <https://platform.claude.com/docs/en/build-with-claude/structured-outputs>:
+/// numerical constraints (`minimum`, `maximum`, `multipleOf`), string length
+/// constraints, and array constraints beyond a `minItems` of 0 or 1 are not
+/// supported.
+const ANTHROPIC_UNSUPPORTED_KEYWORDS: &[&str] = &[
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+    "minLength",
+    "maxLength",
+    "maxItems",
+];
+
+/// The schema as Anthropic accepts it. Only the copy sent to Anthropic is
+/// reduced; [`ANALYSIS_OUTPUT_SCHEMA`] and its validator still enforce every
+/// keyword on the reply. Each removed constraint is restated in the
+/// property's description so the model still sees it.
+fn anthropic_output_schema(mut schema: Value) -> Value {
+    strip_anthropic_unsupported(&mut schema);
+    schema
+}
+
+fn strip_anthropic_unsupported(node: &mut Value) {
+    let Some(object) = node.as_object_mut() else {
+        return;
+    };
+    let mut removed = Vec::new();
+    for keyword in ANTHROPIC_UNSUPPORTED_KEYWORDS {
+        if let Some(value) = object.remove(*keyword) {
+            removed.push(format!("{keyword} {value}"));
+        }
+    }
+    if object
+        .get("minItems")
+        .and_then(Value::as_u64)
+        .is_some_and(|minimum| minimum > 1)
+    {
+        if let Some(value) = object.remove("minItems") {
+            removed.push(format!("minItems {value}"));
+        }
+    }
+    if !removed.is_empty() {
+        let note = format!(
+            "Constraints checked after the reply: {}.",
+            removed.join(", ")
+        );
+        let description = match object.get("description").and_then(Value::as_str) {
+            Some(existing) if !existing.is_empty() => format!("{existing} {note}"),
+            _ => note,
+        };
+        object.insert("description".into(), Value::String(description));
+    }
+    // Recurse only into places that hold schemas, never into `enum`, `const`,
+    // `default`, or `required`, whose values are data.
+    for keyword in ["properties", "$defs", "definitions"] {
+        if let Some(Value::Object(children)) = object.get_mut(keyword) {
+            for child in children.values_mut() {
+                strip_anthropic_unsupported(child);
+            }
+        }
+    }
+    for keyword in ["items", "additionalProperties", "not", "if", "then", "else"] {
+        if let Some(child) = object.get_mut(keyword) {
+            strip_anthropic_unsupported(child);
+        }
+    }
+    for keyword in ["anyOf", "allOf", "oneOf", "prefixItems"] {
+        if let Some(Value::Array(children)) = object.get_mut(keyword) {
+            for child in children {
+                strip_anthropic_unsupported(child);
+            }
+        }
+    }
+}
+
 /// One structured-output request on a reviewed hosted route: the schema
 /// travels as native structured output where the route supports it, and the
 /// body never includes tools or a credential.
@@ -1093,7 +1173,7 @@ pub fn structured_request(
             "max_tokens": max_tokens,
             "system": system_prompt,
             "messages": [{"role": "user", "content": prompt}],
-            "output_config": {"format": {"type": "json_schema", "schema": schema}}
+            "output_config": {"format": {"type": "json_schema", "schema": anthropic_output_schema(schema)}}
         });
         if supports_effort {
             body["output_config"]["effort"] = json!(reasoning_effort);
@@ -1240,4 +1320,127 @@ pub fn parse_json_text(text: &str) -> Result<Value, AppError> {
     serde_json::from_str(without_fence).map_err(|_| {
         AppError::Serialization("AI provider returned text that is not valid JSON".into())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const UNSUPPORTED: &[&str] = &[
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "minLength",
+        "maxLength",
+        "maxItems",
+    ];
+
+    /// Every keyword in a schema, with its value, found anywhere below it.
+    /// Property names are not keywords, so `properties` children are walked
+    /// by value only.
+    fn keywords(node: &Value, found: &mut Vec<(String, Value)>) {
+        match node {
+            Value::Object(object) => {
+                for (key, value) in object {
+                    if matches!(key.as_str(), "properties" | "$defs") {
+                        if let Value::Object(children) = value {
+                            children.values().for_each(|child| keywords(child, found));
+                        }
+                        continue;
+                    }
+                    found.push((key.clone(), value.clone()));
+                    keywords(value, found);
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|item| keywords(item, found)),
+            _ => {}
+        }
+    }
+
+    fn request_schema(provider: &str, protocol: &str) -> Value {
+        let request = provider_request(
+            provider,
+            protocol,
+            "https://example.invalid/v1",
+            "model",
+            "high",
+            "approved brief",
+            false,
+        )
+        .unwrap();
+        if protocol == "anthropic_messages" {
+            request.body["output_config"]["format"]["schema"].clone()
+        } else {
+            request.body["text"]["format"]["schema"].clone()
+        }
+    }
+
+    #[test]
+    fn anthropic_request_schema_has_no_unsupported_keywords() {
+        let schema = request_schema("claude", "anthropic_messages");
+        let mut found = Vec::new();
+        keywords(&schema, &mut found);
+        for (keyword, value) in &found {
+            assert!(
+                !UNSUPPORTED.contains(&keyword.as_str()),
+                "Anthropic rejects {keyword}"
+            );
+            if keyword == "minItems" {
+                assert!(matches!(value.as_u64(), Some(0 | 1)), "minItems {value}");
+            }
+        }
+        // The rest of the schema is untouched, and the removed bounds stay
+        // visible to the model.
+        let confidence = &schema["$defs"]["proposal"]["anyOf"][0]["properties"]["confidence"];
+        assert_eq!(confidence["type"], "number");
+        assert!(confidence["description"]
+            .as_str()
+            .is_some_and(|text| text.contains("minimum 0") && text.contains("maximum 1")));
+        let component_id = &schema["properties"]["component_recommendations"]["items"]
+            ["properties"]["component_id"];
+        assert_eq!(component_id["pattern"], "^[a-z0-9][a-z0-9._-]*$");
+        assert_eq!(schema["additionalProperties"], false);
+        assert!(schema.get("$schema").is_none() && schema.get("$id").is_none());
+    }
+
+    #[test]
+    fn other_routes_keep_the_full_schema() {
+        let schema = request_schema("grok", "openai_responses");
+        let mut found = Vec::new();
+        keywords(&schema, &mut found);
+        let names = found
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect::<Vec<_>>();
+        for keyword in ["minimum", "maximum", "maxLength", "maxItems", "minItems"] {
+            assert!(
+                names.contains(&keyword),
+                "{keyword} must stay on this route"
+            );
+        }
+    }
+
+    #[test]
+    fn validation_still_enforces_the_stripped_limits_on_the_reply() {
+        let valid: Value = serde_json::from_str(include_str!(
+            "../../../docs/examples/codex-analysis.example.json"
+        ))
+        .unwrap();
+        let validator = crate::schemas::validator(ANALYSIS_OUTPUT_SCHEMA).unwrap();
+        assert!(validator.validate(&valid).is_ok());
+        let mut too_confident = valid.clone();
+        too_confident["proposals"][0]["confidence"] = json!(1.5);
+        assert!(validator.validate(&too_confident).is_err());
+        let mut negative = valid.clone();
+        negative["proposals"][0]["confidence"] = json!(-0.1);
+        assert!(validator.validate(&negative).is_err());
+        let mut wordy = valid.clone();
+        wordy["proposals"][0]["reason"] = json!("x".repeat(501));
+        assert!(validator.validate(&wordy).is_err());
+        let mut short = valid;
+        short["proposals"].as_array_mut().unwrap().pop();
+        assert!(validator.validate(&short).is_err());
+    }
 }

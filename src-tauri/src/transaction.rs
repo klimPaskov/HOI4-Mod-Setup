@@ -1211,6 +1211,7 @@ pub fn find_incomplete_transaction(
                     // ignored or followed.
                     verify_app_data_binding(&journal, Some(&app), &directory)?;
                     normalize_incomplete_recovery(&mut journal);
+                    reconcile_finalization_recovery(project_root, &mut journal);
                     candidates.push(journal);
                 }
             }
@@ -1906,14 +1907,13 @@ pub fn run_transaction(
         // process stops after the lock is committed but before the final
         // journal update, startup can verify the rollback record and finish
         // the journal without replaying file operations.
+        //
+        // The success lock is not committed yet, and resume can only reconcile
+        // a lock that is already durable: the lock bytes are not journaled, so
+        // resume cannot write them. Until the lock verifies, the only action
+        // that completes is rollback.
         journal.state = "finalizing".into();
-        journal.recovery = RecoveryState {
-            resume_allowed: true,
-            rollback_allowed: true,
-            discard_staging_allowed: false,
-            project_apply_started: true,
-            recommended_action: "resume".into(),
-        };
+        journal.recovery = unfinished_finalization_recovery();
         persist_journal(&store, &mut journal)?;
         store.write_json(ROLLBACK_RECORD_FILE, &journal)?;
         journal.rollback_record_sha256 = Some(store.directory.hash_file(ROLLBACK_RECORD_FILE)?);
@@ -1929,6 +1929,10 @@ pub fn run_transaction(
         // this point is best-effort: a stale `finalizing` journal is safely
         // reconciled by resume only after the lock and rollback record verify.
         commit_success_lock(project_directory, &journal, &lock_bytes, options)?;
+        // The lock is durable and verified, so resume can now finish the
+        // journal. A stop before this write is reconciled from the lock itself.
+        journal.recovery = committed_finalization_recovery();
+        let _ = persist_journal(&store, &mut journal);
         maybe_abort_for_test("after_lock_write");
         stage_complete(&mut journal, 11, "rollback record", &store, None)?;
         journal.state = "completed".into();
@@ -1961,8 +1965,21 @@ pub fn run_transaction(
             if !lock_committed {
                 journal.state = "interrupted".into();
             }
+            // The journaled hashes only say that finalization began. A stop
+            // inside the lock commit leaves the predecessor lock, or no lock,
+            // and then only rollback completes.
+            let lock_unfinished = lock_committed
+                && project_directory.as_ref().is_some_and(|project| {
+                    matches!(
+                        finalization_lock_state(project, &journal),
+                        Ok(FinalizationLock::NotCommitted)
+                    )
+                });
             journal.updated_at = Utc::now().to_rfc3339();
             normalize_incomplete_recovery(&mut journal);
+            if lock_unfinished {
+                journal.recovery = unfinished_finalization_recovery();
+            }
             let staging_complete = journal
                 .stages
                 .get(6)
@@ -1974,7 +1991,7 @@ pub fn run_transaction(
                 journal.recovery.resume_allowed = false;
                 journal.recovery.recommended_action = "discard_staging".into();
             } else {
-                journal.recovery.recommended_action = if lock_committed {
+                journal.recovery.recommended_action = if lock_committed && !lock_unfinished {
                     "resume".into()
                 } else if journal.recovery.project_apply_started {
                     "rollback".into()
@@ -2042,6 +2059,88 @@ fn commit_success_lock(
         release_quarantine(project, &quarantine, &previous)?;
     }
     Ok(())
+}
+
+/// Where a `finalizing` journal's success lock stands on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FinalizationLock {
+    /// The live lock is the exact lock the journal committed to.
+    Committed,
+    /// The live lock is still the predecessor, or is absent while a
+    /// predecessor exists or none was ever installed. The new lock was never
+    /// written.
+    NotCommitted,
+    /// The live lock matches neither state, so only a person can judge it.
+    Unrecognized,
+}
+
+/// Recovery for a `finalizing` journal whose success lock is not committed.
+/// Resume reconciles a durable lock and cannot write one, because the lock
+/// bytes are not journaled, so rollback is the only action that completes.
+fn unfinished_finalization_recovery() -> RecoveryState {
+    RecoveryState {
+        resume_allowed: false,
+        rollback_allowed: true,
+        discard_staging_allowed: false,
+        project_apply_started: true,
+        recommended_action: "rollback".into(),
+    }
+}
+
+/// Recovery for a `finalizing` journal whose success lock is durable: resume
+/// verifies the lock and rollback record and closes the journal.
+fn committed_finalization_recovery() -> RecoveryState {
+    RecoveryState {
+        resume_allowed: true,
+        rollback_allowed: true,
+        discard_staging_allowed: false,
+        project_apply_started: true,
+        recommended_action: "resume".into(),
+    }
+}
+
+/// Classify the live success lock against a `finalizing` journal. Call it
+/// after `settle_journal_lock_quarantines`, or accept that a predecessor
+/// still in its quarantine reads as an absent lock, which is also unfinished.
+fn finalization_lock_state(
+    project: &RootedDir,
+    journal: &TransactionJournal,
+) -> Result<FinalizationLock, AppError> {
+    let (Some(true), Some(result)) = (
+        journal.result_lock_exists,
+        journal.result_lock_sha256.as_deref(),
+    ) else {
+        return Ok(FinalizationLock::Unrecognized);
+    };
+    let live = live_leaf_hash(project, LOCK_RELATIVE_PATH)?;
+    let previous = journal.previous_lock_sha256.as_deref();
+    Ok(if live.as_deref() == Some(result) {
+        FinalizationLock::Committed
+    } else if live.as_deref() == previous || live.is_none() {
+        FinalizationLock::NotCommitted
+    } else {
+        FinalizationLock::Unrecognized
+    })
+}
+
+/// Correct the recovery actions of a `finalizing` journal from the live lock.
+/// A journal persisted before the lock commit can outlive a process stop, so
+/// what it advertises is checked against the project. An unreadable project
+/// or an unrecognized lock leaves the journal as it was.
+fn reconcile_finalization_recovery(project_root: &Path, journal: &mut TransactionJournal) {
+    if journal.state != "finalizing" {
+        return;
+    }
+    let Ok(project) = open_bound_project_root(project_root, &journal.project_root_lifecycle) else {
+        return;
+    };
+    match finalization_lock_state(&project, journal) {
+        Ok(FinalizationLock::Committed) => journal.recovery = committed_finalization_recovery(),
+        Ok(FinalizationLock::NotCommitted) => {
+            journal.recovery = unfinished_finalization_recovery();
+        }
+        Ok(FinalizationLock::Unrecognized) | Err(_) => {}
+    }
 }
 
 /// Settle both lock quarantines that this journal may own: the success-lock
@@ -8089,6 +8188,17 @@ fn finish_finalization(
     // predecessor lock in its quarantine. Release it only beside the exact
     // committed lock; beside an absent lock it moves back for rollback.
     settle_journal_lock_quarantines(&project_directory, journal)?;
+    // A stop before the success lock was written leaves nothing to finalize.
+    // Record that rollback is the way forward, so the journal stops
+    // advertising a resume that cannot succeed, and leave the files alone.
+    if finalization_lock_state(&project_directory, journal)? == FinalizationLock::NotCommitted {
+        journal.recovery = unfinished_finalization_recovery();
+        persist_journal(store, journal)?;
+        return Err(AppError::Transaction(
+            "the success lock is not in place, so there is nothing to resume; roll back the transaction"
+                .into(),
+        ));
+    }
     let lock_bytes = project_directory
         .read_file(".hoi4-mod-setup/install.lock.json")
         .map_err(|error| {
@@ -15330,6 +15440,170 @@ description: Example skill.
             );
             assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"old");
         }
+    }
+
+    /// A finalizing journal whose success lock was never written used to
+    /// advertise only `resume`, which cannot complete without the lock, and
+    /// rollback was not the advertised action. Every stop before the lock
+    /// is durable must offer rollback and restore the exact pre-apply tree.
+    #[test]
+    fn finalization_stopped_before_the_lock_write_offers_rollback_and_restores_exactly() {
+        #[derive(Debug, Clone, Copy)]
+        enum Stop {
+            // Fault injected after the rollback record, before the lock write.
+            BeforeLockWrite,
+            // Fault injected while the predecessor lock is being displaced.
+            LockQuarantine(QuarantineBoundary),
+        }
+        let cases = [
+            (false, Stop::BeforeLockWrite),
+            (true, Stop::BeforeLockWrite),
+            (true, Stop::LockQuarantine(QuarantineBoundary::BeforeRename)),
+            (true, Stop::LockQuarantine(QuarantineBoundary::AfterRename)),
+            (
+                true,
+                Stop::LockQuarantine(QuarantineBoundary::AfterVerification),
+            ),
+        ];
+        for (with_predecessor, stop) in cases {
+            let label = format!("predecessor={with_predecessor} {stop:?}");
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let (plan, prepared) = if with_predecessor {
+                let (plan, prepared, _) = maintenance_fixture(project.path(), app.path());
+                (plan, prepared)
+            } else {
+                let plan = ready_plan(project.path());
+                let prepared = vec![PreparedFile {
+                    operation_id: "op-1".into(),
+                    destination: "AGENTS.md".into(),
+                    bytes: b"safe".to_vec(),
+                    expected_sha256: sha256_bytes(b"safe"),
+                }];
+                (plan, prepared)
+            };
+            let before = tree_snapshot(project.path());
+            let mut options = TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            };
+            match stop {
+                Stop::BeforeLockWrite => options.fail_after_stage = Some(11),
+                Stop::LockQuarantine(boundary) => options.fail_at_lock_quarantine = Some(boundary),
+            }
+            run_test_transaction(project.path(), &plan, &prepared, &options).unwrap_err();
+
+            let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+            let persisted = read_journal(&journal_path).unwrap();
+            assert_eq!(persisted.state, "finalizing", "{label}");
+            assert_eq!(persisted.recovery.recommended_action, "rollback", "{label}");
+            assert!(!persisted.recovery.resume_allowed, "{label}");
+            assert!(persisted.recovery.rollback_allowed, "{label}");
+            // The project reports the same actions, so a client that follows
+            // the advertised action reaches rollback.
+            let found = find_incomplete_transaction(app.path(), project.path())
+                .unwrap()
+                .unwrap_or_else(|| panic!("{label}: the transaction must stay incomplete"));
+            assert_eq!(found.recovery.recommended_action, "rollback", "{label}");
+            assert!(!found.recovery.resume_allowed, "{label}");
+            assert!(found.recovery.rollback_allowed, "{label}");
+            assert_eq!(recovery_action(&found), "rollback", "{label}");
+
+            // Resume has nothing to finalize and says so.
+            let error = resume_transaction(project.path(), app.path(), plan.plan_id).unwrap_err();
+            assert!(error.to_string().contains("roll back"), "{label}: {error}");
+
+            let mut journal = read_journal(&journal_path).unwrap();
+            assert_eq!(journal.state, "finalizing", "{label}");
+            assert_eq!(journal.recovery.recommended_action, "rollback", "{label}");
+            rollback_transaction(project.path(), &mut journal, &journal_path)
+                .unwrap_or_else(|error| panic!("{label}: {error}"));
+            assert_eq!(journal.state, "rolled_back", "{label}");
+            assert_eq!(tree_snapshot(project.path()), before, "{label}");
+            assert!(
+                find_incomplete_transaction(app.path(), project.path())
+                    .unwrap()
+                    .is_none(),
+                "{label}"
+            );
+        }
+    }
+
+    /// A process stop leaves the journal exactly as it was persisted before
+    /// the lock write, which an earlier build recorded as resumable. The
+    /// project's live lock decides what recovery is offered.
+    #[test]
+    fn stale_resume_advice_is_corrected_from_the_live_lock() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared, predecessor) = maintenance_fixture(project.path(), app.path());
+        let before = tree_snapshot(project.path());
+        run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                fail_after_stage: Some(11),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        journal.state = "finalizing".into();
+        journal.recovery = committed_finalization_recovery();
+        atomic_write_json(&journal_path, &journal).unwrap();
+
+        let found = find_incomplete_transaction(app.path(), project.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.recovery.recommended_action, "rollback");
+        assert!(!found.recovery.resume_allowed);
+        assert!(resume_transaction(project.path(), app.path(), plan.plan_id).is_err());
+        let corrected = read_journal(&journal_path).unwrap();
+        assert_eq!(corrected.recovery.recommended_action, "rollback");
+        assert!(!corrected.recovery.resume_allowed);
+
+        let mut journal = corrected;
+        rollback_transaction(project.path(), &mut journal, &journal_path).unwrap();
+        assert_eq!(
+            fs::read(project.path().join(".hoi4-mod-setup/install.lock.json")).unwrap(),
+            predecessor
+        );
+        assert_eq!(tree_snapshot(project.path()), before);
+    }
+
+    /// A durable success lock keeps resume as the advertised action even
+    /// when the journal was persisted before the lock write.
+    #[test]
+    fn a_committed_success_lock_keeps_resume_as_the_advertised_action() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let (plan, prepared, _) = maintenance_fixture(project.path(), app.path());
+        run_test_transaction(
+            project.path(),
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                fail_at_lock_quarantine: Some(QuarantineBoundary::BeforeRelease),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        let journal_path = transaction_journal_path(app.path(), plan.plan_id);
+        let mut journal = read_journal(&journal_path).unwrap();
+        journal.recovery = unfinished_finalization_recovery();
+        atomic_write_json(&journal_path, &journal).unwrap();
+        let found = find_incomplete_transaction(app.path(), project.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.recovery.recommended_action, "resume");
+        assert!(found.recovery.resume_allowed);
+        let (completed, _) = resume_transaction(project.path(), app.path(), plan.plan_id).unwrap();
+        assert_eq!(completed.state, "completed");
+        assert_eq!(fs::read(project.path().join("AGENTS.md")).unwrap(), b"new");
     }
 
     #[test]
