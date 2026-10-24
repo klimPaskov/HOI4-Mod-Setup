@@ -382,12 +382,30 @@ impl RootedDir {
         destination: &RootedDir,
         destination_relative: &str,
     ) -> Result<bool, AppError> {
+        self.copy_file_atomic_noreplace_named_to(
+            source_relative,
+            destination,
+            destination_relative,
+            None,
+        )
+    }
+
+    /// Like `copy_file_atomic_noreplace_to`, with a caller-derived temporary
+    /// leaf (see `write_atomic_noreplace_from_named`).
+    pub(crate) fn copy_file_atomic_noreplace_named_to(
+        &self,
+        source_relative: &str,
+        destination: &RootedDir,
+        destination_relative: &str,
+        temporary_leaf: Option<&str>,
+    ) -> Result<bool, AppError> {
         let source = self.open_regular_file(source_relative)?;
         let permissions = source.metadata()?.permissions();
-        destination.write_atomic_noreplace_from(
+        destination.write_atomic_noreplace_from_named(
             destination_relative,
             &mut &source,
             Some(permissions),
+            temporary_leaf,
         )
     }
 
@@ -427,6 +445,17 @@ impl RootedDir {
         bytes: &[u8],
     ) -> Result<bool, AppError> {
         self.write_atomic_noreplace_from(relative, &mut &bytes[..], None)
+    }
+
+    /// Like `write_atomic_noreplace`, with a caller-derived temporary leaf
+    /// (see `write_atomic_noreplace_from_named`).
+    pub(crate) fn write_atomic_noreplace_named(
+        &self,
+        relative: &str,
+        bytes: &[u8],
+        temporary_leaf: Option<&str>,
+    ) -> Result<bool, AppError> {
+        self.write_atomic_noreplace_from_named(relative, &mut &bytes[..], None, temporary_leaf)
     }
 
     /// Move a regular file to another name in the same directory without
@@ -628,6 +657,23 @@ impl RootedDir {
         reader: &mut R,
         permissions: Option<Permissions>,
     ) -> Result<bool, AppError> {
+        self.write_atomic_noreplace_from_named(relative, reader, permissions, None)
+    }
+
+    /// Write a new leaf through a synced temporary file and an exclusive
+    /// rename. Without `temporary_leaf` the temporary has a random name. A
+    /// caller that must recover from a hard stop between the temporary's
+    /// creation and the rename passes a name derived from its own journaled
+    /// identity instead, so recovery can find and remove the leftover file.
+    /// A regular file already under that name is an earlier interrupted
+    /// attempt of the same caller and is replaced; any other entry is refused.
+    pub(crate) fn write_atomic_noreplace_from_named<R: Read>(
+        &self,
+        relative: &str,
+        reader: &mut R,
+        permissions: Option<Permissions>,
+        temporary_leaf: Option<&str>,
+    ) -> Result<bool, AppError> {
         let (parent, leaf) = self.open_parent(relative, true)?;
         parent.verify_bound_to_path()?;
         match entry_metadata(&parent, &leaf) {
@@ -635,7 +681,24 @@ impl RootedDir {
             Err(error) if error_is_missing(&error) => {}
             Err(error) => return Err(error),
         }
-        let temporary = OsString::from(format!(".hoi4ms-{}.tmp", Uuid::new_v4()));
+        let temporary = match temporary_leaf {
+            Some(name) => {
+                let name = OsString::from(name);
+                validate_component(&name)?;
+                match entry_metadata(&parent, &name) {
+                    Ok(metadata) if metadata.is_link || !metadata.is_file => {
+                        return Err(AppError::PathSecurity(
+                            "temporary file name is held by a link or non-regular entry".into(),
+                        ));
+                    }
+                    Ok(_) => remove_file_at(&parent, &name)?,
+                    Err(error) if error_is_missing(&error) => {}
+                    Err(error) => return Err(error),
+                }
+                name
+            }
+            None => OsString::from(format!(".hoi4ms-{}.tmp", Uuid::new_v4())),
+        };
         let mut file = open_new_file_at(&parent, &temporary)?;
         let mut result = (|| {
             io::copy(reader, &mut file)?;
@@ -648,6 +711,10 @@ impl RootedDir {
         drop(file);
         let mut placed = false;
         if result.is_ok() {
+            #[cfg(test)]
+            if temporary_leaf.is_some() {
+                abort_before_named_placement();
+            }
             result = (|| {
                 validate_component(&leaf)?;
                 placed = rename_file_noreplace_impl(&parent, &temporary, &leaf)?;
@@ -1301,6 +1368,23 @@ fn entry_metadata_impl(parent: &RootedDir, name: &OsStr) -> Result<EntryMetadata
             && information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT == 0,
         is_link: information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0,
     })
+}
+
+/// Stop the test process abruptly, like a hard kill, at the placement whose
+/// 1-based number `HOI4_MOD_SETUP_TEST_ABORT_PLACEMENT` names. It runs after a
+/// caller-named temporary file is written and synced and before it is renamed
+/// into place, the window in which a stop leaves the temporary file behind.
+#[cfg(test)]
+fn abort_before_named_placement() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static PLACEMENTS: AtomicUsize = AtomicUsize::new(0);
+    let placement = PLACEMENTS.fetch_add(1, Ordering::SeqCst) + 1;
+    let target = std::env::var("HOI4_MOD_SETUP_TEST_ABORT_PLACEMENT")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok());
+    if target == Some(placement) {
+        std::process::abort();
+    }
 }
 
 fn remove_file_at(parent: &RootedDir, name: &OsStr) -> Result<(), AppError> {
