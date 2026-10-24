@@ -1298,7 +1298,14 @@ mod tests {
                 "gemini" => &body["response_format"]["json_schema"]["schema"],
                 _ => &body["text"]["format"]["schema"],
             };
-            assert_eq!(schema["properties"]["proposals"]["minItems"], 10);
+            if id == "claude" {
+                // Anthropic rejects array bounds above 1; Setup's validator
+                // still requires ten proposals in the reply.
+                assert!(schema["properties"]["proposals"].get("minItems").is_none());
+                assert!(schema["properties"]["proposals"].get("maxItems").is_none());
+            } else {
+                assert_eq!(schema["properties"]["proposals"]["minItems"], 10);
+            }
             assert!(body.get("tools").is_none());
             assert!(!body.to_string().contains("fixture-only-value"));
             if id == "grok" {

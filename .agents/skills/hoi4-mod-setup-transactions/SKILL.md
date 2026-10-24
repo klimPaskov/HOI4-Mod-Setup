@@ -452,6 +452,11 @@ written. If the process stops after the lock and rollback record are durable,
 resume verifies the exact lock bytes, rollback-record path/checksum,
 transaction/project binding, live operation observations, and stage checkpoint
 before completing the journal; it never replays file operations.
+Before the lock is durable the journal advertises rollback only, because resume
+cannot write a lock whose bytes are not journaled; it advertises resume once the
+lock verifies. `find_incomplete_transaction` and resume classify the live lock
+against `previous_lock_sha256` and `result_lock_sha256` (`FinalizationLock`), so a
+stale journal never offers a resume that cannot complete.
 `staged_sha256` is separate from the observed live `after_sha256`.
 Rollback uses `rolling_back` plus `rollback_applying` per-operation
 checkpoints, verifies an already-restored destination before retrying, and
