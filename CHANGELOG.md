@@ -4,6 +4,7 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Fix an installation that stopped before its success lock was written: recovery now offers rollback, which restores the exact earlier files, instead of a resume that could never finish.
 - Add a free setup assistant that needs no account: the app sends one structured request through the maintainer's relay to a free OpenRouter model, and it becomes the default once the relay is deployed. The maintainer's key stays a relay secret and never ships in the app or the web page.
 - Add OpenRouter as a setup assistant on desktop and web, with **Sign in with OpenRouter** (OAuth PKCE) or a pasted key. A free model is the default choice.
 - Add **Expand description** on the description step: the selected setup assistant turns a rough note into a fuller description you can edit or undo, on every assistant route.
