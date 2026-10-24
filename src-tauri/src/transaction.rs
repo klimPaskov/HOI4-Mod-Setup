@@ -4420,17 +4420,87 @@ enum LiveChange<'a> {
     Delete,
 }
 
+/// Prefix of the temporary file that carries new bytes to a live destination
+/// until the exclusive rename. Its name is derived from the transaction and
+/// operation like the quarantine name, so a file left by a hard stop between
+/// its creation and the rename is attributable and recovery can remove it.
+const PLACEMENT_PREFIX: &str = ".hoi4ms-placing-";
+
+fn placement_temp_leaf(quarantine_leaf: &str) -> String {
+    match quarantine_leaf.strip_prefix(QUARANTINE_PREFIX) {
+        Some(rest) => format!("{PLACEMENT_PREFIX}{rest}"),
+        None => format!(
+            "{PLACEMENT_PREFIX}{}.tmp",
+            &sha256_bytes(quarantine_leaf.as_bytes())[..32]
+        ),
+    }
+}
+
+/// Remove the placement temporaries that `journal`'s forward transaction and,
+/// when one is given, its rollback transaction may have left beside their
+/// operations' destinations and the installation lock, after a hard stop
+/// between a temporary's creation and its rename. The names are bound to the
+/// transaction IDs, so no user file or other transaction owns them. Operations
+/// outside the project root keep their temporary beside the external
+/// destination and are not searched here.
+fn remove_interrupted_placement_temps(
+    project: &RootedDir,
+    journal: &TransactionJournal,
+    rollback_transaction_id: Option<Uuid>,
+) -> Result<(), AppError> {
+    let mut owners = vec![(journal.transaction_id, "")];
+    if let Some(rollback_id) = rollback_transaction_id {
+        owners.push((rollback_id, "rollback-"));
+    }
+    let mut stale = Vec::new();
+    for (id, operation_prefix) in &owners {
+        for operation in &journal.operations {
+            if operation.external
+                || matches!(
+                    operation.action,
+                    Some(OperationAction::Skip | OperationAction::External) | None
+                )
+            {
+                continue;
+            }
+            let leaf = placement_temp_leaf(&quarantine_leaf_name(
+                *id,
+                &format!("{operation_prefix}{}", operation.id),
+            ));
+            stale.push(quarantine_relative(&operation.destination, &leaf)?);
+        }
+        for purpose in ["commit", "restore"] {
+            let leaf = placement_temp_leaf(&lock_quarantine_leaf(*id, purpose));
+            stale.push(quarantine_relative(LOCK_RELATIVE_PATH, &leaf)?);
+        }
+    }
+    for relative in stale {
+        if project.is_regular_file(&relative).unwrap_or(false) {
+            project.remove_file(&relative)?;
+        }
+    }
+    Ok(())
+}
+
 fn place_new_leaf(
     directory: &RootedDir,
     destination: &str,
     change: &LiveChange<'_>,
+    temporary_leaf: &str,
 ) -> Result<bool, AppError> {
     match change {
         LiveChange::Copy {
             source,
             source_relative,
-        } => source.copy_file_atomic_noreplace_to(source_relative, directory, destination),
-        LiveChange::Bytes(bytes) => directory.write_atomic_noreplace(destination, bytes),
+        } => source.copy_file_atomic_noreplace_named_to(
+            source_relative,
+            directory,
+            destination,
+            Some(temporary_leaf),
+        ),
+        LiveChange::Bytes(bytes) => {
+            directory.write_atomic_noreplace_named(destination, bytes, Some(temporary_leaf))
+        }
         LiveChange::MoveFrom(from) => directory.rename_file_noreplace(from, destination),
         LiveChange::Delete => Ok(true),
     }
@@ -4461,8 +4531,9 @@ fn mutate_live_leaf(
     fault: &dyn Fn(QuarantineBoundary) -> Result<(), AppError>,
     barrier: &dyn Fn(LiveMutationBarrier),
 ) -> Result<Option<String>, AppError> {
+    let placement_leaf = placement_temp_leaf(quarantine_leaf);
     let Some(expected) = expected_current else {
-        if !place_new_leaf(directory, destination, &change)? {
+        if !place_new_leaf(directory, destination, &change, &placement_leaf)? {
             return Err(AppError::Transaction(format!(
                 "local precondition changed during apply: a file appeared at {destination} and was kept"
             )));
@@ -4569,7 +4640,7 @@ fn mutate_live_leaf(
     }
     fault(QuarantineBoundary::AfterVerification)?;
     barrier(LiveMutationBarrier::AfterQuarantineVerified);
-    match place_new_leaf(directory, destination, &change) {
+    match place_new_leaf(directory, destination, &change, &placement_leaf) {
         Ok(true) => Ok(Some(quarantine)),
         Ok(false) => Err(AppError::Transaction(format!(
             "local precondition changed during apply: a file appeared at {destination} and was kept; the reviewed bytes are kept at {quarantine}"
@@ -7131,6 +7202,7 @@ pub fn rollback_transaction(
     compact_operation_checkpoints(store, journal)?;
     if let Some(project) = project_directory.as_ref() {
         settle_journal_lock_quarantines(project, journal)?;
+        remove_interrupted_placement_temps(project, journal, journal.rollback_transaction_id)?;
     }
     let (mut rollback_journal, rollback_store) =
         prepare_rollback_transaction(&project_root, journal, &app, project_directory.as_ref())?;
@@ -12279,6 +12351,172 @@ description: Example skill.
                 _ => unreachable!(),
             }
         }
+    }
+
+    fn project_file_bytes(root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+        fn walk(
+            root: &Path,
+            directory: &Path,
+            files: &mut std::collections::BTreeMap<String, Vec<u8>>,
+        ) {
+            for entry in fs::read_dir(directory).unwrap().filter_map(Result::ok) {
+                let path = entry.path();
+                if entry.file_type().unwrap().is_dir() {
+                    walk(root, &path, files);
+                } else {
+                    let relative = path
+                        .strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    files.insert(relative, fs::read(&path).unwrap());
+                }
+            }
+        }
+        let mut files = std::collections::BTreeMap::new();
+        walk(root, root, &mut files);
+        files
+    }
+
+    fn placement_temp_names(root: &Path) -> Vec<String> {
+        project_file_bytes(root)
+            .into_keys()
+            .filter(|path| {
+                Path::new(path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(".hoi4ms-"))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn transaction_placement_process_fault_worker() {
+        let mode = match std::env::var("HOI4_MOD_SETUP_TEST_PLACEMENT_WORKER") {
+            Ok(mode) => mode,
+            Err(_) => return,
+        };
+        let project_root = PathBuf::from(std::env::var_os("HOI4_MOD_SETUP_TEST_PROJECT").unwrap());
+        let app_root = PathBuf::from(std::env::var_os("HOI4_MOD_SETUP_TEST_APP").unwrap());
+        fs::create_dir_all(&project_root).unwrap();
+        fs::create_dir_all(&app_root).unwrap();
+        let (plan, prepared) = placement_fixture(&mode, &project_root);
+        let (mut journal, _) = run_test_transaction(
+            &project_root,
+            &plan,
+            &prepared,
+            &TransactionOptions {
+                app_data_root: Some(app_root.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let journal_path = transaction_root(&app_root, plan.plan_id)
+            .transaction
+            .join("journal.json");
+        rollback_transaction(&project_root, &mut journal, &journal_path).unwrap();
+    }
+
+    /// `create` places a new file; `replace` displaces an existing one.
+    fn placement_fixture(mode: &str, project_root: &Path) -> (InstallationPlan, Vec<PreparedFile>) {
+        if mode == "replace" {
+            return existing_file_fixture(project_root);
+        }
+        let plan = ready_plan(project_root);
+        let prepared = vec![PreparedFile {
+            operation_id: "op-1".into(),
+            destination: "AGENTS.md".into(),
+            bytes: b"safe".to_vec(),
+            expected_sha256: sha256_bytes(b"safe"),
+        }];
+        (plan, prepared)
+    }
+
+    /// A hard stop between a placement's temporary file and its rename must
+    /// leave nothing behind after recovery. The child process aborts at the
+    /// numbered placement (1: the operation, 2: the success lock, 3: the
+    /// rollback's own restore) and the parent recovers like the app would.
+    #[test]
+    fn hard_stop_before_a_placement_rename_is_recovered_without_leftovers() {
+        for (mode, placement) in [
+            ("create", 1),
+            ("replace", 1),
+            ("create", 2),
+            ("replace", 2),
+            ("replace", 3),
+        ] {
+            let baseline = tempdir().unwrap();
+            placement_fixture(mode, baseline.path());
+            let original = project_file_bytes(baseline.path());
+
+            let project = tempdir().unwrap();
+            let app = tempdir().unwrap();
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "transaction::tests::transaction_placement_process_fault_worker",
+                    "--nocapture",
+                ])
+                .env("HOI4_MOD_SETUP_TEST_PLACEMENT_WORKER", mode)
+                .env("HOI4_MOD_SETUP_TEST_ABORT_PLACEMENT", placement.to_string())
+                .env("HOI4_MOD_SETUP_TEST_PROJECT", project.path())
+                .env("HOI4_MOD_SETUP_TEST_APP", app.path())
+                .output()
+                .unwrap();
+            let label = format!("{mode} placement {placement}");
+            assert!(
+                !output.status.success(),
+                "worker unexpectedly survived the stop for {label}: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            assert!(
+                !placement_temp_names(project.path()).is_empty(),
+                "the stop for {label} left no temporary file, so it missed the window"
+            );
+
+            let mut installation = find_incomplete_transaction(app.path(), project.path())
+                .unwrap()
+                .unwrap_or_else(|| panic!("no interrupted transaction for {label}"));
+            let journal_path = transaction_root(app.path(), installation.transaction_id)
+                .transaction
+                .join("journal.json");
+            rollback_transaction(project.path(), &mut installation, &journal_path)
+                .unwrap_or_else(|error| panic!("rollback failed for {label}: {error}"));
+
+            assert_eq!(
+                placement_temp_names(project.path()),
+                Vec::<String>::new(),
+                "temporary files survived rollback for {label}"
+            );
+            assert_eq!(
+                project_file_bytes(project.path()),
+                original,
+                "project was not restored exactly for {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn named_placement_replaces_its_own_stale_temporary_and_refuses_other_entries() {
+        let project = tempdir().unwrap();
+        let root = RootedDir::open_or_create(project.path()).unwrap();
+        let leaf = placement_temp_leaf(&quarantine_leaf_name(Uuid::new_v4(), "op-1"));
+        fs::write(project.path().join(&leaf), b"half written").unwrap();
+        assert!(root
+            .write_atomic_noreplace_named("new.txt", b"complete", Some(&leaf))
+            .unwrap());
+        assert_eq!(
+            fs::read(project.path().join("new.txt")).unwrap(),
+            b"complete"
+        );
+        assert!(!project.path().join(&leaf).exists());
+
+        fs::create_dir(project.path().join(&leaf)).unwrap();
+        assert!(root
+            .write_atomic_noreplace_named("other.txt", b"complete", Some(&leaf))
+            .is_err());
+        assert!(project.path().join(&leaf).is_dir());
+        assert!(!project.path().join("other.txt").exists());
     }
 
     #[test]
