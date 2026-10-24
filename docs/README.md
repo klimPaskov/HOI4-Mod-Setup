@@ -22,6 +22,7 @@ documents that define them.
 - `source-audit/`: source inventories and verification boundaries
 - `ui-references/`: design references
 - `screenshots/`: README walkthrough images
+- `USER_GUIDE.md`: the full walkthrough moved out of the README, including the existing-mod rules
 - `development/`: current implementation status
 
 The workflow source is

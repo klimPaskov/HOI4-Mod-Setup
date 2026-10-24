@@ -62,4 +62,15 @@ describe("dropped and picked folders", () => {
     await expect(folderFromDrop(dropped([fileEntry("a.txt")]))).rejects.toThrow(/one mod folder/);
     await expect(folderFromDrop(dropped([directoryEntry("a", []), directoryEntry("b", [])]))).rejects.toThrow(/one mod folder/);
   });
+
+  it("orders tens of thousands of files by plain code unit without stalling", () => {
+    const files = Array.from({ length: 40_000 }, (_, index) => picked(`mod/common/group${index % 400}/file${index}.txt`));
+    files.push(picked("mod/Zebra.txt"), picked("mod/apple.txt"));
+    const started = performance.now();
+    const selection = folderFromInput(files);
+    expect(performance.now() - started).toBeLessThan(2000);
+    const paths = selection.files.map((file) => file.path);
+    expect(paths.slice(0, 2)).toEqual(["Zebra.txt", "apple.txt"]);
+    expect(paths).toEqual([...paths].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0)));
+  });
 });

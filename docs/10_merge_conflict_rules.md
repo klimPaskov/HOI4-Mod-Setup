@@ -35,6 +35,14 @@ Back up local content and install incoming.
 
 Build a three-way or structured preview and validate it before selection.
 
+Text is merged line by line against the base (diff3): lines both sides kept from
+the base anchor the merge, a region only one side changed takes that side's
+lines, and identical changes are taken once. Two different changes to the same
+region, or a file too different to align, are refused instead of guessed. The
+local file's line ending and final newline are kept. Update and repair do not
+raise a conflict for a file that already holds the incoming bytes, or for an
+unchanged merged file the source no longer ships.
+
 ### Rename
 
 Install incoming at a reviewed alternate path. Validate references or report that the file is review-only.

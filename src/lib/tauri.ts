@@ -1,4 +1,5 @@
 import { findingDisplayValue, findingLabel } from "../findings";
+import type { SetupRequirement } from "../types";
 import type { AiAccountStatus, AiAnalysisRequest, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, CodexAccountStatus, CodexAnalysisConfirmationValues, CodexAnalysisRecord, CodexAnalysisRequest, CodexAnalysisResult, CodexLoginStart, CodingEnvironmentId, ConflictPreview, ContextDocument, ContextImage, ContextPick, CredentialReference, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, LocalPortraitInstallResult, OpenInCodexResult, ReadinessReport, ScanProgress, ScanSnapshot, SourceManifestPreview, SuggestedProjectPaths, TransactionJournal, UpdateSourceSelection, WizardState, WorkflowHealthResult } from "../types";
 
 interface RawScanFinding {
@@ -121,6 +122,7 @@ interface TauriCommandMap {
   build_installation_plan: { args: { state: WizardState }; result: InstallationPlan };
   build_maintenance_plan: { args: { mode: "update" | "repair" | "reinstall" | "remove"; projectRoot: string; analysisOverride?: CodexAnalysisRecord | null; addOptionalComponents?: string[]; portraitPipeline?: WizardState["portraitPipeline"]; imageGeneration?: ImageGenerationSelection; liveTesting?: LiveTestingSelection; primaryCodingEnvironment?: CodingEnvironmentId; additionalCodingEnvironments?: CodingEnvironmentId[]; analysisConfirmationValues?: CodexAnalysisConfirmationValues; updateSource?: UpdateSourceSelection }; result: InstallationPlan };
   approve_installation: { args: { planId: string }; result: void };
+  check_installation_requirements: { args: { planId: string }; result: SetupRequirement[] };
   resolve_installation_conflict: { args: { planId: string; path: string; choice: string }; result: InstallationPlan };
   apply_installation: { args: { planId: string; projectRoot: string }; result: TransactionJournal };
   rollback_installation: { args: { projectRoot: string; transactionId: string }; result: TransactionJournal };
@@ -573,6 +575,12 @@ function stateForCore(state: WizardState): WizardState {
   if (state.contextImages) core.contextImages = state.contextImages.map((image) => ({ ...image, data_url: "" }));
   if (state.contextDocuments) core.contextDocuments = state.contextDocuments.map((document) => ({ ...document, excerpt: "" }));
   return core;
+}
+
+/** Tools the prepared plan's setup checks need. A failed lookup reports none;
+ * the apply step checks again before any file changes. */
+export async function checkInstallationRequirements(planId: string): Promise<SetupRequirement[]> {
+  return (await invokeCommand("check_installation_requirements", { planId })) ?? [];
 }
 
 export async function approveInstallation(planId: string): Promise<boolean> {

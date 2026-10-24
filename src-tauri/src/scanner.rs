@@ -440,6 +440,9 @@ where
         &no_extra_cancel,
         &mut progress,
     );
+    if let Some(profiler) = walk.profiler.as_mut() {
+        profiler.skip_managed_files(unmodified_managed_visible_files(&root));
+    }
     walk.run(true);
     let ProjectWalk {
         mut observations,
@@ -819,6 +822,54 @@ pub(crate) fn profile_only(
         cancel,
         progress,
     )
+}
+
+/// Project-relative files an earlier setup installed that still match the
+/// lock byte for byte and sit in a folder the profile would read (README.md,
+/// docs/, and similar). They describe the setup, not the mod, so a reimport
+/// must not hand them to the assistant as the mod's own documentation. A file
+/// the user changed, or kept from before the setup, is not in this set. Any
+/// problem reading the lock yields an empty set and the profile reads
+/// everything, as before.
+fn unmodified_managed_visible_files(root: &Path) -> BTreeSet<String> {
+    const LOCK_RELATIVE: &str = ".hoi4-mod-setup/install.lock.json";
+    const MAX_LOCK_BYTES: u64 = 16 * 1024 * 1024;
+    const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
+    let mut files = BTreeSet::new();
+    let Ok(bytes) = crate::flatten::read_bounded_regular_file_no_follow_under_root(
+        root,
+        LOCK_RELATIVE,
+        MAX_LOCK_BYTES,
+    ) else {
+        return files;
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+        return files;
+    };
+    let Ok(lock) = crate::migrations::migrate_lock(value) else {
+        return files;
+    };
+    for file in lock.files.iter().filter(|file| {
+        !file.external
+            && !file.preserved_local
+            && matches!(file.ownership, Ownership::Managed | Ownership::Generated)
+            && file
+                .path
+                .split('/')
+                .all(|component| !hoi4_setup_core::profile::excluded(component))
+    }) {
+        let Ok(current) = crate::flatten::read_bounded_regular_file_no_follow_under_root(
+            root,
+            &file.path,
+            MAX_FILE_BYTES,
+        ) else {
+            continue;
+        };
+        if sha256_bytes(&current) == file.installed_sha256 {
+            files.insert(file.path.clone());
+        }
+    }
+    files
 }
 
 /// Only conflicts that made detector evidence incomplete turn the overall scan
@@ -1906,12 +1957,15 @@ fn scan_content_policy(relative: &str) -> Option<ScanContentPolicy> {
     }
     Some(ScanContentPolicy {
         max_bytes: MAX_TEXT_BYTES,
+        // A native client's subagent Markdown is read to validate its
+        // frontmatter; without its bytes every installed agent looked malformed.
         retain: skill
             || subagent
             || codex_config
             || native_root_instruction
             || native_json
-            || native_map,
+            || native_map
+            || native_agent,
         absolute_paths: documentation_text
             || skill
             || subagent
@@ -5180,6 +5234,131 @@ mod tests {
         }
         entries.sort();
         entries
+    }
+
+    #[test]
+    fn installed_claude_subagents_are_not_reported_as_malformed() {
+        // Frontmatter exactly as the setup installs it.
+        let agent = "---
+name: hoi4-focus-tree-auditor
+description: \"Audits focus trees for completeness.\"
+model: sonnet
+effort: high
+---
+
+First process action:
+Read the tree.
+";
+        let directory = tempdir().unwrap();
+        let agents = directory.path().join(".claude/agents");
+        fs::create_dir_all(&agents).unwrap();
+        fs::write(agents.join("hoi4-focus-tree-auditor.md"), agent).unwrap();
+        let result = scan_project(directory.path(), &ScanOptions::default()).unwrap();
+        let inventory = result
+            .findings
+            .iter()
+            .find(|finding| finding.id == "subagent.inventory")
+            .expect("subagent inventory");
+        assert_eq!(inventory.value["count"], 1);
+        assert_eq!(
+            inventory.value["malformed"],
+            json!([]),
+            "{:?}",
+            inventory.value
+        );
+        assert!(!result
+            .conflicts
+            .iter()
+            .any(|conflict| conflict.id.starts_with("conflict.subagent.")));
+    }
+
+    #[test]
+    fn a_reimport_does_not_profile_files_the_setup_installed() {
+        let directory = tempdir().unwrap();
+        let root = directory.path();
+        fs::create_dir_all(root.join(".hoi4-mod-setup")).unwrap();
+        fs::create_dir_all(root.join("docs")).unwrap();
+        fs::write(
+            root.join("descriptor.mod"),
+            "name=\"Demo\"
+supported_version=\"1.17.*\"
+",
+        )
+        .unwrap();
+        fs::write(
+            root.join("README.md"),
+            "# Demo mod
+A divided Europe.
+",
+        )
+        .unwrap();
+        fs::write(
+            root.join("docs/runtimes.md"),
+            "# Agent runtimes
+Installed by setup.
+",
+        )
+        .unwrap();
+        fs::write(
+            root.join("docs/design.md"),
+            "# Design notes
+Written by the modder.
+",
+        )
+        .unwrap();
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let template = lock.files[0].clone();
+        let locked = |path: &str, text: &str| {
+            let mut file = template.clone();
+            file.path = path.into();
+            file.external = false;
+            file.preserved_local = false;
+            file.ownership = Ownership::Managed;
+            file.installed_sha256 = sha256_bytes(text.as_bytes());
+            file
+        };
+        lock.files = vec![
+            locked(
+                "docs/runtimes.md",
+                "# Agent runtimes
+Installed by setup.
+",
+            ),
+            // Installed once, then edited by the user: it is theirs now.
+            locked(
+                "docs/design.md",
+                "# Design notes
+As installed.
+",
+            ),
+        ];
+        fs::write(
+            root.join(".hoi4-mod-setup/install.lock.json"),
+            serde_json::to_vec(&lock).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            unmodified_managed_visible_files(root),
+            BTreeSet::from(["docs/runtimes.md".to_string()])
+        );
+        let result = scan_project(root, &ScanOptions::default()).unwrap();
+        let documentation = result
+            .findings
+            .iter()
+            .find(|finding| finding.key == "project_documentation")
+            .expect("documentation profile finding")
+            .value
+            .to_string();
+        assert!(
+            !documentation.contains("docs/runtimes.md"),
+            "{documentation}"
+        );
+        assert!(documentation.contains("docs/design.md"), "{documentation}");
+        assert!(documentation.contains("README.md"), "{documentation}");
     }
 
     #[test]

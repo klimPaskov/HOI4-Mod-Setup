@@ -52,6 +52,11 @@ no-follow filesystem boundary as the scanner. It must:
 - read only file metadata for binary and media files. Their bytes are not
   sampled or sent for semantic analysis.
 
+Files an earlier setup installed in visible folders (for example `README.md`,
+`docs/`) are left out too while they still match the installation lock byte for
+byte, so a reimport never presents the setup's own documentation as the mod's.
+A file the user changed, or kept from before the setup, is profiled normally.
+
 The profile excludes entries such as `.git`, `.tools`, `.tmp`,
 `paradox_wiki`, `node_modules`, `target`, `dist`, `build`, `out`, `venv`,
 `env`, `__pycache__`, `coverage`, and other hidden or cache/tooling trees.

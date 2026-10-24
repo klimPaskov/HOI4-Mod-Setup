@@ -334,7 +334,7 @@ describe("web edition", () => {
     expect(await screen.findByRole("button", { name: "Compare" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Compare" }));
     expect(await screen.findByText("my text")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: "Use incoming" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Use the setup's version" }));
     fireEvent.click(screen.getByRole("radio", { name: /A full copy/ }));
 
     stubDownloads();
@@ -411,7 +411,7 @@ describe("web edition", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("heading", { name: "Review the changes" })).toBeInTheDocument();
     expect(screen.getByText(/To delete \(1\)/)).toBeInTheDocument();
-    expect(screen.getByText(/No longer managed \(1\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Left alone \(1\)/)).toBeInTheDocument();
     stubDownloads();
     fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
     await screen.findByRole("heading", { name: "Your ZIP is ready" });
@@ -457,6 +457,138 @@ describe("web edition", () => {
     expect(calls.find((call) => call.op === "zip")!.args).toMatchObject({ decisions: { "CLAUDE.md": "merge" } });
     const exported = calls.find((call) => call.op === "export")!.args as CoreOperations["export"]["args"];
     expect(exported.request.maintenance).toBe("update");
+  });
+
+  /** An existing mod through the assistant to the change review. */
+  async function existingToReview(overrides: Parameters<typeof fakeCore>[0]) {
+    stubGitHub();
+    const core = fakeCore({ evidence: () => [{ reference: "profile.detected", path: "@scan/profile/detected", excerpt: "[]", excerpt_sha256: "0".repeat(64), confidence: 1 }], ...overrides });
+    const rendered = render(<WebApp client={core.client} />);
+    pickFolder(rendered.container);
+    await screen.findByText("demo_mod");
+    chooseAssistant();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Review the details" });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download and review" }));
+    await screen.findByRole("heading", { name: "Review the changes" });
+    return core;
+  }
+
+  const countItem = (text: string) => screen.getByText((_, element) => element?.tagName === "LI" && element.textContent === text);
+  const entry = (path: string, component_id: string, action: CoreOperations["export"]["result"][number]["action"]) => ({ path, component_id, action, incoming_sha256: "b".repeat(64), local_sha256: action === "create" ? null : "c".repeat(64), size: 2 });
+
+  it("keeps the mod's own descriptor and README without asking, and still asks about anything else", async () => {
+    const { calls } = await existingToReview({
+      export: () => [
+        entry("AGENTS.md", "core.agents", "create"),
+        entry("descriptor.mod", "project.descriptor", "conflict"),
+        entry("README.md", "project.readme", "conflict"),
+        entry("thumbnail.png", "project.thumbnail", "conflict"),
+      ],
+    });
+    // Only the thumbnail the user chose needs a decision.
+    expect(countItem("1 need a decision")).toBeInTheDocument();
+    expect(countItem("2 of your own files kept")).toBeInTheDocument();
+    expect(screen.getByText("Your own files, kept as they are (2)")).toBeInTheDocument();
+    expect(screen.getByText(/The setup's version is a new descriptor/)).toBeInTheDocument();
+    // Every file defaults to keeping the user's version.
+    expect(screen.getAllByRole("radio", { name: "Keep mine" }).every((radio) => (radio as HTMLInputElement).checked)).toBe(true);
+    stubDownloads();
+    fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
+    await screen.findByRole("heading", { name: "Your ZIP is ready" });
+    expect(calls.find((call) => call.op === "zip")!.args).toMatchObject({ decisions: { "descriptor.mod": "keep", "README.md": "keep", "thumbnail.png": "keep" } });
+  });
+
+  it("asks about an unreadable descriptor and carries the mod's own version into the one it offers", async () => {
+    const { calls } = await existingToReview({
+      scan: () => ({ findings: [], detected: [{ key: "primary_namespace", value: "demo", reason: "events" }], descriptor: null, stats: null, issues: [] }),
+      export: () => [entry("descriptor.mod", "project.descriptor", "conflict")],
+    });
+    expect(countItem("1 need a decision")).toBeInTheDocument();
+    expect(screen.queryByText(/of your own files kept/)).toBeNull();
+    expect((calls.find((call) => call.op === "export")!.args as CoreOperations["export"]["args"]).request.identity).not.toHaveProperty("version");
+  });
+
+  it("offers the descriptor's version and game version, not new defaults", async () => {
+    const { calls } = await existingToReview({
+      scan: () => ({ findings: [], detected: [{ key: "primary_namespace", value: "demo", reason: "events" }], descriptor: { name: "Demo Mod", version: "1.2", supported_version: "1.12.*" }, stats: null, issues: [] }),
+      export: () => [entry("AGENTS.md", "core.agents", "create")],
+    });
+    const request = (calls.find((call) => call.op === "export")!.args as CoreOperations["export"]["args"]).request;
+    expect(request.identity).toMatchObject({ version: "1.2", supportedGameVersion: "1.12.*" });
+  });
+
+  it("explains a merge that cannot be done in plain words", async () => {
+    stubGitHub();
+    const { client } = fakeCore({
+      scan: scanWithSetup,
+      export: () => [{ ...entry("CLAUDE.md", "core.claude.instructions", "conflict"), mergeable: true }],
+      merge: () => { throw new Error("merge error: non-overlapping line merge could not be proven safe"); },
+    });
+    const { container } = render(<WebApp client={client} />);
+    pickFolder(container);
+    await screen.findByRole("heading", { name: "Existing setup found" });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "Choose components" });
+    fireEvent.click(screen.getByRole("button", { name: "Download and review" }));
+    await screen.findByRole("heading", { name: "Review the changes" });
+    fireEvent.click(screen.getByRole("button", { name: "Preview merge" }));
+    expect(await screen.findByText(/too close together to combine safely/)).toBeInTheDocument();
+    expect(screen.queryByText(/proven safe/)).toBeNull();
+  });
+
+  it("names the file that could not be read when a folder is imported", async () => {
+    stubGitHub();
+    const { client } = fakeCore();
+    const { container } = render(<WebApp client={client} />);
+    const file = new File(["x"], "locked.txt");
+    Object.defineProperty(file, "webkitRelativePath", { value: "demo_mod/common/locked.txt" });
+    Object.defineProperty(file, "arrayBuffer", { value: () => Promise.reject(new Error("The requested file could not be read.")) });
+    fireEvent.change(container.querySelector<HTMLInputElement>("input[type=file]")!, { target: { files: [file] } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("common/locked.txt could not be read");
+  });
+
+  it("says when the dropped folder has no descriptor.mod", async () => {
+    stubGitHub();
+    const { client } = fakeCore({ scan: () => ({ findings: [], detected: [], descriptor: null, stats: null, issues: [] }) });
+    const { container } = render(<WebApp client={client} />);
+    pickFolder(container);
+    expect(await screen.findByText(/could not be read. The setup offers a new one/)).toBeInTheDocument();
+    cleanup();
+    const other = render(<WebApp client={fakeCore({ scan: () => ({ findings: [], detected: [], descriptor: null, stats: null, issues: [] }) }).client} />);
+    const file = new File(["x"], "events.txt");
+    Object.defineProperty(file, "webkitRelativePath", { value: "mods/events/events.txt" });
+    fireEvent.change(other.container.querySelector<HTMLInputElement>("input[type=file]")!, { target: { files: [file] } });
+    expect(await screen.findByText(/no descriptor.mod at its top level/)).toBeInTheDocument();
+  });
+
+  it("warns before a reload discards work in progress, and not otherwise", async () => {
+    stubGitHub();
+    const { client } = fakeCore();
+    const { container } = render(<WebApp client={client} />);
+    const leave = () => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    expect(leave()).toBe(false);
+    pickFolder(container);
+    await screen.findByText("demo_mod");
+    expect(leave()).toBe(true);
+  });
+
+  it("starts the next mod from a clean page, keeping only the assistant choice", async () => {
+    await existingToReview({ export: () => [entry("AGENTS.md", "core.agents", "create")] });
+    stubDownloads();
+    fireEvent.click(screen.getByRole("button", { name: "Download ZIP" }));
+    await screen.findByRole("heading", { name: "Your ZIP is ready" });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare another mod" }));
+    expect(screen.getByRole("heading", { name: "Prepare a mod in your browser" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Scan result" })).toBeNull();
+    expect(screen.queryByText("demo_mod")).toBeNull();
+    expect(screen.getByRole("button", { name: /New mod/ })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByLabelText("AI provider")).toHaveValue("claude");
   });
 
   it("chooses image, portrait, and live-testing integrations", async () => {

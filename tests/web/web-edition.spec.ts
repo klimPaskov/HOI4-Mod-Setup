@@ -178,3 +178,17 @@ test("the setup can start from the keyboard and moves focus to each new step", a
   await expect(page.getByLabel("Mod name")).toHaveValue("Iron Dawn");
   expect(errors).toEqual([]);
 });
+
+test("the start screen fits a phone: no empty gap under the heading and no sideways scroll", async ({ page }) => {
+  const errors = await prepare(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("heading", { name: "Prepare a mod in your browser" })).toBeVisible();
+  const layout = await page.evaluate(() => {
+    const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
+    return { heading: box(".screen-heading").height, card: box(".choice-card").top - box("h1").bottom, scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth };
+  });
+  expect(layout.heading).toBeLessThan(120);
+  expect(layout.card).toBeLessThan(80);
+  expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth);
+  expect(errors).toEqual([]);
+});

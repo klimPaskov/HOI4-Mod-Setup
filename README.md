@@ -4,259 +4,89 @@
 [![YouTube](https://img.shields.io/badge/YouTube-Chaos%20Redux-ff0000?logo=youtube&logoColor=white)](https://www.youtube.com/@ChaosRedux)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20the%20Project-ff5e5b?logo=kofi&logoColor=white)](https://ko-fi.com/klimpaskov)
 [![Download](https://img.shields.io/github/v/release/klimPaskov/HOI4-Mod-Setup?label=Download&logo=github&color=2ea44f)](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
-[![Guide](https://img.shields.io/badge/Guide-GitHub%20Pages-555555?logo=readthedocs&logoColor=white)](https://klimpaskov.github.io/HOI4-Mod-Setup/)
 [![Issues](https://img.shields.io/badge/Bugs%20%26%20Ideas-Issues-24292f?logo=github&logoColor=white)](https://github.com/klimPaskov/HOI4-Mod-Setup/issues)
 
-[![Watch the HOI4 Mod Setup video: One App, All HOI4 Tools](docs/images/setup-app-demo-thumbnail.png)](https://www.youtube.com/watch?v=qdFbLO92dQI)
+Prepare a new or existing **Hearts of Iron IV mod** for AI-assisted development.
+It adds project instructions, skills, specialist subagents, HOI4 tools, and an
+offline wiki, adapted to your mod, for Claude Code, Codex, Cursor, and
+[many more coding clients](docs/36_coding_environment_catalog.md). It is for HOI4
+modders who want an AI agent that knows how their mod and the game's script work.
 
-Prepare a new or existing Hearts of Iron IV mod for AI-assisted development.
-HOI4 Mod Setup creates the mod files, installs project instructions, skills,
-specialist subagents, tools, and an offline wiki, and opens your coding client.
-You can update the setup, repair it, or add workflows later.
+### [**Try the web version →**](https://klimpaskov.github.io/HOI4-Mod-Setup/app/)
 
-Choose any supported coding client. Codex, Claude Code, Cursor, Qoder, and
-OpenCode can use the same modding guidance through their own client packages.
-Setup packages in manifest format 6 add GitHub Copilot (VS Code), Gemini CLI,
-Antigravity, Grok Build, Kilo Code, Kiro, Qwen Code, Cline, Devin Desktop,
-Augment, Continue, and Aider.
-The workflow comes from [Agentic HOI4 Modding](https://github.com/klimPaskov/Agentic-HOI4-Modding).
-It also installs [HOI4 Agent Tools](https://github.com/klimPaskov/hoi4-agent-tools), which lets your agent build focus trees, events, decisions and maps, and offers optional live testing with [Clausewitz MCP by smerss](https://github.com/smerss/Clausewitz-MCP) or experimental [HOI4 Live Tools](https://github.com/klimPaskov/HOI4-Live-Tools).
+No install, nothing uploaded. Or [download the desktop app](#download).
+
+[![The web edition: drop a mod folder or start a new mod](docs/screenshots/18-web-edition.png)](https://klimpaskov.github.io/HOI4-Mod-Setup/app/)
+
+## Quick start
+
+**In your browser** (about five minutes):
+
+1. Open the [web edition](https://klimpaskov.github.io/HOI4-Mod-Setup/app/).
+2. Choose **New mod**, or drop your mod's folder on **Existing mod**.
+3. Pick a setup assistant: the free model when offered, **Sign in with
+   OpenRouter**, or your own API key (Claude, Gemini, Grok, DeepSeek, GLM).
+4. Review what it found and suggests, then **Download** the ZIP.
+5. Unpack the ZIP over a **copy** of your mod (or a Git checkout) and open the
+   folder in your coding client.
+
+**On your computer:** [download](#download), open the app, choose **Create new
+mod** or **Import existing mod**, and follow the steps. The app backs up
+first, shows every change before it writes, and can undo it.
+
+## Web or desktop?
+
+| | Web | Desktop |
+| --- | --- | --- |
+| Install | None | Windows, macOS, Linux |
+| Writes to your mod | No: you download a ZIP | Yes, after review, with backup and **Undo changes** |
+| Existing mods | Drop the folder (read-only) | Pick the folder |
+| Update or repair later | Drop the folder again | **Manage an existing project** |
+| Your API key | Kept in the tab's memory only | Kept in the OS credential store |
+| Claude / ChatGPT account sign-in | No | Yes |
+| HOI4 Agent Tools install and checks, Git, 3D workflow, live testing | No | Yes |
+
+## Using an existing mod
+
+- **Your files stay yours.** A valid `descriptor.mod`, `thumbnail.png`, and
+  `README.md` are kept as they are, and your mod content is never touched.
+- **Import** only reads the folder. Installation then adds the setup on top.
+- **Reimport or update** the same folder any time: the app recognises its setup
+  and offers **Update** or **Repair**. Unchanged setup files are refreshed; files
+  you edited are never overwritten silently and are shown for review (keep,
+  use new, merge, keep both, or skip). Repeating an update with nothing new
+  changes nothing.
+- **Interrupted?** If the app is closed or the computer sleeps during install, the next
+  time you open the folder it offers **Undo changes**, which restores the mod
+  as it was. A full install takes several minutes, so keep the app open.
+
+More in the [user guide](docs/USER_GUIDE.md#existing-mods-import-reimport-update).
 
 ## Download
 
-- Windows: [Download the `.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-windows-x64-setup.exe)
-- Mac with Apple silicon: [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-arm64.dmg)
-- Linux x86-64: [Download the AppImage](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.AppImage) or [Debian package](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.deb)
-- Mac with Intel: [Download the `.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-x64.dmg)
+- Windows: [`.exe` installer](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-windows-x64-setup.exe)
+- Mac, Apple silicon: [`.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-arm64.dmg) · Intel: [`.dmg`](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-macos-x64.dmg)
+- Linux x86-64: [AppImage](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.AppImage) or [Debian package](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest/download/HOI4-Mod-Setup-linux-x64.deb) ([Linux guide](docs/LINUX.md))
 
-On Linux, follow the [Linux install guide](docs/LINUX.md).
+The app updates itself. Signing details for each download are in the
+[release notes](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest).
+Watch the [video walkthrough](https://www.youtube.com/watch?v=qdFbLO92dQI).
 
-### Or use it in your browser
+## Learn more
 
-The [web edition](https://klimpaskov.github.io/HOI4-Mod-Setup/app/) needs no
-install. Choose a setup assistant: the free model, which needs no account
-when it is offered, **Sign in with OpenRouter** (free models included), or
-Claude, Gemini, Grok, DeepSeek, or GLM with your API key. Then start a new mod
-from a short description or drop your mod folder on the page. The assistant fills in the mod's details and recommends
-components; you review everything and download a ZIP to unpack yourself. Your
-files stay in the browser tab: any key stays in the tab's memory, the
-provider sees only your description or a scan summary, and the page downloads
-only the selected modding files from GitHub at one exact commit and checks each
-against its published SHA-256 hash.
-
-It covers most of the desktop app: documents and images as optional context,
-coding clients, components, image providers, the portrait workflow, Clausewitz
-MCP live testing, a review of every changed file with keep, replace, merge,
-rename, or skip, and the same readiness checks. A folder that already has a
-setup can be updated, repaired, changed, or have its setup removed. A local
-model on your computer can also be the setup assistant.
-
-The web edition does not change files in place, so it has no backup or undo
-step; unpack the ZIP over a copy or a Git checkout of your mod. Account
-sign-in for Claude and Codex, installing and checking the HOI4 Agent Tools
-server, saving image-provider keys in your credential store, Git, HOI4 Live
-Tools, and the 3D models workflow need the desktop app.
-
-On Windows, run the downloaded setup file. On Mac, open the disk image and
-move HOI4 Mod Setup to Applications. Community Windows builds are signed by
-ChaosX; community Mac builds use ad-hoc signing. See the
-[release notes](https://github.com/klimPaskov/HOI4-Mod-Setup/releases/latest)
-for your download's signing details.
-
-Follow the [first-run guide](docs/QUICKSTART.md) for Windows, macOS and Linux,
-or visit the [project guide](https://klimpaskov.github.io/HOI4-Mod-Setup/).
-Watch [One App, All HOI4 Tools on YouTube](https://www.youtube.com/watch?v=qdFbLO92dQI) for a video walkthrough.
-
-## Using the app
-
-### Choose a project and setup assistant
-
-![Create a new mod or import an existing one](docs/screenshots/01-welcome.jpg)
-
-Choose **Create new mod** or **Import existing mod**. The setup assistant helps
-prepare the mod's details; choose your coding environment separately later.
-
-The setup assistant that plans the mod is separate from the coding client you
-choose later. Select any supported assistant provider and use its account
-sign-in, API key, or local connection. When the free model is offered, it is
-the default and needs no account: HOI4 Mod Setup sends the request through its
-own relay to a free model on OpenRouter, free models may keep what you send,
-and all users share one daily limit. **OpenRouter** also lets you sign in with
-your own account instead of pasting a key.
-
-While describing a new mod, type a rough idea and choose **Expand
-description**: the setup assistant rewrites it as a fuller description that
-you can edit or undo. Gemini and Grok API-key profiles use the
-app's reviewed provider routes; experimental provider-account routes, when
-shown, keep sign-in inside the provider's own CLI. Choose a model and
-reasoning level when the provider offers them. Claude defaults to Haiku 5.5 at
-medium effort, keeps legacy Haiku 4.5, and lets advanced users enter an exact
-Claude model ID.
-
-The experimental Gemini and Grok account options open the official provider
-client in a separate sign-in window and never ask you to paste a token. They
-are currently verified only on Windows and Linux; use the corresponding
-API-key profile when the account route is unavailable on your computer.
-
-To work on a mod you already have, choose **Manage an existing project** and
-select its folder. The app finds its launcher file and installed setup.
-
-![Choose a previously prepared project](docs/screenshots/11-existing-project.png)
-
-### Describe the mod and review its details
-
-For a new mod, enter its name and a short description.
-
-![Enter the mod name and description](docs/screenshots/02-description.png)
-
-The app suggests a project ID, script prefix, namespace, tags, and starter
-folders. It fills the standard HOI4 mod location and launcher file. Edit any
-value before continuing. Setup creates both `descriptor.mod` files and a replaceable
-600x600 black `thumbnail.png`.
-
-![Review the generated project identity and locations](docs/screenshots/03-identity.png)
-
-For an existing mod, the app checks its descriptors, instructions, skills,
-subagents, client configuration, and Git state, then shows what needs attention.
-
-### Choose your coding clients and components
-
-Select any supported coding client as your main one, then add other clients you use.
-Codex, Claude Code, Cursor, Qoder, and OpenCode are supported, and setup
-packages in manifest format 6 add twelve more clients. Cline, Devin Desktop,
-Augment, and Continue keep MCP servers in their own settings, so the Ready
-screen links their setup guide; Aider has no MCP support.
-
-![Choose one primary coding environment and any additional clients](docs/screenshots/15-coding-environments.png)
-
-### Choose how to make images
-
-Pick a main image provider and add optional providers. ChatGPT through GPTImage
-is selected by default. The list also includes image APIs, local servers, Codex
-image generation when Codex is the main client, and a choice to make art yourself.
-The app stores API keys in the operating-system credential store.
-
-![Choose an image-generation provider](docs/screenshots/16-image-generation.png)
-
-Choose instructions, skills, tools, and the offline wiki. The app adapts the
-guidance to your mod and fills the game and Workshop folders it finds through
-Steam. Required components stay selected.
-
-Choosing an image provider automatically selects its required setup component;
-changing providers removes stale image-route components before the next review.
-The final dependency and file plan is always checked by the app core.
-
-![Choose instructions, skills, tools, wiki, and ChatGPT files](docs/screenshots/04-components.png)
-
-**Latest** is the default and uses the current published Agentic HOI4 Modding package. You can also
-choose a specific commit or release. Updates bring in published components and
-keep your optional workflow choices.
-
-**ChatGPT project-sources packager** is an optional component. Check it to add
-`.tools/package_chatgpt_project_sources.py`, a script you run yourself to export
-project files for a ChatGPT project.
-
-### Add optional workflows
-
-![Choose the optional workflows](docs/screenshots/05-integrations.png)
-
-- **3D models workflow** prepares Meshy and Blender on Windows. Add a Meshy key
-  to use it; the key stays in Windows Credential Manager. Missing tools or
-  credentials leave this workflow incomplete while the rest of setup remains
-  usable.
-- **Super Events workflow** adds the popup, templates, example, assets, and
-  guidance for building Super Events with your mod's script prefix.
-- **ComfyUI portrait production** supports Comfy Cloud, Local ComfyUI, or RunPod.
-  Its expanded panel shows the 16 GB VRAM and 25 GB storage recommendation.
-  See the [portrait workflow guide](docs/32_comfyui_portrait_pipeline.md).
-- **Live testing** opens a separate provider step. Clausewitz MCP by smerss is
-  the default and requires native Linux HOI4 1.19.2 and a separately prepared
-  Linux server: WSL on Windows, or a Linux machine/VM through SSH on macOS.
-  Follow the [Linux setup guide](docs/LIVE_TESTING_LINUX.md), then explicitly
-  confirm readiness. Configure later records a to-do without registration.
-  HOI4 Live Tools is experimental, slower, and not fully tested; its current
-  public package verifies Windows only, with an incomplete macOS scaffold.
-  None disables live testing. The next capture is `17-live-testing.png`.
-
-HOI4 Agent Tools installs and registers its MCP server for your selected coding
-clients on Windows, including `.mcp.json` for Claude Code. It works independently
-of the assistant you used for setup.
-
-![Review selected integrations and credential state](docs/screenshots/06-mcp-credentials.png)
-
-### Choose Git setup
-
-![Keep the mod local, connect a remote, or publish it](docs/screenshots/07-git.png)
-
-Initialize Git, keep an existing repository, or skip Git. Keep the mod local,
-connect a remote, or create a public GitHub repository. Publishing and pushing
-ask for a separate confirmation.
-
-### Review and install
-
-![Review the files and folders before installation](docs/screenshots/09-dry-run.png)
-
-Review the files and folders to add or update, then start installation. For an
-edited file, choose to keep your version, use the incoming version, merge, keep
-both, or skip when available. Installation shows file counts, progress, and an
-estimated time.
-
-Changes are written to your mod folder; use Git to review or undo them.
-
-If setup stops, reopen the project to continue, undo changes, or discard
-prepared files. The app offers the actions available for that installation.
-
-![Recover an interrupted installation](docs/screenshots/14-recovery.png)
-
-### Open the prepared project
-
-![Completed setup and project checks](docs/screenshots/08-ready.png)
-
-The Ready screen shows the project and tool checks. **Open in your primary
-client** starts that client in the mod folder when it is available. Optional
-workflows show their own setup status.
-
-For ChatGPT, check the optional packager component during setup. It adds
-`.tools/package_chatgpt_project_sources.py` and a Windows `.bat` launcher; the
-app never runs them or uploads anything.
-Run `python .tools/package_chatgpt_project_sources.py` to export a folder and
-`all-project-sources.zip` to Downloads. Use `--dry-run`, `--include`, `--exclude`,
-or `--config` to adjust the selection, and a new `--output` folder for each
-export. See the [source-packaging guide](docs/33_chatgpt_source_packaging.md).
-
-### Update, repair, or add workflows later
-
-![Update and repair a prepared project](docs/screenshots/12-maintenance.png)
-
-Open **Manage an existing project** to update or repair setup files, change
-coding clients or the portrait provider, add workflows, remove components, or
-recover an interrupted installation.
-
-**Update source** defaults to **Latest verified source**, including for projects
-installed from an older pin. Choose a commit or release to pin instead, then
-review and confirm the update. MCP versions follow the selected package's
-verified manifest. **Repair installation** keeps the installed revision.
-
-**Remove components** removes unchanged files installed by the app and the
-folders left empty. Edited setup files are shown for review; your mod content
-stays in place.
-
-The app checks for updates when it opens and installs a newer signed version
-automatically. If an update fails, you can keep using the app and retry.
-
-## Troubleshooting
-
-See [Troubleshooting](docs/TROUBLESHOOTING.md) for sign-in, setup source, MCP,
-and interrupted installation fixes.
+- [Quick start with screenshots](docs/QUICKSTART.md) and the [full user guide](docs/USER_GUIDE.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md): sign-in, setup source, MCP, interrupted installs
+- [Contributing](CONTRIBUTING.md), [development setup](DEVELOPMENT.md), [releasing](RELEASING.md), [security](SECURITY.md)
+- The workflow comes from [Agentic HOI4 Modding](https://github.com/klimPaskov/Agentic-HOI4-Modding)
+  and [HOI4 Agent Tools](https://github.com/klimPaskov/hoi4-agent-tools)
 
 ## Privacy
 
-HOI4 Mod Setup has no telemetry. Provider keys stay in Windows Credential
-Manager, macOS Keychain or Linux Secret Service. Claude Code and Codex handle their own account
-sign-in. Secret values are not written into the mod. The web edition keeps a
-provider key only in the open tab's memory and lists every network request it
+No telemetry. Provider keys stay in Windows Credential Manager, macOS Keychain, or
+Linux Secret Service (desktop) or in the open tab's memory (web); secret values
+are never written into your mod. The web edition lists every network request it
 makes under **Network**.
 
 ## License
 
-HOI4 Mod Setup is released under the [Apache License 2.0](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).

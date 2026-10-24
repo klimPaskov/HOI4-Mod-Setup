@@ -24,7 +24,7 @@ import MaintenancePanel from "./parts/MaintenancePanel";
 import type { MaintenanceChoice } from "./parts/MaintenancePanel";
 import DoneStep from "./steps/DoneStep";
 import IntegrationsStep from "./steps/IntegrationsStep";
-import ReviewStep from "./steps/ReviewStep";
+import ReviewStep, { splitConflicts } from "./steps/ReviewStep";
 import type { Analysis, AnalysisRequest, ApprovedEvidence, AssistantProvenance, Comparison, Decision, ExportEntry, ExportRequest, ImageChoice, LiveTestingChoice, Platform, PortraitChoice, ReadinessCheck, ScanSummary, SourcePreview } from "./protocol";
 
 type Step = "start" | "describe" | "details" | "components" | "integrations" | "review" | "done";
@@ -45,6 +45,9 @@ const HIDDEN_COMPONENT_PREFIXES = ["workflow.portraits", "imagegen.", "workflow.
 /** Shown although another optional component depends on it. */
 const ALWAYS_LISTED = new Set(["workflow.super_events"]);
 const READ_BATCH_BYTES = 32 * 1024 * 1024;
+const READ_CONCURRENCY = 24;
+/** Bytes read at once, so a few large files never fill memory twice. */
+const READ_GROUP_BYTES = 64 * 1024 * 1024;
 const PROJECT_ID = /^[a-z][a-z0-9_]{1,63}$/;
 /** The lock's rule for a script prefix or namespace. */
 const IDENTIFIER = /^[a-z_][a-z0-9_]{0,63}$/;
@@ -191,6 +194,18 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
   const seededAnalysis = useRef<string | null>(null);
 
   useEffect(() => onNetworkLog(setNetwork), []);
+  // Nothing is saved between visits (the key and the folder live in memory), so
+  // a reload or a closed tab would silently discard work in progress.
+  const workInProgress = step !== "done" && (scan !== null || analysis !== null || entries !== null || brief.trim() !== "");
+  useEffect(() => {
+    if (!workInProgress) return undefined;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [workInProgress]);
   useEffect(() => headingRef.current?.focus(), [step]);
 
   const existingSetup = scan?.existing_setup?.valid ? scan.existing_setup : null;
@@ -243,17 +258,35 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
       batch = [];
       batchBytes = 0;
     };
-    for (const entry of selection.files) {
-      const buffer = await readFileBytes(entry.file);
-      batch.push({ path: entry.path, buffer });
-      batchBytes += buffer.byteLength;
-      read += 1;
-      if (batchBytes >= READ_BATCH_BYTES) {
-        await flush();
-        setBusy({ label: "Reading the folder", done: read, total: selection.files.length });
+    // Files are read several at a time: one by one, a folder of tens of
+    // thousands of small files spent minutes waiting on the browser.
+    const readOne = async (entry: FolderSelection["files"][number]): Promise<ArrayBuffer> => {
+      try {
+        return await readFileBytes(entry.file);
+      } catch (cause) {
+        // The browser's own message names no file; a locked, protected, or
+        // too-long Windows path is the usual reason.
+        const reason = cause instanceof Error ? cause.message : String(cause);
+        throw new Error(`${entry.path} could not be read (${reason}) Close any program that uses it, check its permissions, and on Windows move the mod closer to the drive root if its path is very long. Then choose the folder again.`);
       }
-    }
-    await flush();
+    };
+    for (let index = 0; index < selection.files.length;) {
+      const group: FolderSelection["files"] = [];
+      let groupBytes = 0;
+      while (index < selection.files.length && group.length < READ_CONCURRENCY && (group.length === 0 || groupBytes + selection.files[index].size <= READ_GROUP_BYTES)) {
+        groupBytes += selection.files[index].size;
+        group.push(selection.files[index]);
+        index += 1;
+      }
+      const buffers = await Promise.all(group.map(readOne));
+      buffers.forEach((buffer, position) => {
+        batch.push({ path: group[position].path, buffer });
+        batchBytes += buffer.byteLength;
+      });
+      read += group.length;
+      if (batchBytes >= READ_BATCH_BYTES) await flush();
+      setBusy({ label: "Reading the folder", done: read, total: selection.files.length });
+    }    await flush();
     setBusy({ label: "Scanning", done: 0, total: 0 });
     const result = await client().call("scan", {});
     setFolder(selection);
@@ -308,6 +341,40 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
     setEdited(new Set());
     setBrief("");
     resetAnalysis();
+  };
+
+  /** Begin another mod: everything about the last one is cleared; the
+   * assistant choice, key, and source stay so they need not be entered again. */
+  const startOver = () => {
+    setStep("start");
+    setError(null);
+    setKind(null);
+    setFolder(null);
+    setScan(null);
+    setMaintenance(null);
+    setIdentity({ displayName: "", projectId: "", description: "", author: "", primaryNamespace: "", scriptPrefix: "", descriptorTags: [] });
+    setEdited(new Set());
+    setBrief("");
+    resetAnalysis();
+    setEvidencePreview(null);
+    setExcluded(new Set());
+    setDocuments([]);
+    setImages([]);
+    setRefused([]);
+    setThumbnail(null);
+    setOptional(new Set());
+    setAdditional(new Set());
+    setImageChoice(null);
+    setPortrait(NO_PORTRAITS);
+    setLive(NO_LIVE_TESTING);
+    setEntries(null);
+    setDecisions({});
+    setComparison(null);
+    setMerged({});
+    setMergeErrors({});
+    setBasesReady(false);
+    setReadiness([]);
+    seededAnalysis.current = null;
   };
 
   const updateIdentity = (key: keyof Identity, value: string | string[]) => {
@@ -674,6 +741,10 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
           scriptPrefix: identity.scriptPrefix.trim() || null,
           primaryNamespace: identity.primaryNamespace.trim() || null,
           descriptorTags: identity.descriptorTags,
+          // An existing mod keeps its own version and game version in the
+          // descriptor the setup offers, so choosing it changes less.
+          ...(kind === "existing" && scan?.descriptor?.version ? { version: scan.descriptor.version } : {}),
+          ...(kind === "existing" && scan?.descriptor?.supported_version ? { supportedGameVersion: scan.descriptor.supported_version } : {}),
         },
         description: identity.description.trim(),
         conventions: {
@@ -734,7 +805,8 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
       });
       setComparison(await client().call("compare", { path }));
     } catch (cause) {
-      setMergeErrors((current) => ({ ...current, [path]: `The files cannot be merged automatically: ${cause instanceof Error ? cause.message : String(cause)}` }));
+      const reason = cause instanceof Error ? cause.message : String(cause);
+      setMergeErrors((current) => ({ ...current, [path]: /could not be proven safe|overlap|conflict/i.test(reason) ? "Your edit and the setup's change are too close together to combine safely. Choose Keep mine or Use the setup's version, or compare the files and edit by hand." : `The files cannot be merged automatically: ${reason}` }));
     }
   });
 
@@ -754,6 +826,9 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
 
   const removal = kind === "existing" && maintenance === "remove";
   const maintaining = kind === "existing" && Boolean(existingSetup) && maintenance !== null;
+  // The first setup of an existing mod keeps the mod's own descriptor and README.
+  const keepOwnFiles = kind === "existing" && !maintaining;
+  const descriptorValid = Boolean(scan?.descriptor?.name?.trim());
   const steps: Step[] = maintaining
     ? maintenance === "update" || maintenance === "change"
       ? ["start", "components", ...(hasIntegrations ? ["integrations" as Step] : []), "review", "done"]
@@ -831,6 +906,13 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                       </ul>
                     )}
                     {scan.issues.length > 0 && <p className="web-panel-text status-review">{scan.issues.join(" ")}</p>}
+                    {!scan.descriptor && (
+                      <p className="web-panel-text status-review">
+                        {folder.files.some((file) => file.path.toLowerCase() === "descriptor.mod")
+                          ? "descriptor.mod is in this folder but could not be read. The setup offers a new one; check the file first."
+                          : "This folder has no descriptor.mod at its top level. If it is a folder of mods, drop one mod's own folder instead. If it is the right folder, the setup adds a descriptor."}
+                      </p>
+                    )}
                     {usesAssistant && <div className="web-panel-text"><FindingsPanel findings={scan.findings} excluded={excluded} onToggle={(id, include) => { setExcluded((current) => { const next = new Set(current); if (include) next.delete(id); else next.add(id); return next; }); resetAnalysis(); }} assistantName={assistantLabel} /></div>}
                   </section>
                 )}
@@ -1041,8 +1123,8 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
             )}
 
             {step === "review" && entries && (
-              <Screen title="Review the changes" sentence={entries.some((entry) => entry.action === "conflict") ? "Some files in your folder differ from the incoming version. Choose what to keep." : undefined} headingRef={headingRef}>
-                <ReviewStep entries={entries} decisions={decisions} onDecision={(path, decision) => setDecisions((current) => ({ ...current, [path]: decision }))} merged={merged} mergeErrors={mergeErrors} basesReady={basesReady} onMerge={previewMerge} onCompare={compare} comparison={comparison} onCloseComparison={() => setComparison(null)} existing={kind === "existing"} removal={removal} layout={layout} onLayout={setLayout} busy={busy !== null} />
+              <Screen title="Review the changes" sentence={splitConflicts(entries, keepOwnFiles, descriptorValid).decide.length > 0 ? "Your folder already has different versions of some of these files. Choose which to keep; your choice goes into the ZIP." : undefined} headingRef={headingRef}>
+                <ReviewStep keepOwnFiles={keepOwnFiles} descriptorValid={descriptorValid} entries={entries} decisions={decisions} onDecision={(path, decision) => setDecisions((current) => ({ ...current, [path]: decision }))} merged={merged} mergeErrors={mergeErrors} basesReady={basesReady} onMerge={previewMerge} onCompare={compare} comparison={comparison} onCloseComparison={() => setComparison(null)} existing={kind === "existing"} removal={removal} layout={layout} onLayout={setLayout} busy={busy !== null} />
               </Screen>
             )}
 
@@ -1077,7 +1159,7 @@ export default function WebApp({ client: providedClient }: { client?: CoreClient
                 : <button type="button" className="button primary" disabled={busy !== null || !primary} onClick={prepare}>Download and review</button>)}
               {step === "integrations" && <button type="button" className="button primary" disabled={busy !== null || integrationsProblem !== null} title={integrationsProblem ?? undefined} onClick={prepare}>Download and review</button>}
               {step === "review" && <button type="button" className="button primary" disabled={busy !== null} onClick={download}>Download ZIP</button>}
-              {step === "done" && <button type="button" className="button" onClick={() => { setStep("start"); setEntries(null); }}>Prepare another mod</button>}
+              {step === "done" && <button type="button" className="button" onClick={startOver}>Prepare another mod</button>}
             </div>
           </footer>
           {(step === "start" ? startProblem : step === "describe" ? briefProblem : step === "details" ? identityProblem : step === "integrations" ? integrationsProblem : null) && <p className="visually-hidden" aria-live="polite">{step === "start" ? startProblem : step === "describe" ? briefProblem : step === "details" ? identityProblem : integrationsProblem}</p>}

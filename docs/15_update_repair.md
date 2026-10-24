@@ -39,7 +39,13 @@ for manifest evidence. New command routes still require an app-owned adapter.
 
 The preview shows revision, manifest version, component additions and removals, dependency and command changes, platform changes, wiki coverage changes, conflicts, download size, and backup size.
 
-For each file, compare installed result to current local and old source to new source. Reuse a prior merge choice only when the conflict signature is unchanged. Generated descriptor, external launcher, and thumbnail artifacts are reviewed independently, including when an existing project already has `descriptor.mod`.
+For each file, compare installed result to current local and old source to new source.
+A file that already holds the incoming bytes is a no-op: it raises no conflict and
+is not rewritten. A file the user edited whose incoming bytes equal what the last
+install wrote has nothing new to merge; the edit is kept (`keep_reviewed_edit`)
+without asking again at every update. A merged file the new source no longer
+ships is kept silently while it still matches the lock. Repeating an update with
+nothing new therefore lists no conflicts. Reuse a prior merge choice only when the conflict signature is unchanged. Generated descriptor, external launcher, and thumbnail artifacts are reviewed independently, including when an existing project already has `descriptor.mod`.
 
 Before an update plan is created, run a new bounded read-only scan. Show the resulting evidence manifest to the user, send only those approved text excerpts to the selected provider (the ChatGPT-authenticated Codex App Server for Codex), and require confirmation of the schema-constrained semantic proposals. The fresh core-session confirmation is passed into the update plan; an old lock record or renderer-supplied record cannot satisfy this update gate. If the scan, provider configuration, analysis, or confirmation fails, no update plan or transaction starts.
 

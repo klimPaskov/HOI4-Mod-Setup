@@ -145,6 +145,9 @@ fn read_installed_package_tree_with_links(
     }
     let mut pending = vec![root.to_path_buf()];
     let mut files = Vec::new();
+    // Regular files are read after the walk, several at a time: each read
+    // re-checks its whole path, which dominates the time on a large tree.
+    let mut regular_files = Vec::new();
     let mut observed_links = BTreeSet::new();
     let mut retained_bytes = 0u64;
     let mut visited_entries = 0usize;
@@ -204,32 +207,20 @@ fn read_installed_package_tree_with_links(
                     })?
                     .to_string_lossy()
                     .replace('\\', "/");
-                let bytes = crate::flatten::read_bounded_regular_file_no_follow_under_root(
-                    root,
-                    &relative,
-                    MAX_PACKAGE_FILE_BYTES,
-                )?;
-                retained_bytes = retained_bytes
-                    .checked_add(bytes.len() as u64)
-                    .ok_or_else(|| AppError::PathSecurity("MCP package size overflowed".into()))?;
-                if retained_bytes > MAX_PACKAGE_TREE_BYTES {
-                    return Err(AppError::PathSecurity(
-                        "the installed MCP package exceeds its verification byte bound".into(),
-                    ));
-                }
-                files.push((relative, bytes));
+                regular_files.push(relative);
             } else {
                 return Err(AppError::PathSecurity(
                     "the installed MCP package contains a special file".into(),
                 ));
             }
         }
-        if files.len() > 10_000 {
+        if files.len() + regular_files.len() > 10_000 {
             return Err(AppError::PathSecurity(
                 "the installed MCP package exceeds its file bound".into(),
             ));
         }
     }
+    files.extend(read_package_files(root, regular_files, retained_bytes)?);
     if observed_links != symlinks.keys().cloned().collect() {
         return Err(AppError::PathSecurity(
             "a declared MCP package link is missing".into(),
@@ -245,6 +236,91 @@ fn read_installed_package_tree_with_links(
         return Err(AppError::PathSecurity(
             "the installed MCP package exceeds its verification bounds".into(),
         ));
+    }
+    Ok(files)
+}
+
+/// One package file's read result while the readers are still running.
+type PackageRead = Result<Vec<u8>, AppError>;
+
+/// Read regular package files with the same no-follow, bounded read as before,
+/// on several threads. Every file still goes through the full per-file path
+/// checks; only the waiting overlaps. The result keeps the byte bounds: a file
+/// over its limit, or a tree over the tree limit, fails the whole read.
+fn read_package_files(
+    root: &Path,
+    relatives: Vec<String>,
+    already_retained: u64,
+) -> Result<Vec<(String, Vec<u8>)>, AppError> {
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+    if relatives.is_empty() {
+        return Ok(Vec::new());
+    }
+    let workers = std::thread::available_parallelism()
+        .map_or(4, std::num::NonZeroUsize::get)
+        .clamp(1, 8)
+        .min(relatives.len());
+    let next = AtomicUsize::new(0);
+    let failed = AtomicBool::new(false);
+    let retained = AtomicU64::new(already_retained);
+    let slots: Vec<std::sync::Mutex<Option<PackageRead>>> = relatives
+        .iter()
+        .map(|_| std::sync::Mutex::new(None))
+        .collect();
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, Ordering::SeqCst);
+                if index >= relatives.len() || failed.load(Ordering::SeqCst) {
+                    break;
+                }
+                let mut result = crate::flatten::read_bounded_regular_file_no_follow_under_root(
+                    root,
+                    &relatives[index],
+                    MAX_PACKAGE_FILE_BYTES,
+                );
+                if let Ok(bytes) = &result {
+                    let total = retained.fetch_add(bytes.len() as u64, Ordering::SeqCst)
+                        + bytes.len() as u64;
+                    if total > MAX_PACKAGE_TREE_BYTES {
+                        result = Err(AppError::PathSecurity(
+                            "the installed MCP package exceeds its verification byte bound".into(),
+                        ));
+                    }
+                }
+                if result.is_err() {
+                    failed.store(true, Ordering::SeqCst);
+                }
+                if let Ok(mut slot) = slots[index].lock() {
+                    *slot = Some(result);
+                }
+            });
+        }
+    });
+    let results = slots
+        .into_iter()
+        .map(|slot| slot.into_inner().ok().flatten())
+        .collect::<Vec<_>>();
+    // Report the real failure, not a slot a worker skipped after it.
+    if let Some(index) = results
+        .iter()
+        .position(|result| matches!(result, Some(Err(_))))
+    {
+        if let Some(Err(error)) = results.into_iter().nth(index).flatten() {
+            return Err(error);
+        }
+        unreachable!("the failing slot was just found");
+    }
+    let mut files = Vec::with_capacity(relatives.len());
+    for (relative, result) in relatives.into_iter().zip(results) {
+        match result {
+            Some(Ok(bytes)) => files.push((relative, bytes)),
+            _ => {
+                return Err(AppError::PathSecurity(
+                    "the installed MCP package read was interrupted".into(),
+                ))
+            }
+        }
     }
     Ok(files)
 }
@@ -1293,6 +1369,33 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("hoi4.tech_inspect")
+        );
+    }
+
+    #[test]
+    #[ignore = "timing probe: set HOI4_TIME_PACKAGE to an installed MCP package directory"]
+    fn time_package_tree_materialization() {
+        let Some(root) = std::env::var_os("HOI4_TIME_PACKAGE") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let started = std::time::Instant::now();
+        let files = read_installed_package_tree_with_links(&root, &BTreeMap::new()).unwrap();
+        eprintln!("read: {:?} ({} files)", started.elapsed(), files.len());
+        let started = std::time::Instant::now();
+        let identity = package_tree_identity(&files);
+        eprintln!("identity: {:?} {}", started.elapsed(), identity.1);
+        let started = std::time::Instant::now();
+        let tree = materialize_verified_package_tree_with_links(
+            &root,
+            &BTreeMap::new(),
+            PrivateTreeLayout::Package,
+        )
+        .unwrap();
+        eprintln!(
+            "materialize total: {:?} {}",
+            started.elapsed(),
+            tree.file_count
         );
     }
 

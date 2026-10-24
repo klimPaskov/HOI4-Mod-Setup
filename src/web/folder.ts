@@ -5,6 +5,8 @@ export interface FolderFile {
   /** Path relative to the dropped folder, with `/` separators. */
   path: string;
   file: File;
+  /** Read once: asking a disk-backed file for its size is a slow call. */
+  size: number;
 }
 
 export interface FolderSelection {
@@ -36,8 +38,9 @@ function accept(selection: FolderSelection, path: string, file: File): void {
     if (folder && !selection.skipped.includes(folder)) selection.skipped.push(folder);
     return;
   }
-  selection.files.push({ path, file });
-  selection.totalBytes += file.size;
+  const size = file.size;
+  selection.files.push({ path, file, size });
+  selection.totalBytes += size;
   if (selection.files.length > MAX_FILES || selection.totalBytes > MAX_TOTAL_BYTES) throw new FolderTooLargeError();
 }
 
@@ -63,7 +66,7 @@ export function folderFromInput(list: FileList | File[]): FolderSelection {
     const path = relative.split("/").slice(1).join("/");
     if (path) accept(selection, path, file);
   }
-  selection.files.sort((left, right) => left.path.localeCompare(right.path));
+  selection.files.sort(byPath);
   return selection;
 }
 
@@ -121,6 +124,12 @@ export async function folderFromDrop(items: DataTransferItemList): Promise<Folde
     }
   };
   await visit(root, "");
-  selection.files.sort((left, right) => left.path.localeCompare(right.path));
+  selection.files.sort(byPath);
   return selection;
+}
+
+/** A plain code-unit order. `localeCompare` made sorting tens of thousands of
+ * paths freeze the page for about twenty seconds. */
+function byPath(left: FolderFile, right: FolderFile): number {
+  return left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
 }

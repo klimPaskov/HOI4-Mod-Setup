@@ -1,9 +1,9 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { Dispatch, KeyboardEvent as ReactKeyboardEvent, ReactNode, SetStateAction } from "react";
-import { applyInstallationResult, approveInstallation, readDiagnostics, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelOpenRouterSignIn, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, draftModDescription, evaluateReadiness, findInterruptedTransaction, forgetContextAttachment, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, openRouterSignIn, pickContextDocuments, pickContextImages, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
+import { applyInstallationResult, approveInstallation, checkInstallationRequirements, readDiagnostics, approveScanEvidence, buildInstallationPlan, buildInstallationPlanResult, buildMaintenancePlanResult, cancelClaudeLogin, cancelCodexLogin, cancelOpenRouterSignIn, cancelScan, checkForAppUpdate, confirmCodexAnalysis, discardInstallationStaging, draftModDescription, evaluateReadiness, findInterruptedTransaction, forgetContextAttachment, installAppUpdate, installLocalPortraitWorkflows, inspectLocalPortraitProvider, isTauriRuntime, logoutClaudeResult, logoutCodexResult, openCodexLoginUrlResult, openExternalUrlResult, openInCodex, openInCodingEnvironment, openRouterSignIn, pickContextDocuments, pickContextImages, pickLauncherFolder, pickProjectFolder, prepareGitOnlineAction, previewDescriptorsResult, previewInstallationConflict, previewSourceManifestResult, readAiAccount, readAiModels, readAiProviderProfiles, readCodexAccount, readImageGenerationCredential, readMeshyCredential, readTransactionJournal, removeAiProviderCredential, removeImageGenerationCredential, removeMeshyCredential, resolveInstallationConflict, resumeInstallation, rollbackInstallationResult, runAiAnalysisResult, runCodexAnalysisResult, runGitOnlineAction, runMcpHealthCheck, scanProject, startClaudeLogin, startCodexLogin, storeAiProviderCredential, storeImageGenerationCredential, storeMeshyCredential, suggestProjectPaths, waitForClaudeLoginResult, waitForCodexLoginResult } from "./lib/tauri";
 import { deriveGeneratedIdentity, HOI4_DESCRIPTOR_TAGS } from "./identity";
 import { base64ByteLength, base64DataUrl, renderCoverPng, renderReferenceJpeg } from "./lib/images";
-import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, ContextDocumentState, ContextImageState, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, McpSupport, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
+import type { AiModelCatalogStatus, AiModelOption, AiProviderId, AiProviderProfile, AppUpdateStatus, CodingEnvironmentId, CodingEnvironmentSelection, CodexAnalysisConfirmationValues, CodexAnalysisRequest, ComponentRecommendation, ComponentRow, ConflictChoice, ConflictPreview, ContextDocumentState, ContextImageState, FolderSelection, GeneratedArtifactPreview, GitOnlineAction, GitOnlinePlan, GitOnlineResult, ImageGenerationProviderDefinition, ImageGenerationSelection, LiveTestingSelection, InstallationPlan, LocalPortraitDiscovery, ManifestComponentPreview, McpSupport, PhaseId, PortraitPipelineState, PortraitProviderId, PortraitProviderStatus, ProjectIdentity, ReadinessReport, RecoveryChoice, ScanFinding, ScanProgress, ScreenId, SemanticConventions, SetupRequirement, SemanticProposalKey, SourceManifestPreview, StatusTone, TransactionJournal, WizardState, WorkflowHealthResult, WorkflowState } from "./types";
 import appIcon from "../src-tauri/icons/icon.png";
 import claudeModels from "./claude-models.json";
 import freeAssistantConfig from "./free-assistant.json";
@@ -479,7 +479,11 @@ function managedInstallationDetails(findings: ScanFinding[]): { present: boolean
     const installedComponents = new Set(value.component_ids ?? []);
     const recorded = [value.primary_coding_environment, ...(value.additional_coding_environments ?? [])].filter((id): id is string => typeof id === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(id));
     const recordedOptions = Array.from(new Set([...CODING_ENVIRONMENTS.map((environment) => environment.id), ...recorded])).map((id) => CODING_ENVIRONMENTS.find((environment) => environment.id === id) ?? { id, label: id, detail: "" });
-    const selection = normalizeCodingEnvironmentSelection(value.primary_coding_environment ?? "codex", value.additional_coding_environments, recordedOptions);
+    // Only an installation lock records a primary client. A mod this app has
+    // not set up yet gets the same default as a new mod, not the legacy one.
+    const selection = value.present === true
+      ? normalizeCodingEnvironmentSelection(value.primary_coding_environment ?? "codex", value.additional_coding_environments, recordedOptions)
+      : { primary: detectedPrimary, additional: detectedCodingEnvironments.filter((id) => id !== detectedPrimary) };
     return {
       present: value.present === true,
       valid: value.valid === true,
@@ -829,8 +833,17 @@ export default function App() {
             detectedLauncherPath = undefined;
           }
         }
+        // A mod that already has a Git repository keeps it: initializing again
+        // is refused when the plan is prepared.
+        let repositoryPresent = false;
+        try {
+          repositoryPresent = (JSON.parse(result.findings.find((finding) => finding.id === "git.repository")?.value ?? "{}") as { present?: boolean }).present === true;
+        } catch {
+          repositoryPresent = false;
+        }
         setState((current) => ({
           ...current,
+          gitMode: repositoryPresent && current.gitMode === "initialize" ? "preserve" : current.gitMode,
           identity: detectedLauncherPath
             ? { ...current.identity, launcherDescriptorPath: detectedLauncherPath }
             : current.identity,
@@ -1452,6 +1465,17 @@ export default function App() {
       setInstallationPending(false);
     }
   };
+  // The tools the prepared plan's setup checks run are looked up while nothing
+  // has been written. Clearing the result (Check again) looks them up again.
+  const requirementsPlanId = state.plan?.plan_id;
+  useEffect(() => {
+    if (state.screen !== "dry-run" || !requirementsPlanId || state.setupRequirements?.planId === requirementsPlanId || !isTauriRuntime()) return;
+    let active = true;
+    void checkInstallationRequirements(requirementsPlanId).then((items) => {
+      if (active) setState((current) => ({ ...current, setupRequirements: { planId: requirementsPlanId, items } }));
+    });
+    return () => { active = false; };
+  }, [state.screen, requirementsPlanId, state.setupRequirements?.planId]);
   // Arriving at the dry run starts preparing the plan once per visit, so the
   // review shows real changes without an extra click. A failure leaves the
   // manual Prepare changes action for retry instead of looping.
@@ -1618,7 +1642,7 @@ export default function App() {
         screen: "dry-run",
       } : {
         transaction: result.value,
-        transactionError: "The partial setup was undone. You can start again.",
+        transactionError: `The partial setup was undone and your mod is as it was. ${transaction.error?.message ? recoveryNextStep(transaction.error.message, false).replace(/^Choose an option below, then /, "To continue, ") : "You can start again."}`,
         readiness: null,
         recoveryEntry: false,
         screen: "welcome",
@@ -1940,11 +1964,14 @@ function SemanticPlanningProgress({ stage, startedAt, now }: { stage: keyof type
   </section>;
 }
 
-export function estimatePlanPreparationProgress(startedAt = Date.now(), now = Date.now()): { percent: number; remaining: string } {
+export function estimatePlanPreparationProgress(startedAt = Date.now(), now = Date.now()): { percent: number; remaining: string; overdue?: boolean } {
   const elapsedSeconds = Math.max(0, (now - startedAt) / 1_000);
   const estimatedTotalSeconds = 30;
   const percent = Math.min(96, Math.max(4, Math.floor(4 + (elapsedSeconds / estimatedTotalSeconds) * 92)));
   const remainingSeconds = Math.max(1, Math.ceil(estimatedTotalSeconds - elapsedSeconds));
+  // A first install downloads and checks every selected file, which can take
+  // minutes. Past the estimate, say so instead of holding at "1 second left".
+  if (elapsedSeconds > estimatedTotalSeconds) return { percent, remaining: "a first install can take a few minutes", overdue: true };
   return {
     percent,
     remaining: remainingSeconds < 60 ? `About ${remainingSeconds} seconds remaining` : `About ${Math.ceil(remainingSeconds / 60)} minutes remaining`,
@@ -1955,8 +1982,8 @@ function PlanPreparationProgress({ startedAt, now }: { startedAt?: number; now: 
   const progress = estimatePlanPreparationProgress(startedAt, now);
   return <section className="panel plan-preparation" role="status" aria-label="Plan preparation status" aria-live="polite" aria-busy="true">
     <div><strong>Preparing changes</strong><span>Checking the selected files and building the review.</span></div>
-    <Progress value={progress.percent} label="Preparing changes" valueText={`${progress.percent}% complete. Estimated time: ${progress.remaining}`} />
-    <div className="plan-preparation-meta" aria-hidden="true"><span>{progress.percent}%</span><span>Estimated time: {progress.remaining}</span></div>
+    <Progress value={progress.overdue ? undefined : progress.percent} label="Preparing changes" valueText={progress.overdue ? `Still working: ${progress.remaining}` : `${progress.percent}% complete. Estimated time: ${progress.remaining}`} />
+    <div className="plan-preparation-meta" aria-hidden="true">{progress.overdue ? <span>Still working: {progress.remaining}</span> : <><span>{progress.percent}%</span><span>Estimated time: {progress.remaining}</span></>}</div>
   </section>;
 }
 
@@ -1993,12 +2020,14 @@ function footerNote(screen: ScreenId, state: WizardState): string {
   if (screen === "dry-run") {
     if (!state.plan) return "Prepare the changes before installation.";
     if (state.plan.conflicts.some((conflict) => !conflict.selected)) return "Resolve blocking conflicts before installation.";
+    const missing = missingSetupRequirements(state);
+    if (missing.length) return `${missing[0].label} is missing. See Before setup for the next step.`;
     return "The reviewed changes are ready to install.";
   }
   if (screen === "install") {
     if (state.installProgress >= 100) return "Setup saved. Readiness is next.";
     const active = state.transaction?.stages.find((stage) => stage.status === "active");
-    return active && INSTALL_CHECK_PROGRESS[active.id] ? `${installStageLabel(active.id)}…` : "Installing selected files…";
+    return `${active && INSTALL_CHECK_PROGRESS[active.id] ? `${installStageLabel(active.id)}…` : "Installing selected files…"} Keep this window open until setup finishes.`;
   }
   if (screen === "ready") return state.transactionError ?? (state.removalSummary ? "Managed setup files were removed." : "Readiness checks saved.");
   if (screen === "update") return state.transactionError ?? "User-modified files are never overwritten silently.";
@@ -2098,6 +2127,13 @@ function analysisConfirmed(state: WizardState): boolean {
     && state.codexAnalysis.proposals.every((proposal) => confirmed.has(proposal.key as SemanticProposalKey));
 }
 
+/** Tools the prepared plan needs that this computer lacks. Empty until checked. */
+export function missingSetupRequirements(state: WizardState): SetupRequirement[] {
+  const checked = state.setupRequirements;
+  if (!checked || !state.plan || checked.planId !== state.plan.plan_id) return [];
+  return checked.items.filter((item) => item.status !== "ready");
+}
+
 function canAdvanceFromScreen(
   state: WizardState,
   scan: { scanComplete: boolean; scanError?: string; scanPartial: boolean; findings: ScanFinding[] },
@@ -2163,7 +2199,7 @@ function canAdvanceFromScreen(
       if (state.gitOnlineAction === "create_public_github") return Boolean(state.gitHubRepository?.trim());
       return true;
     case "dry-run":
-      return Boolean(state.plan) && !state.plan?.conflicts.some((conflict) => !conflict.selected);
+      return Boolean(state.plan) && !state.plan?.conflicts.some((conflict) => !conflict.selected) && !missingSetupRequirements(state).length;
     case "install":
       return state.installProgress >= 100;
     case "recovery":
@@ -2424,7 +2460,7 @@ export function Welcome({ state, update }: { state: WizardState; update: (patch:
   };
   const providerStatus = state.aiAccount?.authenticated
     ? `${selectedLabel} is connected.`
-    : state.aiAccount?.error && !state.aiAccount.error.toLowerCase().includes("credential is not available")
+    : state.aiAccount?.error && !state.aiAccount.error.toLowerCase().includes("credential is not available") && !(providerNeedsManualDetails && !state.aiModel.trim())
       ? state.aiAccount.error
       : providerNeedsManualDetails
         ? `Enter the ${selectedLabel} details and connect.`
@@ -3771,7 +3807,7 @@ export function DryRun({ state, update }: { state: WizardState; update: (patch: 
     : componentId === "workflow.3d"
       ? "Check the 3D workflow"
       : "Check an installed integration";
-  return <div className="stack"><div className="metric-grid"><Metric label="Create" value={plan ? String(counts.create) : "—"} tone={plan ? "pass" : "info"} /><Metric label="Update" value={plan ? String(counts.update) : "—"} tone={plan ? "info" : "muted"} /><Metric label="Skip" value={plan ? String(counts.skip) : "—"} tone={plan ? "review" : "muted"} /><Metric label="Conflicts" value={plan ? String(unresolved) : "—"} tone={plan ? unresolved ? "block" : "pass" : "info"} /></div><div className="two-column"><section className="panel"><PanelTitle title="Plan summary" /><ChangeRow title="Add development tools" detail="Skills, instructions, configuration, and offline wiki" value={planStatus} /><ChangeRow title={state.mode === "new" ? "Project instructions" : "Update project instructions"} detail={state.mode === "new" ? "Adapted to this mod" : "Keeps your existing edits"} status={plan ? state.mode === "new" ? "Ready" : "Review if modified" : "Pending"} /><ChangeRow title="Configure integrations" detail="Selected tools only" value={plan ? "Ready" : "Pending"} /><ChangeRow title="Git setup" detail={`${state.gitBranch} · local changes`} value={plan ? "Ready" : "Pending"} /><ChangeRow title="Online Git" detail="Runs only after setup" value={plan ? onlineActionLabel : "Pending"} />{plan && <details open={showFilePlan} onToggle={(event) => setShowFilePlan(event.currentTarget.open)}><summary>Files and folders to install · {plan.operations.length + profileDirectories.length}</summary>{showFilePlan && <div className="manifest-details file-plan-list">{profileDirectories.map((directory) => <div key={`directory-${directory}`}><strong>{directory}/</strong><small>Create folder</small></div>)}{plan.operations.map((operation) => <div key={operation.id}><strong>{operation.destination}</strong><small>{operation.action === "create" || operation.action === "generate" ? "Add" : operation.action === "replace" || operation.action === "merge" ? "Update" : operation.action === "rename" ? "Keep both" : operation.action === "skip" ? "Keep current" : operation.action === "delete_managed" ? "Remove" : "Check"}</small></div>)}</div>}</details>}{setupChecks.length > 0 && <details><summary>Setup checks</summary><div className="manifest-details">{setupChecks.map((action) => <details key={action.id}><summary>{setupCheckLabel(action.component_id)}</summary><small>Runs automatically after the files are installed.</small><small>Command: {action.display_command ?? action.command_source}</small><small>Folder: {action.working_directory ?? "Project folder"}</small><small>Environment: {action.environment_names?.join(", ") || "None"}</small><small>Expected changes: {action.expected_writes?.join(", ") || "None"}</small></details>)}</div></details>}{!plan && <p className="muted">Prepare the changes before installation.</p>}</section><section className="panel"><PanelTitle title="Before setup" /><CheckRow label="Existing files saved" status={plan ? "Ready" : "Pending"} tone={plan ? "pass" : "info"} /><CheckRow label="Setup checks" status={plan ? setupChecks.length ? `${setupChecks.length} included` : "None needed" : "Pending"} tone={plan ? "pass" : "info"} /><CheckRow label="Unresolved conflicts" status={plan ? String(unresolved) : "Pending"} tone={plan ? unresolved ? "block" : "pass" : "info"} /></section></div></div>;
+  return <div className="stack"><div className="metric-grid"><Metric label="Create" value={plan ? String(counts.create) : "—"} tone={plan ? "pass" : "info"} /><Metric label="Update" value={plan ? String(counts.update) : "—"} tone={plan ? "info" : "muted"} /><Metric label="Skip" value={plan ? String(counts.skip) : "—"} tone={plan ? "review" : "muted"} /><Metric label="Conflicts" value={plan ? String(unresolved) : "—"} tone={plan ? unresolved ? "block" : "pass" : "info"} /></div><div className="two-column"><section className="panel"><PanelTitle title="Plan summary" /><ChangeRow title="Add development tools" detail="Skills, instructions, configuration, and offline wiki" value={planStatus} /><ChangeRow title={state.mode === "new" ? "Project instructions" : "Update project instructions"} detail={state.mode === "new" ? "Adapted to this mod" : "Keeps your existing edits"} status={plan ? state.mode === "new" ? "Ready" : "Review if modified" : "Pending"} /><ChangeRow title="Configure integrations" detail="Selected tools only" value={plan ? "Ready" : "Pending"} /><ChangeRow title="Git setup" detail={`${state.gitBranch} · local changes`} value={plan ? "Ready" : "Pending"} /><ChangeRow title="Online Git" detail="Runs only after setup" value={plan ? onlineActionLabel : "Pending"} />{plan && <details open={showFilePlan} onToggle={(event) => setShowFilePlan(event.currentTarget.open)}><summary>Files and folders to install · {plan.operations.length + profileDirectories.length}</summary>{showFilePlan && <div className="manifest-details file-plan-list">{profileDirectories.map((directory) => <div key={`directory-${directory}`}><strong>{directory}/</strong><small>Create folder</small></div>)}{plan.operations.map((operation) => <div key={operation.id}><strong>{operation.destination}</strong><small>{operation.action === "create" || operation.action === "generate" ? "Add" : operation.action === "replace" || operation.action === "merge" ? "Update" : operation.action === "rename" ? "Keep both" : operation.action === "skip" ? "Keep current" : operation.action === "delete_managed" ? "Remove" : "Check"}</small></div>)}</div>}</details>}{setupChecks.length > 0 && <details><summary>Setup checks</summary><div className="manifest-details">{setupChecks.map((action) => <details key={action.id}><summary>{setupCheckLabel(action.component_id)}</summary><small>Runs automatically after the files are installed.</small><small>Command: {action.display_command ?? action.command_source}</small><small>Folder: {action.working_directory ?? "Project folder"}</small><small>Environment: {action.environment_names?.join(", ") || "None"}</small><small>Expected changes: {action.expected_writes?.join(", ") || "None"}</small></details>)}</div></details>}{!plan && <p className="muted">Prepare the changes before installation.</p>}</section><section className="panel"><PanelTitle title="Before setup" /><CheckRow label="Existing files saved" status={plan ? "Ready" : "Pending"} tone={plan ? "pass" : "info"} /><CheckRow label="Setup checks" status={plan ? setupChecks.length ? `${setupChecks.length} included` : "None needed" : "Pending"} tone={plan ? "pass" : "info"} />{(state.setupRequirements?.planId === plan?.plan_id ? state.setupRequirements?.items ?? [] : []).map((requirement) => <div key={requirement.id} className="requirement-row"><CheckRow label={requirement.label} status={requirement.status === "ready" ? "Found" : "Missing"} tone={requirement.status === "ready" ? "pass" : "block"} />{requirement.status !== "ready" && <><p className="muted" role="status">{requirement.detail}</p><button type="button" className="button secondary" onClick={() => update({ setupRequirements: undefined })}>Check again</button></>}</div>)}<CheckRow label="Unresolved conflicts" status={plan ? String(unresolved) : "Pending"} tone={plan ? unresolved ? "block" : "pass" : "info"} /></section></div></div>;
 }
 
 function Install({ state }: { state: WizardState }) {
@@ -3968,7 +4004,7 @@ export function Ready({ state, update, onMaintenance }: { state: WizardState; up
         <span className="ready-icon">{readinessPending ? "…" : coreReady ? "✓" : "!"}</span>
         <div>
           <h2>{readinessPending ? "Checking readiness" : `${state.identity.displayName || "Project"} ${coreReady ? "is ready" : "needs review"}`}</h2>
-          <p>{readinessPending ? "Core checks are still being evaluated." : coreReady ? "Optional workflow status does not block agentic development." : "Resolve blocking checks before continuing."}</p>
+          <p>{readinessPending ? "Core checks are still being evaluated. Verifying HOI4 Agent Tools can take a minute or two." : coreReady ? "Optional workflow status does not block agentic development." : "Resolve blocking checks before continuing."}</p>
         </div>
         <div className="ready-action">
           <button type="button" className="button primary" disabled={!open || openPending} aria-busy={openPending || undefined} aria-describedby="open-in-codex-help" onClick={() => void handleOpen()}>{nativeTerminal ? openPending ? "Opening terminal…" : "Open project terminal ↗" : openPending ? `Opening ${primaryLabel}…` : openMessage === `${primaryLabel} opened successfully.` ? `${primaryLabel} opened ✓` : `Open in ${primaryLabel} ↗`}</button>
@@ -4266,6 +4302,15 @@ function readableRecoveryAction(value: string) {
   } as Record<string, string>)[value] ?? "Review recovery options";
 }
 
+/** One plain sentence for what to do about a recorded setup failure. */
+export function recoveryNextStep(message: string | undefined, rollbackAllowed: boolean): string {
+  const undo = rollbackAllowed ? "Choose Undo changes to return your mod to how it was before this setup began, then" : "Choose an option below, then";
+  if (message && /python|node\.js|npm|winget|agent tools|mcp/i.test(message)) {
+    return `${undo} install Python from python.org (tick “Add python.exe to PATH”) and set up again. HOI4 Agent Tools needs it.`;
+  }
+  return `${undo} try again. If it stops at the same point, choose Copy diagnostics and include it in a report.`;
+}
+
 function safeRecoveryFailureMessage(value: string) {
   const redacted = value
     .replace(/(bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[REDACTED]")
@@ -4347,7 +4392,9 @@ function Recovery({ state, update, onPickProjectFolder, onStartMaintenance, pend
     stagedFiles > 0 ? `${stagedFiles.toLocaleString("en-US")} ${stagedFiles === 1 ? "file" : "files"} prepared` : undefined,
   ].filter((fact): fact is string => Boolean(fact));
   const stage = recoveryStagePosition(transaction);
-  return <div className="stack"><section className="panel recovery-overview" aria-labelledby="recovery-checkpoint-title"><div className="recovery-state" role="status"><strong>{checkpoint}</strong><span>{checkpointFacts.join(" \u00b7 ")}</span></div><div className="recovery-checkpoint"><div><strong id="recovery-checkpoint-title">Last checkpoint</strong><code>{readableRecoveryStage(transaction.last_checkpoint || "")}</code></div><details><summary>Details</summary><div className="recovery-checkpoint-details"><span><small>Current stage</small><strong>{readableRecoveryStage(stage?.id ?? transaction.error?.stage ?? transaction.state)}</strong></span><span><small>Recommended action</small><strong>{readableRecoveryAction(transaction.recovery.recommended_action)}</strong></span>{transaction.error?.message && <span><small>Why setup stopped</small><strong>{safeRecoveryFailureMessage(transaction.error.message)}</strong></span>}</div></details></div></section><div className={`recovery-grid recovery-grid-${availableOptions.length}`}>{availableOptions.map((item) => <button type="button" key={item.id} className={`recovery-card ${state.recoveryChoice === item.id ? "selected" : ""}`} aria-pressed={state.recoveryChoice === item.id} onClick={() => update({ recoveryChoice: item.id })}><span className="choice-radio" aria-hidden="true" /><strong>{item.title}</strong><p>{item.detail}</p></button>)}</div></div>;
+  return <div className="stack"><section className="panel recovery-overview" aria-labelledby="recovery-checkpoint-title"><div className="recovery-state" role="status"><strong>{checkpoint}</strong><span>{checkpointFacts.join(" \u00b7 ")}</span></div><div className="recovery-checkpoint"><div><strong id="recovery-checkpoint-title">Last checkpoint</strong><code>{readableRecoveryStage(transaction.last_checkpoint || "")}</code></div><details><summary>Details</summary><div className="recovery-checkpoint-details"><span><small>Current stage</small><strong>{readableRecoveryStage(stage?.id ?? transaction.error?.stage ?? transaction.state)}</strong></span><span><small>Recommended action</small><strong>{readableRecoveryAction(transaction.recovery.recommended_action)}</strong></span>{transaction.error?.message && <span><small>Why setup stopped</small><strong>{safeRecoveryFailureMessage(transaction.error.message)}</strong></span>}</div></details></div></section>{transaction.error?.message
+      ? <div className="callout review recovery-cause" role="note"><strong>What stopped setup</strong><p>{safeRecoveryFailureMessage(transaction.error.message).slice(0, 400)}</p><p>{recoveryNextStep(transaction.error.message, transaction.recovery.rollback_allowed)}</p></div>
+      : transaction.recovery.project_apply_started && <div className="callout review recovery-cause" role="note"><strong>What happened</strong><p>Setup stopped before it finished, usually because the app was closed or the computer went to sleep while files were being installed. Installing everything takes several minutes.</p><p>{transaction.recovery.rollback_allowed ? "Choose Undo changes to return your mod to how it was before this setup began, then run setup again and keep the app open until it says it is done." : "Choose an option below, then run setup again and keep the app open until it says it is done."}</p></div>}<div className={`recovery-grid recovery-grid-${availableOptions.length}`}>{availableOptions.map((item) => <button type="button" key={item.id} className={`recovery-card ${state.recoveryChoice === item.id ? "selected" : ""}`} aria-pressed={state.recoveryChoice === item.id} onClick={() => update({ recoveryChoice: item.id })}><span className="choice-radio" aria-hidden="true" /><strong>{item.title}</strong><p>{item.detail}</p></button>)}</div></div>;
 }
 
 function Field({ label, value, onChange, placeholder, action, onAction, mono }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; action?: string; onAction?: () => void; mono?: boolean }) {
