@@ -5875,6 +5875,15 @@ fn build_lock(
                 } else {
                     None
                 };
+                // A merge of the user's edit into a verbatim managed file is
+                // their content on top of the source, not the source itself.
+                // Keep the source as the installed baseline and record the
+                // merged bytes as a kept edit, so the next update sees an edit
+                // to keep instead of an unmodified file to replace.
+                let merged_over_source = operation.action == OperationAction::Merge
+                    && ownership == Ownership::Managed
+                    && !operation.external
+                    && prepared.expected_sha256 != source_sha256;
                 let locked_file = LockedFile {
                     path: operation.destination.clone(),
                     location_scope: Some(if operation.external {
@@ -5890,11 +5899,19 @@ fn build_lock(
                         .clone()
                         .unwrap_or_else(|| operation.destination.clone()),
                     source_revision: plan.source.resolved_revision.clone(),
-                    source_sha256,
+                    source_sha256: source_sha256.clone(),
                     source_size: operation.source_size.or(Some(prepared.bytes.len() as u64)),
                     base_sha256: operation.base_sha256.clone(),
-                    installed_sha256: prepared.expected_sha256.clone(),
-                    installed_size: Some(prepared.bytes.len() as u64),
+                    installed_sha256: if merged_over_source {
+                        source_sha256.clone()
+                    } else {
+                        prepared.expected_sha256.clone()
+                    },
+                    installed_size: if merged_over_source {
+                        operation.source_size
+                    } else {
+                        Some(prepared.bytes.len() as u64)
+                    },
                     ownership,
                     preserved_local: false,
                     external: operation.external,
@@ -5911,6 +5928,14 @@ fn build_lock(
                 };
                 files.insert(key, locked_file);
                 remove_local_modification(&mut local_modifications, &operation.destination);
+                if merged_over_source {
+                    local_modifications.push(LocalModification {
+                        path: operation.destination.clone(),
+                        installed_sha256: source_sha256.clone(),
+                        current_sha256: prepared.expected_sha256.clone(),
+                        detected_at: Utc::now().to_rfc3339(),
+                    });
+                }
             }
         }
     }
@@ -8636,6 +8661,16 @@ pub fn repair_operations(
         } else {
             RollbackAction::RestoreBackup
         };
+        // An edit the user already kept in a reviewed run, still holding the
+        // bytes they kept, is their decision: repair does not ask again.
+        let kept_edit = local_state == LocalState::Modified
+            && !file.preserved_local
+            && file.ownership != Ownership::External
+            && current.as_deref().is_some_and(|hash| {
+                lock.local_modifications.iter().any(|modification| {
+                    modification.path == file.path && modification.current_sha256 == hash
+                })
+            });
         operations.push(PlanOperation {
             id: format!("repair-{index:05}"),
             component_id: file.component_id.clone(),
@@ -8656,6 +8691,8 @@ pub fn repair_operations(
                 Some("preserved_local_review".into())
             } else if file.ownership == Ownership::External {
                 Some("user_owned_review".into())
+            } else if kept_edit {
+                Some("keep_reviewed_edit".into())
             } else if action == OperationAction::Skip {
                 // A healthy file is skipped without any decision; only local
                 // edits need the user's review.
@@ -9530,6 +9567,83 @@ mod tests {
         assert_eq!(agents.action, OperationAction::Skip);
         assert_eq!(agents.resolution.as_deref(), Some("merged_base_required"));
         assert_eq!(agents.local_state, LocalState::Modified);
+    }
+
+    #[test]
+    fn a_merge_keeps_the_source_as_baseline_and_records_the_users_edit() {
+        let project = tempdir().unwrap();
+        let predecessor: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let source = b"skill from source
+";
+        let merged = b"skill from source
+my tweak
+";
+        let mut plan = plan();
+        plan.maintenance_mode = Some("update".into());
+        plan.operations = vec![PlanOperation {
+            id: "update-skill".into(),
+            component_id: "core.skills".into(),
+            ownership: Some(Ownership::Managed),
+            location_scope: Some("project".into()),
+            action: OperationAction::Merge,
+            source_path: Some("skills/SKILL.md".into()),
+            destination: "skills/SKILL.md".into(),
+            source_sha256: Some(sha256_bytes(source)),
+            source_size: Some(source.len() as u64),
+            platform: Some(ManifestPlatform::All),
+            executable: false,
+            result_sha256: Some(sha256_bytes(merged)),
+            base_sha256: None,
+            local_sha256: Some(sha256_bytes(merged)),
+            local_state: LocalState::Modified,
+            resolution: Some("merge".into()),
+            external: false,
+            rollback: RollbackAction::RestoreBackup,
+            external_parent_identity: None,
+        }];
+        let prepared = vec![PreparedFile {
+            operation_id: "update-skill".into(),
+            destination: "skills/SKILL.md".into(),
+            bytes: merged.to_vec(),
+            expected_sha256: sha256_bytes(merged),
+        }];
+        let journal = new_journal(&plan, &plan.project_id, project.path());
+        let project_directory = RootedDir::open_read(project.path()).unwrap();
+        let lock = build_lock(
+            &plan,
+            &prepared,
+            &journal,
+            Some(&predecessor),
+            project.path(),
+            &project_directory,
+        )
+        .unwrap();
+        let locked = lock
+            .files
+            .iter()
+            .find(|file| file.path == "skills/SKILL.md")
+            .unwrap();
+        assert_eq!(locked.installed_sha256, sha256_bytes(source));
+        let edit = lock
+            .local_modifications
+            .iter()
+            .find(|modification| modification.path == "skills/SKILL.md")
+            .expect("the merged edit is recorded");
+        assert_eq!(edit.current_sha256, sha256_bytes(merged));
+
+        // The next update, with the same source, keeps the edit.
+        fs::create_dir_all(project.path().join("skills")).unwrap();
+        fs::write(project.path().join("skills/SKILL.md"), merged).unwrap();
+        let operations = update_operations(&lock, &[locked.clone()], project.path()).unwrap();
+        let operation = operations
+            .iter()
+            .find(|operation| operation.destination == "skills/SKILL.md")
+            .unwrap();
+        assert_eq!(operation.action, OperationAction::Skip);
+        assert_eq!(operation.resolution.as_deref(), Some("keep_reviewed_edit"));
     }
 
     #[test]
@@ -13126,6 +13240,29 @@ description: Example skill.
             agents.resolution.is_some(),
             "a local edit still needs review"
         );
+
+        // Once the user has kept that edit in a reviewed run, repair leaves it alone.
+        let mut kept = lock.clone();
+        kept.local_modifications.push(LocalModification {
+            path: "AGENTS.md".into(),
+            installed_sha256: sha256_bytes(b"safe"),
+            current_sha256: sha256_bytes(b"edited locally"),
+            detected_at: "2026-10-24T00:00:00Z".into(),
+        });
+        let operations = repair_operations(&kept, project.path()).unwrap();
+        let agents = operations
+            .iter()
+            .find(|operation| operation.destination == "AGENTS.md")
+            .unwrap();
+        assert_eq!(agents.resolution.as_deref(), Some("keep_reviewed_edit"));
+        // Edited again after it was kept: review is needed once more.
+        fs::write(project.path().join("AGENTS.md"), b"edited a second time").unwrap();
+        let operations = repair_operations(&kept, project.path()).unwrap();
+        let agents = operations
+            .iter()
+            .find(|operation| operation.destination == "AGENTS.md")
+            .unwrap();
+        assert_ne!(agents.resolution.as_deref(), Some("keep_reviewed_edit"));
     }
 
     fn workshop_import_fixture(

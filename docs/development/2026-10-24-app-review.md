@@ -98,6 +98,10 @@ interrupted-install explanation, and the failed-tool explanation.
 | Update | Files that already held the incoming bytes (`CLAUDE.md`, `.mcp.json`, `.gitignore`) were conflicts at every update; their "Current" and "New" panes were identical | 5 conflicts on a no-source-change update | `update_operations` plans them as no-ops; test `an_update_does_not_review_or_rewrite_files_that_already_hold_the_incoming_bytes` |
 | Update | An edit already kept was asked about again at every update | second update after "Keep current" | `keep_reviewed_edit` ([after](review-2026-10-24/desktop-repeat-update-no-conflicts.png)) |
 | Merge | **Merge** refused any edit that changed the line count ("could not be proven safe"), including appending a line | `SKILL.md` merge failed | Line-based three-way merge in `crates/hoi4-setup-core/src/merge.rs`; two new tests |
+| Update | After **Merge** the lock held the merged bytes as the installed baseline, so the next update planned **Update** for that file and would have replaced the merged edit with the source version (seen as the lone "Update 1" on a no-change update) | lock inspection on the Great War Redux project | Source stays the baseline, merged bytes recorded as a kept edit; test `a_merge_keeps_the_source_as_baseline_and_records_the_users_edit`. Locks written before this fix keep the old baseline |
+| Readiness | A kept edit to a managed file (`AGENTS.md`) made `hashes.managed`, `source.revision`, and `conflicts.resolved` block, so the project read "Needs review" after an update that kept it (probe: `core_ready=false`) | `time_installed_readiness` probe | Reviewed, still-intact edits warn instead of blocking; changed again, they block; test `a_kept_edit_to_a_managed_file_does_not_block_readiness_until_it_changes_again` |
+| Repair | **Repair** asked again about an edit the user had already kept | one conflict (`AGENTS.md`) on Repair | `keep_reviewed_edit` in `repair_operations`; extended repair test |
+| Update | Changed assistant address gave "the confirmed review no longer matches this session" | diagnostics log | Specific message; test `a_changed_assistant_address_is_named_in_the_planning_message` |
 | Context | A reimport profiled the setup's own `README.md` and `docs/` as the mod's documentation | "Documentation conventions: README.md, docs/systems/…" | Unmodified lock-owned files are skipped; core and scanner tests |
 | Defaults | An unmanaged existing mod defaulted to Codex while a new mod defaults to Claude Code | Coding environments screen | Scan only reads a primary from a recorded installation |
 | Progress | Plan preparation sat at "96%, about 1 seconds remaining" for minutes | screenshot, 4 min on a first install | Says "still working, a first install can take a few minutes"; install screen asks to keep the window open |
@@ -174,7 +178,7 @@ from the documentation fixture and covered by unit tests, not driven live.
 | Resolve conflicts | Keep / use new / merge / keep both / skip | Verified; merge fixed |
 | Install | Progress, keep-open note | Verified; ≈8 minutes for 845 files on this machine |
 | Ready | Readiness, open client | Verified; "Open in Claude Code" not clicked (not installed) |
-| Update and repair | Check, repair, remove, recover | Check for updates, reanalysis and Apply verified; **Repair**, **Remove components**, and source pinning not driven live |
+| Update and repair | Check, repair, remove, recover | Check for updates, reanalysis and Apply verified; **Repair** planned live (found the repeated question above; the fixed build was not re-run end to end); **Remove components** and source pinning not driven live |
 | Recovery | Resume / undo / discard | Undo verified three times including resume of an interrupted Undo; Resume and Discard in unit tests |
 | Window sizes | 960×640 and larger | 16 fixture screens at 960×640 and 1280×960: no page overflow or console errors |
 | Startup updater, external links in the app | Signed updates | Not exercised |
@@ -199,7 +203,8 @@ from the documentation fixture and covered by unit tests, not driven live.
 - A mod root longer than about 90 characters can exceed the 260-character Windows path limit once the setup's longest paths are added.
 - The local model address must be the one recorded in the lock for **Check for updates** to accept a reanalysis; the message for a different address ("the confirmed review no longer matches this session") does not say that.
 - HOI4 Agent Tools has no switch to leave it out, so Python is required to finish a Windows or Linux install.
-- A no-change update still lists one file as "Update"; I did not find which.
+- Locks written before the merge-baseline fix (for example the Great War Redux copy tested here) still plan **Update** for a file merged earlier; the fix applies to merges made from now on.
+- A very long project path (this review's scratch folder is about 240 characters) makes Git report "Filename too long", the targeted Git status comes back partial, and the scan reports "Scan incomplete" with **Next** disabled. The same installed project copied to a short path scanned complete.
 
 ## Not verified
 

@@ -1445,6 +1445,20 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         let value = serde_json::from_slice::<serde_json::Value>(&bytes).ok()?;
         crate::migrations::migrate_lock(value).ok()
     });
+    // An edit the user kept in a reviewed maintenance run is recorded with the
+    // bytes they kept. While the file still holds exactly those bytes it is
+    // their decision, not damage; a file changed again is not covered.
+    let kept_edit_holds = |path: &str| -> bool {
+        lock.as_ref().is_some_and(|lock| {
+            lock.local_modifications.iter().any(|modification| {
+                modification.path == path
+                    && safe_join(project_root, path)
+                        .ok()
+                        .and_then(|destination| sha256_file(&destination).ok())
+                        .is_some_and(|hash| hash == modification.current_sha256)
+            })
+        })
+    };
     let hashes_valid = lock.as_ref().is_some_and(|lock| {
         crate::source::validate_commit(&lock.source.revision).is_ok()
             && crate::source::validate_sha256(&lock.source.manifest_sha256).is_ok()
@@ -1456,17 +1470,20 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
                 let Some(path) = locked_file_destination(project_root, file).ok() else {
                     return false;
                 };
-                let hash_valid = sha256_file(&path)
-                    .ok()
-                    .is_some_and(|hash| hash == file.installed_sha256);
-                let size_valid = file
-                    .installed_size
-                    .map(|expected| {
-                        fs::metadata(&path)
-                            .map(|meta| meta.len() == expected)
-                            .unwrap_or(false)
-                    })
-                    .unwrap_or(true);
+                let kept_edit = !file.external && kept_edit_holds(&file.path);
+                let hash_valid = kept_edit
+                    || sha256_file(&path)
+                        .ok()
+                        .is_some_and(|hash| hash == file.installed_sha256);
+                let size_valid = kept_edit
+                    || file
+                        .installed_size
+                        .map(|expected| {
+                            fs::metadata(&path)
+                                .map(|meta| meta.len() == expected)
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(true);
                 hash_valid
                     && size_valid
                     && locked_executable_state_matches(&path, file.executable)
@@ -1809,10 +1826,19 @@ pub fn project_input(project_root: &Path, project_id: &str) -> Result<ReadinessI
         environment_status: "pass".into(),
         wiki_broken_links,
         hashes_valid,
-        conflict_status: if lock.as_ref().is_some_and(|lock| lock.local_modifications.is_empty()) {
-            "pass".into()
-        } else {
-            "block".into()
+        conflict_status: match lock.as_ref() {
+            Some(lock) if lock.local_modifications.is_empty() => "pass".into(),
+            // Kept edits that still hold the bytes the user kept are reported,
+            // not blocking; a recorded file changed again is.
+            Some(lock)
+                if lock
+                    .local_modifications
+                    .iter()
+                    .all(|modification| kept_edit_holds(&modification.path)) =>
+            {
+                "warn".into()
+            }
+            _ => "block".into(),
         },
         dependency_status: dependency_status.into(),
         workflow_3d_state,
@@ -1860,6 +1886,57 @@ pub fn check_project_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_kept_edit_to_a_managed_file_does_not_block_readiness_until_it_changes_again() {
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path();
+        fs::create_dir_all(root.join(".hoi4-mod-setup")).unwrap();
+        let installed = b"installed instructions";
+        let kept = b"installed instructions
+my notes
+";
+        fs::write(root.join("AGENTS.md"), kept).unwrap();
+        let mut lock: InstallationLock = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-lock.example.json"
+        ))
+        .unwrap();
+        let mut file = lock.files[0].clone();
+        file.path = "AGENTS.md".into();
+        file.external = false;
+        file.preserved_local = false;
+        file.source_revision = lock.source.revision.clone();
+        file.installed_sha256 = crate::security::sha256_bytes(installed);
+        file.installed_size = Some(installed.len() as u64);
+        lock.files = vec![file];
+        let write_lock = |lock: &InstallationLock| {
+            fs::write(
+                root.join(".hoi4-mod-setup/install.lock.json"),
+                serde_json::to_vec(lock).unwrap(),
+            )
+            .unwrap();
+        };
+        // An edit nobody has reviewed still blocks.
+        write_lock(&lock);
+        let input = project_input(root, "example").unwrap();
+        assert!(!input.hashes_valid);
+        // The same edit, recorded when the user kept it, does not.
+        lock.local_modifications = vec![LocalModification {
+            path: "AGENTS.md".into(),
+            installed_sha256: crate::security::sha256_bytes(installed),
+            current_sha256: crate::security::sha256_bytes(kept),
+            detected_at: "2026-10-24T00:00:00Z".into(),
+        }];
+        write_lock(&lock);
+        let input = project_input(root, "example").unwrap();
+        assert!(input.hashes_valid);
+        assert_eq!(input.conflict_status, "warn");
+        // Edited again after it was kept: blocking again.
+        fs::write(root.join("AGENTS.md"), b"edited again").unwrap();
+        let input = project_input(root, "example").unwrap();
+        assert!(!input.hashes_valid);
+        assert_eq!(input.conflict_status, "block");
+    }
 
     #[test]
     fn preserved_descriptors_keep_optional_picture_metadata_but_not_invalid_fields() {

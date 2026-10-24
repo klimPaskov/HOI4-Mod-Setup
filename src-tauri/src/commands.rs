@@ -719,6 +719,10 @@ fn planning_user_message(error: AppError) -> String {
         AppError::Credential(message) if message.starts_with("sign in with ChatGPT") => {
             "Sign in with ChatGPT before continuing.".into()
         }
+        AppError::Credential(message) if message.contains("different provider endpoint") => {
+            "This project was set up with a different assistant address than the one connected now. Connect the same address on the first screen, run the review again, and confirm it. Nothing was changed."
+                .into()
+        }
         // Confirmation and session-binding checks share the credential
         // category with real sign-in failures, but the user fixes them by
         // reviewing again, not by reconnecting.
@@ -10335,6 +10339,41 @@ mod tests {
             &readme,
             false
         ));
+    }
+
+    #[test]
+    #[ignore = "timing probe: set HOI4_TIME_PROJECT to an installed project (and APPDATA to its profile)"]
+    fn time_installed_readiness() {
+        let Some(root) = std::env::var_os("HOI4_TIME_PROJECT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let started = std::time::Instant::now();
+        let mut detected = crate::readiness::project_input(&root, "probe").unwrap();
+        eprintln!("project_input: {:?}", started.elapsed());
+        let started = std::time::Instant::now();
+        refresh_installed_mcp_readiness(&root, &mut detected).unwrap();
+        eprintln!(
+            "mcp refresh: {:?} -> {}",
+            started.elapsed(),
+            detected.mcp_status
+        );
+        let started = std::time::Instant::now();
+        let report = crate::readiness::evaluate(&detected);
+        eprintln!(
+            "evaluate: {:?} core_ready={}",
+            started.elapsed(),
+            report.core_ready
+        );
+    }
+
+    #[test]
+    fn a_changed_assistant_address_is_named_in_the_planning_message() {
+        let message = planning_user_message(AppError::Credential(
+            "update reanalysis was confirmed against a different provider endpoint".into(),
+        ));
+        assert!(message.contains("different assistant address"));
+        assert!(message.contains("Nothing was changed."));
     }
 
     #[test]
