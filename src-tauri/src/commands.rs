@@ -1,9 +1,11 @@
 //! The only filesystem, network, process, and credential boundary exposed to React.
 
 use crate::ai::{self, AiProviderConfig};
+#[cfg(test)]
+use crate::codex::CodexAnalysis;
 use crate::codex::{
     find_codex_executable, missing_status, AiAccountStatus, AiAnalysisRequest, AppServerProtocol,
-    ApprovedEvidence, CodexAccountStatus, CodexAnalysis, CodexAnalysisRequest, CodexAnalysisResult,
+    ApprovedEvidence, CodexAccountStatus, CodexAnalysisRequest, CodexAnalysisResult,
     CodexLoginStart, ProcessJsonlTransport,
 };
 use crate::coding_environment;
@@ -15,10 +17,7 @@ use crate::credentials::{
     ScopedSecretEnvironment, MESHY_ENVIRONMENT_NAME,
 };
 use crate::descriptors::generated_artifacts as render_generated_artifacts;
-use crate::merge::{
-    allowed_choices, structured_json_merge, structured_toml_merge, three_way_merge,
-    validate_merged_result, FileKind,
-};
+use crate::merge::{allowed_choices, FileKind};
 use crate::models::{CredentialReference, *};
 use crate::paths::{
     application_data_root, hoi4_user_mod_directory, validate_project_root,
@@ -36,6 +35,25 @@ use crate::security::{
     canonical_relative_key, path_has_link_component, redact_secrets, safe_join, sha256_bytes,
     sha256_file, validate_external_destination,
 };
+use crate::service::evidence::{
+    ai_endpoint_from_state, ai_model_from_state, ai_provider_from_state,
+    ai_reasoning_effort_from_state, approve_evidence, bind_component_registry, confirm_analysis,
+    confirmation_values_sha256, confirmed_analysis_for_plan, plan_root_identity,
+    project_root_field, record_completed_scan, record_confirmed_in_session, retain_analysis,
+    same_persisted_codex_record, same_project_root, string_field,
+    validate_approved_project_root_identity, validate_evidence_request, ApprovedScanEvidence,
+    PendingCodexAnalysis,
+};
+#[cfg(test)]
+use crate::service::evidence::{confirmation_values_from_state, scan_evidence_entries};
+use crate::service::journal_bound_to_root;
+#[cfg(test)]
+use crate::service::plans::refresh_flattened_outputs;
+use crate::service::plans::{
+    accepted_flatten_prepared_files, approve_prepared_plan, renamed_destination, resolve_conflict,
+    store_prepared_plan_in, MergeContext, PreparedPlan,
+};
+use crate::service::runtime::{mcp_client_launch as launch_with_node, NodeRuntime};
 use crate::source::{
     expand_components, resolve_source, select_manifest_files, verify_download, HttpSourceClient,
     SourceRequest,
@@ -59,22 +77,6 @@ use std::time::Duration;
 use tauri::Emitter;
 use tauri_plugin_updater::UpdaterExt;
 use uuid::Uuid;
-
-struct PreparedPlan {
-    plan: InstallationPlan,
-    prepared_files: Vec<crate::models::PreparedFile>,
-    merge_contexts: HashMap<String, MergeContext>,
-    canonical_root: PathBuf,
-    approved: bool,
-}
-
-#[derive(Clone)]
-struct MergeContext {
-    kind: FileKind,
-    base: Vec<u8>,
-    local: Vec<u8>,
-    incoming: Vec<u8>,
-}
 
 const CONFLICT_PREVIEW_MAX_BYTES: usize = 256 * 1024;
 
@@ -174,49 +176,6 @@ static SCAN_GENERATION: OnceLock<Mutex<Uuid>> = OnceLock::new();
 static MESHY_CREDENTIAL_REFERENCE: OnceLock<Mutex<Option<CredentialReference>>> = OnceLock::new();
 static THREE_D_HEALTH: OnceLock<Mutex<HashMap<String, CachedThreeDHealth>>> = OnceLock::new();
 static READY_PROJECTS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
-
-struct PendingCodexAnalysis {
-    analysis: CodexAnalysis,
-    record: CodexAnalysisRecord,
-    confirmed: Option<CodexAnalysisRecord>,
-    project_root: Option<PathBuf>,
-    scan_id: Option<Uuid>,
-    endpoint_fingerprint: Option<String>,
-    confirmed_values_sha256: Option<String>,
-}
-
-#[derive(Default)]
-struct ApprovedScanEvidence {
-    project_root: Option<PathBuf>,
-    project_root_identity: Option<String>,
-    scan_id: Option<Uuid>,
-    entries: HashMap<String, Vec<(String, String)>>,
-    /// Hash of the exact evidence vector the user approved for the next
-    /// semantic turn. A completed scan is not itself an approval.
-    evidence_sha256: Option<String>,
-}
-
-fn validate_approved_project_root_identity(
-    project_root: &Path,
-    approved: &ApprovedScanEvidence,
-    expected_scan_id: Option<Uuid>,
-) -> Result<String, AppError> {
-    if expected_scan_id.is_some_and(|scan_id| approved.scan_id != Some(scan_id)) {
-        return Err(AppError::PathSecurity(
-            "approved project-root identity belongs to a different scan".into(),
-        ));
-    }
-    let expected = approved.project_root_identity.as_deref().ok_or_else(|| {
-        AppError::PathSecurity("approved scan has no project-root identity".into())
-    })?;
-    let observed = RootedDir::open_read(project_root)?.identity_token()?;
-    if observed != expected {
-        return Err(AppError::PathSecurity(
-            "project root changed after the approved read-only scan".into(),
-        ));
-    }
-    Ok(observed)
-}
 
 fn prepared_plans() -> &'static Mutex<std::collections::HashMap<Uuid, PreparedPlan>> {
     PREPARED_PLANS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
@@ -574,26 +533,16 @@ fn store_prepared_plan(
     merge_contexts: HashMap<String, MergeContext>,
     canonical_root: PathBuf,
 ) -> Result<InstallationPlan, AppError> {
-    let id = plan.plan_id;
-    let mut prepared_plan = PreparedPlan {
+    let mut plans = prepared_plans()
+        .lock()
+        .map_err(|_| AppError::Transaction("prepared plan store is unavailable".into()))?;
+    store_prepared_plan_in(
+        &mut plans,
         plan,
         prepared_files,
         merge_contexts,
         canonical_root,
-        approved: false,
-    };
-    // Build the optional flattened view from the currently accepted source
-    // set before exposing the plan to the renderer. In particular, an
-    // unresolved modified AGENTS/skill/subagent file must never leak incoming
-    // bytes into the Chat export merely because the user has not opened the
-    // conflict screen yet.
-    refresh_flattened_outputs(&mut prepared_plan)?;
-    let plan = prepared_plan.plan.clone();
-    prepared_plans()
-        .lock()
-        .map_err(|_| AppError::Transaction("prepared plan store is unavailable".into()))?
-        .insert(id, prepared_plan);
-    Ok(plan)
+    )
 }
 
 fn command_error(error: AppError) -> String {
@@ -885,23 +834,6 @@ fn codex_user_error(error: AppError) -> String {
         }
         _ => "Codex could not complete this request. Try again.".into(),
     }
-}
-
-fn journal_bound_to_root(
-    journal: &TransactionJournal,
-    project_root: &Path,
-) -> Result<bool, AppError> {
-    if journal.project_root.is_empty() {
-        return Ok(false);
-    }
-    let bound_root = validate_project_root_or_destination(Path::new(&journal.project_root))?.0;
-    Ok(if cfg!(target_os = "windows") {
-        bound_root
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&project_root.to_string_lossy())
-    } else {
-        bound_root == project_root
-    })
 }
 
 pub fn run() {
@@ -1811,25 +1743,7 @@ fn bind_analysis_component_registry(
     let source_request = source_request_for_analysis(request)?;
     let client = HttpSourceClient::new()?;
     let resolution = resolve_source(&client, &source_request)?;
-    let mut component_ids = resolution
-        .manifest
-        .components
-        .iter()
-        .map(|component| component.id.clone())
-        .collect::<Vec<_>>();
-    component_ids.sort();
-    component_ids.dedup();
-    let constraints = request.constraints.as_object_mut().ok_or_else(|| {
-        AppError::InvalidInput("semantic analysis constraints must be an object".into())
-    })?;
-    constraints.insert(
-        "component_registry".into(),
-        serde_json::json!({
-            "source_revision": resolution.identity.resolved_revision,
-            "manifest_sha256": resolution.identity.manifest_sha256,
-            "component_ids": component_ids,
-        }),
-    );
+    bind_component_registry(request, &resolution)?;
     Ok(resolution.identity)
 }
 
@@ -1899,12 +1813,8 @@ fn codex_analyze_blocking(
     let mut analyses = codex_analyses()
         .lock()
         .map_err(|_| "Codex analysis store is unavailable".to_string())?;
-    if analyses.len() >= 32 {
-        if let Some(oldest) = analyses.keys().next().copied() {
-            analyses.remove(&oldest);
-        }
-    }
-    analyses.insert(
+    retain_analysis(
+        &mut analyses,
         result.record.analysis_id,
         PendingCodexAnalysis {
             analysis: result.analysis.clone(),
@@ -1972,12 +1882,8 @@ fn retain_provider_analysis(
         .map_err(|_| "AI analysis store is unavailable".to_string())?;
     require_provider_session_generation(&request.provider, account_generation)
         .map_err(provider_analysis_user_error)?;
-    if analyses.len() >= 32 {
-        if let Some(oldest) = analyses.keys().next().copied() {
-            analyses.remove(&oldest);
-        }
-    }
-    analyses.insert(
+    retain_analysis(
+        &mut analyses,
         result.record.analysis_id,
         PendingCodexAnalysis {
             analysis: result.analysis.clone(),
@@ -2022,340 +1928,29 @@ fn approve_scan_evidence(
 ) -> Result<(), String> {
     let project_root = validate_project_root(Path::new(&project_root)).map_err(command_error)?;
     let scan_id = Uuid::parse_str(&scan_id).map_err(|_| "scan ID is invalid".to_string())?;
-    if evidence
-        .iter()
-        .any(|item| item.reference == crate::scanner::LOCAL_ONLY_PORTRAIT_ROUTES_FINDING)
-    {
-        return Err(
-            "local portrait routes stay on this computer and cannot be sent for analysis".into(),
-        );
-    }
-    crate::codex::validate_analysis_evidence(&evidence).map_err(command_error)?;
     let mut approved = codex_approved_evidence()
         .lock()
         .map_err(|_| "approved scan evidence store is unavailable".to_string())?;
-    if approved
-        .project_root
-        .as_ref()
-        .is_none_or(|root| !same_project_root(root, &project_root))
-        || approved.scan_id != Some(scan_id)
-    {
-        return Err("scan evidence is stale or belongs to a different project".into());
-    }
-    validate_approved_project_root_identity(&project_root, &approved, Some(scan_id))
-        .map_err(command_error)?;
-    let approved_sha256 =
-        crate::codex::evidence_manifest_sha256(&evidence).map_err(command_error)?;
-    for item in &evidence {
-        let entries = approved.entries.get_mut(&item.reference).ok_or_else(|| {
-            format!(
-                "scan evidence reference is not present in the completed scan: {}",
-                item.reference
-            )
-        })?;
-        if !entries.iter().any(|(path, _)| path == &item.path) {
-            return Err(format!(
-                "scan evidence path is not present in the completed scan: {}",
-                item.path
-            ));
-        }
-        let hash = &item.excerpt_sha256;
-        if !entries
-            .iter()
-            .any(|(path, existing)| path == &item.path && existing == hash)
-        {
-            return Err(format!(
-                "scan evidence excerpt is not the exact core-scanned value: {}",
-                item.reference
-            ));
-        }
-    }
-    approved.evidence_sha256 = Some(approved_sha256);
-    Ok(())
+    approve_evidence(&mut approved, &project_root, scan_id, &evidence)
 }
 
 fn validate_codex_evidence_approval(request: &CodexAnalysisRequest) -> Result<(), AppError> {
     if request.evidence.is_empty() {
-        if request.analysis_purpose.as_deref() == Some("maintenance_reanalysis") {
-            return Err(AppError::Credential(
-                "maintenance analysis requires approved read-only evidence".into(),
-            ));
-        }
-        return Ok(());
+        // No evidence is judged against no approval; the store is not read.
+        return validate_evidence_request(
+            &ApprovedScanEvidence::default(),
+            request,
+            &crate::context::validate_context_evidence,
+        );
     }
     let approved = codex_approved_evidence().lock().map_err(|_| {
         AppError::Serialization("approved scan evidence store is unavailable".into())
     })?;
-    if matches!(
-        request.analysis_purpose.as_deref(),
-        Some("existing_project_import") | Some("maintenance_reanalysis")
-    ) {
-        let requested_root = request.project_root.as_deref().ok_or_else(|| {
-            AppError::PathSecurity("existing-project analysis has no project root".into())
-        })?;
-        let requested_root = validate_project_root(Path::new(requested_root))?;
-        let approved_root = approved.project_root.as_ref().ok_or_else(|| {
-            AppError::Credential("existing-project analysis has no current read-only scan".into())
-        })?;
-        if !same_project_root(&requested_root, approved_root) || request.scan_id != approved.scan_id
-        {
-            return Err(AppError::Credential(
-                "existing-project analysis is not bound to the latest read-only scan".into(),
-            ));
-        }
-        validate_approved_project_root_identity(&requested_root, &approved, request.scan_id)?;
-    }
-    // Documents the user added are bound by the context store; the scan
-    // approval covers only scan evidence.
-    let (context, scan): (Vec<_>, Vec<_>) = request
-        .evidence
-        .iter()
-        .cloned()
-        .partition(|evidence| crate::context::is_context_evidence_path(&evidence.path));
-    for evidence in &context {
-        crate::context::validate_context_evidence(
-            &evidence.reference,
-            &evidence.path,
-            &evidence.excerpt_sha256,
-        )?;
-    }
-    let mut references = BTreeSet::new();
-    for evidence in &context {
-        if !references.insert(evidence.reference.as_str()) {
-            return Err(AppError::InvalidInput(
-                "Codex evidence references must be unique".into(),
-            ));
-        }
-    }
-    if scan.is_empty() {
-        if request.analysis_purpose.as_deref() == Some("maintenance_reanalysis") {
-            return Err(AppError::Credential(
-                "maintenance analysis requires approved read-only evidence".into(),
-            ));
-        }
-        if request.analysis_purpose.as_deref() != Some("existing_project_import") {
-            return Ok(());
-        }
-    }
-    let requested_evidence_sha256 = crate::codex::evidence_manifest_sha256(&scan)?;
-    if approved.evidence_sha256.as_deref() != Some(requested_evidence_sha256.as_str()) {
-        return Err(AppError::Credential(
-            "Codex evidence must be explicitly approved after the latest read-only scan".into(),
-        ));
-    }
-    for evidence in &scan {
-        if !references.insert(evidence.reference.as_str()) {
-            return Err(AppError::InvalidInput(
-                "Codex evidence references must be unique".into(),
-            ));
-        }
-        let matches = approved
-            .entries
-            .get(&evidence.reference)
-            .is_some_and(|items| {
-                items.iter().any(|(path, excerpt_sha256)| {
-                    path == &evidence.path && excerpt_sha256 == &evidence.excerpt_sha256
-                })
-            });
-        if !matches {
-            return Err(AppError::InvalidInput(format!(
-                "Codex evidence is not bound to a completed read-only scan: {}",
-                evidence.reference
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn same_project_root(left: &Path, right: &Path) -> bool {
-    if cfg!(target_os = "windows") {
-        left.to_string_lossy()
-            .eq_ignore_ascii_case(&right.to_string_lossy())
-    } else {
-        left == right
-    }
-}
-
-fn canonical_component_recommendations(value: &Value) -> Result<Value, AppError> {
-    let mut recommendations: Vec<crate::codex::ComponentRecommendation> =
-        serde_json::from_value(value.clone())?;
-    if recommendations.len() > 64 {
-        return Err(AppError::InvalidInput(
-            "confirmed component recommendations exceed the supported limit".into(),
-        ));
-    }
-    recommendations.sort_by(|left, right| left.component_id.cmp(&right.component_id));
-    if recommendations
-        .windows(2)
-        .any(|pair| pair[0].component_id == pair[1].component_id)
-    {
-        return Err(AppError::InvalidInput(
-            "confirmed component recommendations contain duplicate IDs".into(),
-        ));
-    }
-    serde_json::to_value(recommendations).map_err(AppError::from)
-}
-
-fn canonical_confirmation_values(value: &Value) -> Result<Value, AppError> {
-    let object = value.as_object().ok_or_else(|| {
-        AppError::InvalidInput("confirmed render values must be an object".into())
-    })?;
-    if object.keys().any(|key| {
-        !matches!(
-            key.as_str(),
-            "identity"
-                | "description"
-                | "folderProfile"
-                | "conventions"
-                | "componentRecommendations"
-        )
-    }) {
-        return Err(AppError::InvalidInput(
-            "confirmed render values contain an unsupported field".into(),
-        ));
-    }
-    let description = object
-        .get("description")
-        .and_then(Value::as_str)
-        .ok_or_else(|| AppError::InvalidInput("confirmed description is missing".into()))?;
-    crate::codex::validate_proposal_value(
-        &crate::codex::ProposalKey::ProjectDescription,
-        &Value::String(description.to_owned()),
-    )?;
-    let folder_profile = object
-        .get("folderProfile")
-        .and_then(Value::as_array)
-        .ok_or_else(|| AppError::InvalidInput("confirmed folder profile is missing".into()))?;
-    let folders = folder_profile
-        .iter()
-        .map(|folder| {
-            folder
-                .as_str()
-                .map(ToOwned::to_owned)
-                .ok_or_else(|| AppError::InvalidInput("confirmed folder profile is invalid".into()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    crate::codex::validate_folder_profile_paths(&folders)?;
-
-    let identity = object
-        .get("identity")
-        .and_then(Value::as_object)
-        .ok_or_else(|| AppError::InvalidInput("confirmed project identity is missing".into()))?;
-    const IDENTITY_FIELDS: &[(&str, bool)] = &[
-        ("displayName", true),
-        ("projectId", true),
-        ("author", true),
-        ("version", true),
-        ("supportedGameVersion", true),
-        ("projectRoot", true),
-        ("defaultBranch", true),
-        ("scriptPrefix", false),
-        ("primaryNamespace", false),
-        ("descriptorTags", false),
-        ("launcherDescriptorPath", false),
-    ];
-    if identity
-        .keys()
-        .any(|key| !IDENTITY_FIELDS.iter().any(|(name, _)| name == key))
-    {
-        return Err(AppError::InvalidInput(
-            "confirmed project identity contains an unsupported field".into(),
-        ));
-    }
-    let mut canonical_identity = serde_json::Map::new();
-    for (field, required) in IDENTITY_FIELDS {
-        let current = identity.get(*field).cloned().unwrap_or(Value::Null);
-        if *required && !current.is_string() {
-            return Err(AppError::InvalidInput(format!(
-                "confirmed project identity field is missing: {field}"
-            )));
-        }
-        if *field == "descriptorTags" {
-            if !current.is_null()
-                && (!current.is_array()
-                    || current
-                        .as_array()
-                        .is_some_and(|values| values.iter().any(|value| !value.is_string())))
-            {
-                return Err(AppError::InvalidInput(
-                    "confirmed descriptor tags are invalid".into(),
-                ));
-            }
-        } else if !current.is_null() && !current.is_string() {
-            return Err(AppError::InvalidInput(format!(
-                "confirmed project identity field is invalid: {field}"
-            )));
-        }
-        canonical_identity.insert((*field).into(), current);
-    }
-    let conventions = object
-        .get("conventions")
-        .and_then(Value::as_object)
-        .ok_or_else(|| {
-            AppError::InvalidInput("confirmed project conventions are missing".into())
-        })?;
-    const CONVENTION_FIELDS: &[(&str, crate::codex::ProposalKey)] = &[
-        ("agents_profile", crate::codex::ProposalKey::AgentsProfile),
-        (
-            "localisation_convention",
-            crate::codex::ProposalKey::LocalisationConvention,
-        ),
-        (
-            "documentation_convention",
-            crate::codex::ProposalKey::DocumentationConvention,
-        ),
-    ];
-    if conventions
-        .keys()
-        .any(|key| !CONVENTION_FIELDS.iter().any(|(name, _)| name == key))
-    {
-        return Err(AppError::InvalidInput(
-            "confirmed project conventions contain an unsupported field".into(),
-        ));
-    }
-    let mut canonical_conventions = serde_json::Map::new();
-    for (field, proposal_key) in CONVENTION_FIELDS {
-        let value = conventions
-            .get(*field)
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| {
-                AppError::InvalidInput(format!("confirmed project convention is missing: {field}"))
-            })?;
-        crate::codex::validate_proposal_value(proposal_key, &Value::String(value.to_owned()))?;
-        canonical_conventions.insert((*field).into(), Value::String(value.to_owned()));
-    }
-    let component_recommendations = object.get("componentRecommendations").ok_or_else(|| {
-        AppError::InvalidInput("confirmed component recommendations are missing".into())
-    })?;
-    let component_recommendations = canonical_component_recommendations(component_recommendations)?;
-    Ok(serde_json::json!({
-        "description": description,
-        "folderProfile": folders,
-        "identity": canonical_identity,
-        "conventions": canonical_conventions,
-        "componentRecommendations": component_recommendations,
-    }))
-}
-
-fn confirmation_values_sha256(value: &Value) -> Result<String, AppError> {
-    Ok(sha256_bytes(&serde_json::to_vec(
-        &canonical_confirmation_values(value)?,
-    )?))
-}
-
-fn confirmation_values_from_state(state: &Value) -> Result<Value, AppError> {
-    Ok(serde_json::json!({
-        "description": state.get("description").cloned().unwrap_or(Value::String(String::new())),
-        "folderProfile": state.get("folderProfile").cloned().unwrap_or_else(|| serde_json::json!([])),
-        "identity": state.get("identity").cloned().unwrap_or(Value::Null),
-        "conventions": state.get("conventions").cloned().unwrap_or(Value::Null),
-        "componentRecommendations": state
-            .pointer("/codexAnalysis/component_recommendations")
-            .cloned()
-            .or_else(|| state.get("componentRecommendations").cloned())
-            .unwrap_or_else(|| serde_json::json!([])),
-    }))
+    validate_evidence_request(
+        &approved,
+        request,
+        &crate::context::validate_context_evidence,
+    )
 }
 
 #[tauri::command(async)]
@@ -2364,50 +1959,10 @@ fn confirm_codex_analysis(
     confirmed_fields: Vec<String>,
     confirmed_values: Value,
 ) -> Result<CodexAnalysisRecord, String> {
-    let canonical_values =
-        canonical_confirmation_values(&confirmed_values).map_err(command_error)?;
-    let canonical_bytes = serde_json::to_vec(&canonical_values)
-        .map_err(AppError::from)
-        .map_err(command_error)?;
-    let confirmed_values_sha256 = sha256_bytes(&canonical_bytes);
     let mut analyses = codex_analyses()
         .lock()
         .map_err(|_| "Codex analysis store is unavailable".to_string())?;
-    let pending = analyses
-        .get_mut(&record.analysis_id)
-        .ok_or_else(|| "Codex analysis is no longer available in the core session".to_string())?;
-    let expected_recommendations = canonical_component_recommendations(
-        &serde_json::to_value(&pending.analysis.component_recommendations)
-            .map_err(AppError::from)
-            .map_err(command_error)?,
-    )
-    .map_err(command_error)?;
-    if canonical_values.get("componentRecommendations") != Some(&expected_recommendations) {
-        return Err(
-            "component recommendations changed after the selected provider returned its analysis"
-                .into(),
-        );
-    }
-    if let Some(confirmed) = &pending.confirmed {
-        if confirmed.confirmed_fields == confirmed_fields {
-            if pending.confirmed_values_sha256.as_deref() == Some(confirmed_values_sha256.as_str())
-            {
-                return Ok(confirmed.clone());
-            }
-            pending.confirmed_values_sha256 = Some(confirmed_values_sha256);
-            return Ok(confirmed.clone());
-        }
-        return Err("Codex analysis has already been confirmed with different fields".into());
-    }
-    let confirmed = crate::codex::confirm_analysis_record(
-        &pending.record,
-        &pending.analysis,
-        &confirmed_fields,
-    )
-    .map_err(command_error)?;
-    pending.confirmed = Some(confirmed.clone());
-    pending.confirmed_values_sha256 = Some(confirmed_values_sha256);
-    Ok(confirmed)
+    confirm_analysis(&mut analyses, &record, &confirmed_fields, &confirmed_values)
 }
 
 #[tauri::command(async)]
@@ -2726,56 +2281,8 @@ fn scan_project_blocking(
     if *active_generation != generation {
         return Err("scan result was superseded by a newer project scan".into());
     }
-    if result.cancelled || result.partial {
-        *approved = ApprovedScanEvidence::default();
-    } else {
-        // The approval store represents only the most recently completed scan.
-        // Clearing it prevents an evidence reference from one project from being
-        // replayed after the user switches projects in the same desktop session.
-        let entries = scan_evidence_entries(&result)?;
-        approved.project_root = Some(root);
-        approved.project_root_identity = Some(project_root_identity);
-        approved.scan_id = Some(result.scan_id);
-        approved.entries = entries;
-        approved.evidence_sha256 = None;
-    }
+    record_completed_scan(&mut approved, root, project_root_identity, &result)?;
     Ok(result)
-}
-
-fn scan_evidence_entries(
-    result: &ScanResult,
-) -> Result<HashMap<String, Vec<(String, String)>>, String> {
-    let mut entries = HashMap::<String, Vec<(String, String)>>::new();
-    for finding in &result.findings {
-        let excerpt = if let Some(excerpt) = &finding.model_excerpt {
-            excerpt.clone()
-        } else {
-            match &finding.value {
-                Value::String(value) => value.clone(),
-                value => serde_json::to_string(value)
-                    .map_err(|error| format!("scan evidence could not be serialized: {error}"))?,
-            }
-        };
-        let excerpt_sha256 = sha256_bytes(excerpt.as_bytes());
-        let finding_entries = entries.entry(finding.id.clone()).or_default();
-        for evidence in &finding.evidence {
-            finding_entries.push((evidence.path.clone(), excerpt_sha256.clone()));
-        }
-    }
-    for conflict in &result.conflicts {
-        let excerpt = conflict
-            .details
-            .clone()
-            .unwrap_or_else(|| conflict.kind.clone());
-        entries
-            .entry(conflict.id.clone())
-            .or_default()
-            .push((conflict.path.clone(), sha256_bytes(excerpt.as_bytes())));
-    }
-    if entries.len() > 4096 {
-        return Err("scan produced too many evidence references for a safe Codex review".into());
-    }
-    Ok(entries)
 }
 
 #[cfg(test)]
@@ -4193,29 +3700,12 @@ fn mcp_client_launch(
     target: &crate::mcp::VerifiedMcpTarget,
     platform: Platform,
 ) -> Result<(String, Vec<String>), AppError> {
-    if platform == Platform::Linux {
-        let node = std::fs::canonicalize("/usr/bin/node").map_err(|_| {
-            AppError::Process("the trusted native Node runtime is unavailable".into())
-        })?;
-        crate::process::validate_executable_publisher(&node, "OpenJS Foundation")?;
-        let entry = crate::paths::linux_npm_prefix()?
-            .join("lib/node_modules")
-            .join(&target.package_name)
-            .join(&target.runtime_entry);
-        Ok((
-            node.display().to_string(),
-            vec![entry.display().to_string()],
-        ))
-    } else if platform == Platform::Windows && Platform::current() == Platform::Windows {
-        Ok((
-            crate::paths::user_facing_path(
-                &crate::paths::windows_npm_prefix()?.join(&target.target),
-            ),
-            vec![],
-        ))
-    } else {
-        Ok((target.target.clone(), vec![]))
-    }
+    // The desktop's Linux route is the system Node and the per-user npm
+    // prefix; a server supplies its own `NodeRuntime` through the service.
+    let node = (platform == Platform::Linux)
+        .then(NodeRuntime::linux_system)
+        .transpose()?;
+    launch_with_node(target, platform, node.as_ref())
 }
 
 #[tauri::command(async)]
@@ -4501,13 +3991,6 @@ fn preview_installation_conflict(plan_id: String, path: String) -> Result<Confli
         truncated: base_truncated || local_truncated || incoming_truncated,
         redacted: base_redacted || local_redacted || incoming_redacted,
     })
-}
-
-fn string_field(value: &Value, key: &str) -> Option<String> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
 }
 
 fn source_request_from_state(state: &Value) -> Result<SourceRequest, AppError> {
@@ -5059,23 +4542,7 @@ fn manifest_external_actions(
 }
 
 fn project_root_from_state(state: &Value) -> Result<PathBuf, AppError> {
-    let root = string_field(state, "identity")
-        .and_then(|identity| serde_json::from_str::<Value>(&identity).ok())
-        .and_then(|identity| string_field(&identity, "projectRoot"))
-        .or_else(|| {
-            state
-                .pointer("/identity/projectRoot")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        })
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| {
-            AppError::InvalidInput(
-                "choose a project folder before creating an installation plan".into(),
-            )
-        })?;
-    let root = PathBuf::from(root);
-    validate_project_root_or_destination(&root).map(|(root, _)| root)
+    validate_project_root_or_destination(&project_root_field(state)?).map(|(root, _)| root)
 }
 
 fn component_kind(component: &ComponentDefinition, path: &str) -> FileKind {
@@ -5781,28 +5248,6 @@ fn maintenance_identity(lock: &InstallationLock, root: &Path) -> ProjectIdentity
     }
 }
 
-fn merge_bytes(context: &MergeContext, path: &str) -> Result<Vec<u8>, AppError> {
-    let base = std::str::from_utf8(&context.base)
-        .map_err(|error| AppError::Merge(format!("base is not UTF-8: {error}")))?;
-    let local = std::str::from_utf8(&context.local)
-        .map_err(|error| AppError::Merge(format!("local is not UTF-8: {error}")))?;
-    let incoming = std::str::from_utf8(&context.incoming)
-        .map_err(|error| AppError::Merge(format!("incoming is not UTF-8: {error}")))?;
-    let merged = match context.kind {
-        FileKind::Text => three_way_merge(base, local, incoming)?,
-        FileKind::Toml => structured_toml_merge(base, local, incoming)?,
-        FileKind::Json => structured_json_merge(base, local, incoming)?,
-        FileKind::Binary | FileKind::Symlink | FileKind::Directory => {
-            return Err(AppError::Merge(format!(
-                "text merge is not valid for {path}"
-            )))
-        }
-    };
-    let bytes = merged.into_bytes();
-    validate_merged_result(context.kind, path, &bytes)?;
-    Ok(bytes)
-}
-
 fn choice_from_state(state: &Value) -> Option<String> {
     string_field(state, "conflictChoice")
 }
@@ -5880,51 +5325,6 @@ fn project_identity_from_state(state: &Value, root: &Path) -> Result<ProjectIden
         }
     }
     Ok(identity)
-}
-
-fn renamed_destination(root: &Path, original: &str, external: bool) -> Result<String, AppError> {
-    let original_path = if external {
-        validate_external_destination(original)?
-    } else {
-        safe_join(root, original)?
-    };
-    let parent = original_path
-        .parent()
-        .ok_or_else(|| AppError::Transaction("cannot create a renamed destination".into()))?;
-    let stem = original_path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| AppError::Transaction("destination filename is not Unicode".into()))?;
-    let extension = original_path
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(|value| format!(".{value}"))
-        .unwrap_or_default();
-    for index in 0..1000 {
-        let suffix = if index == 0 {
-            ".incoming".to_string()
-        } else {
-            format!(".incoming-{index}")
-        };
-        let candidate = parent.join(format!("{stem}{suffix}{extension}"));
-        if !candidate.exists() {
-            return if external {
-                Ok(
-                    validate_external_destination(&candidate.display().to_string())?
-                        .display()
-                        .to_string(),
-                )
-            } else {
-                let relative = candidate.strip_prefix(root).map_err(|_| {
-                    AppError::PathSecurity("renamed destination escaped root".into())
-                })?;
-                Ok(relative.to_string_lossy().replace('\\', "/"))
-            };
-        }
-    }
-    Err(AppError::Transaction(
-        "could not find an unused renamed destination".into(),
-    ))
 }
 
 fn generated_state(state: &Value) -> BTreeMap<String, String> {
@@ -6036,55 +5436,6 @@ fn transaction_directories(state: &Value, mode: &str) -> Result<Vec<String>, App
     Ok(directories)
 }
 
-fn ai_provider_from_state(state: &Value) -> Result<String, AppError> {
-    let provider = match state.get("aiProvider") {
-        None => "codex",
-        Some(value) => value.as_str().ok_or_else(|| {
-            AppError::InvalidInput("selected AI provider must be a string".into())
-        })?,
-    }
-    .trim();
-    if provider.is_empty() {
-        return Err(AppError::InvalidInput(
-            "selected AI provider cannot be empty".into(),
-        ));
-    }
-    if crate::ai::profile(provider).is_none() {
-        return Err(AppError::InvalidInput(format!(
-            "unsupported AI provider: {provider}"
-        )));
-    }
-    Ok(provider.to_string())
-}
-
-fn ai_model_from_state(state: &Value) -> String {
-    state
-        .get("aiModel")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or("default")
-        .to_string()
-}
-
-fn ai_reasoning_effort_from_state(state: &Value) -> String {
-    state
-        .get("aiReasoningEffort")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("xhigh")
-        .to_string()
-}
-
-fn ai_endpoint_from_state(state: &Value) -> Option<String> {
-    state
-        .get("aiEndpoint")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
 fn ai_optimization_profile(provider: &str) -> String {
     ai::profile(provider)
         .map(|profile| profile.optimization_profile)
@@ -6105,81 +5456,10 @@ fn codex_analysis_from_state(
     state: &Value,
     project_root: &Path,
 ) -> Result<CodexAnalysisRecord, AppError> {
-    let value = state
-        .get("codexAnalysisRecord")
-        .or_else(|| state.pointer("/codexAnalysis/record"))
-        .ok_or_else(|| {
-            AppError::Credential(
-                "selected-provider analysis must be confirmed before planning".into(),
-            )
-        })?;
-    let record: CodexAnalysisRecord = serde_json::from_value(value.clone())?;
-    crate::codex::validate_confirmed_record(&record)?;
-    let provider = ai_provider_from_state(state)?;
-    if record.provider.as_deref().unwrap_or("codex") != provider {
-        return Err(AppError::Credential(
-            "confirmed analysis belongs to a different AI provider".into(),
-        ));
-    }
-    let profile = ai::profile(&provider).ok_or_else(|| {
-        AppError::Credential("confirmed analysis uses an unsupported AI provider".into())
-    })?;
-    let selected_model = ai_model_from_state(state);
-    let selected_reasoning_effort = ai_reasoning_effort_from_state(state);
-    if record.model.as_deref() != Some(selected_model.as_str())
-        || record.reasoning_effort.as_deref() != Some(selected_reasoning_effort.as_str())
-        || record.optimization_profile.as_deref() != Some(profile.optimization_profile.as_str())
-    {
-        return Err(AppError::Credential(
-            "confirmed analysis does not match the selected provider, model, reasoning effort, or optimization profile".into(),
-        ));
-    }
-    let expected_scan_id = state
-        .pointer("/scanContext/scanId")
-        .and_then(Value::as_str)
-        .and_then(|value| Uuid::parse_str(value).ok());
-    let endpoint_fingerprint = (provider != "codex")
-        .then(|| sha256_bytes(ai_endpoint_from_state(state).unwrap_or_default().as_bytes()));
-    let expected_confirmation_values_sha256 =
-        confirmation_values_sha256(&confirmation_values_from_state(state)?)?;
-    if !codex_record_confirmed_in_session_with_endpoint(
-        &record,
-        Some(project_root),
-        expected_scan_id,
-        endpoint_fingerprint.as_deref(),
-        Some(&expected_confirmation_values_sha256),
-    )? {
-        return Err(AppError::Credential(
-            "selected-provider confirmation is no longer present in the core session; rerun semantic analysis"
-                .into(),
-        ));
-    }
-    // The project root and scan ID are core-only bindings that never cross
-    // the renderer; restore them from the confirmed session entry so plan
-    // construction can bind the plan to the same scan.
-    let mut record = record;
-    if let Some(pending) = codex_analyses()
+    let analyses = codex_analyses()
         .lock()
-        .map_err(|_| AppError::Process("Codex analysis store is unavailable".into()))?
-        .get(&record.analysis_id)
-    {
-        record.scan_id = pending.scan_id;
-        record.project_root = pending
-            .project_root
-            .as_ref()
-            .map(|root| root.display().to_string());
-    }
-    Ok(record)
-}
-
-fn same_persisted_codex_record(left: &CodexAnalysisRecord, right: &CodexAnalysisRecord) -> bool {
-    let mut left = left.clone();
-    let mut right = right.clone();
-    left.project_root = None;
-    left.scan_id = None;
-    right.project_root = None;
-    right.scan_id = None;
-    left == right
+        .map_err(|_| AppError::Process("Codex analysis store is unavailable".into()))?;
+    confirmed_analysis_for_plan(&analyses, state, project_root)
 }
 
 fn codex_record_confirmed_in_session_with_endpoint(
@@ -6192,31 +5472,14 @@ fn codex_record_confirmed_in_session_with_endpoint(
     let analyses = codex_analyses()
         .lock()
         .map_err(|_| AppError::Process("Codex analysis store is unavailable".into()))?;
-    Ok(analyses.get(&record.analysis_id).is_some_and(|pending| {
-        pending
-            .confirmed
-            .as_ref()
-            .is_some_and(|confirmed| same_persisted_codex_record(confirmed, record))
-            && expected_endpoint_fingerprint
-                .is_none_or(|expected| pending.endpoint_fingerprint.as_deref() == Some(expected))
-            && expected_confirmation_values_sha256
-                .is_none_or(|expected| pending.confirmed_values_sha256.as_deref() == Some(expected))
-            && if record.analysis_purpose.as_deref().is_some_and(|purpose| {
-                matches!(
-                    purpose,
-                    "existing_project_import" | "maintenance_reanalysis"
-                )
-            }) {
-                expected_project_root.is_none_or(|root| {
-                    pending
-                        .project_root
-                        .as_deref()
-                        .is_some_and(|pending_root| same_project_root(pending_root, root))
-                }) && expected_scan_id.is_none_or(|scan_id| pending.scan_id == Some(scan_id))
-            } else {
-                true
-            }
-    }))
+    Ok(record_confirmed_in_session(
+        &analyses,
+        record,
+        expected_project_root,
+        expected_scan_id,
+        expected_endpoint_fingerprint,
+        expected_confirmation_values_sha256,
+    ))
 }
 
 fn git_setup_from_state(
@@ -6261,22 +5524,10 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
         let approved = codex_approved_evidence().lock().map_err(|_| {
             AppError::Serialization("approved scan evidence store is unavailable".into())
         })?;
-        if approved
-            .project_root
-            .as_ref()
-            .is_none_or(|approved_root| !same_project_root(approved_root, &root))
-            || approved.scan_id != codex_analysis.scan_id
-        {
-            return Err(AppError::PathSecurity(
-                "project plan is not bound to the latest scan of this root".into(),
-            ));
-        }
-        validate_approved_project_root_identity(&root, &approved, codex_analysis.scan_id)?
+        plan_root_identity(&approved, &root, true, codex_analysis.scan_id)?
     } else {
-        let parent = root.parent().ok_or_else(|| {
-            AppError::PathSecurity("new project root has no existing parent".into())
-        })?;
-        RootedDir::open_read(parent)?.identity_token()?
+        // A root to be created binds its parent; no scan is involved.
+        plan_root_identity(&ApprovedScanEvidence::default(), &root, false, None)?
     };
     let ai_provider = ai_provider_from_state(state)?;
     let ai_model = ai_model_from_state(state);
@@ -6911,318 +6162,6 @@ fn build_plan(state: &Value) -> Result<(InstallationPlan, Vec<PreparedFile>), Ap
     crate::transaction::bind_plan_external_parents(&mut plan)?;
     ensure_mcp_package_replaceable(&plan)?;
     Ok((plan, prepared))
-}
-
-fn is_flattened_destination(path: &str) -> bool {
-    path.replace('\\', "/")
-        .starts_with(&format!("{}/", crate::flatten::FLAT_DESTINATION_ROOT))
-}
-
-fn is_flattened_source_path(path: Option<&str>) -> bool {
-    path.is_some_and(|value| {
-        value.replace('\\', "/").starts_with(&format!(
-            "generated:{}/",
-            crate::flatten::FLAT_DESTINATION_ROOT
-        ))
-    })
-}
-
-fn flatten_operation_uses_incoming(operation: &PlanOperation) -> bool {
-    if matches!(
-        operation.resolution.as_deref(),
-        Some(
-            "review_required"
-                | "reverse_merge_required"
-                | "user_owned_review"
-                | "keep_user_modification"
-                | "obsolete_review"
-        )
-    ) {
-        return false;
-    }
-    !(matches!(
-        (operation.action, operation.resolution.as_deref()),
-        (OperationAction::Skip, Some("keep" | "skip"))
-    ) || (operation.local_state == LocalState::Modified && operation.resolution.is_none()))
-}
-
-fn accepted_flatten_prepared_files(
-    prepared_files: &[PreparedFile],
-    operations: &[PlanOperation],
-    project_root: &Path,
-) -> Result<Vec<PreparedFile>, AppError> {
-    let mut accepted = Vec::new();
-    for file in prepared_files {
-        let operation = operations
-            .iter()
-            .find(|operation| operation.id == file.operation_id);
-        if operation.is_none_or(flatten_operation_uses_incoming) {
-            accepted.push(file.clone());
-            continue;
-        }
-        let Some(operation) = operation else {
-            continue;
-        };
-        let kept_local = matches!(
-            operation.resolution.as_deref(),
-            Some("keep" | "keep_user_modification")
-        );
-        let normalized_destination = file.destination.replace('\\', "/");
-        let eligible = crate::flatten::FLATTEN_SOURCE_PREFIXES
-            .iter()
-            .any(|prefix| normalized_destination.starts_with(prefix));
-        if kept_local && eligible {
-            let bytes = crate::flatten::read_regular_file_no_follow_under_root(
-                project_root,
-                &file.destination,
-            )?;
-            accepted.push(PreparedFile {
-                operation_id: file.operation_id.clone(),
-                destination: file.destination.clone(),
-                expected_sha256: sha256_bytes(&bytes),
-                bytes,
-            });
-        }
-    }
-    Ok(accepted)
-}
-
-#[derive(Clone)]
-struct FlattenedDecision {
-    source_sha256: Option<String>,
-    action: OperationAction,
-    resolution: String,
-    local_sha256: Option<String>,
-    local_state: LocalState,
-    destination: String,
-}
-
-fn refresh_flattened_outputs(prepared_plan: &mut PreparedPlan) -> Result<(), AppError> {
-    if !prepared_plan.plan.flatten_chat_sources {
-        return Ok(());
-    }
-    let previous_decisions = prepared_plan
-        .plan
-        .operations
-        .iter()
-        .filter(|operation| {
-            is_flattened_destination(&operation.destination)
-                || is_flattened_source_path(operation.source_path.as_deref())
-        })
-        .filter_map(|operation| {
-            operation.resolution.clone().map(|resolution| {
-                (
-                    operation.source_path.clone().unwrap_or_else(|| {
-                        format!("generated:{}", operation.destination.replace('\\', "/"))
-                    }),
-                    FlattenedDecision {
-                        source_sha256: operation.source_sha256.clone(),
-                        action: operation.action,
-                        resolution,
-                        local_sha256: operation.local_sha256.clone(),
-                        local_state: operation.local_state,
-                        destination: operation.destination.clone(),
-                    },
-                )
-            })
-        })
-        .collect::<BTreeMap<_, _>>();
-    prepared_plan
-        .plan
-        .generated_artifacts
-        .retain(|artifact| !is_flattened_destination(&artifact.destination));
-    prepared_plan
-        .plan
-        .operations
-        .retain(|operation| !is_flattened_destination(&operation.destination));
-    prepared_plan
-        .plan
-        .conflicts
-        .retain(|conflict| !is_flattened_destination(&conflict.path));
-    prepared_plan
-        .prepared_files
-        .retain(|file| !is_flattened_destination(&file.destination));
-
-    let flatten_prepared = accepted_flatten_prepared_files(
-        &prepared_plan.prepared_files,
-        &prepared_plan.plan.operations,
-        &prepared_plan.canonical_root,
-    )?;
-    let accepted_generated = prepared_plan
-        .plan
-        .generated_artifacts
-        .iter()
-        .filter(|artifact| {
-            let source_path = format!("generated:{}", artifact.destination);
-            prepared_plan
-                .plan
-                .operations
-                .iter()
-                .find(|operation| operation.source_path.as_deref() == Some(source_path.as_str()))
-                .is_none_or(|operation| {
-                    operation.destination == artifact.destination
-                        && flatten_operation_uses_incoming(operation)
-                })
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let flattened = crate::flatten::build_artifacts(
-        &flatten_prepared,
-        &accepted_generated,
-        &prepared_plan.canonical_root,
-    )?;
-    let operation_offset = prepared_plan.plan.operations.len();
-    for (index, artifact) in flattened.iter().enumerate() {
-        let destination_path = safe_join(&prepared_plan.canonical_root, &artifact.destination)?;
-        let local_sha = if destination_path.is_file() {
-            Some(sha256_file(&destination_path)?)
-        } else {
-            None
-        };
-        let local_state = match local_sha.as_deref() {
-            None => LocalState::Absent,
-            Some(hash) if hash == artifact.expected_sha256 => LocalState::Unmodified,
-            Some(_) => LocalState::Modified,
-        };
-        let action = if local_state == LocalState::Absent {
-            OperationAction::Generate
-        } else {
-            OperationAction::Skip
-        };
-        let operation_id = format!("generated-flat-{operation_offset:05}-{index:05}");
-        if local_state == LocalState::Modified {
-            prepared_plan.plan.conflicts.push(PlanConflict {
-                id: format!("conflict.{operation_id}"),
-                path: artifact.destination.clone(),
-                options: vec![
-                    "keep".into(),
-                    "replace".into(),
-                    "rename".into(),
-                    "skip".into(),
-                ],
-                selected: None,
-                apply_to_identical: false,
-            });
-        }
-        prepared_plan
-            .plan
-            .generated_artifacts
-            .push(artifact.clone());
-        prepared_plan.plan.operations.push(PlanOperation {
-            id: operation_id.clone(),
-            component_id: artifact.component_id.clone(),
-            ownership: Some(Ownership::Generated),
-            location_scope: Some("project".into()),
-            action,
-            source_path: Some(format!("generated:{}", artifact.destination)),
-            destination: artifact.destination.clone(),
-            source_sha256: Some(artifact.expected_sha256.clone()),
-            source_size: Some(
-                artifact
-                    .bytes
-                    .as_ref()
-                    .map_or(artifact.content.len(), Vec::len) as u64,
-            ),
-            platform: Some(ManifestPlatform::All),
-            executable: false,
-            result_sha256: (action != OperationAction::Skip)
-                .then_some(artifact.expected_sha256.clone()),
-            base_sha256: None,
-            local_sha256: local_sha,
-            local_state,
-            resolution: None,
-            external: false,
-            rollback: if local_state == LocalState::Absent {
-                RollbackAction::RemoveCreated
-            } else {
-                RollbackAction::RestoreBackup
-            },
-            external_parent_identity: None,
-        });
-        prepared_plan.prepared_files.push(PreparedFile {
-            operation_id,
-            destination: artifact.destination.clone(),
-            bytes: artifact
-                .bytes
-                .clone()
-                .unwrap_or_else(|| artifact.content.as_bytes().to_vec()),
-            expected_sha256: artifact.expected_sha256.clone(),
-        });
-    }
-
-    for operation in prepared_plan
-        .plan
-        .operations
-        .iter_mut()
-        .filter(|operation| is_flattened_destination(&operation.destination))
-    {
-        let Some(source_path) = operation.source_path.as_deref() else {
-            continue;
-        };
-        let Some(previous) = previous_decisions.get(source_path) else {
-            continue;
-        };
-        if previous.source_sha256.as_deref() != operation.source_sha256.as_deref()
-            || previous.resolution == "merge"
-        {
-            continue;
-        }
-
-        let same_local_state = previous.local_state == operation.local_state
-            && previous.local_sha256.as_deref() == operation.local_sha256.as_deref();
-        let preserve_rename = previous.resolution == "rename"
-            && is_flattened_destination(&previous.destination)
-            && previous.destination != operation.destination
-            && safe_join(&prepared_plan.canonical_root, &previous.destination)
-                .is_ok_and(|path| !path.exists());
-        if previous.resolution != "rename" && !same_local_state {
-            continue;
-        }
-        if previous.resolution == "rename" && !preserve_rename {
-            continue;
-        }
-
-        operation.resolution = Some(previous.resolution.clone());
-        match previous.resolution.as_str() {
-            "keep" | "skip" => {
-                operation.action = OperationAction::Skip;
-                operation.result_sha256 = None;
-                prepared_plan
-                    .prepared_files
-                    .retain(|file| file.operation_id != operation.id);
-            }
-            "replace" => {
-                operation.action = previous.action;
-                operation.result_sha256 = operation.source_sha256.clone();
-            }
-            "rename" if preserve_rename => {
-                let destination = previous.destination.clone();
-                operation.action = OperationAction::Rename;
-                operation.destination = destination.clone();
-                operation.local_sha256 = None;
-                operation.local_state = LocalState::Absent;
-                operation.result_sha256 = operation.source_sha256.clone();
-                operation.rollback = RollbackAction::RemoveCreated;
-                if let Some(file) = prepared_plan
-                    .prepared_files
-                    .iter_mut()
-                    .find(|file| file.operation_id == operation.id)
-                {
-                    file.destination = destination;
-                }
-            }
-            _ => continue,
-        }
-        if let Some(conflict) = prepared_plan
-            .plan
-            .conflicts
-            .iter_mut()
-            .find(|conflict| conflict.path == source_path.trim_start_matches("generated:"))
-        {
-            conflict.selected = Some(previous.resolution.clone());
-        }
-    }
-    Ok(())
 }
 
 #[tauri::command(async)]
@@ -9536,14 +8475,7 @@ fn approve_installation(plan_id: String) -> Result<(), String> {
     let prepared = plans
         .get_mut(&id)
         .ok_or_else(|| "installation plan is not available in the core session".to_string())?;
-    prepared.approved = true;
-    prepared.plan.approvals.dry_run_reviewed = true;
-    prepared.plan.approvals.external_actions_reviewed = true;
-    // The final dry-run approval is the explicit approval for a configured
-    // local remote. It does not approve repository creation or pushing: those
-    // actions are not part of the transaction and remain separately gated by
-    // the Git plan's push_approved flag.
-    prepared.plan.approvals.git_remote_approved = true;
+    approve_prepared_plan(prepared);
     Ok(())
 }
 
@@ -9560,127 +8492,7 @@ fn resolve_installation_conflict(
     let prepared = plans
         .get_mut(&id)
         .ok_or_else(|| "installation plan is not available in the core session".to_string())?;
-    let conflict_index = prepared
-        .plan
-        .conflicts
-        .iter()
-        .position(|conflict| conflict.path == path)
-        .ok_or_else(|| "installation conflict is not present in the core plan".to_string())?;
-    {
-        let conflict = &mut prepared.plan.conflicts[conflict_index];
-        if !conflict.options.iter().any(|option| option == &choice) {
-            return Err("invalid installation conflict choice".into());
-        }
-        conflict.selected = Some(choice.clone());
-    }
-    let operation_index = prepared
-        .plan
-        .operations
-        .iter()
-        .position(|operation| operation.destination == path)
-        .ok_or_else(|| "installation conflict has no bound operation".to_string())?;
-    let operation_id = prepared.plan.operations[operation_index].id.clone();
-    match choice.as_str() {
-        "keep" | "skip" => {
-            let operation = &mut prepared.plan.operations[operation_index];
-            operation.resolution = Some(choice.clone());
-            operation.action = OperationAction::Skip;
-            operation.result_sha256 = None;
-            prepared
-                .prepared_files
-                .retain(|file| file.operation_id != operation_id);
-        }
-        "merge" => {
-            let merged = prepared
-                .merge_contexts
-                .get(&operation_id)
-                .ok_or_else(|| "a verified merge base is unavailable".to_string())
-                .and_then(|context| merge_bytes(context, &path).map_err(command_error))?;
-            let result_sha256 = sha256_bytes(&merged);
-            let destination = {
-                let operation = &mut prepared.plan.operations[operation_index];
-                operation.resolution = Some(choice.clone());
-                operation.action = OperationAction::Merge;
-                operation.result_sha256 = Some(result_sha256.clone());
-                operation.destination.clone()
-            };
-            if let Some(file) = prepared
-                .prepared_files
-                .iter_mut()
-                .find(|file| file.operation_id == operation_id)
-            {
-                file.destination = destination;
-                file.bytes = merged;
-                file.expected_sha256 = result_sha256;
-            } else {
-                return Err("merge operation has no prepared incoming bytes".into());
-            }
-        }
-        "rename" => {
-            let external = prepared.plan.operations[operation_index].external;
-            let original = prepared.plan.operations[operation_index]
-                .destination
-                .clone();
-            let destination = renamed_destination(&prepared.canonical_root, &original, external)
-                .map_err(command_error)?;
-            {
-                let operation = &mut prepared.plan.operations[operation_index];
-                operation.resolution = Some(choice.clone());
-                operation.action = OperationAction::Rename;
-                operation.destination = destination.clone();
-                operation.local_sha256 = None;
-                operation.local_state = LocalState::Absent;
-                operation.result_sha256 = None;
-                operation.rollback = RollbackAction::RemoveCreated;
-            }
-            if let Some(file) = prepared
-                .prepared_files
-                .iter_mut()
-                .find(|file| file.operation_id == operation_id)
-            {
-                file.destination = destination.clone();
-            } else {
-                return Err("rename operation has no prepared incoming bytes".into());
-            }
-            if let Some(entry) = prepared
-                .plan
-                .download_ledger
-                .iter_mut()
-                .find(|entry| entry.operation_id == operation_id)
-            {
-                entry.destination = destination;
-            }
-            if let Some(file) = prepared
-                .prepared_files
-                .iter()
-                .find(|file| file.operation_id == operation_id)
-            {
-                prepared.plan.operations[operation_index].result_sha256 =
-                    Some(file.expected_sha256.clone());
-            }
-        }
-        "replace" => {
-            {
-                let operation = &mut prepared.plan.operations[operation_index];
-                operation.resolution = Some(choice.clone());
-                if operation.action != OperationAction::Generate {
-                    operation.action = OperationAction::Replace;
-                }
-            }
-            let result_sha256 = prepared
-                .prepared_files
-                .iter()
-                .find(|file| file.operation_id == operation_id)
-                .map(|file| file.expected_sha256.clone())
-                .ok_or_else(|| "replace operation has no prepared incoming bytes".to_string())?;
-            prepared.plan.operations[operation_index].result_sha256 = Some(result_sha256);
-        }
-        _ => {}
-    }
-    if !is_flattened_destination(&path) {
-        refresh_flattened_outputs(prepared).map_err(command_error)?;
-    }
-    Ok(prepared.plan.clone())
+    resolve_conflict(prepared, &path, &choice)
 }
 
 #[tauri::command(async)]

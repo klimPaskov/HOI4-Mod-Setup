@@ -17,8 +17,12 @@ name = "hoi4-mod-setup"
 path = "src/main.rs"
 
 [features]
-default = []
-desktop = ["dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-plugin-updater"]
+# The OS credential vault (Windows Credential Manager, macOS Keychain, Linux
+# Secret Service). A server that supplies its own `CredentialStore` builds with
+# `--no-default-features`, which also drops the native libdbus dependency.
+default = ["os-keyring"]
+os-keyring = ["dep:keyring"]
+desktop = ["os-keyring", "dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-plugin-updater"]
 
 [dependencies]
 base64 = "0.22"
@@ -53,16 +57,16 @@ tauri-build = { version = "2.5", features = [] }
 proptest = "1.7"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+keyring = { version = "3.6", default-features = false, features = ["windows-native"], optional = true }
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
+keyring = { version = "3.6", default-features = false, features = ["apple-native"], optional = true }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["alloc", "NSArray", "NSPathUtilities", "NSString"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "3.6", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+keyring = { version = "3.6", default-features = false, features = ["sync-secret-service", "crypto-rust"], optional = true }
 md-5 = "0.10"
