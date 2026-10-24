@@ -91,7 +91,12 @@ All setup assistants use the same `codex-analysis` response schema and approved-
 boundary. Codex receives the schema through App Server `outputSchema`; the
 Anthropic, Gemini, and Grok API adapters use their native structured-output
 formats; other adapters receive the exact checked-in schema in their system
-request. Native output is an input constraint, not a substitute for runtime
+request. The schema sent to Anthropic omits the keywords its structured output
+rejects with HTTP 400 (`minimum`, `maximum`, `multipleOf`, `minLength`,
+`maxLength`, `maxItems`, and `minItems` above 1; see the JSON Schema limitations in
+<https://platform.claude.com/docs/en/build-with-claude/structured-outputs>) and
+restates them in each property's description; the checked-in schema is never
+reduced. Native output is an input constraint, not a substitute for runtime
 validation: Rust validates the complete checked-in Draft 2020-12 schema and
 the semantic invariants before accepting a response. The core assigns its own
 UUID analysis ID after validation instead of requiring the model to invent a
