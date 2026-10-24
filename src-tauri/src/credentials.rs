@@ -10,6 +10,10 @@ pub const IMAGE_GENERATION_ENVIRONMENT_NAME: &str = "IMAGE_GENERATION_API_KEY";
 const MAX_SECRET_INPUT_BYTES: usize = 64 * 1024;
 const MESHY_STABLE_REFERENCE: &str = "credential://meshy_api_key/default";
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#[cfg_attr(
+    not(any(feature = "os-keyring", target_os = "windows")),
+    allow(dead_code)
+)]
 const KEYRING_SERVICE: &str = "com.klimpaskov.hoi4-mod-setup";
 
 pub trait CredentialStore {
@@ -22,6 +26,66 @@ pub trait CredentialStore {
     ) -> Result<CredentialReference, AppError>;
     fn read(&self, reference: &CredentialReference) -> Result<String, AppError>;
     fn delete(&self, reference: &CredentialReference) -> Result<(), AppError>;
+}
+
+/// A shared store is a store, so a server can hand one secret-store adapter
+/// to every session as `Arc<dyn CredentialStore + Send + Sync>`.
+impl<T: CredentialStore + ?Sized> CredentialStore for std::sync::Arc<T> {
+    fn save(&self, name: &str, value: &str) -> Result<CredentialReference, AppError> {
+        (**self).save(name, value)
+    }
+
+    fn save_scoped(
+        &self,
+        name: &str,
+        scope: &str,
+        value: &str,
+    ) -> Result<CredentialReference, AppError> {
+        (**self).save_scoped(name, scope, value)
+    }
+
+    fn read(&self, reference: &CredentialReference) -> Result<String, AppError> {
+        (**self).read(reference)
+    }
+
+    fn delete(&self, reference: &CredentialReference) -> Result<(), AppError> {
+        (**self).delete(reference)
+    }
+}
+
+/// A store that holds nothing and refuses every request. A service that needs
+/// no provider credential (the free assistant, a local endpoint, or a caller
+/// that runs analysis itself) uses it so no ambient store is ever consulted.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DeniedCredentialStore;
+
+impl DeniedCredentialStore {
+    fn refusal() -> AppError {
+        AppError::Credential("no credential store is available to this service".into())
+    }
+}
+
+impl CredentialStore for DeniedCredentialStore {
+    fn save(&self, _name: &str, _value: &str) -> Result<CredentialReference, AppError> {
+        Err(Self::refusal())
+    }
+
+    fn save_scoped(
+        &self,
+        _name: &str,
+        _scope: &str,
+        _value: &str,
+    ) -> Result<CredentialReference, AppError> {
+        Err(Self::refusal())
+    }
+
+    fn read(&self, _reference: &CredentialReference) -> Result<String, AppError> {
+        Err(Self::refusal())
+    }
+
+    fn delete(&self, _reference: &CredentialReference) -> Result<(), AppError> {
+        Err(Self::refusal())
+    }
 }
 
 #[derive(Default, Clone)]
@@ -95,7 +159,10 @@ impl CredentialStore for MemoryCredentialStore {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OsCredentialStore;
 
-#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#[cfg(all(
+    feature = "os-keyring",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
 impl CredentialStore for OsCredentialStore {
     fn save(&self, name: &str, value: &str) -> Result<CredentialReference, AppError> {
         validate_secret_input(name, value)?;
@@ -162,11 +229,24 @@ impl CredentialStore for OsCredentialStore {
     }
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+#[cfg(not(all(
+    feature = "os-keyring",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+)))]
+const OS_CREDENTIAL_STORE_UNAVAILABLE: &str = if cfg!(feature = "os-keyring") {
+    "OS credential storage is supported only on Windows and macOS"
+} else {
+    "this build has no OS credential store; supply a CredentialStore"
+};
+
+#[cfg(not(all(
+    feature = "os-keyring",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+)))]
 impl CredentialStore for OsCredentialStore {
     fn save(&self, _name: &str, _value: &str) -> Result<CredentialReference, AppError> {
         Err(AppError::UnsupportedPlatform(
-            "OS credential storage is supported only on Windows and macOS".into(),
+            OS_CREDENTIAL_STORE_UNAVAILABLE.into(),
         ))
     }
 
@@ -177,19 +257,19 @@ impl CredentialStore for OsCredentialStore {
         _value: &str,
     ) -> Result<CredentialReference, AppError> {
         Err(AppError::UnsupportedPlatform(
-            "OS credential storage is supported only on Windows and macOS".into(),
+            OS_CREDENTIAL_STORE_UNAVAILABLE.into(),
         ))
     }
 
     fn read(&self, _reference: &CredentialReference) -> Result<String, AppError> {
         Err(AppError::UnsupportedPlatform(
-            "OS credential storage is supported only on Windows and macOS".into(),
+            OS_CREDENTIAL_STORE_UNAVAILABLE.into(),
         ))
     }
 
     fn delete(&self, _reference: &CredentialReference) -> Result<(), AppError> {
         Err(AppError::UnsupportedPlatform(
-            "OS credential storage is supported only on Windows and macOS".into(),
+            OS_CREDENTIAL_STORE_UNAVAILABLE.into(),
         ))
     }
 }
@@ -580,6 +660,39 @@ pub fn mesh_key_status<S: CredentialStore>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_shared_store_is_a_store() {
+        let store: std::sync::Arc<dyn CredentialStore + Send + Sync> =
+            std::sync::Arc::new(MemoryCredentialStore::default());
+        let reference = store
+            .save_scoped(AI_PROVIDER_ENVIRONMENT_NAME, "claude", "sk-fixture")
+            .unwrap();
+        assert_eq!(store.read(&reference).unwrap(), "sk-fixture");
+        store.delete(&reference).unwrap();
+        assert!(store.read(&reference).is_err());
+    }
+
+    #[test]
+    fn the_denied_store_holds_and_refuses_everything() {
+        let store = DeniedCredentialStore;
+        assert!(store.save("NAME", "value").is_err());
+        assert!(store
+            .save_scoped(AI_PROVIDER_ENVIRONMENT_NAME, "claude", "value")
+            .is_err());
+        let reference = stable_meshy_reference();
+        assert!(store.read(&reference).is_err());
+        assert!(store.delete(&reference).is_err());
+    }
+
+    #[cfg(not(feature = "os-keyring"))]
+    #[test]
+    fn without_the_os_keyring_feature_the_os_store_refuses_every_request() {
+        let reference = stable_meshy_reference();
+        assert!(OsCredentialStore.save("NAME", "value").is_err());
+        assert!(OsCredentialStore.read(&reference).is_err());
+        assert!(OsCredentialStore.delete(&reference).is_err());
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     #[ignore = "requires an isolated desktop Secret Service session"]
