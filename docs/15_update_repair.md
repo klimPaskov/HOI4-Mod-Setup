@@ -102,7 +102,7 @@ Select a rollback record and preview source revision, restored or removed files,
 
 ## Removal
 
-Use reverse dependencies. Default to deleting unmodified managed files, removing managed structured contributions, preserving modified or merged files, preserving local additions, keeping global tools, and removing only project credential references. Deleting the OS credential is a separate explicit vault action and requires the opaque Meshy reference; managed removal never performs it implicitly. The final removal report records transaction completion without claiming that the now-unconfigured project is AI-ready; the lock remains available for audit and rollback.
+Use reverse dependencies. Default to deleting unmodified managed files, removing managed structured contributions, preserving modified or merged files, preserving local additions, keeping the mod's own files (descriptors, launcher descriptor, thumbnail, README, and documents added through the app, which leave management but stay on disk), keeping global tools, and removing only project credential references. Deleting the OS credential is a separate explicit vault action and requires the opaque Meshy reference; managed removal never performs it implicitly. The final removal report records transaction completion without claiming that the now-unconfigured project is AI-ready; the lock remains available for audit and rollback.
 
 ## Optional workflow maintenance
 

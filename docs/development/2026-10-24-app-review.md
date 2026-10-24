@@ -106,6 +106,11 @@ interrupted-install explanation, and the failed-tool explanation.
 | Defaults | An unmanaged existing mod defaulted to Codex while a new mod defaults to Claude Code | Coding environments screen | Scan only reads a primary from a recorded installation |
 | Progress | Plan preparation sat at "96%, about 1 seconds remaining" for minutes | screenshot, 4 min on a first install | Says "still working, a first install can take a few minutes"; install screen asks to keep the window open |
 | Performance | Verifying the installed 5,387-file, 283 MB HOI4 Agent Tools package took 140 s for the read alone on a release build, so **Ready** showed "Checking readiness" for 151 s | timing probe `time_package_tree_materialization` | Files are read on several threads. Measured in the timing probe: read 140 s → 14 s, whole copy-and-verify 235 s → 88 s. The Ready screen's 151 s was not re-measured end to end after the change; the screen now says it can take a minute or two. The private copy that follows is unchanged and still the larger part (see [Limitations](#limitations)) |
+| Remove | **Remove components** could not be applied: "a confirmed selected-provider analysis is required before apply". A removal plan still carried the image provider's install step, so it was not a pure removal | live run on a created mod; plan inspected from the UI state | `provider_bootstrap_selected` is false in remove mode; test `removal_never_plans_a_provider_bootstrap` |
+| Remove | The removal then stopped in its last stage ("no action evidence: mcp.hoi4_agent_tools") because it re-ran the agent-tools setup for components that stay installed, and the recovery screen answered with "install Python" | live run, 3,404 of 4,246 files already deleted | Removal runs only the image cleanup; the Python advice needs Python, npm, Node.js, or winget in the message; tests `managed_removal_runs_only_the_reviewed_gptimage_dependency_cleanup` (extended) and a front-end test |
+| Remove | The runner refused every post-install action in a removal, including the reviewed GPTImage cleanup | live run, stopped at "managed removal cannot run a post-install action" | Only that cleanup is allowed; test `managed_removal_may_only_run_the_reviewed_image_cleanup` |
+| Remove | A completed removal deleted the mod's own `descriptor.mod`, launcher `.mod`, `thumbnail.png`, and `README.md` while the screen said "Your own mod files were not touched" | disk diff of a created mod: 4,240 of 4,246 files gone, those four among them | Those files stay on disk and leave the lock; test `managed_removal_keeps_the_mods_own_files_and_stops_managing_them` (fails without the fix); verified live on `rm_test` |
+| Undo | An interrupted removal was undone twice, each time restoring all 4,246 files and the folder tree exactly (0 changed). Undo of ~850 files took about 12 minutes, because it first backs up the live state | snapshot diff | Not changed; listed under Limitations |
 | First run | "invalid input: AI model must be non-empty" appeared before a local model's details were entered | screenshot | Hidden until details are entered |
 | Visual | The Python requirement text sat flush against the panel edge; the recovery cause box merged with the overview panel | screenshots | Padding and placement |
 
@@ -140,6 +145,20 @@ public revision to import, so source changes were made on the copy.
 Round trip on the web: an overlay ZIP unpacked over each copy preserved every
 original byte (0 changed, 0 removed) and a re-drop was recognised as an existing
 setup. Export and re-open on the desktop was done by the desktop run itself, which writes in place.
+
+**New mod, desktop (release build).** Creating a mod from a short description
+wrote `descriptor.mod`, the launcher `.mod`, a 600 × 600 `thumbnail.png`, the
+folders, wiki, `.tools`, and the lock, and readiness completed.
+
+**Remove components, desktop (release build).** After the fixes above, a mod
+created by the app lost 843 unchanged setup files and the folders they emptied;
+the 4 files the user had edited or merged were kept, and the mod's own files
+stayed. A second mod, `rm_test` (an existing mod with no README or thumbnail, so
+the app generated both), was installed (4,246 files) and removed: its three
+original files were byte-identical afterwards, the generated `README.md` and
+`thumbnail.png` were still there, the setup was gone, and the lock listed only
+the three merged instruction files that were kept. A new mod's launcher `.mod`
+file was covered by the unit test, not re-checked live after the last fix.
 
 ## Web edition
 
@@ -178,7 +197,7 @@ from the documentation fixture and covered by unit tests, not driven live.
 | Resolve conflicts | Keep / use new / merge / keep both / skip | Verified; merge fixed |
 | Install | Progress, keep-open note | Verified; ≈8 minutes for 845 files on this machine |
 | Ready | Readiness, open client | Verified; "Open in Claude Code" not clicked (not installed) |
-| Update and repair | Check, repair, remove, recover | Check for updates, reanalysis and Apply verified; **Repair** planned live (found the repeated question above; the fixed build was not re-run end to end); **Remove components** and source pinning not driven live |
+| Update and repair | Check, repair, remove, recover | Check for updates, reanalysis and Apply verified; **Repair** run live (restored a deleted setup file byte-identically; an interrupted post-apply repair was undone exactly); **Remove components** run live after the fixes above; source pinning not driven live |
 | Recovery | Resume / undo / discard | Undo verified three times including resume of an interrupted Undo; Resume and Discard in unit tests |
 | Window sizes | 960×640 and larger | 16 fixture screens at 960×640 and 1280×960: no page overflow or console errors |
 | Startup updater, external links in the app | Signed updates | Not exercised |
@@ -187,10 +206,10 @@ from the documentation fixture and covered by unit tests, not driven live.
 
 | Check | Result |
 | --- | --- |
-| `cargo test --workspace --all-features` (`pnpm test:rust`) | Passed: 702 desktop-crate tests (16 opt-in ignored), 71 core, 15 web binding, and the remaining crates |
+| `cargo test --workspace --all-features` (`pnpm test:rust`) | Passed: 708 desktop-crate tests (17 opt-in ignored), 71 core, 15 web binding, and the remaining crates |
 | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Passed |
 | `cargo fmt --all --check` | Passed (after formatting the new code) |
-| `vitest run` | 256 passed (11 files) |
+| `vitest run` | 257 passed (11 files) |
 | `tsc --noEmit`, `scripts/lint_frontend.mjs` | Passed |
 | `scripts/validate_repository.py` | Passed |
 | Web: `vitest src/web`, `build_web` + `check_web_build`, Playwright (Chromium) `tests/web` | 47 passed, build ok, 6 passed (rerun on the final sources) |
@@ -200,6 +219,8 @@ from the documentation fixture and covered by unit tests, not driven live.
 - Windows only. macOS and Linux behaviour, signing, notarization, the AppImage and the updater were not run.
 - The assistants are a loopback fixture; real provider quality, sign-in, usage limits, and Claude Code / Codex account flows are untested.
 - Verifying HOI4 Agent Tools still copies the 283 MB package into a private folder each time (read, write, re-read). The read is now parallel; the write was left sequential because a parallel write measured no better. Caching the verified copy would remove most of the remaining time but changes a security boundary, so it was not done here.
+- Undo is slow on a large install: about 850 files took roughly 12 minutes, because the undo first backs up the live state so it can itself be reversed.
+- Source pinning (**Specific commit**, **Release**) was not exercised live.
 - A mod root longer than about 90 characters can exceed the 260-character Windows path limit once the setup's longest paths are added.
 - The local model address must be the one recorded in the lock for **Check for updates** to accept a reanalysis; the message for a different address ("the confirmed review no longer matches this session") does not say that.
 - HOI4 Agent Tools has no switch to leave it out, so Python is required to finish a Windows or Linux install.
@@ -208,4 +229,4 @@ from the documentation fixture and covered by unit tests, not driven live.
 
 ## Not verified
 
-New-mod creation on the desktop, the 3D, Super Events, portrait and live-testing screens, Repair and Remove on the desktop, source pinning, the full-copy ZIP and change-client and remove flows on the web, Firefox and WebKit, real directory drag and drop, OneDrive placeholder folders, and anything on macOS or Linux.
+The 3D, Super Events, portrait and live-testing screens, source pinning on the desktop, the full-copy ZIP and change-client and remove flows on the web, Firefox and WebKit, real directory drag and drop, OneDrive placeholder folders, and anything on macOS or Linux.

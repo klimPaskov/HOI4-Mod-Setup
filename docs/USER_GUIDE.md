@@ -244,7 +244,9 @@ verified manifest. **Repair installation** keeps the installed revision.
 
 **Remove components** removes unchanged files installed by the app and the
 folders left empty. Edited setup files are shown for review; your mod content
-stays in place.
+stays in place, including `descriptor.mod`, the launcher file, `thumbnail.png`,
+`README.md`, and any documents or images you added through the app, which are
+left as they are and no longer managed. Removal needs no AI assistant.
 
 The app checks for updates when it opens and installs a newer signed version
 automatically. If an update fails, you can keep using the app and retry.

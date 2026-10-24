@@ -1706,6 +1706,7 @@ pub fn run_transaction(
                 "imagegen.gptimage",
             ]
             .into_iter()
+            .filter(|component_id| !removal || *component_id == "imagegen.gptimage")
             .filter(|component_id| {
                 // A manifest that predates the HOI4 Live Tools bootstrap
                 // declares no action; the skill-only workflow has nothing to run.
@@ -8743,8 +8744,9 @@ fn prune_emptied_directories(root: &RootedDir, plan: &InstallationPlan) {
 /// routes (see [`installer_mcp_server_ids`]) from a native client MCP file the
 /// installer merged, keeping every other server and key.
 pub const MCP_ROUTE_REMOVAL: &str = "mcp_route_removal";
-/// Resolution of an unchanged native client MCP file that has no shared route
-/// left to remove: nothing is written and the file leaves management.
+/// Resolution of an unchanged file that has nothing left to remove (a native
+/// client MCP file with no shared route, or a file of the mod itself): nothing
+/// is written and the file leaves management.
 pub const MCP_ROUTE_RELEASE: &str = "mcp_route_release";
 
 /// How an unchanged native client MCP file leaves management.
@@ -8953,6 +8955,19 @@ fn operation_releases_mcp_file(operation: &PlanOperation) -> bool {
     )
 }
 
+/// Files of the mod itself that the setup wrote or the user added through it.
+fn removal_keeps_mod_file(component_id: &str) -> bool {
+    matches!(
+        component_id,
+        "project.descriptor"
+            | "project.launcher_descriptor"
+            | "project.thumbnail"
+            | "project.readme"
+            | "project.context_reference"
+            | "project.visual_direction"
+    )
+}
+
 pub fn managed_removal_operations(
     lock: &InstallationLock,
     project_root: &Path,
@@ -8986,6 +9001,37 @@ pub fn managed_removal_operations(
             }
         }
         let unchanged = current.as_deref() == Some(file.installed_sha256.as_str());
+        // The descriptors, thumbnail, README, and documents the user added are
+        // the mod itself, not development setup: removing the setup leaves
+        // them on disk and only stops managing them.
+        if removal_keeps_mod_file(&file.component_id) && current.is_some() {
+            operations.push(PlanOperation {
+                id,
+                component_id: file.component_id.clone(),
+                ownership: Some(file.ownership),
+                location_scope: Some(location_scope_for_file(file)),
+                action: OperationAction::Skip,
+                source_path: None,
+                destination: file.path.clone(),
+                source_sha256: None,
+                source_size: file.source_size,
+                platform: file.platform,
+                executable: file.executable,
+                result_sha256: None,
+                base_sha256: file.base_sha256.clone(),
+                local_sha256: current,
+                local_state: if unchanged {
+                    LocalState::Unmodified
+                } else {
+                    LocalState::Modified
+                },
+                resolution: Some(MCP_ROUTE_RELEASE.into()),
+                external: file.external,
+                rollback: RollbackAction::RestoreBackup,
+                external_parent_identity: None,
+            });
+            continue;
+        }
         let reversible = !file.preserved_local
             && !matches!(file.ownership, Ownership::Merged | Ownership::External);
         operations.push(PlanOperation {
@@ -12509,6 +12555,62 @@ description: Example skill.
     }
 
     #[test]
+    fn managed_removal_keeps_the_mods_own_files_and_stops_managing_them() {
+        let project = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        let mut initial_plan = ready_plan(project.path());
+        let mut readme = initial_plan.operations[0].clone();
+        readme.id = "op-readme".into();
+        readme.destination = "README.md".into();
+        readme.component_id = "project.readme".into();
+        initial_plan.operations.push(readme);
+        let initial_prepared = ["AGENTS.md", "README.md"]
+            .into_iter()
+            .zip(["op-1", "op-readme"])
+            .map(|(destination, operation_id)| PreparedFile {
+                operation_id: operation_id.into(),
+                destination: destination.into(),
+                bytes: b"safe".to_vec(),
+                expected_sha256: sha256_bytes(b"safe"),
+            })
+            .collect::<Vec<_>>();
+        let (_, installed_lock) = run_test_transaction(
+            project.path(),
+            &initial_plan,
+            &initial_prepared,
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let mut removal_plan = ready_plan(project.path());
+        removal_plan.maintenance_mode = Some("remove".into());
+        removal_plan.plan_id = Uuid::new_v4();
+        removal_plan.codex_analysis = None;
+        removal_plan.generated_artifacts.clear();
+        removal_plan.external_actions.clear();
+        removal_plan.git_setup = None;
+        removal_plan.optional_workflows.clear();
+        removal_plan.operations =
+            managed_removal_operations(&installed_lock, project.path()).unwrap();
+        let (_, removal_lock) = run_test_transaction(
+            project.path(),
+            &removal_plan,
+            &[],
+            &TransactionOptions {
+                app_data_root: Some(app.path().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!project.path().join("AGENTS.md").exists());
+        assert_eq!(fs::read(project.path().join("README.md")).unwrap(), b"safe");
+        assert!(removal_lock.files.is_empty());
+    }
+
+    #[test]
     fn managed_removal_prunes_emptied_folders_and_rollback_restores_them() {
         let project = tempdir().unwrap();
         let app = tempdir().unwrap();
@@ -12657,6 +12759,14 @@ description: Example skill.
         removal_plan
             .optional_workflows
             .insert("imagegen.gptimage".into(), "not_selected".into());
+        // Components that stay installed keep their state; a removal never
+        // runs their setup, so they need no reviewed action of their own.
+        removal_plan
+            .optional_workflows
+            .insert(crate::mcp::COMPONENT_ID.into(), "ready".into());
+        removal_plan
+            .optional_workflows
+            .insert("workflow.3d".into(), "ready".into());
         removal_plan.external_actions = vec![ExternalAction {
             id: "external.imagegen.gptimage.cleanup".into(),
             component_id: "imagegen.gptimage".into(),

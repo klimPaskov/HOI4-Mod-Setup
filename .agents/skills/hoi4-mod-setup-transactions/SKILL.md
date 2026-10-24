@@ -514,7 +514,7 @@ Opaque OS-vault credential references are carried separately from secret values.
   component is absent from that locked source, Update must resolve the current
   source first; Repair must not mix a newer component into the old lock.
 - Reinstall preserves local modifications through the same conflict engine.
-- Managed removal deletes only owned, unmodified content by default.
+- Managed removal deletes only owned, unmodified content by default. It keeps the mod's own files (`removal_keeps_mod_file`: descriptor, launcher descriptor, thumbnail, README, context and visual-direction documents) on disk and releases them from the lock with `MCP_ROUTE_RELEASE`. A removal plan is a pure removal only if every operation is a skip or delete, it has no generated artifacts, Git setup, or provider bootstrap (`provider_bootstrap_selected` is false in remove mode), and its only external action is the reviewed GPTImage cleanup, the only post-install action a removal may run. A plan that fails this test wrongly demands a provider analysis.
 - A credential removal is a separate explicit choice.
 - Optional workflow health is separate from the core lock gate. A stored Meshy reference may be carried forward only for `workflow.3d`, but a workflow is `incomplete` or `selected_pending` until its approved, manifest-derived health route reports success; missing optional credentials never block the core readiness gate.
 - `workflow.super_events` has no credential health action; its installed or

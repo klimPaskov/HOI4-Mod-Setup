@@ -4305,7 +4305,7 @@ function readableRecoveryAction(value: string) {
 /** One plain sentence for what to do about a recorded setup failure. */
 export function recoveryNextStep(message: string | undefined, rollbackAllowed: boolean): string {
   const undo = rollbackAllowed ? "Choose Undo changes to return your mod to how it was before this setup began, then" : "Choose an option below, then";
-  if (message && /python|node\.js|npm|winget|agent tools|mcp/i.test(message)) {
+  if (message && /python|node\.js|npm|winget/i.test(message)) {
     return `${undo} install Python from python.org (tick “Add python.exe to PATH”) and set up again. HOI4 Agent Tools needs it.`;
   }
   return `${undo} try again. If it stops at the same point, choose Copy diagnostics and include it in a report.`;

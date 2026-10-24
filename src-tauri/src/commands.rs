@@ -2967,7 +2967,15 @@ fn run_reviewed_post_install_actions(
     plan: &InstallationPlan,
     component_id: &str,
 ) -> Result<PostInstallActionOutcome, AppError> {
-    if plan.maintenance_mode.as_deref() == Some("remove") {
+    // A removal sets nothing up. Its only reviewed action is the cleanup of
+    // the GPTImage dependency tree that Setup itself installed.
+    if plan.maintenance_mode.as_deref() == Some("remove")
+        && !(component_id == IMAGEGEN_GPTIMAGE_COMPONENT_ID
+            && plan
+                .external_actions
+                .iter()
+                .any(|action| action.id == "external.imagegen.gptimage.cleanup"))
+    {
         return Err(AppError::Transaction(
             "managed removal cannot run a post-install action".into(),
         ));
@@ -3173,6 +3181,17 @@ fn image_provider_selected(selection: Option<&ImageGenerationSelection>, id: &st
                 .iter()
                 .any(|candidate| candidate == id)
     })
+}
+
+/// Whether a plan installs this image provider. Removal only reverses what is
+/// installed, so it never plans a provider bootstrap; a removal that carried
+/// one would stop being a pure removal and wrongly ask for a provider analysis.
+fn provider_bootstrap_selected(
+    mode: &str,
+    selection: Option<&ImageGenerationSelection>,
+    id: &str,
+) -> bool {
+    mode != "remove" && image_provider_selected(selection, id)
 }
 
 fn reviewed_gptimage_cleanup_action() -> ExternalAction {
@@ -9513,7 +9532,8 @@ fn build_maintenance_plan_blocking(
     } else {
         Vec::new()
     };
-    let gptimage_selected = image_provider_selected(selected_image_generation.as_ref(), "gptimage");
+    let gptimage_selected =
+        provider_bootstrap_selected(&mode, selected_image_generation.as_ref(), "gptimage");
     if gptimage_selected
         && !external_actions
             .iter()
@@ -11794,6 +11814,25 @@ mod tests {
     }
 
     #[test]
+    fn removal_never_plans_a_provider_bootstrap() {
+        let selection = ImageGenerationSelection {
+            primary_provider: "gptimage".into(),
+            ..Default::default()
+        };
+        assert!(provider_bootstrap_selected(
+            "repair",
+            Some(&selection),
+            "gptimage"
+        ));
+        assert!(!provider_bootstrap_selected(
+            "remove",
+            Some(&selection),
+            "gptimage"
+        ));
+        assert!(!provider_bootstrap_selected("update", None, "gptimage"));
+    }
+
+    #[test]
     fn managed_removal_never_restarts_the_three_d_bootstrap() {
         let project = tempdir().unwrap();
         let mut plan: InstallationPlan = serde_json::from_str(include_str!(
@@ -11808,6 +11847,36 @@ mod tests {
         let error =
             run_reviewed_post_install_actions(project.path(), &plan, "workflow.3d").unwrap_err();
         assert!(error.to_string().contains("managed removal"));
+    }
+
+    #[test]
+    fn managed_removal_may_only_run_the_reviewed_image_cleanup() {
+        let project = tempdir().unwrap();
+        let mut plan: InstallationPlan = serde_json::from_str(include_str!(
+            "../../docs/examples/installation-plan.example.json"
+        ))
+        .unwrap();
+        plan.maintenance_mode = Some("remove".into());
+        plan.external_actions = vec![reviewed_gptimage_cleanup_action()];
+        for component in [
+            crate::mcp::COMPONENT_ID,
+            LIVE_TOOLS_COMPONENT_ID,
+            "workflow.3d",
+        ] {
+            let error =
+                run_reviewed_post_install_actions(project.path(), &plan, component).unwrap_err();
+            assert!(error.to_string().contains("managed removal"), "{component}");
+        }
+        // The cleanup itself is allowed to start; with no installed tree it
+        // fails later for its own reason, never for being a removal.
+        let outcome = run_reviewed_post_install_actions(
+            project.path(),
+            &plan,
+            IMAGEGEN_GPTIMAGE_COMPONENT_ID,
+        );
+        if let Err(error) = outcome {
+            assert!(!error.to_string().contains("managed removal cannot run"));
+        }
     }
 
     #[test]

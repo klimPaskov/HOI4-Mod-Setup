@@ -2423,6 +2423,34 @@ describe("HOI4 Mod Setup wizard", () => {
     expect(screen.getByText(/install Python from python.org .*HOI4 Agent Tools needs it/)).toBeInTheDocument();
   });
 
+  it("does not blame Python when the failure names the tools component but not Python", async () => {
+    vi.mocked(findInterruptedTransaction).mockResolvedValue({
+      transaction_id: "removal-transaction",
+      state: "interrupted",
+      last_checkpoint: "post-install-verified",
+      recovery: {
+        resume_allowed: false,
+        rollback_allowed: true,
+        discard_staging_allowed: false,
+        project_apply_started: true,
+        recommended_action: "rollback",
+      },
+      error: {
+        code: "TRANSACTION_FAILED",
+        message: "transaction error: the reviewed post-install component has no action evidence: mcp.hoi4_agent_tools",
+        stage: "post-install checks",
+      },
+    } as never);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /manage an existing project/i }));
+    fireEvent.change(screen.getByLabelText("Project folder"), { target: { value: "C:\mods\removal" } });
+
+    expect(await screen.findByText("What stopped setup")).toBeInTheDocument();
+    expect(screen.queryByText(/install Python from python.org/)).not.toBeInTheDocument();
+    expect(screen.getByText(/try again\. If it stops at the same point/)).toBeInTheDocument();
+  });
+
   it("shows only Discard when setup stopped before changing project files", async () => {
     vi.mocked(findInterruptedTransaction).mockResolvedValue({
       transaction_id: "pre-apply-transaction",
