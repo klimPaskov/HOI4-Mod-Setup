@@ -196,6 +196,15 @@ fn prepared_plans() -> &'static Mutex<std::collections::HashMap<Uuid, PreparedPl
     PREPARED_PLANS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
+/// Reviewed plans whose applied project still has a finishing step to run (the
+/// development tools). One use each: `run_agent_setup` takes its plan out.
+static FINISHING_PLANS: OnceLock<Mutex<HashMap<Uuid, (PathBuf, InstallationPlan)>>> =
+    OnceLock::new();
+
+fn finishing_plans() -> &'static Mutex<HashMap<Uuid, (PathBuf, InstallationPlan)>> {
+    FINISHING_PLANS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 fn ready_projects() -> &'static Mutex<HashMap<String, String>> {
     READY_PROJECTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
@@ -7175,18 +7184,15 @@ fn run_agent_setup(plan_id: String, project_root: String) -> Result<AgentSetupRe
     let root = validate_project_root_or_destination(Path::new(&project_root))
         .map(|(root, _)| root)
         .map_err(command_error)?;
-    let plan = {
-        let plans = prepared_plans()
-            .lock()
-            .map_err(|_| "prepared plan store is unavailable".to_string())?;
-        let prepared = plans
-            .get(&id)
-            .ok_or_else(|| "installation plan is not available in the core session".to_string())?;
-        if prepared.canonical_root != root {
-            return Err("installation root changed after review".into());
-        }
-        prepared.plan.clone()
-    };
+    // The apply keeps the reviewed plan for this one step and nothing else.
+    let (reviewed_root, plan) = finishing_plans()
+        .lock()
+        .map_err(|_| "finishing plan store is unavailable".to_string())?
+        .remove(&id)
+        .ok_or_else(|| "the development tools step has no reviewed plan".to_string())?;
+    if reviewed_root != root {
+        return Err("installation root changed after review".into());
+    }
     run_agent_setup_blocking(&plan, &root).map_err(command_error)
 }
 
@@ -7227,6 +7233,15 @@ fn apply_installation(plan_id: String, project_root: String) -> Result<Transacti
         },
     )
     .map_err(command_error)?;
+    if crate::agent_setup::reviewed_action(&approved_plan)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        if let Ok(mut finishing) = finishing_plans().lock() {
+            finishing.insert(id, (root.clone(), approved_plan.clone()));
+        }
+    }
     prepared_plans()
         .lock()
         .map_err(|_| "prepared plan store is unavailable".to_string())?

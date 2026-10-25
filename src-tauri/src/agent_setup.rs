@@ -50,7 +50,10 @@ pub fn action(game_dir: Option<&str>) -> ExternalAction {
     let mut arguments = vec![SCRIPT.to_string(), "setup".to_string()];
     if let Some(dir) = game_dir.filter(|dir| !dir.trim().is_empty()) {
         arguments.push("--save-game-dir".into());
-        arguments.push(dir.replace('\\', "/"));
+        // A canonicalized Windows path carries a verbatim `\\?\` prefix; the
+        // package's tools expect the plain folder.
+        let plain = dir.replace('\\', "/");
+        arguments.push(plain.strip_prefix("//?/").unwrap_or(&plain).to_string());
     }
     ExternalAction {
         id: ACTION_ID.into(),
@@ -316,7 +319,8 @@ mod tests {
             "../../docs/examples/installation-plan.example.json"
         ))
         .unwrap();
-        plan.external_actions = vec![action(Some("C:\\Games\\HOI4"))];
+        // The canonicalized Windows form carries a verbatim prefix.
+        plan.external_actions = vec![action(Some("\\\\?\\C:\\Games\\HOI4"))];
         let reviewed = reviewed_action(&plan).unwrap().unwrap();
         assert_eq!(
             reviewed.arguments,
