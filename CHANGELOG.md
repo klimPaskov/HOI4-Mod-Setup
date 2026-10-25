@@ -4,6 +4,13 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+## 0.7.1 - 2026-10-25
+
+- Turn on the free setup assistant. The relay is deployed, so a first run needs no account, key, or sign-in: the free model is offered and is the default on desktop and web. It sends one structured request through the maintainer's Cloudflare relay to a free OpenRouter model, and the app shows that free models may keep what is sent and that everyone shares one daily limit. When the limit is reached the app says so and offers another assistant.
+- Replace the free model `nvidia/nemotron-3-super-120b-a12b:free`, whose only host was down (0% uptime), with `nvidia/nemotron-3.5-super-vl:free`, which supports structured output, for the free assistant and for OpenRouter with your own key. The relay now lets OpenRouter fall back to two other structured-output free models, and includes the provider's short reason when it refuses a request.
+- Fix the relay answering 502 to every request: the upstream call used a redirect mode that Node accepts but Cloudflare Workers reject.
+- Add one command for the maintainer, `node scripts/setup_free_assistant.mjs`, that validates an OpenRouter key and a Cloudflare token, stores the secrets, deploys the relay, tests it, and opens the pull request that sets its address.
+- Make the release notes list installers in the order Windows, macOS, Linux.
 - Say why a pinned setup version is refused when its files disagree with its published manifest (a commit made before the source's manifest refresh), instead of asking the user to check their connection. Pinning **Specific commit** and **Release** was checked live on a release build: both resolve to the exact full revision and record it in the plan.
 
 ## 0.7.0 - 2026-10-25

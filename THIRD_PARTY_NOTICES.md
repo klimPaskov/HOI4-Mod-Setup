@@ -6,7 +6,7 @@ and source or homepage evidence for release review. It does not replace maintain
 review of bundled assets or the complete license text supplied by each dependency
 before a public binary release.
 
-Inventory counts: 160 JavaScript packages and 427 Rust packages.
+Inventory counts: 160 JavaScript packages and 429 Rust packages.
 
 ## JavaScript dependencies
 
@@ -133,10 +133,10 @@ Inventory counts: 160 JavaScript packages and 427 Rust packages.
 | postcss | 8.5.31 | MIT | https://postcss.org/ |
 | pretty-format | 27.5.1 | MIT | https://github.com/facebook/jest#readme |
 | punycode | 2.3.1 | MIT | https://mths.be/punycode |
-| react-dom | 19.3.0 | MIT | https://react.dev/ |
+| react-dom | 19.3.1 | MIT | https://react.dev/ |
 | react-is | 17.0.2 | MIT | https://reactjs.org/ |
 | react-refresh | 0.17.0 | MIT | https://react.dev/ |
-| react | 19.3.0 | MIT | https://react.dev/ |
+| react | 19.3.1 | MIT | https://react.dev/ |
 | redent | 3.0.0 | MIT | https://github.com/sindresorhus/redent#readme |
 | rollup | 4.65.0 | MIT | https://rollupjs.org/ |
 | rrweb-cssom | 0.8.0 | MIT | https://github.com/rrweb-io/CSSOM#readme |
@@ -232,7 +232,7 @@ Inventory counts: 160 JavaScript packages and 427 Rust packages.
 | core-foundation | 0.9.4 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | cpufeatures | 0.3.0 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
-| crc32fast | 1.5.0 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
+| crc32fast | 1.5.3 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | crossbeam-utils | 0.8.22 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | cssparser-macros | 0.6.1 | MPL-2.0 | registry+https://github.com/rust-lang/crates.io-index |
@@ -274,7 +274,7 @@ Inventory counts: 160 JavaScript packages and 427 Rust packages.
 | fdeflate | 0.3.7 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | filetime | 0.2.29 | MIT/Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | find-msvc-tools | 0.1.9 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
-| flate2 | 1.1.9 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
+| flate2 | 1.1.10 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | fluent-uri | 0.4.1 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | fnv | 1.0.7 | Apache-2.0 / MIT | registry+https://github.com/rust-lang/crates.io-index |
 | foldhash | 0.2.0 | Zlib | registry+https://github.com/rust-lang/crates.io-index |
@@ -351,6 +351,7 @@ Inventory counts: 160 JavaScript packages and 427 Rust packages.
 | micromap | 0.3.0 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | minisign-verify | 0.2.5 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
+| miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | mio | 1.2.2 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | new_debug_unreachable | 1.0.6 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | nix | 0.29.0 | MIT | registry+https://github.com/rust-lang/crates.io-index |
@@ -444,7 +445,7 @@ Inventory counts: 160 JavaScript packages and 427 Rust packages.
 | serde_core | 1.0.229 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | serde_derive_internals | 0.29.1 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
-| serde_json | 1.0.151 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
+| serde_json | 1.0.154 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | serde_repr | 0.1.21 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | serde_spanned | 0.6.9 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | serde_spanned | 1.1.1 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
@@ -483,9 +484,9 @@ Inventory counts: 160 JavaScript packages and 427 Rust packages.
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | tendril | 0.5.1 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | thiserror-impl | 1.0.69 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
-| thiserror-impl | 2.0.19 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
+| thiserror-impl | 2.0.21 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | thiserror | 1.0.69 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
-| thiserror | 2.0.19 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
+| thiserror | 2.0.21 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | time-core | 0.1.9 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | time-macros | 0.2.32 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | time | 0.3.54 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
@@ -523,7 +524,7 @@ Inventory counts: 160 JavaScript packages and 427 Rust packages.
 | unic-ucd-version | 0.9.0 | MIT/Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | unicode-general-category | 1.1.0 | Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | unicode-ident | 1.0.24 | (MIT OR Apache-2.0) AND Unicode-3.0 | registry+https://github.com/rust-lang/crates.io-index |
-| unicode-normalization | 0.1.25 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
+| unicode-normalization | 0.1.26 | (MIT OR Apache-2.0) AND Unicode-3.0 | registry+https://github.com/rust-lang/crates.io-index |
 | untrusted | 0.9.0 | ISC | registry+https://github.com/rust-lang/crates.io-index |
 | updater-signature-verify | 0.1.0 | Apache-2.0 | path dependency |
 | url | 2.5.8 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
@@ -600,6 +601,7 @@ Inventory counts: 160 JavaScript packages and 427 Rust packages.
 | zerotrie | 0.2.4 | Unicode-3.0 | registry+https://github.com/rust-lang/crates.io-index |
 | zerovec-derive | 0.11.3 | Unicode-3.0 | registry+https://github.com/rust-lang/crates.io-index |
 | zerovec | 0.11.6 | Unicode-3.0 | registry+https://github.com/rust-lang/crates.io-index |
+| zlib-rs | 0.6.8 | Zlib | registry+https://github.com/rust-lang/crates.io-index |
 | zmij | 1.0.23 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | zvariant_derive | 4.2.0 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | zvariant_utils | 2.1.0 | MIT | registry+https://github.com/rust-lang/crates.io-index |
