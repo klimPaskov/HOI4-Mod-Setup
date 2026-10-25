@@ -861,6 +861,11 @@ fn request_provider(
     extract_structured_output(&post_provider(provider, endpoint, headers, &body)?)
 }
 
+/// How long one hosted analysis request may take. A reasoning model (the free
+/// model among them) can spend minutes on a large project before it answers;
+/// the Claude route allows five. Two minutes cut those requests off.
+const HOSTED_ANALYSIS_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
 /// Send one request to a reviewed route and return its response envelope.
 fn post_provider(
     provider: &str,
@@ -869,7 +874,7 @@ fn post_provider(
     body: &Value,
 ) -> Result<Value, AppError> {
     let client = Client::builder()
-        .timeout(Duration::from_secs(120))
+        .timeout(HOSTED_ANALYSIS_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| {
@@ -1024,6 +1029,13 @@ fn description_payload(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_hosted_analysis_may_take_as_long_as_the_claude_route() {
+        // The free reasoning model needs minutes on a large project; two
+        // minutes cut it off with "error sending request".
+        assert!(super::HOSTED_ANALYSIS_TIMEOUT >= std::time::Duration::from_secs(300));
+    }
+
     use super::*;
     use crate::credentials::MemoryCredentialStore;
     use hoi4_setup_core::analysis::ANALYSIS_OUTPUT_SCHEMA as ANALYSIS_SCHEMA;

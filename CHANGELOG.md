@@ -4,6 +4,8 @@ HOI4 Mod Setup follows semantic versioning.
 
 ## Unreleased
 
+- Let a hosted setup analysis take up to five minutes instead of two. The free model reasons before it answers and needs longer than two minutes on a large installed project, which showed as "The selected provider is temporarily unavailable" on every attempt of an update or repair review.
+
 ## 0.7.1 - 2026-10-25
 
 - Turn on the free setup assistant. The relay is deployed, so a first run needs no account, key, or sign-in: the free model is offered and is the default on desktop and web. It sends one structured request through the maintainer's Cloudflare relay to a free OpenRouter model, and the app shows that free models may keep what is sent and that everyone shares one daily limit. When the limit is reached the app says so and offers another assistant.
