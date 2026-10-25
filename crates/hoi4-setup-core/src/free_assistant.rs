@@ -23,7 +23,7 @@ pub const OPENROUTER_ENDPOINT: &str = "https://openrouter.ai/api/v1/chat/complet
 pub const OPENROUTER_AUTH_URL: &str = "https://openrouter.ai/auth";
 pub const OPENROUTER_KEY_EXCHANGE_URL: &str = "https://openrouter.ai/api/v1/auth/keys";
 /// The free model suggested for a signed-in OpenRouter account.
-pub const OPENROUTER_DEFAULT_MODEL: &str = "nvidia/nemotron-3-super-120b-a12b:free";
+pub const OPENROUTER_DEFAULT_MODEL: &str = "nvidia/nemotron-3.5-super-vl:free";
 
 const CONFIG: &str = include_str!("../../../src/free-assistant.json");
 

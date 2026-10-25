@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { checkBody, handle } from "./worker.mjs";
 
-const MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
+const MODEL = "nvidia/nemotron-3.5-super-vl:free";
 const ORIGIN = "https://klimpaskov.github.io";
 const KEY = ["sk", "or", "v1", "relay-test"].join("-");
 const env = (extra = {}) => ({ OPENROUTER_API_KEY: KEY, MODEL, ALLOWED_ORIGINS: ORIGIN, ...extra });
@@ -35,11 +35,32 @@ test("forwards the reviewed shape with the secret key and the configured model o
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "https://openrouter.ai/api/v1/chat/completions");
   assert.equal(calls[0].init.headers.authorization, `Bearer ${KEY}`);
-  assert.equal(calls[0].init.redirect, "error");
+  assert.equal(calls[0].init.redirect, "manual");
   const sent = JSON.parse(calls[0].init.body);
   assert.deepEqual(Object.keys(sent).sort(), ["max_tokens", "messages", "model", "provider", "response_format"]);
   assert.equal(sent.model, MODEL);
   assert.equal(sent.max_tokens, 8192);
+});
+
+test("the upstream call uses only fetch options the Workers runtime accepts", async () => {
+  const calls = [];
+  await handle(post(body(), { origin: ORIGIN }), env(), upstreamReturning(200, '{"choices":[]}', calls));
+  // Workers throw on any other redirect mode ("error"), which showed up only once deployed.
+  assert.ok(["follow", "manual"].includes(calls[0].init.redirect));
+});
+
+test("a refusal from the model provider carries its short reason", async () => {
+  const response = await handle(post(body(), { origin: ORIGIN }), env(), upstreamReturning(404, '{"error":{"message":"No endpoints found matching your data policy"}}', []));
+  assert.equal(response.status, 502);
+  assert.match(await response.text(), /HTTP 404: No endpoints found matching your data policy/);
+  const plain = await handle(post(body(), { origin: ORIGIN }), env(), upstreamReturning(500, "not json", []));
+  assert.match(await plain.text(), /HTTP 500\./);
+});
+
+test("a redirect from the model provider is refused, not followed", async () => {
+  const response = await handle(post(body(), { origin: ORIGIN }), env(), upstreamReturning(302, "", []));
+  assert.equal(response.status, 502);
+  assert.match(await response.text(), /could not reach its model/);
 });
 
 test("desktop requests without an Origin are served without CORS headers", async () => {
@@ -112,4 +133,12 @@ test("the relay's model matches the app's checked-in free model", () => {
   const config = JSON.parse(readFileSync(new URL("../src/free-assistant.json", import.meta.url), "utf8"));
   const toml = readFileSync(new URL("./wrangler.toml", import.meta.url), "utf8");
   assert.match(toml, new RegExp(`^MODEL = "${config.model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"$`, "m"));
+});
+
+test("fallback models are sent as an ordered list behind the configured one", async () => {
+  const calls = [];
+  await handle(post(body(), { origin: ORIGIN }), env({ FALLBACK_MODELS: "a/b:free, c/d:free" }), upstreamReturning(200, '{"choices":[]}', calls));
+  const sent = JSON.parse(calls[0].init.body);
+  assert.deepEqual(sent.models, [MODEL, "a/b:free", "c/d:free"]);
+  assert.equal(sent.model, undefined);
 });

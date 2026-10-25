@@ -1,4 +1,4 @@
 {
   "endpoint": "https://hoi4-mod-setup-free.klimpaskov1-3892.workers.dev/v1/chat/completions",
-  "model": "nvidia/nemotron-3-super-120b-a12b:free"
+  "model": "nvidia/nemotron-3.5-super-vl:free"
 }

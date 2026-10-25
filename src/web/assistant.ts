@@ -31,7 +31,7 @@ export interface BrowserProvider {
 }
 
 const FREE_ASSISTANT = freeAssistantConfig as { endpoint: string | null; model: string };
-export const OPENROUTER_FREE_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
+export const OPENROUTER_FREE_MODEL = "nvidia/nemotron-3.5-super-vl:free";
 
 /** The free route, once its relay is deployed. */
 export const FREE_PROVIDER: BrowserProvider | null = FREE_ASSISTANT.endpoint

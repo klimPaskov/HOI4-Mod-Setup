@@ -16,7 +16,22 @@ day until the account has bought at least 10 credits, then 1,000 a day. Every
 user of the free route shares that allowance. A setup uses one to three
 requests.
 
-## Deploy
+## Deploy (one command)
+
+From a clone, with the [GitHub CLI](https://cli.github.com) signed in as a repository admin:
+
+```bash
+node scripts/setup_free_assistant.mjs
+```
+
+Paste an [OpenRouter key](https://openrouter.ai/settings/keys) and a
+[Cloudflare API token](https://dash.cloudflare.com/profile/api-tokens) (**Create Token**, then the
+**Edit Cloudflare Workers** template). The script validates both, finds the Cloudflare account,
+stores the three secrets in the `free-assistant` environment, runs the deploy workflow, tests the
+relay with one real request, and opens a pull request that sets `endpoint`. `--check` only checks the
+computer. The steps below are what it automates.
+
+## Deploy (by hand)
 
 1. Create a Cloudflare API token with the **Edit Cloudflare Workers** template.
 2. In this repository's settings, create an environment named
