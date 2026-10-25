@@ -91,6 +91,11 @@ test(`curates ${signing} installers, release notes, and complete updater metadat
     const releaseNotes = await readFile(join(output, "RELEASE_NOTES.md"), "utf8");
     assert.ok(releaseNotes.includes("## Changes\n"));
     assert.equal(releaseNotes.split("\n").filter((line) => /^- (Windows|Mac|Linux)/.test(line)).length, 5);
+    // Install links are listed Windows, then macOS, then Linux.
+    assert.deepEqual(
+      releaseNotes.split("\n").filter((line) => /^- (Windows|Mac|Linux)/.test(line)).map((line) => line.split(":")[0]),
+      ["- Windows", "- Mac (Apple silicon)", "- Mac (Intel)", "- Linux x64 (AppImage)", "- Linux x64 (Debian/Ubuntu)"],
+    );
     for (const feature of ["GPTImage is the default", "Coding clients remain independent", "Update and repair", "Clausewitz MCP by smerss", "native Linux HOI4 1.19.2", "manual Linux game/server setup", "supports Windows only", "README", "Quickstart"]) assert.ok(releaseNotes.includes(feature), feature);
     assert.equal(releaseNotes.includes("community certificate named ChaosX"), signing === "community");
     assert.equal(releaseNotes.includes("not Apple-notarized"), signing === "community");
