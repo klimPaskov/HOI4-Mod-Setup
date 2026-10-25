@@ -180,7 +180,7 @@ mod tests {
         let route = json!({
             "provider": "openrouter", "protocol": "openai_compatible",
             "endpoint": "https://openrouter.ai/api/v1/chat/completions",
-            "model": "nvidia/nemotron-3-super-120b-a12b:free", "reasoningEffort": "high",
+            "model": "nvidia/nemotron-3.5-super-vl:free", "reasoningEffort": "high",
             "supportsEffort": false, "optimizationProfile": "OpenRouter setup analysis"
         })
         .to_string();

@@ -8,7 +8,11 @@ workers_dev = true
 
 [vars]
 # Keep in step with src/free-assistant.json.
-MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+MODEL = "nvidia/nemotron-3.5-super-vl:free"
+# Tried in this order by OpenRouter when the first model's host is down or refuses.
+# All support structured output. Free models come and go: check
+# https://openrouter.ai/api/v1/models/<id>/endpoints before changing.
+FALLBACK_MODELS = "xingchen-agi/xing4.0-29b-a4b:free,dots-studio/dots-3-note-preview:free"
 ALLOWED_ORIGINS = "https://klimpaskov.github.io"
 
 # A few requests a minute from each address; one setup needs one to three.

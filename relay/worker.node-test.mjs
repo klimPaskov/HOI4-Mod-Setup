@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { checkBody, handle } from "./worker.mjs";
 
-const MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
+const MODEL = "nvidia/nemotron-3.5-super-vl:free";
 const ORIGIN = "https://klimpaskov.github.io";
 const KEY = ["sk", "or", "v1", "relay-test"].join("-");
 const env = (extra = {}) => ({ OPENROUTER_API_KEY: KEY, MODEL, ALLOWED_ORIGINS: ORIGIN, ...extra });
@@ -133,4 +133,12 @@ test("the relay's model matches the app's checked-in free model", () => {
   const config = JSON.parse(readFileSync(new URL("../src/free-assistant.json", import.meta.url), "utf8"));
   const toml = readFileSync(new URL("./wrangler.toml", import.meta.url), "utf8");
   assert.match(toml, new RegExp(`^MODEL = "${config.model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"$`, "m"));
+});
+
+test("fallback models are sent as an ordered list behind the configured one", async () => {
+  const calls = [];
+  await handle(post(body(), { origin: ORIGIN }), env({ FALLBACK_MODELS: "a/b:free, c/d:free" }), upstreamReturning(200, '{"choices":[]}', calls));
+  const sent = JSON.parse(calls[0].init.body);
+  assert.deepEqual(sent.models, [MODEL, "a/b:free", "c/d:free"]);
+  assert.equal(sent.model, undefined);
 });

@@ -60,8 +60,10 @@ export async function handle(request, env, upstreamFetch) {
   const problem = checkBody(body, env.MODEL);
   if (problem) return reply(400, problem, cors);
 
+  const fallbacks = String(env.FALLBACK_MODELS ?? "").split(",").map((id) => id.trim()).filter(Boolean);
   const upstreamBody = {
-    model: env.MODEL,
+    // OpenRouter tries these in order; a single model is sent as `model`.
+    ...(fallbacks.length > 0 ? { models: [env.MODEL, ...fallbacks] } : { model: env.MODEL }),
     messages: body.messages.map(({ role, content }) => ({ role, content })),
     max_tokens: MAX_TOKENS,
     provider: { require_parameters: true },
